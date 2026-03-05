@@ -1,0 +1,121 @@
+from __future__ import annotations
+
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
+
+import pytest
+
+from src.telegram.auth import TelegramAuth, _describe_code_type, _describe_next_type
+
+
+class FakeSentCodeTypeApp:
+    pass
+
+
+class FakeSentCodeTypeSms:
+    pass
+
+
+class FakeCodeTypeSms:
+    pass
+
+
+class FakeCodeTypeCall:
+    pass
+
+
+class TestDescribeCodeType:
+    def test_app(self):
+        with patch("src.telegram.auth.SentCodeTypeApp", FakeSentCodeTypeApp):
+            assert _describe_code_type(FakeSentCodeTypeApp()) == "приложение Telegram"
+
+    def test_sms(self):
+        with patch("src.telegram.auth.SentCodeTypeSms", FakeSentCodeTypeSms):
+            assert _describe_code_type(FakeSentCodeTypeSms()) == "SMS"
+
+    def test_fallback(self):
+        assert _describe_code_type("unknown") == "Telegram"
+
+
+class TestDescribeNextType:
+    def test_none(self):
+        assert _describe_next_type(None) is None
+
+    def test_sms(self):
+        with patch("src.telegram.auth.CodeTypeSms", FakeCodeTypeSms):
+            assert _describe_next_type(FakeCodeTypeSms()) == "SMS"
+
+    def test_call(self):
+        with patch("src.telegram.auth.CodeTypeCall", FakeCodeTypeCall):
+            assert _describe_next_type(FakeCodeTypeCall()) == "звонок"
+
+    def test_unknown(self):
+        assert _describe_next_type("something") is None
+
+
+class TestSendCode:
+    @pytest.mark.asyncio
+    async def test_send_code_returns_dict(self):
+        auth = TelegramAuth(api_id=123, api_hash="abc")
+        fake_type = FakeSentCodeTypeApp()
+        fake_next = FakeCodeTypeSms()
+        fake_result = SimpleNamespace(
+            phone_code_hash="hash123",
+            type=fake_type,
+            next_type=fake_next,
+            timeout=60,
+        )
+        mock_client = AsyncMock()
+        mock_client.send_code_request = AsyncMock(return_value=fake_result)
+
+        with (
+            patch("src.telegram.auth.TelegramClient", return_value=mock_client),
+            patch("src.telegram.auth.SentCodeTypeApp", FakeSentCodeTypeApp),
+            patch("src.telegram.auth.CodeTypeSms", FakeCodeTypeSms),
+        ):
+            info = await auth.send_code("+1234567890")
+
+        assert isinstance(info, dict)
+        assert info["phone_code_hash"] == "hash123"
+        assert info["code_type"] == "приложение Telegram"
+        assert info["next_type"] == "SMS"
+        assert info["timeout"] == 60
+        assert "+1234567890" in auth._pending
+
+
+class TestResendCode:
+    @pytest.mark.asyncio
+    async def test_resend_code_no_pending(self):
+        auth = TelegramAuth(api_id=123, api_hash="abc")
+        with pytest.raises(ValueError, match="No pending auth"):
+            await auth.resend_code("+1234567890")
+
+    @pytest.mark.asyncio
+    async def test_resend_code_calls_resend_request(self):
+        auth = TelegramAuth(api_id=123, api_hash="abc")
+        mock_client = AsyncMock()
+        auth._pending["+1234567890"] = (mock_client, "old_hash")
+
+        fake_type = FakeSentCodeTypeSms()
+        fake_result = SimpleNamespace(
+            phone_code_hash="new_hash",
+            type=fake_type,
+            next_type=None,
+            timeout=120,
+        )
+        mock_client.return_value = fake_result
+
+        with (
+            patch("src.telegram.auth.SentCodeTypeSms", FakeSentCodeTypeSms),
+        ):
+            info = await auth.resend_code("+1234567890")
+
+        assert info["phone_code_hash"] == "new_hash"
+        assert info["code_type"] == "SMS"
+        assert info["next_type"] is None
+        assert info["timeout"] == 120
+        # Verify hash was updated
+        _, stored_hash = auth._pending["+1234567890"]
+        assert stored_hash == "new_hash"
+        # Verify ResendCodeRequest was called
+        mock_client.assert_called_once()

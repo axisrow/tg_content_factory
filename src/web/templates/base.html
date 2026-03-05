@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="ru" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}TG Post Search{% endblock %}</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔍</text></svg>">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <nav class="container">
+        <ul>
+            <li><strong>TG Post Search</strong></li>
+        </ul>
+        <ul>
+            <li><a href="/">Поиск</a></li>
+            <li><a href="/dashboard">Панель</a></li>
+            <li><a href="/channels">Каналы</a></li>
+            <li><a href="/scheduler">Планировщик</a></li>
+            <li><a href="/settings">Настройки</a></li>
+            <li><a href="/logout">Выйти</a></li>
+        </ul>
+    </nav>
+    <div id="flash-container" class="container"></div>
+    <main class="container">
+        {% block content %}{% endblock %}
+    </main>
+    <footer class="container">
+        <small>TG Post Search v0.1.0</small>
+    </footer>
+<script>
+(function() {
+    var msgs = {
+        channel_added: "Канал добавлен.",
+        channels_added: "Каналы добавлены.",
+        channel_toggled: "Статус канала изменён.",
+        channel_deleted: "Канал удалён.",
+        keyword_added: "Ключевое слово добавлено.",
+        keyword_deleted: "Ключевое слово удалено.",
+        account_connected: "Аккаунт подключён.",
+        credentials_saved: "API-данные сохранены.",
+        account_toggled: "Статус аккаунта изменён.",
+        account_deleted: "Аккаунт удалён.",
+        scheduler_started: "Планировщик запущен.",
+        scheduler_stopped: "Планировщик остановлен.",
+        collect_started: "Сбор сообщений запущен в фоне.",
+        collect_queued: "Задача добавлена в очередь. Выполнится после текущего сбора.",
+        task_cancelled: "Задача отменена.",
+        already_running: "Сбор уже запущен.",
+        triggered: "Сбор запущен вручную.",
+        keyword_toggled: "Статус ключевого слова изменён."
+    };
+    var errors = {
+        resolve: "Не удалось найти канал. Проверьте username или ссылку.",
+        no_client: "Нет подключённых аккаунтов для поиска канала.",
+        collecting: "Сбор уже выполняется. Дождитесь завершения.",
+        shutting_down: "Приложение завершает работу."
+    };
+    var params = new URLSearchParams(window.location.search);
+    var code = params.get("msg");
+    var errCode = params.get("error");
+    var container = document.getElementById("flash-container");
+    if (code && msgs[code]) {
+        container.innerHTML = '<div class="flash-success">' + msgs[code] + '</div>';
+    }
+    if (errCode && errors[errCode]) {
+        container.innerHTML = '<div class="flash-error">' + errors[errCode] + '</div>';
+    }
+    if (code || errCode) {
+        params.delete("msg");
+        params.delete("error");
+        var qs = params.toString();
+        var url = window.location.pathname + (qs ? "?" + qs : "");
+        window.history.replaceState(null, "", url);
+        setTimeout(function() { container.innerHTML = ""; }, 5000);
+    }
+    // Active nav highlight
+    var path = window.location.pathname;
+    var links = document.querySelectorAll("nav ul:last-child a");
+    links.forEach(function(a) {
+        var href = a.getAttribute("href");
+        if (href === "/" && path === "/") {
+            a.setAttribute("aria-current", "page");
+        } else if (href !== "/" && path.startsWith(href)) {
+            a.setAttribute("aria-current", "page");
+        }
+    });
+})();
+</script>
+</body>
+</html>

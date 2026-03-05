@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}Импорт каналов — TG Post Search{% endblock %}
+{% block content %}
+<p><a href="/channels">&larr; Назад к каналам</a></p>
+<h1>Импорт каналов</h1>
+
+<article>
+    <form method="post" action="/channels/import" enctype="multipart/form-data">
+        <label>
+            Файл (любой формат)
+            <input type="file" name="file">
+        </label>
+        <label>
+            Список каналов
+            <textarea name="text_input" rows="6" placeholder="@channel1&#10;t.me/channel2&#10;-1001234567890&#10;https://t.me/+invite_hash"></textarea>
+            <small>Загрузите файл любого формата — парсер автоматически найдёт все Telegram-идентификаторы (<code>@username</code>, <code>t.me/...</code>, числовой ID).</small>
+        </label>
+        <button type="submit">Импортировать</button>
+    </form>
+</article>
+
+{% if results is not none %}
+<article>
+    <header>Результаты импорта</header>
+    <p>
+        Всего: <strong>{{ results.total }}</strong> &middot;
+        Добавлено: <strong>{{ results.added }}</strong> &middot;
+        Пропущено: <strong>{{ results.skipped }}</strong> &middot;
+        Ошибок: <strong>{{ results.failed }}</strong>
+    </p>
+    {% if results.details %}
+    <table>
+        <thead>
+            <tr>
+                <th>Идентификатор</th>
+                <th>Статус</th>
+                <th>Детали</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for item in results.details %}
+            <tr>
+                <td><code>{{ item.identifier }}</code></td>
+                <td>
+                    {% if item.status == "added" %}
+                        <mark>Добавлен</mark>
+                    {% elif item.status == "skipped" %}
+                        Пропущен
+                    {% else %}
+                        <mark class="error">Ошибка</mark>
+                    {% endif %}
+                </td>
+                <td>{{ item.detail }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% endif %}
+</article>
+{% endif %}
+{% endblock %}

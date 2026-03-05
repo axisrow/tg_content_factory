@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+{% block title %}Настройки — TG Post Search{% endblock %}
+{% block content %}
+<h1>Настройки</h1>
+
+<article>
+    <header>Telegram API credentials</header>
+    {% if is_configured %}
+    <p><mark>Настроено</mark> — API credentials сохранены.</p>
+    {% else %}
+    <p><mark class="secondary">Не настроено</mark> — для работы приложения необходимо указать Telegram API credentials.</p>
+    {% endif %}
+
+    <details {% if not is_configured %}open{% endif %}>
+        <summary>Как получить API ID и API Hash</summary>
+        <ol>
+            <li>Перейдите на <a href="https://my.telegram.org/apps" target="_blank" rel="noopener">my.telegram.org/apps</a></li>
+            <li>Авторизуйтесь с вашим номером телефона Telegram</li>
+            <li>Заполните форму создания приложения (название и короткое имя — любые)</li>
+            <li>Скопируйте <strong>App api_id</strong> и <strong>App api_hash</strong></li>
+        </ol>
+    </details>
+
+    <form method="post" action="/settings/save-credentials" class="settings-form">
+        <div class="grid">
+            <label for="api_id">API ID
+                <input type="text" id="api_id" name="api_id"
+                       placeholder="12345678"
+                       value="{{ api_id }}"
+                       {% if not is_configured %}inputmode="numeric" required{% endif %}>
+            </label>
+            <label for="api_hash">API Hash
+                <input type="text" id="api_hash" name="api_hash"
+                       placeholder="abcdef1234567890abcdef1234567890"
+                       value="{{ api_hash }}"
+                       {% if not is_configured %}required{% endif %}>
+            </label>
+        </div>
+        <button type="submit">Сохранить</button>
+    </form>
+</article>
+
+<article>
+    <header>Telegram-аккаунты</header>
+
+    <p><a href="/auth/login" role="button">Добавить аккаунт</a></p>
+
+    {% if accounts %}
+    <table>
+        <thead>
+            <tr>
+                <th>Телефон</th>
+                <th>Статус</th>
+                <th>Premium</th>
+                <th>Primary</th>
+                <th>Подключён</th>
+                <th>Flood wait</th>
+                <th>Добавлен</th>
+                <th>Действия</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for acc in accounts %}
+            <tr>
+                <td>{{ acc.phone }}</td>
+                <td>{{ "Активен" if acc.is_active else "Отключён" }}</td>
+                <td>{{ "Да" if acc.is_premium else "Нет" }}</td>
+                <td>{{ "Да" if acc.is_primary else "Нет" }}</td>
+                <td>{{ "Да" if acc.phone in connected_phones else "Нет" }}</td>
+                <td>{{ acc.flood_wait_until.strftime('%H:%M:%S') if acc.flood_wait_until else "—" }}</td>
+                <td>{{ acc.created_at.strftime('%Y-%m-%d') if acc.created_at else "—" }}</td>
+                <td>
+                    <form method="post" action="/settings/{{ acc.id }}/toggle" style="display:inline">
+                        <button type="submit" class="secondary outline" style="padding: 0.25rem 0.5rem; margin: 0;">
+                            {{ "Откл." if acc.is_active else "Вкл." }}
+                        </button>
+                    </form>
+                    <form method="post" action="/settings/{{ acc.id }}/delete" style="display:inline" onsubmit="return confirm('Вы уверены, что хотите удалить этот аккаунт?')">
+                        <button type="submit" class="contrast outline" style="padding: 0.25rem 0.5rem; margin: 0;">Удалить</button>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p>Нет подключённых аккаунтов. <a href="/auth/login">Добавьте первый аккаунт</a>.</p>
+    {% endif %}
+</article>
+{% endblock %}

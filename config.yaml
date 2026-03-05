@@ -1,0 +1,27 @@
+telegram:
+  api_id: ${TG_API_ID}
+  api_hash: ${TG_API_HASH}
+
+web:
+  host: "0.0.0.0"
+  port: 8080
+  password: ${WEB_PASS}
+
+scheduler:
+  collect_interval_minutes: 30
+  delay_between_channels_sec: 2
+  delay_between_requests_sec: 1
+  messages_per_channel: 100
+  max_flood_wait_sec: 300
+
+notifications:
+  admin_chat_id: null
+
+database:
+  path: "data/tg_search.db"
+
+llm:
+  enabled: false
+  provider: "openai"
+  model: "gpt-4o-mini"
+  api_key: ${LLM_API_KEY}

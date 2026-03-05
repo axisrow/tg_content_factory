@@ -1,0 +1,120 @@
+{% extends "base.html" %}
+{% block title %}Подключение аккаунта — TG Post Search{% endblock %}
+{% block content %}
+<h1>Подключение аккаунта</h1>
+
+<article>
+    <header>Инструкция</header>
+    <ol>
+        <li>Настройте API credentials на странице <a href="/settings">Настройки</a></li>
+        <li>Введите номер телефона в международном формате (например, <code>+1234567890</code>)</li>
+        <li>Нажмите «Отправить код»</li>
+        <li>Введите код из Telegram</li>
+        <li>Если включена 2FA — введите пароль</li>
+    </ol>
+    <details>
+        <summary>Важно</summary>
+        <ul>
+            <li>Первый аккаунт станет основным</li>
+            <li>Добавьте второй аккаунт как fallback</li>
+            <li>Данные сессии хранятся локально безопасно</li>
+        </ul>
+    </details>
+</article>
+
+{% if error %}
+<article aria-label="Error" role="alert">
+    <p style="color: #991b1b;">{{ error }}</p>
+</article>
+{% endif %}
+
+{% if step == 'credentials' %}
+<article>
+    <header>Шаг 1: API Credentials</header>
+    <p>API credentials не настроены. Введите <code>api_id</code> и <code>api_hash</code> с <a href="https://my.telegram.org/apps" target="_blank">my.telegram.org/apps</a>.</p>
+    <form method="post" action="/auth/save-credentials">
+        <label for="api_id">API ID</label>
+        <input type="number" id="api_id" name="api_id" placeholder="12345678" required>
+        <label for="api_hash">API Hash</label>
+        <input type="text" id="api_hash" name="api_hash" placeholder="0123456789abcdef..." required>
+        <button type="submit">Сохранить</button>
+    </form>
+</article>
+
+{% elif step == 'phone' or not step %}
+<article>
+    <form method="post" action="/auth/send-code">
+        <label for="phone">Номер телефона</label>
+        <input type="tel" id="phone" name="phone" placeholder="+1234567890" value="{{ phone or '' }}" required>
+        <button type="submit">Отправить код</button>
+    </form>
+</article>
+
+{% elif step == 'code' %}
+<article>
+    <form method="post" action="/auth/verify-code">
+        <input type="hidden" name="phone" value="{{ phone }}">
+        <input type="hidden" name="phone_code_hash" value="{{ phone_code_hash }}">
+        <input type="hidden" name="code_type" value="{{ code_type or '' }}">
+        <input type="hidden" name="next_type" value="{{ next_type or '' }}">
+        <input type="hidden" name="timeout" value="{{ timeout or '' }}">
+        <p>Код отправлен через <strong>{{ code_type or 'Telegram' }}</strong> на <strong>{{ phone }}</strong></p>
+        <label for="code">Код подтверждения</label>
+        <input type="text" id="code" name="code" placeholder="12345" required autofocus>
+        <label for="password_2fa">Пароль 2FA (если есть)</label>
+        <input type="password" id="password_2fa" name="password_2fa" placeholder="Оставьте пустым, если нет 2FA">
+        <button type="submit">Подтвердить</button>
+    </form>
+    {% if next_type %}
+    <form method="post" action="/auth/resend-code" style="margin-top: 1rem;">
+        <input type="hidden" name="phone" value="{{ phone }}">
+        <input type="hidden" name="phone_code_hash" value="{{ phone_code_hash }}">
+        <button type="submit" id="resend-btn" class="secondary outline">
+            Отправить через {{ next_type }}
+        </button>
+    </form>
+    {% endif %}
+    <form method="post" action="/auth/send-code" style="margin-top: 0.5rem;">
+        <input type="hidden" name="phone" value="{{ phone }}">
+        <button type="submit" class="secondary outline">Отправить код повторно</button>
+    </form>
+    <a href="/auth/login" role="button" class="secondary outline" style="margin-top: 0.5rem; display: block; text-align: center;">Указать другой номер</a>
+</article>
+{% if timeout %}
+<script>
+(function() {
+    var btn = document.getElementById('resend-btn');
+    if (!btn) return;
+    var remaining = {{ timeout }};
+    if (remaining <= 0) return;
+    btn.disabled = true;
+    var originalText = btn.textContent;
+    function tick() {
+        if (remaining <= 0) {
+            btn.disabled = false;
+            btn.textContent = originalText;
+            return;
+        }
+        btn.textContent = originalText + ' (' + remaining + ' сек)';
+        remaining--;
+        setTimeout(tick, 1000);
+    }
+    tick();
+})();
+</script>
+{% endif %}
+
+{% elif step == '2fa' %}
+<article>
+    <form method="post" action="/auth/verify-code">
+        <input type="hidden" name="phone" value="{{ phone }}">
+        <input type="hidden" name="code" value="{{ code }}">
+        <input type="hidden" name="phone_code_hash" value="{{ phone_code_hash }}">
+        <p>Требуется пароль двухфакторной аутентификации для <strong>{{ phone }}</strong></p>
+        <label for="password_2fa">Пароль 2FA</label>
+        <input type="password" id="password_2fa" name="password_2fa" required autofocus>
+        <button type="submit">Подтвердить</button>
+    </form>
+</article>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,157 @@
+{% extends "base.html" %}
+{% block title %}Поиск — TG Post Search{% endblock %}
+{% block content %}
+<h1>Поиск по постам</h1>
+
+<form method="get" action="/">
+    <label>
+        Запрос
+        <input type="text" name="q" value="{{ q }}" placeholder="Введите поисковый запрос" autofocus>
+    </label>
+
+    <div class="grid">
+        <label>
+            Канал
+            <select name="channel_id" id="channel-select">
+                <option value="">Все каналы</option>
+                {% for ch in channels %}
+                <option value="{{ ch.channel_id }}" {{ 'selected' if channel_id == ch.channel_id else '' }}>
+                    {{ ch.title or ch.username or ch.channel_id }}
+                </option>
+                {% endfor %}
+            </select>
+        </label>
+        <label>
+            Дата от
+            <input type="date" name="date_from" id="date-from" value="{{ date_from }}">
+        </label>
+        <label>
+            Дата до
+            <input type="date" name="date_to" id="date-to" value="{{ date_to }}">
+        </label>
+    </div>
+
+    <fieldset style="display: flex; align-items: center; gap: 1.5rem; flex-wrap: wrap; border: none; padding: 0; margin-bottom: var(--pico-spacing);">
+        <legend class="visually-hidden">Режим поиска</legend>
+        <label style="margin-bottom: 0;" title="Поиск по ранее собранным сообщениям в локальной базе данных">
+            <input type="radio" name="mode" value="local" {{ 'checked' if mode == 'local' else '' }}>
+            Локальная база
+        </label>
+        <label style="margin-bottom: 0;" title="Поиск по всем чатам и каналам подключённого аккаунта через Telegram API">
+            <input type="radio" name="mode" value="my_chats" {{ 'checked' if mode == 'my_chats' else '' }}>
+            Мои чаты
+        </label>
+        <label style="margin-bottom: 0;" title="Поиск внутри выбранного канала через Telegram API">
+            <input type="radio" name="mode" value="channel" {{ 'checked' if mode == 'channel' else '' }}>
+            В канале
+        </label>
+        <label style="margin-bottom: 0;" title="Глобальный поиск по публичным каналам (требуется Telegram Premium)">
+            <input type="radio" name="mode" value="telegram" {{ 'checked' if mode == 'telegram' else '' }}>
+            Публичные (Premium)
+        </label>
+        {% if search_quota and search_quota.remains is not none %}
+        <small id="quota-info" style="color: var(--pico-muted-color);">
+            Premium-поиск: осталось {{ search_quota.remains }}{% if search_quota.total_daily %} из {{ search_quota.total_daily }}{% endif %} сегодня
+        </small>
+        {% endif %}
+        {% if ai_enabled %}
+        <label style="margin-bottom: 0;" title="Семантический поиск с помощью LLM по локальной базе">
+            <input type="radio" name="mode" value="ai" {{ 'checked' if mode == 'ai' else '' }}>
+            AI-поиск
+        </label>
+        {% endif %}
+        <button type="submit" style="margin-bottom: 0; margin-left: auto;">Найти</button>
+    </fieldset>
+</form>
+
+{% if result %}
+<hr>
+
+{% if result.error %}
+<article style="border-left: 4px solid var(--pico-color-red-500, #e53935); padding: 1rem;">
+    <strong>Ошибка:</strong> {{ result.error }}
+</article>
+{% endif %}
+
+{% if result.ai_summary %}
+<article>
+    <header>AI-анализ</header>
+    <p>{{ result.ai_summary }}</p>
+</article>
+{% endif %}
+
+{% if not result.error %}
+<p>Найдено: <strong>{{ result.total }}</strong> сообщений по запросу «{{ result.query }}»</p>
+{% endif %}
+
+{% if result.messages %}
+<table>
+    <thead>
+        <tr>
+            <th>Дата</th>
+            <th>Канал</th>
+            <th>Отправитель</th>
+            <th>Медиа</th>
+            <th>Текст</th>
+            <th></th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for msg in result.messages %}
+        <tr>
+            <td style="white-space: nowrap;">{{ msg.date.strftime('%Y-%m-%d %H:%M') }}</td>
+            <td>{{ msg.channel_title or msg.channel_username or msg.channel_id }}</td>
+            <td>{{ msg.sender_name or "—" }}</td>
+            <td>{{ msg.media_type or "—" }}</td>
+            <td>{{ msg.text[:300] if msg.text else "—" }}{{ "..." if msg.text and msg.text|length > 300 else "" }}</td>
+            <td>{% if msg.channel_username %}<a href="https://t.me/{{ msg.channel_username }}/{{ msg.message_id }}" target="_blank" rel="noopener" title="Открыть в Telegram">&#8599;</a>{% else %}<a href="https://t.me/c/{{ msg.channel_id }}/{{ msg.message_id }}" target="_blank" rel="noopener" title="Открыть в Telegram">&#8599;</a>{% endif %}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+
+{% if total_pages > 1 %}
+<nav>
+    <ul>
+        {% if page > 1 %}
+        <li><a href="/?q={{ q|urlencode }}&channel_id={{ channel_id or '' }}&date_from={{ date_from }}&date_to={{ date_to }}&mode={{ mode }}&page={{ page - 1 }}">Назад</a></li>
+        {% endif %}
+        <li>Страница {{ page }} из {{ total_pages }}</li>
+        {% if page < total_pages %}
+        <li><a href="/?q={{ q|urlencode }}&channel_id={{ channel_id or '' }}&date_from={{ date_from }}&date_to={{ date_to }}&mode={{ mode }}&page={{ page + 1 }}">Далее</a></li>
+        {% endif %}
+    </ul>
+</nav>
+{% endif %}
+
+{% else %}
+<p>Ничего не найдено.</p>
+{% endif %}
+
+{% endif %}
+
+<script>
+(function() {
+    var radios = document.querySelectorAll('input[name="mode"]');
+    var channelSelect = document.getElementById('channel-select');
+    var dateFrom = document.getElementById('date-from');
+    var dateTo = document.getElementById('date-to');
+
+    function updateState() {
+        var mode = document.querySelector('input[name="mode"]:checked').value;
+        // local: channel + dates enabled
+        // channel: channel enabled, dates disabled
+        // others: all disabled
+        channelSelect.disabled = (mode !== 'local' && mode !== 'channel');
+        dateFrom.disabled = (mode !== 'local');
+        dateTo.disabled = (mode !== 'local');
+    }
+
+    radios.forEach(function(r) {
+        r.addEventListener('change', updateState);
+    });
+
+    updateState();
+})();
+</script>
+{% endblock %}
