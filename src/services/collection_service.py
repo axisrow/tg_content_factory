@@ -13,8 +13,7 @@ class CollectionService:
         self._queue = queue
 
     async def enqueue_channel_by_pk(self, pk: int) -> bool:
-        channels = await self._db.get_channels()
-        channel = next((ch for ch in channels if ch.id == pk), None)
+        channel = await self._db.get_channel_by_pk(pk)
         if not channel:
             return False
         await self._queue.enqueue(channel)

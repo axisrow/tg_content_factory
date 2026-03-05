@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+from typing import TypeVar
+
 from fastapi import Request
 from fastapi.templating import Jinja2Templates
 
@@ -17,6 +20,16 @@ from src.services.search_service import SearchService
 from src.telegram.auth import TelegramAuth
 from src.telegram.client_pool import ClientPool
 from src.telegram.collector import Collector
+
+T = TypeVar("T")
+
+
+def _request_cached(request: Request, key: str, factory: Callable[[], T]) -> T:
+    value = getattr(request.state, key, None)
+    if value is None:
+        value = factory()
+        setattr(request.state, key, value)
+    return value
 
 
 def get_db(request: Request) -> Database:
@@ -56,24 +69,42 @@ def get_templates(request: Request) -> Jinja2Templates:
 
 
 def channel_service(request: Request) -> ChannelService:
-    return ChannelService(get_db(request), get_pool(request))
+    return _request_cached(
+        request,
+        "_channel_service",
+        lambda: ChannelService(get_db(request), get_pool(request)),
+    )
 
 
 def keyword_service(request: Request) -> KeywordService:
-    return KeywordService(get_db(request))
+    return _request_cached(request, "_keyword_service", lambda: KeywordService(get_db(request)))
 
 
 def account_service(request: Request) -> AccountService:
-    return AccountService(get_db(request), get_pool(request))
+    return _request_cached(
+        request,
+        "_account_service",
+        lambda: AccountService(get_db(request), get_pool(request)),
+    )
 
 
 def collection_service(request: Request) -> CollectionService:
-    return CollectionService(get_db(request), get_collector(request), get_queue(request))
+    return _request_cached(
+        request,
+        "_collection_service",
+        lambda: CollectionService(get_db(request), get_collector(request), get_queue(request)),
+    )
 
 
 def search_service(request: Request) -> SearchService:
-    return SearchService(get_search_engine(request), get_ai_search(request))
+    return _request_cached(
+        request,
+        "_search_service",
+        lambda: SearchService(get_search_engine(request), get_ai_search(request)),
+    )
 
 
 def scheduler_service(request: Request) -> SchedulerService:
-    return SchedulerService(get_scheduler(request))
+    return _request_cached(
+        request, "_scheduler_service", lambda: SchedulerService(get_scheduler(request))
+    )

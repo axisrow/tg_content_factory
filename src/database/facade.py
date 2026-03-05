@@ -106,6 +106,10 @@ class Database:
         self._require()
         return await self._channels.get_channels(active_only)
 
+    async def get_channel_by_pk(self, pk: int) -> Channel | None:
+        self._require()
+        return await self._channels.get_channel_by_pk(pk)
+
     async def get_channels_with_counts(self, active_only: bool = False) -> list[Channel]:
         self._require()
         return await self._channels.get_channels_with_counts(active_only)

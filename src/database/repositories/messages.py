@@ -149,8 +149,14 @@ class MessagesRepository:
 
     async def get_stats(self) -> dict:
         stats: dict[str, int] = {}
-        for table in ("accounts", "channels", "messages", "keywords"):
-            cur = await self._db.execute(f"SELECT COUNT(*) as cnt FROM {table}")  # noqa: S608
+        queries = {
+            "accounts": "SELECT COUNT(*) as cnt FROM accounts",
+            "channels": "SELECT COUNT(*) as cnt FROM channels",
+            "messages": "SELECT COUNT(*) as cnt FROM messages",
+            "keywords": "SELECT COUNT(*) as cnt FROM keywords",
+        }
+        for table, sql in queries.items():
+            cur = await self._db.execute(sql)
             row = await cur.fetchone()
             stats[table] = row["cnt"] if row else 0
         return stats

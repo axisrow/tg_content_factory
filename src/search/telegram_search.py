@@ -204,6 +204,10 @@ class TelegramSearch:
             async for msg in client.iter_messages(None, search=query, limit=limit):
                 converted = TelegramMessageTransformer.convert_telethon_message(msg)
                 if converted is None:
+                    logger.debug(
+                        "Skipping message in search_my_chats: id=%s has no chat context",
+                        getattr(msg, "id", None),
+                    )
                     continue
                 messages.append(converted)
                 if converted.channel_id not in seen_channels:
@@ -254,6 +258,10 @@ class TelegramSearch:
             async for msg in client.iter_messages(entity, search=query, limit=limit):
                 converted = TelegramMessageTransformer.convert_telethon_message(msg)
                 if converted is None:
+                    logger.debug(
+                        "Skipping message in search_in_channel: id=%s has no chat context",
+                        getattr(msg, "id", None),
+                    )
                     continue
                 messages.append(converted)
                 if converted.channel_id not in seen_channels:

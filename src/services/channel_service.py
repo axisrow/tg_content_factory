@@ -54,15 +54,13 @@ class ChannelService:
             )
 
     async def toggle(self, pk: int) -> None:
-        channels = await self._db.get_channels()
-        for channel in channels:
-            if channel.id == pk:
-                await self._db.set_channel_active(pk, not channel.is_active)
-                return
+        channel = await self._db.get_channel_by_pk(pk)
+        if not channel:
+            return
+        await self._db.set_channel_active(pk, not channel.is_active)
 
     async def delete(self, pk: int) -> None:
         await self._db.delete_channel(pk)
 
     async def get_by_pk(self, pk: int) -> Channel | None:
-        channels = await self._db.get_channels()
-        return next((ch for ch in channels if ch.id == pk), None)
+        return await self._db.get_channel_by_pk(pk)

@@ -29,6 +29,25 @@ class ChannelsRepository:
         await self._db.commit()
         return cur.lastrowid or 0
 
+    @staticmethod
+    def _map_channel(row: aiosqlite.Row) -> Channel:
+        keys = row.keys()
+        return Channel(
+            id=row["id"],
+            channel_id=row["channel_id"],
+            title=row["title"],
+            username=row["username"],
+            channel_type=row["channel_type"],
+            is_active=bool(row["is_active"]),
+            last_collected_id=row["last_collected_id"],
+            added_at=datetime.fromisoformat(row["added_at"]) if row["added_at"] else None,
+            message_count=(
+                row["message_count"]
+                if "message_count" in keys and row["message_count"] is not None
+                else 0
+            ),
+        )
+
     async def get_channels(self, active_only: bool = False) -> list[Channel]:
         sql = "SELECT * FROM channels"
         if active_only:
@@ -36,19 +55,14 @@ class ChannelsRepository:
         sql += " ORDER BY id ASC"
         cur = await self._db.execute(sql)
         rows = await cur.fetchall()
-        return [
-            Channel(
-                id=r["id"],
-                channel_id=r["channel_id"],
-                title=r["title"],
-                username=r["username"],
-                channel_type=r["channel_type"],
-                is_active=bool(r["is_active"]),
-                last_collected_id=r["last_collected_id"],
-                added_at=datetime.fromisoformat(r["added_at"]) if r["added_at"] else None,
-            )
-            for r in rows
-        ]
+        return [self._map_channel(r) for r in rows]
+
+    async def get_channel_by_pk(self, pk: int) -> Channel | None:
+        cur = await self._db.execute("SELECT * FROM channels WHERE id = ?", (pk,))
+        row = await cur.fetchone()
+        if not row:
+            return None
+        return self._map_channel(row)
 
     async def get_channels_with_counts(self, active_only: bool = False) -> list[Channel]:
         sql = """
@@ -63,20 +77,7 @@ class ChannelsRepository:
         sql += " ORDER BY c.id ASC"
         cur = await self._db.execute(sql)
         rows = await cur.fetchall()
-        return [
-            Channel(
-                id=r["id"],
-                channel_id=r["channel_id"],
-                title=r["title"],
-                username=r["username"],
-                channel_type=r["channel_type"],
-                is_active=bool(r["is_active"]),
-                last_collected_id=r["last_collected_id"],
-                added_at=datetime.fromisoformat(r["added_at"]) if r["added_at"] else None,
-                message_count=r["message_count"],
-            )
-            for r in rows
-        ]
+        return [self._map_channel(r) for r in rows]
 
     async def update_channel_last_id(self, channel_id: int, last_id: int) -> None:
         await self._db.execute(
@@ -92,11 +93,10 @@ class ChannelsRepository:
         await self._db.commit()
 
     async def delete_channel(self, pk: int) -> None:
-        row = await self._db.execute_fetchall(
-            "SELECT channel_id FROM channels WHERE id = ?", (pk,)
-        )
+        cur = await self._db.execute("SELECT channel_id FROM channels WHERE id = ?", (pk,))
+        row = await cur.fetchone()
         if row:
-            channel_id = row[0][0]
+            channel_id = row["channel_id"]
             await self._db.execute("DELETE FROM messages WHERE channel_id = ?", (channel_id,))
             await self._db.execute("DELETE FROM channel_stats WHERE channel_id = ?", (channel_id,))
         await self._db.execute("DELETE FROM channels WHERE id = ?", (pk,))
