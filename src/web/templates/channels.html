@@ -22,6 +22,12 @@
 </article>
 
 {% if channels %}
+<div style="margin-bottom: 1rem;">
+    <form method="post" action="/channels/stats/all" style="display:inline">
+        <button type="submit" class="outline" style="padding: 0.25rem 0.75rem;">Обновить всю статистику</button>
+    </form>
+</div>
+<div style="overflow-x:auto">
 <table>
     <thead>
         <tr>
@@ -31,12 +37,16 @@
             <th>Тип</th>
             <th>Активен</th>
             <th>Сообщений</th>
-            <th>Последний msg ID</th>
+            <th>Подписчики</th>
+            <th>Avg просмотры</th>
+            <th>Avg реакции</th>
+            <th>Avg репосты</th>
             <th>Действия</th>
         </tr>
     </thead>
     <tbody>
         {% for ch in channels %}
+        {% set st = latest_stats.get(ch.channel_id) if latest_stats else None %}
         <tr>
             <td>{{ ch.channel_id }}</td>
             <td>{{ ch.title or "—" }}</td>
@@ -44,10 +54,16 @@
             <td>{% if ch.channel_type == "channel" %}Канал{% elif ch.channel_type == "group" %}Группа{% else %}—{% endif %}{% if not ch.username %} <small>(приватный)</small>{% endif %}</td>
             <td>{{ "Да" if ch.is_active else "Нет" }}</td>
             <td>{{ ch.message_count }}</td>
-            <td>{{ ch.last_collected_id }}</td>
-            <td>
+            <td>{{ st.subscriber_count if st and st.subscriber_count is not none else "—" }}</td>
+            <td>{{ "%.1f"|format(st.avg_views) if st and st.avg_views is not none else "—" }}</td>
+            <td>{{ "%.1f"|format(st.avg_reactions) if st and st.avg_reactions is not none else "—" }}</td>
+            <td>{{ "%.1f"|format(st.avg_forwards) if st and st.avg_forwards is not none else "—" }}</td>
+            <td style="white-space:nowrap">
                 <form method="post" action="/channels/{{ ch.id }}/collect" style="display:inline">
-                    <button type="submit" class="outline" style="padding: 0.25rem 0.5rem; margin: 0;">Загрузить все</button>
+                    <button type="submit" class="outline" style="padding: 0.25rem 0.5rem; margin: 0;">Загрузить</button>
+                </form>
+                <form method="post" action="/channels/{{ ch.id }}/stats" style="display:inline">
+                    <button type="submit" class="outline" style="padding: 0.25rem 0.5rem; margin: 0;">Стата</button>
                 </form>
                 <form method="post" action="/channels/{{ ch.id }}/toggle" style="display:inline">
                     <button type="submit" class="secondary outline" style="padding: 0.25rem 0.5rem; margin: 0;">
@@ -62,6 +78,7 @@
         {% endfor %}
     </tbody>
 </table>
+</div>
 {% else %}
 <p>Нет добавленных каналов.</p>
 {% endif %}

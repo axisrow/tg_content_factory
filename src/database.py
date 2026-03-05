@@ -6,7 +6,7 @@ from pathlib import Path
 
 import aiosqlite
 
-from src.models import Account, Channel, CollectionTask, Keyword, Message
+from src.models import Account, Channel, ChannelStats, CollectionTask, Keyword, Message
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +78,20 @@ CREATE TABLE IF NOT EXISTS search_log (
 
 CREATE INDEX IF NOT EXISTS idx_search_log_phone_date
     ON search_log(phone, created_at);
+CREATE TABLE IF NOT EXISTS channel_stats (
+    id INTEGER PRIMARY KEY,
+    channel_id INTEGER NOT NULL,
+    subscriber_count INTEGER,
+    avg_views REAL,
+    avg_reactions REAL,
+    avg_forwards REAL,
+    collected_at TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY (channel_id) REFERENCES channels(channel_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_channel_stats_channel_date
+    ON channel_stats(channel_id, collected_at);
+CREATE INDEX IF NOT EXISTS idx_messages_text ON messages(text);
 CREATE INDEX IF NOT EXISTS idx_messages_channel_date ON messages(channel_id, date);
 
 CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
@@ -331,8 +345,12 @@ class Database:
             "SELECT channel_id FROM channels WHERE id = ?", (pk,)
         )
         if row:
+            channel_id = row[0][0]
             await self._db.execute(
-                "DELETE FROM messages WHERE channel_id = ?", (row[0][0],)
+                "DELETE FROM messages WHERE channel_id = ?", (channel_id,)
+            )
+            await self._db.execute(
+                "DELETE FROM channel_stats WHERE channel_id = ?", (channel_id,)
             )
         await self._db.execute("DELETE FROM channels WHERE id = ?", (pk,))
         await self._db.commit()
@@ -666,6 +684,80 @@ class Database:
             }
             for r in rows
         ]
+
+    # --- Channel Stats ---
+
+    async def save_channel_stats(self, stats: ChannelStats) -> int:
+        assert self._db is not None
+        cur = await self._db.execute(
+            """INSERT INTO channel_stats
+               (channel_id, subscriber_count, avg_views, avg_reactions, avg_forwards)
+               VALUES (?, ?, ?, ?, ?)""",
+            (
+                stats.channel_id,
+                stats.subscriber_count,
+                stats.avg_views,
+                stats.avg_reactions,
+                stats.avg_forwards,
+            ),
+        )
+        await self._db.commit()
+        return cur.lastrowid or 0
+
+    async def get_channel_stats(
+        self, channel_id: int, limit: int = 1
+    ) -> list[ChannelStats]:
+        assert self._db is not None
+        cur = await self._db.execute(
+            "SELECT * FROM channel_stats WHERE channel_id = ? "
+            "ORDER BY collected_at DESC LIMIT ?",
+            (channel_id, limit),
+        )
+        rows = await cur.fetchall()
+        return [
+            ChannelStats(
+                id=r["id"],
+                channel_id=r["channel_id"],
+                subscriber_count=r["subscriber_count"],
+                avg_views=r["avg_views"],
+                avg_reactions=r["avg_reactions"],
+                avg_forwards=r["avg_forwards"],
+                collected_at=(
+                    datetime.fromisoformat(r["collected_at"])
+                    if r["collected_at"]
+                    else None
+                ),
+            )
+            for r in rows
+        ]
+
+    async def get_latest_stats_for_all(self) -> dict[int, ChannelStats]:
+        assert self._db is not None
+        cur = await self._db.execute(
+            """SELECT cs.* FROM channel_stats cs
+               INNER JOIN (
+                   SELECT channel_id, MAX(collected_at) AS max_date
+                   FROM channel_stats GROUP BY channel_id
+               ) latest ON cs.channel_id = latest.channel_id
+                        AND cs.collected_at = latest.max_date"""
+        )
+        rows = await cur.fetchall()
+        return {
+            r["channel_id"]: ChannelStats(
+                id=r["id"],
+                channel_id=r["channel_id"],
+                subscriber_count=r["subscriber_count"],
+                avg_views=r["avg_views"],
+                avg_reactions=r["avg_reactions"],
+                avg_forwards=r["avg_forwards"],
+                collected_at=(
+                    datetime.fromisoformat(r["collected_at"])
+                    if r["collected_at"]
+                    else None
+                ),
+            )
+            for r in rows
+        }
 
     # --- Settings ---
 
