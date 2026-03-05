@@ -1,0 +1,99 @@
+SCHEMA_SQL = """
+CREATE TABLE IF NOT EXISTS accounts (
+    id INTEGER PRIMARY KEY,
+    phone TEXT UNIQUE NOT NULL,
+    session_string TEXT NOT NULL,
+    is_primary INTEGER DEFAULT 0,
+    is_active INTEGER DEFAULT 1,
+    flood_wait_until TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS channels (
+    id INTEGER PRIMARY KEY,
+    channel_id INTEGER UNIQUE NOT NULL,
+    title TEXT,
+    username TEXT,
+    is_active INTEGER DEFAULT 1,
+    last_collected_id INTEGER DEFAULT 0,
+    added_at TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS messages (
+    id INTEGER PRIMARY KEY,
+    channel_id INTEGER NOT NULL,
+    message_id INTEGER NOT NULL,
+    sender_id INTEGER,
+    sender_name TEXT,
+    text TEXT,
+    media_type TEXT,
+    date TEXT NOT NULL,
+    collected_at TEXT DEFAULT (datetime('now')),
+    UNIQUE(channel_id, message_id)
+);
+
+CREATE TABLE IF NOT EXISTS keywords (
+    id INTEGER PRIMARY KEY,
+    pattern TEXT NOT NULL,
+    is_regex INTEGER DEFAULT 0,
+    is_active INTEGER DEFAULT 1
+);
+
+CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS collection_tasks (
+    id INTEGER PRIMARY KEY,
+    channel_id INTEGER NOT NULL,
+    channel_title TEXT,
+    status TEXT DEFAULT 'pending',
+    messages_collected INTEGER DEFAULT 0,
+    error TEXT,
+    created_at TEXT DEFAULT (datetime('now')),
+    started_at TEXT,
+    completed_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS search_log (
+    id INTEGER PRIMARY KEY,
+    phone TEXT NOT NULL,
+    query TEXT NOT NULL,
+    results_count INTEGER DEFAULT 0,
+    created_at TEXT DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_search_log_phone_date
+    ON search_log(phone, created_at);
+CREATE TABLE IF NOT EXISTS channel_stats (
+    id INTEGER PRIMARY KEY,
+    channel_id INTEGER NOT NULL,
+    subscriber_count INTEGER,
+    avg_views REAL,
+    avg_reactions REAL,
+    avg_forwards REAL,
+    collected_at TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY (channel_id) REFERENCES channels(channel_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_channel_stats_channel_date
+    ON channel_stats(channel_id, collected_at);
+CREATE INDEX IF NOT EXISTS idx_messages_text ON messages(text);
+CREATE INDEX IF NOT EXISTS idx_messages_channel_date ON messages(channel_id, date);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
+    text,
+    content=messages,
+    content_rowid=id,
+    tokenize="unicode61"
+);
+
+CREATE TRIGGER IF NOT EXISTS messages_fts_ai AFTER INSERT ON messages BEGIN
+    INSERT INTO messages_fts(rowid, text) VALUES (new.id, new.text);
+END;
+
+CREATE TRIGGER IF NOT EXISTS messages_fts_ad AFTER DELETE ON messages BEGIN
+    INSERT INTO messages_fts(messages_fts, rowid, text) VALUES ('delete', old.id, old.text);
+END;
+"""

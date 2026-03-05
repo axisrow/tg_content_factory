@@ -1,6 +1,8 @@
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
+from src.web import deps
+
 router = APIRouter()
 
 CREDENTIALS_MASK = "••••••••"
@@ -8,14 +10,14 @@ CREDENTIALS_MASK = "••••••••"
 
 @router.get("/", response_class=HTMLResponse)
 async def settings_page(request: Request):
-    auth = request.app.state.auth
-    db = request.app.state.db
-    pool = request.app.state.pool
+    auth = deps.get_auth(request)
+    db = deps.get_db(request)
+    pool = deps.get_pool(request)
     api_id_raw = await db.get_setting("tg_api_id") or ""
     api_hash_raw = await db.get_setting("tg_api_hash") or ""
     accounts = await db.get_accounts()
     connected_phones = set(pool.clients.keys())
-    return request.app.state.templates.TemplateResponse(
+    return deps.get_templates(request).TemplateResponse(
         request,
         "settings.html",
         {
@@ -31,8 +33,8 @@ async def settings_page(request: Request):
 @router.post("/save-credentials")
 async def save_credentials(request: Request):
     form = await request.form()
-    db = request.app.state.db
-    auth = request.app.state.auth
+    db = deps.get_db(request)
+    auth = deps.get_auth(request)
 
     api_id = str(form.get("api_id", "")).strip()
     api_hash = str(form.get("api_hash", "")).strip()
@@ -56,29 +58,11 @@ async def save_credentials(request: Request):
 
 @router.post("/{account_id}/toggle")
 async def toggle_account(request: Request, account_id: int):
-    db = request.app.state.db
-    accounts = await db.get_accounts()
-    for acc in accounts:
-        if acc.id == account_id:
-            await db.set_account_active(account_id, not acc.is_active)
-            if not acc.is_active:
-                try:
-                    await request.app.state.pool.add_client(acc.phone, acc.session_string)
-                except Exception:
-                    pass
-            else:
-                await request.app.state.pool.remove_client(acc.phone)
-            break
+    await deps.account_service(request).toggle(account_id)
     return RedirectResponse(url="/settings?msg=account_toggled", status_code=303)
 
 
 @router.post("/{account_id}/delete")
 async def delete_account(request: Request, account_id: int):
-    db = request.app.state.db
-    accounts = await db.get_accounts()
-    for acc in accounts:
-        if acc.id == account_id:
-            await request.app.state.pool.remove_client(acc.phone)
-            break
-    await db.delete_account(account_id)
+    await deps.account_service(request).delete(account_id)
     return RedirectResponse(url="/settings?msg=account_deleted", status_code=303)
