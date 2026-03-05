@@ -29,9 +29,6 @@
     <form method="post" action="/channels/filter/analyze" style="display:inline">
         <button type="submit" class="outline" style="padding: 0.25rem 0.75rem;">Анализ фильтров</button>
     </form>
-    <form method="post" action="/channels/filter/apply" style="display:inline">
-        <button type="submit" class="outline" style="padding: 0.25rem 0.75rem;">Применить фильтры</button>
-    </form>
     <form method="post" action="/channels/filter/reset" style="display:inline">
         <button type="submit" class="secondary outline" style="padding: 0.25rem 0.75rem;">Сброс фильтров</button>
     </form>
@@ -90,9 +87,15 @@
                         {{ "Вернуть" if ch.is_filtered else "Скрыть" }}
                     </button>
                 </form>
-                <form method="post" action="/channels/{{ ch.id }}/collect" style="display:inline">
-                    <button type="submit" class="outline" style="padding: 0.25rem 0.5rem; margin: 0;">Загрузить</button>
-                </form>
+                {% if ch.is_filtered %}
+                    <button type="button" class="outline" disabled style="padding: 0.25rem 0.5rem; margin: 0;">
+                        Загрузить
+                    </button>
+                {% else %}
+                    <form method="post" action="/channels/{{ ch.id }}/collect" style="display:inline">
+                        <button type="submit" class="outline" style="padding: 0.25rem 0.5rem; margin: 0;">Загрузить</button>
+                    </form>
+                {% endif %}
                 <form method="post" action="/channels/{{ ch.id }}/stats" style="display:inline">
                     <button type="submit" class="outline" style="padding: 0.25rem 0.5rem; margin: 0;">Стата</button>
                 </form>

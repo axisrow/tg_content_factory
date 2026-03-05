@@ -87,12 +87,11 @@ class TestAnalyzerLowUniqueness:
 
     async def test_boundary_exactly_at_threshold(self, db, raw_db):
         await _insert_channel(raw_db, 103)
-        # 30% uniqueness = exactly at threshold -> NOT flagged (< threshold)
+        # 4 unique / 10 total = 40% > 30% threshold -> NOT flagged
         texts = ["unique A", "unique B", "unique C"] + ["same"] * 7
         await _insert_messages(raw_db, 103, texts)
         analyzer = ChannelAnalyzer(db)
         result = await analyzer.analyze_channel(103)
-        # 4 unique / 10 total = 40% > 30% threshold
         assert "low_uniqueness" not in result.flags
 
 
@@ -320,12 +319,13 @@ class TestChannelAnalyzer:
         )
         row = await cur.fetchone()
         assert row["is_filtered"] == 1
-        assert row["filter_flags"] == "non_cyrillic"
+        assert row["filter_flags"] == "low_uniqueness,non_cyrillic"
 
     async def test_apply_filters_is_atomic_on_error(self, db, raw_db, monkeypatch):
         await _insert_channel(raw_db, 713, title="Atomic")
         await raw_db.execute(
-            "UPDATE channels SET is_filtered = 1, filter_flags = 'legacy_flag' WHERE channel_id = 713"
+            "UPDATE channels SET is_filtered = 1, filter_flags = 'legacy_flag'"
+            " WHERE channel_id = 713"
         )
         await raw_db.commit()
 

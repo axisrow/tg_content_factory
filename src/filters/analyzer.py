@@ -125,16 +125,16 @@ class ChannelAnalyzer:
         return await self._build_report()
 
     async def apply_filters(self, report: FilterReport) -> int:
-        # Dedupe by channel_id (last value wins) to avoid double updates/count inflation.
-        deduped: dict[int, str] = {}
+        # Dedupe by channel_id (merge flags via set union) to avoid double updates/count inflation.
+        deduped: dict[int, set[str]] = {}
         for result in report.results:
             if result.is_filtered:
-                deduped[result.channel_id] = ",".join(result.flags)
-        updates = list(deduped.items())
-
+                existing = deduped.get(result.channel_id, set())
+                existing.update(result.flags)
+                deduped[result.channel_id] = existing
+        updates = [(cid, ",".join(sorted(flags))) for cid, flags in deduped.items()]
         conn = self._database.db
         assert conn is not None
-        await conn.execute("BEGIN")
         try:
             await self._database.reset_all_channel_filters(commit=False)
             count = 0

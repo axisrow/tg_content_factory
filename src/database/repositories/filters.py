@@ -4,6 +4,8 @@ import re
 
 import aiosqlite
 
+# Intentionally duplicated from src/filters/criteria.py — UDF layer must not
+# depend on the filters package to keep DB initialisation self-contained.
 _CYRILLIC_RE = re.compile(r"[а-яА-ЯёЁ]")
 
 

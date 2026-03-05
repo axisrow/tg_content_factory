@@ -478,6 +478,7 @@ async def test_filter_analyze_renders_snapshot_hidden_fields(client):
 
     resp = await client.post("/channels/filter/analyze")
     assert resp.status_code == 200
+    assert 'name="snapshot" value="1"' in resp.text
     assert 'name="selected"' in resp.text
     assert 'value="-100551|' in resp.text
     assert "low_uniqueness" in resp.text
@@ -499,7 +500,7 @@ async def test_filter_apply_with_snapshot_skips_reanalyze(client, monkeypatch):
 
     resp = await client.post(
         "/channels/filter/apply",
-        data={"selected": "-100661|low_uniqueness"},
+        data={"snapshot": "1", "selected": "-100661|low_uniqueness"},
         follow_redirects=False,
     )
     assert resp.status_code == 303
@@ -515,8 +516,7 @@ async def test_filter_apply_with_snapshot_skips_reanalyze(client, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_filter_apply_without_snapshot_uses_reanalyze(client, monkeypatch):
-    from src.filters.models import ChannelFilterResult, FilterReport
+async def test_filter_apply_without_snapshot_returns_error(client, monkeypatch):
     from src.models import Channel
 
     db = client._transport.app.state.db
@@ -524,36 +524,22 @@ async def test_filter_apply_without_snapshot_uses_reanalyze(client, monkeypatch)
         Channel(channel_id=-100662, title="Fallback", username="fallback", channel_type="channel")
     )
 
-    called = {"value": False}
+    async def _boom(self):
+        raise AssertionError("analyze_all should not be called without snapshot")
 
-    async def _fake_analyze_all(self):
-        called["value"] = True
-        return FilterReport(
-            results=[
-                ChannelFilterResult(
-                    channel_id=-100662,
-                    flags=["low_uniqueness"],
-                    is_filtered=True,
-                )
-            ],
-            total_channels=1,
-            filtered_count=1,
-        )
-
-    monkeypatch.setattr("src.web.routes.filter.ChannelAnalyzer.analyze_all", _fake_analyze_all)
+    monkeypatch.setattr("src.web.routes.filter.ChannelAnalyzer.analyze_all", _boom)
 
     resp = await client.post("/channels/filter/apply", data={}, follow_redirects=False)
     assert resp.status_code == 303
-    assert called["value"] is True
-    assert "msg=filter_applied" in resp.headers["location"]
+    assert "error=filter_snapshot_required" in resp.headers["location"]
 
     cur = await db.execute(
         "SELECT is_filtered, filter_flags FROM channels WHERE channel_id = ?",
         (-100662,),
     )
     row = await cur.fetchone()
-    assert row["is_filtered"] == 1
-    assert row["filter_flags"] == "low_uniqueness"
+    assert row["is_filtered"] == 0
+    assert row["filter_flags"] == ""
 
 
 @pytest.mark.asyncio
@@ -561,6 +547,54 @@ async def test_filter_toggle_missing_channel_returns_not_found_msg(client):
     resp = await client.post("/channels/999999/filter-toggle", follow_redirects=False)
     assert resp.status_code == 303
     assert "msg=channel_not_found" in resp.headers["location"]
+
+
+@pytest.mark.asyncio
+async def test_filter_toggle_sets_manual_flag(client):
+    from src.models import Channel
+
+    db = client._transport.app.state.db
+    await db.add_channel(
+        Channel(channel_id=-100664, title="Manual", username="manual", channel_type="channel")
+    )
+    channel = next(ch for ch in await db.get_channels() if ch.channel_id == -100664)
+
+    resp = await client.post(f"/channels/{channel.id}/filter-toggle", follow_redirects=False)
+    assert resp.status_code == 303
+    assert "msg=filter_toggled" in resp.headers["location"]
+
+    cur = await db.execute(
+        "SELECT is_filtered, filter_flags FROM channels WHERE channel_id = ?",
+        (-100664,),
+    )
+    row = await cur.fetchone()
+    assert row["is_filtered"] == 1
+    assert row["filter_flags"] == "manual"
+
+
+@pytest.mark.asyncio
+async def test_collect_filtered_channel_is_blocked(client):
+    from src.collection_queue import CollectionQueue
+    from src.models import Channel
+
+    db = client._transport.app.state.db
+    client._transport.app.state.collection_queue = CollectionQueue(
+        client._transport.app.state.collector,
+        db,
+    )
+    await db.add_channel(
+        Channel(channel_id=-100663, title="Filtered", username="filtered", channel_type="channel")
+    )
+    await db.set_channels_filtered_bulk([(-100663, "low_uniqueness")])
+    channels = await db.get_channels(include_filtered=True)
+    channel = next(ch for ch in channels if ch.channel_id == -100663)
+
+    resp = await client.post(f"/channels/{channel.id}/collect", follow_redirects=False)
+    assert resp.status_code == 303
+    assert "error=channel_filtered" in resp.headers["location"]
+
+    tasks = await db.get_collection_tasks()
+    assert tasks == []
 
 
 @pytest.mark.asyncio

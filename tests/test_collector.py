@@ -38,6 +38,36 @@ async def test_collect_no_clients(db):
 
 
 @pytest.mark.asyncio
+async def test_collect_all_skips_filtered_channels(db):
+    await db.add_channel(Channel(channel_id=-100124, title="Filtered"))
+    await db.add_channel(Channel(channel_id=-100125, title="Normal"))
+    await db.set_channels_filtered_bulk([(-100124, "low_uniqueness")])
+
+    pool = make_mock_pool(get_available_client=AsyncMock(return_value=None))
+    collector = Collector(pool, db, SchedulerConfig())
+
+    stats = await collector.collect_all_channels()
+    assert stats["channels"] == 1
+    assert stats["messages"] == 0
+
+
+@pytest.mark.asyncio
+async def test_collect_single_channel_skips_filtered(db):
+    """collect_single_channel returns 0 immediately for filtered channels."""
+    ch = Channel(
+        channel_id=-100130, title="Filtered",
+        is_filtered=True, filter_flags="non_cyrillic",
+    )
+    pool = make_mock_pool(get_available_client=AsyncMock(return_value=None))
+    collector = Collector(pool, db, SchedulerConfig())
+
+    count = await collector.collect_single_channel(ch)
+    assert count == 0
+    # Pool should never be touched
+    pool.get_available_client.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_collect_channel_uses_peer_channel_without_username(db):
     """_collect_channel falls back to PeerChannel when no username."""
     ch = Channel(channel_id=1970788983, title="Test Channel")
@@ -390,3 +420,50 @@ async def test_progress_callback_invoked_on_batch_flush(db):
     assert progress_cb.await_count == 2
     progress_cb.assert_any_await(500)
     progress_cb.assert_any_await(600)
+
+
+@pytest.mark.asyncio
+async def test_collection_queue_skips_filtered_channel(db):
+    """CollectionQueue worker skips channels that become filtered after enqueue."""
+    from src.collection_queue import CollectionQueue
+
+    ch = Channel(channel_id=-100140, title="Will Be Filtered")
+    await db.add_channel(ch)
+
+    pool = make_mock_pool(get_available_client=AsyncMock(return_value=None))
+    collector = Collector(pool, db, SchedulerConfig())
+
+    queue = CollectionQueue(collector, db)
+
+    # Mark channel as filtered after adding
+    await db.set_channels_filtered_bulk([(-100140, "low_uniqueness")])
+
+    # Get the stored channel with its PK
+    channels = await db.get_channels(include_filtered=True)
+    stored_ch = next(c for c in channels if c.channel_id == -100140)
+
+    task_id = await queue.enqueue(stored_ch)
+
+    # Wait for worker to process
+    await asyncio.sleep(0.5)
+
+    task = await db.get_collection_task(task_id)
+    assert task.status == "cancelled"
+
+    await queue.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_collect_all_stats_skips_filtered(db):
+    """collect_all_stats should skip filtered channels."""
+    await db.add_channel(Channel(channel_id=-100150, title="Filtered"))
+    await db.add_channel(Channel(channel_id=-100151, title="Normal"))
+    await db.set_channels_filtered_bulk([(-100150, "low_uniqueness")])
+
+    pool = make_mock_pool(get_available_client=AsyncMock(return_value=None))
+    collector = Collector(pool, db, SchedulerConfig())
+
+    stats = await collector.collect_all_stats()
+    # Only 1 channel (Normal), and it will error because no client
+    assert stats["channels"] == 0
+    assert stats["errors"] == 1

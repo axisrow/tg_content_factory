@@ -74,7 +74,19 @@ class Collector:
         full: bool = False,
         progress_callback: Callable[[int], Awaitable[None]] | None = None,
     ) -> int:
-        """Collect messages from a single channel. If full=True, reset last_collected_id to 0."""
+        """Collect messages from a single channel. If full=True, reset last_collected_id to 0.
+
+        This is the canonical entry point for is_filtered checks in the
+        collection path.  Other callers (CollectionQueue, CLI, web routes)
+        may also guard against filtered channels earlier for better UX,
+        but this check is the authoritative gate.
+        """
+        if channel.is_filtered:
+            logger.info(
+                "Skipping collection for channel %d: channel is filtered",
+                channel.channel_id,
+            )
+            return 0
         async with self._lock:
             self._running = True
             self._cancel_event.clear()
@@ -106,11 +118,13 @@ class Collector:
             stats = {"channels": 0, "messages": 0, "errors": 0}
 
             try:
-                channels = await self._db.get_channels(active_only=True)
+                channels = await self._db.get_channels(
+                    active_only=True, include_filtered=False
+                )
                 if not channels:
-                    logger.info("No active channels to collect")
+                    logger.info("No active unfiltered channels to collect")
                     return stats
-                logger.info("Found %d active channels to collect", len(channels))
+                logger.info("Found %d active unfiltered channels to collect", len(channels))
 
                 # Pre-fetch dialogs to populate Telethon entity cache.
                 # StringSession loses entity cache between restarts, so
@@ -296,11 +310,13 @@ class Collector:
         if flood_wait_sec is not None:
             await self._pool.report_flood(phone, flood_wait_sec)
             if flood_wait_sec <= self._config.max_flood_wait_sec:
-                # Re-read channel from DB to get updated last_collected_id
-                channels = await self._db.get_channels()
-                updated = next(
-                    (c for c in channels if c.channel_id == channel_id), None
-                )
+                # Re-read channel from DB to get updated last_collected_id.
+                # Use get_channel_by_pk (no filtering) — collection already
+                # started, so we must finish even if the channel was filtered
+                # in the meantime.
+                updated = None
+                if channel.id is not None:
+                    updated = await self._db.get_channel_by_pk(channel.id)
                 if updated:
                     return len(all_messages) + await self._collect_channel(
                         updated, progress_callback=progress_callback
@@ -407,7 +423,9 @@ class Collector:
         async with self._stats_lock:
             self._stats_running = True
             try:
-                channels = await self._db.get_channels(active_only=True)
+                channels = await self._db.get_channels(
+                    active_only=True, include_filtered=False
+                )
                 stats = {"channels": 0, "errors": 0}
                 for channel in channels:
                     try:

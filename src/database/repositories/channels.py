@@ -114,7 +114,10 @@ class ChannelsRepository:
 
     async def set_channel_filtered(self, pk: int, filtered: bool) -> None:
         if filtered:
-            await self._db.execute("UPDATE channels SET is_filtered = 1 WHERE id = ?", (pk,))
+            await self._db.execute(
+                "UPDATE channels SET is_filtered = 1, filter_flags = 'manual' WHERE id = ?",
+                (pk,),
+            )
         else:
             await self._db.execute(
                 "UPDATE channels SET is_filtered = 0, filter_flags = '' WHERE id = ?",

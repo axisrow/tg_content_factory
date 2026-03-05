@@ -16,9 +16,11 @@ async def collect_channel(request: Request, pk: int):
         return RedirectResponse(url="/channels?error=shutting_down", status_code=303)
 
     service = deps.collection_service(request)
-    ok = await service.enqueue_channel_by_pk(pk)
-    if not ok:
-        return RedirectResponse(url="/channels", status_code=303)
+    enqueue_status = await service.enqueue_channel_by_pk(pk)
+    if enqueue_status == "not_found":
+        return RedirectResponse(url="/channels?msg=channel_not_found", status_code=303)
+    if enqueue_status == "filtered":
+        return RedirectResponse(url="/channels?error=channel_filtered", status_code=303)
 
     collector = deps.get_collector(request)
     msg = "collect_queued" if collector.is_running else "collect_started"

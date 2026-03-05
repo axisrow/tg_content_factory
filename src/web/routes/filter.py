@@ -51,15 +51,14 @@ async def apply_filters(request: Request):
     analyzer = ChannelAnalyzer(db)
 
     form = await request.form()
+    if form.get("snapshot") != "1":
+        return RedirectResponse(url="/channels?error=filter_snapshot_required", status_code=303)
     snapshot_results = _parse_snapshot(form.getlist("selected"))
-    if snapshot_results:
-        report = FilterReport(
-            results=snapshot_results,
-            total_channels=len(snapshot_results),
-            filtered_count=len(snapshot_results),
-        )
-    else:
-        report = await analyzer.analyze_all()
+    report = FilterReport(
+        results=snapshot_results,
+        total_channels=len(snapshot_results),
+        filtered_count=len(snapshot_results),
+    )
 
     count = await analyzer.apply_filters(report)
     return RedirectResponse(
