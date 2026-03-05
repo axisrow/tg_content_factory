@@ -41,6 +41,24 @@ async def test_add_and_get_channels(db):
 
 
 @pytest.mark.asyncio
+async def test_get_channel_by_pk(db):
+    ch = Channel(channel_id=-1002233445566, title="Lookup Channel", username="@lookup")
+    await db.add_channel(ch)
+
+    channels = await db.get_channels()
+    found = await db.get_channel_by_pk(channels[0].id)
+    assert found is not None
+    assert found.channel_id == -1002233445566
+    assert found.title == "Lookup Channel"
+
+
+@pytest.mark.asyncio
+async def test_get_channel_by_pk_returns_none_for_unknown_id(db):
+    found = await db.get_channel_by_pk(999999)
+    assert found is None
+
+
+@pytest.mark.asyncio
 async def test_insert_message_deduplication(db):
     msg = Message(
         channel_id=-1001234567890,
@@ -48,8 +66,10 @@ async def test_insert_message_deduplication(db):
         text="Hello world",
         date=datetime.now(timezone.utc),
     )
-    await db.insert_message(msg)
-    await db.insert_message(msg)
+    first = await db.insert_message(msg)
+    second = await db.insert_message(msg)
+    assert first is True
+    assert second is False
     # Second insert should be ignored (dedup)
     messages, total = await db.search_messages()
     assert total == 1

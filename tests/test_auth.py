@@ -119,3 +119,21 @@ class TestResendCode:
         assert stored_hash == "new_hash"
         # Verify ResendCodeRequest was called
         mock_client.assert_called_once()
+
+
+class TestVerifyCode:
+    @pytest.mark.asyncio
+    async def test_verify_code_disconnects_temporary_client(self):
+        auth = TelegramAuth(api_id=123, api_hash="abc")
+        mock_client = AsyncMock()
+        mock_client.session = SimpleNamespace(save=lambda: "session123")
+        auth._pending["+1234567890"] = (mock_client, "hash123")
+
+        session = await auth.verify_code("+1234567890", "11111", "hash123")
+
+        assert session == "session123"
+        mock_client.sign_in.assert_awaited_once_with(
+            "+1234567890", "11111", phone_code_hash="hash123"
+        )
+        mock_client.disconnect.assert_awaited_once()
+        assert "+1234567890" not in auth._pending
