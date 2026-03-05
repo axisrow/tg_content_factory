@@ -130,6 +130,13 @@ class TestNonCyrillic:
         assert pct == 0.0
         assert flagged is True
 
+    async def test_mixed_content_channel(self, raw_db):
+        await _insert_channel(raw_db, 402)
+        await _insert_messages(raw_db, 402, ["hello world", "Привет мир", "ещё один", "test"])
+        pct, flagged = await check_non_cyrillic(raw_db, 402)
+        assert pct == 50.0
+        assert flagged is False
+
 
 class TestChatNoise:
     async def test_not_a_group(self, raw_db):
@@ -159,20 +166,20 @@ class TestChatNoise:
 
 
 class TestChannelAnalyzer:
-    async def test_analyze_all(self, raw_db):
+    async def test_analyze_all(self, db, raw_db):
         await _insert_channel(raw_db, 600)
         await _insert_messages(raw_db, 600, ["unique text"] * 3)
-        analyzer = ChannelAnalyzer(raw_db)
+        analyzer = ChannelAnalyzer(db)
         report = await analyzer.analyze_all()
         assert report.total_channels >= 1
         found = [r for r in report.results if r.channel_id == 600]
         assert len(found) == 1
 
-    async def test_apply_filters(self, raw_db):
+    async def test_apply_filters(self, db, raw_db):
         await _insert_channel(raw_db, 700)
         # All same messages -> low uniqueness -> should be filtered
         await _insert_messages(raw_db, 700, ["spam"] * 20)
-        analyzer = ChannelAnalyzer(raw_db)
+        analyzer = ChannelAnalyzer(db)
         report = await analyzer.analyze_all()
         result = [r for r in report.results if r.channel_id == 700][0]
         assert result.is_filtered is True
@@ -182,23 +189,56 @@ class TestChannelAnalyzer:
         assert count >= 1
 
         cur = await raw_db.execute(
-            "SELECT is_filtered FROM channels WHERE channel_id = 700"
+            "SELECT is_filtered, filter_flags FROM channels WHERE channel_id = 700"
         )
         row = await cur.fetchone()
         assert row["is_filtered"] == 1
+        assert "low_uniqueness" in row["filter_flags"]
 
-    async def test_reset_filters(self, raw_db):
+    async def test_reset_filters(self, db, raw_db):
         await _insert_channel(raw_db, 800)
         await raw_db.execute(
-            "UPDATE channels SET is_filtered = 1 WHERE channel_id = 800"
+            "UPDATE channels SET is_filtered = 1, filter_flags = 'low_uniqueness,non_cyrillic'"
+            " WHERE channel_id = 800"
         )
         await raw_db.commit()
 
-        analyzer = ChannelAnalyzer(raw_db)
+        analyzer = ChannelAnalyzer(db)
         await analyzer.reset_filters()
 
         cur = await raw_db.execute(
-            "SELECT is_filtered FROM channels WHERE channel_id = 800"
+            "SELECT is_filtered, filter_flags FROM channels WHERE channel_id = 800"
         )
         row = await cur.fetchone()
         assert row["is_filtered"] == 0
+        assert row["filter_flags"] == ""
+
+    async def test_bulk_cross_channel_dupes_flag(self, db, raw_db):
+        await _insert_channel(raw_db, 900, title="A")
+        await _insert_channel(raw_db, 901, title="B")
+        await _insert_channel(raw_db, 902, title="C")
+
+        await _insert_messages(
+            raw_db,
+            900,
+            [
+                "shared duplicated content alpha beta gamma",
+                "shared duplicated content delta epsilon zeta",
+                "unique channel 900 payload long enough",
+            ],
+        )
+        await _insert_messages(
+            raw_db,
+            901,
+            [
+                "shared duplicated content alpha beta gamma",
+                "shared duplicated content delta epsilon zeta",
+            ],
+        )
+        await _insert_messages(raw_db, 902, ["independent long content for channel 902 only"])
+
+        analyzer = ChannelAnalyzer(db)
+        report = await analyzer.analyze_all()
+        ch900 = next(r for r in report.results if r.channel_id == 900)
+        assert ch900.cross_dupe_pct == 66.7
+        assert "cross_channel_spam" in ch900.flags

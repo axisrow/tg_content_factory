@@ -40,6 +40,11 @@ class ChannelsRepository:
             channel_type=row["channel_type"],
             is_active=bool(row["is_active"]),
             is_filtered=bool(row["is_filtered"]) if "is_filtered" in keys else False,
+            filter_flags=(
+                row["filter_flags"]
+                if "filter_flags" in keys and row["filter_flags"]
+                else ""
+            ),
             last_collected_id=row["last_collected_id"],
             added_at=datetime.fromisoformat(row["added_at"]) if row["added_at"] else None,
             message_count=(
@@ -108,10 +113,37 @@ class ChannelsRepository:
         await self._db.commit()
 
     async def set_channel_filtered(self, pk: int, filtered: bool) -> None:
-        await self._db.execute(
-            "UPDATE channels SET is_filtered = ? WHERE id = ?", (int(filtered), pk)
+        if filtered:
+            await self._db.execute("UPDATE channels SET is_filtered = 1 WHERE id = ?", (pk,))
+        else:
+            await self._db.execute(
+                "UPDATE channels SET is_filtered = 0, filter_flags = '' WHERE id = ?",
+                (pk,),
+            )
+        await self._db.commit()
+
+    async def set_filtered_bulk(self, updates: list[tuple[int, str]]) -> int:
+        if not updates:
+            return 0
+        updated_rows = 0
+        for channel_id, flags_csv in updates:
+            cur = await self._db.execute(
+                "UPDATE channels SET is_filtered = 1, filter_flags = ? WHERE channel_id = ?",
+                (flags_csv, channel_id),
+            )
+            rowcount = cur.rowcount if cur.rowcount is not None else 0
+            if rowcount > 0:
+                updated_rows += rowcount
+        await self._db.commit()
+        return updated_rows
+
+    async def reset_all_filters(self) -> int:
+        cur = await self._db.execute(
+            "UPDATE channels SET is_filtered = 0, filter_flags = ''"
         )
         await self._db.commit()
+        rowcount = cur.rowcount if cur.rowcount is not None else 0
+        return rowcount if rowcount > 0 else 0
 
     async def delete_channel(self, pk: int) -> None:
         cur = await self._db.execute("SELECT channel_id FROM channels WHERE id = ?", (pk,))

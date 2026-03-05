@@ -33,6 +33,7 @@ class Channel(BaseModel):
     channel_type: str | None = None  # "channel" | "group"
     is_active: bool = True
     is_filtered: bool = False
+    filter_flags: str = ""
     last_collected_id: int = 0
     added_at: datetime | None = None
     message_count: int = 0

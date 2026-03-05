@@ -56,6 +56,10 @@ class Collector:
     def is_running(self) -> bool:
         return self._running or self._stats_running
 
+    @property
+    def is_stats_running(self) -> bool:
+        return self._stats_running
+
     async def cancel(self) -> None:
         self._cancel_event.set()
 

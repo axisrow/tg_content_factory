@@ -161,6 +161,14 @@ class Database:
         self._require()
         await self._channels.set_channel_filtered(pk, filtered)
 
+    async def set_channels_filtered_bulk(self, updates: list[tuple[int, str]]) -> int:
+        self._require()
+        return await self._channels.set_filtered_bulk(updates)
+
+    async def reset_all_channel_filters(self) -> int:
+        self._require()
+        return await self._channels.reset_all_filters()
+
     async def delete_channel(self, pk: int) -> None:
         self._require()
         await self._channels.delete_channel(pk)

@@ -455,6 +455,115 @@ async def test_channel_type_displayed(client):
 
 
 @pytest.mark.asyncio
+async def test_filter_analyze_renders_snapshot_hidden_fields(client):
+    from datetime import datetime, timezone
+
+    from src.models import Channel, Message
+
+    db = client._transport.app.state.db
+    ch = Channel(channel_id=-100551, title="Spam", username="spamchan", channel_type="channel")
+    await db.add_channel(ch)
+    now = datetime.now(timezone.utc)
+    await db.insert_messages_batch(
+        [
+            Message(
+                channel_id=-100551,
+                message_id=i + 1,
+                text="same spam line",
+                date=now,
+            )
+            for i in range(20)
+        ]
+    )
+
+    resp = await client.post("/channels/filter/analyze")
+    assert resp.status_code == 200
+    assert 'name="selected"' in resp.text
+    assert 'value="-100551|' in resp.text
+    assert "low_uniqueness" in resp.text
+
+
+@pytest.mark.asyncio
+async def test_filter_apply_with_snapshot_skips_reanalyze(client, monkeypatch):
+    from src.models import Channel
+
+    db = client._transport.app.state.db
+    await db.add_channel(
+        Channel(channel_id=-100661, title="Snapshot", username="snapshot", channel_type="channel")
+    )
+
+    async def _boom(self):
+        raise AssertionError("analyze_all should not be called for snapshot apply")
+
+    monkeypatch.setattr("src.web.routes.filter.ChannelAnalyzer.analyze_all", _boom)
+
+    resp = await client.post(
+        "/channels/filter/apply",
+        data={"selected": "-100661|low_uniqueness"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    assert "msg=filter_applied" in resp.headers["location"]
+
+    cur = await db.execute(
+        "SELECT is_filtered, filter_flags FROM channels WHERE channel_id = ?",
+        (-100661,),
+    )
+    row = await cur.fetchone()
+    assert row["is_filtered"] == 1
+    assert row["filter_flags"] == "low_uniqueness"
+
+
+@pytest.mark.asyncio
+async def test_filter_apply_without_snapshot_uses_reanalyze(client, monkeypatch):
+    from src.filters.models import ChannelFilterResult, FilterReport
+    from src.models import Channel
+
+    db = client._transport.app.state.db
+    await db.add_channel(
+        Channel(channel_id=-100662, title="Fallback", username="fallback", channel_type="channel")
+    )
+
+    called = {"value": False}
+
+    async def _fake_analyze_all(self):
+        called["value"] = True
+        return FilterReport(
+            results=[
+                ChannelFilterResult(
+                    channel_id=-100662,
+                    flags=["low_uniqueness"],
+                    is_filtered=True,
+                )
+            ],
+            total_channels=1,
+            filtered_count=1,
+        )
+
+    monkeypatch.setattr("src.web.routes.filter.ChannelAnalyzer.analyze_all", _fake_analyze_all)
+
+    resp = await client.post("/channels/filter/apply", data={}, follow_redirects=False)
+    assert resp.status_code == 303
+    assert called["value"] is True
+    assert "msg=filter_applied" in resp.headers["location"]
+
+    cur = await db.execute(
+        "SELECT is_filtered, filter_flags FROM channels WHERE channel_id = ?",
+        (-100662,),
+    )
+    row = await cur.fetchone()
+    assert row["is_filtered"] == 1
+    assert row["filter_flags"] == "low_uniqueness"
+
+
+@pytest.mark.asyncio
+async def test_filter_toggle_missing_channel_returns_not_found_msg(client):
+    resp = await client.post("/channels/999999/filter-toggle", follow_redirects=False)
+    assert resp.status_code == 303
+    assert "msg=channel_not_found" in resp.headers["location"]
+
+
+@pytest.mark.asyncio
 async def test_search_results_have_tg_links(client):
     """Search results contain links to original Telegram messages."""
     from datetime import datetime, timezone

@@ -11,8 +11,7 @@ def run(args: argparse.Namespace) -> None:
     async def _run() -> None:
         _, db = await runtime.init_db(args.config)
         try:
-            assert db.db is not None
-            analyzer = ChannelAnalyzer(db.db)
+            analyzer = ChannelAnalyzer(db)
 
             if args.filter_action == "analyze":
                 report = await analyzer.analyze_all()

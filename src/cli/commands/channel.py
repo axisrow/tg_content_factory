@@ -23,7 +23,7 @@ def run(args: argparse.Namespace) -> None:
                 if not channels:
                     print("No channels found.")
                     return
-                fmt = "{:<5} {:<15} {:<25} {:<12} {:<8} {:<10} {:<12}"
+                fmt = "{:<5} {:<15} {:<25} {:<12} {:<8} {:<10} {:<12} {:<20}"
                 header = (
                     "ID",
                     "Channel ID",
@@ -32,10 +32,15 @@ def run(args: argparse.Namespace) -> None:
                     "Active",
                     "Messages",
                     "Last msg ID",
+                    "Slop",
                 )
                 print(fmt.format(*header))
-                print("-" * 90)
+                print("-" * 110)
                 for ch in channels:
+                    if ch.is_filtered:
+                        slop = f"SLOP: {ch.filter_flags}" if ch.filter_flags else "SLOP"
+                    else:
+                        slop = "-"
                     print(
                         fmt.format(
                             ch.id or 0,
@@ -45,6 +50,7 @@ def run(args: argparse.Namespace) -> None:
                             "Yes" if ch.is_active else "No",
                             ch.message_count,
                             ch.last_collected_id,
+                            slop,
                         )
                     )
 

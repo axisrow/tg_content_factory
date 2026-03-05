@@ -199,6 +199,34 @@ async def test_get_channel_by_pk_returns_none_for_unknown_id(db):
 
 
 @pytest.mark.asyncio
+async def test_set_channels_filtered_bulk_and_reset(db):
+    await db.add_channel(Channel(channel_id=-1007001, title="One", username="one"))
+    await db.add_channel(Channel(channel_id=-1007002, title="Two", username="two"))
+
+    updated = await db.set_channels_filtered_bulk(
+        [(-1007001, "low_uniqueness"), (-1007002, "non_cyrillic,chat_noise")]
+    )
+    assert updated == 2
+
+    channels = await db.get_channels()
+    by_channel_id = {channel.channel_id: channel for channel in channels}
+    assert by_channel_id[-1007001].is_filtered is True
+    assert by_channel_id[-1007001].filter_flags == "low_uniqueness"
+    assert by_channel_id[-1007002].is_filtered is True
+    assert by_channel_id[-1007002].filter_flags == "non_cyrillic,chat_noise"
+
+    reset_count = await db.reset_all_channel_filters()
+    assert reset_count >= 2
+
+    channels = await db.get_channels()
+    by_channel_id = {channel.channel_id: channel for channel in channels}
+    assert by_channel_id[-1007001].is_filtered is False
+    assert by_channel_id[-1007001].filter_flags == ""
+    assert by_channel_id[-1007002].is_filtered is False
+    assert by_channel_id[-1007002].filter_flags == ""
+
+
+@pytest.mark.asyncio
 async def test_insert_message_deduplication(db):
     msg = Message(
         channel_id=-1001234567890,
@@ -575,15 +603,84 @@ async def test_migrate_adds_channel_type_column(tmp_path):
     cur = await database.execute("PRAGMA table_info(channels)")
     columns = {row["name"] for row in await cur.fetchall()}
     assert "channel_type" in columns
+    assert "is_filtered" in columns
+    assert "filter_flags" in columns
 
     channels = await database.get_channels()
     assert len(channels) == 1
     assert channels[0].channel_type is None
+    assert channels[0].is_filtered is False
+    assert channels[0].filter_flags == ""
 
     ch = Channel(channel_id=-100456, title="New", channel_type="group")
     await database.add_channel(ch)
     channels = await database.get_channels()
     assert any(c.channel_type == "group" for c in channels)
+
+    await database.close()
+
+
+@pytest.mark.asyncio
+async def test_migrate_filter_columns_idempotent(tmp_path):
+    db_path = str(tmp_path / "migrate_filter_columns_idempotent.db")
+
+    conn = await aiosqlite.connect(db_path)
+    await conn.executescript("""
+        CREATE TABLE IF NOT EXISTS accounts (
+            id INTEGER PRIMARY KEY,
+            phone TEXT UNIQUE NOT NULL,
+            session_string TEXT NOT NULL,
+            is_primary INTEGER DEFAULT 0,
+            is_active INTEGER DEFAULT 1,
+            flood_wait_until TEXT,
+            created_at TEXT DEFAULT (datetime('now'))
+        );
+        CREATE TABLE IF NOT EXISTS channels (
+            id INTEGER PRIMARY KEY,
+            channel_id INTEGER UNIQUE NOT NULL,
+            title TEXT,
+            username TEXT,
+            is_active INTEGER DEFAULT 1,
+            last_collected_id INTEGER DEFAULT 0,
+            added_at TEXT DEFAULT (datetime('now'))
+        );
+        CREATE TABLE IF NOT EXISTS messages (
+            id INTEGER PRIMARY KEY,
+            channel_id INTEGER NOT NULL,
+            message_id INTEGER NOT NULL,
+            sender_id INTEGER,
+            sender_name TEXT,
+            text TEXT,
+            media_type TEXT,
+            date TEXT NOT NULL,
+            collected_at TEXT DEFAULT (datetime('now')),
+            UNIQUE(channel_id, message_id)
+        );
+        CREATE TABLE IF NOT EXISTS keywords (
+            id INTEGER PRIMARY KEY,
+            pattern TEXT NOT NULL,
+            is_regex INTEGER DEFAULT 0,
+            is_active INTEGER DEFAULT 1
+        );
+        CREATE TABLE IF NOT EXISTS settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        );
+    """)
+    await conn.commit()
+    await conn.close()
+
+    database = Database(db_path)
+    await database.initialize()
+    await database.close()
+
+    database = Database(db_path)
+    await database.initialize()
+
+    cur = await database.execute("PRAGMA table_info(channels)")
+    columns = {row["name"] for row in await cur.fetchall()}
+    assert "is_filtered" in columns
+    assert "filter_flags" in columns
 
     await database.close()
 

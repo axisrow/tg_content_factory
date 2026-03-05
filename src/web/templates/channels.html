@@ -73,7 +73,13 @@
             <td>{{ "%.1f"|format(st.avg_forwards) if st and st.avg_forwards is not none else "—" }}</td>
             <td>
                 {% if ch.is_filtered %}
-                    <mark>Отфильтрован</mark>
+                    {% if ch.filter_flags %}
+                        {% for flag in ch.filter_flags.split(',') %}
+                            <mark>{{ flag.strip() }}</mark>
+                        {% endfor %}
+                    {% else %}
+                        <mark>Отфильтрован</mark>
+                    {% endif %}
                 {% else %}
                     -
                 {% endif %}

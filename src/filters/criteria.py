@@ -1,6 +1,14 @@
 from __future__ import annotations
 
+import re
+
 import aiosqlite
+
+CYRILLIC_RE = re.compile(r"[а-яА-ЯёЁ]")
+
+
+def contains_cyrillic(text: str) -> bool:
+    return bool(CYRILLIC_RE.search(text))
 
 
 async def check_low_uniqueness(
@@ -124,16 +132,25 @@ async def check_non_cyrillic(
     """
     cur = await db.execute(
         """
-        SELECT
-            COUNT(*) AS total,
-            SUM(CASE WHEN text GLOB '*[а-яА-ЯёЁ]*' THEN 1 ELSE 0 END) AS cyr
+        SELECT text
         FROM messages
         WHERE channel_id = ? AND text IS NOT NULL AND text != ''
         """,
         (channel_id,),
     )
-    row = await cur.fetchone()
-    total, cyr = row["total"], row["cyr"] or 0
+    total = 0
+    cyr = 0
+    while True:
+        rows = await cur.fetchmany(1000)
+        if not rows:
+            break
+        for row in rows:
+            text = row["text"]
+            if not text:
+                continue
+            total += 1
+            if contains_cyrillic(text):
+                cyr += 1
     if total == 0:
         return None, False
     pct = cyr / total * 100

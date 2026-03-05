@@ -225,6 +225,7 @@ async def test_stats_web_endpoint(tmp_path):
         return_value=ChannelStats(channel_id=-100123, subscriber_count=999)
     )
     collector.is_running = False
+    collector.is_stats_running = False
     app.state.collector = collector
     app.state.search_engine = SearchEngine(db)
     app.state.ai_search = AISearchEngine(config.llm, db)

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class ChannelFilterResult(BaseModel):
@@ -8,7 +8,7 @@ class ChannelFilterResult(BaseModel):
     title: str | None = None
     username: str | None = None
     message_count: int = 0
-    flags: list[str] = []
+    flags: list[str] = Field(default_factory=list)
     uniqueness_pct: float | None = None
     subscriber_ratio: float | None = None
     cyrillic_pct: float | None = None
@@ -18,6 +18,6 @@ class ChannelFilterResult(BaseModel):
 
 
 class FilterReport(BaseModel):
-    results: list[ChannelFilterResult] = []
+    results: list[ChannelFilterResult] = Field(default_factory=list)
     total_channels: int = 0
     filtered_count: int = 0

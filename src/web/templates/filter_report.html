@@ -49,6 +49,9 @@
 
 <div style="display:flex; gap:0.5rem; margin-top:1rem">
     <form method="post" action="/channels/filter/apply">
+        {% for r in report.results if r.is_filtered %}
+        <input type="hidden" name="selected" value="{{ r.channel_id }}|{{ r.flags|join(',') }}">
+        {% endfor %}
         <button type="submit">Применить фильтры ({{ report.filtered_count }} каналов)</button>
     </form>
     <a href="/channels" role="button" class="secondary">Назад к каналам</a>
