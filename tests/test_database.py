@@ -124,6 +124,39 @@ async def test_legacy_v1_sessions_migrate_to_v2_on_init(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_migrate_sessions_rollback_on_bad_row(tmp_path):
+    """Migration rolls back when a row has an unsupported encryption version."""
+    db_path = str(tmp_path / "rollback_migration.db")
+
+    db = Database(db_path)
+    await db.initialize()
+    await db.add_account(Account(phone="+71230000010", session_string="good_session"))
+    # Insert a bad row directly — unsupported enc version
+    await db.execute(
+        "INSERT INTO accounts (phone, session_string) VALUES (?, ?)",
+        ("+71230000011", "enc:v99:garbage"),
+    )
+    await db.db.commit()
+    await db.close()
+
+    encrypted_db = Database(db_path, session_encryption_secret="some-key")
+    with pytest.raises(RuntimeError, match="Failed to migrate session"):
+        await encrypted_db.initialize()
+
+    # Verify rollback: both rows should be unchanged
+    conn = await aiosqlite.connect(db_path)
+    conn.row_factory = aiosqlite.Row
+    cur = await conn.execute(
+        "SELECT phone, session_string FROM accounts ORDER BY phone"
+    )
+    rows = await cur.fetchall()
+    assert len(rows) == 2
+    assert rows[0]["session_string"] == "good_session"
+    assert rows[1]["session_string"] == "enc:v99:garbage"
+    await conn.close()
+
+
+@pytest.mark.asyncio
 async def test_initialize_fails_without_key_when_encrypted_sessions_exist(tmp_path):
     db_path = str(tmp_path / "no_key_fail_fast.db")
 
