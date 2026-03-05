@@ -2,6 +2,7 @@ import logging
 
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from starlette.background import BackgroundTask
 
 from src.models import Channel, Keyword
 
@@ -125,8 +126,10 @@ async def delete_channel(request: Request, pk: int):
 @router.post("/stats/all")
 async def collect_all_stats(request: Request):
     collector = request.app.state.collector
-    await collector.collect_all_stats()
-    return RedirectResponse(url="/channels?msg=stats_collected_all", status_code=303)
+    task = BackgroundTask(collector.collect_all_stats)
+    return RedirectResponse(
+        url="/channels?msg=stats_collection_started", status_code=303, background=task
+    )
 
 
 @router.post("/{pk}/stats")

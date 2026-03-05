@@ -310,6 +310,9 @@ def cmd_channel(args: argparse.Namespace) -> None:
                 if args.all:
                     result = await collector.collect_all_stats()
                     print(f"Stats collected: {result}")
+                elif not args.identifier:
+                    print("Specify a channel identifier or use --all")
+                    return
                 else:
                     channels = await db.get_channels()
                     ch = _resolve_channel(channels, args.identifier)

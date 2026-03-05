@@ -7,6 +7,7 @@ from collections.abc import Awaitable, Callable
 from datetime import timezone
 
 from telethon.errors import FloodWaitError
+from telethon.tl.functions.channels import GetFullChannelRequest
 from telethon.tl.types import (
     DocumentAttributeAnimated,
     DocumentAttributeAudio,
@@ -351,8 +352,6 @@ class Collector:
             else:
                 entity = await client.get_entity(PeerChannel(channel.channel_id))
 
-            from telethon.tl.functions.channels import GetFullChannelRequest
-
             full = await client(GetFullChannelRequest(entity))
             subscriber_count = getattr(full.full_chat, "participants_count", None)
 
@@ -383,20 +382,29 @@ class Collector:
             )
             await self._db.save_channel_stats(stats)
             return stats
+        except FloodWaitError as e:
+            logger.warning("Flood wait %ds for stats on %s", e.seconds, channel.channel_id)
+            await self._pool.report_flood(phone, e.seconds)
+            return None
         finally:
             await self._pool.release_client(phone)
 
     async def collect_all_stats(self) -> dict:
-        channels = await self._db.get_channels(active_only=True)
-        stats = {"channels": 0, "errors": 0}
-        for channel in channels:
+        async with self._lock:
+            self._running = True
             try:
-                await self.collect_channel_stats(channel)
-                stats["channels"] += 1
-            except Exception as e:
-                logger.error("Stats error for %s: %s", channel.channel_id, e)
-                stats["errors"] += 1
-        return stats
+                channels = await self._db.get_channels(active_only=True)
+                stats = {"channels": 0, "errors": 0}
+                for channel in channels:
+                    try:
+                        await self.collect_channel_stats(channel)
+                        stats["channels"] += 1
+                    except Exception as e:
+                        logger.error("Stats error for %s: %s", channel.channel_id, e)
+                        stats["errors"] += 1
+                return stats
+            finally:
+                self._running = False
 
     @staticmethod
     def _get_sender_name(msg) -> str | None:
