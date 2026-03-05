@@ -93,6 +93,21 @@ CREATE INDEX IF NOT EXISTS idx_channel_stats_channel_date
     ON channel_stats(channel_id, collected_at);
 CREATE INDEX IF NOT EXISTS idx_messages_text ON messages(text);
 CREATE INDEX IF NOT EXISTS idx_messages_channel_date ON messages(channel_id, date);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
+    text,
+    content=messages,
+    content_rowid=id,
+    tokenize="unicode61"
+);
+
+CREATE TRIGGER IF NOT EXISTS messages_fts_ai AFTER INSERT ON messages BEGIN
+    INSERT INTO messages_fts(rowid, text) VALUES (new.id, new.text);
+END;
+
+CREATE TRIGGER IF NOT EXISTS messages_fts_ad AFTER DELETE ON messages BEGIN
+    INSERT INTO messages_fts(messages_fts, rowid, text) VALUES ('delete', old.id, old.text);
+END;
 """
 
 
@@ -143,6 +158,21 @@ class Database:
             )
         """)
         await self._db.commit()
+
+        # Populate FTS5 index for existing data (runs once, tracked by settings flag)
+        cur = await self._db.execute(
+            "SELECT value FROM settings WHERE key = 'fts5_initialized'"
+        )
+        if not await cur.fetchone():
+            try:
+                await self._db.execute("INSERT INTO messages_fts(messages_fts) VALUES('rebuild')")
+                await self._db.execute(
+                    "INSERT OR IGNORE INTO settings (key, value) VALUES ('fts5_initialized', '1')"
+                )
+                await self._db.commit()
+                logger.info("FTS5 index built for existing messages")
+            except Exception as e:
+                logger.warning("FTS5 index build failed (FTS5 may be unavailable): %s", e)
 
     async def close(self) -> None:
         if self._db:
@@ -386,12 +416,9 @@ class Database:
     ) -> tuple[list[Message], int]:
         """Search messages by text and filters. Returns (messages, total_count)."""
         assert self._db is not None
-        conditions = []
+        conditions: list[str] = []
         params: list = []
 
-        if query:
-            conditions.append("m.text LIKE ?")
-            params.append(f"%{query}%")
         if channel_id:
             conditions.append("m.channel_id = ?")
             params.append(channel_id)
@@ -404,21 +431,45 @@ class Database:
 
         where = " WHERE " + " AND ".join(conditions) if conditions else ""
 
-        count_cur = await self._db.execute(
-            f"SELECT COUNT(*) as cnt FROM messages m{where}", tuple(params)
-        )
-        row = await count_cur.fetchone()
-        total = row["cnt"] if row else 0
+        if query:
+            # FTS5 phrase query: wrap in double quotes, escape internal quotes
+            fts_query = '"' + query.replace('"', '""') + '"'
+            fts_join = (
+                " INNER JOIN (SELECT rowid FROM messages_fts"
+                " WHERE messages_fts MATCH ?) AS fts ON m.id = fts.rowid"
+            )
+            count_cur = await self._db.execute(
+                f"SELECT COUNT(*) as cnt FROM messages m{fts_join}{where}",
+                (fts_query, *params),
+            )
+            row = await count_cur.fetchone()
+            total = row["cnt"] if row else 0
 
-        cur = await self._db.execute(
-            f"""SELECT m.*, c.title as channel_title, c.username as channel_username
-                FROM messages m
-                LEFT JOIN channels c ON m.channel_id = c.channel_id
-                {where}
-                ORDER BY m.date DESC
-                LIMIT ? OFFSET ?""",
-            (*params, limit, offset),
-        )
+            cur = await self._db.execute(
+                f"""SELECT m.*, c.title as channel_title, c.username as channel_username
+                    FROM messages m{fts_join}
+                    LEFT JOIN channels c ON m.channel_id = c.channel_id
+                    {where}
+                    ORDER BY m.date DESC
+                    LIMIT ? OFFSET ?""",
+                (fts_query, *params, limit, offset),
+            )
+        else:
+            count_cur = await self._db.execute(
+                f"SELECT COUNT(*) as cnt FROM messages m{where}", tuple(params)
+            )
+            row = await count_cur.fetchone()
+            total = row["cnt"] if row else 0
+
+            cur = await self._db.execute(
+                f"""SELECT m.*, c.title as channel_title, c.username as channel_username
+                    FROM messages m
+                    LEFT JOIN channels c ON m.channel_id = c.channel_id
+                    {where}
+                    ORDER BY m.date DESC
+                    LIMIT ? OFFSET ?""",
+                (*params, limit, offset),
+            )
         rows = await cur.fetchall()
         messages = [
             Message(
@@ -540,6 +591,32 @@ class Database:
             tuple(params),
         )
         await self._db.commit()
+
+    async def get_collection_task(self, task_id: int) -> CollectionTask | None:
+        assert self._db is not None
+        cur = await self._db.execute(
+            "SELECT * FROM collection_tasks WHERE id = ?", (task_id,)
+        )
+        r = await cur.fetchone()
+        if r is None:
+            return None
+        return CollectionTask(
+            id=r["id"],
+            channel_id=r["channel_id"],
+            channel_title=r["channel_title"],
+            status=r["status"],
+            messages_collected=r["messages_collected"],
+            error=r["error"],
+            created_at=(
+                datetime.fromisoformat(r["created_at"]) if r["created_at"] else None
+            ),
+            started_at=(
+                datetime.fromisoformat(r["started_at"]) if r["started_at"] else None
+            ),
+            completed_at=(
+                datetime.fromisoformat(r["completed_at"]) if r["completed_at"] else None
+            ),
+        )
 
     async def get_collection_tasks(self, limit: int = 20) -> list[CollectionTask]:
         assert self._db is not None

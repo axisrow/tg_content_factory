@@ -50,7 +50,7 @@ class SearchEngine:
         if result is None:
             return None
 
-        client, _phone = result
+        client, phone = result
 
         try:
             from telethon.tl.functions.channels import CheckSearchPostsFloodRequest
@@ -66,6 +66,8 @@ class SearchEngine:
         except Exception as exc:
             logger.debug("checkSearchPostsFlood unavailable: %s", exc)
             return None
+        finally:
+            await self._pool.release_client(phone)
 
     async def search_telegram(
         self,
@@ -86,43 +88,46 @@ class SearchEngine:
                 error="Нет доступных Telegram-аккаунтов. Проверьте подключение.",
             )
 
-        client, _phone = result
+        client, phone = result
 
-        # Premium check — channels.searchPosts requires it
-        me = await client.get_me()
-        if not getattr(me, "premium", False):
-            return SearchResult(
-                messages=[], total=0, query=query,
-                error=(
-                    "Глобальный поиск по публичным каналам требует Telegram Premium. "
-                    f"Аккаунт {_phone} не имеет подписки Premium."
-                ),
+        try:
+            # Premium check — channels.searchPosts requires it
+            me = await client.get_me()
+            if not getattr(me, "premium", False):
+                return SearchResult(
+                    messages=[], total=0, query=query,
+                    error=(
+                        "Глобальный поиск по публичным каналам требует Telegram Premium. "
+                        f"Аккаунт {phone} не имеет подписки Premium."
+                    ),
+                )
+
+            # Quota check
+            quota = await self.check_search_quota(query)
+            if quota and quota.get("remains") == 0 and not quota.get("query_is_free"):
+                return SearchResult(
+                    messages=[], total=0, query=query,
+                    error=(
+                        "Лимит Premium-поиска исчерпан на сегодня. "
+                        "Попробуйте позже или используйте другой режим поиска."
+                    ),
+                )
+
+            messages, seen_channels = await self._search_posts_global(
+                client, query, limit
             )
 
-        # Quota check
-        quota = await self.check_search_quota(query)
-        if quota and quota.get("remains") == 0 and not quota.get("query_is_free"):
-            return SearchResult(
-                messages=[], total=0, query=query,
-                error=(
-                    "Лимит Premium-поиска исчерпан на сегодня. "
-                    "Попробуйте позже или используйте другой режим поиска."
-                ),
-            )
+            for ch in seen_channels.values():
+                await self._db.add_channel(ch)
 
-        messages, seen_channels = await self._search_posts_global(
-            client, query, limit
-        )
+            if messages:
+                await self._db.insert_messages_batch(messages)
 
-        for ch in seen_channels.values():
-            await self._db.add_channel(ch)
+            await self._db.log_search(phone, query, len(messages))
 
-        if messages:
-            await self._db.insert_messages_batch(messages)
-
-        await self._db.log_search(_phone, query, len(messages))
-
-        return SearchResult(messages=messages, total=len(messages), query=query)
+            return SearchResult(messages=messages, total=len(messages), query=query)
+        finally:
+            await self._pool.release_client(phone)
 
     async def _search_posts_global(
         self,
@@ -273,32 +278,35 @@ class SearchEngine:
                 error="Нет доступных Telegram-аккаунтов. Проверьте подключение.",
             )
 
-        client, _phone = result
+        client, phone = result
 
-        # Pre-fetch entity cache (needed for StringSession clients)
-        await client.get_dialogs()
+        try:
+            # Pre-fetch entity cache (needed for StringSession clients)
+            await client.get_dialogs()
 
-        messages: list[Message] = []
-        seen_channels: dict[int, Channel] = {}
+            messages: list[Message] = []
+            seen_channels: dict[int, Channel] = {}
 
-        async for msg in client.iter_messages(None, search=query, limit=limit):
-            converted = self._convert_telethon_message(msg)
-            if converted is None:
-                continue
-            messages.append(converted)
-            if converted.channel_id not in seen_channels:
-                seen_channels[converted.channel_id] = Channel(
-                    channel_id=converted.channel_id,
-                    title=converted.channel_title,
-                    username=converted.channel_username,
-                )
+            async for msg in client.iter_messages(None, search=query, limit=limit):
+                converted = self._convert_telethon_message(msg)
+                if converted is None:
+                    continue
+                messages.append(converted)
+                if converted.channel_id not in seen_channels:
+                    seen_channels[converted.channel_id] = Channel(
+                        channel_id=converted.channel_id,
+                        title=converted.channel_title,
+                        username=converted.channel_username,
+                    )
 
-        for ch in seen_channels.values():
-            await self._db.add_channel(ch)
-        if messages:
-            await self._db.insert_messages_batch(messages)
+            for ch in seen_channels.values():
+                await self._db.add_channel(ch)
+            if messages:
+                await self._db.insert_messages_batch(messages)
 
-        return SearchResult(messages=messages, total=len(messages), query=query)
+            return SearchResult(messages=messages, total=len(messages), query=query)
+        finally:
+            await self._pool.release_client(phone)
 
     async def search_in_channel(
         self,
@@ -325,44 +333,47 @@ class SearchEngine:
                 error="Нет доступных Telegram-аккаунтов. Проверьте подключение.",
             )
 
-        client, _phone = result
+        client, phone = result
 
-        # Resolve entity: specific channel or None (all chats)
-        entity = None
-        if channel_id:
-            try:
-                entity = await client.get_entity(PeerChannel(channel_id))
-            except Exception as exc:
-                logger.warning("Cannot resolve channel %s: %s", channel_id, exc)
-                return SearchResult(
-                    messages=[], total=0, query=query,
-                    error=f"Не удалось найти канал {channel_id}: {exc}",
-                )
-        else:
-            # Pre-fetch entity cache for global search across own chats
-            await client.get_dialogs()
+        try:
+            # Resolve entity: specific channel or None (all chats)
+            entity = None
+            if channel_id:
+                try:
+                    entity = await client.get_entity(PeerChannel(channel_id))
+                except Exception as exc:
+                    logger.warning("Cannot resolve channel %s: %s", channel_id, exc)
+                    return SearchResult(
+                        messages=[], total=0, query=query,
+                        error=f"Не удалось найти канал {channel_id}: {exc}",
+                    )
+            else:
+                # Pre-fetch entity cache for global search across own chats
+                await client.get_dialogs()
 
-        messages: list[Message] = []
-        seen_channels: dict[int, Channel] = {}
+            messages: list[Message] = []
+            seen_channels: dict[int, Channel] = {}
 
-        async for msg in client.iter_messages(entity, search=query, limit=limit):
-            converted = self._convert_telethon_message(msg)
-            if converted is None:
-                continue
-            messages.append(converted)
-            if converted.channel_id not in seen_channels:
-                seen_channels[converted.channel_id] = Channel(
-                    channel_id=converted.channel_id,
-                    title=converted.channel_title,
-                    username=converted.channel_username,
-                )
+            async for msg in client.iter_messages(entity, search=query, limit=limit):
+                converted = self._convert_telethon_message(msg)
+                if converted is None:
+                    continue
+                messages.append(converted)
+                if converted.channel_id not in seen_channels:
+                    seen_channels[converted.channel_id] = Channel(
+                        channel_id=converted.channel_id,
+                        title=converted.channel_title,
+                        username=converted.channel_username,
+                    )
 
-        for ch in seen_channels.values():
-            await self._db.add_channel(ch)
-        if messages:
-            await self._db.insert_messages_batch(messages)
+            for ch in seen_channels.values():
+                await self._db.add_channel(ch)
+            if messages:
+                await self._db.insert_messages_batch(messages)
 
-        return SearchResult(messages=messages, total=len(messages), query=query)
+            return SearchResult(messages=messages, total=len(messages), query=query)
+        finally:
+            await self._pool.release_client(phone)
 
     @staticmethod
     def _resolve_sender(msg, chats_map, users_map) -> tuple[int | None, str | None]:
