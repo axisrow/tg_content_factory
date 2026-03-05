@@ -47,13 +47,14 @@ class Collector:
         self._config = config
         self._notifier = notifier
         self._running = False
+        self._stats_running = False
         self._cancel_event = asyncio.Event()
         self._lock = asyncio.Lock()
         self._stats_lock = asyncio.Lock()
 
     @property
     def is_running(self) -> bool:
-        return self._running
+        return self._running or self._stats_running
 
     async def cancel(self) -> None:
         self._cancel_event.set()
@@ -342,6 +343,10 @@ class Collector:
                     )
 
     async def collect_channel_stats(self, channel: Channel) -> ChannelStats | None:
+        async with self._stats_lock:
+            return await self._collect_channel_stats(channel)
+
+    async def _collect_channel_stats(self, channel: Channel) -> ChannelStats | None:
         result = await self._pool.get_available_client()
         if result is None:
             logger.error("No available clients for stats collection")
@@ -392,20 +397,23 @@ class Collector:
 
     async def collect_all_stats(self) -> dict:
         async with self._stats_lock:
-            self._running = True
+            self._stats_running = True
             try:
                 channels = await self._db.get_channels(active_only=True)
                 stats = {"channels": 0, "errors": 0}
                 for channel in channels:
                     try:
-                        await self.collect_channel_stats(channel)
-                        stats["channels"] += 1
+                        result = await self._collect_channel_stats(channel)
+                        if result is not None:
+                            stats["channels"] += 1
+                        else:
+                            stats["errors"] += 1
                     except Exception as e:
                         logger.error("Stats error for %s: %s", channel.channel_id, e)
                         stats["errors"] += 1
                 return stats
             finally:
-                self._running = False
+                self._stats_running = False
 
     @staticmethod
     def _get_sender_name(msg) -> str | None:
