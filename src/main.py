@@ -192,7 +192,15 @@ def cmd_channel(args: argparse.Namespace) -> None:
                 if not pool.clients:
                     logging.error("No connected accounts.")
                     return
-                info = await pool.resolve_channel(args.identifier.strip())
+                try:
+                    info = await pool.resolve_channel(args.identifier.strip())
+                except RuntimeError as exc:
+                    if str(exc) == "no_client":
+                        print("ERROR: Нет доступных аккаунтов Telegram.")
+                        return
+                    info = None
+                except Exception:
+                    info = None
                 if not info:
                     print(f"Could not resolve channel: {args.identifier}")
                     return
@@ -258,7 +266,14 @@ def cmd_channel(args: argparse.Namespace) -> None:
                 for ident in identifiers:
                     try:
                         info = await pool.resolve_channel(ident.strip())
-                    except Exception:
+                    except RuntimeError as exc:
+                        if str(exc) == "no_client":
+                            print("ERROR: Нет доступных аккаунтов Telegram. Импорт прерван.")
+                            failed += len(identifiers) - added - skipped - failed
+                            break
+                        info = None
+                    except Exception as exc:
+                        logging.warning("Failed to resolve '%s': %s", ident, exc)
                         info = None
                     if not info:
                         print(f"FAIL: {ident} — could not resolve")
@@ -282,6 +297,39 @@ def cmd_channel(args: argparse.Namespace) -> None:
 
                 print(f"\nTotal: {len(identifiers)}, Added: {added}, "
                       f"Skipped: {skipped}, Failed: {failed}")
+
+            elif args.channel_action == "stats":
+                from src.telegram.collector import Collector
+
+                _, pool = await _init_pool(config, db)
+                if not pool.clients:
+                    logging.error("No connected accounts.")
+                    return
+                collector = Collector(pool, db, config.scheduler)
+
+                if args.all:
+                    result = await collector.collect_all_stats()
+                    print(f"Stats collected: {result}")
+                elif not args.identifier:
+                    print("Specify a channel identifier or use --all")
+                    return
+                else:
+                    channels = await db.get_channels()
+                    ch = _resolve_channel(channels, args.identifier)
+                    if not ch:
+                        print(f"Channel '{args.identifier}' not found")
+                        return
+                    st = await collector.collect_channel_stats(ch)
+                    if st:
+                        print(
+                            f"Channel {ch.channel_id} ({ch.title}):\n"
+                            f"  Subscribers: {st.subscriber_count}\n"
+                            f"  Avg views: {st.avg_views}\n"
+                            f"  Avg reactions: {st.avg_reactions}\n"
+                            f"  Avg forwards: {st.avg_forwards}"
+                        )
+                    else:
+                        print("No client available to collect stats")
 
             elif args.channel_action == "collect":
                 from src.telegram.collector import Collector
@@ -518,6 +566,16 @@ def main() -> None:
 
     ch_collect = ch_sub.add_parser("collect", help="Collect single channel (full)")
     ch_collect.add_argument("identifier", help="Channel pk, channel_id, or @username")
+
+    ch_stats = ch_sub.add_parser("stats", help="Collect channel statistics")
+    ch_stats.add_argument(
+        "identifier", nargs="?", default=None,
+        help="Channel pk, channel_id, or @username",
+    )
+    ch_stats.add_argument(
+        "--all", action="store_true",
+        help="Collect stats for all active channels",
+    )
 
     ch_import = ch_sub.add_parser("import", help="Bulk import from file or text")
     ch_import.add_argument("source", help="Path to .txt/.csv file, or comma-separated identifiers")

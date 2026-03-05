@@ -70,6 +70,16 @@ class CollectionTask(BaseModel):
     completed_at: datetime | None = None
 
 
+class ChannelStats(BaseModel):
+    id: int | None = None
+    channel_id: int
+    subscriber_count: int | None = None
+    avg_views: float | None = None
+    avg_reactions: float | None = None
+    avg_forwards: float | None = None
+    collected_at: datetime | None = None
+
+
 class SearchResult(BaseModel):
     messages: list[Message]
     total: int
