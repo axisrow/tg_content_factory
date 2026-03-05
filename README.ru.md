@@ -12,6 +12,7 @@ Telegram Post Search & Monitoring — инструмент для сбора, п
 - Полнотекстовый поиск: локальная БД, напрямую в Telegram, AI-поиск (LLM)
 - Веб-панель (FastAPI + Pico CSS)
 - HTTP Basic Auth
+- Session cookie получает флаг `Secure` для HTTPS-запросов
 - Готов к запуску в Docker
 
 ## Быстрый старт
@@ -39,7 +40,7 @@ cp .env.example .env
 TG_API_ID=ваш_api_id
 TG_API_HASH=ваш_api_hash
 WEB_PASS=ваш_пароль
-SESSION_ENCRYPTION_KEY=    # опционально, рекомендуется для шифрования сессий аккаунтов
+SESSION_ENCRYPTION_KEY=    # нужен для шифрования session string аккаунтов в БД
 LLM_API_KEY=               # опционально, для AI-поиска
 ```
 
@@ -70,8 +71,10 @@ docker-compose up -d
 | `TG_API_ID` | Да | Telegram API ID |
 | `TG_API_HASH` | Да | Telegram API Hash |
 | `WEB_PASS` | Да | Пароль веб-панели |
-| `SESSION_ENCRYPTION_KEY` | Нет | Явный ключ для шифрования Telegram session string в БД |
+| `SESSION_ENCRYPTION_KEY` | Нет* | Явный ключ для шифрования Telegram session string в БД |
 | `LLM_API_KEY` | Нет | API-ключ для AI-поиска |
+
+`*` Если не задан, новые сессии сохраняются в plaintext. Если в БД уже есть зашифрованные сессии (`enc:v*`), приложение завершит старт с явной ошибкой до задания этого ключа.
 
 ### config.yaml
 

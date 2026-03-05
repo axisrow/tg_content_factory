@@ -52,7 +52,7 @@ Three layers: **CLI/Web** → **Telegram + Search + Scheduler** → **SQLite**
 - **Incremental collection**: `min_id = channel.last_collected_id`, `reverse=True`; after the loop, `last_collected_id` is updated to `max(seen message_ids)`
 - **Batch insert**: `INSERT OR IGNORE` + `UNIQUE(channel_id, message_id)` — duplicates silently skipped
 - **Cancellation**: `Collector._cancel_event` is an `asyncio.Event`, checked every 10 messages in the iter loop and at each channel boundary
-- **Session tokens**: custom HMAC-SHA256 signed tokens in `src/web/session.py` — payload is `{user, exp}`, secret persisted in DB settings table, cookie max-age 30 days
+- **Session tokens**: custom HMAC-SHA256 signed tokens in `src/web/session.py` — payload is `{user, exp}`, secret persisted in DB settings table, cookie max-age 30 days (`Secure` on HTTPS)
 - **CollectionQueue** (`src/collection_queue.py`): `asyncio.Queue` + single worker task, task status (`pending/running/completed/failed/cancelled`) tracked in DB
 - **DB migrations**: `_migrate()` in database.py uses `PRAGMA table_info` to detect missing columns and issues `ALTER TABLE ADD COLUMN` as needed
 - **Keyword matching**: plain text (case-insensitive substring) and regex (`re.IGNORECASE`)
@@ -66,4 +66,4 @@ Three layers: **CLI/Web** → **Telegram + Search + Scheduler** → **SQLite**
 - Web auth: HTTP Basic Auth (password only via `WEB_PASS`, username hardcoded as "admin")
 - ruff for linting: line-length=100, target py311, rules E/F/I/N/W
 - Tests: pytest-asyncio with `asyncio_mode="auto"`
-- Session strings stored encrypted in DB (cryptography package)
+- Session strings stored as `enc:v2:*` when `SESSION_ENCRYPTION_KEY` is set; legacy `enc:v1:*` auto-migrated; startup fails fast if encrypted rows exist without key

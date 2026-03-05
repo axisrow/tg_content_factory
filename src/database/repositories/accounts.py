@@ -39,27 +39,40 @@ class AccountsRepository:
         return cur.lastrowid or 0
 
     async def migrate_sessions(self) -> int:
-        """Encrypt any plaintext sessions in the DB. Returns number migrated."""
+        """Migrate plaintext and legacy encrypted sessions to the current format."""
         if not self._session_cipher:
             return 0
 
         cur = await self._db.execute("SELECT id, phone, session_string FROM accounts")
         rows = await cur.fetchall()
+        if not rows:
+            return 0
+
         migrated = 0
 
-        for row in rows:
-            raw_session = row["session_string"]
-            if not self._session_cipher.is_encrypted(raw_session):
-                encrypted = self._session_cipher.encrypt(raw_session)
-                await self._db.execute(
-                    "UPDATE accounts SET session_string = ? WHERE id = ?",
-                    (encrypted, row["id"]),
-                )
-                migrated += 1
-                logger.info("Migrated plaintext session for phone=%s", row["phone"])
+        try:
+            await self._db.execute("BEGIN")
+            for row in rows:
+                raw_session = row["session_string"]
+                try:
+                    migrated_value = self._session_cipher.encrypt(raw_session)
+                except ValueError as exc:
+                    raise RuntimeError(
+                        f"Failed to migrate session for phone={row['phone']}"
+                    ) from exc
 
-        if migrated:
+                if migrated_value != raw_session:
+                    await self._db.execute(
+                        "UPDATE accounts SET session_string = ? WHERE id = ?",
+                        (migrated_value, row["id"]),
+                    )
+                    migrated += 1
+                    logger.info("Migrated session format for phone=%s", row["phone"])
             await self._db.commit()
+        except Exception:
+            await self._db.rollback()
+            raise
+
         return migrated
 
     async def get_accounts(self, active_only: bool = False) -> list[Account]:

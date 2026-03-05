@@ -75,6 +75,7 @@ class BasicAuthMiddleware(BaseHTTPMiddleware):
                         max_age=COOKIE_MAX_AGE,
                         httponly=True,
                         samesite="lax",
+                        secure=request.url.scheme == "https",
                     )
                 return response
 

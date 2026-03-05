@@ -111,11 +111,9 @@ def resolve_session_encryption_secret(config: AppConfig) -> str | None:
     """
     if config.security.session_encryption_key:
         return config.security.session_encryption_key
-    if config.web.password:
-        return config.web.password
     logger.warning(
-        "No session encryption secret configured. "
-        "Sessions will be stored in plaintext. "
-        "Set SESSION_ENCRYPTION_KEY (recommended) or WEB_PASS."
+        "No SESSION_ENCRYPTION_KEY configured. "
+        "New account sessions will be stored in plaintext, and an encrypted DB will fail to start. "
+        "Set SESSION_ENCRYPTION_KEY."
     )
     return None

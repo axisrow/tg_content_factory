@@ -200,6 +200,28 @@ async def test_logout_clears_cookie(client):
 
 
 @pytest.mark.asyncio
+async def test_cookie_not_secure_on_http(client):
+    resp = await client.get("/", follow_redirects=False)
+    cookie_header = resp.headers.get("set-cookie", "")
+    assert "Secure" not in cookie_header
+
+
+@pytest.mark.asyncio
+async def test_cookie_secure_on_https(client):
+    transport = client._transport
+    auth_header = base64.b64encode(b":testpass").decode()
+    async with AsyncClient(
+        transport=transport,
+        base_url="https://test",
+        follow_redirects=False,
+        headers={"Authorization": f"Basic {auth_header}"},
+    ) as c:
+        resp = await c.get("/")
+        cookie_header = resp.headers.get("set-cookie", "")
+        assert "Secure" in cookie_header
+
+
+@pytest.mark.asyncio
 async def test_invalid_cookie_falls_back(unauth_client):
     unauth_client.cookies.set(COOKIE_NAME, "fake.token")
     resp = await unauth_client.get("/")
@@ -280,6 +302,18 @@ async def test_csrf_blocks_cross_origin_post(client):
         "/channels/add",
         data={"identifier": "@testchan"},
         headers={"Origin": "https://evil.example"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 403
+    assert "CSRF validation failed" in resp.text
+
+
+@pytest.mark.asyncio
+async def test_csrf_blocks_null_origin(client):
+    resp = await client.post(
+        "/channels/add",
+        data={"identifier": "@testchan"},
+        headers={"Origin": "null"},
         follow_redirects=False,
     )
     assert resp.status_code == 403

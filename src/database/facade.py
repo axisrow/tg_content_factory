@@ -36,11 +36,30 @@ class Database:
         self._channel_stats: ChannelStatsRepository | None = None
         self._settings: SettingsRepository | None = None
 
+    async def _has_encrypted_sessions(self) -> bool:
+        assert self._db is not None
+        cur = await self._db.execute(
+            """
+            SELECT 1
+            FROM accounts
+            WHERE session_string LIKE 'enc:v1:%'
+               OR session_string LIKE 'enc:v2:%'
+            LIMIT 1
+            """
+        )
+        return bool(await cur.fetchone())
+
     async def initialize(self) -> None:
         self._db = await self._connection.connect()
         await self._db.executescript(SCHEMA_SQL)
         await self._db.commit()
         await run_migrations(self._db)
+
+        if not self._session_encryption_secret and await self._has_encrypted_sessions():
+            raise RuntimeError(
+                "Encrypted account sessions found in DB but SESSION_ENCRYPTION_KEY is not set. "
+                "Set SESSION_ENCRYPTION_KEY to start the application."
+            )
 
         session_cipher = None
         if self._session_encryption_secret:
