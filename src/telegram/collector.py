@@ -344,7 +344,11 @@ class Collector:
 
     async def collect_channel_stats(self, channel: Channel) -> ChannelStats | None:
         async with self._stats_lock:
-            return await self._collect_channel_stats(channel)
+            self._stats_running = True
+            try:
+                return await self._collect_channel_stats(channel)
+            finally:
+                self._stats_running = False
 
     async def _collect_channel_stats(self, channel: Channel) -> ChannelStats | None:
         result = await self._pool.get_available_client()
