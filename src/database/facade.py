@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from datetime import datetime
+from typing import Any
+
 import aiosqlite
 
 from src.database.connection import DBConnection
@@ -8,6 +11,7 @@ from src.database.repositories.accounts import AccountsRepository
 from src.database.repositories.channel_stats import ChannelStatsRepository
 from src.database.repositories.channels import ChannelsRepository
 from src.database.repositories.collection_tasks import CollectionTasksRepository
+from src.database.repositories.filters import FilterRepository
 from src.database.repositories.keywords import KeywordsRepository
 from src.database.repositories.messages import MessagesRepository
 from src.database.repositories.search_log import SearchLogRepository
@@ -35,6 +39,7 @@ class Database:
         self._search_log: SearchLogRepository | None = None
         self._channel_stats: ChannelStatsRepository | None = None
         self._settings: SettingsRepository | None = None
+        self._filters: FilterRepository | None = None
 
     async def _has_encrypted_sessions(self) -> bool:
         assert self._db is not None
@@ -73,6 +78,7 @@ class Database:
         self._search_log = SearchLogRepository(self._db)
         self._channel_stats = ChannelStatsRepository(self._db)
         self._settings = SettingsRepository(self._db)
+        self._filters = FilterRepository(self._db)
 
         await self._accounts.migrate_sessions()
 
@@ -89,6 +95,12 @@ class Database:
     def db(self) -> aiosqlite.Connection | None:
         return self._db
 
+    @property
+    def filter_repo(self) -> FilterRepository:
+        self._require()
+        assert self._filters is not None
+        return self._filters
+
     def _require(self) -> None:
         if any(
             repo is None
@@ -101,6 +113,7 @@ class Database:
                 self._search_log,
                 self._channel_stats,
                 self._settings,
+                self._filters,
             )
         ):
             raise RuntimeError("Database.initialize() has not been called")
@@ -133,17 +146,25 @@ class Database:
         self._require()
         return await self._channels.add_channel(channel)
 
-    async def get_channels(self, active_only: bool = False) -> list[Channel]:
+    async def get_channels(
+        self, active_only: bool = False, include_filtered: bool = True
+    ) -> list[Channel]:
         self._require()
-        return await self._channels.get_channels(active_only)
+        return await self._channels.get_channels(active_only, include_filtered)
 
     async def get_channel_by_pk(self, pk: int) -> Channel | None:
         self._require()
         return await self._channels.get_channel_by_pk(pk)
 
-    async def get_channels_with_counts(self, active_only: bool = False) -> list[Channel]:
+    async def get_channel_by_channel_id(self, channel_id: int) -> Channel | None:
         self._require()
-        return await self._channels.get_channels_with_counts(active_only)
+        return await self._channels.get_channel_by_channel_id(channel_id)
+
+    async def get_channels_with_counts(
+        self, active_only: bool = False, include_filtered: bool = True
+    ) -> list[Channel]:
+        self._require()
+        return await self._channels.get_channels_with_counts(active_only, include_filtered)
 
     async def update_channel_last_id(self, channel_id: int, last_id: int) -> None:
         self._require()
@@ -152,6 +173,20 @@ class Database:
     async def set_channel_active(self, pk: int, active: bool) -> None:
         self._require()
         await self._channels.set_channel_active(pk, active)
+
+    async def set_channel_filtered(self, pk: int, filtered: bool) -> None:
+        self._require()
+        await self._channels.set_channel_filtered(pk, filtered)
+
+    async def set_channels_filtered_bulk(
+        self, updates: list[tuple[int, str]], *, commit: bool = True
+    ) -> int:
+        self._require()
+        return await self._channels.set_filtered_bulk(updates, commit=commit)
+
+    async def reset_all_channel_filters(self, *, commit: bool = True) -> int:
+        self._require()
+        return await self._channels.reset_all_filters(commit=commit)
 
     async def delete_channel(self, pk: int) -> None:
         self._require()
@@ -204,9 +239,23 @@ class Database:
         self._require()
         await self._keywords.delete_keyword(keyword_id)
 
-    async def create_collection_task(self, channel_id: int, channel_title: str | None) -> int:
+    async def create_collection_task(
+        self,
+        channel_id: int,
+        channel_title: str | None,
+        *,
+        run_after: datetime | None = None,
+        payload: dict[str, Any] | None = None,
+        parent_task_id: int | None = None,
+    ) -> int:
         self._require()
-        return await self._tasks.create_collection_task(channel_id, channel_title)
+        return await self._tasks.create_collection_task(
+            channel_id,
+            channel_title,
+            run_after=run_after,
+            payload=payload,
+            parent_task_id=parent_task_id,
+        )
 
     async def update_collection_task_progress(self, task_id: int, messages_collected: int) -> None:
         self._require()
@@ -229,6 +278,32 @@ class Database:
     async def get_collection_tasks(self, limit: int = 20) -> list[CollectionTask]:
         self._require()
         return await self._tasks.get_collection_tasks(limit)
+
+    async def get_active_stats_task(self) -> CollectionTask | None:
+        self._require()
+        return await self._tasks.get_active_stats_task()
+
+    async def claim_next_due_stats_task(self, now: datetime) -> CollectionTask | None:
+        self._require()
+        return await self._tasks.claim_next_due_stats_task(now)
+
+    async def create_stats_continuation_task(
+        self,
+        *,
+        payload: dict[str, Any],
+        run_after: datetime | None,
+        parent_task_id: int,
+    ) -> int:
+        self._require()
+        return await self._tasks.create_stats_continuation_task(
+            payload=payload,
+            run_after=run_after,
+            parent_task_id=parent_task_id,
+        )
+
+    async def requeue_running_stats_tasks_on_startup(self, now: datetime) -> int:
+        self._require()
+        return await self._tasks.requeue_running_stats_tasks_on_startup(now)
 
     async def cancel_collection_task(self, task_id: int) -> bool:
         self._require()

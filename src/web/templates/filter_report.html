@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block title %}Отчёт фильтрации — TG Post Search{% endblock %}
+{% block content %}
+<h1>Отчёт анализа каналов</h1>
+
+<p>Всего каналов: <strong>{{ report.total_channels }}</strong>, подлежат фильтрации: <strong>{{ report.filtered_count }}</strong></p>
+
+{% if report.results %}
+<div style="overflow-x:auto">
+<table>
+    <thead>
+        <tr>
+            <th>ID канала</th>
+            <th>Название</th>
+            <th>Сообщений</th>
+            <th>Уникальность %</th>
+            <th>Подписчики/Посты</th>
+            <th>Кириллица %</th>
+            <th>Короткие %</th>
+            <th>Кросс-дубли %</th>
+            <th>Флаги</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for r in report.results %}
+        <tr{% if r.is_filtered %} style="background-color: rgba(255,0,0,0.05)"{% endif %}>
+            <td>{{ r.channel_id }}</td>
+            <td>{{ r.title or "-" }}</td>
+            <td>{{ r.message_count }}</td>
+            <td>{{ "%.1f"|format(r.uniqueness_pct) if r.uniqueness_pct is not none else "-" }}</td>
+            <td>{{ "%.2f"|format(r.subscriber_ratio) if r.subscriber_ratio is not none else "-" }}</td>
+            <td>{{ "%.1f"|format(r.cyrillic_pct) if r.cyrillic_pct is not none else "-" }}</td>
+            <td>{{ "%.1f"|format(r.short_msg_pct) if r.short_msg_pct is not none else "-" }}</td>
+            <td>{{ "%.1f"|format(r.cross_dupe_pct) if r.cross_dupe_pct is not none else "-" }}</td>
+            <td>
+                {% if r.flags %}
+                    {% for flag in r.flags %}
+                        <mark style="margin-right:0.25rem">{{ flag }}</mark>
+                    {% endfor %}
+                {% else %}
+                    -
+                {% endif %}
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+</div>
+
+<div style="display:flex; gap:0.5rem; margin-top:1rem">
+    <form method="post" action="/channels/filter/apply">
+        <input type="hidden" name="snapshot" value="1">
+        {% for r in report.results if r.is_filtered %}
+        <input type="hidden" name="selected" value="{{ r.channel_id }}|{{ r.flags|join(',') }}">
+        {% endfor %}
+        <button type="submit">Применить фильтры ({{ report.filtered_count }} каналов)</button>
+    </form>
+    <a href="/channels" role="button" class="secondary">Назад к каналам</a>
+</div>
+{% else %}
+<p>Нет каналов для анализа.</p>
+{% endif %}
+{% endblock %}

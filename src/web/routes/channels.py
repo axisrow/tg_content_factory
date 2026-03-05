@@ -13,7 +13,10 @@ router = APIRouter()
 @router.get("/", response_class=HTMLResponse)
 async def channels_list(request: Request):
     service = deps.channel_service(request)
-    channels, keywords, latest_stats = await service.list_for_page()
+    show_all = request.query_params.get("view") == "all"
+    channels, keywords, latest_stats = await service.list_for_page(
+        include_filtered=show_all
+    )
     error = request.query_params.get("error")
     msg = request.query_params.get("msg")
     return deps.get_templates(request).TemplateResponse(
@@ -25,6 +28,7 @@ async def channels_list(request: Request):
             "latest_stats": latest_stats,
             "error": error,
             "msg": msg,
+            "show_all": show_all,
         },
     )
 

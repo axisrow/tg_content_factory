@@ -25,6 +25,24 @@ async def run_migrations(db: aiosqlite.Connection) -> None:
     if "channel_type" not in ch_columns:
         await db.execute("ALTER TABLE channels ADD COLUMN channel_type TEXT")
         await db.commit()
+    if "is_filtered" not in ch_columns:
+        await db.execute("ALTER TABLE channels ADD COLUMN is_filtered INTEGER DEFAULT 0")
+        await db.commit()
+    if "filter_flags" not in ch_columns:
+        await db.execute("ALTER TABLE channels ADD COLUMN filter_flags TEXT DEFAULT ''")
+        await db.commit()
+
+    cur = await db.execute("PRAGMA table_info(collection_tasks)")
+    task_columns = {row["name"] for row in await cur.fetchall()}
+    if "run_after" not in task_columns:
+        await db.execute("ALTER TABLE collection_tasks ADD COLUMN run_after TEXT")
+        await db.commit()
+    if "payload" not in task_columns:
+        await db.execute("ALTER TABLE collection_tasks ADD COLUMN payload TEXT")
+        await db.commit()
+    if "parent_task_id" not in task_columns:
+        await db.execute("ALTER TABLE collection_tasks ADD COLUMN parent_task_id INTEGER")
+        await db.commit()
 
     await db.execute(
         """

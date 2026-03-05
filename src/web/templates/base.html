@@ -49,13 +49,23 @@
         task_cancelled: "Задача отменена.",
         already_running: "Сбор уже запущен.",
         triggered: "Сбор запущен вручную.",
-        keyword_toggled: "Статус ключевого слова изменён."
+        keyword_toggled: "Статус ключевого слова изменён.",
+        filter_toggled: "Фильтр канала изменён.",
+        filter_applied: "Фильтры применены.",
+        filter_reset: "Фильтры сброшены.",
+        channel_not_found: "Канал не найден.",
+        stats_collection_started: "Сбор статистики запущен в фоне.",
+        stats_collection_queued: "Сбор статистики поставлен в очередь.",
+        search_triggered: "Поиск запущен."
     };
     var errors = {
         resolve: "Не удалось найти канал. Проверьте username или ссылку.",
         no_client: "Нет подключённых аккаунтов для поиска канала.",
         collecting: "Сбор уже выполняется. Дождитесь завершения.",
-        shutting_down: "Приложение завершает работу."
+        shutting_down: "Приложение завершает работу.",
+        stats_running: "Сбор статистики уже выполняется.",
+        channel_filtered: "Канал помечен как бесполезный и исключён из сбора.",
+        filter_snapshot_required: "Сначала выполните анализ фильтров и примените его из отчёта."
     };
     var params = new URLSearchParams(window.location.search);
     var code = params.get("msg");

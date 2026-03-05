@@ -23,7 +23,7 @@ def run(args: argparse.Namespace) -> None:
                 if not channels:
                     print("No channels found.")
                     return
-                fmt = "{:<5} {:<15} {:<25} {:<12} {:<8} {:<10} {:<12}"
+                fmt = "{:<5} {:<15} {:<25} {:<12} {:<8} {:<10} {:<12} {:<20}"
                 header = (
                     "ID",
                     "Channel ID",
@@ -32,10 +32,15 @@ def run(args: argparse.Namespace) -> None:
                     "Active",
                     "Messages",
                     "Last msg ID",
+                    "Filter",
                 )
                 print(fmt.format(*header))
-                print("-" * 90)
+                print("-" * 110)
                 for ch in channels:
+                    if ch.is_filtered:
+                        filt = ch.filter_flags if ch.filter_flags else "Yes"
+                    else:
+                        filt = "-"
                     print(
                         fmt.format(
                             ch.id or 0,
@@ -45,6 +50,7 @@ def run(args: argparse.Namespace) -> None:
                             "Yes" if ch.is_active else "No",
                             ch.message_count,
                             ch.last_collected_id,
+                            filt,
                         )
                     )
 
@@ -196,6 +202,13 @@ def run(args: argparse.Namespace) -> None:
                 ch = resolve_channel(channels, args.identifier)
                 if not ch:
                     print(f"Channel '{args.identifier}' not found")
+                    return
+                if ch.is_filtered:
+                    title = ch.title or ch.channel_id
+                    print(
+                        f"Channel '{title}' is filtered"
+                        " and excluded from collection"
+                    )
                     return
                 task_id = await db.create_collection_task(ch.channel_id, ch.title)
                 await db.update_collection_task(task_id, "running")

@@ -105,7 +105,11 @@
                     {% elif t.status == 'cancelled' %}
                         Отменена
                     {% else %}
-                        Ожидание
+                        {% if t.run_after %}
+                            Ожидание до {{ t.run_after.strftime('%Y-%m-%d %H:%M:%S UTC') }}
+                        {% else %}
+                            Ожидание
+                        {% endif %}
                     {% endif %}
                 </td>
                 <td>{{ t.messages_collected }}</td>
@@ -138,5 +142,11 @@ document.querySelectorAll('form[action$="/trigger"], form[action$="/start"], for
         btn.disabled = true;
     });
 });
+
+{% if has_active_tasks %}
+setTimeout(function() {
+    window.location.reload();
+}, 5000);
+{% endif %}
 </script>
 {% endblock %}

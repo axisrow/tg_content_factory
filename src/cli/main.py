@@ -5,6 +5,7 @@ import sys
 from dotenv import load_dotenv
 
 from src.cli.commands import account, channel, collect, keyword, scheduler, search, serve
+from src.cli.commands import filter as filter_cmd
 from src.cli.parser import build_parser
 from src.cli.runtime import setup_logging
 
@@ -21,6 +22,7 @@ def main() -> None:
         "collect": collect.run,
         "search": search.run,
         "channel": channel.run,
+        "filter": filter_cmd.run,
         "keyword": keyword.run,
         "account": account.run,
         "scheduler": scheduler.run,
@@ -30,6 +32,7 @@ def main() -> None:
     if handler:
         sub_attr = {
             "channel": "channel_action",
+            "filter": "filter_action",
             "keyword": "keyword_action",
             "account": "account_action",
             "scheduler": "scheduler_action",

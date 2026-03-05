@@ -20,6 +20,7 @@ from src.database import Database
 from src.scheduler.manager import SchedulerManager
 from src.search.ai_search import AISearchEngine
 from src.search.engine import SearchEngine
+from src.services.stats_task_dispatcher import StatsTaskDispatcher
 from src.telegram.auth import TelegramAuth
 from src.telegram.client_pool import ClientPool
 from src.telegram.collector import Collector
@@ -151,6 +152,11 @@ async def lifespan(app: FastAPI):
     collection_queue = CollectionQueue(collector, db)
     app.state.collection_queue = collection_queue
 
+    # Deferred stats dispatcher
+    stats_dispatcher = StatsTaskDispatcher(collector, db, default_batch_size=20)
+    await stats_dispatcher.start()
+    app.state.stats_dispatcher = stats_dispatcher
+
     # Search engines
     search_engine = SearchEngine(db, pool)
     app.state.search_engine = search_engine
@@ -178,6 +184,7 @@ async def lifespan(app: FastAPI):
         app.state.shutting_down = True
         logger.info("Shutting down...")
         for name, coro in [
+            ("stats_dispatcher", stats_dispatcher.stop()),
             ("scheduler", scheduler.stop()),
             ("collector", collector.cancel()),
             ("collection_queue", collection_queue.shutdown()),
@@ -253,6 +260,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
     from src.web.routes.channel_collection import router as channel_collection_router
     from src.web.routes.channels import router as channels_router
     from src.web.routes.dashboard import router as dashboard_router
+    from src.web.routes.filter import router as filter_router
     from src.web.routes.import_channels import router as import_router
     from src.web.routes.keywords import router as keywords_router
     from src.web.routes.scheduler import router as scheduler_router
@@ -263,6 +271,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
     app.include_router(dashboard_router, prefix="/dashboard")
     app.include_router(auth_router, prefix="/auth")
     app.include_router(channels_router, prefix="/channels")
+    app.include_router(filter_router, prefix="/channels")
     app.include_router(keywords_router, prefix="/channels")
     app.include_router(channel_collection_router, prefix="/channels")
     app.include_router(import_router, prefix="/channels")

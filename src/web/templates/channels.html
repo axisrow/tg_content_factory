@@ -21,10 +21,19 @@
     </form>
 </article>
 
-{% if channels %}
-<div style="margin-bottom: 1rem;">
+{% if channels or show_all %}
+<div style="margin-bottom: 1rem; display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
+    <a href="/channels" role="button" class="{{ '' if show_all else 'secondary' }} outline" style="padding: 0.25rem 0.75rem;">Активные</a>
+    <a href="/channels?view=all" role="button" class="{{ 'secondary' if show_all else '' }} outline" style="padding: 0.25rem 0.75rem;">Все каналы</a>
+    <span style="flex:1"></span>
+    <form method="post" action="/channels/filter/analyze" style="display:inline">
+        <button type="submit" class="outline" style="padding: 0.25rem 0.75rem;">Анализ фильтров</button>
+    </form>
+    <form method="post" action="/channels/filter/reset" style="display:inline">
+        <button type="submit" class="secondary outline" style="padding: 0.25rem 0.75rem;">Сброс фильтров</button>
+    </form>
     <form method="post" action="/channels/stats/all" style="display:inline">
-        <button type="submit" class="outline" style="padding: 0.25rem 0.75rem;">Обновить всю статистику</button>
+        <button type="submit" class="outline" style="padding: 0.25rem 0.75rem;">Обновить статистику</button>
     </form>
 </div>
 <div style="overflow-x:auto">
@@ -41,13 +50,14 @@
             <th>Avg просмотры</th>
             <th>Avg реакции</th>
             <th>Avg репосты</th>
+            <th>Фильтр</th>
             <th>Действия</th>
         </tr>
     </thead>
     <tbody>
         {% for ch in channels %}
         {% set st = latest_stats.get(ch.channel_id) if latest_stats else None %}
-        <tr>
+        <tr{% if ch.is_filtered %} style="opacity: 0.6"{% endif %}>
             <td>{{ ch.channel_id }}</td>
             <td>{{ ch.title or "—" }}</td>
             <td>{% if ch.username %}<a href="https://t.me/{{ ch.username }}" target="_blank" rel="noopener">@{{ ch.username }}</a>{% else %}—{% endif %}</td>
@@ -58,10 +68,34 @@
             <td>{{ "%.1f"|format(st.avg_views) if st and st.avg_views is not none else "—" }}</td>
             <td>{{ "%.1f"|format(st.avg_reactions) if st and st.avg_reactions is not none else "—" }}</td>
             <td>{{ "%.1f"|format(st.avg_forwards) if st and st.avg_forwards is not none else "—" }}</td>
+            <td>
+                {% if ch.is_filtered %}
+                    {% if ch.filter_flags %}
+                        {% for flag in ch.filter_flags.split(',') %}
+                            <mark>{{ flag.strip() }}</mark>
+                        {% endfor %}
+                    {% else %}
+                        <mark>Отфильтрован</mark>
+                    {% endif %}
+                {% else %}
+                    -
+                {% endif %}
+            </td>
             <td style="white-space:nowrap">
-                <form method="post" action="/channels/{{ ch.id }}/collect" style="display:inline">
-                    <button type="submit" class="outline" style="padding: 0.25rem 0.5rem; margin: 0;">Загрузить</button>
+                <form method="post" action="/channels/{{ ch.id }}/filter-toggle" style="display:inline">
+                    <button type="submit" class="outline" style="padding: 0.25rem 0.5rem; margin: 0;">
+                        {{ "Вернуть" if ch.is_filtered else "Скрыть" }}
+                    </button>
                 </form>
+                {% if ch.is_filtered %}
+                    <button type="button" class="outline" disabled style="padding: 0.25rem 0.5rem; margin: 0;">
+                        Загрузить
+                    </button>
+                {% else %}
+                    <form method="post" action="/channels/{{ ch.id }}/collect" style="display:inline">
+                        <button type="submit" class="outline" style="padding: 0.25rem 0.5rem; margin: 0;">Загрузить</button>
+                    </form>
+                {% endif %}
                 <form method="post" action="/channels/{{ ch.id }}/stats" style="display:inline">
                     <button type="submit" class="outline" style="padding: 0.25rem 0.5rem; margin: 0;">Стата</button>
                 </form>

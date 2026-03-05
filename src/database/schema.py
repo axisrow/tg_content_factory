@@ -51,6 +51,9 @@ CREATE TABLE IF NOT EXISTS collection_tasks (
     status TEXT DEFAULT 'pending',
     messages_collected INTEGER DEFAULT 0,
     error TEXT,
+    run_after TEXT,
+    payload TEXT,
+    parent_task_id INTEGER,
     created_at TEXT DEFAULT (datetime('now')),
     started_at TEXT,
     completed_at TEXT

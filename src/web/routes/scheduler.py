@@ -20,6 +20,7 @@ async def scheduler_page(request: Request):
     db = deps.get_db(request)
     msg = request.query_params.get("msg")
     tasks = await db.get_collection_tasks()
+    has_active_tasks = any(t.status in ("pending", "running") for t in tasks)
     search_log = await db.get_recent_searches()
     return deps.get_templates(request).TemplateResponse(
         request,
@@ -35,6 +36,7 @@ async def scheduler_page(request: Request):
             "collecting_now": collector.is_running,
             "msg": msg,
             "tasks": tasks,
+            "has_active_tasks": has_active_tasks,
             "search_log": search_log,
         },
     )

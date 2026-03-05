@@ -39,6 +39,12 @@ class ChannelsRepository:
             username=row["username"],
             channel_type=row["channel_type"],
             is_active=bool(row["is_active"]),
+            is_filtered=bool(row["is_filtered"]) if "is_filtered" in keys else False,
+            filter_flags=(
+                row["filter_flags"]
+                if "filter_flags" in keys and row["filter_flags"]
+                else ""
+            ),
             last_collected_id=row["last_collected_id"],
             added_at=datetime.fromisoformat(row["added_at"]) if row["added_at"] else None,
             message_count=(
@@ -48,10 +54,17 @@ class ChannelsRepository:
             ),
         )
 
-    async def get_channels(self, active_only: bool = False) -> list[Channel]:
-        sql = "SELECT * FROM channels"
+    async def get_channels(
+        self, active_only: bool = False, include_filtered: bool = True
+    ) -> list[Channel]:
+        conditions = []
         if active_only:
-            sql += " WHERE is_active = 1"
+            conditions.append("is_active = 1")
+        if not include_filtered:
+            conditions.append("is_filtered = 0")
+        sql = "SELECT * FROM channels"
+        if conditions:
+            sql += " WHERE " + " AND ".join(conditions)
         sql += " ORDER BY id ASC"
         cur = await self._db.execute(sql)
         rows = await cur.fetchall()
@@ -64,7 +77,19 @@ class ChannelsRepository:
             return None
         return self._map_channel(row)
 
-    async def get_channels_with_counts(self, active_only: bool = False) -> list[Channel]:
+    async def get_channel_by_channel_id(self, channel_id: int) -> Channel | None:
+        cur = await self._db.execute(
+            "SELECT * FROM channels WHERE channel_id = ?",
+            (channel_id,),
+        )
+        row = await cur.fetchone()
+        if not row:
+            return None
+        return self._map_channel(row)
+
+    async def get_channels_with_counts(
+        self, active_only: bool = False, include_filtered: bool = True
+    ) -> list[Channel]:
         sql = """
             SELECT c.*, COALESCE(cnt.total, 0) AS message_count
             FROM channels c
@@ -72,8 +97,13 @@ class ChannelsRepository:
                 SELECT channel_id, COUNT(*) AS total FROM messages GROUP BY channel_id
             ) cnt ON c.channel_id = cnt.channel_id
         """
+        conditions = []
         if active_only:
-            sql += " WHERE c.is_active = 1"
+            conditions.append("c.is_active = 1")
+        if not include_filtered:
+            conditions.append("c.is_filtered = 0")
+        if conditions:
+            sql += " WHERE " + " AND ".join(conditions)
         sql += " ORDER BY c.id ASC"
         cur = await self._db.execute(sql)
         rows = await cur.fetchall()
@@ -91,6 +121,46 @@ class ChannelsRepository:
             "UPDATE channels SET is_active = ? WHERE id = ?", (int(active), pk)
         )
         await self._db.commit()
+
+    async def set_channel_filtered(self, pk: int, filtered: bool) -> None:
+        if filtered:
+            await self._db.execute(
+                "UPDATE channels SET is_filtered = 1, filter_flags = 'manual' WHERE id = ?",
+                (pk,),
+            )
+        else:
+            await self._db.execute(
+                "UPDATE channels SET is_filtered = 0, filter_flags = '' WHERE id = ?",
+                (pk,),
+            )
+        await self._db.commit()
+
+    async def set_filtered_bulk(
+        self, updates: list[tuple[int, str]], *, commit: bool = True
+    ) -> int:
+        if not updates:
+            return 0
+        updated_rows = 0
+        for channel_id, flags_csv in updates:
+            cur = await self._db.execute(
+                "UPDATE channels SET is_filtered = 1, filter_flags = ? WHERE channel_id = ?",
+                (flags_csv, channel_id),
+            )
+            rowcount = cur.rowcount if cur.rowcount is not None else 0
+            if rowcount > 0:
+                updated_rows += rowcount
+        if commit:
+            await self._db.commit()
+        return updated_rows
+
+    async def reset_all_filters(self, *, commit: bool = True) -> int:
+        cur = await self._db.execute(
+            "UPDATE channels SET is_filtered = 0, filter_flags = ''"
+        )
+        if commit:
+            await self._db.commit()
+        rowcount = cur.rowcount if cur.rowcount is not None else 0
+        return rowcount if rowcount > 0 else 0
 
     async def delete_channel(self, pk: int) -> None:
         cur = await self._db.execute("SELECT channel_id FROM channels WHERE id = ?", (pk,))

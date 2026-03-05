@@ -4,7 +4,7 @@ import asyncio
 import logging
 import re
 from collections.abc import Awaitable, Callable
-from datetime import timezone
+from datetime import datetime, timezone
 
 from telethon.errors import FloodWaitError
 from telethon.tl.functions.channels import GetFullChannelRequest
@@ -34,6 +34,22 @@ from src.telegram.notifier import Notifier
 logger = logging.getLogger(__name__)
 
 
+class NoActiveStatsClientsError(RuntimeError):
+    """Raised when there are no active connected clients for stats collection."""
+
+
+class AllStatsClientsFloodedError(RuntimeError):
+    """Raised when all active connected clients are in flood-wait."""
+
+    def __init__(self, retry_after_sec: int, next_available_at: datetime):
+        super().__init__(
+            "All active clients are flood-waited until "
+            f"{next_available_at.isoformat()} (retry in {retry_after_sec}s)"
+        )
+        self.retry_after_sec = retry_after_sec
+        self.next_available_at = next_available_at
+
+
 class Collector:
     def __init__(
         self,
@@ -56,6 +72,17 @@ class Collector:
     def is_running(self) -> bool:
         return self._running or self._stats_running
 
+    @property
+    def is_stats_running(self) -> bool:
+        return self._stats_running
+
+    @property
+    def delay_between_channels_sec(self) -> int:
+        return self._config.delay_between_channels_sec
+
+    async def get_stats_availability(self):
+        return await self._pool.get_stats_availability()
+
     async def cancel(self) -> None:
         self._cancel_event.set()
 
@@ -70,7 +97,19 @@ class Collector:
         full: bool = False,
         progress_callback: Callable[[int], Awaitable[None]] | None = None,
     ) -> int:
-        """Collect messages from a single channel. If full=True, reset last_collected_id to 0."""
+        """Collect messages from a single channel. If full=True, reset last_collected_id to 0.
+
+        This is the canonical entry point for is_filtered checks in the
+        collection path.  Other callers (CollectionQueue, CLI, web routes)
+        may also guard against filtered channels earlier for better UX,
+        but this check is the authoritative gate.
+        """
+        if channel.is_filtered:
+            logger.info(
+                "Skipping collection for channel %d: channel is filtered",
+                channel.channel_id,
+            )
+            return 0
         async with self._lock:
             self._running = True
             self._cancel_event.clear()
@@ -102,11 +141,13 @@ class Collector:
             stats = {"channels": 0, "messages": 0, "errors": 0}
 
             try:
-                channels = await self._db.get_channels(active_only=True)
+                channels = await self._db.get_channels(
+                    active_only=True, include_filtered=False
+                )
                 if not channels:
-                    logger.info("No active channels to collect")
+                    logger.info("No active unfiltered channels to collect")
                     return stats
-                logger.info("Found %d active channels to collect", len(channels))
+                logger.info("Found %d active unfiltered channels to collect", len(channels))
 
                 # Pre-fetch dialogs to populate Telethon entity cache.
                 # StringSession loses entity cache between restarts, so
@@ -292,11 +333,13 @@ class Collector:
         if flood_wait_sec is not None:
             await self._pool.report_flood(phone, flood_wait_sec)
             if flood_wait_sec <= self._config.max_flood_wait_sec:
-                # Re-read channel from DB to get updated last_collected_id
-                channels = await self._db.get_channels()
-                updated = next(
-                    (c for c in channels if c.channel_id == channel_id), None
-                )
+                # Re-read channel from DB to get updated last_collected_id.
+                # Use get_channel_by_pk (no filtering) — collection already
+                # started, so we must finish even if the channel was filtered
+                # in the meantime.
+                updated = None
+                if channel.id is not None:
+                    updated = await self._db.get_channel_by_pk(channel.id)
                 if updated:
                     return len(all_messages) + await self._collect_channel(
                         updated, progress_callback=progress_callback
@@ -347,74 +390,117 @@ class Collector:
             self._stats_running = True
             try:
                 return await self._collect_channel_stats(channel)
+            except (AllStatsClientsFloodedError, NoActiveStatsClientsError):
+                logger.error("No available clients for stats collection")
+                return None
             finally:
                 self._stats_running = False
 
     async def _collect_channel_stats(self, channel: Channel) -> ChannelStats | None:
-        result = await self._pool.get_available_client()
-        if result is None:
-            logger.error("No available clients for stats collection")
-            return None
-        client, phone = result
-        try:
-            if channel.username:
-                entity = await client.get_entity(channel.username)
-            else:
-                entity = await client.get_entity(PeerChannel(channel.channel_id))
-
-            full = await client(GetFullChannelRequest(entity))
-            subscriber_count = getattr(full.full_chat, "participants_count", None)
-
-            views_list, reactions_list, forwards_list = [], [], []
-            async for msg in client.iter_messages(entity, limit=50):
-                if getattr(msg, "views", None) is not None:
-                    views_list.append(msg.views)
-                if getattr(msg, "forwards", None) is not None:
-                    forwards_list.append(msg.forwards)
-                reactions = getattr(msg, "reactions", None)
-                if reactions:
-                    total = sum(
-                        getattr(r, "count", 0)
-                        for r in getattr(reactions, "results", [])
+        while True:
+            result = await self._pool.get_available_client()
+            if result is None:
+                availability_fn = getattr(self._pool, "get_stats_availability", None)
+                if not callable(availability_fn):
+                    raise NoActiveStatsClientsError("No active connected clients")
+                availability_result = availability_fn()
+                if not asyncio.iscoroutine(availability_result):
+                    raise NoActiveStatsClientsError("No active connected clients")
+                availability = await availability_result
+                if (
+                    availability.state == "all_flooded"
+                    and availability.retry_after_sec is not None
+                    and availability.next_available_at_utc is not None
+                ):
+                    raise AllStatsClientsFloodedError(
+                        retry_after_sec=availability.retry_after_sec,
+                        next_available_at=availability.next_available_at_utc,
                     )
-                    reactions_list.append(total)
+                raise NoActiveStatsClientsError("No active connected clients")
 
-            stats = ChannelStats(
-                channel_id=channel.channel_id,
-                subscriber_count=subscriber_count,
-                avg_views=sum(views_list) / len(views_list) if views_list else None,
-                avg_reactions=(
-                    sum(reactions_list) / len(reactions_list) if reactions_list else None
-                ),
-                avg_forwards=(
-                    sum(forwards_list) / len(forwards_list) if forwards_list else None
-                ),
-            )
-            await self._db.save_channel_stats(stats)
-            return stats
-        except FloodWaitError as e:
-            logger.warning("Flood wait %ds for stats on %s", e.seconds, channel.channel_id)
-            await self._pool.report_flood(phone, e.seconds)
-            return None
-        finally:
-            await self._pool.release_client(phone)
+            client, phone = result
+            try:
+                if channel.username:
+                    entity = await client.get_entity(channel.username)
+                else:
+                    entity = await client.get_entity(PeerChannel(channel.channel_id))
+
+                full = await client(GetFullChannelRequest(entity))
+                subscriber_count = getattr(full.full_chat, "participants_count", None)
+
+                views_list, reactions_list, forwards_list = [], [], []
+                async for msg in client.iter_messages(
+                    entity,
+                    limit=50,
+                    wait_time=self._config.delay_between_requests_sec,
+                ):
+                    if getattr(msg, "views", None) is not None:
+                        views_list.append(msg.views)
+                    if getattr(msg, "forwards", None) is not None:
+                        forwards_list.append(msg.forwards)
+                    reactions = getattr(msg, "reactions", None)
+                    if reactions:
+                        total = sum(
+                            getattr(r, "count", 0)
+                            for r in getattr(reactions, "results", [])
+                        )
+                        reactions_list.append(total)
+
+                stats = ChannelStats(
+                    channel_id=channel.channel_id,
+                    subscriber_count=subscriber_count,
+                    avg_views=sum(views_list) / len(views_list) if views_list else None,
+                    avg_reactions=(
+                        sum(reactions_list) / len(reactions_list)
+                        if reactions_list else None
+                    ),
+                    avg_forwards=(
+                        sum(forwards_list) / len(forwards_list) if forwards_list else None
+                    ),
+                )
+                await self._db.save_channel_stats(stats)
+                return stats
+            except FloodWaitError as e:
+                logger.warning(
+                    "Flood wait %ds for stats on %s via %s",
+                    e.seconds, channel.channel_id, phone,
+                )
+                await self._pool.report_flood(phone, e.seconds)
+            finally:
+                await self._pool.release_client(phone)
 
     async def collect_all_stats(self) -> dict:
         async with self._stats_lock:
             self._stats_running = True
             try:
-                channels = await self._db.get_channels(active_only=True)
+                channels = await self._db.get_channels(
+                    active_only=True, include_filtered=False
+                )
                 stats = {"channels": 0, "errors": 0}
-                for channel in channels:
-                    try:
-                        result = await self._collect_channel_stats(channel)
-                        if result is not None:
+                for idx, channel in enumerate(channels):
+                    while True:
+                        try:
+                            await self._collect_channel_stats(channel)
                             stats["channels"] += 1
-                        else:
+                            break
+                        except AllStatsClientsFloodedError as e:
+                            logger.warning(
+                                "All clients are flood-waited for stats. "
+                                "Waiting %ds until %s",
+                                e.retry_after_sec,
+                                e.next_available_at.isoformat(),
+                            )
+                            await asyncio.sleep(e.retry_after_sec)
+                        except NoActiveStatsClientsError:
+                            logger.error("No active connected clients for stats collection")
+                            stats["errors"] += len(channels) - idx
+                            return stats
+                        except Exception as e:
+                            logger.error("Stats error for %s: %s", channel.channel_id, e)
                             stats["errors"] += 1
-                    except Exception as e:
-                        logger.error("Stats error for %s: %s", channel.channel_id, e)
-                        stats["errors"] += 1
+                            break
+                    if idx < len(channels) - 1:
+                        await asyncio.sleep(self._config.delay_between_channels_sec)
                 return stats
             finally:
                 self._stats_running = False

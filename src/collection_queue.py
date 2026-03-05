@@ -51,6 +51,22 @@ class CollectionQueue:
                 self._queue.task_done()
                 continue
 
+            # Channel may become filtered after being queued.
+            fresh_channel = None
+            if channel.id is not None:
+                fresh_channel = await self._db.get_channel_by_pk(channel.id)
+            if fresh_channel is not None:
+                channel = fresh_channel
+            if channel.is_filtered:
+                await self._db.cancel_collection_task(task_id)
+                logger.info(
+                    "Task %d skipped: channel %d is filtered",
+                    task_id,
+                    channel.channel_id,
+                )
+                self._queue.task_done()
+                continue
+
             self._current_task_id = task_id
             try:
                 await self._db.update_collection_task(task_id, "running")
