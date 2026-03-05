@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from datetime import datetime
+from typing import Any
+
 import aiosqlite
 
 from src.database.connection import DBConnection
@@ -153,6 +156,10 @@ class Database:
         self._require()
         return await self._channels.get_channel_by_pk(pk)
 
+    async def get_channel_by_channel_id(self, channel_id: int) -> Channel | None:
+        self._require()
+        return await self._channels.get_channel_by_channel_id(channel_id)
+
     async def get_channels_with_counts(
         self, active_only: bool = False, include_filtered: bool = True
     ) -> list[Channel]:
@@ -232,9 +239,23 @@ class Database:
         self._require()
         await self._keywords.delete_keyword(keyword_id)
 
-    async def create_collection_task(self, channel_id: int, channel_title: str | None) -> int:
+    async def create_collection_task(
+        self,
+        channel_id: int,
+        channel_title: str | None,
+        *,
+        run_after: datetime | None = None,
+        payload: dict[str, Any] | None = None,
+        parent_task_id: int | None = None,
+    ) -> int:
         self._require()
-        return await self._tasks.create_collection_task(channel_id, channel_title)
+        return await self._tasks.create_collection_task(
+            channel_id,
+            channel_title,
+            run_after=run_after,
+            payload=payload,
+            parent_task_id=parent_task_id,
+        )
 
     async def update_collection_task_progress(self, task_id: int, messages_collected: int) -> None:
         self._require()
@@ -257,6 +278,32 @@ class Database:
     async def get_collection_tasks(self, limit: int = 20) -> list[CollectionTask]:
         self._require()
         return await self._tasks.get_collection_tasks(limit)
+
+    async def get_active_stats_task(self) -> CollectionTask | None:
+        self._require()
+        return await self._tasks.get_active_stats_task()
+
+    async def claim_next_due_stats_task(self, now: datetime) -> CollectionTask | None:
+        self._require()
+        return await self._tasks.claim_next_due_stats_task(now)
+
+    async def create_stats_continuation_task(
+        self,
+        *,
+        payload: dict[str, Any],
+        run_after: datetime | None,
+        parent_task_id: int,
+    ) -> int:
+        self._require()
+        return await self._tasks.create_stats_continuation_task(
+            payload=payload,
+            run_after=run_after,
+            parent_task_id=parent_task_id,
+        )
+
+    async def requeue_running_stats_tasks_on_startup(self, now: datetime) -> int:
+        self._require()
+        return await self._tasks.requeue_running_stats_tasks_on_startup(now)
 
     async def cancel_collection_task(self, task_id: int) -> bool:
         self._require()

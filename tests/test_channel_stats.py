@@ -2,6 +2,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from telethon.errors import FloodWaitError
 
 from src.config import SchedulerConfig
 from src.models import Channel, ChannelStats
@@ -128,6 +129,41 @@ async def test_collect_channel_stats_success(db):
     saved = await db.get_channel_stats(-100123)
     assert len(saved) == 1
     assert saved[0].subscriber_count == 5000
+    assert mock_client.iter_messages.call_args.kwargs["wait_time"] == 1
+
+
+@pytest.mark.asyncio
+async def test_collect_channel_stats_rotates_on_flood_wait(db):
+    ch = Channel(channel_id=-100321, title="Rotate", username="rotate_chan")
+    await db.add_channel(ch)
+
+    flood_err = FloodWaitError(request=None, capture=0)
+    flood_err.seconds = 60
+
+    client1 = AsyncMock()
+    client1.get_entity = AsyncMock(side_effect=flood_err)
+
+    mock_entity = SimpleNamespace()
+    mock_full_chat = SimpleNamespace(participants_count=123)
+    mock_full = SimpleNamespace(full_chat=mock_full_chat)
+    client2 = AsyncMock()
+    client2.get_entity = AsyncMock(return_value=mock_entity)
+    client2.return_value = mock_full
+    client2.iter_messages = MagicMock(return_value=_AsyncIterMessages([]))
+
+    pool = make_mock_pool(
+        get_available_client=AsyncMock(
+            side_effect=[(client1, "+7001"), (client2, "+7002")]
+        )
+    )
+
+    collector = Collector(pool, db, SchedulerConfig())
+    result = await collector.collect_channel_stats(ch)
+
+    assert result is not None
+    assert result.subscriber_count == 123
+    pool.report_flood.assert_awaited_once_with("+7001", 60)
+    client2.get_entity.assert_awaited_once_with("rotate_chan")
 
 
 @pytest.mark.asyncio

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any
 
 from pydantic import BaseModel
 
@@ -67,6 +68,9 @@ class CollectionTask(BaseModel):
     status: str = "pending"  # pending / running / completed / failed / cancelled
     messages_collected: int = 0
     error: str | None = None
+    run_after: datetime | None = None
+    payload: dict[str, Any] | None = None
+    parent_task_id: int | None = None
     created_at: datetime | None = None
     started_at: datetime | None = None
     completed_at: datetime | None = None

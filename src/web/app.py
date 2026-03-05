@@ -20,6 +20,7 @@ from src.database import Database
 from src.scheduler.manager import SchedulerManager
 from src.search.ai_search import AISearchEngine
 from src.search.engine import SearchEngine
+from src.services.stats_task_dispatcher import StatsTaskDispatcher
 from src.telegram.auth import TelegramAuth
 from src.telegram.client_pool import ClientPool
 from src.telegram.collector import Collector
@@ -151,6 +152,11 @@ async def lifespan(app: FastAPI):
     collection_queue = CollectionQueue(collector, db)
     app.state.collection_queue = collection_queue
 
+    # Deferred stats dispatcher
+    stats_dispatcher = StatsTaskDispatcher(collector, db, default_batch_size=20)
+    await stats_dispatcher.start()
+    app.state.stats_dispatcher = stats_dispatcher
+
     # Search engines
     search_engine = SearchEngine(db, pool)
     app.state.search_engine = search_engine
@@ -178,6 +184,7 @@ async def lifespan(app: FastAPI):
         app.state.shutting_down = True
         logger.info("Shutting down...")
         for name, coro in [
+            ("stats_dispatcher", stats_dispatcher.stop()),
             ("scheduler", scheduler.stop()),
             ("collector", collector.cancel()),
             ("collection_queue", collection_queue.shutdown()),

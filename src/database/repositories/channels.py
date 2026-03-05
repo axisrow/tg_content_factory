@@ -77,6 +77,16 @@ class ChannelsRepository:
             return None
         return self._map_channel(row)
 
+    async def get_channel_by_channel_id(self, channel_id: int) -> Channel | None:
+        cur = await self._db.execute(
+            "SELECT * FROM channels WHERE channel_id = ?",
+            (channel_id,),
+        )
+        row = await cur.fetchone()
+        if not row:
+            return None
+        return self._map_channel(row)
+
     async def get_channels_with_counts(
         self, active_only: bool = False, include_filtered: bool = True
     ) -> list[Channel]:

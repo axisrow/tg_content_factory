@@ -1,3 +1,4 @@
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -21,6 +22,36 @@ async def test_pool_get_available_no_clients(db):
     pool = ClientPool(auth, db)
     result = await pool.get_available_client()
     assert result is None
+
+
+@pytest.mark.asyncio
+async def test_stats_availability_no_connected_active(db):
+    await db.add_account(Account(phone="+70000000001", session_string="s1", is_primary=True))
+    auth = MagicMock()
+    pool = ClientPool(auth, db)
+
+    availability = await pool.get_stats_availability()
+    assert availability.state == "no_connected_active"
+    assert availability.retry_after_sec is None
+
+
+@pytest.mark.asyncio
+async def test_stats_availability_all_flooded(db):
+    acc = Account(phone="+70000000002", session_string="s2", is_primary=True)
+    await db.add_account(acc)
+
+    auth = MagicMock()
+    pool = ClientPool(auth, db)
+    pool.clients["+70000000002"] = AsyncMock()
+
+    until = datetime.now(timezone.utc) + timedelta(seconds=120)
+    await db.update_account_flood("+70000000002", until)
+
+    availability = await pool.get_stats_availability()
+    assert availability.state == "all_flooded"
+    assert availability.retry_after_sec is not None
+    assert availability.retry_after_sec >= 1
+    assert availability.next_available_at_utc is not None
 
 
 @pytest.mark.asyncio

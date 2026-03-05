@@ -5,6 +5,7 @@ import base64
 import io
 import logging
 import re
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 from telethon import TelegramClient
@@ -15,6 +16,13 @@ from src.models import TelegramUserInfo
 from src.telegram.auth import TelegramAuth
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class StatsClientAvailability:
+    state: str  # "available" | "all_flooded" | "no_connected_active"
+    retry_after_sec: int | None = None
+    next_available_at_utc: datetime | None = None
 
 
 class ClientPool:
@@ -56,10 +64,8 @@ class ClientPool:
             for acc in accounts:
                 if acc.phone in self._in_use:
                     continue
-                if (
-                    acc.flood_wait_until
-                    and acc.flood_wait_until.replace(tzinfo=timezone.utc) > now
-                ):
+                flood_until = self._normalize_utc(acc.flood_wait_until)
+                if flood_until and flood_until > now:
                     continue
                 if acc.phone in self.clients:
                     self._in_use.add(acc.phone)
@@ -68,15 +74,40 @@ class ClientPool:
             # Fallback: if all clients are in use, return any non-flood-waited client
             # (allows the same client to be shared when there's only one account)
             for acc in accounts:
-                if (
-                    acc.flood_wait_until
-                    and acc.flood_wait_until.replace(tzinfo=timezone.utc) > now
-                ):
+                flood_until = self._normalize_utc(acc.flood_wait_until)
+                if flood_until and flood_until > now:
                     continue
                 if acc.phone in self.clients:
                     return self.clients[acc.phone], acc.phone
 
             return None
+
+    async def get_stats_availability(self) -> StatsClientAvailability:
+        """Describe stats client availability for batch scheduling decisions."""
+        async with self._lock:
+            now = datetime.now(timezone.utc)
+            accounts = await self._db.get_accounts(active_only=True)
+            connected = [acc for acc in accounts if acc.phone in self.clients]
+            if not connected:
+                return StatsClientAvailability(state="no_connected_active")
+
+            earliest: datetime | None = None
+            for acc in connected:
+                flood_until = self._normalize_utc(acc.flood_wait_until)
+                if flood_until is None or flood_until <= now:
+                    return StatsClientAvailability(state="available")
+                if earliest is None or flood_until < earliest:
+                    earliest = flood_until
+
+            if earliest is None:
+                return StatsClientAvailability(state="no_connected_active")
+
+            retry_after_sec = max(1, int((earliest - now).total_seconds()))
+            return StatsClientAvailability(
+                state="all_flooded",
+                retry_after_sec=retry_after_sec,
+                next_available_at_utc=earliest,
+            )
 
     async def release_client(self, phone: str) -> None:
         """Mark client as no longer in active use."""
@@ -109,6 +140,14 @@ class ClientPool:
     async def disconnect_all(self) -> None:
         for phone in list(self.clients):
             await self.remove_client(phone)
+
+    @staticmethod
+    def _normalize_utc(value: datetime | None) -> datetime | None:
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
 
     async def get_users_info(self) -> list[TelegramUserInfo]:
         """Get info about all connected Telegram accounts."""
@@ -220,4 +259,3 @@ class ClientPool:
             return dialogs
         finally:
             await self.release_client(phone)
-

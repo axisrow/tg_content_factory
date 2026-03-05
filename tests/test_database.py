@@ -753,3 +753,67 @@ async def test_migrate_adds_is_premium_column(tmp_path):
     assert accounts[0].is_premium is False
 
     await database.close()
+
+
+@pytest.mark.asyncio
+async def test_stats_task_claim_and_continuation(db):
+    now = datetime.now(timezone.utc)
+    payload = {
+        "task_kind": "stats_all",
+        "channel_ids": [-1001, -1002],
+        "next_index": 0,
+        "batch_size": 20,
+        "channels_ok": 0,
+        "channels_err": 0,
+    }
+    tid = await db.create_collection_task(
+        0,
+        "Обновление статистики",
+        run_after=now,
+        payload=payload,
+    )
+
+    claimed = await db.claim_next_due_stats_task(now)
+    assert claimed is not None
+    assert claimed.id == tid
+    assert claimed.status == "running"
+    assert claimed.payload is not None
+    assert claimed.payload["task_kind"] == "stats_all"
+
+    continuation_id = await db.create_stats_continuation_task(
+        payload={**payload, "next_index": 1},
+        run_after=now,
+        parent_task_id=tid,
+    )
+    continuation = await db.get_collection_task(continuation_id)
+    assert continuation is not None
+    assert continuation.parent_task_id == tid
+    assert continuation.status == "pending"
+    assert continuation.payload is not None
+    assert continuation.payload["next_index"] == 1
+
+
+@pytest.mark.asyncio
+async def test_requeue_running_stats_tasks_on_startup(db):
+    payload = {
+        "task_kind": "stats_all",
+        "channel_ids": [],
+        "next_index": 0,
+        "batch_size": 20,
+        "channels_ok": 0,
+        "channels_err": 0,
+    }
+    tid = await db.create_collection_task(
+        0,
+        "Обновление статистики",
+        payload=payload,
+    )
+    await db.update_collection_task(tid, "running")
+
+    requeued = await db.requeue_running_stats_tasks_on_startup(datetime.now(timezone.utc))
+    assert requeued == 1
+
+    task = await db.get_collection_task(tid)
+    assert task is not None
+    assert task.status == "pending"
+    assert task.run_after is not None

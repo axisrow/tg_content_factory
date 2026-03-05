@@ -29,27 +29,40 @@ async def collect_channel(request: Request, pk: int):
 
 @router.post("/stats/all")
 async def collect_all_stats(request: Request):
+    if getattr(request.app.state, "shutting_down", False):
+        return RedirectResponse(url="/channels?error=shutting_down", status_code=303)
+
     collector = deps.get_collector(request)
-    if collector.is_stats_running:
+    db = deps.get_db(request)
+    existing = await db.get_active_stats_task()
+    if existing:
         return RedirectResponse(url="/channels?error=stats_running", status_code=303)
 
-    db = deps.get_db(request)
-    task_id = await db.create_collection_task(0, "Обновление статистики")
-    await db.update_collection_task(task_id, "running")
-
-    async def _run_all_stats():
-        try:
-            stats = await collector.collect_all_stats()
-            count = stats.get("channels", 0) if stats else 0
-            await db.update_collection_task(task_id, "completed", messages_collected=count)
-        except Exception as exc:
-            logger.exception("collect_all_stats failed")
-            await db.update_collection_task(task_id, "failed", error=str(exc))
-
-    task = BackgroundTask(_run_all_stats)
-    return RedirectResponse(
-        url="/channels?msg=stats_collection_started", status_code=303, background=task
+    channels = await db.get_channels(active_only=True, include_filtered=False)
+    latest_stats = await db.get_latest_stats_for_all()
+    channels_without_stats = [
+        ch for ch in channels if ch.channel_id not in latest_stats
+    ]
+    channels_with_stats = [
+        ch for ch in channels if ch.channel_id in latest_stats
+    ]
+    ordered_channels = channels_without_stats + channels_with_stats
+    payload = {
+        "task_kind": "stats_all",
+        "channel_ids": [ch.channel_id for ch in ordered_channels],
+        "next_index": 0,
+        "batch_size": 20,
+        "channels_ok": 0,
+        "channels_err": 0,
+    }
+    await db.create_collection_task(
+        0,
+        "Обновление статистики",
+        payload=payload,
     )
+
+    msg = "stats_collection_queued" if collector.is_running else "stats_collection_started"
+    return RedirectResponse(url=f"/channels?msg={msg}", status_code=303)
 
 
 @router.post("/{pk}/stats")

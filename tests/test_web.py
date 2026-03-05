@@ -598,6 +598,83 @@ async def test_collect_filtered_channel_is_blocked(client):
 
 
 @pytest.mark.asyncio
+async def test_stats_all_creates_pending_task(client):
+    db = client._transport.app.state.db
+
+    resp = await client.post("/channels/stats/all", follow_redirects=False)
+    assert resp.status_code == 303
+    assert "msg=stats_collection_started" in resp.headers["location"]
+
+    tasks = await db.get_collection_tasks()
+    assert len(tasks) == 1
+    assert tasks[0].channel_id == 0
+    assert tasks[0].status == "pending"
+    assert tasks[0].payload is not None
+    assert tasks[0].payload["task_kind"] == "stats_all"
+
+
+@pytest.mark.asyncio
+async def test_stats_all_queued_when_collector_running(client):
+    app = client._transport.app.state
+    db = app.db
+    app.collector._running = True
+    try:
+        resp = await client.post("/channels/stats/all", follow_redirects=False)
+    finally:
+        app.collector._running = False
+
+    assert resp.status_code == 303
+    assert "msg=stats_collection_queued" in resp.headers["location"]
+
+    tasks = await db.get_collection_tasks()
+    assert len(tasks) == 1
+    assert tasks[0].status == "pending"
+
+
+@pytest.mark.asyncio
+async def test_stats_all_blocks_duplicate_active_task(client):
+    db = client._transport.app.state.db
+    payload = {
+        "task_kind": "stats_all",
+        "channel_ids": [],
+        "next_index": 0,
+        "batch_size": 20,
+        "channels_ok": 0,
+        "channels_err": 0,
+    }
+    await db.create_collection_task(0, "Обновление статистики", payload=payload)
+
+    resp = await client.post("/channels/stats/all", follow_redirects=False)
+    assert resp.status_code == 303
+    assert "error=stats_running" in resp.headers["location"]
+
+
+@pytest.mark.asyncio
+async def test_stats_all_prioritizes_channels_without_stats(client):
+    from src.models import Channel, ChannelStats
+
+    db = client._transport.app.state.db
+    await db.add_channel(Channel(channel_id=-100901, title="With stats"))
+    await db.add_channel(Channel(channel_id=-100902, title="No stats 1"))
+    await db.add_channel(Channel(channel_id=-100903, title="No stats 2"))
+
+    await db.save_channel_stats(
+        ChannelStats(channel_id=-100901, subscriber_count=1)
+    )
+
+    resp = await client.post("/channels/stats/all", follow_redirects=False)
+    assert resp.status_code == 303
+    assert "msg=stats_collection_started" in resp.headers["location"]
+
+    tasks = await db.get_collection_tasks()
+    payload = tasks[0].payload
+    assert payload is not None
+    channel_ids = payload["channel_ids"]
+    assert channel_ids.index(-100901) > channel_ids.index(-100902)
+    assert channel_ids.index(-100901) > channel_ids.index(-100903)
+
+
+@pytest.mark.asyncio
 async def test_search_results_have_tg_links(client):
     """Search results contain links to original Telegram messages."""
     from datetime import datetime, timezone

@@ -4,6 +4,7 @@ from src.services.collection_service import CollectionService
 from src.services.keyword_service import KeywordService
 from src.services.scheduler_service import SchedulerService
 from src.services.search_service import SearchService
+from src.services.stats_task_dispatcher import StatsTaskDispatcher
 
 __all__ = [
     "AccountService",
@@ -12,4 +13,5 @@ __all__ = [
     "KeywordService",
     "SchedulerService",
     "SearchService",
+    "StatsTaskDispatcher",
 ]
