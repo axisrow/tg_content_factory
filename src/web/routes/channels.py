@@ -140,8 +140,10 @@ async def collect_stats(request: Request, pk: int):
     channel = next((ch for ch in channels if ch.id == pk), None)
     if not channel:
         return RedirectResponse(url="/channels", status_code=303)
-    await collector.collect_channel_stats(channel)
-    return RedirectResponse(url="/channels?msg=stats_collected", status_code=303)
+    task = BackgroundTask(collector.collect_channel_stats, channel)
+    return RedirectResponse(
+        url="/channels?msg=stats_collection_started", status_code=303, background=task
+    )
 
 
 @router.post("/keywords/add")

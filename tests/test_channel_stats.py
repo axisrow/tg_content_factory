@@ -34,6 +34,23 @@ async def test_save_and_get_channel_stats(db):
 
 
 @pytest.mark.asyncio
+async def test_delete_channel_removes_stats(db):
+    ch = Channel(channel_id=-100123, title="Test")
+    await db.add_channel(ch)
+    channels = await db.get_channels()
+    pk = channels[0].id
+
+    await db.save_channel_stats(
+        ChannelStats(channel_id=-100123, subscriber_count=5000)
+    )
+    assert len(await db.get_channel_stats(-100123)) == 1
+
+    await db.delete_channel(pk)
+
+    assert len(await db.get_channel_stats(-100123)) == 0
+
+
+@pytest.mark.asyncio
 async def test_get_latest_stats_for_all(db):
     ch1 = Channel(channel_id=-100111, title="Ch1")
     ch2 = Channel(channel_id=-100222, title="Ch2")
@@ -226,9 +243,7 @@ async def test_stats_web_endpoint(tmp_path):
     ) as c:
         resp = await c.post(f"/channels/{pk}/stats")
         assert resp.status_code == 303
-        assert "msg=stats_collected" in resp.headers["location"]
-
-    collector.collect_channel_stats.assert_awaited_once()
+        assert "msg=stats_collection_started" in resp.headers["location"]
     await db.close()
 
 
@@ -260,10 +275,12 @@ async def test_collect_all_stats(db):
     assert result["errors"] == 0
 
 
-@pytest.mark.asyncio
-async def test_cli_channel_stats_no_args(db, capsys):
+def test_cli_channel_stats_no_args(capsys):
     """Calling `channel stats` without identifier or --all should not crash."""
     import argparse
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    from src.main import cmd_channel
 
     args = argparse.Namespace(
         config="config.yaml",
@@ -272,26 +289,26 @@ async def test_cli_channel_stats_no_args(db, capsys):
         all=False,
     )
 
-    # cmd_channel calls asyncio.run internally, but we're already in an event loop.
-    # Instead, test the guard logic directly by extracting the inner _run.
-    # We monkeypatch _init_db to return our test db.
-    from unittest.mock import patch
+    mock_db = AsyncMock()
+    mock_db.close = AsyncMock()
+
+    mock_pool = MagicMock()
+    mock_pool.clients = {"phone": True}
+    mock_pool.disconnect_all = AsyncMock()
 
     async def fake_init_db(config_path):
         from src.config import AppConfig
 
-        return AppConfig(), db
+        return AppConfig(), mock_db
 
-    with patch("src.main._init_db", fake_init_db):
-        # Call the inner logic directly
-        config, test_db = await fake_init_db(args.config)
-        # Simulate the stats branch guard
-        if args.all:
-            pass
-        elif not args.identifier:
-            print("Specify a channel identifier or use --all")
-        else:
-            pass
+    async def fake_init_pool(config, db):
+        return config, mock_pool
+
+    with (
+        patch("src.main._init_db", fake_init_db),
+        patch("src.main._init_pool", fake_init_pool),
+    ):
+        cmd_channel(args)
 
     captured = capsys.readouterr()
     assert "Specify a channel identifier or use --all" in captured.out

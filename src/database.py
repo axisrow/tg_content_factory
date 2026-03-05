@@ -315,8 +315,12 @@ class Database:
             "SELECT channel_id FROM channels WHERE id = ?", (pk,)
         )
         if row:
+            channel_id = row[0][0]
             await self._db.execute(
-                "DELETE FROM messages WHERE channel_id = ?", (row[0][0],)
+                "DELETE FROM messages WHERE channel_id = ?", (channel_id,)
+            )
+            await self._db.execute(
+                "DELETE FROM channel_stats WHERE channel_id = ?", (channel_id,)
             )
         await self._db.execute("DELETE FROM channels WHERE id = ?", (pk,))
         await self._db.commit()

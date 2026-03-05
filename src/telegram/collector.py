@@ -49,6 +49,7 @@ class Collector:
         self._running = False
         self._cancel_event = asyncio.Event()
         self._lock = asyncio.Lock()
+        self._stats_lock = asyncio.Lock()
 
     @property
     def is_running(self) -> bool:
@@ -390,7 +391,7 @@ class Collector:
             await self._pool.release_client(phone)
 
     async def collect_all_stats(self) -> dict:
-        async with self._lock:
+        async with self._stats_lock:
             self._running = True
             try:
                 channels = await self._db.get_channels(active_only=True)
