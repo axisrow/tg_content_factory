@@ -59,14 +59,20 @@ class Database:
         return self._db
 
     def _require(self) -> None:
-        assert self._accounts is not None
-        assert self._channels is not None
-        assert self._messages is not None
-        assert self._keywords is not None
-        assert self._tasks is not None
-        assert self._search_log is not None
-        assert self._channel_stats is not None
-        assert self._settings is not None
+        if any(
+            repo is None
+            for repo in (
+                self._accounts,
+                self._channels,
+                self._messages,
+                self._keywords,
+                self._tasks,
+                self._search_log,
+                self._channel_stats,
+                self._settings,
+            )
+        ):
+            raise RuntimeError("Database.initialize() has not been called")
 
     async def add_account(self, account: Account) -> int:
         self._require()

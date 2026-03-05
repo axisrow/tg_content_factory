@@ -6,20 +6,18 @@ from src.cli import runtime
 from src.cli.commands import account, channel, collect, keyword, scheduler, search, serve
 from src.cli.main import main
 
-
-async def _init_db(config_path: str):
-    return await runtime.init_db(config_path)
-
-
-async def _init_pool(config, db):
-    return await runtime.init_pool(config, db)
-
+_init_db = runtime.init_db
+_init_pool = runtime.init_pool
 
 def setup_logging() -> None:
     runtime.setup_logging()
 
 
 def _run_with_legacy_runtime(handler, args: argparse.Namespace) -> None:
+    if runtime.init_db is _init_db and runtime.init_pool is _init_pool:
+        handler(args)
+        return
+
     old_init_db = runtime.init_db
     old_init_pool = runtime.init_pool
     runtime.init_db = _init_db

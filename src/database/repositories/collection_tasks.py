@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 import aiosqlite
 
@@ -33,7 +33,7 @@ class CollectionTasksRepository:
         messages_collected: int | None = None,
         error: str | None = None,
     ) -> None:
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(tz=timezone.utc).isoformat()
         sets = ["status = ?"]
         params: list = [status]
         if status == "running":
@@ -95,7 +95,7 @@ class CollectionTasksRepository:
         ]
 
     async def cancel_collection_task(self, task_id: int) -> bool:
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(tz=timezone.utc).isoformat()
         cur = await self._db.execute(
             "UPDATE collection_tasks SET status = 'cancelled', completed_at = ? "
             "WHERE id = ? AND status IN ('pending', 'running')",

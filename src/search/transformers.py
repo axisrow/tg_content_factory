@@ -3,10 +3,61 @@ from __future__ import annotations
 from datetime import timezone
 
 from src.models import Message
-from src.telegram.collector import Collector
 
 
 class TelegramMessageTransformer:
+    @staticmethod
+    def media_type_from_message(msg) -> str | None:
+        from telethon.tl.types import (
+            DocumentAttributeAnimated,
+            DocumentAttributeAudio,
+            DocumentAttributeSticker,
+            DocumentAttributeVideo,
+            MessageMediaContact,
+            MessageMediaDice,
+            MessageMediaDocument,
+            MessageMediaGame,
+            MessageMediaGeo,
+            MessageMediaGeoLive,
+            MessageMediaPhoto,
+            MessageMediaPoll,
+            MessageMediaWebPage,
+        )
+
+        media = msg.media
+        if media is None:
+            return None
+        if isinstance(media, MessageMediaPhoto):
+            return "photo"
+        if isinstance(media, MessageMediaDocument):
+            doc = media.document
+            if doc and hasattr(doc, "attributes"):
+                for attr in doc.attributes:
+                    if isinstance(attr, DocumentAttributeSticker):
+                        return "sticker"
+                    if isinstance(attr, DocumentAttributeVideo):
+                        return "video_note" if getattr(attr, "round_message", False) else "video"
+                    if isinstance(attr, DocumentAttributeAudio):
+                        return "voice" if getattr(attr, "voice", False) else "audio"
+                    if isinstance(attr, DocumentAttributeAnimated):
+                        return "gif"
+            return "document"
+        if isinstance(media, MessageMediaWebPage):
+            return "web_page"
+        if isinstance(media, MessageMediaGeo):
+            return "location"
+        if isinstance(media, MessageMediaGeoLive):
+            return "geo_live"
+        if isinstance(media, MessageMediaContact):
+            return "contact"
+        if isinstance(media, MessageMediaPoll):
+            return "poll"
+        if isinstance(media, MessageMediaDice):
+            return "dice"
+        if isinstance(media, MessageMediaGame):
+            return "game"
+        return "unknown"
+
     @staticmethod
     def convert_telethon_message(msg) -> Message | None:
         chat = getattr(msg, "chat", None)
@@ -36,7 +87,7 @@ class TelegramMessageTransformer:
             sender_id=sender_id,
             sender_name=sender_name,
             text=getattr(msg, "message", None) or getattr(msg, "text", None),
-            media_type=Collector._get_media_type(msg),
+            media_type=TelegramMessageTransformer.media_type_from_message(msg),
             date=date,
             channel_title=chat_title,
             channel_username=chat_username,

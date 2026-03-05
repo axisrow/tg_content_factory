@@ -7,7 +7,6 @@ from src.models import Channel, Message, SearchResult
 from src.search.persistence import SearchPersistence
 from src.search.transformers import TelegramMessageTransformer
 from src.telegram.client_pool import ClientPool
-from src.telegram.collector import Collector
 
 try:
     from telethon.tl.types import PeerChannel
@@ -32,6 +31,15 @@ class TelegramSearch:
 
         client, phone = result
         try:
+            return await self._check_search_quota_with_client(client, query)
+        except Exception as exc:
+            logger.debug("checkSearchPostsFlood unavailable: %s", exc)
+            return None
+        finally:
+            await self._pool.release_client(phone)
+
+    async def _check_search_quota_with_client(self, client, query: str = "") -> dict | None:
+        try:
             from telethon.tl.functions.channels import CheckSearchPostsFloodRequest
 
             r = await client(CheckSearchPostsFloodRequest(query=query))
@@ -45,8 +53,6 @@ class TelegramSearch:
         except Exception as exc:
             logger.debug("checkSearchPostsFlood unavailable: %s", exc)
             return None
-        finally:
-            await self._pool.release_client(phone)
 
     async def search_telegram(self, query: str, limit: int = 50) -> SearchResult:
         if not self._pool:
@@ -75,7 +81,7 @@ class TelegramSearch:
                     ),
                 )
 
-            quota = await self.check_search_quota(query)
+            quota = await self._check_search_quota_with_client(client, query)
             if quota and quota.get("remains") == 0 and not quota.get("query_is_free"):
                 return SearchResult(
                     messages=[],
@@ -148,7 +154,7 @@ class TelegramSearch:
                         sender_id=sender_id,
                         sender_name=sender_name,
                         text=getattr(msg, "message", None),
-                        media_type=Collector._get_media_type(msg),
+                        media_type=TelegramMessageTransformer.media_type_from_message(msg),
                         date=msg.date.replace(tzinfo=timezone.utc)
                         if msg.date and msg.date.tzinfo is None
                         else msg.date,

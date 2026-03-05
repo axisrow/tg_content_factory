@@ -12,13 +12,10 @@ async def collect_channel(request: Request, pk: int):
     if getattr(request.app.state, "shutting_down", False):
         return RedirectResponse(url="/channels?error=shutting_down", status_code=303)
 
-    queue = deps.get_queue(request)
-    db = deps.get_db(request)
-    channels = await db.get_channels()
-    channel = next((ch for ch in channels if ch.id == pk), None)
-    if not channel:
+    service = deps.collection_service(request)
+    ok = await service.enqueue_channel_by_pk(pk)
+    if not ok:
         return RedirectResponse(url="/channels", status_code=303)
-    await queue.enqueue(channel)
 
     collector = deps.get_collector(request)
     msg = "collect_queued" if collector.is_running else "collect_started"
