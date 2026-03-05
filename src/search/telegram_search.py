@@ -1,0 +1,263 @@
+from __future__ import annotations
+
+import logging
+from datetime import timezone
+
+from src.models import Channel, Message, SearchResult
+from src.search.persistence import SearchPersistence
+from src.search.transformers import TelegramMessageTransformer
+from src.telegram.client_pool import ClientPool
+from src.telegram.collector import Collector
+
+try:
+    from telethon.tl.types import PeerChannel
+except ImportError:  # pragma: no cover
+    PeerChannel = None  # type: ignore[assignment,misc]
+
+logger = logging.getLogger(__name__)
+
+
+class TelegramSearch:
+    def __init__(self, pool: ClientPool | None, persistence: SearchPersistence):
+        self._pool = pool
+        self._persistence = persistence
+
+    async def check_search_quota(self, query: str = "") -> dict | None:
+        if not self._pool:
+            return None
+
+        result = await self._pool.get_available_client()
+        if result is None:
+            return None
+
+        client, phone = result
+        try:
+            from telethon.tl.functions.channels import CheckSearchPostsFloodRequest
+
+            r = await client(CheckSearchPostsFloodRequest(query=query))
+            return {
+                "total_daily": getattr(r, "total_daily", None),
+                "remains": getattr(r, "remains", None),
+                "wait_till": getattr(r, "wait_till", None),
+                "query_is_free": getattr(r, "query_is_free", False),
+                "stars_amount": getattr(r, "stars_amount", None),
+            }
+        except Exception as exc:
+            logger.debug("checkSearchPostsFlood unavailable: %s", exc)
+            return None
+        finally:
+            await self._pool.release_client(phone)
+
+    async def search_telegram(self, query: str, limit: int = 50) -> SearchResult:
+        if not self._pool:
+            return SearchResult(messages=[], total=0, query=query, error="Нет подключённых Telegram-аккаунтов.")
+
+        result = await self._pool.get_available_client()
+        if result is None:
+            return SearchResult(
+                messages=[],
+                total=0,
+                query=query,
+                error="Нет доступных Telegram-аккаунтов. Проверьте подключение.",
+            )
+
+        client, phone = result
+        try:
+            me = await client.get_me()
+            if not getattr(me, "premium", False):
+                return SearchResult(
+                    messages=[],
+                    total=0,
+                    query=query,
+                    error=(
+                        "Глобальный поиск по публичным каналам требует Telegram Premium. "
+                        f"Аккаунт {phone} не имеет подписки Premium."
+                    ),
+                )
+
+            quota = await self.check_search_quota(query)
+            if quota and quota.get("remains") == 0 and not quota.get("query_is_free"):
+                return SearchResult(
+                    messages=[],
+                    total=0,
+                    query=query,
+                    error=(
+                        "Лимит Premium-поиска исчерпан на сегодня. "
+                        "Попробуйте позже или используйте другой режим поиска."
+                    ),
+                )
+
+            messages, seen_channels = await self._search_posts_global(client, query, limit)
+            await self._persistence.cache_search_results(seen_channels, messages, phone, query)
+            return SearchResult(messages=messages, total=len(messages), query=query)
+        finally:
+            await self._pool.release_client(phone)
+
+    async def _search_posts_global(self, client, query: str, limit: int) -> tuple[list[Message], dict[int, Channel]]:
+        from telethon.tl.functions.channels import SearchPostsRequest
+        from telethon.tl.types import InputPeerEmpty, PeerChannel
+        from telethon.utils import get_input_peer
+
+        messages: list[Message] = []
+        seen_channels: dict[int, Channel] = {}
+
+        offset_rate = 0
+        offset_peer = InputPeerEmpty()
+        offset_id = 0
+
+        while len(messages) < limit:
+            batch_limit = min(limit - len(messages), 100)
+            r = await client(
+                SearchPostsRequest(
+                    query=query,
+                    offset_rate=offset_rate,
+                    offset_peer=offset_peer,
+                    offset_id=offset_id,
+                    limit=batch_limit,
+                )
+            )
+
+            if not r.messages:
+                break
+
+            chats_map = {c.id: c for c in getattr(r, "chats", [])}
+            users_map = {u.id: u for u in getattr(r, "users", [])}
+
+            for msg in r.messages:
+                if not isinstance(getattr(msg, "peer_id", None), PeerChannel):
+                    continue
+                chat_id = msg.peer_id.channel_id
+
+                chat = chats_map.get(chat_id)
+                chat_title = getattr(chat, "title", None) if chat else None
+                chat_username = getattr(chat, "username", None) if chat else None
+
+                if chat_id not in seen_channels:
+                    seen_channels[chat_id] = Channel(
+                        channel_id=chat_id,
+                        title=chat_title,
+                        username=chat_username,
+                    )
+
+                sender_id, sender_name = TelegramMessageTransformer.resolve_sender(msg, chats_map, users_map)
+
+                messages.append(
+                    Message(
+                        channel_id=chat_id,
+                        message_id=msg.id,
+                        sender_id=sender_id,
+                        sender_name=sender_name,
+                        text=getattr(msg, "message", None),
+                        media_type=Collector._get_media_type(msg),
+                        date=msg.date.replace(tzinfo=timezone.utc)
+                        if msg.date and msg.date.tzinfo is None
+                        else msg.date,
+                        channel_title=chat_title,
+                        channel_username=chat_username,
+                    )
+                )
+
+            next_rate = getattr(r, "next_rate", None)
+            if next_rate and len(r.messages) == batch_limit:
+                offset_rate = next_rate
+                last_msg = r.messages[-1]
+                offset_id = last_msg.id
+                if isinstance(last_msg.peer_id, PeerChannel):
+                    last_chat = chats_map.get(last_msg.peer_id.channel_id)
+                    if last_chat:
+                        offset_peer = get_input_peer(last_chat)
+                    else:
+                        break
+                else:
+                    break
+            else:
+                break
+
+        return messages, seen_channels
+
+    async def search_my_chats(self, query: str, limit: int = 50) -> SearchResult:
+        if not self._pool:
+            return SearchResult(messages=[], total=0, query=query, error="Нет подключённых Telegram-аккаунтов.")
+
+        result = await self._pool.get_available_client()
+        if result is None:
+            return SearchResult(
+                messages=[],
+                total=0,
+                query=query,
+                error="Нет доступных Telegram-аккаунтов. Проверьте подключение.",
+            )
+
+        client, phone = result
+        try:
+            await client.get_dialogs()
+
+            messages: list[Message] = []
+            seen_channels: dict[int, Channel] = {}
+
+            async for msg in client.iter_messages(None, search=query, limit=limit):
+                converted = TelegramMessageTransformer.convert_telethon_message(msg)
+                if converted is None:
+                    continue
+                messages.append(converted)
+                if converted.channel_id not in seen_channels:
+                    seen_channels[converted.channel_id] = Channel(
+                        channel_id=converted.channel_id,
+                        title=converted.channel_title,
+                        username=converted.channel_username,
+                    )
+
+            await self._persistence.cache_messages_and_channels(seen_channels, messages)
+            return SearchResult(messages=messages, total=len(messages), query=query)
+        finally:
+            await self._pool.release_client(phone)
+
+    async def search_in_channel(self, channel_id: int | None, query: str, limit: int = 50) -> SearchResult:
+        if not self._pool:
+            return SearchResult(messages=[], total=0, query=query, error="Нет подключённых Telegram-аккаунтов.")
+
+        result = await self._pool.get_available_client()
+        if result is None:
+            return SearchResult(
+                messages=[],
+                total=0,
+                query=query,
+                error="Нет доступных Telegram-аккаунтов. Проверьте подключение.",
+            )
+
+        client, phone = result
+        try:
+            entity = None
+            if channel_id:
+                try:
+                    entity = await client.get_entity(PeerChannel(channel_id))
+                except Exception as exc:
+                    logger.warning("Cannot resolve channel %s: %s", channel_id, exc)
+                    return SearchResult(
+                        messages=[],
+                        total=0,
+                        query=query,
+                        error=f"Не удалось найти канал {channel_id}: {exc}",
+                    )
+            else:
+                await client.get_dialogs()
+
+            messages: list[Message] = []
+            seen_channels: dict[int, Channel] = {}
+
+            async for msg in client.iter_messages(entity, search=query, limit=limit):
+                converted = TelegramMessageTransformer.convert_telethon_message(msg)
+                if converted is None:
+                    continue
+                messages.append(converted)
+                if converted.channel_id not in seen_channels:
+                    seen_channels[converted.channel_id] = Channel(
+                        channel_id=converted.channel_id,
+                        title=converted.channel_title,
+                        username=converted.channel_username,
+                    )
+
+            await self._persistence.cache_messages_and_channels(seen_channels, messages)
+            return SearchResult(messages=messages, total=len(messages), query=query)
+        finally:
+            await self._pool.release_client(phone)
