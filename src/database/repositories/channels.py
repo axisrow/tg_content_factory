@@ -122,7 +122,9 @@ class ChannelsRepository:
             )
         await self._db.commit()
 
-    async def set_filtered_bulk(self, updates: list[tuple[int, str]]) -> int:
+    async def set_filtered_bulk(
+        self, updates: list[tuple[int, str]], *, commit: bool = True
+    ) -> int:
         if not updates:
             return 0
         updated_rows = 0
@@ -134,14 +136,16 @@ class ChannelsRepository:
             rowcount = cur.rowcount if cur.rowcount is not None else 0
             if rowcount > 0:
                 updated_rows += rowcount
-        await self._db.commit()
+        if commit:
+            await self._db.commit()
         return updated_rows
 
-    async def reset_all_filters(self) -> int:
+    async def reset_all_filters(self, *, commit: bool = True) -> int:
         cur = await self._db.execute(
             "UPDATE channels SET is_filtered = 0, filter_flags = ''"
         )
-        await self._db.commit()
+        if commit:
+            await self._db.commit()
         rowcount = cur.rowcount if cur.rowcount is not None else 0
         return rowcount if rowcount > 0 else 0
 

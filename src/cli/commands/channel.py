@@ -32,15 +32,15 @@ def run(args: argparse.Namespace) -> None:
                     "Active",
                     "Messages",
                     "Last msg ID",
-                    "Slop",
+                    "Filter",
                 )
                 print(fmt.format(*header))
                 print("-" * 110)
                 for ch in channels:
                     if ch.is_filtered:
-                        slop = f"SLOP: {ch.filter_flags}" if ch.filter_flags else "SLOP"
+                        filt = ch.filter_flags if ch.filter_flags else "Yes"
                     else:
-                        slop = "-"
+                        filt = "-"
                     print(
                         fmt.format(
                             ch.id or 0,
@@ -50,7 +50,7 @@ def run(args: argparse.Namespace) -> None:
                             "Yes" if ch.is_active else "No",
                             ch.message_count,
                             ch.last_collected_id,
-                            slop,
+                            filt,
                         )
                     )
 

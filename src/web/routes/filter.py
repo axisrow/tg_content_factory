@@ -4,6 +4,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from src.filters.analyzer import ChannelAnalyzer
+from src.filters.criteria import VALID_FLAGS
 from src.filters.models import ChannelFilterResult, FilterReport
 from src.web import deps
 
@@ -13,7 +14,7 @@ router = APIRouter()
 
 
 def _parse_snapshot(values: list[str]) -> list[ChannelFilterResult]:
-    results: list[ChannelFilterResult] = []
+    deduped: dict[int, list[str]] = {}
     for value in values:
         channel_id_str, sep, flags_csv = value.partition("|")
         if not sep:
@@ -22,11 +23,14 @@ def _parse_snapshot(values: list[str]) -> list[ChannelFilterResult]:
             channel_id = int(channel_id_str)
         except ValueError:
             continue
-        flags = [flag.strip() for flag in flags_csv.split(",") if flag.strip()]
+        flags = [f for f in (f.strip() for f in flags_csv.split(",")) if f in VALID_FLAGS]
         if not flags:
             continue
-        results.append(ChannelFilterResult(channel_id=channel_id, flags=flags, is_filtered=True))
-    return results
+        deduped[channel_id] = flags
+    return [
+        ChannelFilterResult(channel_id=channel_id, flags=flags, is_filtered=True)
+        for channel_id, flags in deduped.items()
+    ]
 
 
 @router.post("/filter/analyze", response_class=HTMLResponse)
@@ -78,4 +82,4 @@ async def toggle_channel_filter(request: Request, pk: int):
     if not channel:
         return RedirectResponse(url="/channels?msg=channel_not_found", status_code=303)
     await db.set_channel_filtered(pk, not channel.is_filtered)
-    return RedirectResponse(url="/channels?msg=channel_toggled", status_code=303)
+    return RedirectResponse(url="/channels?msg=filter_toggled", status_code=303)

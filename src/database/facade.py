@@ -8,6 +8,7 @@ from src.database.repositories.accounts import AccountsRepository
 from src.database.repositories.channel_stats import ChannelStatsRepository
 from src.database.repositories.channels import ChannelsRepository
 from src.database.repositories.collection_tasks import CollectionTasksRepository
+from src.database.repositories.filters import FilterRepository
 from src.database.repositories.keywords import KeywordsRepository
 from src.database.repositories.messages import MessagesRepository
 from src.database.repositories.search_log import SearchLogRepository
@@ -35,6 +36,7 @@ class Database:
         self._search_log: SearchLogRepository | None = None
         self._channel_stats: ChannelStatsRepository | None = None
         self._settings: SettingsRepository | None = None
+        self._filters: FilterRepository | None = None
 
     async def _has_encrypted_sessions(self) -> bool:
         assert self._db is not None
@@ -73,6 +75,7 @@ class Database:
         self._search_log = SearchLogRepository(self._db)
         self._channel_stats = ChannelStatsRepository(self._db)
         self._settings = SettingsRepository(self._db)
+        self._filters = FilterRepository(self._db)
 
         await self._accounts.migrate_sessions()
 
@@ -89,6 +92,12 @@ class Database:
     def db(self) -> aiosqlite.Connection | None:
         return self._db
 
+    @property
+    def filter_repo(self) -> FilterRepository:
+        self._require()
+        assert self._filters is not None
+        return self._filters
+
     def _require(self) -> None:
         if any(
             repo is None
@@ -101,6 +110,7 @@ class Database:
                 self._search_log,
                 self._channel_stats,
                 self._settings,
+                self._filters,
             )
         ):
             raise RuntimeError("Database.initialize() has not been called")
@@ -161,13 +171,15 @@ class Database:
         self._require()
         await self._channels.set_channel_filtered(pk, filtered)
 
-    async def set_channels_filtered_bulk(self, updates: list[tuple[int, str]]) -> int:
+    async def set_channels_filtered_bulk(
+        self, updates: list[tuple[int, str]], *, commit: bool = True
+    ) -> int:
         self._require()
-        return await self._channels.set_filtered_bulk(updates)
+        return await self._channels.set_filtered_bulk(updates, commit=commit)
 
-    async def reset_all_channel_filters(self) -> int:
+    async def reset_all_channel_filters(self, *, commit: bool = True) -> int:
         self._require()
-        return await self._channels.reset_all_filters()
+        return await self._channels.reset_all_filters(commit=commit)
 
     async def delete_channel(self, pk: int) -> None:
         self._require()

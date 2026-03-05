@@ -21,7 +21,7 @@
     </form>
 </article>
 
-{% if channels or show_all is defined %}
+{% if channels or show_all %}
 <div style="margin-bottom: 1rem; display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
     <a href="/channels" role="button" class="{{ '' if show_all else 'secondary' }} outline" style="padding: 0.25rem 0.75rem;">Активные</a>
     <a href="/channels?view=all" role="button" class="{{ 'secondary' if show_all else '' }} outline" style="padding: 0.25rem 0.75rem;">Все каналы</a>

@@ -13,6 +13,10 @@ def run(args: argparse.Namespace) -> None:
         try:
             analyzer = ChannelAnalyzer(db)
 
+            if not args.filter_action:
+                print("Usage: filter {analyze|apply|reset}")
+                return
+
             if args.filter_action == "analyze":
                 report = await analyzer.analyze_all()
                 if not report.results:
