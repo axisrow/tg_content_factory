@@ -14,6 +14,7 @@ data/
 *.db
 *.session
 .env
+pattaya.xlsx
 
 # Virtual environments
 .venv/
