@@ -15,12 +15,19 @@ async def channels_list(request: Request):
     db = request.app.state.db
     channels = await db.get_channels_with_counts()
     keywords = await db.get_keywords()
+    latest_stats = await db.get_latest_stats_for_all()
     error = request.query_params.get("error")
     msg = request.query_params.get("msg")
     return request.app.state.templates.TemplateResponse(
         request,
         "channels.html",
-        {"channels": channels, "keywords": keywords, "error": error, "msg": msg},
+        {
+            "channels": channels,
+            "keywords": keywords,
+            "latest_stats": latest_stats,
+            "error": error,
+            "msg": msg,
+        },
     )
 
 
@@ -30,6 +37,10 @@ async def add_channel(request: Request, identifier: str = Form(...)):
     db = request.app.state.db
     try:
         info = await pool.resolve_channel(identifier.strip())
+    except RuntimeError as exc:
+        if str(exc) == "no_client":
+            return RedirectResponse(url="/channels?error=no_client", status_code=303)
+        info = None
     except Exception:
         info = None
     if not info:
@@ -109,6 +120,25 @@ async def delete_channel(request: Request, pk: int):
     db = request.app.state.db
     await db.delete_channel(pk)
     return RedirectResponse(url="/channels?msg=channel_deleted", status_code=303)
+
+
+@router.post("/stats/all")
+async def collect_all_stats(request: Request):
+    collector = request.app.state.collector
+    await collector.collect_all_stats()
+    return RedirectResponse(url="/channels?msg=stats_collected_all", status_code=303)
+
+
+@router.post("/{pk}/stats")
+async def collect_stats(request: Request, pk: int):
+    db = request.app.state.db
+    collector = request.app.state.collector
+    channels = await db.get_channels()
+    channel = next((ch for ch in channels if ch.id == pk), None)
+    if not channel:
+        return RedirectResponse(url="/channels", status_code=303)
+    await collector.collect_channel_stats(channel)
+    return RedirectResponse(url="/channels?msg=stats_collected", status_code=303)
 
 
 @router.post("/keywords/add")

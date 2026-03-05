@@ -26,7 +26,7 @@ from telethon.tl.types import (
 
 from src.config import SchedulerConfig
 from src.database import Database
-from src.models import Channel, Message
+from src.models import Channel, ChannelStats, Message
 from src.telegram.client_pool import ClientPool
 from src.telegram.notifier import Notifier
 
@@ -74,11 +74,13 @@ class Collector:
             try:
                 result = await self._pool.get_available_client()
                 if result:
-                    client, _ = result
+                    client, phone = result
                     try:
                         await asyncio.wait_for(client.get_dialogs(), timeout=30)
                     except Exception:
                         pass
+                    finally:
+                        await self._pool.release_client(phone)
 
                 if full:
                     channel = Channel(**{**channel.model_dump(), "last_collected_id": 0})
@@ -108,13 +110,15 @@ class Collector:
                 # get_dialogs() is needed for PeerChannel lookups to work.
                 result = await self._pool.get_available_client()
                 if result:
-                    client, _ = result
+                    client, phone = result
                     try:
                         logger.info("Pre-fetching dialogs...")
                         await asyncio.wait_for(client.get_dialogs(), timeout=30)
                         logger.info("Dialogs pre-fetched successfully")
                     except Exception as e:
                         logger.warning("Failed to pre-fetch dialogs: %s", e)
+                    finally:
+                        await self._pool.release_client(phone)
 
                 for channel in channels:
                     if self._cancel_event.is_set():
@@ -334,6 +338,65 @@ class Collector:
                         f"Keyword '{kw.pattern}' found in channel {msg.channel_id}:\n"
                         f"{msg.text[:200]}"
                     )
+
+    async def collect_channel_stats(self, channel: Channel) -> ChannelStats | None:
+        result = await self._pool.get_available_client()
+        if result is None:
+            logger.error("No available clients for stats collection")
+            return None
+        client, phone = result
+        try:
+            if channel.username:
+                entity = await client.get_entity(channel.username)
+            else:
+                entity = await client.get_entity(PeerChannel(channel.channel_id))
+
+            from telethon.tl.functions.channels import GetFullChannelRequest
+
+            full = await client(GetFullChannelRequest(entity))
+            subscriber_count = getattr(full.full_chat, "participants_count", None)
+
+            views_list, reactions_list, forwards_list = [], [], []
+            async for msg in client.iter_messages(entity, limit=50):
+                if getattr(msg, "views", None) is not None:
+                    views_list.append(msg.views)
+                if getattr(msg, "forwards", None) is not None:
+                    forwards_list.append(msg.forwards)
+                reactions = getattr(msg, "reactions", None)
+                if reactions:
+                    total = sum(
+                        getattr(r, "count", 0)
+                        for r in getattr(reactions, "results", [])
+                    )
+                    reactions_list.append(total)
+
+            stats = ChannelStats(
+                channel_id=channel.channel_id,
+                subscriber_count=subscriber_count,
+                avg_views=sum(views_list) / len(views_list) if views_list else None,
+                avg_reactions=(
+                    sum(reactions_list) / len(reactions_list) if reactions_list else None
+                ),
+                avg_forwards=(
+                    sum(forwards_list) / len(forwards_list) if forwards_list else None
+                ),
+            )
+            await self._db.save_channel_stats(stats)
+            return stats
+        finally:
+            await self._pool.release_client(phone)
+
+    async def collect_all_stats(self) -> dict:
+        channels = await self._db.get_channels(active_only=True)
+        stats = {"channels": 0, "errors": 0}
+        for channel in channels:
+            try:
+                await self.collect_channel_stats(channel)
+                stats["channels"] += 1
+            except Exception as e:
+                logger.error("Stats error for %s: %s", channel.channel_id, e)
+                stats["errors"] += 1
+        return stats
 
     @staticmethod
     def _get_sender_name(msg) -> str | None:
