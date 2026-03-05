@@ -25,3 +25,6 @@ llm:
   provider: "openai"
   model: "gpt-4o-mini"
   api_key: ${LLM_API_KEY}
+
+security:
+  session_encryption_key: ${SESSION_ENCRYPTION_KEY}

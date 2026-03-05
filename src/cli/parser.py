@@ -13,7 +13,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     collect_parser = sub.add_parser("collect", help="Run one-shot collection")
     collect_parser.add_argument(
-        "--channel-id", type=int, default=None, help="Collect single channel by channel_id (full mode)"
+        "--channel-id", type=int, default=None,
+        help="Collect single channel by channel_id (full mode)",
     )
 
     search_parser = sub.add_parser("search", help="Search messages")
@@ -25,7 +26,10 @@ def build_parser() -> argparse.ArgumentParser:
         default="local",
         help="Search mode: local, telegram, my_chats, channel",
     )
-    search_parser.add_argument("--channel-id", type=int, default=None, help="Channel ID for --mode=channel")
+    search_parser.add_argument(
+        "--channel-id", type=int, default=None,
+        help="Channel ID for --mode=channel",
+    )
 
     ch_parser = sub.add_parser("channel", help="Channel management")
     ch_sub = ch_parser.add_subparsers(dest="channel_action")
@@ -44,8 +48,14 @@ def build_parser() -> argparse.ArgumentParser:
     ch_collect.add_argument("identifier", help="Channel pk, channel_id, or @username")
 
     ch_stats = ch_sub.add_parser("stats", help="Collect channel statistics")
-    ch_stats.add_argument("identifier", nargs="?", default=None, help="Channel pk, channel_id, or @username")
-    ch_stats.add_argument("--all", action="store_true", help="Collect stats for all active channels")
+    ch_stats.add_argument(
+        "identifier", nargs="?", default=None,
+        help="Channel pk, channel_id, or @username",
+    )
+    ch_stats.add_argument(
+        "--all", action="store_true",
+        help="Collect stats for all active channels",
+    )
 
     ch_import = ch_sub.add_parser("import", help="Bulk import from file or text")
     ch_import.add_argument("source", help="Path to .txt/.csv file, or comma-separated identifiers")

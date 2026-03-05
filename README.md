@@ -12,6 +12,7 @@ Telegram Post Search & Monitoring — a tool for collecting, searching, and moni
 - Full-text search: local DB, direct Telegram, AI-powered (LLM)
 - Web dashboard (FastAPI + Pico CSS)
 - HTTP Basic Auth
+- Session cookie uses `Secure` flag on HTTPS requests
 - Docker ready
 
 ## Quick Start
@@ -39,6 +40,7 @@ Edit `.env`:
 TG_API_ID=your_api_id
 TG_API_HASH=your_api_hash
 WEB_PASS=your_password
+SESSION_ENCRYPTION_KEY=    # required to encrypt account session strings in DB
 LLM_API_KEY=               # optional, for AI search
 ```
 
@@ -69,7 +71,10 @@ docker-compose up -d
 | `TG_API_ID` | Yes | Telegram API ID |
 | `TG_API_HASH` | Yes | Telegram API Hash |
 | `WEB_PASS` | Yes | Web panel password |
+| `SESSION_ENCRYPTION_KEY` | No* | Explicit key for encrypting Telegram session strings in DB |
 | `LLM_API_KEY` | No | API key for AI-powered search |
+
+`*` If not set, new sessions are stored in plaintext. If DB already contains encrypted sessions (`enc:v*`), app startup fails fast until this key is provided.
 
 ### config.yaml
 
@@ -83,6 +88,7 @@ Config supports `${ENV_VAR}` substitution. Empty env vars are dropped (defaults 
 | `notifications` | `admin_chat_id` for keyword match alerts |
 | `database` | SQLite path (default: `data/tg_search.db`) |
 | `llm` | LLM provider, model, API key, enabled flag |
+| `security` | Session encryption settings (`session_encryption_key`) |
 
 ## Usage
 

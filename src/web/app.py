@@ -15,7 +15,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
 
 from src.collection_queue import CollectionQueue
-from src.config import AppConfig, load_config
+from src.config import AppConfig, load_config, resolve_session_encryption_secret
 from src.database import Database
 from src.scheduler.manager import SchedulerManager
 from src.search.ai_search import AISearchEngine
@@ -24,6 +24,7 @@ from src.telegram.auth import TelegramAuth
 from src.telegram.client_pool import ClientPool
 from src.telegram.collector import Collector
 from src.telegram.notifier import Notifier
+from src.web.csrf import OriginCSRFMiddleware
 from src.web.session import (
     COOKIE_MAX_AGE,
     COOKIE_NAME,
@@ -74,6 +75,7 @@ class BasicAuthMiddleware(BaseHTTPMiddleware):
                         max_age=COOKIE_MAX_AGE,
                         httponly=True,
                         samesite="lax",
+                        secure=request.url.scheme == "https",
                     )
                 return response
 
@@ -101,7 +103,10 @@ async def lifespan(app: FastAPI):
     config: AppConfig = app.state.config
 
     # Database
-    db = Database(config.database.path)
+    db = Database(
+        config.database.path,
+        session_encryption_secret=resolve_session_encryption_secret(config),
+    )
     await db.initialize()
     app.state.db = db
 
@@ -202,6 +207,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
             BasicAuthMiddleware,
             password=config.web.password,
         )
+    app.add_middleware(OriginCSRFMiddleware)
 
     # Static files
     if STATIC_DIR.exists():
@@ -244,8 +250,8 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
 
     # Register routes
     from src.web.routes.auth import router as auth_router
-    from src.web.routes.channels import router as channels_router
     from src.web.routes.channel_collection import router as channel_collection_router
+    from src.web.routes.channels import router as channels_router
     from src.web.routes.dashboard import router as dashboard_router
     from src.web.routes.import_channels import router as import_router
     from src.web.routes.keywords import router as keywords_router

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 
-from src.config import load_config
+from src.config import load_config, resolve_session_encryption_secret
 from src.database import Database
 from src.telegram.auth import TelegramAuth
 from src.telegram.client_pool import ClientPool
@@ -18,7 +18,10 @@ def setup_logging() -> None:
 
 async def init_db(config_path: str):
     config = load_config(config_path)
-    db = Database(config.database.path)
+    db = Database(
+        config.database.path,
+        session_encryption_secret=resolve_session_encryption_secret(config),
+    )
     await db.initialize()
     return config, db
 

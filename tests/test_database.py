@@ -1,10 +1,20 @@
+import base64
+import hashlib
 from datetime import datetime, timezone
 
 import aiosqlite
 import pytest
+from cryptography.fernet import Fernet
 
 from src.database import Database
 from src.models import Account, Channel, Keyword, Message
+
+
+def _encrypt_v1(secret: str, plaintext: str) -> str:
+    digest = hashlib.sha256(secret.encode("utf-8")).digest()
+    key = base64.urlsafe_b64encode(digest)
+    token = Fernet(key).encrypt(plaintext.encode("utf-8")).decode("ascii")
+    return f"enc:v1:{token}"
 
 
 @pytest.mark.asyncio
@@ -28,6 +38,136 @@ async def test_account_upsert(db):
     accounts = await db.get_accounts()
     assert len(accounts) == 1
     assert accounts[0].session_string == "session2"
+
+
+@pytest.mark.asyncio
+async def test_account_session_encrypted_at_rest(tmp_path):
+    db_path = str(tmp_path / "encrypted.db")
+    database = Database(db_path, session_encryption_secret="test-encryption-secret")
+    await database.initialize()
+
+    await database.add_account(Account(phone="+71230000000", session_string="session_plain"))
+
+    cur = await database.execute(
+        "SELECT session_string FROM accounts WHERE phone = ?",
+        ("+71230000000",),
+    )
+    row = await cur.fetchone()
+    assert row is not None
+    assert row["session_string"] != "session_plain"
+    assert row["session_string"].startswith("enc:v2:")
+
+    accounts = await database.get_accounts()
+    assert accounts[0].session_string == "session_plain"
+    await database.close()
+
+
+@pytest.mark.asyncio
+async def test_plaintext_sessions_migrate_on_init(tmp_path):
+    """Plaintext sessions are encrypted during initialize(), not get_accounts()."""
+    db_path = str(tmp_path / "plaintext_migration.db")
+
+    legacy_db = Database(db_path)
+    await legacy_db.initialize()
+    await legacy_db.add_account(Account(phone="+71230000001", session_string="legacy_plaintext"))
+    await legacy_db.close()
+
+    encrypted_db = Database(db_path, session_encryption_secret="migration-secret")
+    await encrypted_db.initialize()
+
+    # Migration already happened during initialize(); verify DB state first.
+    cur = await encrypted_db.execute(
+        "SELECT session_string FROM accounts WHERE phone = ?",
+        ("+71230000001",),
+    )
+    row = await cur.fetchone()
+    assert row is not None
+    assert row["session_string"].startswith("enc:v2:")
+
+    # get_accounts() returns decrypted value.
+    accounts = await encrypted_db.get_accounts()
+
+    assert accounts[0].session_string == "legacy_plaintext"
+    await encrypted_db.close()
+
+
+@pytest.mark.asyncio
+async def test_legacy_v1_sessions_migrate_to_v2_on_init(tmp_path):
+    db_path = str(tmp_path / "v1_migration.db")
+    legacy_secret = "legacy-key"
+
+    legacy_db = Database(db_path)
+    await legacy_db.initialize()
+    legacy_v1 = _encrypt_v1(legacy_secret, "legacy_v1_session")
+    await legacy_db.execute(
+        "INSERT INTO accounts (phone, session_string) VALUES (?, ?)",
+        ("+71230000002", legacy_v1),
+    )
+    await legacy_db.db.commit()
+    await legacy_db.close()
+
+    encrypted_db = Database(db_path, session_encryption_secret=legacy_secret)
+    await encrypted_db.initialize()
+
+    cur = await encrypted_db.execute(
+        "SELECT session_string FROM accounts WHERE phone = ?",
+        ("+71230000002",),
+    )
+    row = await cur.fetchone()
+    assert row is not None
+    assert row["session_string"].startswith("enc:v2:")
+    assert row["session_string"] != legacy_v1
+
+    accounts = await encrypted_db.get_accounts()
+    assert accounts[0].session_string == "legacy_v1_session"
+    await encrypted_db.close()
+
+
+@pytest.mark.asyncio
+async def test_migrate_sessions_rollback_on_bad_row(tmp_path):
+    """Migration rolls back when a row has an unsupported encryption version."""
+    db_path = str(tmp_path / "rollback_migration.db")
+
+    db = Database(db_path)
+    await db.initialize()
+    await db.add_account(Account(phone="+71230000010", session_string="good_session"))
+    # Insert a bad row directly — unsupported enc version
+    await db.execute(
+        "INSERT INTO accounts (phone, session_string) VALUES (?, ?)",
+        ("+71230000011", "enc:v99:garbage"),
+    )
+    await db.db.commit()
+    await db.close()
+
+    encrypted_db = Database(db_path, session_encryption_secret="some-key")
+    with pytest.raises(RuntimeError, match="Failed to migrate session"):
+        await encrypted_db.initialize()
+
+    # Verify rollback: both rows should be unchanged
+    conn = await aiosqlite.connect(db_path)
+    conn.row_factory = aiosqlite.Row
+    cur = await conn.execute(
+        "SELECT phone, session_string FROM accounts ORDER BY phone"
+    )
+    rows = await cur.fetchall()
+    assert len(rows) == 2
+    assert rows[0]["session_string"] == "good_session"
+    assert rows[1]["session_string"] == "enc:v99:garbage"
+    await conn.close()
+
+
+@pytest.mark.asyncio
+async def test_initialize_fails_without_key_when_encrypted_sessions_exist(tmp_path):
+    db_path = str(tmp_path / "no_key_fail_fast.db")
+
+    encrypted_db = Database(db_path, session_encryption_secret="strict-key")
+    await encrypted_db.initialize()
+    await encrypted_db.add_account(Account(phone="+71230000003", session_string="encrypted"))
+    await encrypted_db.close()
+
+    db_without_key = Database(db_path)
+    with pytest.raises(RuntimeError, match="SESSION_ENCRYPTION_KEY"):
+        await db_without_key.initialize()
 
 
 @pytest.mark.asyncio

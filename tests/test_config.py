@@ -1,5 +1,4 @@
-
-from src.config import AppConfig, load_config
+from src.config import AppConfig, load_config, resolve_session_encryption_secret
 
 
 def test_default_config():
@@ -41,3 +40,16 @@ def test_load_config_with_empty_env(tmp_path, monkeypatch):
     assert config.telegram.api_id == 0
     assert config.telegram.api_hash == ""
     assert config.llm.api_key == ""
+
+
+def test_resolve_session_encryption_secret_prefers_explicit_key():
+    config = AppConfig()
+    config.security.session_encryption_key = "explicit-session-key"
+    config.web.password = "web-pass"
+    assert resolve_session_encryption_secret(config) == "explicit-session-key"
+
+
+def test_resolve_session_encryption_secret_does_not_fallback_to_web_pass():
+    config = AppConfig()
+    config.web.password = "web-pass"
+    assert resolve_session_encryption_secret(config) is None
