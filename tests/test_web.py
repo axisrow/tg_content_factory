@@ -140,6 +140,13 @@ async def test_search_with_query(client):
     assert "test" in resp.text
 
 
+@pytest.mark.asyncio
+async def test_search_with_invalid_channel_id_returns_error(client):
+    resp = await client.get("/?q=test&mode=channel&channel_id=abc")
+    assert resp.status_code == 200
+    assert "Некорректный ID канала: abc" in resp.text
+
+
 @pytest.fixture
 async def unauth_client(client):
     """Client without auth headers, reusing the same app from client fixture."""

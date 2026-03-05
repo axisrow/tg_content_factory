@@ -16,7 +16,7 @@ class MessagesRepository:
 
     async def insert_message(self, msg: Message) -> bool:
         try:
-            await self._db.execute(
+            cur = await self._db.execute(
                 """INSERT OR IGNORE INTO messages
                    (channel_id, message_id, sender_id, sender_name, text, media_type, date)
                    VALUES (?, ?, ?, ?, ?, ?, ?)""",
@@ -31,7 +31,7 @@ class MessagesRepository:
                 ),
             )
             await self._db.commit()
-            return self._db.total_changes > 0
+            return cur.rowcount > 0
         except Exception:
             return False
 

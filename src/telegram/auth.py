@@ -151,6 +151,10 @@ class TelegramAuth:
 
         session_string = client.session.save()
         del self._pending[phone]
+        try:
+            await client.disconnect()
+        except Exception:
+            logger.warning("Failed to disconnect temporary auth client for %s", phone)
         logger.info("Successfully authenticated %s", phone)
         return session_string
 

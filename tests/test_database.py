@@ -48,8 +48,10 @@ async def test_insert_message_deduplication(db):
         text="Hello world",
         date=datetime.now(timezone.utc),
     )
-    await db.insert_message(msg)
-    await db.insert_message(msg)
+    first = await db.insert_message(msg)
+    second = await db.insert_message(msg)
+    assert first is True
+    assert second is False
     # Second insert should be ignored (dedup)
     messages, total = await db.search_messages()
     assert total == 1

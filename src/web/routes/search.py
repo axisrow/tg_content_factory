@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import HTMLResponse
 
+from src.models import SearchResult
 from src.web import deps
 
 router = APIRouter()
@@ -19,20 +20,29 @@ async def search_page(
     result = None
     limit = 50
     offset = (page - 1) * limit
-    channel_id_int: int | None = int(channel_id) if channel_id else None
+    channel_id_int: int | None = None
+    channel_id_error: str | None = None
+    if channel_id:
+        try:
+            channel_id_int = int(channel_id)
+        except ValueError:
+            channel_id_error = f"Некорректный ID канала: {channel_id}"
 
     service = deps.search_service(request)
 
     if q:
-        result = await service.search(
-            mode=mode,
-            query=q,
-            limit=limit,
-            channel_id=channel_id_int,
-            date_from=date_from or None,
-            date_to=date_to or None,
-            offset=offset,
-        )
+        if channel_id_error and mode in {"local", "channel"}:
+            result = SearchResult(messages=[], total=0, query=q, error=channel_id_error)
+        else:
+            result = await service.search(
+                mode=mode,
+                query=q,
+                limit=limit,
+                channel_id=channel_id_int,
+                date_from=date_from or None,
+                date_to=date_to or None,
+                offset=offset,
+            )
 
     db = deps.get_db(request)
     channels = await db.get_channels()
