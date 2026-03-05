@@ -133,17 +133,21 @@ class Database:
         self._require()
         return await self._channels.add_channel(channel)
 
-    async def get_channels(self, active_only: bool = False) -> list[Channel]:
+    async def get_channels(
+        self, active_only: bool = False, include_filtered: bool = True
+    ) -> list[Channel]:
         self._require()
-        return await self._channels.get_channels(active_only)
+        return await self._channels.get_channels(active_only, include_filtered)
 
     async def get_channel_by_pk(self, pk: int) -> Channel | None:
         self._require()
         return await self._channels.get_channel_by_pk(pk)
 
-    async def get_channels_with_counts(self, active_only: bool = False) -> list[Channel]:
+    async def get_channels_with_counts(
+        self, active_only: bool = False, include_filtered: bool = True
+    ) -> list[Channel]:
         self._require()
-        return await self._channels.get_channels_with_counts(active_only)
+        return await self._channels.get_channels_with_counts(active_only, include_filtered)
 
     async def update_channel_last_id(self, channel_id: int, last_id: int) -> None:
         self._require()
@@ -152,6 +156,10 @@ class Database:
     async def set_channel_active(self, pk: int, active: bool) -> None:
         self._require()
         await self._channels.set_channel_active(pk, active)
+
+    async def set_channel_filtered(self, pk: int, filtered: bool) -> None:
+        self._require()
+        await self._channels.set_channel_filtered(pk, filtered)
 
     async def delete_channel(self, pk: int) -> None:
         self._require()

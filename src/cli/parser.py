@@ -60,6 +60,12 @@ def build_parser() -> argparse.ArgumentParser:
     ch_import = ch_sub.add_parser("import", help="Bulk import from file or text")
     ch_import.add_argument("source", help="Path to .txt/.csv file, or comma-separated identifiers")
 
+    flt_parser = sub.add_parser("filter", help="Channel content filter")
+    flt_sub = flt_parser.add_subparsers(dest="filter_action")
+    flt_sub.add_parser("analyze", help="Analyze channels and show report")
+    flt_sub.add_parser("apply", help="Analyze and mark filtered channels")
+    flt_sub.add_parser("reset", help="Reset all channel filters")
+
     kw_parser = sub.add_parser("keyword", help="Keyword management")
     kw_sub = kw_parser.add_subparsers(dest="keyword_action")
     kw_sub.add_parser("list", help="List keywords")

@@ -39,6 +39,7 @@ class ChannelsRepository:
             username=row["username"],
             channel_type=row["channel_type"],
             is_active=bool(row["is_active"]),
+            is_filtered=bool(row["is_filtered"]) if "is_filtered" in keys else False,
             last_collected_id=row["last_collected_id"],
             added_at=datetime.fromisoformat(row["added_at"]) if row["added_at"] else None,
             message_count=(
@@ -48,10 +49,17 @@ class ChannelsRepository:
             ),
         )
 
-    async def get_channels(self, active_only: bool = False) -> list[Channel]:
-        sql = "SELECT * FROM channels"
+    async def get_channels(
+        self, active_only: bool = False, include_filtered: bool = True
+    ) -> list[Channel]:
+        conditions = []
         if active_only:
-            sql += " WHERE is_active = 1"
+            conditions.append("is_active = 1")
+        if not include_filtered:
+            conditions.append("is_filtered = 0")
+        sql = "SELECT * FROM channels"
+        if conditions:
+            sql += " WHERE " + " AND ".join(conditions)
         sql += " ORDER BY id ASC"
         cur = await self._db.execute(sql)
         rows = await cur.fetchall()
@@ -64,7 +72,9 @@ class ChannelsRepository:
             return None
         return self._map_channel(row)
 
-    async def get_channels_with_counts(self, active_only: bool = False) -> list[Channel]:
+    async def get_channels_with_counts(
+        self, active_only: bool = False, include_filtered: bool = True
+    ) -> list[Channel]:
         sql = """
             SELECT c.*, COALESCE(cnt.total, 0) AS message_count
             FROM channels c
@@ -72,8 +82,13 @@ class ChannelsRepository:
                 SELECT channel_id, COUNT(*) AS total FROM messages GROUP BY channel_id
             ) cnt ON c.channel_id = cnt.channel_id
         """
+        conditions = []
         if active_only:
-            sql += " WHERE c.is_active = 1"
+            conditions.append("c.is_active = 1")
+        if not include_filtered:
+            conditions.append("c.is_filtered = 0")
+        if conditions:
+            sql += " WHERE " + " AND ".join(conditions)
         sql += " ORDER BY c.id ASC"
         cur = await self._db.execute(sql)
         rows = await cur.fetchall()
@@ -89,6 +104,12 @@ class ChannelsRepository:
     async def set_channel_active(self, pk: int, active: bool) -> None:
         await self._db.execute(
             "UPDATE channels SET is_active = ? WHERE id = ?", (int(active), pk)
+        )
+        await self._db.commit()
+
+    async def set_channel_filtered(self, pk: int, filtered: bool) -> None:
+        await self._db.execute(
+            "UPDATE channels SET is_filtered = ? WHERE id = ?", (int(filtered), pk)
         )
         await self._db.commit()
 

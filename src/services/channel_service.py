@@ -10,8 +10,12 @@ class ChannelService:
         self._db = db
         self._pool = pool
 
-    async def list_for_page(self) -> tuple[list[Channel], list, dict]:
-        channels = await self._db.get_channels_with_counts()
+    async def list_for_page(
+        self, include_filtered: bool = True
+    ) -> tuple[list[Channel], list, dict]:
+        channels = await self._db.get_channels_with_counts(
+            include_filtered=include_filtered
+        )
         keywords = await self._db.get_keywords()
         latest_stats = await self._db.get_latest_stats_for_all()
         return channels, keywords, latest_stats

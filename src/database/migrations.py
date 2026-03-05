@@ -38,6 +38,12 @@ async def run_migrations(db: aiosqlite.Connection) -> None:
     )
     await db.commit()
 
+    cur = await db.execute("PRAGMA table_info(channels)")
+    ch_columns2 = {row["name"] for row in await cur.fetchall()}
+    if "is_filtered" not in ch_columns2:
+        await db.execute("ALTER TABLE channels ADD COLUMN is_filtered INTEGER DEFAULT 0")
+        await db.commit()
+
     cur = await db.execute("SELECT value FROM settings WHERE key = 'fts5_initialized'")
     if not await cur.fetchone():
         try:
