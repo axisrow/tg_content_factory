@@ -138,6 +138,7 @@ async def test_search_telegram_returns_results(db):
 
     pool = MagicMock()
     pool.get_available_client = AsyncMock(return_value=(mock_client, "+1234567890"))
+    pool.release_client = AsyncMock()
 
     engine = SearchEngine(db, pool=pool)
     result = await engine.search_telegram("AI", limit=10)
@@ -147,6 +148,7 @@ async def test_search_telegram_returns_results(db):
     assert result.messages[0].message_id == 42
     assert result.messages[0].text == "Test message about AI"
     assert result.messages[0].channel_title == "Test Channel"
+    pool.release_client.assert_called_with("+1234567890")
 
 
 @pytest.mark.asyncio
@@ -167,6 +169,7 @@ async def test_search_telegram_caches_to_db(db):
 
     pool = MagicMock()
     pool.get_available_client = AsyncMock(return_value=(mock_client, "+1234567890"))
+    pool.release_client = AsyncMock()
 
     engine = SearchEngine(db, pool=pool)
     await engine.search_telegram("cached", limit=5)
@@ -174,6 +177,7 @@ async def test_search_telegram_caches_to_db(db):
     messages, total = await db.search_messages(query="cached", limit=10, offset=0)
     assert total == 1
     assert messages[0].text == "cached search result"
+    pool.release_client.assert_called_with("+1234567890")
 
 
 @pytest.mark.asyncio
@@ -210,6 +214,7 @@ async def test_search_telegram_no_premium(db):
 
     pool = MagicMock()
     pool.get_available_client = AsyncMock(return_value=(mock_client, "+1234567890"))
+    pool.release_client = AsyncMock()
 
     engine = SearchEngine(db, pool=pool)
     result = await engine.search_telegram("query")
@@ -218,6 +223,7 @@ async def test_search_telegram_no_premium(db):
     assert result.messages == []
     assert "Telegram Premium" in result.error
     assert "+1234567890" in result.error
+    pool.release_client.assert_called_once_with("+1234567890")
 
 
 # ---- Helpers for resolved Telethon messages (iter_messages) ----
@@ -277,6 +283,7 @@ async def test_search_my_chats_returns_results(db):
 
     pool = MagicMock()
     pool.get_available_client = AsyncMock(return_value=(client, "+1234567890"))
+    pool.release_client = AsyncMock()
 
     engine = SearchEngine(db, pool=pool)
     result = await engine.search_my_chats("resolved", limit=10)
@@ -285,6 +292,7 @@ async def test_search_my_chats_returns_results(db):
     assert result.messages[0].message_id == 42
     assert result.messages[0].text == "resolved message"
     assert result.messages[0].channel_title == "My Chat"
+    pool.release_client.assert_called_once_with("+1234567890")
 
 
 @pytest.mark.asyncio
@@ -318,6 +326,7 @@ async def test_search_in_channel_returns_results(db):
 
     pool = MagicMock()
     pool.get_available_client = AsyncMock(return_value=(client, "+1234567890"))
+    pool.release_client = AsyncMock()
 
     engine = SearchEngine(db, pool=pool)
     result = await engine.search_in_channel(200456, "resolved", limit=10)
@@ -325,6 +334,7 @@ async def test_search_in_channel_returns_results(db):
     assert result.total == 1
     assert result.messages[0].channel_id == 200456
     assert result.messages[0].channel_title == "Target Channel"
+    pool.release_client.assert_called_once_with("+1234567890")
 
 
 @pytest.mark.asyncio
@@ -336,6 +346,7 @@ async def test_search_in_channel_all_channels(db):
 
     pool = MagicMock()
     pool.get_available_client = AsyncMock(return_value=(client, "+1234567890"))
+    pool.release_client = AsyncMock()
 
     engine = SearchEngine(db, pool=pool)
     result = await engine.search_in_channel(None, "query", limit=10)
@@ -343,6 +354,7 @@ async def test_search_in_channel_all_channels(db):
     assert result.total == 1
     assert result.error is None
     assert result.messages[0].channel_title == "All Chats Result"
+    pool.release_client.assert_called_once_with("+1234567890")
 
 
 @pytest.mark.asyncio
@@ -352,9 +364,11 @@ async def test_search_in_channel_entity_not_found(db):
 
     pool = MagicMock()
     pool.get_available_client = AsyncMock(return_value=(client, "+1234567890"))
+    pool.release_client = AsyncMock()
 
     engine = SearchEngine(db, pool=pool)
     result = await engine.search_in_channel(999999, "query")
 
     assert result.total == 0
     assert "Не удалось найти канал" in result.error
+    pool.release_client.assert_called_once_with("+1234567890")

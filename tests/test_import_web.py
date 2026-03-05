@@ -134,6 +134,76 @@ async def test_import_button_on_channels_page(client):
     assert "Импорт" in resp.text
 
 
+@pytest.fixture
+async def client_no_accounts(tmp_path):
+    """Client fixture where resolve_channel raises no_client."""
+    config = AppConfig()
+    config.database.path = str(tmp_path / "test_no_acc.db")
+    config.telegram.api_id = 12345
+    config.telegram.api_hash = "test_hash"
+    config.web.password = "testpass"
+    app = create_app(config)
+
+    db = Database(config.database.path)
+    await db.initialize()
+    app.state.db = db
+
+    async def _no_users(self):
+        return []
+
+    async def _resolve_channel(self, identifier):
+        raise RuntimeError("no_client")
+
+    async def _get_dialogs(self):
+        return []
+
+    app.state.pool = type(
+        "Pool",
+        (),
+        {
+            "clients": {},
+            "get_users_info": _no_users,
+            "resolve_channel": _resolve_channel,
+            "get_dialogs": _get_dialogs,
+        },
+    )()
+
+    from src.telegram.auth import TelegramAuth
+
+    app.state.auth = TelegramAuth(12345, "test_hash")
+    app.state.notifier = None
+    collector = Collector(app.state.pool, db, config.scheduler)
+    app.state.collector = collector
+    app.state.search_engine = SearchEngine(db)
+    app.state.ai_search = AISearchEngine(config.llm, db)
+    app.state.scheduler = SchedulerManager(collector, config.scheduler)
+    app.state.session_secret = "test_secret_key"
+
+    transport = ASGITransport(app=app)
+    auth_header = base64.b64encode(b":testpass").decode()
+    async with AsyncClient(
+        transport=transport,
+        base_url="http://test",
+        follow_redirects=True,
+        headers={"Authorization": f"Basic {auth_header}"},
+    ) as c:
+        yield c
+
+    await db.close()
+
+
+@pytest.mark.asyncio
+async def test_import_no_client_shows_error(client_no_accounts):
+    resp = await client_no_accounts.post(
+        "/channels/import",
+        data={"text_input": "@chan1\n@chan2\n@chan3"},
+    )
+    assert resp.status_code == 200
+    assert "Нет доступных аккаунтов" in resp.text
+    # All 3 should fail
+    assert "Ошибок: <strong>3</strong>" in resp.text
+
+
 @pytest.mark.asyncio
 async def test_import_file_upload(client):
     file_content = b"@filech1\n@filech2\n@filech3"

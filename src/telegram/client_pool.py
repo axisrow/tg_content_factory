@@ -4,9 +4,11 @@ import asyncio
 import base64
 import io
 import logging
+import re
 from datetime import datetime, timedelta, timezone
 
 from telethon import TelegramClient
+from telethon.errors import FloodWaitError
 
 from src.database import Database
 from src.models import TelegramUserInfo
@@ -143,27 +145,54 @@ class ClientPool:
         return result
 
     async def resolve_channel(self, identifier: str) -> dict | None:
-        """Resolve channel by @username or t.me/ link. Returns dict with channel info."""
-        result = await self.get_available_client()
-        if not result:
-            return None
-        client, phone = result
-        try:
-            entity = await client.get_entity(identifier)
-            if getattr(entity, "broadcast", False):
-                channel_type = "channel"
-            elif getattr(entity, "megagroup", False):
-                channel_type = "group"
-            else:
-                channel_type = None
-            return {
-                "channel_id": entity.id,
-                "title": entity.title,
-                "username": getattr(entity, "username", None),
-                "channel_type": channel_type,
-            }
-        finally:
-            await self.release_client(phone)
+        """Resolve channel by @username or t.me/ link. Returns dict with channel info.
+
+        Raises:
+            RuntimeError("no_client") — no connected/available Telegram accounts.
+        """
+        # Normalize post links: https://t.me/channel/123 → https://t.me/channel
+        identifier = re.sub(r"(t\.me/[^/\s]+)/\d+$", r"\1", identifier)
+
+        for _attempt in range(3):
+            result = await self.get_available_client()
+            if not result:
+                logger.warning("resolve_channel: no available client for '%s'", identifier)
+                raise RuntimeError("no_client")
+            client, phone = result
+            try:
+                entity = await client.get_entity(identifier)
+                if not hasattr(entity, "title"):
+                    logger.info(
+                        "resolve_channel: '%s' is a user, not a channel/group", identifier
+                    )
+                    return None
+                if getattr(entity, "broadcast", False):
+                    channel_type = "channel"
+                elif getattr(entity, "megagroup", False):
+                    channel_type = "group"
+                else:
+                    channel_type = None
+                return {
+                    "channel_id": entity.id,
+                    "title": entity.title,
+                    "username": getattr(entity, "username", None),
+                    "channel_type": channel_type,
+                }
+            except FloodWaitError as e:
+                await self.release_client(phone)
+                await self.report_flood(phone, e.seconds)
+                logger.warning(
+                    "resolve_channel: flood wait %ds for '%s', rotating client",
+                    e.seconds, identifier,
+                )
+                continue
+            except Exception as e:
+                logger.warning("resolve_channel: failed to resolve '%s': %s", identifier, e)
+                return None
+            finally:
+                await self.release_client(phone)
+        logger.warning("resolve_channel: all clients flood-waited for '%s'", identifier)
+        return None
 
     async def get_dialogs(self) -> list[dict]:
         """Get list of subscribed channels and groups."""

@@ -15,9 +15,18 @@
             <textarea name="text_input" rows="6" placeholder="@channel1&#10;t.me/channel2&#10;-1001234567890&#10;https://t.me/+invite_hash"></textarea>
             <small>Загрузите файл любого формата — парсер автоматически найдёт все Telegram-идентификаторы (<code>@username</code>, <code>t.me/...</code>, числовой ID).</small>
         </label>
-        <button type="submit">Импортировать</button>
+        <button type="submit" id="import-btn">Импортировать</button>
     </form>
 </article>
+
+<script>
+document.querySelector('form[action$="/import"]').addEventListener('submit', function() {
+    var btn = document.getElementById('import-btn');
+    btn.setAttribute('aria-busy', 'true');
+    btn.textContent = 'Импорт выполняется…';
+    btn.disabled = true;
+});
+</script>
 
 {% if results is not none %}
 <article>

@@ -53,12 +53,29 @@ async def import_channels(
     skipped = 0
     failed = 0
 
+    no_client = False
     for ident in identifiers:
         try:
             info = await pool.resolve_channel(ident.strip())
+        except RuntimeError as exc:
+            if str(exc) == "no_client":
+                no_client = True
+                for remaining in identifiers[identifiers.index(ident):]:
+                    details.append({
+                        "identifier": remaining,
+                        "status": "failed",
+                        "detail": "Нет доступных аккаунтов Telegram",
+                    })
+                    failed += 1
+                break
+            logger.warning("Failed to resolve '%s': %s", ident, exc)
+            info = None
         except Exception as exc:
             logger.warning("Failed to resolve '%s': %s", ident, exc)
             info = None
+
+        if no_client:
+            break
 
         if not info:
             details.append({"identifier": ident, "status": "failed", "detail": "Не найден"})

@@ -90,7 +90,7 @@ docker-compose up -d
 
 ```bash
 # Запуск веб-сервера
-python -m src.main [--config CONFIG] serve [--web-user USER --web-pass PASS]
+python -m src.main [--config CONFIG] serve [--web-pass PASS]
 
 # Разовый сбор сообщений
 python -m src.main [--config CONFIG] collect

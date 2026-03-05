@@ -90,7 +90,7 @@ Config supports `${ENV_VAR}` substitution. Empty env vars are dropped (defaults 
 
 ```bash
 # Start web server
-python -m src.main [--config CONFIG] serve [--web-user USER --web-pass PASS]
+python -m src.main [--config CONFIG] serve [--web-pass PASS]
 
 # One-shot message collection
 python -m src.main [--config CONFIG] collect
