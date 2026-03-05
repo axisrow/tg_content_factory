@@ -28,7 +28,9 @@ def run(args: argparse.Namespace) -> None:
             elif args.mode == "my_chats":
                 result = await engine.search_my_chats(args.query, limit=args.limit)
             elif args.mode == "channel":
-                result = await engine.search_in_channel(args.channel_id, args.query, limit=args.limit)
+                result = await engine.search_in_channel(
+                    args.channel_id, args.query, limit=args.limit
+                )
             else:
                 result = await engine.search_local(args.query, limit=args.limit)
 

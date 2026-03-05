@@ -56,7 +56,10 @@ class TelegramSearch:
 
     async def search_telegram(self, query: str, limit: int = 50) -> SearchResult:
         if not self._pool:
-            return SearchResult(messages=[], total=0, query=query, error="Нет подключённых Telegram-аккаунтов.")
+            return SearchResult(
+                messages=[], total=0, query=query,
+                error="Нет подключённых Telegram-аккаунтов.",
+            )
 
         result = await self._pool.get_available_client()
         if result is None:
@@ -99,7 +102,9 @@ class TelegramSearch:
         finally:
             await self._pool.release_client(phone)
 
-    async def _search_posts_global(self, client, query: str, limit: int) -> tuple[list[Message], dict[int, Channel]]:
+    async def _search_posts_global(
+        self, client, query: str, limit: int,
+    ) -> tuple[list[Message], dict[int, Channel]]:
         from telethon.tl.functions.channels import SearchPostsRequest
         from telethon.tl.types import InputPeerEmpty, PeerChannel
         from telethon.utils import get_input_peer
@@ -145,7 +150,9 @@ class TelegramSearch:
                         username=chat_username,
                     )
 
-                sender_id, sender_name = TelegramMessageTransformer.resolve_sender(msg, chats_map, users_map)
+                sender_id, sender_name = TelegramMessageTransformer.resolve_sender(
+                    msg, chats_map, users_map,
+                )
 
                 messages.append(
                     Message(
@@ -183,7 +190,10 @@ class TelegramSearch:
 
     async def search_my_chats(self, query: str, limit: int = 50) -> SearchResult:
         if not self._pool:
-            return SearchResult(messages=[], total=0, query=query, error="Нет подключённых Telegram-аккаунтов.")
+            return SearchResult(
+                messages=[], total=0, query=query,
+                error="Нет подключённых Telegram-аккаунтов.",
+            )
 
         result = await self._pool.get_available_client()
         if result is None:
@@ -222,9 +232,14 @@ class TelegramSearch:
         finally:
             await self._pool.release_client(phone)
 
-    async def search_in_channel(self, channel_id: int | None, query: str, limit: int = 50) -> SearchResult:
+    async def search_in_channel(
+        self, channel_id: int | None, query: str, limit: int = 50,
+    ) -> SearchResult:
         if not self._pool:
-            return SearchResult(messages=[], total=0, query=query, error="Нет подключённых Telegram-аккаунтов.")
+            return SearchResult(
+                messages=[], total=0, query=query,
+                error="Нет подключённых Telegram-аккаунтов.",
+            )
 
         result = await self._pool.get_available_client()
         if result is None:

@@ -14,11 +14,17 @@ from src.database.repositories.search_log import SearchLogRepository
 from src.database.repositories.settings import SettingsRepository
 from src.database.schema import SCHEMA_SQL
 from src.models import Account, Channel, ChannelStats, CollectionTask, Keyword, Message
+from src.security import SessionCipher
 
 
 class Database:
-    def __init__(self, db_path: str = "data/tg_search.db"):
+    def __init__(
+        self,
+        db_path: str = "data/tg_search.db",
+        session_encryption_secret: str | None = None,
+    ):
         self._db_path = db_path
+        self._session_encryption_secret = session_encryption_secret
         self._connection = DBConnection(db_path)
         self._db: aiosqlite.Connection | None = None
         self._accounts: AccountsRepository | None = None
@@ -36,7 +42,11 @@ class Database:
         await self._db.commit()
         await run_migrations(self._db)
 
-        self._accounts = AccountsRepository(self._db)
+        session_cipher = None
+        if self._session_encryption_secret:
+            session_cipher = SessionCipher(self._session_encryption_secret)
+
+        self._accounts = AccountsRepository(self._db, session_cipher=session_cipher)
         self._channels = ChannelsRepository(self._db)
         self._messages = MessagesRepository(self._db)
         self._keywords = KeywordsRepository(self._db)
@@ -44,6 +54,8 @@ class Database:
         self._search_log = SearchLogRepository(self._db)
         self._channel_stats = ChannelStatsRepository(self._db)
         self._settings = SettingsRepository(self._db)
+
+        await self._accounts.migrate_sessions()
 
     async def close(self) -> None:
         await self._connection.close()

@@ -5,8 +5,8 @@ import asyncio
 import logging
 from pathlib import Path
 
-from src.cli.commands.common import resolve_channel
 from src.cli import runtime
+from src.cli.commands.common import resolve_channel
 from src.models import Channel
 from src.parsers import deduplicate_identifiers, parse_file, parse_identifiers
 from src.telegram.collector import Collector

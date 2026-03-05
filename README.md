@@ -39,6 +39,7 @@ Edit `.env`:
 TG_API_ID=your_api_id
 TG_API_HASH=your_api_hash
 WEB_PASS=your_password
+SESSION_ENCRYPTION_KEY=    # optional, recommended for account session encryption
 LLM_API_KEY=               # optional, for AI search
 ```
 
@@ -69,6 +70,7 @@ docker-compose up -d
 | `TG_API_ID` | Yes | Telegram API ID |
 | `TG_API_HASH` | Yes | Telegram API Hash |
 | `WEB_PASS` | Yes | Web panel password |
+| `SESSION_ENCRYPTION_KEY` | No | Explicit key for encrypting Telegram session strings in DB |
 | `LLM_API_KEY` | No | API key for AI-powered search |
 
 ### config.yaml
@@ -83,6 +85,7 @@ Config supports `${ENV_VAR}` substitution. Empty env vars are dropped (defaults 
 | `notifications` | `admin_chat_id` for keyword match alerts |
 | `database` | SQLite path (default: `data/tg_search.db`) |
 | `llm` | LLM provider, model, API key, enabled flag |
+| `security` | Session encryption settings (`session_encryption_key`) |
 
 ## Usage
 

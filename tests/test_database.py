@@ -31,6 +31,57 @@ async def test_account_upsert(db):
 
 
 @pytest.mark.asyncio
+async def test_account_session_encrypted_at_rest(tmp_path):
+    db_path = str(tmp_path / "encrypted.db")
+    database = Database(db_path, session_encryption_secret="test-encryption-secret")
+    await database.initialize()
+
+    await database.add_account(Account(phone="+71230000000", session_string="session_plain"))
+
+    cur = await database.execute(
+        "SELECT session_string FROM accounts WHERE phone = ?",
+        ("+71230000000",),
+    )
+    row = await cur.fetchone()
+    assert row is not None
+    assert row["session_string"] != "session_plain"
+    assert row["session_string"].startswith("enc:v1:")
+
+    accounts = await database.get_accounts()
+    assert accounts[0].session_string == "session_plain"
+    await database.close()
+
+
+@pytest.mark.asyncio
+async def test_plaintext_sessions_migrate_on_init(tmp_path):
+    """Plaintext sessions are encrypted during initialize(), not get_accounts()."""
+    db_path = str(tmp_path / "plaintext_migration.db")
+
+    legacy_db = Database(db_path)
+    await legacy_db.initialize()
+    await legacy_db.add_account(Account(phone="+71230000001", session_string="legacy_plaintext"))
+    await legacy_db.close()
+
+    encrypted_db = Database(db_path, session_encryption_secret="migration-secret")
+    await encrypted_db.initialize()
+
+    # Migration already happened during initialize(); verify DB state first.
+    cur = await encrypted_db.execute(
+        "SELECT session_string FROM accounts WHERE phone = ?",
+        ("+71230000001",),
+    )
+    row = await cur.fetchone()
+    assert row is not None
+    assert row["session_string"].startswith("enc:v1:")
+
+    # get_accounts() returns decrypted value.
+    accounts = await encrypted_db.get_accounts()
+
+    assert accounts[0].session_string == "legacy_plaintext"
+    await encrypted_db.close()
+
+
+@pytest.mark.asyncio
 async def test_add_and_get_channels(db):
     ch = Channel(channel_id=-1001234567890, title="Test Channel", username="@test")
     await db.add_channel(ch)

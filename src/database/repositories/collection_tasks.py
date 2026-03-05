@@ -89,7 +89,10 @@ class CollectionTasksRepository:
                 error=r["error"],
                 created_at=(datetime.fromisoformat(r["created_at"]) if r["created_at"] else None),
                 started_at=(datetime.fromisoformat(r["started_at"]) if r["started_at"] else None),
-                completed_at=(datetime.fromisoformat(r["completed_at"]) if r["completed_at"] else None),
+                completed_at=(
+                    datetime.fromisoformat(r["completed_at"])
+                    if r["completed_at"] else None
+                ),
             )
             for r in rows
         ]

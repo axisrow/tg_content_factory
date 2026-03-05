@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import logging
 import os
 import re
 from pathlib import Path
 
 import yaml
 from pydantic import BaseModel
+
+logger = logging.getLogger(__name__)
 
 
 class TelegramConfig(BaseModel):
@@ -43,6 +46,10 @@ class LLMConfig(BaseModel):
     api_key: str = ""
 
 
+class SecurityConfig(BaseModel):
+    session_encryption_key: str = ""
+
+
 class AppConfig(BaseModel):
     telegram: TelegramConfig = TelegramConfig()
     web: WebConfig = WebConfig()
@@ -50,6 +57,7 @@ class AppConfig(BaseModel):
     notifications: NotificationsConfig = NotificationsConfig()
     database: DatabaseConfig = DatabaseConfig()
     llm: LLMConfig = LLMConfig()
+    security: SecurityConfig = SecurityConfig()
 
 
 _ENV_PATTERN = re.compile(r"\$\{(\w+)\}")
@@ -93,3 +101,21 @@ def load_config(path: str | Path = "config.yaml") -> AppConfig:
 
     substituted = _walk_and_substitute(raw)
     return AppConfig.model_validate(substituted)
+
+
+def resolve_session_encryption_secret(config: AppConfig) -> str | None:
+    """Resolve a stable secret for account session encryption.
+
+    Returns ``None`` when no suitable secret is available — the caller should
+    skip encryption rather than use a well-known default.
+    """
+    if config.security.session_encryption_key:
+        return config.security.session_encryption_key
+    if config.web.password:
+        return config.web.password
+    logger.warning(
+        "No session encryption secret configured. "
+        "Sessions will be stored in plaintext. "
+        "Set SESSION_ENCRYPTION_KEY (recommended) or WEB_PASS."
+    )
+    return None

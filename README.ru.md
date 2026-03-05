@@ -39,6 +39,7 @@ cp .env.example .env
 TG_API_ID=ваш_api_id
 TG_API_HASH=ваш_api_hash
 WEB_PASS=ваш_пароль
+SESSION_ENCRYPTION_KEY=    # опционально, рекомендуется для шифрования сессий аккаунтов
 LLM_API_KEY=               # опционально, для AI-поиска
 ```
 
@@ -69,6 +70,7 @@ docker-compose up -d
 | `TG_API_ID` | Да | Telegram API ID |
 | `TG_API_HASH` | Да | Telegram API Hash |
 | `WEB_PASS` | Да | Пароль веб-панели |
+| `SESSION_ENCRYPTION_KEY` | Нет | Явный ключ для шифрования Telegram session string в БД |
 | `LLM_API_KEY` | Нет | API-ключ для AI-поиска |
 
 ### config.yaml
@@ -83,6 +85,7 @@ docker-compose up -d
 | `notifications` | `admin_chat_id` для уведомлений о совпадении ключевых слов |
 | `database` | Путь к SQLite (по умолчанию: `data/tg_search.db`) |
 | `llm` | Провайдер LLM, модель, API-ключ, флаг включения |
+| `security` | Настройки шифрования сессий (`session_encryption_key`) |
 
 ## Использование
 

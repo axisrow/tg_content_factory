@@ -275,6 +275,47 @@ async def test_resolve_channel_success(client):
 
 
 @pytest.mark.asyncio
+async def test_csrf_blocks_cross_origin_post(client):
+    resp = await client.post(
+        "/channels/add",
+        data={"identifier": "@testchan"},
+        headers={"Origin": "https://evil.example"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 403
+    assert "CSRF validation failed" in resp.text
+
+
+@pytest.mark.asyncio
+async def test_csrf_allows_post_without_origin_or_referer(client):
+    """POST without Origin/Referer headers is allowed (matches Django behavior)."""
+    transport = client._transport
+    auth_header = base64.b64encode(b":testpass").decode()
+    async with AsyncClient(
+        transport=transport,
+        base_url="http://test",
+        headers={"Authorization": f"Basic {auth_header}"},
+    ) as c:
+        resp = await c.post(
+            "/channels/add",
+            data={"identifier": "@testchan"},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+
+
+@pytest.mark.asyncio
+async def test_csrf_allows_same_origin_post(client):
+    resp = await client.post(
+        "/channels/add",
+        data={"identifier": "@testchan"},
+        headers={"Origin": "http://test"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+
+
+@pytest.mark.asyncio
 async def test_resolve_channel_fail(tmp_path):
     """Failed resolve redirects with error query param."""
     config = AppConfig()
