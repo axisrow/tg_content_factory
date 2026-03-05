@@ -46,8 +46,7 @@ class CollectionQueue:
                 break
 
             # Check if task was cancelled while waiting in queue
-            tasks = await self._db.get_collection_tasks(limit=1)
-            task = next((t for t in tasks if t.id == task_id), None)
+            task = await self._db.get_collection_task(task_id)
             if task and task.status == "cancelled":
                 self._queue.task_done()
                 continue

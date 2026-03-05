@@ -83,7 +83,7 @@ class AISearchEngine:
             )
 
         try:
-            response = self._agent.run(query)
+            response = await asyncio.to_thread(self._agent.run, query)
             summary = str(response)
 
             # Also get raw messages for display

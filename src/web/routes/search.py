@@ -45,8 +45,10 @@ async def search_page(
     channels = await db.get_channels()
     ai_enabled = request.app.state.ai_search.enabled
 
-    # Fetch search quota for Premium mode display
-    search_quota = await engine.check_search_quota()
+    # Fetch search quota only when in telegram (Premium) mode
+    search_quota = None
+    if mode == "telegram":
+        search_quota = await engine.check_search_quota()
 
     total_pages = 0
     if result and result.total > 0:
