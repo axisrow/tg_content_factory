@@ -87,7 +87,11 @@ class CollectionQueue:
                     if count == 0 and not force and channel.id is not None:
                         after_ch = await self._db.get_channel_by_pk(channel.id)
                         if after_ch and after_ch.is_filtered and not channel.is_filtered:
-                            note = "Пропущен: low_subscriber_ratio"
+                            before_flags = set((channel.filter_flags or "").split(",")) - {""}
+                            after_flags = set((after_ch.filter_flags or "").split(",")) - {""}
+                            new_flags = after_flags - before_flags
+                            reason = next(iter(new_flags), "low_subscriber_ratio")
+                            note = f"Пропущен: {reason}"
                     await self._db.update_collection_task(
                         task_id, "completed", messages_collected=count, note=note
                     )
