@@ -54,10 +54,12 @@ class TestValidFlags:
     def test_all_flags_present(self):
         assert "low_uniqueness" in VALID_FLAGS
         assert "low_subscriber_ratio" in VALID_FLAGS
+        assert "low_subscriber_manual" in VALID_FLAGS
+        assert "manual" in VALID_FLAGS
         assert "cross_channel_spam" in VALID_FLAGS
         assert "non_cyrillic" in VALID_FLAGS
         assert "chat_noise" in VALID_FLAGS
-        assert len(VALID_FLAGS) == 5
+        assert len(VALID_FLAGS) == 7
 
 
 class TestAnalyzerLowUniqueness:

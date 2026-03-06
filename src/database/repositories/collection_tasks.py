@@ -29,9 +29,11 @@ class CollectionTasksRepository:
             id=row["id"],
             channel_id=row["channel_id"],
             channel_title=row["channel_title"],
+            channel_username=row["channel_username"],
             status=row["status"],
             messages_collected=row["messages_collected"],
             error=row["error"],
+            note=row["note"],
             run_after=(datetime.fromisoformat(row["run_after"]) if row["run_after"] else None),
             payload=CollectionTasksRepository._parse_payload(row["payload"]),
             parent_task_id=row["parent_task_id"],
@@ -49,6 +51,7 @@ class CollectionTasksRepository:
         channel_id: int,
         channel_title: str | None,
         *,
+        channel_username: str | None = None,
         run_after: datetime | None = None,
         payload: dict[str, Any] | None = None,
         parent_task_id: int | None = None,
@@ -59,9 +62,12 @@ class CollectionTasksRepository:
         payload_json = json.dumps(payload) if payload is not None else None
         cur = await self._db.execute(
             "INSERT INTO collection_tasks "
-            "(channel_id, channel_title, run_after, payload, parent_task_id) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (channel_id, channel_title, run_after_iso, payload_json, parent_task_id),
+            "(channel_id, channel_title, channel_username, run_after, payload, parent_task_id) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                channel_id, channel_title, channel_username,
+                run_after_iso, payload_json, parent_task_id,
+            ),
         )
         await self._db.commit()
         return cur.lastrowid or 0
@@ -79,6 +85,7 @@ class CollectionTasksRepository:
         status: str,
         messages_collected: int | None = None,
         error: str | None = None,
+        note: str | None = None,
     ) -> None:
         now = datetime.now(tz=timezone.utc).isoformat()
         sets = ["status = ?"]
@@ -95,6 +102,9 @@ class CollectionTasksRepository:
         if error is not None:
             sets.append("error = ?")
             params.append(error)
+        if note is not None:
+            sets.append("note = ?")
+            params.append(note)
         params.append(task_id)
         await self._db.execute(
             f"UPDATE collection_tasks SET {', '.join(sets)} WHERE id = ?",

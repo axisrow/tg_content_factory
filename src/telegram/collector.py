@@ -169,12 +169,15 @@ class Collector:
                     finally:
                         await self._pool.release_client(phone)
 
+                min_subs_raw = await self._db.get_setting("min_subscribers_filter")
+                min_subs = int(min_subs_raw) if min_subs_raw else 0
+
                 for channel in channels:
                     if self._cancel_event.is_set():
                         logger.info("Collection cancelled")
                         break
                     try:
-                        collected = await self._collect_channel(channel)
+                        collected = await self._collect_channel(channel, min_subs=min_subs)
                         stats["channels"] += 1
                         stats["messages"] += collected
                         await asyncio.sleep(self._config.delay_between_channels_sec)
@@ -234,6 +237,7 @@ class Collector:
         channel: Channel,
         progress_callback: Callable[[int], Awaitable[None]] | None = None,
         force: bool = False,
+        min_subs: int = 0,
     ) -> int:
         """Collect new messages from a single channel. Returns count."""
         channel_id = channel.channel_id
@@ -272,6 +276,15 @@ class Collector:
                 stats_list = await self._db.get_channel_stats(channel_id, limit=1)
                 subscriber_count = stats_list[0].subscriber_count if stats_list else None
                 if subscriber_count is not None:
+                    if min_subs > 0 and subscriber_count < min_subs:
+                        await self._db.set_channels_filtered_bulk(
+                            [(channel_id, "low_subscriber_manual")]
+                        )
+                        logger.info(
+                            "Pre-filter: channel %d subscribers %d < %d, skipping",
+                            channel_id, subscriber_count, min_subs,
+                        )
+                        return 0
                     cur = await self._db.execute(
                         "SELECT COUNT(*) FROM messages WHERE channel_id = ?",
                         (channel_id,),

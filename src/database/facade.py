@@ -260,6 +260,7 @@ class Database:
         channel_id: int,
         channel_title: str | None,
         *,
+        channel_username: str | None = None,
         run_after: datetime | None = None,
         payload: dict[str, Any] | None = None,
         parent_task_id: int | None = None,
@@ -268,6 +269,7 @@ class Database:
         return await self._tasks.create_collection_task(
             channel_id,
             channel_title,
+            channel_username=channel_username,
             run_after=run_after,
             payload=payload,
             parent_task_id=parent_task_id,
@@ -283,9 +285,10 @@ class Database:
         status: str,
         messages_collected: int | None = None,
         error: str | None = None,
+        note: str | None = None,
     ) -> None:
         self._require()
-        await self._tasks.update_collection_task(task_id, status, messages_collected, error)
+        await self._tasks.update_collection_task(task_id, status, messages_collected, error, note)
 
     async def get_collection_task(self, task_id: int) -> CollectionTask | None:
         self._require()

@@ -130,14 +130,11 @@ async def test_search_telegram_returns_results(db):
 
     response = _make_search_response([mock_msg], chats=[mock_chat])
 
-    me = MagicMock()
-    me.premium = True
     mock_client = AsyncMock()
-    mock_client.get_me = AsyncMock(return_value=me)
     mock_client.return_value = response
 
     pool = MagicMock()
-    pool.get_available_client = AsyncMock(return_value=(mock_client, "+1234567890"))
+    pool.get_premium_client = AsyncMock(return_value=(mock_client, "+1234567890"))
     pool.release_client = AsyncMock()
 
     engine = SearchEngine(db, pool=pool)
@@ -161,14 +158,11 @@ async def test_search_telegram_caches_to_db(db):
 
     response = _make_search_response([mock_msg], chats=[mock_chat])
 
-    me = MagicMock()
-    me.premium = True
     mock_client = AsyncMock()
-    mock_client.get_me = AsyncMock(return_value=me)
     mock_client.return_value = response
 
     pool = MagicMock()
-    pool.get_available_client = AsyncMock(return_value=(mock_client, "+1234567890"))
+    pool.get_premium_client = AsyncMock(return_value=(mock_client, "+1234567890"))
     pool.release_client = AsyncMock()
 
     engine = SearchEngine(db, pool=pool)
@@ -192,38 +186,17 @@ async def test_search_telegram_no_pool(db):
 
 
 @pytest.mark.asyncio
-async def test_search_telegram_no_clients(db):
-    pool = MagicMock()
-    pool.get_available_client = AsyncMock(return_value=None)
-
-    engine = SearchEngine(db, pool=pool)
-    result = await engine.search_telegram("query")
-
-    assert result.total == 0
-    assert result.messages == []
-    assert result.error == "Нет доступных Telegram-аккаунтов. Проверьте подключение."
-
-
-@pytest.mark.asyncio
 async def test_search_telegram_no_premium(db):
-    me = MagicMock()
-    me.premium = False
-
-    mock_client = MagicMock()
-    mock_client.get_me = AsyncMock(return_value=me)
-
+    # get_premium_client returns None when no premium accounts are available
     pool = MagicMock()
-    pool.get_available_client = AsyncMock(return_value=(mock_client, "+1234567890"))
-    pool.release_client = AsyncMock()
+    pool.get_premium_client = AsyncMock(return_value=None)
 
     engine = SearchEngine(db, pool=pool)
     result = await engine.search_telegram("query")
 
     assert result.total == 0
     assert result.messages == []
-    assert "Telegram Premium" in result.error
-    assert "+1234567890" in result.error
-    pool.release_client.assert_called_once_with("+1234567890")
+    assert "Premium" in result.error
 
 
 # ---- Helpers for resolved Telethon messages (iter_messages) ----

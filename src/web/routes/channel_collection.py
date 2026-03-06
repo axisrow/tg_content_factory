@@ -97,7 +97,9 @@ async def collect_stats(request: Request, pk: int):
         return RedirectResponse(url="/channels?error=stats_running", status_code=303)
 
     db = deps.get_db(request)
-    task_id = await db.create_collection_task(channel.channel_id, channel.title)
+    task_id = await db.create_collection_task(
+        channel.channel_id, channel.title, channel_username=channel.username
+    )
     await db.update_collection_task(task_id, "running")
 
     async def _run_channel_stats():
