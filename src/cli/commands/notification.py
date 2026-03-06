@@ -17,7 +17,8 @@ def run(args: argparse.Namespace) -> None:
                 print("Creating notification bot via BotFather...")
                 bot = await svc.setup_bot()
                 print(f"Bot created: @{bot.bot_username}")
-                print(f"Token: {bot.bot_token}")
+                print("[!] Сохраните токен — он больше не будет показан:")
+                print(f"    Token: {bot.bot_token}")
                 print(f"Send /start to @{bot.bot_username} in Telegram to activate it.")
 
             elif args.notification_action == "status":

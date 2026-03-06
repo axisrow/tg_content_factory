@@ -80,7 +80,6 @@ async def setup_notification_bot(request: Request):
         return JSONResponse({"error": str(exc)}, status_code=500)
     return JSONResponse({
         "bot_username": bot.bot_username,
-        "bot_token": bot.bot_token,
         "bot_id": bot.bot_id,
     })
 
