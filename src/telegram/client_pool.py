@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 
 from telethon import TelegramClient
 from telethon.errors import FloodWaitError, UsernameInvalidError, UsernameNotOccupiedError
-from telethon.tl.types import PeerChannel
+from telethon.tl.types import ChannelForbidden, PeerChannel
 
 from src.database import Database
 from src.models import TelegramUserInfo
@@ -212,9 +212,8 @@ class ClientPool:
                         "resolve_channel: '%s' is a user, not a channel/group", identifier
                     )
                     return None
-                from telethon.tl.types import ChannelForbidden
                 if isinstance(entity, ChannelForbidden):
-                    return False
+                    return None
                 scam = getattr(entity, "scam", False)
                 fake = getattr(entity, "fake", False)
                 restricted = getattr(entity, "restricted", False)
@@ -259,7 +258,7 @@ class ClientPool:
                 continue
             except (UsernameNotOccupiedError, UsernameInvalidError) as e:
                 logger.warning("resolve_channel: username not found '%s': %s", identifier, e)
-                return False  # Sentinel: channel definitely does not exist
+                return None
             except Exception as e:
                 logger.warning("resolve_channel: failed to resolve '%s': %s", identifier, e)
                 return None
@@ -297,11 +296,13 @@ class ClientPool:
                         channel_type = "channel"
                     else:
                         channel_type = "group"
+                    deactivate = channel_type in ("scam", "fake", "restricted")
                     dialogs.append({
                         "channel_id": entity.id,
                         "title": dialog.title,
                         "username": getattr(entity, "username", None),
                         "channel_type": channel_type,
+                        "deactivate": deactivate,
                     })
             return dialogs
         finally:

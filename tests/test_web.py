@@ -81,8 +81,6 @@ async def client(tmp_path):
     ) as c:
         yield c
 
-    if hasattr(app.state, "collection_queue"):
-        await app.state.collection_queue.shutdown()
     await db.close()
 
 
@@ -457,6 +455,144 @@ async def test_channel_type_displayed(client):
 
 
 @pytest.mark.asyncio
+async def test_add_scam_channel_is_inactive(tmp_path):
+    """Adding a scam channel via /channels/add creates it with is_active=False."""
+    config = AppConfig()
+    config.database.path = str(tmp_path / "test.db")
+    config.telegram.api_id = 12345
+    config.telegram.api_hash = "test_hash"
+    config.web.password = "testpass"
+    app = create_app(config)
+
+    db = Database(config.database.path)
+    await db.initialize()
+    app.state.db = db
+
+    async def _no_users(self):
+        return []
+
+    async def _resolve_scam(self, identifier):
+        return {
+            "channel_id": -1009999999,
+            "title": "Scam Channel",
+            "username": "scamchan",
+            "channel_type": "scam",
+            "deactivate": True,
+        }
+
+    async def _get_dialogs(self):
+        return []
+
+    app.state.pool = type(
+        "Pool",
+        (),
+        {
+            "clients": {},
+            "get_users_info": _no_users,
+            "resolve_channel": _resolve_scam,
+            "get_dialogs": _get_dialogs,
+        },
+    )()
+    from src.telegram.auth import TelegramAuth
+
+    app.state.auth = TelegramAuth(12345, "test_hash")
+    app.state.notifier = None
+    collector = Collector(app.state.pool, db, config.scheduler)
+    app.state.collector = collector
+    app.state.search_engine = SearchEngine(db)
+    app.state.ai_search = AISearchEngine(config.llm, db)
+    app.state.scheduler = SchedulerManager(collector, config.scheduler)
+    app.state.session_secret = "test_secret_key"
+
+    transport = ASGITransport(app=app)
+    auth_header = base64.b64encode(b":testpass").decode()
+    async with AsyncClient(
+        transport=transport,
+        base_url="http://test",
+        follow_redirects=True,
+        headers={"Authorization": f"Basic {auth_header}"},
+    ) as c:
+        resp = await c.post("/channels/add", data={"identifier": "@scamchan"})
+        assert resp.status_code == 200
+
+    channels = await db.get_channels()
+    assert len(channels) == 1
+    assert channels[0].is_active is False
+
+    await db.close()
+
+
+@pytest.mark.asyncio
+async def test_bulk_add_scam_dialog_is_inactive(tmp_path):
+    """Adding a scam dialog via /channels/add-bulk creates it with is_active=False."""
+    config = AppConfig()
+    config.database.path = str(tmp_path / "test.db")
+    config.telegram.api_id = 12345
+    config.telegram.api_hash = "test_hash"
+    config.web.password = "testpass"
+    app = create_app(config)
+
+    db = Database(config.database.path)
+    await db.initialize()
+    app.state.db = db
+
+    async def _no_users(self):
+        return []
+
+    async def _resolve_channel(self, identifier):
+        return None
+
+    async def _get_dialogs_scam(self):
+        return [
+            {
+                "channel_id": -100777,
+                "title": "Scam Dialog",
+                "username": "scamdialog",
+                "channel_type": "scam",
+                "deactivate": True,
+            }
+        ]
+
+    app.state.pool = type(
+        "Pool",
+        (),
+        {
+            "clients": {},
+            "get_users_info": _no_users,
+            "resolve_channel": _resolve_channel,
+            "get_dialogs": _get_dialogs_scam,
+        },
+    )()
+    from src.telegram.auth import TelegramAuth
+
+    app.state.auth = TelegramAuth(12345, "test_hash")
+    app.state.notifier = None
+    collector = Collector(app.state.pool, db, config.scheduler)
+    app.state.collector = collector
+    app.state.search_engine = SearchEngine(db)
+    app.state.ai_search = AISearchEngine(config.llm, db)
+    app.state.scheduler = SchedulerManager(collector, config.scheduler)
+    app.state.session_secret = "test_secret_key"
+
+    transport = ASGITransport(app=app)
+    auth_header = base64.b64encode(b":testpass").decode()
+    async with AsyncClient(
+        transport=transport,
+        base_url="http://test",
+        follow_redirects=True,
+        headers={"Authorization": f"Basic {auth_header}"},
+    ) as c:
+        resp = await c.post("/channels/add-bulk", data={"channel_ids": ["-100777"]})
+        assert resp.status_code == 200
+
+    channels = await db.get_channels()
+    assert len(channels) == 1
+    assert channels[0].is_active is False
+
+    await db.close()
+
+
+@pytest.mark.asyncio
 async def test_filter_analyze_applies_filters(client):
     from datetime import datetime, timezone
 
@@ -599,6 +735,8 @@ async def test_collect_filtered_channel_is_allowed(client):
 
     tasks = await db.get_collection_tasks()
     assert len(tasks) == 1
+
+    await client._transport.app.state.collection_queue.shutdown()
 
 
 @pytest.mark.asyncio

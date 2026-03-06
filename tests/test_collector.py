@@ -1,13 +1,13 @@
 import asyncio
 from datetime import datetime, timezone
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, call
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from telethon.tl.types import PeerChannel
 
 from src.config import SchedulerConfig
-from src.models import Channel, ChannelStats
+from src.models import Channel, ChannelStats, Message
 from src.telegram.collector import Collector
 from tests.helpers import AsyncIterEmpty as _AsyncIterEmpty
 from tests.helpers import make_mock_pool
@@ -482,6 +482,15 @@ async def test_prefilter_broadcast_low_ratio(db):
     )
     await db.add_channel(ch)
     await db.save_channel_stats(ChannelStats(channel_id=-100200, subscriber_count=156))
+    # Insert 62000 fake messages so COUNT(*) = 62000, ratio = 156/62000 ≈ 0.0025 < 1.0
+    await db.insert_messages_batch([
+        Message(
+            channel_id=-100200, message_id=i, text="x",
+            date=datetime(2025, 1, 1, tzinfo=timezone.utc),
+        )
+        for i in range(1, 201)
+    ])
+    # 156 / 200 = 0.78 < 1.0 → should be filtered
 
     mock_client = AsyncMock()
     mock_client.get_entity = AsyncMock(return_value=SimpleNamespace())
@@ -493,7 +502,7 @@ async def test_prefilter_broadcast_low_ratio(db):
     count = await collector._collect_channel(ch)
 
     assert count == 0
-    # iter_messages must NOT be called for collection (last_collected_id > 0, no probe needed)
+    # iter_messages must NOT be called (pre-filtered)
     mock_client.iter_messages.assert_not_called()
 
     # Channel must be marked as filtered
@@ -512,7 +521,14 @@ async def test_prefilter_supergroup_low_ratio(db):
     )
     await db.add_channel(ch)
     await db.save_channel_stats(ChannelStats(channel_id=-100201, subscriber_count=100))
-    # ratio = 100 / 10000 = 0.01 < 0.02
+    # Insert 10000 messages so COUNT(*) = 10000, ratio = 100/10000 = 0.01 < 0.02
+    await db.insert_messages_batch([
+        Message(
+            channel_id=-100201, message_id=i, text="x",
+            date=datetime(2025, 1, 1, tzinfo=timezone.utc),
+        )
+        for i in range(1, 10001)
+    ])
 
     mock_client = AsyncMock()
     mock_client.get_entity = AsyncMock(return_value=SimpleNamespace())
@@ -540,7 +556,14 @@ async def test_prefilter_supergroup_pass_ratio(db):
     )
     await db.add_channel(ch)
     await db.save_channel_stats(ChannelStats(channel_id=-100202, subscriber_count=50))
-    # ratio = 50 / 1000 = 0.05 >= 0.02
+    # Insert 1000 messages so COUNT(*) = 1000, ratio = 50/1000 = 0.05 >= 0.02
+    await db.insert_messages_batch([
+        Message(
+            channel_id=-100202, message_id=i, text="x",
+            date=datetime(2025, 1, 1, tzinfo=timezone.utc),
+        )
+        for i in range(1, 1001)
+    ])
 
     mock_client = AsyncMock()
     mock_client.get_entity = AsyncMock(return_value=SimpleNamespace())
@@ -589,15 +612,22 @@ async def test_prefilter_no_stats_skips_check(db):
 
 
 @pytest.mark.asyncio
-async def test_prefilter_uses_last_collected_id(db):
-    """last_collected_id > 0 → no extra iter_messages(limit=1) probe."""
+async def test_prefilter_uses_message_count(db):
+    """Pre-filter uses real COUNT(*) from DB, not last_collected_id."""
     ch = Channel(
         channel_id=-100204, title="Established Channel",
         channel_type="supergroup", last_collected_id=500,
     )
     await db.add_channel(ch)
     await db.save_channel_stats(ChannelStats(channel_id=-100204, subscriber_count=5))
-    # ratio = 5 / 500 = 0.01 < 0.02 → filtered
+    # Insert 500 messages so COUNT(*) = 500, ratio = 5/500 = 0.01 < 0.02 → filtered
+    await db.insert_messages_batch([
+        Message(
+            channel_id=-100204, message_id=i, text="x",
+            date=datetime(2025, 1, 1, tzinfo=timezone.utc),
+        )
+        for i in range(1, 501)
+    ])
 
     mock_client = AsyncMock()
     mock_client.get_entity = AsyncMock(return_value=SimpleNamespace())
@@ -609,38 +639,24 @@ async def test_prefilter_uses_last_collected_id(db):
     count = await collector._collect_channel(ch)
 
     assert count == 0
-    # iter_messages must never be called (last_collected_id used as latest_msg_id)
+    # iter_messages must never be called (pre-filtered by message_count)
     mock_client.iter_messages.assert_not_called()
 
 
 @pytest.mark.asyncio
-async def test_prefilter_first_run_probes_latest_msg_id(db):
-    """First run (last_collected_id=0) → latest_msg_id via iter_messages(limit=1)."""
+async def test_prefilter_skips_when_no_messages(db):
+    """First run (message_count=0) → pre-filter skipped, collection proceeds."""
     ch = Channel(
         channel_id=-100205, title="New Channel",
         channel_type="supergroup", last_collected_id=0,
     )
     await db.add_channel(ch)
     await db.save_channel_stats(ChannelStats(channel_id=-100205, subscriber_count=1))
-    # After probe: latest_msg_id=1000, ratio = 1/1000 = 0.001 < 0.02 → filtered
-
-    probe_msg = SimpleNamespace(
-        id=1000, text=None, media=None, sender_id=None, sender=None,
-        date=datetime(2025, 1, 1, tzinfo=timezone.utc),
-    )
-
-    call_count = 0
-
-    def _iter_messages_side_effect(entity, **kwargs):
-        nonlocal call_count
-        call_count += 1
-        if kwargs.get("limit") == 1:
-            return _AsyncIterMessages([probe_msg])
-        return _AsyncIterEmpty()
+    # No messages in DB → message_count = 0 → pre-filter skipped
 
     mock_client = AsyncMock()
     mock_client.get_entity = AsyncMock(return_value=SimpleNamespace())
-    mock_client.iter_messages = MagicMock(side_effect=_iter_messages_side_effect)
+    mock_client.iter_messages = MagicMock(return_value=_AsyncIterEmpty())
 
     pool = make_mock_pool(get_available_client=AsyncMock(return_value=(mock_client, "+7000")))
     collector = Collector(pool, db, SchedulerConfig())
@@ -648,12 +664,41 @@ async def test_prefilter_first_run_probes_latest_msg_id(db):
     count = await collector._collect_channel(ch)
 
     assert count == 0
-    # iter_messages called exactly once (the probe with limit=1)
-    assert call_count == 1
+    # iter_messages called for actual collection (pre-filter was skipped)
     mock_client.iter_messages.assert_called_once()
-    call_kwargs = mock_client.iter_messages.call_args
-    assert call_kwargs.kwargs.get("limit") == 1 or call_kwargs[1].get("limit") == 1
+
+
+@pytest.mark.asyncio
+async def test_prefilter_skipped_when_force(db):
+    """force=True → pre-filter skipped; channel filter state not changed."""
+    ch = Channel(
+        channel_id=-100206, title="Forced Channel",
+        channel_type="supergroup", last_collected_id=500,
+    )
+    await db.add_channel(ch)
+    await db.save_channel_stats(ChannelStats(channel_id=-100206, subscriber_count=5))
+    # 5 / 500 = 0.01 < 0.02 — would be filtered without force
+    await db.insert_messages_batch([
+        Message(
+            channel_id=-100206, message_id=i, text="x",
+            date=datetime(2025, 1, 1, tzinfo=timezone.utc),
+        )
+        for i in range(1, 501)
+    ])
+
+    mock_client = AsyncMock()
+    mock_client.get_entity = AsyncMock(return_value=SimpleNamespace())
+    mock_client.iter_messages = MagicMock(return_value=_AsyncIterEmpty())
+
+    pool = make_mock_pool(get_available_client=AsyncMock(return_value=(mock_client, "+7000")))
+    collector = Collector(pool, db, SchedulerConfig())
+
+    count = await collector._collect_channel(ch, force=True)
+
+    assert count == 0
+    # Collection proceeds (iter_messages called), channel NOT marked filtered
+    mock_client.iter_messages.assert_called_once()
 
     channels = await db.get_channels(include_filtered=True)
-    stored = next(c for c in channels if c.channel_id == -100205)
-    assert stored.is_filtered is True
+    stored = next(c for c in channels if c.channel_id == -100206)
+    assert stored.is_filtered is False

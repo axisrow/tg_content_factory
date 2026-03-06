@@ -29,6 +29,7 @@ class ChannelService:
             title=info["title"],
             username=info["username"],
             channel_type=info.get("channel_type"),
+            is_active=not info.get("deactivate", False),
         )
         await self._db.add_channel(channel)
         return True
@@ -54,6 +55,7 @@ class ChannelService:
                     title=dialog["title"],
                     username=dialog["username"],
                     channel_type=dialog.get("channel_type"),
+                    is_active=not dialog.get("deactivate", False),
                 )
             )
 

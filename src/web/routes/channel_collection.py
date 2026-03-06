@@ -16,10 +16,16 @@ async def collect_channel(request: Request, pk: int):
 
     if getattr(request.app.state, "shutting_down", False):
         if is_htmx:
-            return HTMLResponse(f'<span id="collect-btn-{pk}" title="Сервер останавливается">⚠️</span>')
+            return HTMLResponse(
+                f'<span id="collect-btn-{pk}" title="Сервер останавливается">'
+                f'⚠️</span>'
+            )
         return RedirectResponse(url="/channels?error=shutting_down", status_code=303)
 
     service = deps.collection_service(request)
+    db = deps.get_db(request)
+    channel = await db.get_channel_by_pk(pk)
+    is_filtered = channel.is_filtered if channel else False
     enqueue_status = await service.enqueue_channel_by_pk(pk, force=True)
 
     if is_htmx:
@@ -27,9 +33,11 @@ async def collect_channel(request: Request, pk: int):
             return HTMLResponse(f'<span id="collect-btn-{pk}">❓</span>')
         collector = deps.get_collector(request)
         label = "В очереди" if collector.is_running else "Запущен"
+        filtered_badge = ' <small title="Канал отфильтрован">⚡</small>' if is_filtered else ""
         return HTMLResponse(
             f'<span id="collect-btn-{pk}">'
             f'<button class="outline emoji-btn" disabled title="{label}">⏳</button>'
+            f'{filtered_badge}'
             f'</span>'
         )
 
