@@ -44,6 +44,10 @@ async def run_migrations(db: aiosqlite.Connection) -> None:
         await db.execute("ALTER TABLE collection_tasks ADD COLUMN parent_task_id INTEGER")
         await db.commit()
 
+    await db.execute("UPDATE channels SET channel_type='supergroup' WHERE channel_type='group'")
+    await db.execute("UPDATE channels SET channel_type='group' WHERE channel_type='chat'")
+    await db.commit()
+
     await db.execute(
         """
         UPDATE channels SET last_collected_id = (

@@ -119,6 +119,7 @@ form button[style*="padding"] {
 
 .badge-active { color: #15803d; font-weight: 600; }
 .badge-inactive { color: #9ca3af; }
+.badge-filtered { color: #dc2626; font-weight: 600; }
 
 @media (max-width: 576px) {
   nav.container > ul:first-child li strong {

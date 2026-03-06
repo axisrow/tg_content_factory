@@ -83,7 +83,7 @@ class ChannelAnalyzer:
 
             short_msg_pct: float | None = None
             noisy_chat = False
-            if channel["channel_type"] == "group" and channel_id_value in short_map:
+            if channel["channel_type"] in ("group", "supergroup") and channel_id_value in short_map:
                 short_total, short_count = short_map[channel_id_value]
                 if short_total > 0:
                     raw_short_pct = short_count / short_total * 100

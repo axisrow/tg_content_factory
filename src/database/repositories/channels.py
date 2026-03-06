@@ -162,6 +162,13 @@ class ChannelsRepository:
         rowcount = cur.rowcount if cur.rowcount is not None else 0
         return rowcount if rowcount > 0 else 0
 
+    async def set_channel_type(self, channel_id: int, channel_type: str) -> None:
+        await self._db.execute(
+            "UPDATE channels SET channel_type=? WHERE channel_id=?",
+            (channel_type, channel_id),
+        )
+        await self._db.commit()
+
     async def delete_channel(self, pk: int) -> None:
         cur = await self._db.execute("SELECT channel_id FROM channels WHERE id = ?", (pk,))
         row = await cur.fetchone()

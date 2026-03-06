@@ -38,6 +38,7 @@ async def analyze_channels(request: Request):
     db = deps.get_db(request)
     analyzer = ChannelAnalyzer(db)
     report = await analyzer.analyze_all()
+    await analyzer.apply_filters(report)
     return deps.get_templates(request).TemplateResponse(
         request,
         "filter_report.html",
