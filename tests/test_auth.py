@@ -82,6 +82,30 @@ class TestSendCode:
         assert info["timeout"] == 60
         assert "+1234567890" in auth._pending
 
+    @pytest.mark.asyncio
+    async def test_send_code_disconnects_previous_pending_client(self):
+        auth = TelegramAuth(api_id=123, api_hash="abc")
+        old_client = AsyncMock()
+        auth._pending["+1234567890"] = (old_client, "old_hash")
+
+        fake_result = SimpleNamespace(
+            phone_code_hash="hash123",
+            type=FakeSentCodeTypeApp(),
+            next_type=None,
+            timeout=60,
+        )
+        new_client = AsyncMock()
+        new_client.send_code_request = AsyncMock(return_value=fake_result)
+
+        with (
+            patch("src.telegram.auth.TelegramClient", return_value=new_client),
+            patch("src.telegram.auth.SentCodeTypeApp", FakeSentCodeTypeApp),
+        ):
+            await auth.send_code("+1234567890")
+
+        old_client.disconnect.assert_awaited_once()
+        assert auth._pending["+1234567890"][0] is new_client
+
 
 class TestResendCode:
     @pytest.mark.asyncio

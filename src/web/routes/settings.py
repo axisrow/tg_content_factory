@@ -65,6 +65,9 @@ async def save_credentials(request: Request):
     id_changed = api_id and api_id != CREDENTIALS_MASK
     hash_changed = api_hash and api_hash != CREDENTIALS_MASK
 
+    if id_changed and not api_id.isdigit():
+        return RedirectResponse(url="/settings?error=invalid_api_id", status_code=303)
+
     if id_changed:
         await db.set_setting("tg_api_id", api_id)
     if hash_changed:
@@ -74,6 +77,8 @@ async def save_credentials(request: Request):
         actual_id = api_id if id_changed else (await db.get_setting("tg_api_id") or "")
         actual_hash = api_hash if hash_changed else (await db.get_setting("tg_api_hash") or "")
         if actual_id and actual_hash:
+            if not actual_id.isdigit():
+                return RedirectResponse(url="/settings?error=invalid_api_id", status_code=303)
             auth.update_credentials(int(actual_id), actual_hash)
 
     return RedirectResponse(url="/settings?msg=credentials_saved", status_code=303)

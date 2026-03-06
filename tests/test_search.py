@@ -199,6 +199,29 @@ async def test_search_telegram_no_premium(db):
     assert "Premium" in result.error
 
 
+@pytest.mark.asyncio
+async def test_search_my_chats_runtime_error_returns_search_result(db):
+    client = AsyncMock()
+    client.get_dialogs = AsyncMock(return_value=[])
+
+    async def _broken_iter(*args, **kwargs):
+        raise RuntimeError("telegram api failure")
+        yield
+
+    client.iter_messages = _broken_iter
+
+    pool = MagicMock()
+    pool.get_available_client = AsyncMock(return_value=(client, "+1234567890"))
+    pool.release_client = AsyncMock()
+
+    engine = SearchEngine(db, pool=pool)
+    result = await engine.search_my_chats("query")
+
+    assert result.total == 0
+    assert "telegram api failure" in result.error
+    pool.release_client.assert_called_once_with("+1234567890")
+
+
 # ---- Helpers for resolved Telethon messages (iter_messages) ----
 
 def _make_resolved_message(
@@ -344,4 +367,27 @@ async def test_search_in_channel_entity_not_found(db):
 
     assert result.total == 0
     assert "Не удалось найти канал" in result.error
+    pool.release_client.assert_called_once_with("+1234567890")
+
+
+@pytest.mark.asyncio
+async def test_search_in_channel_runtime_error_returns_search_result(db):
+    client = AsyncMock()
+    client.get_entity = AsyncMock(return_value=MagicMock())
+
+    async def _broken_iter(*args, **kwargs):
+        raise RuntimeError("channel search failure")
+        yield
+
+    client.iter_messages = _broken_iter
+
+    pool = MagicMock()
+    pool.get_available_client = AsyncMock(return_value=(client, "+1234567890"))
+    pool.release_client = AsyncMock()
+
+    engine = SearchEngine(db, pool=pool)
+    result = await engine.search_in_channel(999999, "query")
+
+    assert result.total == 0
+    assert "channel search failure" in result.error
     pool.release_client.assert_called_once_with("+1234567890")

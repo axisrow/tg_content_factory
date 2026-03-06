@@ -204,10 +204,12 @@ class CollectionTasksRepository:
         return [self._to_task(r) for r in rows]
 
     async def fail_running_collection_tasks_on_startup(self) -> int:
+        now = datetime.now(tz=timezone.utc).isoformat()
         cur = await self._db.execute(
             "UPDATE collection_tasks "
-            "SET status = 'failed', completed_at = datetime('now') "
+            "SET status = 'failed', completed_at = ? "
             "WHERE channel_id != 0 AND status = 'running'",
+            (now,),
         )
         await self._db.commit()
         return cur.rowcount or 0

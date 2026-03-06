@@ -123,16 +123,6 @@ class Collector:
             self._running = True
             self._cancel_event.clear()
             try:
-                result = await self._pool.get_available_client()
-                if result:
-                    client, phone = result
-                    try:
-                        await asyncio.wait_for(client.get_dialogs(), timeout=30)
-                    except Exception:
-                        pass
-                    finally:
-                        await self._pool.release_client(phone)
-
                 if full:
                     channel = Channel(**{**channel.model_dump(), "last_collected_id": 0})
 
@@ -255,13 +245,17 @@ class Collector:
             return 0
 
         client, phone = result
+        # Populate entity cache when using PeerChannel (StringSession loses cache between restarts)
+        if not channel.username:
+            try:
+                await asyncio.wait_for(client.get_dialogs(), timeout=30)
+            except Exception:
+                pass
         messages_batch: list[Message] = []
         all_messages: list[Message] = []
-        # Tracks the highest message_id seen in this run.
-        # Initialized to min_id so the guard `max_msg_id > min_id`
-        # prevents a spurious DB update when no messages are collected.
-        max_msg_id = min_id
+        persisted_max_msg_id = min_id
         flood_wait_sec: int | None = None
+        stop_due_to_persistence_error = False
 
         is_first_run = channel.last_collected_id == 0
         limit = None if is_first_run else self._config.messages_per_channel
@@ -269,6 +263,45 @@ class Collector:
             "Collecting channel %d (%s), first_run=%s, min_id=%d, limit=%s",
             channel_id, channel.username or channel.title, is_first_run, min_id, limit,
         )
+
+        async def _flush_batch(batch: list[Message]) -> bool:
+            nonlocal persisted_max_msg_id
+            if not batch:
+                return True
+
+            await self._db.insert_messages_batch(batch)
+            expected_ids = {message.message_id for message in batch}
+            placeholders = ",".join("?" for _ in expected_ids)
+            cur = await self._db.execute(
+                f"SELECT message_id FROM messages WHERE channel_id = ? "
+                f"AND message_id IN ({placeholders})",
+                (channel_id, *expected_ids),
+            )
+            rows = await cur.fetchall()
+            persisted_ids = {row["message_id"] for row in rows}
+            missing_ids = expected_ids - persisted_ids
+            if missing_ids:
+                logger.error(
+                    "Failed to persist %d/%d messages for channel %d; "
+                    "last persisted id remains %d",
+                    len(missing_ids),
+                    len(expected_ids),
+                    channel_id,
+                    persisted_max_msg_id,
+                )
+                return False
+
+            persisted_max_msg_id = max(persisted_max_msg_id, max(expected_ids))
+            all_messages.extend(batch)
+            logger.info(
+                "Channel %d: persisted %d messages, total %d",
+                channel_id,
+                len(batch),
+                len(all_messages),
+            )
+            if progress_callback:
+                await progress_callback(len(all_messages))
+            return True
 
         try:
             if channel.username:
@@ -401,22 +434,16 @@ class Collector:
                     else msg.date,
                 )
                 messages_batch.append(message)
-                max_msg_id = max(max_msg_id, msg.id)
 
                 if len(messages_batch) % 10 == 0 and self._cancel_event.is_set():
                     logger.info("Channel %d collection interrupted", channel_id)
                     break
 
                 if is_first_run and len(messages_batch) >= 500:
-                    await self._db.insert_messages_batch(messages_batch)
-                    all_messages.extend(messages_batch)
-                    logger.info(
-                        "Channel %d: flushed %d, total %d",
-                        channel_id, len(messages_batch), len(all_messages),
-                    )
+                    if not await _flush_batch(messages_batch):
+                        stop_due_to_persistence_error = True
+                        break
                     messages_batch = []
-                    if progress_callback:
-                        await progress_callback(len(all_messages))
                     if self._cancel_event.is_set():
                         break
 
@@ -436,28 +463,25 @@ class Collector:
             # so a failure in one doesn't prevent the other from executing.
             try:
                 if messages_batch:
-                    await self._db.insert_messages_batch(messages_batch)
-                    all_messages.extend(messages_batch)
-                    logger.info(
-                        "Channel %d: saved %d remaining messages on exit",
-                        channel_id, len(messages_batch),
-                    )
-                    if progress_callback:
-                        await progress_callback(len(all_messages))
+                    stop_due_to_persistence_error = not await _flush_batch(messages_batch)
             except Exception as flush_err:
                 logger.error(
                     "Failed to flush %d messages for channel %d: %s",
                     len(messages_batch), channel_id, flush_err,
                 )
+                stop_due_to_persistence_error = True
             try:
-                if max_msg_id > min_id:
-                    await self._db.update_channel_last_id(channel_id, max_msg_id)
+                if persisted_max_msg_id > min_id:
+                    await self._db.update_channel_last_id(channel_id, persisted_max_msg_id)
             except Exception as update_err:
                 logger.error(
                     "Failed to update last_collected_id for channel %d: %s",
                     channel_id, update_err,
                 )
             await self._pool.release_client(phone)
+
+        if stop_due_to_persistence_error:
+            return len(all_messages)
 
         # Handle FloodWait AFTER finally has flushed progress
         if flood_wait_sec is not None:
@@ -507,7 +531,11 @@ class Collector:
     async def _precheck_sample(self, client, entity, limit: int) -> list[str]:
         """Sample up to `limit` messages for cross-channel precheck."""
         prefixes: list[str] = []
-        async for msg in client.iter_messages(entity, limit=limit):
+        async for msg in client.iter_messages(
+            entity,
+            limit=limit,
+            wait_time=self._config.delay_between_requests_sec,
+        ):
             if self._cancel_event.is_set():
                 break
             if msg.text and len(msg.text) > 10:

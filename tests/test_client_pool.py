@@ -209,7 +209,7 @@ async def test_resolve_channel_user_returns_none(db):
 
 @pytest.mark.asyncio
 async def test_get_premium_client_fallback_when_in_use(db):
-    """get_premium_client() returns client even when it's in _in_use (fallback for single account)."""
+    """get_premium_client() may reuse an in-use premium client as a single-account fallback."""
     acc = Account(phone="+70001111111", session_string="s1", is_primary=True, is_premium=True)
     await db.add_account(acc)
 
