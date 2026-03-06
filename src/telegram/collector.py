@@ -27,6 +27,10 @@ from telethon.tl.types import (
 
 from src.config import SchedulerConfig
 from src.database import Database
+from src.filters.criteria import (
+    LOW_SUBSCRIBER_RATIO_CHAT_THRESHOLD,
+    LOW_SUBSCRIBER_RATIO_THRESHOLD,
+)
 from src.models import Channel, ChannelStats, Message
 from src.telegram.client_pool import ClientPool
 from src.telegram.notifier import Notifier
@@ -96,6 +100,7 @@ class Collector:
         *,
         full: bool = False,
         progress_callback: Callable[[int], Awaitable[None]] | None = None,
+        force: bool = False,
     ) -> int:
         """Collect messages from a single channel. If full=True, reset last_collected_id to 0.
 
@@ -104,7 +109,7 @@ class Collector:
         may also guard against filtered channels earlier for better UX,
         but this check is the authoritative gate.
         """
-        if channel.is_filtered:
+        if channel.is_filtered and not force:
             logger.info(
                 "Skipping collection for channel %d: channel is filtered",
                 channel.channel_id,
@@ -128,7 +133,7 @@ class Collector:
                     channel = Channel(**{**channel.model_dump(), "last_collected_id": 0})
 
                 return await self._collect_channel(
-                    channel, progress_callback=progress_callback
+                    channel, progress_callback=progress_callback, force=force
                 )
             finally:
                 self._running = False
@@ -228,6 +233,7 @@ class Collector:
         self,
         channel: Channel,
         progress_callback: Callable[[int], Awaitable[None]] | None = None,
+        force: bool = False,
     ) -> int:
         """Collect new messages from a single channel. Returns count."""
         channel_id = channel.channel_id
@@ -259,6 +265,36 @@ class Collector:
                 entity = await client.get_entity(channel.username)
             else:
                 entity = await client.get_entity(PeerChannel(channel_id))
+
+            # Превентивная фильтрация по subscriber_ratio до загрузки сообщений
+            # Пропускается при force=True (ручной запуск не должен менять фильтр-статус)
+            if not force:
+                stats_list = await self._db.get_channel_stats(channel_id, limit=1)
+                subscriber_count = stats_list[0].subscriber_count if stats_list else None
+                if subscriber_count is not None:
+                    cur = await self._db.execute(
+                        "SELECT COUNT(*) FROM messages WHERE channel_id = ?",
+                        (channel_id,),
+                    )
+                    row = await cur.fetchone()
+                    message_count = row[0] if row else 0
+                    if message_count > 0:
+                        is_broadcast = channel.channel_type in ("channel", "monoforum")
+                        threshold = (
+                            LOW_SUBSCRIBER_RATIO_THRESHOLD
+                            if is_broadcast
+                            else LOW_SUBSCRIBER_RATIO_CHAT_THRESHOLD
+                        )
+                        ratio = subscriber_count / message_count
+                        if ratio < threshold:
+                            await self._db.set_channels_filtered_bulk(
+                                [(channel_id, "low_subscriber_ratio")]
+                            )
+                            logger.info(
+                                "Pre-filter: channel %d ratio %.4f < %.2f, skipping",
+                                channel_id, ratio, threshold,
+                            )
+                            return 0
 
             async for msg in client.iter_messages(
                 entity,
@@ -350,7 +386,7 @@ class Collector:
                     updated = await self._db.get_channel_by_pk(channel.id)
                 if updated:
                     return len(all_messages) + await self._collect_channel(
-                        updated, progress_callback=progress_callback
+                        updated, progress_callback=progress_callback, force=force
                     )
             else:
                 if self._notifier:

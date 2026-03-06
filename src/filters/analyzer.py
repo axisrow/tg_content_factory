@@ -6,6 +6,7 @@ from src.database import Database
 from src.filters.criteria import (
     CHAT_NOISE_THRESHOLD,
     CROSS_DUPE_THRESHOLD,
+    LOW_SUBSCRIBER_RATIO_CHAT_THRESHOLD,
     LOW_SUBSCRIBER_RATIO_THRESHOLD,
     LOW_UNIQUENESS_THRESHOLD,
     NON_CYRILLIC_THRESHOLD,
@@ -55,7 +56,13 @@ class ChannelAnalyzer:
             if subscriber_count is not None and message_count > 0:
                 raw_ratio = subscriber_count / message_count
                 subscriber_ratio = round(raw_ratio, 2)
-                low_subscriber = raw_ratio < LOW_SUBSCRIBER_RATIO_THRESHOLD
+                is_broadcast = channel["channel_type"] in ("channel", "monoforum")
+                threshold = (
+                    LOW_SUBSCRIBER_RATIO_THRESHOLD
+                    if is_broadcast
+                    else LOW_SUBSCRIBER_RATIO_CHAT_THRESHOLD
+                )
+                low_subscriber = raw_ratio < threshold
             if low_subscriber:
                 flags.append("low_subscriber_ratio")
 
@@ -83,7 +90,8 @@ class ChannelAnalyzer:
 
             short_msg_pct: float | None = None
             noisy_chat = False
-            if channel["channel_type"] in ("group", "supergroup") and channel_id_value in short_map:
+            is_chat = channel["channel_type"] in ("group", "supergroup", "forum")
+            if is_chat and channel_id_value in short_map:
                 short_total, short_count = short_map[channel_id_value]
                 if short_total > 0:
                     raw_short_pct = short_count / short_total * 100
@@ -147,6 +155,30 @@ class ChannelAnalyzer:
         except Exception:
             await conn.rollback()
             raise
+
+    async def precheck_subscriber_ratio(self) -> int:
+        """Filter channels by subscriber_count/message_count without Telegram.
+        Returns count of newly filtered channels."""
+        channels = await self._database.get_channels_with_counts(
+            active_only=True, include_filtered=False,
+        )
+        stats_map = await self._database.get_latest_stats_for_all()
+        to_filter: list[tuple[int, str]] = []
+        for channel in channels:
+            stats = stats_map.get(channel.channel_id)
+            subscriber_count = stats.subscriber_count if stats else None
+            if not subscriber_count or not channel.message_count:
+                continue
+            is_broadcast = channel.channel_type in ("channel", "monoforum")
+            threshold = (
+                LOW_SUBSCRIBER_RATIO_THRESHOLD if is_broadcast
+                else LOW_SUBSCRIBER_RATIO_CHAT_THRESHOLD
+            )
+            if subscriber_count / channel.message_count < threshold:
+                to_filter.append((channel.channel_id, "low_subscriber_ratio"))
+        if to_filter:
+            await self._database.set_channels_filtered_bulk(to_filter)
+        return len(to_filter)
 
     async def reset_filters(self) -> None:
         await self._database.reset_all_channel_filters()

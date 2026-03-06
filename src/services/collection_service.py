@@ -16,13 +16,13 @@ class CollectionService:
         self._collector = collector
         self._queue = queue
 
-    async def enqueue_channel_by_pk(self, pk: int) -> EnqueueResult:
+    async def enqueue_channel_by_pk(self, pk: int, force: bool = False) -> EnqueueResult:
         channel = await self._db.get_channel_by_pk(pk)
         if not channel:
             return "not_found"
-        if channel.is_filtered:
+        if channel.is_filtered and not force:
             return "filtered"
-        await self._queue.enqueue(channel)
+        await self._queue.enqueue(channel, force=force)
         return "queued"
 
     async def collect_channel_stats(self, channel: Channel) -> None:

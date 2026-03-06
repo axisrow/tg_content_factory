@@ -14,13 +14,13 @@ class CollectionQueue:
     def __init__(self, collector: Collector, db: Database):
         self._collector = collector
         self._db = db
-        self._queue: asyncio.Queue[tuple[int, Channel]] = asyncio.Queue()
+        self._queue: asyncio.Queue[tuple[int, Channel, bool]] = asyncio.Queue()
         self._worker: asyncio.Task | None = None
         self._current_task_id: int | None = None
 
-    async def enqueue(self, channel: Channel) -> int:
+    async def enqueue(self, channel: Channel, force: bool = False) -> int:
         task_id = await self._db.create_collection_task(channel.channel_id, channel.title)
-        await self._queue.put((task_id, channel))
+        await self._queue.put((task_id, channel, force))
         self._ensure_worker()
         return task_id
 
@@ -37,7 +37,7 @@ class CollectionQueue:
     async def _run_worker(self) -> None:
         while True:
             try:
-                task_id, channel = await asyncio.wait_for(self._queue.get(), timeout=1.0)
+                task_id, channel, force = await asyncio.wait_for(self._queue.get(), timeout=1.0)
             except asyncio.TimeoutError:
                 if self._queue.empty():
                     break
@@ -57,7 +57,7 @@ class CollectionQueue:
                 fresh_channel = await self._db.get_channel_by_pk(channel.id)
             if fresh_channel is not None:
                 channel = fresh_channel
-            if channel.is_filtered:
+            if channel.is_filtered and not force:
                 await self._db.cancel_collection_task(task_id)
                 logger.info(
                     "Task %d skipped: channel %d is filtered",
@@ -75,7 +75,7 @@ class CollectionQueue:
                     await self._db.update_collection_task_progress(task_id, count)
 
                 count = await self._collector.collect_single_channel(
-                    channel, full=True, progress_callback=_progress
+                    channel, full=True, progress_callback=_progress, force=force
                 )
                 if self._collector.is_cancelled:
                     await self._db.cancel_collection_task(task_id)
