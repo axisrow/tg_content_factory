@@ -156,23 +156,22 @@ class ChannelAnalyzer:
             raise
 
     async def precheck_subscriber_ratio(self) -> int:
-        """Filter channels by subscriber_count/last_collected_id without Telegram.
+        """Filter channels by subscriber_count/message_count without Telegram.
         Returns count of newly filtered channels."""
-        channels = await self._database.get_channels(active_only=True, include_filtered=False)
+        channels = await self._database.get_channels_with_counts(active_only=True, include_filtered=False)
         stats_map = await self._database.get_latest_stats_for_all()
         to_filter: list[tuple[int, str]] = []
         for channel in channels:
             stats = stats_map.get(channel.channel_id)
             subscriber_count = stats.subscriber_count if stats else None
-            latest_msg_id = channel.last_collected_id
-            if not subscriber_count or not latest_msg_id:
+            if not subscriber_count or not channel.message_count:
                 continue
             is_broadcast = channel.channel_type in ("channel", "monoforum")
             threshold = (
                 LOW_SUBSCRIBER_RATIO_THRESHOLD if is_broadcast
                 else LOW_SUBSCRIBER_RATIO_CHAT_THRESHOLD
             )
-            if subscriber_count / latest_msg_id < threshold:
+            if subscriber_count / channel.message_count < threshold:
                 to_filter.append((channel.channel_id, "low_subscriber_ratio"))
         if to_filter:
             await self._database.set_channels_filtered_bulk(to_filter)

@@ -376,13 +376,14 @@ class TestChannelAnalyzer:
         assert row["filter_flags"] == ""
 
     async def test_precheck_broadcast_low_ratio(self, db, raw_db):
-        # broadcast channel: subscriber_count=156, last_collected_id=62000 -> 0.0025 < 1.0 -> filtered
+        # broadcast channel: subscriber_count=10, message_count=20 -> 0.5 < 1.0 -> filtered
         await raw_db.execute(
-            "INSERT INTO channels (channel_id, title, channel_type, is_active, last_collected_id)"
-            " VALUES (?, ?, ?, 1, ?)",
-            (1001, "Spam Broadcast", "channel", 62000),
+            "INSERT INTO channels (channel_id, title, channel_type, is_active) VALUES (?, ?, ?, 1)",
+            (1001, "Spam Broadcast", "channel"),
         )
-        await _insert_stats(raw_db, 1001, 156)
+        await raw_db.commit()
+        await _insert_messages(raw_db, 1001, [f"msg {i}" for i in range(20)])
+        await _insert_stats(raw_db, 1001, 10)
         analyzer = ChannelAnalyzer(db)
         count = await analyzer.precheck_subscriber_ratio()
         assert count == 1
@@ -394,24 +395,26 @@ class TestChannelAnalyzer:
         assert row["filter_flags"] == "low_subscriber_ratio"
 
     async def test_precheck_supergroup_low_ratio(self, db, raw_db):
-        # supergroup: subscriber_count=100, last_collected_id=10000 -> 0.01 < 0.02 -> filtered
+        # supergroup: subscriber_count=1, message_count=100 -> 0.01 < 0.02 -> filtered
         await raw_db.execute(
-            "INSERT INTO channels (channel_id, title, channel_type, is_active, last_collected_id)"
-            " VALUES (?, ?, ?, 1, ?)",
-            (1002, "Spam Supergroup", "supergroup", 10000),
+            "INSERT INTO channels (channel_id, title, channel_type, is_active) VALUES (?, ?, ?, 1)",
+            (1002, "Spam Supergroup", "supergroup"),
         )
-        await _insert_stats(raw_db, 1002, 100)
+        await raw_db.commit()
+        await _insert_messages(raw_db, 1002, [f"msg {i}" for i in range(100)])
+        await _insert_stats(raw_db, 1002, 1)
         analyzer = ChannelAnalyzer(db)
         count = await analyzer.precheck_subscriber_ratio()
         assert count == 1
 
     async def test_precheck_supergroup_healthy_ratio(self, db, raw_db):
-        # @PattayaVse: subscriber_count=7039, last_collected_id=186010 -> 0.038 > 0.02 -> NOT filtered
+        # @PattayaVse: subscriber_count=7039, message_count=100 -> 70.39 > 0.02 -> NOT filtered
         await raw_db.execute(
-            "INSERT INTO channels (channel_id, title, channel_type, is_active, last_collected_id)"
-            " VALUES (?, ?, ?, 1, ?)",
-            (1003, "PattayaVse", "supergroup", 186010),
+            "INSERT INTO channels (channel_id, title, channel_type, is_active) VALUES (?, ?, ?, 1)",
+            (1003, "PattayaVse", "supergroup"),
         )
+        await raw_db.commit()
+        await _insert_messages(raw_db, 1003, [f"msg {i}" for i in range(100)])
         await _insert_stats(raw_db, 1003, 7039)
         analyzer = ChannelAnalyzer(db)
         count = await analyzer.precheck_subscriber_ratio()
@@ -425,22 +428,22 @@ class TestChannelAnalyzer:
     async def test_precheck_no_stats_skipped(self, db, raw_db):
         # No stats -> skip
         await raw_db.execute(
-            "INSERT INTO channels (channel_id, title, channel_type, is_active, last_collected_id)"
-            " VALUES (?, ?, ?, 1, ?)",
-            (1004, "No Stats", "channel", 50000),
+            "INSERT INTO channels (channel_id, title, channel_type, is_active) VALUES (?, ?, ?, 1)",
+            (1004, "No Stats", "channel"),
         )
         await raw_db.commit()
+        await _insert_messages(raw_db, 1004, [f"msg {i}" for i in range(50)])
         analyzer = ChannelAnalyzer(db)
         count = await analyzer.precheck_subscriber_ratio()
         assert count == 0
 
-    async def test_precheck_zero_last_collected_id_skipped(self, db, raw_db):
-        # last_collected_id=0 -> skip
+    async def test_precheck_zero_message_count_skipped(self, db, raw_db):
+        # No messages in DB -> message_count=0 -> skip
         await raw_db.execute(
-            "INSERT INTO channels (channel_id, title, channel_type, is_active, last_collected_id)"
-            " VALUES (?, ?, ?, 1, ?)",
-            (1005, "No Collected", "channel", 0),
+            "INSERT INTO channels (channel_id, title, channel_type, is_active) VALUES (?, ?, ?, 1)",
+            (1005, "No Collected", "channel"),
         )
+        await raw_db.commit()
         await _insert_stats(raw_db, 1005, 500)
         analyzer = ChannelAnalyzer(db)
         count = await analyzer.precheck_subscriber_ratio()
