@@ -30,6 +30,10 @@ from src.database import Database
 from src.filters.criteria import (
     LOW_SUBSCRIBER_RATIO_CHAT_THRESHOLD,
     LOW_SUBSCRIBER_RATIO_THRESHOLD,
+    LOW_UNIQUENESS_THRESHOLD,
+    PRECHECK_CROSS_DUPE_MIN_SAMPLE,
+    PRECHECK_CROSS_DUPE_RATIO,
+    PRECHECK_CROSS_DUPE_SAMPLE,
 )
 from src.models import Channel, ChannelStats, Message
 from src.telegram.client_pool import ClientPool
@@ -132,8 +136,10 @@ class Collector:
                 if full:
                     channel = Channel(**{**channel.model_dump(), "last_collected_id": 0})
 
+                min_subs_raw = await self._db.get_setting("min_subscribers_filter")
+                min_subs = int(min_subs_raw) if min_subs_raw else 0
                 return await self._collect_channel(
-                    channel, progress_callback=progress_callback, force=force
+                    channel, progress_callback=progress_callback, force=force, min_subs=min_subs
                 )
             finally:
                 self._running = False
@@ -266,9 +272,50 @@ class Collector:
 
         try:
             if channel.username:
-                entity = await client.get_entity(channel.username)
+                try:
+                    entity = await asyncio.wait_for(
+                        client.get_entity(channel.username), timeout=30.0
+                    )
+                except asyncio.TimeoutError:
+                    logger.warning("get_entity timed out for channel %d, skipping", channel_id)
+                    return 0
+                except (ValueError, UsernameNotOccupiedError, UsernameInvalidError):
+                    logger.warning(
+                        "Channel %d (%s): username not found, trying numeric ID fallback",
+                        channel_id, channel.username,
+                    )
+                    try:
+                        fallback_entity = await asyncio.wait_for(
+                            client.get_entity(PeerChannel(channel_id)), timeout=30.0
+                        )
+                    except Exception:
+                        logger.warning(
+                            "Channel %d: all entity lookups failed, deactivating", channel_id
+                        )
+                        if channel.id:
+                            await self._db.set_channel_active(channel.id, False)
+                        return 0
+                    new_username = getattr(fallback_entity, "username", None)
+                    new_title = getattr(fallback_entity, "title", channel.title)
+                    await self._db.update_channel_meta(
+                        channel_id, username=new_username, title=new_title
+                    )
+                    logger.warning(
+                        "Channel %d: username changed %s → %s, marking filtered",
+                        channel_id, channel.username, new_username,
+                    )
+                    await self._db.set_channels_filtered_bulk(
+                        [(channel_id, "username_changed")]
+                    )
+                    return 0
             else:
-                entity = await client.get_entity(PeerChannel(channel_id))
+                try:
+                    entity = await asyncio.wait_for(
+                        client.get_entity(PeerChannel(channel_id)), timeout=30.0
+                    )
+                except asyncio.TimeoutError:
+                    logger.warning("get_entity timed out for channel %d, skipping", channel_id)
+                    return 0
 
             # Превентивная фильтрация по subscriber_ratio до загрузки сообщений
             # Пропускается при force=True (ручной запуск не должен менять фильтр-статус)
@@ -308,6 +355,32 @@ class Collector:
                                 channel_id, ratio, threshold,
                             )
                             return 0
+
+            # Pre-check: sample 10 posts to detect cross-channel duplicates
+            if is_first_run:
+                try:
+                    sample_prefixes = await asyncio.wait_for(
+                        self._precheck_sample(client, entity, PRECHECK_CROSS_DUPE_SAMPLE),
+                        timeout=60.0,
+                    )
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        "Precheck timed out for channel %d, skipping precheck", channel_id
+                    )
+                    sample_prefixes = []
+                if len(sample_prefixes) >= PRECHECK_CROSS_DUPE_MIN_SAMPLE:
+                    matches = await self._db.filter_repo.count_matching_prefixes_in_other_channels(
+                        channel_id, sample_prefixes
+                    )
+                    if matches / len(sample_prefixes) >= PRECHECK_CROSS_DUPE_RATIO:
+                        await self._db.set_channels_filtered_bulk(
+                            [(channel_id, "cross_channel_spam")]
+                        )
+                        logger.info(
+                            "Pre-filter: channel %d has %d/%d cross-dupe messages, skipping",
+                            channel_id, matches, len(sample_prefixes),
+                        )
+                        return 0
 
             async for msg in client.iter_messages(
                 entity,
@@ -412,7 +485,34 @@ class Collector:
         if all_messages and self._notifier:
             await self._check_keywords(all_messages)
 
+        if is_first_run and len(all_messages) >= 50:
+            cur = await self._db.execute(
+                "SELECT COUNT(*) as total, COUNT(DISTINCT substr(text,1,100)) as uniq"
+                " FROM messages WHERE channel_id = ? AND text IS NOT NULL AND length(text) > 10",
+                (channel_id,),
+            )
+            row = await cur.fetchone()
+            if row and row["total"] >= 50:
+                ratio = row["uniq"] / row["total"] * 100
+                if ratio < LOW_UNIQUENESS_THRESHOLD:
+                    await self._db.set_channels_filtered_bulk([(channel_id, "low_uniqueness")])
+                    logger.warning(
+                        "Post-collection: channel %d low_uniqueness %.1f%%, marked filtered",
+                        channel_id,
+                        ratio,
+                    )
+
         return len(all_messages)
+
+    async def _precheck_sample(self, client, entity, limit: int) -> list[str]:
+        """Sample up to `limit` messages for cross-channel precheck."""
+        prefixes: list[str] = []
+        async for msg in client.iter_messages(entity, limit=limit):
+            if self._cancel_event.is_set():
+                break
+            if msg.text and len(msg.text) > 10:
+                prefixes.append(msg.text[:100])
+        return prefixes
 
     async def _check_keywords(self, messages: list[Message]) -> None:
         """Check messages against active keywords and notify."""

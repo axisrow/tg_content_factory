@@ -59,7 +59,8 @@ class TestValidFlags:
         assert "cross_channel_spam" in VALID_FLAGS
         assert "non_cyrillic" in VALID_FLAGS
         assert "chat_noise" in VALID_FLAGS
-        assert len(VALID_FLAGS) == 7
+        assert "username_changed" in VALID_FLAGS
+        assert len(VALID_FLAGS) == 8
 
 
 class TestAnalyzerLowUniqueness:

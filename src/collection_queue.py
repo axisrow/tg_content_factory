@@ -109,6 +109,26 @@ class CollectionQueue:
                 self._current_task_id = None
                 self._queue.task_done()
 
+    async def requeue_startup_tasks(self) -> int:
+        """Re-enqueue pending collection tasks that survived a server restart."""
+        pending = await self._db.get_pending_channel_tasks()
+        count = 0
+        for task in pending:
+            channel = await self._db.get_channel_by_channel_id(task.channel_id)
+            if channel is None:
+                await self._db.cancel_collection_task(task.id)
+                logger.warning(
+                    "Cancelled orphaned task %d: channel %d not found",
+                    task.id, task.channel_id,
+                )
+                continue
+            await self._queue.put((task.id, channel, False))
+            count += 1
+        if count:
+            self._ensure_worker()
+            logger.info("Re-enqueued %d pending collection tasks on startup", count)
+        return count
+
     async def shutdown(self) -> None:
         if self._worker and not self._worker.done():
             self._worker.cancel()

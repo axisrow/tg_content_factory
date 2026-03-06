@@ -34,6 +34,9 @@ class ChannelAnalyzer:
         cross_dupe_map = await self._repo.fetch_cross_dupe_map(channel_id)
         cyrillic_map = await self._repo.fetch_cyrillic_map(channel_id)
 
+        min_subs_raw = await self._database.get_setting("min_subscribers_filter")
+        min_subs = int(min_subs_raw) if min_subs_raw else 0
+
         results: list[ChannelFilterResult] = []
         for channel in channels:
             channel_id_value = channel["channel_id"]
@@ -63,7 +66,16 @@ class ChannelAnalyzer:
                     else LOW_SUBSCRIBER_RATIO_CHAT_THRESHOLD
                 )
                 low_subscriber = raw_ratio < threshold
-            if low_subscriber:
+            manual_subs_flagged = False
+            if (
+                min_subs > 0
+                and subscriber_count is not None
+                and subscriber_count < min_subs
+            ):
+                flags.append("low_subscriber_manual")
+                manual_subs_flagged = True
+
+            if low_subscriber and not manual_subs_flagged:
                 flags.append("low_subscriber_ratio")
 
             cross_dupe_pct: float | None = None
@@ -176,6 +188,20 @@ class ChannelAnalyzer:
             )
             if subscriber_count / channel.message_count < threshold:
                 to_filter.append((channel.channel_id, "low_subscriber_ratio"))
+
+        # Применить ручной порог min_subscribers_filter
+        min_subs_raw = await self._database.get_setting("min_subscribers_filter")
+        min_subs = int(min_subs_raw) if min_subs_raw else 0
+        if min_subs > 0:
+            already = {cid for cid, _ in to_filter}
+            for channel in channels:
+                if channel.channel_id in already:
+                    continue
+                stats = stats_map.get(channel.channel_id)
+                subs = stats.subscriber_count if stats else None
+                if subs is not None and subs < min_subs:
+                    to_filter.append((channel.channel_id, "low_subscriber_manual"))
+
         if to_filter:
             await self._database.set_channels_filtered_bulk(to_filter)
         return len(to_filter)
