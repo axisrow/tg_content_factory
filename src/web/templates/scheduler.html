@@ -105,7 +105,7 @@
                         <span aria-busy="true">Выполняется</span>
                     {% elif t.status == 'completed' %}
                         Завершено
-                        {% if t.error %}<br><small style="color:var(--pico-muted-color)">{{ t.error }}</small>{% endif %}
+                        {% if t.note %}<br><small style="color:var(--pico-muted-color)">{{ t.note }}</small>{% endif %}
                     {% elif t.status == 'failed' %}
                         <mark>Ошибка</mark>
                         {% if t.error %}<br><small>{{ t.error[:100] }}</small>{% endif %}
