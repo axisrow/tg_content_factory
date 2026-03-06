@@ -1,7 +1,7 @@
 import logging
 
 from fastapi import APIRouter, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from starlette.background import BackgroundTask
 
 from src.web import deps
@@ -12,16 +12,29 @@ logger = logging.getLogger(__name__)
 
 @router.post("/{pk}/collect")
 async def collect_channel(request: Request, pk: int):
+    is_htmx = request.headers.get("HX-Request") == "true"
+
     if getattr(request.app.state, "shutting_down", False):
+        if is_htmx:
+            return HTMLResponse(f'<span id="collect-btn-{pk}" title="Сервер останавливается">⚠️</span>')
         return RedirectResponse(url="/channels?error=shutting_down", status_code=303)
 
     service = deps.collection_service(request)
-    enqueue_status = await service.enqueue_channel_by_pk(pk)
+    enqueue_status = await service.enqueue_channel_by_pk(pk, force=True)
+
+    if is_htmx:
+        if enqueue_status == "not_found":
+            return HTMLResponse(f'<span id="collect-btn-{pk}">❓</span>')
+        collector = deps.get_collector(request)
+        label = "В очереди" if collector.is_running else "Запущен"
+        return HTMLResponse(
+            f'<span id="collect-btn-{pk}">'
+            f'<button class="outline emoji-btn" disabled title="{label}">⏳</button>'
+            f'</span>'
+        )
+
     if enqueue_status == "not_found":
         return RedirectResponse(url="/channels?msg=channel_not_found", status_code=303)
-    if enqueue_status == "filtered":
-        return RedirectResponse(url="/channels?error=channel_filtered", status_code=303)
-
     collector = deps.get_collector(request)
     msg = "collect_queued" if collector.is_running else "collect_started"
     return RedirectResponse(url=f"/channels?msg={msg}", status_code=303)

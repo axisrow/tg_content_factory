@@ -27,6 +27,10 @@ from telethon.tl.types import (
 
 from src.config import SchedulerConfig
 from src.database import Database
+from src.filters.criteria import (
+    LOW_SUBSCRIBER_RATIO_CHAT_THRESHOLD,
+    LOW_SUBSCRIBER_RATIO_THRESHOLD,
+)
 from src.models import Channel, ChannelStats, Message
 from src.telegram.client_pool import ClientPool
 from src.telegram.notifier import Notifier
@@ -96,6 +100,7 @@ class Collector:
         *,
         full: bool = False,
         progress_callback: Callable[[int], Awaitable[None]] | None = None,
+        force: bool = False,
     ) -> int:
         """Collect messages from a single channel. If full=True, reset last_collected_id to 0.
 
@@ -104,7 +109,7 @@ class Collector:
         may also guard against filtered channels earlier for better UX,
         but this check is the authoritative gate.
         """
-        if channel.is_filtered:
+        if channel.is_filtered and not force:
             logger.info(
                 "Skipping collection for channel %d: channel is filtered",
                 channel.channel_id,
@@ -259,6 +264,34 @@ class Collector:
                 entity = await client.get_entity(channel.username)
             else:
                 entity = await client.get_entity(PeerChannel(channel_id))
+
+            # Превентивная фильтрация по subscriber_ratio до загрузки сообщений
+            stats_list = await self._db.get_channel_stats(channel_id, limit=1)
+            subscriber_count = stats_list[0].subscriber_count if stats_list else None
+            if subscriber_count is not None:
+                if channel.last_collected_id > 0:
+                    latest_msg_id = channel.last_collected_id
+                else:
+                    latest_msg_id = 0
+                    async for msg in client.iter_messages(entity, limit=1):
+                        latest_msg_id = msg.id
+                if latest_msg_id > 0:
+                    is_broadcast = channel.channel_type in ("channel", "monoforum")
+                    threshold = (
+                        LOW_SUBSCRIBER_RATIO_THRESHOLD
+                        if is_broadcast
+                        else LOW_SUBSCRIBER_RATIO_CHAT_THRESHOLD
+                    )
+                    ratio = subscriber_count / latest_msg_id
+                    if ratio < threshold:
+                        await self._db.set_channels_filtered_bulk(
+                            [(channel_id, "low_subscriber_ratio")]
+                        )
+                        logger.info(
+                            "Pre-filter: channel %d ratio %.4f < %.2f, skipping",
+                            channel_id, ratio, threshold,
+                        )
+                        return 0
 
             async for msg in client.iter_messages(
                 entity,

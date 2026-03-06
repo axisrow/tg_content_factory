@@ -574,7 +574,8 @@ async def test_filter_toggle_sets_manual_flag(client):
 
 
 @pytest.mark.asyncio
-async def test_collect_filtered_channel_is_blocked(client):
+async def test_collect_filtered_channel_is_allowed(client):
+    """Manual collect (web UI) must proceed even when channel is filtered."""
     from src.collection_queue import CollectionQueue
     from src.models import Channel
 
@@ -592,10 +593,10 @@ async def test_collect_filtered_channel_is_blocked(client):
 
     resp = await client.post(f"/channels/{channel.id}/collect", follow_redirects=False)
     assert resp.status_code == 303
-    assert "error=channel_filtered" in resp.headers["location"]
+    assert "error" not in resp.headers["location"]
 
     tasks = await db.get_collection_tasks()
-    assert tasks == []
+    assert len(tasks) == 1
 
 
 @pytest.mark.asyncio

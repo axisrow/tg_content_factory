@@ -67,6 +67,7 @@ def build_parser() -> argparse.ArgumentParser:
     flt_sub.add_parser("analyze", help="Analyze channels and show report")
     flt_sub.add_parser("apply", help="Analyze and mark filtered channels")
     flt_sub.add_parser("reset", help="Reset all channel filters")
+    flt_sub.add_parser("precheck", help="Apply pre-filter by subscriber ratio (no Telegram needed)")
 
     kw_parser = sub.add_parser("keyword", help="Keyword management")
     kw_sub = kw_parser.add_subparsers(dest="keyword_action")
