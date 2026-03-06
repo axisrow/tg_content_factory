@@ -51,8 +51,8 @@ class ClientPool:
                     is_premium = bool(getattr(me, "premium", False))
                     if is_premium != acc.is_premium:
                         await self._db.update_account_premium(acc.phone, is_premium)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning("Failed to fetch premium status for %s: %s", acc.phone, e)
             except Exception as e:
                 logger.error("Failed to connect %s: %s", acc.phone, e)
 
@@ -84,22 +84,36 @@ class ClientPool:
             return None
 
     async def get_premium_client(self) -> tuple[TelegramClient, str] | None:
-        """Get first available premium client. Returns (client, phone) or None."""
+        """Get first available premium client. Flood wait is ignored (search uses different API method)."""
         async with self._lock:
-            now = datetime.now(timezone.utc)
             accounts = await self._db.get_accounts(active_only=True)
             for acc in accounts:
                 if not acc.is_premium:
                     continue
                 if acc.phone in self._in_use:
                     continue
-                flood_until = self._normalize_utc(acc.flood_wait_until)
-                if flood_until and flood_until > now:
-                    continue
                 if acc.phone in self.clients:
                     self._in_use.add(acc.phone)
                     return self.clients[acc.phone], acc.phone
+
+            # Fallback: share client if all in use
+            for acc in accounts:
+                if not acc.is_premium:
+                    continue
+                if acc.phone in self.clients:
+                    return self.clients[acc.phone], acc.phone
+
             return None
+
+    async def get_premium_unavailability_reason(self) -> str:
+        accounts = await self._db.get_accounts(active_only=True)
+        premium = [acc for acc in accounts if acc.is_premium]
+        if not premium:
+            return "Нет аккаунтов с Telegram Premium. Добавьте Premium-аккаунт в настройках."
+        connected = [acc for acc in premium if acc.phone in self.clients]
+        if not connected:
+            return "Premium-аккаунт не подключён. Перезапустите сервер."
+        return "Premium-аккаунт недоступен."
 
     async def get_stats_availability(self) -> StatsClientAvailability:
         """Describe stats client availability for batch scheduling decisions."""

@@ -194,6 +194,24 @@ class CollectionTasksRepository:
             parent_task_id=parent_task_id,
         )
 
+    async def get_pending_channel_tasks(self) -> list[CollectionTask]:
+        cur = await self._db.execute(
+            "SELECT * FROM collection_tasks "
+            "WHERE channel_id != 0 AND status = 'pending' "
+            "ORDER BY id ASC"
+        )
+        rows = await cur.fetchall()
+        return [self._to_task(r) for r in rows]
+
+    async def fail_running_collection_tasks_on_startup(self) -> int:
+        cur = await self._db.execute(
+            "UPDATE collection_tasks "
+            "SET status = 'failed', completed_at = datetime('now') "
+            "WHERE channel_id != 0 AND status = 'running'",
+        )
+        await self._db.commit()
+        return cur.rowcount or 0
+
     async def requeue_running_stats_tasks_on_startup(self, now: datetime) -> int:
         now_iso = now.astimezone(timezone.utc).isoformat()
         cur = await self._db.execute(

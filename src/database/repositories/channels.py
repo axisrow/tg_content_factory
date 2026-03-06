@@ -169,6 +169,15 @@ class ChannelsRepository:
         )
         await self._db.commit()
 
+    async def update_channel_meta(
+        self, channel_id: int, *, username: str | None, title: str | None
+    ) -> None:
+        await self._db.execute(
+            "UPDATE channels SET username = ?, title = ? WHERE channel_id = ?",
+            (username, title, channel_id),
+        )
+        await self._db.commit()
+
     async def delete_channel(self, pk: int) -> None:
         cur = await self._db.execute("SELECT channel_id FROM channels WHERE id = ?", (pk,))
         row = await cur.fetchone()

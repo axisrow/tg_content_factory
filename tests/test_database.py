@@ -817,3 +817,73 @@ async def test_requeue_running_stats_tasks_on_startup(db):
     assert task is not None
     assert task.status == "pending"
     assert task.run_after is not None
+
+
+@pytest.mark.asyncio
+async def test_delete_messages_for_channel(db):
+    ch1 = Channel(channel_id=-100301, title="Channel 1")
+    ch2 = Channel(channel_id=-100302, title="Channel 2")
+    await db.add_channel(ch1)
+    await db.add_channel(ch2)
+
+    await db.insert_messages_batch([
+        Message(channel_id=-100301, message_id=i, text=f"msg {i}",
+                date=datetime.now(timezone.utc))
+        for i in range(1, 6)
+    ])
+    await db.insert_messages_batch([
+        Message(channel_id=-100302, message_id=i, text=f"msg {i}",
+                date=datetime.now(timezone.utc))
+        for i in range(1, 4)
+    ])
+
+    deleted = await db.delete_messages_for_channel(-100301)
+    assert deleted == 5
+
+    # Only ch2 messages remain
+    results, total = await db.search_messages()
+    assert total == 3
+    assert all(m.channel_id == -100302 for m in results)
+
+
+@pytest.mark.asyncio
+async def test_search_excludes_filtered_channels(db):
+    ch_ok = Channel(channel_id=-100311, title="Good Channel")
+    ch_bad = Channel(channel_id=-100312, title="Filtered Channel")
+    await db.add_channel(ch_ok)
+    await db.add_channel(ch_bad)
+    await db.set_channels_filtered_bulk([(-100312, "low_uniqueness")])
+
+    await db.insert_messages_batch([
+        Message(channel_id=-100311, message_id=1, text="good message",
+                date=datetime.now(timezone.utc)),
+    ])
+    await db.insert_messages_batch([
+        Message(channel_id=-100312, message_id=1, text="filtered message",
+                date=datetime.now(timezone.utc)),
+    ])
+
+    results, total = await db.search_messages()
+    assert total == 1
+    assert results[0].channel_id == -100311
+
+    results_fts, total_fts = await db.search_messages(query="message")
+    assert total_fts == 1
+    assert results_fts[0].channel_id == -100311
+
+
+@pytest.mark.asyncio
+async def test_update_channel_meta(db):
+    """update_channel_meta updates username and title, leaving other fields intact."""
+    ch = Channel(channel_id=9999001, title="Original Title", username="original_user")
+    await db.add_channel(ch)
+
+    await db.update_channel_meta(9999001, username="new_user", title="New Title")
+
+    stored = await db.get_channel_by_channel_id(9999001)
+    assert stored is not None
+    assert stored.username == "new_user"
+    assert stored.title == "New Title"
+    # Other fields must remain untouched
+    assert stored.is_active is True
+    assert stored.is_filtered is False

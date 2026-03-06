@@ -63,12 +63,9 @@ class TelegramSearch:
 
         result = await self._pool.get_premium_client()
         if result is None:
-            return SearchResult(
-                messages=[],
-                total=0,
-                query=query,
-                error="Нет доступных Premium-аккаунтов. Добавьте аккаунт с Telegram Premium.",
-            )
+            reason = await self._pool.get_premium_unavailability_reason()
+            logger.warning("search_telegram: no premium client for query=%r: %s", query, reason)
+            return SearchResult(messages=[], total=0, query=query, error=reason)
 
         client, phone = result
         try:

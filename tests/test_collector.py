@@ -10,6 +10,7 @@ from src.config import SchedulerConfig
 from src.models import Channel, ChannelStats, Message
 from src.telegram.collector import Collector
 from tests.helpers import AsyncIterEmpty as _AsyncIterEmpty
+from tests.helpers import AsyncIterMessages as _AsyncIterMessages
 from tests.helpers import make_mock_pool
 
 
@@ -224,24 +225,6 @@ def _make_mock_message(msg_id, text=None, media=None, sender_id=None):
     )
 
 
-class _AsyncIterMessages:
-    """Async iterator yielding provided messages."""
-
-    def __init__(self, messages):
-        self._messages = list(messages)
-        self._index = 0
-
-    def __aiter__(self):
-        return self
-
-    async def __anext__(self):
-        if self._index >= len(self._messages):
-            raise StopAsyncIteration
-        msg = self._messages[self._index]
-        self._index += 1
-        return msg
-
-
 @pytest.mark.asyncio
 async def test_get_media_type_photo():
     from telethon.tl.types import MessageMediaPhoto
@@ -380,7 +363,10 @@ async def test_backfill_batch_flush(db):
 
     mock_client = AsyncMock()
     mock_client.get_entity = AsyncMock(return_value=SimpleNamespace())
-    mock_client.iter_messages = MagicMock(return_value=_AsyncIterMessages(mock_msgs))
+    # side_effect returns a fresh iterator per call: first for precheck, then for main loop
+    mock_client.iter_messages = MagicMock(
+        side_effect=lambda *a, **kw: _AsyncIterMessages(mock_msgs)
+    )
 
     pool = make_mock_pool(get_available_client=AsyncMock(return_value=(mock_client, "+7000")))
 
@@ -406,7 +392,10 @@ async def test_progress_callback_invoked_on_batch_flush(db):
 
     mock_client = AsyncMock()
     mock_client.get_entity = AsyncMock(return_value=SimpleNamespace())
-    mock_client.iter_messages = MagicMock(return_value=_AsyncIterMessages(mock_msgs))
+    # side_effect returns a fresh iterator per call: first for precheck, then for main loop
+    mock_client.iter_messages = MagicMock(
+        side_effect=lambda *a, **kw: _AsyncIterMessages(mock_msgs)
+    )
 
     pool = make_mock_pool(get_available_client=AsyncMock(return_value=(mock_client, "+7000")))
 
@@ -446,6 +435,57 @@ async def test_collection_queue_skips_filtered_channel(db):
 
     # Wait for worker to process
     await asyncio.sleep(0.5)
+
+    task = await db.get_collection_task(task_id)
+    assert task.status == "cancelled"
+
+    await queue.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_requeue_startup_tasks(db):
+    """requeue_startup_tasks re-enqueues pending tasks that survived a restart."""
+    from src.collection_queue import CollectionQueue
+
+    ch = Channel(channel_id=-100160, title="Pending Channel", username="pending_ch")
+    await db.add_channel(ch)
+
+    # Simulate a task that was created before restart (pending, never processed)
+    task_id = await db.create_collection_task(
+        -100160, "Pending Channel", channel_username="pending_ch"
+    )
+
+    pool = make_mock_pool(get_available_client=AsyncMock(return_value=None))
+    collector = Collector(pool, db, SchedulerConfig())
+    queue = CollectionQueue(collector, db)
+
+    count = await queue.requeue_startup_tasks()
+    assert count == 1
+
+    # Wait for worker to process (will fail — no client, but status transitions)
+    await asyncio.sleep(0.5)
+
+    task = await db.get_collection_task(task_id)
+    # Task was picked up: either completed (0 messages) or failed
+    assert task.status in ("completed", "failed")
+
+    await queue.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_requeue_startup_tasks_cancels_orphaned(db):
+    """requeue_startup_tasks cancels tasks whose channel was deleted."""
+    from src.collection_queue import CollectionQueue
+
+    # Create a task for a channel that doesn't exist in the channels table
+    task_id = await db.create_collection_task(-100999, "Ghost Channel")
+
+    pool = make_mock_pool(get_available_client=AsyncMock(return_value=None))
+    collector = Collector(pool, db, SchedulerConfig())
+    queue = CollectionQueue(collector, db)
+
+    count = await queue.requeue_startup_tasks()
+    assert count == 0
 
     task = await db.get_collection_task(task_id)
     assert task.status == "cancelled"
@@ -664,8 +704,8 @@ async def test_prefilter_skips_when_no_messages(db):
     count = await collector._collect_channel(ch)
 
     assert count == 0
-    # iter_messages called for actual collection (pre-filter was skipped)
-    mock_client.iter_messages.assert_called_once()
+    # iter_messages called twice: once for cross-dupe precheck, once for actual collection
+    assert mock_client.iter_messages.call_count == 2
 
 
 @pytest.mark.asyncio
@@ -702,3 +742,161 @@ async def test_prefilter_skipped_when_force(db):
     channels = await db.get_channels(include_filtered=True)
     stored = next(c for c in channels if c.channel_id == -100206)
     assert stored.is_filtered is False
+
+
+@pytest.mark.asyncio
+async def test_precheck_runs_when_force_and_first_run(db):
+    """force=True + first_run (last_collected_id=0) → precheck должен выполняться."""
+    ch = Channel(
+        channel_id=-100207, title="Force First Run",
+        channel_type="supergroup", last_collected_id=0,
+    )
+    await db.add_channel(ch)
+
+    mock_client = AsyncMock()
+    mock_client.get_entity = AsyncMock(return_value=SimpleNamespace())
+    # iter_messages вызывается дважды: сначала precheck (limit=10), затем основной сбор
+    mock_client.iter_messages = MagicMock(return_value=_AsyncIterEmpty())
+
+    pool = make_mock_pool(get_available_client=AsyncMock(return_value=(mock_client, "+7000")))
+    collector = Collector(pool, db, SchedulerConfig())
+
+    await collector._collect_channel(ch, force=True)
+
+    # Precheck вызывает iter_messages один раз (sample), затем основной сбор — ещё раз
+    assert mock_client.iter_messages.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_get_entity_timeout_returns_zero(db):
+    """get_entity hanging → TimeoutError → _collect_channel returns 0."""
+    ch = Channel(channel_id=-100400, title="Hanging Channel", username="hang_chan")
+    await db.add_channel(ch)
+
+    mock_client = AsyncMock()
+    mock_client.get_entity = AsyncMock(side_effect=asyncio.TimeoutError)
+
+    pool = make_mock_pool(get_available_client=AsyncMock(return_value=(mock_client, "+7000")))
+    collector = Collector(pool, db, SchedulerConfig())
+
+    count = await collector._collect_channel(ch)
+    assert count == 0
+
+
+@pytest.mark.asyncio
+async def test_precheck_timeout_skips_check(db):
+    """Precheck hanging → TimeoutError → collection continues with 0 precheck sample."""
+    ch = Channel(channel_id=-100401, title="Slow Precheck", username="slow_chan",
+                 last_collected_id=0)
+    await db.add_channel(ch)
+
+    mock_client = AsyncMock()
+    mock_client.get_entity = AsyncMock(return_value=SimpleNamespace())
+    mock_client.iter_messages = MagicMock(return_value=_AsyncIterEmpty())
+
+    pool = make_mock_pool(get_available_client=AsyncMock(return_value=(mock_client, "+7000")))
+    collector = Collector(pool, db, SchedulerConfig())
+
+    # Patch _precheck_sample to simulate timeout
+    collector._precheck_sample = AsyncMock(side_effect=asyncio.TimeoutError)
+
+    count = await collector._collect_channel(ch)
+
+    # Collection should continue despite precheck timeout
+    assert count == 0
+    # Main iter_messages (for actual collection) should still be called
+    mock_client.iter_messages.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_post_collection_low_uniqueness_marks_filtered(db):
+    """First run with 100 identical messages → channel marked is_filtered=True, messages kept."""
+    ch = Channel(channel_id=-100300, title="Spam Channel", username="spam", last_collected_id=0)
+    await db.add_channel(ch)
+
+    # 100 messages with the same long text → uniqueness ratio = 1/100 = 1% < 30%
+    spam_text = "КУПИ КРИПТУ СЕЙЧАС! Уникальное предложение только сегодня!"
+    mock_msgs = [_make_mock_message(i, text=spam_text) for i in range(1, 101)]
+
+    mock_client = AsyncMock()
+    mock_client.get_entity = AsyncMock(return_value=SimpleNamespace())
+    mock_client.iter_messages = MagicMock(
+        side_effect=lambda *a, **kw: _AsyncIterMessages(mock_msgs)
+    )
+
+    pool = make_mock_pool(get_available_client=AsyncMock(return_value=(mock_client, "+7000")))
+    config = SchedulerConfig(delay_between_requests_sec=0)
+    collector = Collector(pool, db, config)
+
+    count = await collector._collect_channel(ch)
+
+    assert count == 100
+
+    # Channel must be marked as filtered with low_uniqueness
+    channels = await db.get_channels(include_filtered=True)
+    stored = next(c for c in channels if c.channel_id == -100300)
+    assert stored.is_filtered is True
+    assert "low_uniqueness" in stored.filter_flags
+
+    # Messages must still be in DB (purge is a separate action)
+    cur = await db.execute("SELECT COUNT(*) as cnt FROM messages WHERE channel_id = ?", (-100300,))
+    row = await cur.fetchone()
+    assert row["cnt"] == 100
+
+
+# ---------------------------------------------------------------------------
+# Username-changed handling
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_username_changed_marks_filtered(db):
+    """Username lookup fails, PeerChannel fallback succeeds → filtered with username_changed."""
+    ch = Channel(channel_id=3645212410, title="Old Title", username="raketa_nanobanana4")
+    await db.add_channel(ch)
+    ch = (await db.get_channels())[0]
+
+    fallback_entity = SimpleNamespace(username="new_username", title="New Title")
+
+    async def _get_entity(arg):
+        if isinstance(arg, str):
+            raise ValueError('No user has "raketa_nanobanana4" as username')
+        return fallback_entity
+
+    mock_client = AsyncMock()
+    mock_client.get_entity = AsyncMock(side_effect=_get_entity)
+
+    pool = make_mock_pool(get_available_client=AsyncMock(return_value=(mock_client, "+7000")))
+    collector = Collector(pool, db, SchedulerConfig())
+
+    result = await collector._collect_channel(ch)
+
+    assert result == 0
+    stored = await db.get_channel_by_channel_id(3645212410)
+    assert stored is not None
+    assert stored.username == "new_username"
+    assert stored.title == "New Title"
+    assert stored.is_filtered is True
+    assert "username_changed" in stored.filter_flags
+
+
+@pytest.mark.asyncio
+async def test_username_not_found_deactivates(db):
+    """Both username and PeerChannel lookups fail → channel deactivated, returns 0."""
+    ch = Channel(channel_id=3645212410, title="Old Title", username="gone_username")
+    await db.add_channel(ch)
+    ch = (await db.get_channels())[0]
+
+    mock_client = AsyncMock()
+    mock_client.get_entity = AsyncMock(
+        side_effect=ValueError("No user has username")
+    )
+
+    pool = make_mock_pool(get_available_client=AsyncMock(return_value=(mock_client, "+7000")))
+    collector = Collector(pool, db, SchedulerConfig())
+
+    result = await collector._collect_channel(ch)
+
+    assert result == 0
+    stored = await db.get_channel_by_pk(ch.id)
+    assert stored is not None
+    assert stored.is_active is False

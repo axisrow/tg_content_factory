@@ -109,6 +109,9 @@ async def lifespan(app: FastAPI):
         session_encryption_secret=resolve_session_encryption_secret(config),
     )
     await db.initialize()
+    recovered = await db.fail_running_collection_tasks_on_startup()
+    if recovered:
+        logger.warning("Marked %d interrupted collection tasks as failed on startup", recovered)
     app.state.db = db
 
     # Session secret key
@@ -150,6 +153,9 @@ async def lifespan(app: FastAPI):
 
     # Collection queue
     collection_queue = CollectionQueue(collector, db)
+    requeued = await collection_queue.requeue_startup_tasks()
+    if requeued:
+        logger.info("Re-enqueued %d pending collection tasks on startup", requeued)
     app.state.collection_queue = collection_queue
 
     # Deferred stats dispatcher

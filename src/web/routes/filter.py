@@ -83,6 +83,16 @@ async def reset_filters(request: Request):
     return RedirectResponse(url="/channels?msg=filter_reset", status_code=303)
 
 
+@router.post("/{channel_id}/purge-messages")
+async def purge_channel_messages(request: Request, channel_id: int):
+    db = deps.get_db(request)
+    channel = await db.get_channel_by_channel_id(channel_id)
+    if not channel or not channel.is_filtered:
+        return RedirectResponse(url="/channels?error=not_filtered", status_code=303)
+    deleted = await db.delete_messages_for_channel(channel_id)
+    return RedirectResponse(url=f"/channels?msg=purged&count={deleted}", status_code=303)
+
+
 @router.post("/{pk}/filter-toggle")
 async def toggle_channel_filter(request: Request, pk: int):
     db = deps.get_db(request)

@@ -41,6 +41,15 @@ async def save_filters(request: Request):
     if not min_subs.isdigit():
         return RedirectResponse(url="/settings?error=invalid_value", status_code=303)
     await db.set_setting("min_subscribers_filter", min_subs)
+    if int(min_subs) > 0:
+        all_stats = await db.get_latest_stats_for_all()
+        to_filter = [
+            (channel_id, "low_subscriber_manual")
+            for channel_id, stats in all_stats.items()
+            if stats.subscriber_count is not None and stats.subscriber_count < int(min_subs)
+        ]
+        if to_filter:
+            await db.set_channels_filtered_bulk(to_filter)
     return RedirectResponse(url="/settings?msg=filters_saved", status_code=303)
 
 
