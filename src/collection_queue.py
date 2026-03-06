@@ -19,7 +19,9 @@ class CollectionQueue:
         self._current_task_id: int | None = None
 
     async def enqueue(self, channel: Channel, force: bool = False) -> int:
-        task_id = await self._db.create_collection_task(channel.channel_id, channel.title)
+        task_id = await self._db.create_collection_task(
+            channel.channel_id, channel.title, channel_username=channel.username
+        )
         await self._queue.put((task_id, channel, force))
         self._ensure_worker()
         return task_id
@@ -81,8 +83,13 @@ class CollectionQueue:
                     await self._db.cancel_collection_task(task_id)
                     logger.info("Task %d cancelled during collection", task_id)
                 else:
+                    note = None
+                    if count == 0 and not force and channel.id is not None:
+                        after_ch = await self._db.get_channel_by_pk(channel.id)
+                        if after_ch and after_ch.is_filtered and not channel.is_filtered:
+                            note = "Пропущен: low_subscriber_ratio"
                     await self._db.update_collection_task(
-                        task_id, "completed", messages_collected=count
+                        task_id, "completed", messages_collected=count, error=note
                     )
                     logger.info(
                         "Collected %d messages from channel %d", count, channel.channel_id

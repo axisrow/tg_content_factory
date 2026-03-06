@@ -43,6 +43,9 @@ async def run_migrations(db: aiosqlite.Connection) -> None:
     if "parent_task_id" not in task_columns:
         await db.execute("ALTER TABLE collection_tasks ADD COLUMN parent_task_id INTEGER")
         await db.commit()
+    if "channel_username" not in task_columns:
+        await db.execute("ALTER TABLE collection_tasks ADD COLUMN channel_username TEXT")
+        await db.commit()
 
     await db.execute("UPDATE channels SET channel_type='supergroup' WHERE channel_type='group'")
     await db.execute("UPDATE channels SET channel_type='group' WHERE channel_type='chat'")

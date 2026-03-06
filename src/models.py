@@ -65,6 +65,7 @@ class CollectionTask(BaseModel):
     id: int | None = None
     channel_id: int
     channel_title: str | None = None
+    channel_username: str | None = None
     status: str = "pending"  # pending / running / completed / failed / cancelled
     messages_collected: int = 0
     error: str | None = None

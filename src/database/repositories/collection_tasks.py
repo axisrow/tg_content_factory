@@ -29,6 +29,7 @@ class CollectionTasksRepository:
             id=row["id"],
             channel_id=row["channel_id"],
             channel_title=row["channel_title"],
+            channel_username=row["channel_username"],
             status=row["status"],
             messages_collected=row["messages_collected"],
             error=row["error"],
@@ -49,6 +50,7 @@ class CollectionTasksRepository:
         channel_id: int,
         channel_title: str | None,
         *,
+        channel_username: str | None = None,
         run_after: datetime | None = None,
         payload: dict[str, Any] | None = None,
         parent_task_id: int | None = None,
@@ -59,9 +61,9 @@ class CollectionTasksRepository:
         payload_json = json.dumps(payload) if payload is not None else None
         cur = await self._db.execute(
             "INSERT INTO collection_tasks "
-            "(channel_id, channel_title, run_after, payload, parent_task_id) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (channel_id, channel_title, run_after_iso, payload_json, parent_task_id),
+            "(channel_id, channel_title, channel_username, run_after, payload, parent_task_id) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (channel_id, channel_title, channel_username, run_after_iso, payload_json, parent_task_id),
         )
         await self._db.commit()
         return cur.lastrowid or 0
