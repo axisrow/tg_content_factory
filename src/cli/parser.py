@@ -57,6 +57,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="Collect stats for all active channels",
     )
 
+    ch_sub.add_parser("refresh-types", help="Fill missing channel_type for existing channels")
+
     ch_import = ch_sub.add_parser("import", help="Bulk import from file or text")
     ch_import.add_argument("source", help="Path to .txt/.csv file, or comma-separated identifiers")
 

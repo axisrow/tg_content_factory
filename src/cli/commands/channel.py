@@ -193,6 +193,36 @@ def run(args: argparse.Namespace) -> None:
                     else:
                         print("No client available to collect stats")
 
+            elif args.channel_action == "refresh-types":
+                _, pool = await runtime.init_pool(config, db)
+                if not pool.clients:
+                    logging.error("No connected accounts.")
+                    return
+                channels = await db.get_channels()
+                null_type = [ch for ch in channels if ch.channel_type is None]
+                print(f"Channels with missing type: {len(null_type)}")
+                updated = failed = 0
+                for ch in null_type:
+                    identifier = ch.username or str(ch.channel_id)
+                    try:
+                        info = await pool.resolve_channel(identifier)
+                    except Exception as e:
+                        logging.warning("Failed to resolve %s: %s", identifier, e)
+                        info = None
+                    if not info or info.get("channel_type") is None:
+                        print(f"SKIP: {ch.title} ({ch.channel_id}) — type still unknown")
+                        failed += 1
+                        continue
+                    await db.add_channel(Channel(
+                        channel_id=info["channel_id"],
+                        title=info["title"],
+                        username=info["username"],
+                        channel_type=info["channel_type"],
+                    ))
+                    print(f"OK: {ch.title} → {info['channel_type']}")
+                    updated += 1
+                print(f"\nUpdated: {updated}, Skipped: {failed}")
+
             elif args.channel_action == "collect":
                 _, pool = await runtime.init_pool(config, db)
                 if not pool.clients:
