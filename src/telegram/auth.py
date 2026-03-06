@@ -79,11 +79,29 @@ class TelegramAuth:
         self._api_id = api_id
         self._api_hash = api_hash
 
+    async def _disconnect_pending_client(self, phone: str) -> None:
+        pending = self._pending.pop(phone, None)
+        if pending is None:
+            return
+        client, _ = pending
+        try:
+            await client.disconnect()
+        except Exception:
+            logger.warning("Failed to disconnect previous pending auth client for %s", phone)
+
     async def send_code(self, phone: str) -> dict:
         """Send auth code to phone. Returns dict with hash, type info, timeout."""
+        await self._disconnect_pending_client(phone)
         client = TelegramClient(StringSession(), self._api_id, self._api_hash)
         await client.connect()
-        result = await client.send_code_request(phone)
+        try:
+            result = await client.send_code_request(phone)
+        except Exception:
+            try:
+                await client.disconnect()
+            except Exception:
+                logger.warning("Failed to disconnect temporary auth client for %s", phone)
+            raise
         self._pending[phone] = (client, result.phone_code_hash)
         logger.info(
             "Auth code sent to %s: type=%s, next_type=%s, timeout=%s",

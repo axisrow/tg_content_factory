@@ -412,6 +412,31 @@ async def test_progress_callback_invoked_on_batch_flush(db):
 
 
 @pytest.mark.asyncio
+async def test_collect_channel_does_not_advance_last_id_when_flush_fails(db):
+    ch = Channel(channel_id=-100126, title="Test", username="test", last_collected_id=5)
+    await db.add_channel(ch)
+    await db.update_channel_last_id(-100126, 5)
+    stored = next(c for c in await db.get_channels() if c.channel_id == -100126)
+
+    mock_client = AsyncMock()
+    mock_client.get_entity = AsyncMock(return_value=SimpleNamespace())
+    mock_client.iter_messages = MagicMock(
+        return_value=_AsyncIterMessages([_make_mock_message(10, text="msg 10")])
+    )
+
+    pool = make_mock_pool(get_available_client=AsyncMock(return_value=(mock_client, "+7000")))
+
+    db.insert_messages_batch = AsyncMock(return_value=0)  # type: ignore[method-assign]
+
+    collector = Collector(pool, db, SchedulerConfig(delay_between_requests_sec=0))
+    count = await collector._collect_channel(stored)
+
+    updated = next(c for c in await db.get_channels() if c.channel_id == -100126)
+    assert count == 0
+    assert updated.last_collected_id == 5
+
+
+@pytest.mark.asyncio
 async def test_collection_queue_skips_filtered_channel(db):
     """CollectionQueue worker skips channels that become filtered after enqueue."""
     from src.collection_queue import CollectionQueue
@@ -847,6 +872,54 @@ async def test_post_collection_low_uniqueness_marks_filtered(db):
 # ---------------------------------------------------------------------------
 # Username-changed handling
 # ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_precheck_detects_cross_channel_spam(db):
+    """Precheck marks a first-run channel as cross_channel_spam on 80%+ sample overlap."""
+    # Existing channel with known messages in DB
+    existing_ch = Channel(channel_id=-100500, title="Existing Source")
+    await db.add_channel(existing_ch)
+    spam_texts = [f"Спам-рассылка номер {i}, достаточно длинный текст для теста" for i in range(8)]
+    await db.insert_messages_batch([
+        Message(
+            channel_id=-100500, message_id=i + 1, text=spam_texts[i],
+            date=datetime(2025, 1, 1, tzinfo=timezone.utc),
+        )
+        for i in range(8)
+    ])
+
+    # New channel (first run)
+    ch = Channel(
+        channel_id=-100501,
+        title="New Spam Channel",
+        username="new_spam",
+        last_collected_id=0,
+    )
+    await db.add_channel(ch)
+
+    mock_client = AsyncMock()
+    mock_client.get_entity = AsyncMock(return_value=SimpleNamespace())
+    mock_client.iter_messages = MagicMock(return_value=_AsyncIterEmpty())
+
+    pool = make_mock_pool(get_available_client=AsyncMock(return_value=(mock_client, "+7000")))
+    config = SchedulerConfig(delay_between_requests_sec=0)
+    collector = Collector(pool, db, config)
+
+    # Precheck returns all 8 prefixes — all exist in channel -100500
+    sample_prefixes = [t[:100] for t in spam_texts]
+    collector._precheck_sample = AsyncMock(return_value=sample_prefixes)
+
+    count = await collector._collect_channel(ch)
+
+    assert count == 0
+    # Main iter_messages must NOT be called (pre-filtered)
+    mock_client.iter_messages.assert_not_called()
+
+    channels = await db.get_channels(include_filtered=True)
+    stored = next(c for c in channels if c.channel_id == -100501)
+    assert stored.is_filtered is True
+    assert "cross_channel_spam" in stored.filter_flags
+
 
 @pytest.mark.asyncio
 async def test_username_changed_marks_filtered(db):

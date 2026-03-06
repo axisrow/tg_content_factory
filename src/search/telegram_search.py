@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import logging
 from datetime import timezone
 
@@ -54,6 +55,26 @@ class TelegramSearch:
             logger.debug("checkSearchPostsFlood unavailable: %s", exc)
             return None
 
+    async def _get_premium_unavailability_reason(self) -> str:
+        if not self._pool:
+            return "Нет подключённых Telegram-аккаунтов."
+
+        reason_getter = getattr(self._pool, "get_premium_unavailability_reason", None)
+        if not callable(reason_getter):
+            return "Нет аккаунтов с Telegram Premium. Добавьте Premium-аккаунт в настройках."
+
+        try:
+            reason = reason_getter()
+            if inspect.isawaitable(reason):
+                reason = await reason
+        except Exception as exc:
+            logger.warning("Failed to resolve premium unavailability reason: %s", exc)
+            return "Нет аккаунтов с Telegram Premium. Добавьте Premium-аккаунт в настройках."
+
+        if isinstance(reason, str) and reason:
+            return reason
+        return "Нет аккаунтов с Telegram Premium. Добавьте Premium-аккаунт в настройках."
+
     async def search_telegram(self, query: str, limit: int = 50) -> SearchResult:
         if not self._pool:
             return SearchResult(
@@ -63,7 +84,7 @@ class TelegramSearch:
 
         result = await self._pool.get_premium_client()
         if result is None:
-            reason = await self._pool.get_premium_unavailability_reason()
+            reason = await self._get_premium_unavailability_reason()
             logger.warning("search_telegram: no premium client for query=%r: %s", query, reason)
             return SearchResult(messages=[], total=0, query=query, error=reason)
 
@@ -84,6 +105,14 @@ class TelegramSearch:
             messages, seen_channels = await self._search_posts_global(client, query, limit)
             await self._persistence.cache_search_results(seen_channels, messages, phone, query)
             return SearchResult(messages=messages, total=len(messages), query=query)
+        except Exception as exc:
+            logger.exception("Telegram global search failed for query=%r", query)
+            return SearchResult(
+                messages=[],
+                total=0,
+                query=query,
+                error=f"Ошибка поиска в Telegram: {exc}",
+            )
         finally:
             await self._pool.release_client(phone)
 
@@ -214,6 +243,14 @@ class TelegramSearch:
 
             await self._persistence.cache_messages_and_channels(seen_channels, messages)
             return SearchResult(messages=messages, total=len(messages), query=query)
+        except Exception as exc:
+            logger.exception("Telegram my_chats search failed for query=%r", query)
+            return SearchResult(
+                messages=[],
+                total=0,
+                query=query,
+                error=f"Ошибка поиска в Telegram: {exc}",
+            )
         finally:
             await self._pool.release_client(phone)
 
@@ -273,5 +310,17 @@ class TelegramSearch:
 
             await self._persistence.cache_messages_and_channels(seen_channels, messages)
             return SearchResult(messages=messages, total=len(messages), query=query)
+        except Exception as exc:
+            logger.exception(
+                "Telegram channel search failed for channel_id=%s query=%r",
+                channel_id,
+                query,
+            )
+            return SearchResult(
+                messages=[],
+                total=0,
+                query=query,
+                error=f"Ошибка поиска в Telegram: {exc}",
+            )
         finally:
             await self._pool.release_client(phone)

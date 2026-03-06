@@ -147,6 +147,25 @@ async def test_search_with_invalid_channel_id_returns_error(client):
     assert "Некорректный ID канала: abc" in resp.text
 
 
+@pytest.mark.asyncio
+async def test_search_runtime_error_is_rendered(client, monkeypatch):
+    from src.web import deps
+
+    class BrokenSearchService:
+        async def search(self, **kwargs):
+            raise RuntimeError("boom")
+
+        async def check_quota(self, query=""):
+            return None
+
+    monkeypatch.setattr(deps, "search_service", lambda request: BrokenSearchService())
+
+    resp = await client.get("/?q=test&mode=telegram")
+
+    assert resp.status_code == 200
+    assert "Ошибка поиска: boom" in resp.text
+
+
 @pytest.fixture
 async def unauth_client(client):
     """Client without auth headers, reusing the same app from client fixture."""
@@ -286,6 +305,20 @@ async def test_settings_no_accounts(client):
     assert resp.status_code == 200
     assert "Добавьте первый аккаунт" in resp.text
     assert "/auth/login" in resp.text
+
+
+@pytest.mark.asyncio
+async def test_settings_rejects_invalid_api_id(client):
+    db = client._transport.app.state.db
+
+    resp = await client.post(
+        "/settings/save-credentials",
+        data={"api_id": "abc", "api_hash": "hash"},
+    )
+
+    assert resp.status_code == 200
+    assert resp.url.params.get("error") == "invalid_api_id"
+    assert await db.get_setting("tg_api_id") is None
 
 
 @pytest.mark.asyncio

@@ -1,13 +1,22 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import date, datetime, timedelta
 
 import aiosqlite
 
 from src.models import Message
 
 logger = logging.getLogger(__name__)
+
+
+def _normalize_date_to(date_to: str) -> tuple[str, str]:
+    """Return SQL operator and upper bound for inclusive day filters."""
+    try:
+        parsed = date.fromisoformat(date_to)
+    except ValueError:
+        return "<=", date_to
+    return "<", (parsed + timedelta(days=1)).isoformat()
 
 
 class MessagesRepository:
@@ -84,8 +93,9 @@ class MessagesRepository:
             conditions.append("m.date >= ?")
             params.append(date_from)
         if date_to:
-            conditions.append("m.date <= ?")
-            params.append(date_to)
+            operator, normalized_date_to = _normalize_date_to(date_to)
+            conditions.append(f"m.date {operator} ?")
+            params.append(normalized_date_to)
 
         channel_join = " LEFT JOIN channels c ON m.channel_id = c.channel_id"
         where = " WHERE " + " AND ".join(conditions)

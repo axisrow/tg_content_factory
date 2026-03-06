@@ -84,7 +84,10 @@ class ClientPool:
             return None
 
     async def get_premium_client(self) -> tuple[TelegramClient, str] | None:
-        """Get first available premium client. Flood wait is ignored (search uses different API method)."""
+        """Get first available premium client.
+
+        Flood wait is ignored because premium search uses a different API method.
+        """
         async with self._lock:
             accounts = await self._db.get_accounts(active_only=True)
             for acc in accounts:

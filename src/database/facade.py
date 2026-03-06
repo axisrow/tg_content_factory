@@ -243,7 +243,6 @@ class Database:
 
     async def delete_messages_for_channel(self, channel_id: int) -> int:
         self._require()
-        assert self._messages is not None
         return await self._messages.delete_messages_for_channel(channel_id)
 
     async def get_stats(self) -> dict:
@@ -333,7 +332,6 @@ class Database:
 
     async def get_pending_channel_tasks(self) -> list[CollectionTask]:
         self._require()
-        assert self._tasks is not None
         return await self._tasks.get_pending_channel_tasks()
 
     async def fail_running_collection_tasks_on_startup(self) -> int:

@@ -20,7 +20,8 @@ class CollectionQueue:
 
     async def enqueue(self, channel: Channel, force: bool = False) -> int:
         task_id = await self._db.create_collection_task(
-            channel.channel_id, channel.title, channel_username=channel.username
+            channel.channel_id, channel.title, channel_username=channel.username,
+            payload={"force": True} if force else None,
         )
         await self._queue.put((task_id, channel, force))
         self._ensure_worker()
@@ -122,7 +123,8 @@ class CollectionQueue:
                     task.id, task.channel_id,
                 )
                 continue
-            await self._queue.put((task.id, channel, False))
+            force = bool((task.payload or {}).get("force", False))
+            await self._queue.put((task.id, channel, force))
             count += 1
         if count:
             self._ensure_worker()

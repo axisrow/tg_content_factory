@@ -291,6 +291,23 @@ async def test_search_messages(db):
 
 
 @pytest.mark.asyncio
+async def test_search_messages_date_to_includes_entire_day(db):
+    await db.insert_message(
+        Message(
+            channel_id=-100123,
+            message_id=1,
+            text="Midday update",
+            date=datetime(2025, 1, 1, 12, 0, tzinfo=timezone.utc),
+        )
+    )
+
+    results, total = await db.search_messages(query="Midday", date_to="2025-01-01")
+
+    assert total == 1
+    assert results[0].message_id == 1
+
+
+@pytest.mark.asyncio
 async def test_keywords_crud(db):
     kw = Keyword(pattern="bitcoin", is_regex=False)
     kid = await db.add_keyword(kw)
