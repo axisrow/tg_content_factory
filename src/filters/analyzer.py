@@ -90,7 +90,8 @@ class ChannelAnalyzer:
 
             short_msg_pct: float | None = None
             noisy_chat = False
-            if channel["channel_type"] in ("group", "supergroup", "forum") and channel_id_value in short_map:
+            is_chat = channel["channel_type"] in ("group", "supergroup", "forum")
+            if is_chat and channel_id_value in short_map:
                 short_total, short_count = short_map[channel_id_value]
                 if short_total > 0:
                     raw_short_pct = short_count / short_total * 100
@@ -158,7 +159,9 @@ class ChannelAnalyzer:
     async def precheck_subscriber_ratio(self) -> int:
         """Filter channels by subscriber_count/message_count without Telegram.
         Returns count of newly filtered channels."""
-        channels = await self._database.get_channels_with_counts(active_only=True, include_filtered=False)
+        channels = await self._database.get_channels_with_counts(
+            active_only=True, include_filtered=False,
+        )
         stats_map = await self._database.get_latest_stats_for_all()
         to_filter: list[tuple[int, str]] = []
         for channel in channels:

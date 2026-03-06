@@ -269,20 +269,20 @@ class Collector:
             stats_list = await self._db.get_channel_stats(channel_id, limit=1)
             subscriber_count = stats_list[0].subscriber_count if stats_list else None
             if subscriber_count is not None:
-                if channel.last_collected_id > 0:
-                    latest_msg_id = channel.last_collected_id
-                else:
-                    latest_msg_id = 0
-                    async for msg in client.iter_messages(entity, limit=1):
-                        latest_msg_id = msg.id
-                if latest_msg_id > 0:
+                cur = await self._db.execute(
+                    "SELECT COUNT(*) FROM messages WHERE channel_id = ?",
+                    (channel_id,),
+                )
+                row = await cur.fetchone()
+                message_count = row[0] if row else 0
+                if message_count > 0:
                     is_broadcast = channel.channel_type in ("channel", "monoforum")
                     threshold = (
                         LOW_SUBSCRIBER_RATIO_THRESHOLD
                         if is_broadcast
                         else LOW_SUBSCRIBER_RATIO_CHAT_THRESHOLD
                     )
-                    ratio = subscriber_count / latest_msg_id
+                    ratio = subscriber_count / message_count
                     if ratio < threshold:
                         await self._db.set_channels_filtered_bulk(
                             [(channel_id, "low_subscriber_ratio")]

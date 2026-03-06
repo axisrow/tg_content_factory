@@ -59,7 +59,10 @@ def run(args: argparse.Namespace) -> None:
 
             elif args.filter_action == "precheck":
                 count = await analyzer.precheck_subscriber_ratio()
-                print(f"Pre-filter applied: {count} channels marked as filtered (low_subscriber_ratio).")
+                print(
+                    f"Pre-filter applied: {count} channels marked as filtered"
+                    " (low_subscriber_ratio)."
+                )
 
             elif args.filter_action == "reset":
                 await analyzer.reset_filters()
