@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
+from src.services.notification_service import NotificationService
 from src.web import deps
 
 router = APIRouter()
@@ -66,3 +67,49 @@ async def toggle_account(request: Request, account_id: int):
 async def delete_account(request: Request, account_id: int):
     await deps.account_service(request).delete(account_id)
     return RedirectResponse(url="/settings?msg=account_deleted", status_code=303)
+
+
+@router.post("/notifications/setup")
+async def setup_notification_bot(request: Request):
+    pool = deps.get_pool(request)
+    db = deps.get_db(request)
+    notif_cfg = request.app.state.config.notifications
+    svc = NotificationService(db, pool, notif_cfg.bot_name_prefix, notif_cfg.bot_username_prefix)
+    try:
+        bot = await svc.setup_bot()
+    except Exception as exc:
+        return JSONResponse({"error": str(exc)}, status_code=500)
+    return JSONResponse({
+        "bot_username": bot.bot_username,
+        "bot_id": bot.bot_id,
+    })
+
+
+@router.get("/notifications/status")
+async def notification_bot_status(request: Request):
+    pool = deps.get_pool(request)
+    db = deps.get_db(request)
+    notif_cfg = request.app.state.config.notifications
+    svc = NotificationService(db, pool, notif_cfg.bot_name_prefix, notif_cfg.bot_username_prefix)
+    bot = await svc.get_status()
+    if bot is None:
+        return JSONResponse({"configured": False})
+    return JSONResponse({
+        "configured": True,
+        "bot_username": bot.bot_username,
+        "bot_id": bot.bot_id,
+        "created_at": bot.created_at.isoformat() if bot.created_at else None,
+    })
+
+
+@router.post("/notifications/delete")
+async def delete_notification_bot(request: Request):
+    pool = deps.get_pool(request)
+    db = deps.get_db(request)
+    notif_cfg = request.app.state.config.notifications
+    svc = NotificationService(db, pool, notif_cfg.bot_name_prefix, notif_cfg.bot_username_prefix)
+    try:
+        await svc.teardown_bot()
+    except Exception as exc:
+        return JSONResponse({"error": str(exc)}, status_code=500)
+    return JSONResponse({"deleted": True})

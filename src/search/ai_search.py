@@ -37,14 +37,14 @@ class AISearchEngine:
 
             def search_posts_tool(query: str) -> str:
                 """Search collected posts in the database."""
-                loop = asyncio.get_event_loop()
-                if loop.is_running():
-                    import concurrent.futures
+                import concurrent.futures
 
+                try:
+                    asyncio.get_running_loop()
                     with concurrent.futures.ThreadPoolExecutor() as executor:
                         future = executor.submit(asyncio.run, db.search_messages(query, limit=20))
                         messages, total = future.result()
-                else:
+                except RuntimeError:
                     messages, total = asyncio.run(db.search_messages(query, limit=20))
 
                 if not messages:

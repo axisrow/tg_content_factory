@@ -99,4 +99,10 @@ def build_parser() -> argparse.ArgumentParser:
     sched_sub.add_parser("trigger", help="Trigger one-shot collection")
     sched_sub.add_parser("search", help="Run keyword search now")
 
+    notif_parser = sub.add_parser("notification", help="Personal notification bot management")
+    notif_sub = notif_parser.add_subparsers(dest="notification_action")
+    notif_sub.add_parser("setup", help="Create personal notification bot via BotFather")
+    notif_sub.add_parser("status", help="Show notification bot status")
+    notif_sub.add_parser("delete", help="Delete notification bot via BotFather")
+
     return parser

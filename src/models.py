@@ -86,6 +86,16 @@ class ChannelStats(BaseModel):
     collected_at: datetime | None = None
 
 
+class NotificationBot(BaseModel):
+    id: int = 0
+    tg_user_id: int
+    tg_username: str | None = None
+    bot_id: int | None = None
+    bot_username: str
+    bot_token: str
+    created_at: datetime | None = None
+
+
 class SearchResult(BaseModel):
     messages: list[Message]
     total: int

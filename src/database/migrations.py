@@ -60,6 +60,51 @@ async def run_migrations(db: aiosqlite.Connection) -> None:
     )
     await db.commit()
 
+    await db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS notification_bots (
+            id INTEGER PRIMARY KEY,
+            tg_user_id INTEGER NOT NULL UNIQUE,
+            tg_username TEXT,
+            bot_id INTEGER,
+            bot_username TEXT NOT NULL,
+            bot_token TEXT NOT NULL,
+            created_at TEXT DEFAULT (datetime('now'))
+        )
+        """
+    )
+    await db.commit()
+
+    # Migrate existing notification_bots table: drop NOT NULL on bot_id
+    cur = await db.execute("PRAGMA table_info(notification_bots)")
+    nb_columns = {row["name"]: row for row in await cur.fetchall()}
+    if "bot_id" in nb_columns and nb_columns["bot_id"]["notnull"]:
+        await db.execute(
+            """
+            CREATE TABLE notification_bots_tmp (
+                id INTEGER PRIMARY KEY,
+                tg_user_id INTEGER NOT NULL UNIQUE,
+                tg_username TEXT,
+                bot_id INTEGER,
+                bot_username TEXT NOT NULL,
+                bot_token TEXT NOT NULL,
+                created_at TEXT DEFAULT (datetime('now'))
+            )
+            """
+        )
+        await db.execute(
+            """
+            INSERT INTO notification_bots_tmp
+                (id, tg_user_id, tg_username, bot_id, bot_username, bot_token, created_at)
+            SELECT id, tg_user_id, tg_username, bot_id, bot_username, bot_token, created_at
+            FROM notification_bots
+            """
+        )
+        await db.execute("DROP TABLE notification_bots")
+        await db.execute("ALTER TABLE notification_bots_tmp RENAME TO notification_bots")
+        await db.commit()
+        logger.info("Migrated notification_bots: removed NOT NULL from bot_id")
+
     cur = await db.execute("SELECT value FROM settings WHERE key = 'fts5_initialized'")
     if not await cur.fetchone():
         try:
