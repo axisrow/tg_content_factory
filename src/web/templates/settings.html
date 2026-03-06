@@ -46,6 +46,7 @@
     <p><a href="/auth/login" role="button">Добавить аккаунт</a></p>
 
     {% if accounts %}
+    <div style="overflow-x:auto">
     <table>
         <thead>
             <tr>
@@ -63,26 +64,27 @@
             {% for acc in accounts %}
             <tr>
                 <td>{{ acc.phone }}</td>
-                <td>{{ "Активен" if acc.is_active else "Отключён" }}</td>
-                <td>{{ "Да" if acc.is_premium else "Нет" }}</td>
-                <td>{{ "Да" if acc.is_primary else "Нет" }}</td>
-                <td>{{ "Да" if acc.phone in connected_phones else "Нет" }}</td>
+                <td>{% if acc.is_active %}<span class="badge-active">● Активен</span>{% else %}<span class="badge-inactive">● Отключён</span>{% endif %}</td>
+                <td>{% if acc.is_premium %}<span class="badge-active">●</span>{% else %}<span class="badge-inactive">●</span>{% endif %}</td>
+                <td>{% if acc.is_primary %}<span class="badge-active">●</span>{% else %}<span class="badge-inactive">●</span>{% endif %}</td>
+                <td>{% if acc.phone in connected_phones %}<span class="badge-active">●</span>{% else %}<span class="badge-inactive">●</span>{% endif %}</td>
                 <td>{{ acc.flood_wait_until.strftime('%H:%M:%S') if acc.flood_wait_until else "—" }}</td>
                 <td>{{ acc.created_at.strftime('%Y-%m-%d') if acc.created_at else "—" }}</td>
                 <td>
                     <form method="post" action="/settings/{{ acc.id }}/toggle" style="display:inline">
-                        <button type="submit" class="secondary outline" style="padding: 0.25rem 0.5rem; margin: 0;">
-                            {{ "Откл." if acc.is_active else "Вкл." }}
+                        <button type="submit" class="secondary outline emoji-btn" title="{{ 'Отключить' if acc.is_active else 'Включить' }}">
+                            {{ "⏸️" if acc.is_active else "▶️" }}
                         </button>
                     </form>
                     <form method="post" action="/settings/{{ acc.id }}/delete" style="display:inline" onsubmit="return confirm('Вы уверены, что хотите удалить этот аккаунт?')">
-                        <button type="submit" class="contrast outline" style="padding: 0.25rem 0.5rem; margin: 0;">Удалить</button>
+                        <button type="submit" class="contrast outline emoji-btn" title="Удалить">🗑️</button>
                     </form>
                 </td>
             </tr>
             {% endfor %}
         </tbody>
     </table>
+    </div>
     {% else %}
     <p>Нет подключённых аккаунтов. <a href="/auth/login">Добавьте первый аккаунт</a>.</p>
     {% endif %}

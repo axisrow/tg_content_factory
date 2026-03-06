@@ -201,7 +201,18 @@ def run(args: argparse.Namespace) -> None:
                 channels = await db.get_channels()
                 null_type = [ch for ch in channels if ch.channel_type is None]
                 print(f"Channels with missing type: {len(null_type)}")
-                updated = failed = 0
+                # Pre-fetch dialogs to populate entity cache for channels without username
+                prefetch = await pool.get_available_client()
+                if prefetch:
+                    client, phone = prefetch
+                    try:
+                        print("Pre-fetching dialogs to populate entity cache...")
+                        await asyncio.wait_for(client.get_dialogs(), timeout=30)
+                    except Exception as e:
+                        logging.warning("Failed to pre-fetch dialogs: %s", e)
+                    finally:
+                        await pool.release_client(phone)
+                updated = failed = deactivated = 0
                 for ch in null_type:
                     identifier = ch.username or str(ch.channel_id)
                     try:
@@ -209,6 +220,13 @@ def run(args: argparse.Namespace) -> None:
                     except Exception as e:
                         logging.warning("Failed to resolve %s: %s", identifier, e)
                         info = None
+                    if info is False:
+                        await db.set_channel_active(ch.id, False)
+                        print(
+                            f"DEACTIVATED: {ch.title} (@{ch.username or ch.channel_id}) — not found"
+                        )
+                        deactivated += 1
+                        continue
                     if not info or info.get("channel_type") is None:
                         print(f"SKIP: {ch.title} ({ch.channel_id}) — type still unknown")
                         failed += 1
@@ -221,7 +239,7 @@ def run(args: argparse.Namespace) -> None:
                     ))
                     print(f"OK: {ch.title} → {info['channel_type']}")
                     updated += 1
-                print(f"\nUpdated: {updated}, Skipped: {failed}")
+                print(f"\nUpdated: {updated}, Deactivated: {deactivated}, Skipped: {failed}")
 
             elif args.channel_action == "collect":
                 _, pool = await runtime.init_pool(config, db)
