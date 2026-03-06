@@ -10,11 +10,62 @@ main.container {
 }
 
 nav ul li a {
-    font-size: 0.9rem;
+    font-size: 0.8rem;
 }
 
 table {
-    font-size: 0.9rem;
+    font-size: 0.72rem;
+}
+
+td, th {
+    padding: 0.3rem 0.5rem;
+}
+
+.channels-table {
+    table-layout: fixed;
+    width: 100%;
+    min-width: 900px;
+}
+
+.channels-table th:nth-child(1),
+.channels-table td:nth-child(1) { width: 110px; }   /* ID канала */
+
+.channels-table th:nth-child(2),
+.channels-table td:nth-child(2) { width: 180px; }   /* Название */
+
+.channels-table th:nth-child(3),
+.channels-table td:nth-child(3) { width: 130px; }   /* Username */
+
+.channels-table th:nth-child(4),
+.channels-table td:nth-child(4) { width: 95px; }    /* Тип */
+
+.channels-table th:nth-child(5),
+.channels-table td:nth-child(5) { width: 62px; }    /* Активен */
+
+.channels-table th:nth-child(6),
+.channels-table td:nth-child(6) { width: 80px; }    /* Сообщений */
+
+.channels-table th:nth-child(7),
+.channels-table td:nth-child(7) { width: 85px; }    /* Подписчики */
+
+.channels-table th:nth-child(8),
+.channels-table td:nth-child(8) { width: 145px; }   /* Действия */
+
+.emoji-btn {
+    padding: 0.1rem 0.3rem !important;
+    font-size: 1rem;
+    line-height: 1;
+    margin: 0 1px;
+    width: auto !important;
+    display: inline-flex !important;
+}
+
+.channels-table td:nth-child(1),
+.channels-table td:nth-child(2),
+.channels-table td:nth-child(3) {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 article header {
@@ -64,4 +115,23 @@ form button[style*="padding"] {
     background: #fee2e2;
     border: 1px solid #f87171;
     color: #991b1b;
+}
+
+.badge-active { color: #15803d; font-weight: 600; }
+.badge-inactive { color: #9ca3af; }
+
+@media (max-width: 576px) {
+  nav.container > ul:first-child li strong {
+    white-space: nowrap;
+  }
+  nav.container {
+    flex-wrap: wrap;
+  }
+  nav.container > ul:last-child {
+    width: 100%;
+    overflow-x: auto;
+    flex-wrap: nowrap;
+    padding-bottom: 0.25rem;
+    -webkit-overflow-scrolling: touch;
+  }
 }

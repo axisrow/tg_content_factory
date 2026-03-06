@@ -27,7 +27,7 @@
     <a href="/channels?view=all" role="button" class="{{ 'secondary' if show_all else '' }} outline" style="padding: 0.25rem 0.75rem;">Все каналы</a>
     <span style="flex:1"></span>
     <form method="post" action="/channels/filter/analyze" style="display:inline">
-        <button type="submit" class="outline" style="padding: 0.25rem 0.75rem;">Анализ фильтров</button>
+        <button type="submit" class="outline" style="padding: 0.25rem 0.75rem;">Обновить фильтры</button>
     </form>
     <form method="post" action="/channels/filter/reset" style="display:inline">
         <button type="submit" class="secondary outline" style="padding: 0.25rem 0.75rem;">Сброс фильтров</button>
@@ -37,19 +37,16 @@
     </form>
 </div>
 <div style="overflow-x:auto">
-<table>
+<table class="channels-table">
     <thead>
         <tr>
             <th>ID канала</th>
             <th>Название</th>
             <th>Username</th>
             <th>Тип</th>
-            <th>Активен</th>
+            <th>Статус</th>
             <th>Сообщений</th>
             <th>Подписчики</th>
-            <th>Avg просмотры</th>
-            <th>Avg реакции</th>
-            <th>Avg репосты</th>
             <th>Фильтр</th>
             <th>Действия</th>
         </tr>
@@ -61,51 +58,60 @@
             <td>{{ ch.channel_id }}</td>
             <td>{{ ch.title or "—" }}</td>
             <td>{% if ch.username %}<a href="https://t.me/{{ ch.username }}" target="_blank" rel="noopener">@{{ ch.username }}</a>{% else %}—{% endif %}</td>
-            <td>{% if ch.channel_type == "channel" %}Канал{% elif ch.channel_type == "group" %}Группа{% else %}—{% endif %}{% if not ch.username %} <small>(приватный)</small>{% endif %}</td>
-            <td>{{ "Да" if ch.is_active else "Нет" }}</td>
+            <td>{% if ch.channel_type == "channel" %}{% if not ch.username %}Канал <span title="Приватный" style="cursor:default">🔒</span>{% else %}Канал{% endif %}{% elif ch.channel_type == "supergroup" %}{% if not ch.username %}Супергруппа <span title="Приватная" style="cursor:default">🔒</span>{% else %}Супергруппа{% endif %}{% elif ch.channel_type == "gigagroup" %}{% if not ch.username %}Гигагруппа <span title="Приватная" style="cursor:default">🔒</span>{% else %}Гигагруппа{% endif %}{% elif ch.channel_type == "group" %}{% if not ch.username %}Группа <span title="Приватная" style="cursor:default">🔒</span>{% else %}Группа{% endif %}{% elif ch.channel_type == "unavailable" %}<span style="color:#9ca3af">Недоступен</span>{% else %}<span style="color:#9ca3af">Непроверен</span>{% endif %}</td>
+            <td>
+              {% if ch.is_filtered %}<span class="badge-filtered" title="Отфильтрован">●</span>
+              {% elif ch.is_active %}<span class="badge-active">●</span>
+              {% else %}<span class="badge-inactive">●</span>{% endif %}
+            </td>
             <td>{{ ch.message_count }}</td>
             <td>{{ st.subscriber_count if st and st.subscriber_count is not none else "—" }}</td>
-            <td>{{ "%.1f"|format(st.avg_views) if st and st.avg_views is not none else "—" }}</td>
-            <td>{{ "%.1f"|format(st.avg_reactions) if st and st.avg_reactions is not none else "—" }}</td>
-            <td>{{ "%.1f"|format(st.avg_forwards) if st and st.avg_forwards is not none else "—" }}</td>
             <td>
                 {% if ch.is_filtered %}
+                    {% set flag_emoji = {
+                        "low_uniqueness": ("🖨️", "Низкая уникальность контента"),
+                        "low_subscriber_ratio": ("📉", "Мало подписчиков"),
+                        "cross_channel_spam": ("📢", "Кросс-канальный спам"),
+                        "non_cyrillic": ("🌐", "Не кириллический контент"),
+                        "chat_noise": ("💬", "Шум чата")
+                    } %}
                     {% if ch.filter_flags %}
                         {% for flag in ch.filter_flags.split(',') %}
-                            <mark>{{ flag.strip() }}</mark>
+                            {% set f = flag.strip() %}
+                            {% if f in flag_emoji %}
+                                <span title="{{ flag_emoji[f][1] }}" style="cursor:default;font-size:1.1em">{{ flag_emoji[f][0] }}</span>
+                            {% else %}
+                                <span title="{{ f }}" style="cursor:default">🚫</span>
+                            {% endif %}
                         {% endfor %}
                     {% else %}
-                        <mark>Отфильтрован</mark>
+                        <span title="Отфильтрован" style="cursor:default">🚫</span>
                     {% endif %}
                 {% else %}
-                    -
+                    —
                 {% endif %}
             </td>
             <td style="white-space:nowrap">
-                <form method="post" action="/channels/{{ ch.id }}/filter-toggle" style="display:inline">
-                    <button type="submit" class="outline" style="padding: 0.25rem 0.5rem; margin: 0;">
-                        {{ "Вернуть" if ch.is_filtered else "Скрыть" }}
-                    </button>
-                </form>
                 {% if ch.is_filtered %}
-                    <button type="button" class="outline" disabled style="padding: 0.25rem 0.5rem; margin: 0;">
-                        Загрузить
-                    </button>
+                <form method="post" action="/channels/{{ ch.id }}/filter-toggle" style="display:inline">
+                    <button type="submit" class="outline emoji-btn" title="Вернуть">🔁</button>
+                </form>
+                    <button type="button" class="outline emoji-btn" title="Загрузить" disabled>⬇️</button>
                 {% else %}
                     <form method="post" action="/channels/{{ ch.id }}/collect" style="display:inline">
-                        <button type="submit" class="outline" style="padding: 0.25rem 0.5rem; margin: 0;">Загрузить</button>
+                        <button type="submit" class="outline emoji-btn" title="Загрузить">⬇️</button>
                     </form>
                 {% endif %}
                 <form method="post" action="/channels/{{ ch.id }}/stats" style="display:inline">
-                    <button type="submit" class="outline" style="padding: 0.25rem 0.5rem; margin: 0;">Стата</button>
+                    <button type="submit" class="outline emoji-btn" title="Обновить статистику">📊</button>
                 </form>
                 <form method="post" action="/channels/{{ ch.id }}/toggle" style="display:inline">
-                    <button type="submit" class="secondary outline" style="padding: 0.25rem 0.5rem; margin: 0;">
-                        {{ "Откл." if ch.is_active else "Вкл." }}
+                    <button type="submit" class="secondary outline emoji-btn" title="{{ 'Отключить' if ch.is_active else 'Включить' }}">
+                        {{ "⏸️" if ch.is_active else "▶️" }}
                     </button>
                 </form>
                 <form method="post" action="/channels/{{ ch.id }}/delete" style="display:inline" onsubmit="return confirm('Вы уверены, что хотите удалить этот канал?')">
-                    <button type="submit" class="contrast outline" style="padding: 0.25rem 0.5rem; margin: 0;">Удалить</button>
+                    <button type="submit" class="contrast outline emoji-btn" title="Удалить">🗑️</button>
                 </form>
             </td>
         </tr>
@@ -139,6 +145,7 @@
 </article>
 
 {% if keywords %}
+<div style="overflow-x:auto">
 <table>
     <thead>
         <tr>
@@ -152,22 +159,23 @@
         {% for kw in keywords %}
         <tr>
             <td><code>{{ kw.pattern }}</code></td>
-            <td>{{ "Да" if kw.is_regex else "Нет" }}</td>
-            <td>{{ "Да" if kw.is_active else "Нет" }}</td>
+            <td>{% if kw.is_regex %}<span class="badge-active">●</span>{% else %}<span class="badge-inactive">●</span>{% endif %}</td>
+            <td>{% if kw.is_active %}<span class="badge-active">●</span>{% else %}<span class="badge-inactive">●</span>{% endif %}</td>
             <td>
                 <form method="post" action="/channels/keywords/{{ kw.id }}/toggle" style="display:inline">
-                    <button type="submit" class="secondary outline" style="padding: 0.25rem 0.5rem; margin: 0;">
-                        {{ "Откл." if kw.is_active else "Вкл." }}
+                    <button type="submit" class="secondary outline emoji-btn" title="{{ 'Отключить' if kw.is_active else 'Включить' }}">
+                        {{ "⏸️" if kw.is_active else "▶️" }}
                     </button>
                 </form>
                 <form method="post" action="/channels/keywords/{{ kw.id }}/delete" style="display:inline" onsubmit="return confirm('Вы уверены, что хотите удалить это ключевое слово?')">
-                    <button type="submit" class="contrast outline" style="padding: 0.25rem 0.5rem; margin: 0;">Удалить</button>
+                    <button type="submit" class="contrast outline emoji-btn" title="Удалить">🗑️</button>
                 </form>
             </td>
         </tr>
         {% endfor %}
     </tbody>
 </table>
+</div>
 {% else %}
 <p>Нет ключевых слов.</p>
 {% endif %}

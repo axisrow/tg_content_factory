@@ -6,7 +6,7 @@ import re
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 
-from telethon.errors import FloodWaitError
+from telethon.errors import FloodWaitError, UsernameInvalidError, UsernameNotOccupiedError
 from telethon.tl.functions.channels import GetFullChannelRequest
 from telethon.tl.types import (
     DocumentAttributeAnimated,
@@ -298,6 +298,14 @@ class Collector:
                     if self._cancel_event.is_set():
                         break
 
+        except (UsernameNotOccupiedError, UsernameInvalidError):
+            logger.warning(
+                "Channel %d (%s): username not found, deactivating",
+                channel_id, channel.username,
+            )
+            if channel.id:
+                await self._db.set_channel_active(channel.id, False)
+            raise
         except FloodWaitError as e:
             flood_wait_sec = e.seconds
             logger.warning("FloodWait %ds for %s on channel %d", flood_wait_sec, phone, channel_id)

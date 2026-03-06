@@ -60,7 +60,7 @@
             AI-поиск
         </label>
         {% endif %}
-        <button type="submit" style="margin-bottom: 0; margin-left: auto;">Найти</button>
+        <button type="submit" style="margin-bottom: 0;">Найти</button>
     </fieldset>
 </form>
 
@@ -85,6 +85,7 @@
 {% endif %}
 
 {% if result.messages %}
+<div style="overflow-x:auto">
 <table>
     <thead>
         <tr>
@@ -109,6 +110,7 @@
         {% endfor %}
     </tbody>
 </table>
+</div>
 
 {% if total_pages > 1 %}
 <nav>

@@ -38,6 +38,7 @@ document.querySelector('form[action$="/import"]').addEventListener('submit', fun
         Ошибок: <strong>{{ results.failed }}</strong>
     </p>
     {% if results.details %}
+    <div style="overflow-x:auto">
     <table>
         <thead>
             <tr>
@@ -64,6 +65,7 @@ document.querySelector('form[action$="/import"]').addEventListener('submit', fun
             {% endfor %}
         </tbody>
     </table>
+    </div>
     {% endif %}
 </article>
 {% endif %}

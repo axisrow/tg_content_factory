@@ -27,7 +27,7 @@
     </form>
     {% endif %}
     <form method="post" action="/scheduler/trigger">
-        <button type="submit" class="contrast" {{ 'disabled' if collecting_now else '' }}>
+        <button type="submit" class="secondary" {{ 'disabled' if collecting_now else '' }}>
             Запустить сбор сейчас
         </button>
     </form>
@@ -43,7 +43,7 @@
     <p>Результат: ключевых слов — {{ last_search_stats.keywords }}, найдено — {{ last_search_stats.results }}, ошибок — {{ last_search_stats.errors }}</p>
     {% endif %}
     <form method="post" action="/scheduler/trigger-search">
-        <button type="submit" class="contrast">Запустить поиск по ключевым словам</button>
+        <button type="submit" class="secondary">Запустить поиск по ключевым словам</button>
     </form>
 </article>
 

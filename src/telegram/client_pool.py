@@ -9,7 +9,8 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 from telethon import TelegramClient
-from telethon.errors import FloodWaitError
+from telethon.errors import FloodWaitError, UsernameInvalidError, UsernameNotOccupiedError
+from telethon.tl.types import PeerChannel
 
 from src.database import Database
 from src.models import TelegramUserInfo
@@ -192,6 +193,12 @@ class ClientPool:
         # Normalize post links: https://t.me/channel/123 → https://t.me/channel
         identifier = re.sub(r"(t\.me/[^/\s]+)/\d+$", r"\1", identifier)
 
+        # Use PeerChannel for numeric IDs so Telethon treats them as channels, not users
+        if identifier.lstrip("-").isdigit():
+            peer: str | PeerChannel = PeerChannel(abs(int(identifier)))
+        else:
+            peer = identifier
+
         for _attempt in range(3):
             result = await self.get_available_client()
             if not result:
@@ -199,7 +206,7 @@ class ClientPool:
                 raise RuntimeError("no_client")
             client, phone = result
             try:
-                entity = await client.get_entity(identifier)
+                entity = await client.get_entity(peer)
                 if not hasattr(entity, "title"):
                     logger.info(
                         "resolve_channel: '%s' is a user, not a channel/group", identifier
@@ -225,6 +232,9 @@ class ClientPool:
                     e.seconds, identifier,
                 )
                 continue
+            except (UsernameNotOccupiedError, UsernameInvalidError) as e:
+                logger.warning("resolve_channel: username not found '%s': %s", identifier, e)
+                return False  # Sentinel: channel definitely does not exist
             except Exception as e:
                 logger.warning("resolve_channel: failed to resolve '%s': %s", identifier, e)
                 return None
