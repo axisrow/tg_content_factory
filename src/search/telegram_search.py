@@ -25,7 +25,7 @@ class TelegramSearch:
         if not self._pool:
             return None
 
-        result = await self._pool.get_available_client()
+        result = await self._pool.get_premium_client()
         if result is None:
             return None
 
@@ -61,29 +61,17 @@ class TelegramSearch:
                 error="Нет подключённых Telegram-аккаунтов.",
             )
 
-        result = await self._pool.get_available_client()
+        result = await self._pool.get_premium_client()
         if result is None:
             return SearchResult(
                 messages=[],
                 total=0,
                 query=query,
-                error="Нет доступных Telegram-аккаунтов. Проверьте подключение.",
+                error="Нет доступных Premium-аккаунтов. Добавьте аккаунт с Telegram Premium.",
             )
 
         client, phone = result
         try:
-            me = await client.get_me()
-            if not getattr(me, "premium", False):
-                return SearchResult(
-                    messages=[],
-                    total=0,
-                    query=query,
-                    error=(
-                        "Глобальный поиск по публичным каналам требует Telegram Premium. "
-                        f"Аккаунт {phone} не имеет подписки Premium."
-                    ),
-                )
-
             quota = await self._check_search_quota_with_client(client, query)
             if quota and quota.get("remains") == 0 and not quota.get("query_is_free"):
                 return SearchResult(
