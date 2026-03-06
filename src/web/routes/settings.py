@@ -38,8 +38,9 @@ async def save_filters(request: Request):
     form = await request.form()
     db = deps.get_db(request)
     min_subs = str(form.get("min_subscribers_filter", "0")).strip()
-    if min_subs.isdigit():
-        await db.set_setting("min_subscribers_filter", min_subs)
+    if not min_subs.isdigit():
+        return RedirectResponse(url="/settings?error=invalid_value", status_code=303)
+    await db.set_setting("min_subscribers_filter", min_subs)
     return RedirectResponse(url="/settings?msg=filters_saved", status_code=303)
 
 

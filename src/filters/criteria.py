@@ -15,6 +15,7 @@ VALID_FLAGS = frozenset({
     "low_uniqueness",
     "low_subscriber_ratio",
     "low_subscriber_manual",
+    "manual",
     "cross_channel_spam",
     "non_cyrillic",
     "chat_noise",
