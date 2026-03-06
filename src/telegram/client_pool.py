@@ -212,12 +212,14 @@ class ClientPool:
                         "resolve_channel: '%s' is a user, not a channel/group", identifier
                     )
                     return None
-                if getattr(entity, "broadcast", False):
+                if getattr(entity, "megagroup", False):
+                    channel_type = "supergroup"
+                elif getattr(entity, "gigagroup", False):
+                    channel_type = "gigagroup"
+                elif getattr(entity, "broadcast", False):
                     channel_type = "channel"
-                elif getattr(entity, "megagroup", False):
-                    channel_type = "group"
                 else:
-                    channel_type = None
+                    channel_type = "group"
                 return {
                     "channel_id": entity.id,
                     "title": entity.title,
@@ -254,12 +256,14 @@ class ClientPool:
             async for dialog in client.iter_dialogs():
                 if dialog.is_channel or dialog.is_group:
                     entity = dialog.entity
-                    if getattr(entity, "broadcast", False):
+                    if getattr(entity, "megagroup", False):
+                        channel_type = "supergroup"
+                    elif getattr(entity, "gigagroup", False):
+                        channel_type = "gigagroup"
+                    elif getattr(entity, "broadcast", False):
                         channel_type = "channel"
-                    elif getattr(entity, "megagroup", False):
-                        channel_type = "group"
                     else:
-                        channel_type = None
+                        channel_type = "group"
                     dialogs.append({
                         "channel_id": entity.id,
                         "title": dialog.title,

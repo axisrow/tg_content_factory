@@ -222,6 +222,7 @@ def run(args: argparse.Namespace) -> None:
                         info = None
                     if info is False:
                         await db.set_channel_active(ch.id, False)
+                        await db.set_channel_type(ch.channel_id, "unavailable")
                         print(
                             f"DEACTIVATED: {ch.title} (@{ch.username or ch.channel_id}) — not found"
                         )

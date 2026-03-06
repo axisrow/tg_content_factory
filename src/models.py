@@ -31,7 +31,7 @@ class Channel(BaseModel):
     channel_id: int
     title: str | None = None
     username: str | None = None
-    channel_type: str | None = None  # "channel" | "group"
+    channel_type: str | None = None  # "channel"|"supergroup"|"gigagroup"|"group"|"unavailable"
     is_active: bool = True
     is_filtered: bool = False
     filter_flags: str = ""

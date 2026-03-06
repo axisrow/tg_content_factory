@@ -455,7 +455,7 @@ async def test_channel_type_displayed(client):
 
 
 @pytest.mark.asyncio
-async def test_filter_analyze_renders_snapshot_hidden_fields(client):
+async def test_filter_analyze_applies_filters(client):
     from datetime import datetime, timezone
 
     from src.models import Channel, Message
@@ -478,10 +478,11 @@ async def test_filter_analyze_renders_snapshot_hidden_fields(client):
 
     resp = await client.post("/channels/filter/analyze")
     assert resp.status_code == 200
-    assert 'name="snapshot" value="1"' in resp.text
-    assert 'name="selected"' in resp.text
-    assert 'value="-100551|' in resp.text
     assert "low_uniqueness" in resp.text
+
+    channel = await db.get_channel_by_channel_id(-100551)
+    assert channel is not None
+    assert channel.is_filtered is True
 
 
 @pytest.mark.asyncio
