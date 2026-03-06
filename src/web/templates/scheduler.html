@@ -93,12 +93,19 @@
         <tbody>
             {% for t in tasks %}
             <tr>
-                <td>{{ t.channel_title or t.channel_id }}</td>
+                <td>
+                    {{ t.channel_title or t.channel_id }}
+                    <br><small>
+                        {%- if t.channel_username %}@{{ t.channel_username }} · {% endif -%}
+                        id: {{ t.channel_id }}
+                    </small>
+                </td>
                 <td>
                     {% if t.status == 'running' %}
                         <span aria-busy="true">Выполняется</span>
                     {% elif t.status == 'completed' %}
                         Завершено
+                        {% if t.error %}<br><small style="color:var(--pico-muted-color)">{{ t.error }}</small>{% endif %}
                     {% elif t.status == 'failed' %}
                         <mark>Ошибка</mark>
                         {% if t.error %}<br><small>{{ t.error[:100] }}</small>{% endif %}
