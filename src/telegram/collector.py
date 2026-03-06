@@ -386,7 +386,7 @@ class Collector:
                     updated = await self._db.get_channel_by_pk(channel.id)
                 if updated:
                     return len(all_messages) + await self._collect_channel(
-                        updated, progress_callback=progress_callback
+                        updated, progress_callback=progress_callback, force=force
                     )
             else:
                 if self._notifier:
