@@ -133,7 +133,7 @@ class Collector:
                     channel = Channel(**{**channel.model_dump(), "last_collected_id": 0})
 
                 return await self._collect_channel(
-                    channel, progress_callback=progress_callback
+                    channel, progress_callback=progress_callback, force=force
                 )
             finally:
                 self._running = False
@@ -233,6 +233,7 @@ class Collector:
         self,
         channel: Channel,
         progress_callback: Callable[[int], Awaitable[None]] | None = None,
+        force: bool = False,
     ) -> int:
         """Collect new messages from a single channel. Returns count."""
         channel_id = channel.channel_id
@@ -266,32 +267,34 @@ class Collector:
                 entity = await client.get_entity(PeerChannel(channel_id))
 
             # Превентивная фильтрация по subscriber_ratio до загрузки сообщений
-            stats_list = await self._db.get_channel_stats(channel_id, limit=1)
-            subscriber_count = stats_list[0].subscriber_count if stats_list else None
-            if subscriber_count is not None:
-                cur = await self._db.execute(
-                    "SELECT COUNT(*) FROM messages WHERE channel_id = ?",
-                    (channel_id,),
-                )
-                row = await cur.fetchone()
-                message_count = row[0] if row else 0
-                if message_count > 0:
-                    is_broadcast = channel.channel_type in ("channel", "monoforum")
-                    threshold = (
-                        LOW_SUBSCRIBER_RATIO_THRESHOLD
-                        if is_broadcast
-                        else LOW_SUBSCRIBER_RATIO_CHAT_THRESHOLD
+            # Пропускается при force=True (ручной запуск не должен менять фильтр-статус)
+            if not force:
+                stats_list = await self._db.get_channel_stats(channel_id, limit=1)
+                subscriber_count = stats_list[0].subscriber_count if stats_list else None
+                if subscriber_count is not None:
+                    cur = await self._db.execute(
+                        "SELECT COUNT(*) FROM messages WHERE channel_id = ?",
+                        (channel_id,),
                     )
-                    ratio = subscriber_count / message_count
-                    if ratio < threshold:
-                        await self._db.set_channels_filtered_bulk(
-                            [(channel_id, "low_subscriber_ratio")]
+                    row = await cur.fetchone()
+                    message_count = row[0] if row else 0
+                    if message_count > 0:
+                        is_broadcast = channel.channel_type in ("channel", "monoforum")
+                        threshold = (
+                            LOW_SUBSCRIBER_RATIO_THRESHOLD
+                            if is_broadcast
+                            else LOW_SUBSCRIBER_RATIO_CHAT_THRESHOLD
                         )
-                        logger.info(
-                            "Pre-filter: channel %d ratio %.4f < %.2f, skipping",
-                            channel_id, ratio, threshold,
-                        )
-                        return 0
+                        ratio = subscriber_count / message_count
+                        if ratio < threshold:
+                            await self._db.set_channels_filtered_bulk(
+                                [(channel_id, "low_subscriber_ratio")]
+                            )
+                            logger.info(
+                                "Pre-filter: channel %d ratio %.4f < %.2f, skipping",
+                                channel_id, ratio, threshold,
+                            )
+                            return 0
 
             async for msg in client.iter_messages(
                 entity,

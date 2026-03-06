@@ -98,7 +98,8 @@
                 </form>
                 {% endif %}
                 <span id="collect-btn-{{ ch.id }}">
-                    <form hx-post="/channels/{{ ch.id }}/collect"
+                    <form action="/channels/{{ ch.id }}/collect" method="post"
+                          hx-post="/channels/{{ ch.id }}/collect"
                           hx-target="#collect-btn-{{ ch.id }}"
                           hx-swap="outerHTML"
                           style="display:inline">

@@ -667,6 +667,38 @@ async def test_prefilter_skips_when_no_messages(db):
     # iter_messages called for actual collection (pre-filter was skipped)
     mock_client.iter_messages.assert_called_once()
 
+
+@pytest.mark.asyncio
+async def test_prefilter_skipped_when_force(db):
+    """force=True → pre-filter skipped; channel filter state not changed."""
+    ch = Channel(
+        channel_id=-100206, title="Forced Channel",
+        channel_type="supergroup", last_collected_id=500,
+    )
+    await db.add_channel(ch)
+    await db.save_channel_stats(ChannelStats(channel_id=-100206, subscriber_count=5))
+    # 5 / 500 = 0.01 < 0.02 — would be filtered without force
+    await db.insert_messages_batch([
+        Message(
+            channel_id=-100206, message_id=i, text="x",
+            date=datetime(2025, 1, 1, tzinfo=timezone.utc),
+        )
+        for i in range(1, 501)
+    ])
+
+    mock_client = AsyncMock()
+    mock_client.get_entity = AsyncMock(return_value=SimpleNamespace())
+    mock_client.iter_messages = MagicMock(return_value=_AsyncIterEmpty())
+
+    pool = make_mock_pool(get_available_client=AsyncMock(return_value=(mock_client, "+7000")))
+    collector = Collector(pool, db, SchedulerConfig())
+
+    count = await collector._collect_channel(ch, force=True)
+
+    assert count == 0
+    # Collection proceeds (iter_messages called), channel NOT marked filtered
+    mock_client.iter_messages.assert_called_once()
+
     channels = await db.get_channels(include_filtered=True)
-    stored = next(c for c in channels if c.channel_id == -100205)
+    stored = next(c for c in channels if c.channel_id == -100206)
     assert stored.is_filtered is False
