@@ -67,6 +67,14 @@ async def apply_filters(request: Request):
     )
 
 
+@router.post("/filter/precheck")
+async def precheck_subscriber_ratio(request: Request):
+    db = deps.get_db(request)
+    analyzer = ChannelAnalyzer(db)
+    count = await analyzer.precheck_subscriber_ratio()
+    return RedirectResponse(url=f"/channels?msg=precheck_done&count={count}", status_code=303)
+
+
 @router.post("/filter/reset")
 async def reset_filters(request: Request):
     db = deps.get_db(request)

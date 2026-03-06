@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 
 from telethon import TelegramClient
 from telethon.errors import FloodWaitError, UsernameInvalidError, UsernameNotOccupiedError
-from telethon.tl.types import PeerChannel
+from telethon.tl.types import ChannelForbidden, PeerChannel
 
 from src.database import Database
 from src.models import TelegramUserInfo
@@ -212,11 +212,32 @@ class ClientPool:
                         "resolve_channel: '%s' is a user, not a channel/group", identifier
                     )
                     return None
-                if getattr(entity, "megagroup", False):
-                    channel_type = "supergroup"
-                elif getattr(entity, "gigagroup", False):
+                if isinstance(entity, ChannelForbidden):
+                    return None
+                scam = getattr(entity, "scam", False)
+                fake = getattr(entity, "fake", False)
+                restricted = getattr(entity, "restricted", False)
+                monoforum = getattr(entity, "monoforum", False)
+                forum = getattr(entity, "forum", False)
+                megagroup = getattr(entity, "megagroup", False)
+                gigagroup = getattr(entity, "gigagroup", False)
+                broadcast = getattr(entity, "broadcast", False)
+                deactivate = False
+                if scam:
+                    channel_type, deactivate = "scam", True
+                elif fake:
+                    channel_type, deactivate = "fake", True
+                elif restricted:
+                    channel_type, deactivate = "restricted", True
+                elif monoforum:
+                    channel_type = "monoforum"
+                elif forum:
+                    channel_type = "forum"
+                elif gigagroup:
                     channel_type = "gigagroup"
-                elif getattr(entity, "broadcast", False):
+                elif megagroup:
+                    channel_type = "supergroup"
+                elif broadcast:
                     channel_type = "channel"
                 else:
                     channel_type = "group"
@@ -225,6 +246,7 @@ class ClientPool:
                     "title": entity.title,
                     "username": getattr(entity, "username", None),
                     "channel_type": channel_type,
+                    "deactivate": deactivate,
                 }
             except FloodWaitError as e:
                 await self.release_client(phone)
@@ -236,7 +258,7 @@ class ClientPool:
                 continue
             except (UsernameNotOccupiedError, UsernameInvalidError) as e:
                 logger.warning("resolve_channel: username not found '%s': %s", identifier, e)
-                return False  # Sentinel: channel definitely does not exist
+                return None
             except Exception as e:
                 logger.warning("resolve_channel: failed to resolve '%s': %s", identifier, e)
                 return None
@@ -256,19 +278,31 @@ class ClientPool:
             async for dialog in client.iter_dialogs():
                 if dialog.is_channel or dialog.is_group:
                     entity = dialog.entity
-                    if getattr(entity, "megagroup", False):
-                        channel_type = "supergroup"
+                    if getattr(entity, "scam", False):
+                        channel_type = "scam"
+                    elif getattr(entity, "fake", False):
+                        channel_type = "fake"
+                    elif getattr(entity, "restricted", False):
+                        channel_type = "restricted"
+                    elif getattr(entity, "monoforum", False):
+                        channel_type = "monoforum"
+                    elif getattr(entity, "forum", False):
+                        channel_type = "forum"
                     elif getattr(entity, "gigagroup", False):
                         channel_type = "gigagroup"
+                    elif getattr(entity, "megagroup", False):
+                        channel_type = "supergroup"
                     elif getattr(entity, "broadcast", False):
                         channel_type = "channel"
                     else:
                         channel_type = "group"
+                    deactivate = channel_type in ("scam", "fake", "restricted")
                     dialogs.append({
                         "channel_id": entity.id,
                         "title": dialog.title,
                         "username": getattr(entity, "username", None),
                         "channel_type": channel_type,
+                        "deactivate": deactivate,
                     })
             return dialogs
         finally:

@@ -57,6 +57,13 @@ def run(args: argparse.Namespace) -> None:
                 count = await analyzer.apply_filters(report)
                 print(f"Applied filters: {count} channels marked as filtered.")
 
+            elif args.filter_action == "precheck":
+                count = await analyzer.precheck_subscriber_ratio()
+                print(
+                    f"Pre-filter applied: {count} channels marked as filtered"
+                    " (low_subscriber_ratio)."
+                )
+
             elif args.filter_action == "reset":
                 await analyzer.reset_filters()
                 print("All channel filters have been reset.")

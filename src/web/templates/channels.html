@@ -58,7 +58,7 @@
             <td>{{ ch.channel_id }}</td>
             <td>{{ ch.title or "—" }}</td>
             <td>{% if ch.username %}<a href="https://t.me/{{ ch.username }}" target="_blank" rel="noopener">@{{ ch.username }}</a>{% else %}—{% endif %}</td>
-            <td>{% if ch.channel_type == "channel" %}{% if not ch.username %}Канал <span title="Приватный" style="cursor:default">🔒</span>{% else %}Канал{% endif %}{% elif ch.channel_type == "supergroup" %}{% if not ch.username %}Супергруппа <span title="Приватная" style="cursor:default">🔒</span>{% else %}Супергруппа{% endif %}{% elif ch.channel_type == "gigagroup" %}{% if not ch.username %}Гигагруппа <span title="Приватная" style="cursor:default">🔒</span>{% else %}Гигагруппа{% endif %}{% elif ch.channel_type == "group" %}{% if not ch.username %}Группа <span title="Приватная" style="cursor:default">🔒</span>{% else %}Группа{% endif %}{% elif ch.channel_type == "unavailable" %}<span style="color:#9ca3af">Недоступен</span>{% else %}<span style="color:#9ca3af">Непроверен</span>{% endif %}</td>
+            <td>{% if ch.channel_type == "channel" %}{% if not ch.username %}Канал <span title="Приватный" style="cursor:default">🔒</span>{% else %}Канал{% endif %}{% elif ch.channel_type == "supergroup" %}{% if not ch.username %}Супергруппа <span title="Приватная" style="cursor:default">🔒</span>{% else %}Супергруппа{% endif %}{% elif ch.channel_type == "gigagroup" %}{% if not ch.username %}Гигагруппа <span title="Приватная" style="cursor:default">🔒</span>{% else %}Гигагруппа{% endif %}{% elif ch.channel_type == "group" %}{% if not ch.username %}Группа <span title="Приватная" style="cursor:default">🔒</span>{% else %}Группа{% endif %}{% elif ch.channel_type == "forum" %}{% if not ch.username %}Форум <span title="Приватный" style="cursor:default">🔒</span>{% else %}Форум{% endif %}{% elif ch.channel_type == "monoforum" %}Монофорум{% elif ch.channel_type == "restricted" %}<span style="color:#ef4444">Ограничен</span>{% elif ch.channel_type == "scam" %}<span style="color:#ef4444">Скам ⚠️</span>{% elif ch.channel_type == "fake" %}<span style="color:#ef4444">Фейк ⚠️</span>{% elif ch.channel_type == "unavailable" %}<span style="color:#9ca3af">Недоступен</span>{% else %}<span style="color:#9ca3af">Непроверен</span>{% endif %}</td>
             <td>
               {% if ch.is_filtered %}<span class="badge-filtered" title="Отфильтрован">●</span>
               {% elif ch.is_active %}<span class="badge-active">●</span>
@@ -96,12 +96,16 @@
                 <form method="post" action="/channels/{{ ch.id }}/filter-toggle" style="display:inline">
                     <button type="submit" class="outline emoji-btn" title="Вернуть">🔁</button>
                 </form>
-                    <button type="button" class="outline emoji-btn" title="Загрузить" disabled>⬇️</button>
-                {% else %}
-                    <form method="post" action="/channels/{{ ch.id }}/collect" style="display:inline">
+                {% endif %}
+                <span id="collect-btn-{{ ch.id }}">
+                    <form action="/channels/{{ ch.id }}/collect" method="post"
+                          hx-post="/channels/{{ ch.id }}/collect"
+                          hx-target="#collect-btn-{{ ch.id }}"
+                          hx-swap="outerHTML"
+                          style="display:inline">
                         <button type="submit" class="outline emoji-btn" title="Загрузить">⬇️</button>
                     </form>
-                {% endif %}
+                </span>
                 <form method="post" action="/channels/{{ ch.id }}/stats" style="display:inline">
                     <button type="submit" class="outline emoji-btn" title="Обновить статистику">📊</button>
                 </form>

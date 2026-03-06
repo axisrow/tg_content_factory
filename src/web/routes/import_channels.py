@@ -91,18 +91,23 @@ async def import_channels(
             skipped += 1
             continue
 
+        deactivate = info.get("deactivate", False)
         channel = Channel(
             channel_id=info["channel_id"],
             title=info["title"],
             username=info["username"],
             channel_type=info.get("channel_type"),
+            is_active=not deactivate,
         )
         await db.add_channel(channel)
         existing_ids.add(info["channel_id"])
+        detail_text = f"{info.get('title', '')} ({info['channel_id']})"
+        if deactivate:
+            detail_text += " [неактивен: scam/fake/restricted]"
         details.append({
             "identifier": ident,
             "status": "added",
-            "detail": f"{info.get('title', '')} ({info['channel_id']})",
+            "detail": detail_text,
         })
         added += 1
 

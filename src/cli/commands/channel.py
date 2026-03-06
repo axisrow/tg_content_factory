@@ -72,15 +72,20 @@ def run(args: argparse.Namespace) -> None:
                     print(f"Could not resolve channel: {args.identifier}")
                     return
 
+                deactivate = info.get("deactivate", False)
                 await db.add_channel(
                     Channel(
                         channel_id=info["channel_id"],
                         title=info["title"],
                         username=info["username"],
                         channel_type=info.get("channel_type"),
+                        is_active=not deactivate,
                     )
                 )
-                print(f"Added channel: {info['title']} ({info['channel_id']})")
+                msg = f"Added channel: {info['title']} ({info['channel_id']})"
+                if deactivate:
+                    msg += f" [WARN: deactivated, type={info['channel_type']}]"
+                print(msg)
 
             elif args.channel_action == "delete":
                 channels = await db.get_channels()
@@ -145,16 +150,19 @@ def run(args: argparse.Namespace) -> None:
                         skipped += 1
                         continue
 
+                    deactivate = info.get("deactivate", False)
                     await db.add_channel(
                         Channel(
                             channel_id=info["channel_id"],
                             title=info["title"],
                             username=info["username"],
                             channel_type=info.get("channel_type"),
+                            is_active=not deactivate,
                         )
                     )
                     existing_ids.add(info["channel_id"])
-                    print(f"OK: {ident} — {info.get('title', '')} ({info['channel_id']})")
+                    status = f"WARN ({info['channel_type']})" if deactivate else "OK"
+                    print(f"{status}: {ident} — {info.get('title', '')} ({info['channel_id']})")
                     added += 1
 
                 print(
@@ -198,9 +206,9 @@ def run(args: argparse.Namespace) -> None:
                 if not pool.clients:
                     logging.error("No connected accounts.")
                     return
-                channels = await db.get_channels()
+                channels = await db.get_channels(active_only=True)
                 null_type = [ch for ch in channels if ch.channel_type is None]
-                print(f"Channels with missing type: {len(null_type)}")
+                print(f"Active channels to check: {len(channels)} (missing type: {len(null_type)})")
                 # Pre-fetch dialogs to populate entity cache for channels without username
                 prefetch = await pool.get_available_client()
                 if prefetch:
@@ -213,7 +221,7 @@ def run(args: argparse.Namespace) -> None:
                     finally:
                         await pool.release_client(phone)
                 updated = failed = deactivated = 0
-                for ch in null_type:
+                for ch in channels:
                     identifier = ch.username or str(ch.channel_id)
                     try:
                         info = await pool.resolve_channel(identifier)
@@ -232,12 +240,13 @@ def run(args: argparse.Namespace) -> None:
                         print(f"SKIP: {ch.title} ({ch.channel_id}) — type still unknown")
                         failed += 1
                         continue
-                    await db.add_channel(Channel(
-                        channel_id=info["channel_id"],
-                        title=info["title"],
-                        username=info["username"],
-                        channel_type=info["channel_type"],
-                    ))
+                    if info.get("deactivate"):
+                        await db.set_channel_active(ch.id, False)
+                        await db.set_channel_type(ch.channel_id, info["channel_type"])
+                        print(f"DEACTIVATED ({info['channel_type']}): {ch.title}")
+                        deactivated += 1
+                        continue
+                    await db.set_channel_type(ch.channel_id, info["channel_type"])
                     print(f"OK: {ch.title} → {info['channel_type']}")
                     updated += 1
                 print(f"\nUpdated: {updated}, Deactivated: {deactivated}, Skipped: {failed}")
@@ -252,18 +261,11 @@ def run(args: argparse.Namespace) -> None:
                 if not ch:
                     print(f"Channel '{args.identifier}' not found")
                     return
-                if ch.is_filtered:
-                    title = ch.title or ch.channel_id
-                    print(
-                        f"Channel '{title}' is filtered"
-                        " and excluded from collection"
-                    )
-                    return
                 task_id = await db.create_collection_task(ch.channel_id, ch.title)
                 await db.update_collection_task(task_id, "running")
                 collector = Collector(pool, db, config.scheduler)
                 try:
-                    count = await collector.collect_single_channel(ch, full=True)
+                    count = await collector.collect_single_channel(ch, full=True, force=True)
                     await db.update_collection_task(task_id, "completed", messages_collected=count)
                     print(f"Collected {count} messages from channel {ch.channel_id}")
                 except Exception as exc:
