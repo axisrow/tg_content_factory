@@ -14,10 +14,19 @@ from src.database.repositories.collection_tasks import CollectionTasksRepository
 from src.database.repositories.filters import FilterRepository
 from src.database.repositories.keywords import KeywordsRepository
 from src.database.repositories.messages import MessagesRepository
+from src.database.repositories.notification_bots import NotificationBotsRepository
 from src.database.repositories.search_log import SearchLogRepository
 from src.database.repositories.settings import SettingsRepository
 from src.database.schema import SCHEMA_SQL
-from src.models import Account, Channel, ChannelStats, CollectionTask, Keyword, Message
+from src.models import (
+    Account,
+    Channel,
+    ChannelStats,
+    CollectionTask,
+    Keyword,
+    Message,
+    NotificationBot,
+)
 from src.security import SessionCipher
 
 
@@ -40,6 +49,7 @@ class Database:
         self._channel_stats: ChannelStatsRepository | None = None
         self._settings: SettingsRepository | None = None
         self._filters: FilterRepository | None = None
+        self._notification_bots: NotificationBotsRepository | None = None
 
     async def _has_encrypted_sessions(self) -> bool:
         assert self._db is not None
@@ -79,6 +89,7 @@ class Database:
         self._channel_stats = ChannelStatsRepository(self._db)
         self._settings = SettingsRepository(self._db)
         self._filters = FilterRepository(self._db)
+        self._notification_bots = NotificationBotsRepository(self._db)
 
         await self._accounts.migrate_sessions()
 
@@ -114,6 +125,7 @@ class Database:
                 self._channel_stats,
                 self._settings,
                 self._filters,
+                self._notification_bots,
             )
         ):
             raise RuntimeError("Database.initialize() has not been called")
@@ -340,3 +352,18 @@ class Database:
     async def set_setting(self, key: str, value: str) -> None:
         self._require()
         await self._settings.set_setting(key, value)
+
+    async def get_notification_bot(self, tg_user_id: int) -> NotificationBot | None:
+        self._require()
+        assert self._notification_bots is not None
+        return await self._notification_bots.get_bot(tg_user_id)
+
+    async def save_notification_bot(self, bot: NotificationBot) -> int:
+        self._require()
+        assert self._notification_bots is not None
+        return await self._notification_bots.save_bot(bot)
+
+    async def delete_notification_bot(self, tg_user_id: int) -> None:
+        self._require()
+        assert self._notification_bots is not None
+        await self._notification_bots.delete_bot(tg_user_id)

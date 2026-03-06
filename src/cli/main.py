@@ -4,7 +4,16 @@ import sys
 
 from dotenv import load_dotenv
 
-from src.cli.commands import account, channel, collect, keyword, scheduler, search, serve
+from src.cli.commands import (
+    account,
+    channel,
+    collect,
+    keyword,
+    notification,
+    scheduler,
+    search,
+    serve,
+)
 from src.cli.commands import filter as filter_cmd
 from src.cli.parser import build_parser
 from src.cli.runtime import setup_logging
@@ -26,6 +35,7 @@ def main() -> None:
         "keyword": keyword.run,
         "account": account.run,
         "scheduler": scheduler.run,
+        "notification": notification.run,
     }
 
     handler = commands.get(args.command)
@@ -36,6 +46,7 @@ def main() -> None:
             "keyword": "keyword_action",
             "account": "account_action",
             "scheduler": "scheduler_action",
+            "notification": "notification_action",
         }
         if args.command in sub_attr and not getattr(args, sub_attr[args.command], None):
             parser.parse_args([args.command, "--help"])

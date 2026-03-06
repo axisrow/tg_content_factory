@@ -60,6 +60,21 @@ async def run_migrations(db: aiosqlite.Connection) -> None:
     )
     await db.commit()
 
+    await db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS notification_bots (
+            id INTEGER PRIMARY KEY,
+            tg_user_id INTEGER NOT NULL UNIQUE,
+            tg_username TEXT,
+            bot_id INTEGER NOT NULL,
+            bot_username TEXT NOT NULL,
+            bot_token TEXT NOT NULL,
+            created_at TEXT DEFAULT (datetime('now'))
+        )
+        """
+    )
+    await db.commit()
+
     cur = await db.execute("SELECT value FROM settings WHERE key = 'fts5_initialized'")
     if not await cur.fetchone():
         try:
