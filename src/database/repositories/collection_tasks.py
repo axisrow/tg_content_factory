@@ -63,7 +63,10 @@ class CollectionTasksRepository:
             "INSERT INTO collection_tasks "
             "(channel_id, channel_title, channel_username, run_after, payload, parent_task_id) "
             "VALUES (?, ?, ?, ?, ?, ?)",
-            (channel_id, channel_title, channel_username, run_after_iso, payload_json, parent_task_id),
+            (
+                channel_id, channel_title, channel_username,
+                run_after_iso, payload_json, parent_task_id,
+            ),
         )
         await self._db.commit()
         return cur.lastrowid or 0
