@@ -97,7 +97,7 @@
                     {{ t.channel_title or t.channel_id }}
                     <br><small>
                         {%- if t.channel_username %}@{{ t.channel_username }} · {% endif -%}
-                        id: {{ t.channel_id }}
+                        {% if t.channel_id != 0 %}id: {{ t.channel_id }}{% endif %}
                     </small>
                 </td>
                 <td>
