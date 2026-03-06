@@ -16,6 +16,7 @@ async def settings_page(request: Request):
     pool = deps.get_pool(request)
     api_id_raw = await db.get_setting("tg_api_id") or ""
     api_hash_raw = await db.get_setting("tg_api_hash") or ""
+    min_subscribers_filter = int(await db.get_setting("min_subscribers_filter") or 0)
     accounts = await db.get_accounts()
     connected_phones = set(pool.clients.keys())
     return deps.get_templates(request).TemplateResponse(
@@ -25,10 +26,21 @@ async def settings_page(request: Request):
             "is_configured": auth.is_configured,
             "api_id": CREDENTIALS_MASK if api_id_raw else "",
             "api_hash": CREDENTIALS_MASK if api_hash_raw else "",
+            "min_subscribers_filter": min_subscribers_filter,
             "accounts": accounts,
             "connected_phones": connected_phones,
         },
     )
+
+
+@router.post("/save-filters")
+async def save_filters(request: Request):
+    form = await request.form()
+    db = deps.get_db(request)
+    min_subs = str(form.get("min_subscribers_filter", "0")).strip()
+    if min_subs.isdigit():
+        await db.set_setting("min_subscribers_filter", min_subs)
+    return RedirectResponse(url="/settings?msg=filters_saved", status_code=303)
 
 
 @router.post("/save-credentials")

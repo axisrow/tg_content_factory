@@ -41,6 +41,19 @@
 </article>
 
 <article>
+    <header>Фильтры каналов</header>
+    <form method="post" action="/settings/save-filters" class="settings-form">
+        <label for="min_subscribers_filter">Минимальное количество подписчиков
+            <input type="number" id="min_subscribers_filter" name="min_subscribers_filter"
+                   min="0" value="{{ min_subscribers_filter }}"
+                   placeholder="0 — отключено">
+            <small>Каналы с числом подписчиков ниже порога будут помечены флагом 👥 и пропущены при сборе. Значение 0 — фильтр отключён.</small>
+        </label>
+        <button type="submit">Сохранить</button>
+    </form>
+</article>
+
+<article>
     <header>Telegram-аккаунты</header>
 
     <p><a href="/auth/login" role="button">Добавить аккаунт</a></p>
