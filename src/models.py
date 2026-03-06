@@ -90,7 +90,7 @@ class NotificationBot(BaseModel):
     id: int = 0
     tg_user_id: int
     tg_username: str | None = None
-    bot_id: int
+    bot_id: int | None = None
     bot_username: str
     bot_token: str
     created_at: datetime | None = None

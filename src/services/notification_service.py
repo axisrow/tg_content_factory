@@ -27,23 +27,18 @@ class NotificationService:
 
         try:
             me = await client.get_me()
-        finally:
-            await self._pool.release_client(phone)
+            tg_user_id: int = me.id
+            tg_username: str | None = getattr(me, "username", None)
 
-        tg_user_id: int = me.id
-        tg_username: str | None = getattr(me, "username", None)
+            raw_slug = tg_username or str(tg_user_id)
+            if len(raw_slug) > 17:
+                logger.warning(
+                    "slug '%s' truncated to 17 characters for bot username", raw_slug
+                )
+            slug = raw_slug[:17]
+            bot_username = f"{_BOT_USERNAME_PREFIX}{slug}_bot"
+            bot_name = f"{_BOT_NAME_PREFIX} ({slug})"
 
-        slug = tg_username or str(tg_user_id)
-        bot_username = f"{_BOT_USERNAME_PREFIX}{slug}_bot"
-        bot_name = f"{_BOT_NAME_PREFIX} ({slug})"
-
-        # Re-acquire client for BotFather conversation
-        result = await self._pool.get_available_client()
-        if not result:
-            raise RuntimeError("No available Telegram client in pool")
-        client, phone = result
-
-        try:
             token = await botfather.create_bot(client, bot_name, bot_username)
 
             # Send /start to the new bot so it gets initialised
@@ -53,12 +48,12 @@ class NotificationService:
                 logger.warning("Could not send /start to @%s: %s", bot_username, exc)
 
             # Resolve the bot's Telegram ID
+            bot_id: int | None = None
             try:
                 entity = await client.get_entity(bot_username)
-                bot_id: int = entity.id
+                bot_id = entity.id
             except Exception as exc:
                 logger.warning("Could not resolve bot entity for @%s: %s", bot_username, exc)
-                bot_id = 0
 
         finally:
             await self._pool.release_client(phone)

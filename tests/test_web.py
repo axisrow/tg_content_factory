@@ -81,6 +81,8 @@ async def client(tmp_path):
     ) as c:
         yield c
 
+    if hasattr(app.state, "collection_queue"):
+        await app.state.collection_queue.shutdown()
     await db.close()
 
 
