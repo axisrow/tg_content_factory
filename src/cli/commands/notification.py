@@ -11,7 +11,11 @@ def run(args: argparse.Namespace) -> None:
     async def _run() -> None:
         config, db = await runtime.init_db(args.config)
         _, pool = await runtime.init_pool(config, db)
-        svc = NotificationService(db, pool)
+        svc = NotificationService(
+            db, pool,
+            config.notifications.bot_name_prefix,
+            config.notifications.bot_username_prefix,
+        )
         try:
             if args.notification_action == "setup":
                 print("Creating notification bot via BotFather...")

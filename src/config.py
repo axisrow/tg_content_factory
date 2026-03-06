@@ -33,6 +33,8 @@ class SchedulerConfig(BaseModel):
 
 class NotificationsConfig(BaseModel):
     admin_chat_id: int | None = None
+    bot_name_prefix: str = "LeadHunter"
+    bot_username_prefix: str = "leadhunter_"
 
 
 class DatabaseConfig(BaseModel):

@@ -73,7 +73,8 @@ async def delete_account(request: Request, account_id: int):
 async def setup_notification_bot(request: Request):
     pool = deps.get_pool(request)
     db = deps.get_db(request)
-    svc = NotificationService(db, pool)
+    notif_cfg = request.app.state.config.notifications
+    svc = NotificationService(db, pool, notif_cfg.bot_name_prefix, notif_cfg.bot_username_prefix)
     try:
         bot = await svc.setup_bot()
     except Exception as exc:
@@ -88,7 +89,8 @@ async def setup_notification_bot(request: Request):
 async def notification_bot_status(request: Request):
     pool = deps.get_pool(request)
     db = deps.get_db(request)
-    svc = NotificationService(db, pool)
+    notif_cfg = request.app.state.config.notifications
+    svc = NotificationService(db, pool, notif_cfg.bot_name_prefix, notif_cfg.bot_username_prefix)
     bot = await svc.get_status()
     if bot is None:
         return JSONResponse({"configured": False})
@@ -104,7 +106,8 @@ async def notification_bot_status(request: Request):
 async def delete_notification_bot(request: Request):
     pool = deps.get_pool(request)
     db = deps.get_db(request)
-    svc = NotificationService(db, pool)
+    notif_cfg = request.app.state.config.notifications
+    svc = NotificationService(db, pool, notif_cfg.bot_name_prefix, notif_cfg.bot_username_prefix)
     try:
         await svc.teardown_bot()
     except Exception as exc:

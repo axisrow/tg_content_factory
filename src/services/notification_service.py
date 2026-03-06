@@ -9,14 +9,22 @@ from src.telegram.client_pool import ClientPool
 
 logger = logging.getLogger(__name__)
 
-_BOT_NAME_PREFIX = "LeadHunter"
-_BOT_USERNAME_PREFIX = "leadhunter_"
+_DEFAULT_BOT_NAME_PREFIX = "LeadHunter"
+_DEFAULT_BOT_USERNAME_PREFIX = "leadhunter_"
 
 
 class NotificationService:
-    def __init__(self, db: Database, pool: ClientPool):
+    def __init__(
+        self,
+        db: Database,
+        pool: ClientPool,
+        bot_name_prefix: str = _DEFAULT_BOT_NAME_PREFIX,
+        bot_username_prefix: str = _DEFAULT_BOT_USERNAME_PREFIX,
+    ):
         self._db = db
         self._pool = pool
+        self._bot_name_prefix = bot_name_prefix
+        self._bot_username_prefix = bot_username_prefix
 
     async def setup_bot(self) -> NotificationBot:
         """Create a personal notification bot via BotFather and save it to DB."""
@@ -36,8 +44,8 @@ class NotificationService:
                     "slug '%s' truncated to 17 characters for bot username", raw_slug
                 )
             slug = raw_slug[:17]
-            bot_username = f"{_BOT_USERNAME_PREFIX}{slug}_bot"
-            bot_name = f"{_BOT_NAME_PREFIX} ({slug})"
+            bot_username = f"{self._bot_username_prefix}{slug}_bot"
+            bot_name = f"{self._bot_name_prefix} ({slug})"
 
             token = await botfather.create_bot(client, bot_name, bot_username)
 
