@@ -186,19 +186,6 @@ async def test_search_telegram_no_pool(db):
 
 
 @pytest.mark.asyncio
-async def test_search_telegram_no_clients(db):
-    pool = MagicMock()
-    pool.get_premium_client = AsyncMock(return_value=None)
-
-    engine = SearchEngine(db, pool=pool)
-    result = await engine.search_telegram("query")
-
-    assert result.total == 0
-    assert result.messages == []
-    assert result.error == "Нет доступных Premium-аккаунтов. Добавьте аккаунт с Telegram Premium."
-
-
-@pytest.mark.asyncio
 async def test_search_telegram_no_premium(db):
     # get_premium_client returns None when no premium accounts are available
     pool = MagicMock()
