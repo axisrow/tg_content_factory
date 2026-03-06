@@ -89,7 +89,7 @@ class CollectionQueue:
                         if after_ch and after_ch.is_filtered and not channel.is_filtered:
                             note = "Пропущен: low_subscriber_ratio"
                     await self._db.update_collection_task(
-                        task_id, "completed", messages_collected=count, error=note
+                        task_id, "completed", messages_collected=count, note=note
                     )
                     logger.info(
                         "Collected %d messages from channel %d", count, channel.channel_id

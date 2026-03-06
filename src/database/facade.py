@@ -285,9 +285,10 @@ class Database:
         status: str,
         messages_collected: int | None = None,
         error: str | None = None,
+        note: str | None = None,
     ) -> None:
         self._require()
-        await self._tasks.update_collection_task(task_id, status, messages_collected, error)
+        await self._tasks.update_collection_task(task_id, status, messages_collected, error, note)
 
     async def get_collection_task(self, task_id: int) -> CollectionTask | None:
         self._require()
