@@ -216,3 +216,84 @@ async def test_import_file_upload(client):
     assert "filech1" in resp.text
     assert "filech2" in resp.text
     assert "filech3" in resp.text
+
+
+@pytest.fixture
+async def client_scam(tmp_path):
+    """Client fixture where resolve_channel returns a scam channel."""
+    config = AppConfig()
+    config.database.path = str(tmp_path / "test_scam.db")
+    config.telegram.api_id = 12345
+    config.telegram.api_hash = "test_hash"
+    config.web.password = "testpass"
+    app = create_app(config)
+
+    db = Database(config.database.path)
+    await db.initialize()
+    app.state.db = db
+
+    async def _no_users(self):
+        return []
+
+    async def _resolve_scam(self, identifier):
+        return {
+            "channel_id": -1008888888,
+            "title": "Scam Import Channel",
+            "username": "scamimport",
+            "channel_type": "scam",
+            "deactivate": True,
+        }
+
+    async def _get_dialogs(self):
+        return []
+
+    app.state.pool = type(
+        "Pool",
+        (),
+        {
+            "clients": {},
+            "get_users_info": _no_users,
+            "resolve_channel": _resolve_scam,
+            "get_dialogs": _get_dialogs,
+        },
+    )()
+
+    from src.telegram.auth import TelegramAuth
+
+    app.state.auth = TelegramAuth(12345, "test_hash")
+    app.state.notifier = None
+    collector = Collector(app.state.pool, db, config.scheduler)
+    app.state.collector = collector
+    app.state.search_engine = SearchEngine(db)
+    app.state.ai_search = AISearchEngine(config.llm, db)
+    app.state.scheduler = SchedulerManager(collector, config.scheduler)
+    app.state.session_secret = "test_secret_key"
+
+    transport = ASGITransport(app=app)
+    auth_header = base64.b64encode(b":testpass").decode()
+    async with AsyncClient(
+        transport=transport,
+        base_url="http://test",
+        follow_redirects=True,
+        headers={"Authorization": f"Basic {auth_header}"},
+    ) as c:
+        yield c, db
+
+    await db.close()
+
+
+@pytest.mark.asyncio
+async def test_import_scam_channel_is_inactive(client_scam):
+    """Importing a scam channel creates it with is_active=False."""
+    c, db = client_scam
+    resp = await c.post(
+        "/channels/import",
+        data={"text_input": "@scamimport"},
+    )
+    assert resp.status_code == 200
+    assert "Добавлен" in resp.text
+    assert "неактивен" in resp.text
+
+    channels = await db.get_channels()
+    assert len(channels) == 1
+    assert channels[0].is_active is False

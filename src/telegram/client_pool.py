@@ -296,11 +296,13 @@ class ClientPool:
                         channel_type = "channel"
                     else:
                         channel_type = "group"
+                    deactivate = channel_type in ("scam", "fake", "restricted")
                     dialogs.append({
                         "channel_id": entity.id,
                         "title": dialog.title,
                         "username": getattr(entity, "username", None),
                         "channel_type": channel_type,
+                        "deactivate": deactivate,
                     })
             return dialogs
         finally:
