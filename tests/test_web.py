@@ -736,6 +736,8 @@ async def test_collect_filtered_channel_is_allowed(client):
     tasks = await db.get_collection_tasks()
     assert len(tasks) == 1
 
+    await client._transport.app.state.collection_queue.shutdown()
+
 
 @pytest.mark.asyncio
 async def test_stats_all_creates_pending_task(client):

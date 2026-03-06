@@ -258,7 +258,7 @@ class ClientPool:
                 continue
             except (UsernameNotOccupiedError, UsernameInvalidError) as e:
                 logger.warning("resolve_channel: username not found '%s': %s", identifier, e)
-                return False  # Sentinel: channel definitely does not exist
+                return None
             except Exception as e:
                 logger.warning("resolve_channel: failed to resolve '%s': %s", identifier, e)
                 return None
