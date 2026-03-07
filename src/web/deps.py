@@ -21,6 +21,7 @@ from src.services.search_service import SearchService
 from src.telegram.auth import TelegramAuth
 from src.telegram.client_pool import ClientPool
 from src.telegram.collector import Collector
+from src.web.log_handler import LogBuffer
 
 T = TypeVar("T")
 
@@ -121,3 +122,7 @@ def scheduler_service(request: Request) -> SchedulerService:
     return _request_cached(
         request, "_scheduler_service", lambda: SchedulerService(get_scheduler(request))
     )
+
+
+def get_log_buffer(request: Request) -> LogBuffer:
+    return request.app.state.log_buffer

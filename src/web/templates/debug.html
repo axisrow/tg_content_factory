@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}Дебаг — TG Post Search{% endblock %}
+{% block content %}
+<h2>Консоль сервера</h2>
+<p><small>Последние 500 записей. Обновляется каждые 3 секунды.</small></p>
+<figure>
+  <table role="grid">
+    <thead>
+      <tr><th>Время</th><th>Уровень</th><th>Логгер</th><th>Сообщение</th></tr>
+    </thead>
+    <tbody hx-get="/debug/logs" hx-trigger="every 3s" hx-swap="innerHTML">
+      {% include "_debug_logs.html" %}
+    </tbody>
+  </table>
+</figure>
+{% endblock %}

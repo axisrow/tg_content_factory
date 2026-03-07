@@ -222,6 +222,12 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
     app = FastAPI(title="TG Post Search", lifespan=lifespan)
     app.state.config = config
 
+    from src.web.log_handler import LogBuffer
+    log_buffer = LogBuffer(maxlen=500)
+    log_buffer.setFormatter(logging.Formatter("%(message)s"))
+    logging.getLogger().addHandler(log_buffer)
+    app.state.log_buffer = log_buffer
+
     if config.web.password:
         app.add_middleware(
             BasicAuthMiddleware,
@@ -270,6 +276,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
 
     # Register routes
     from src.web.routes.auth import router as auth_router
+    from src.web.routes.debug import router as debug_router
     from src.web.routes.channel_collection import router as channel_collection_router
     from src.web.routes.channels import router as channels_router
     from src.web.routes.dashboard import router as dashboard_router
@@ -290,5 +297,6 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
     app.include_router(import_router, prefix="/channels")
     app.include_router(scheduler_router, prefix="/scheduler")
     app.include_router(settings_router, prefix="/settings")
+    app.include_router(debug_router, prefix="/debug")
 
     return app

@@ -121,6 +121,10 @@ form button[style*="padding"] {
 .badge-inactive { color: #9ca3af; }
 .badge-filtered { color: #dc2626; font-weight: 600; }
 
+.log-error td { color: var(--pico-color-red-550); }
+.log-warning td { color: var(--pico-color-amber-550); }
+.log-debug td { opacity: 0.5; }
+
 @media (max-width: 576px) {
   nav.container > ul:first-child li strong {
     white-space: nowrap;
