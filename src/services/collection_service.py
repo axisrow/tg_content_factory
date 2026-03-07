@@ -35,7 +35,7 @@ class CollectionService:
         await self._queue.enqueue(channel, force=force)
         return "queued"
 
-    async def enqueue_all_channels(self, force: bool = False) -> BulkEnqueueResult:
+    async def enqueue_all_channels(self) -> BulkEnqueueResult:
         channels = await self._db.get_channels(active_only=True, include_filtered=False)
         busy_channel_ids = await self._db.get_channel_ids_with_active_tasks()
         queued_count = 0
@@ -45,7 +45,7 @@ class CollectionService:
             if channel.channel_id in busy_channel_ids:
                 skipped_existing_count += 1
                 continue
-            await self._queue.enqueue(channel, force=force)
+            await self._queue.enqueue(channel, force=True)
             queued_count += 1
 
         return BulkEnqueueResult(

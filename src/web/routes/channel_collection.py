@@ -66,7 +66,7 @@ async def collect_all_channels(request: Request):
         return RedirectResponse(url="/channels?error=shutting_down", status_code=303)
 
     service = deps.collection_service(request)
-    result = await service.enqueue_all_channels(force=True)
+    result = await service.enqueue_all_channels()
 
     if is_htmx:
         return HTMLResponse(_collect_all_result_fragment(result))
