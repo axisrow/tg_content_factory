@@ -162,7 +162,7 @@ class TestAuthFlow:
 
     @pytest.mark.asyncio
     async def test_all_protected_pages_require_auth(self, noauth_client):
-        for path in ["/settings/", "/channels/", "/dashboard/", "/scheduler/"]:
+        for path in ["/settings/", "/channels/", "/dashboard/", "/scheduler/", "/keywords/"]:
             resp = await noauth_client.get(path, follow_redirects=False)
             assert resp.status_code == 401, f"{path} should require auth"
 
@@ -243,7 +243,7 @@ class TestKeywordCRUD:
     @pytest.mark.asyncio
     async def test_add_plain_keyword(self, auth_client, test_db):
         resp = await auth_client.post(
-            "/channels/keywords/add",
+            "/keywords/add",
             data={"pattern": "bitcoin", "is_regex": ""},
         )
         assert resp.status_code == 200
@@ -256,7 +256,7 @@ class TestKeywordCRUD:
     @pytest.mark.asyncio
     async def test_add_regex_keyword(self, auth_client, test_db):
         resp = await auth_client.post(
-            "/channels/keywords/add",
+            "/keywords/add",
             data={"pattern": r"BTC|ETH", "is_regex": "on"},
         )
         assert resp.status_code == 200
@@ -270,18 +270,18 @@ class TestKeywordCRUD:
         kw = Keyword(pattern="delete_me")
         kid = await test_db.add_keyword(kw)
 
-        resp = await auth_client.post(f"/channels/keywords/{kid}/delete")
+        resp = await auth_client.post(f"/keywords/{kid}/delete")
         assert resp.status_code == 200
 
         keywords = await test_db.get_keywords()
         assert len(keywords) == 0
 
     @pytest.mark.asyncio
-    async def test_keyword_appears_on_channels_page(self, auth_client, test_db):
+    async def test_keyword_appears_on_keywords_page(self, auth_client, test_db):
         kw = Keyword(pattern="ethereum")
         await test_db.add_keyword(kw)
 
-        resp = await auth_client.get("/channels/")
+        resp = await auth_client.get("/keywords/")
         assert "ethereum" in resp.text
 
 
