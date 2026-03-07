@@ -33,9 +33,12 @@ async def settings_page(request: Request):
     min_subscribers_filter = int(await db.get_setting("min_subscribers_filter") or 0)
     saved_interval = await db.get_setting("collect_interval_minutes")
     config = request.app.state.config
-    collect_interval_minutes = (
-        int(saved_interval) if saved_interval else config.scheduler.collect_interval_minutes
-    )
+    try:
+        collect_interval_minutes = (
+            int(saved_interval) if saved_interval else config.scheduler.collect_interval_minutes
+        )
+    except (TypeError, ValueError):
+        collect_interval_minutes = config.scheduler.collect_interval_minutes
     accounts = await db.get_accounts()
     connected_phones = set(pool.clients.keys())
     notification_target = await deps.get_notification_target_service(request).describe_target()
