@@ -423,6 +423,54 @@ async def test_progress_callback_invoked_on_batch_flush(db):
 
 
 @pytest.mark.asyncio
+async def test_backfill_does_not_send_keyword_notifications(db):
+    from src.models import Keyword
+
+    ch = Channel(channel_id=-100126, title="Test", username="test", last_collected_id=0)
+    await db.add_channel(ch)
+    await db.add_keyword(Keyword(pattern="urgent"))
+
+    mock_msgs = [_make_mock_message(i, text=f"urgent msg {i}") for i in range(1, 3)]
+
+    mock_client = AsyncMock()
+    mock_client.get_entity = AsyncMock(return_value=SimpleNamespace())
+    mock_client.iter_messages = MagicMock(return_value=_AsyncIterMessages(mock_msgs))
+
+    pool = make_mock_pool(get_available_client=AsyncMock(return_value=(mock_client, "+7000")))
+    notifier = AsyncMock()
+
+    collector = Collector(pool, db, SchedulerConfig(delay_between_requests_sec=0), notifier)
+    count = await collector._collect_channel(ch)
+
+    assert count == 2
+    notifier.notify.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_incremental_collection_sends_keyword_notifications(db):
+    from src.models import Keyword
+
+    ch = Channel(channel_id=-100127, title="Test", username="test", last_collected_id=10)
+    await db.add_channel(ch)
+    await db.add_keyword(Keyword(pattern="urgent"))
+
+    mock_msgs = [_make_mock_message(11, text="urgent update")]
+
+    mock_client = AsyncMock()
+    mock_client.get_entity = AsyncMock(return_value=SimpleNamespace())
+    mock_client.iter_messages = MagicMock(return_value=_AsyncIterMessages(mock_msgs))
+
+    pool = make_mock_pool(get_available_client=AsyncMock(return_value=(mock_client, "+7000")))
+    notifier = AsyncMock()
+
+    collector = Collector(pool, db, SchedulerConfig(delay_between_requests_sec=0), notifier)
+    count = await collector._collect_channel(ch)
+
+    assert count == 1
+    notifier.notify.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_collection_queue_skips_filtered_channel(db):
     """CollectionQueue worker skips channels that become filtered after enqueue."""
     from src.collection_queue import CollectionQueue
@@ -449,6 +497,34 @@ async def test_collection_queue_skips_filtered_channel(db):
 
     task = await db.get_collection_task(task_id)
     assert task.status == "cancelled"
+
+    await queue.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_collection_queue_cancels_deleted_channel(db):
+    from src.collection_queue import CollectionQueue
+
+    ch = Channel(channel_id=-100141, title="Will Be Deleted")
+    await db.add_channel(ch)
+
+    pool = make_mock_pool(get_available_client=AsyncMock(return_value=None))
+    collector = Collector(pool, db, SchedulerConfig())
+    queue = CollectionQueue(collector, db)
+    queue._ensure_worker = lambda: None
+
+    stored_ch = next(c for c in await db.get_channels() if c.channel_id == -100141)
+    task_id = await queue.enqueue(stored_ch)
+    await db.delete_channel(stored_ch.id)
+
+    await queue._run_worker()
+
+    task = await db.get_collection_task(task_id)
+    _messages, total = await db.search_messages(limit=10)
+    assert task is not None
+    assert task.status == "cancelled"
+    assert task.note == "Канал удалён до начала сбора."
+    assert total == 0
 
     await queue.shutdown()
 

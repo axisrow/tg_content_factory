@@ -238,6 +238,7 @@ class Collector:
         progress_callback: Callable[[int], Awaitable[None]] | None = None,
         force: bool = False,
         min_subs: int = 0,
+        progress_offset: int = 0,
     ) -> int:
         """Collect new messages from a single channel. Returns count."""
         channel_id = channel.channel_id
@@ -250,7 +251,7 @@ class Collector:
 
         client, phone = result
         messages_batch: list[Message] = []
-        all_messages: list[Message] = []
+        persisted_count = 0
         # Tracks the highest message_id seen in this run.
         # Initialized to min_id so the guard `max_msg_id > min_id`
         # prevents a spurious DB update when no messages are collected.
@@ -258,6 +259,7 @@ class Collector:
         flood_wait_sec: int | None = None
 
         is_first_run = channel.last_collected_id == 0
+        should_notify_keywords = self._notifier is not None and not is_first_run
         limit = None if is_first_run else self._config.messages_per_channel
         logger.info(
             "Collecting channel %d (%s), first_run=%s, min_id=%d, limit=%s",
@@ -335,15 +337,20 @@ class Collector:
                     break
 
                 if is_first_run and len(messages_batch) >= 500:
+                    if not await self._channel_still_exists(channel_id):
+                        messages_batch = []
+                        break
                     await self._db.insert_messages_batch(messages_batch)
-                    all_messages.extend(messages_batch)
+                    persisted_count += len(messages_batch)
                     logger.info(
                         "Channel %d: flushed %d, total %d",
-                        channel_id, len(messages_batch), len(all_messages),
+                        channel_id, len(messages_batch), persisted_count,
                     )
+                    if should_notify_keywords:
+                        await self._check_keywords(messages_batch)
                     messages_batch = []
                     if progress_callback:
-                        await progress_callback(len(all_messages))
+                        await progress_callback(progress_offset + persisted_count)
                     if self._cancel_event.is_set():
                         break
 
@@ -363,21 +370,26 @@ class Collector:
             # so a failure in one doesn't prevent the other from executing.
             try:
                 if messages_batch:
-                    await self._db.insert_messages_batch(messages_batch)
-                    all_messages.extend(messages_batch)
-                    logger.info(
-                        "Channel %d: saved %d remaining messages on exit",
-                        channel_id, len(messages_batch),
-                    )
-                    if progress_callback:
-                        await progress_callback(len(all_messages))
+                    if not await self._channel_still_exists(channel_id):
+                        messages_batch = []
+                    else:
+                        await self._db.insert_messages_batch(messages_batch)
+                        persisted_count += len(messages_batch)
+                        logger.info(
+                            "Channel %d: saved %d remaining messages on exit",
+                            channel_id, len(messages_batch),
+                        )
+                        if should_notify_keywords:
+                            await self._check_keywords(messages_batch)
+                        if progress_callback:
+                            await progress_callback(progress_offset + persisted_count)
             except Exception as flush_err:
                 logger.error(
                     "Failed to flush %d messages for channel %d: %s",
                     len(messages_batch), channel_id, flush_err,
                 )
             try:
-                if max_msg_id > min_id:
+                if max_msg_id > min_id and await self._channel_still_exists(channel_id):
                     await self._db.update_channel_last_id(channel_id, max_msg_id)
             except Exception as update_err:
                 logger.error(
@@ -398,8 +410,11 @@ class Collector:
                 if channel.id is not None:
                     updated = await self._db.get_channel_by_pk(channel.id)
                 if updated:
-                    return len(all_messages) + await self._collect_channel(
-                        updated, progress_callback=progress_callback, force=force
+                    return persisted_count + await self._collect_channel(
+                        updated,
+                        progress_callback=progress_callback,
+                        force=force,
+                        progress_offset=progress_offset + persisted_count,
                     )
             else:
                 if self._notifier:
@@ -407,12 +422,9 @@ class Collector:
                         f"FloodWait {flood_wait_sec}s on {phone}, "
                         f"channel {channel_id} skipped"
                     )
-            return len(all_messages)
+            return persisted_count
 
-        if all_messages and self._notifier:
-            await self._check_keywords(all_messages)
-
-        return len(all_messages)
+        return persisted_count
 
     async def _check_keywords(self, messages: list[Message]) -> None:
         """Check messages against active keywords and notify."""
@@ -441,6 +453,9 @@ class Collector:
                         f"Keyword '{kw.pattern}' found in channel {msg.channel_id}:\n"
                         f"{msg.text[:200]}"
                     )
+
+    async def _channel_still_exists(self, channel_id: int) -> bool:
+        return await self._db.get_channel_by_channel_id(channel_id) is not None
 
     async def collect_channel_stats(self, channel: Channel) -> ChannelStats | None:
         async with self._stats_lock:

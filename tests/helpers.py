@@ -34,8 +34,10 @@ class AsyncIterMessages:
 def make_mock_pool(**kwargs) -> MagicMock:
     """Create a MagicMock pool with async methods properly mocked."""
     pool = MagicMock()
+    pool.clients = {}
     pool.release_client = AsyncMock()
     pool.report_flood = AsyncMock()
+    pool.get_client_by_phone = AsyncMock(return_value=None)
     for key, value in kwargs.items():
         setattr(pool, key, value)
     return pool

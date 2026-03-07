@@ -128,6 +128,19 @@ class CollectionTasksRepository:
         rows = await cur.fetchall()
         return [self._to_task(r) for r in rows]
 
+    async def get_active_collection_tasks_for_channel(
+        self,
+        channel_id: int,
+    ) -> list[CollectionTask]:
+        cur = await self._db.execute(
+            "SELECT * FROM collection_tasks "
+            "WHERE channel_id = ? AND status IN ('pending', 'running') "
+            "ORDER BY id ASC",
+            (channel_id,),
+        )
+        rows = await cur.fetchall()
+        return [self._to_task(r) for r in rows]
+
     async def get_active_stats_task(self) -> CollectionTask | None:
         cur = await self._db.execute(
             "SELECT * FROM collection_tasks "
@@ -205,12 +218,18 @@ class CollectionTasksRepository:
         await self._db.commit()
         return cur.rowcount or 0
 
-    async def cancel_collection_task(self, task_id: int) -> bool:
+    async def cancel_collection_task(self, task_id: int, note: str | None = None) -> bool:
         now = datetime.now(tz=timezone.utc).isoformat()
+        sets = ["status = 'cancelled'", "completed_at = ?"]
+        params: list = [now]
+        if note is not None:
+            sets.append("note = ?")
+            params.append(note)
+        params.append(task_id)
         cur = await self._db.execute(
-            "UPDATE collection_tasks SET status = 'cancelled', completed_at = ? "
+            f"UPDATE collection_tasks SET {', '.join(sets)} "
             "WHERE id = ? AND status IN ('pending', 'running')",
-            (now, task_id),
+            tuple(params),
         )
         await self._db.commit()
         return cur.rowcount > 0
