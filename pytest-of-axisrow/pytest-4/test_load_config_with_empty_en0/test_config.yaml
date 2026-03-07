@@ -1,0 +1,5 @@
+telegram:
+  api_id: ${TG_API_ID}
+  api_hash: ${TG_API_HASH}
+llm:
+  api_key: ${LLM_API_KEY}

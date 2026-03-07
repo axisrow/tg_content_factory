@@ -100,6 +100,8 @@ async def test_my_telegram_page_shows_dialogs(client):
     assert resp.status_code == 200
     assert "My Channel" in resp.text
     assert "My Group" in resp.text
+    assert "Some User" in resp.text
+    assert "My Bot" in resp.text
     # All 4 tabs present
     assert "tab-channels" in resp.text
     assert "tab-groups" in resp.text
@@ -231,7 +233,7 @@ async def test_get_dialogs_for_phone_partial_on_timeout():
     original_wait_for = asyncio.wait_for
 
     async def fast_wait_for(coro, timeout):
-        return await original_wait_for(coro, timeout=0.05)
+        return await original_wait_for(coro, timeout=min(timeout, 0.05))
 
     with patch("src.telegram.client_pool.asyncio.wait_for", fast_wait_for):
         result = await ClientPool.get_dialogs_for_phone(pool, "+1234567890")
