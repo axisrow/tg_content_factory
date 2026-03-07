@@ -64,6 +64,14 @@ class ChannelService:
                 )
             )
 
+    async def get_my_dialogs(self, phone: str) -> list[dict]:
+        """Get all dialogs for a specific account, enriched with already_added flag."""
+        existing_ids = {ch.channel_id for ch in await self._db.get_channels()}
+        dialogs = await self._pool.get_dialogs_for_phone(phone, include_dm=True)
+        for d in dialogs:
+            d["already_added"] = d["channel_id"] in existing_ids
+        return dialogs
+
     async def toggle(self, pk: int) -> None:
         channel = await self._db.get_channel_by_pk(pk)
         if not channel:

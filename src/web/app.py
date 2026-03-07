@@ -283,6 +283,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
     from src.web.routes.filter import router as filter_router
     from src.web.routes.import_channels import router as import_router
     from src.web.routes.keywords import router as keywords_router
+    from src.web.routes.my_telegram import router as my_telegram_router
     from src.web.routes.scheduler import router as scheduler_router
     from src.web.routes.search import router as search_router
     from src.web.routes.settings import router as settings_router
@@ -297,6 +298,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
     app.include_router(import_router, prefix="/channels")
     app.include_router(scheduler_router, prefix="/scheduler")
     app.include_router(settings_router, prefix="/settings")
+    app.include_router(my_telegram_router, prefix="/my-telegram")
     app.include_router(debug_router, prefix="/debug")
 
     return app

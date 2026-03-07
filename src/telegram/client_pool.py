@@ -338,6 +338,62 @@ class ClientPool:
         logger.warning("resolve_channel: all clients flood-waited for '%s'", identifier)
         return None
 
+    async def get_dialogs_for_phone(self, phone: str, include_dm: bool = True) -> list[dict]:
+        """Get all dialogs for a specific connected account."""
+        result = await self.get_client_by_phone(phone)
+        if not result:
+            return []
+        client, phone = result
+        try:
+            async def _iter() -> list[dict]:
+                items: list[dict] = []
+                async for dialog in client.iter_dialogs():
+                    entity = dialog.entity
+                    if dialog.is_channel or dialog.is_group:
+                        if getattr(entity, "scam", False):
+                            channel_type = "scam"
+                        elif getattr(entity, "fake", False):
+                            channel_type = "fake"
+                        elif getattr(entity, "restricted", False):
+                            channel_type = "restricted"
+                        elif getattr(entity, "monoforum", False):
+                            channel_type = "monoforum"
+                        elif getattr(entity, "forum", False):
+                            channel_type = "forum"
+                        elif getattr(entity, "gigagroup", False):
+                            channel_type = "gigagroup"
+                        elif getattr(entity, "megagroup", False):
+                            channel_type = "supergroup"
+                        elif getattr(entity, "broadcast", False):
+                            channel_type = "channel"
+                        else:
+                            channel_type = "group"
+                        deactivate = channel_type in ("scam", "fake", "restricted")
+                        items.append({
+                            "channel_id": entity.id,
+                            "title": dialog.title,
+                            "username": getattr(entity, "username", None),
+                            "channel_type": channel_type,
+                            "deactivate": deactivate,
+                        })
+                    elif include_dm:
+                        items.append({
+                            "channel_id": entity.id,
+                            "title": dialog.title,
+                            "username": getattr(entity, "username", None),
+                            "channel_type": "dm",
+                            "deactivate": False,
+                        })
+                return items
+
+            try:
+                return await asyncio.wait_for(_iter(), timeout=60.0)
+            except asyncio.TimeoutError:
+                logger.warning("get_dialogs_for_phone: timed out for %s", phone)
+                return []
+        finally:
+            await self.release_client(phone)
+
     async def get_dialogs(self) -> list[dict]:
         """Get list of subscribed channels and groups."""
         result = await self.get_available_client()

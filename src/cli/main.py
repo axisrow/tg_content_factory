@@ -15,6 +15,7 @@ from src.cli.commands import (
     serve,
 )
 from src.cli.commands import filter as filter_cmd
+from src.cli.commands import my_telegram as my_telegram_cmd
 from src.cli.parser import build_parser
 from src.cli.runtime import setup_logging
 
@@ -36,6 +37,7 @@ def main() -> None:
         "account": account.run,
         "scheduler": scheduler.run,
         "notification": notification.run,
+        "my-telegram": my_telegram_cmd.run,
     }
 
     handler = commands.get(args.command)
@@ -47,6 +49,7 @@ def main() -> None:
             "account": "account_action",
             "scheduler": "scheduler_action",
             "notification": "notification_action",
+            "my-telegram": "my_telegram_action",
         }
         if args.command in sub_attr and not getattr(args, sub_attr[args.command], None):
             parser.parse_args([args.command, "--help"])

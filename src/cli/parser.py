@@ -99,6 +99,11 @@ def build_parser() -> argparse.ArgumentParser:
     sched_sub.add_parser("trigger", help="Trigger one-shot collection")
     sched_sub.add_parser("search", help="Run keyword search now")
 
+    my_tg_parser = sub.add_parser("my-telegram", help="View account dialogs")
+    my_tg_sub = my_tg_parser.add_subparsers(dest="my_telegram_action")
+    my_tg_list = my_tg_sub.add_parser("list", help="List all dialogs for an account")
+    my_tg_list.add_argument("--phone", default=None, help="Account phone (default: first connected)")  # noqa: E501
+
     notif_parser = sub.add_parser("notification", help="Personal notification bot management")
     notif_sub = notif_parser.add_subparsers(dest="notification_action")
     notif_sub.add_parser("setup", help="Create personal notification bot via BotFather")
