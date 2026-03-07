@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import logging
+
 from src.database import Database
 from src.telegram.client_pool import ClientPool
+
+logger = logging.getLogger(__name__)
 
 
 class AccountService:
@@ -21,8 +25,8 @@ class AccountService:
                     if not acc.is_active:
                         try:
                             await self._pool.add_client(acc.phone, acc.session_string)
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            logger.warning("Failed to add client for %s: %s", acc.phone, e)
                     else:
                         await self._pool.remove_client(acc.phone)
                 return

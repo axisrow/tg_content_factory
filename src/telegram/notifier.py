@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from src.services.notification_target_service import NotificationTargetService
@@ -25,7 +26,9 @@ class Notifier:
 
         try:
             async with self._target_service.use_client() as (client, _phone):
-                await client.send_message(self._admin_chat_id, text)
+                await asyncio.wait_for(
+                    client.send_message(self._admin_chat_id, text), timeout=30.0
+                )
             return True
         except Exception as e:
             logger.error("Failed to send notification: %s", e)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import inspect
 import logging
 from datetime import timezone
@@ -220,26 +221,29 @@ class TelegramSearch:
 
         client, phone = result
         try:
-            await client.get_dialogs()
+            await asyncio.wait_for(client.get_dialogs(), timeout=30.0)
 
-            messages: list[Message] = []
-            seen_channels: dict[int, Channel] = {}
+            async def _collect_my_chats() -> tuple[list[Message], dict[int, Channel]]:
+                collected: list[Message] = []
+                seen: dict[int, Channel] = {}
+                async for msg in client.iter_messages(None, search=query, limit=limit):
+                    converted = TelegramMessageTransformer.convert_telethon_message(msg)
+                    if converted is None:
+                        logger.debug(
+                            "Skipping message in search_my_chats: id=%s has no chat context",
+                            getattr(msg, "id", None),
+                        )
+                        continue
+                    collected.append(converted)
+                    if converted.channel_id not in seen:
+                        seen[converted.channel_id] = Channel(
+                            channel_id=converted.channel_id,
+                            title=converted.channel_title,
+                            username=converted.channel_username,
+                        )
+                return collected, seen
 
-            async for msg in client.iter_messages(None, search=query, limit=limit):
-                converted = TelegramMessageTransformer.convert_telethon_message(msg)
-                if converted is None:
-                    logger.debug(
-                        "Skipping message in search_my_chats: id=%s has no chat context",
-                        getattr(msg, "id", None),
-                    )
-                    continue
-                messages.append(converted)
-                if converted.channel_id not in seen_channels:
-                    seen_channels[converted.channel_id] = Channel(
-                        channel_id=converted.channel_id,
-                        title=converted.channel_title,
-                        username=converted.channel_username,
-                    )
+            messages, seen_channels = await asyncio.wait_for(_collect_my_chats(), timeout=90.0)
 
             await self._persistence.cache_messages_and_channels(seen_channels, messages)
             return SearchResult(messages=messages, total=len(messages), query=query)
@@ -277,7 +281,9 @@ class TelegramSearch:
             entity = None
             if channel_id:
                 try:
-                    entity = await client.get_entity(PeerChannel(channel_id))
+                    entity = await asyncio.wait_for(
+                        client.get_entity(PeerChannel(channel_id)), timeout=30.0
+                    )
                 except Exception as exc:
                     logger.warning("Cannot resolve channel %s: %s", channel_id, exc)
                     return SearchResult(
@@ -287,26 +293,29 @@ class TelegramSearch:
                         error=f"Не удалось найти канал {channel_id}: {exc}",
                     )
             else:
-                await client.get_dialogs()
+                await asyncio.wait_for(client.get_dialogs(), timeout=30.0)
 
-            messages: list[Message] = []
-            seen_channels: dict[int, Channel] = {}
+            async def _collect_in_channel() -> tuple[list[Message], dict[int, Channel]]:
+                collected: list[Message] = []
+                seen: dict[int, Channel] = {}
+                async for msg in client.iter_messages(entity, search=query, limit=limit):
+                    converted = TelegramMessageTransformer.convert_telethon_message(msg)
+                    if converted is None:
+                        logger.debug(
+                            "Skipping message in search_in_channel: id=%s has no chat context",
+                            getattr(msg, "id", None),
+                        )
+                        continue
+                    collected.append(converted)
+                    if converted.channel_id not in seen:
+                        seen[converted.channel_id] = Channel(
+                            channel_id=converted.channel_id,
+                            title=converted.channel_title,
+                            username=converted.channel_username,
+                        )
+                return collected, seen
 
-            async for msg in client.iter_messages(entity, search=query, limit=limit):
-                converted = TelegramMessageTransformer.convert_telethon_message(msg)
-                if converted is None:
-                    logger.debug(
-                        "Skipping message in search_in_channel: id=%s has no chat context",
-                        getattr(msg, "id", None),
-                    )
-                    continue
-                messages.append(converted)
-                if converted.channel_id not in seen_channels:
-                    seen_channels[converted.channel_id] = Channel(
-                        channel_id=converted.channel_id,
-                        title=converted.channel_title,
-                        username=converted.channel_username,
-                    )
+            messages, seen_channels = await asyncio.wait_for(_collect_in_channel(), timeout=90.0)
 
             await self._persistence.cache_messages_and_channels(seen_channels, messages)
             return SearchResult(messages=messages, total=len(messages), query=query)
