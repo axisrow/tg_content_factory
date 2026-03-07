@@ -83,9 +83,15 @@ class SchedulerManager:
         saved_interval = (
             await self._db.get_setting("collect_interval_minutes") if self._db else None
         )
-        collect_interval = (
-            int(saved_interval) if saved_interval else self._config.collect_interval_minutes
-        )
+        try:
+            collect_interval = (
+                int(saved_interval) if saved_interval else self._config.collect_interval_minutes
+            )
+        except (TypeError, ValueError):
+            logger.warning(
+                "Invalid collect_interval_minutes in DB (%r), using config default", saved_interval
+            )
+            collect_interval = self._config.collect_interval_minutes
         self._current_interval_minutes = collect_interval
         self._scheduler.add_job(
             self._run_collection,

@@ -1008,3 +1008,57 @@ async def test_collect_all_non_htmx_redirects(client):
     resp = await client.post("/channels/collect-all", follow_redirects=False)
     assert resp.status_code == 303
     assert "msg=collect_all_started" in resp.headers["location"]
+
+
+@pytest.mark.asyncio
+async def test_save_scheduler_valid(client):
+    """POST /settings/save-scheduler with valid interval persists and redirects."""
+    resp = await client.post(
+        "/settings/save-scheduler",
+        data={"collect_interval_minutes": "30"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    assert "msg=scheduler_saved" in resp.headers["location"]
+    db = client._transport.app.state.db
+    assert await db.get_setting("collect_interval_minutes") == "30"
+
+
+@pytest.mark.asyncio
+async def test_save_scheduler_invalid_value(client):
+    """POST /settings/save-scheduler with non-numeric value redirects to error."""
+    resp = await client.post(
+        "/settings/save-scheduler",
+        data={"collect_interval_minutes": "abc"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    assert "error=invalid_value" in resp.headers["location"]
+
+
+@pytest.mark.asyncio
+async def test_save_scheduler_clamps_to_min(client):
+    """POST /settings/save-scheduler clamps value below 1 to 1."""
+    resp = await client.post(
+        "/settings/save-scheduler",
+        data={"collect_interval_minutes": "0"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    assert "msg=scheduler_saved" in resp.headers["location"]
+    db = client._transport.app.state.db
+    assert await db.get_setting("collect_interval_minutes") == "1"
+
+
+@pytest.mark.asyncio
+async def test_save_scheduler_clamps_to_max(client):
+    """POST /settings/save-scheduler clamps value above 1440 to 1440."""
+    resp = await client.post(
+        "/settings/save-scheduler",
+        data={"collect_interval_minutes": "9999"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    assert "msg=scheduler_saved" in resp.headers["location"]
+    db = client._transport.app.state.db
+    assert await db.get_setting("collect_interval_minutes") == "1440"

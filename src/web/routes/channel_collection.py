@@ -9,6 +9,9 @@ from src.web import deps
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
+# NOTE: _COLLECT_ALL_BTN and _COLLECT_ALL_SPINNER must stay in sync with the
+# corresponding fragment in templates/channels.html (the initial page render uses
+# the Jinja template; HTMX responses use these Python constants).
 _COLLECT_ALL_BTN = (
     '<span id="collect-all-btn">'
     '<form method="post" action="/channels/collect-all" style="display:inline"'
