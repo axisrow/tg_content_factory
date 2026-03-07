@@ -76,6 +76,8 @@ async def client(tmp_path):
     app.state.scheduler = SchedulerManager(collector, config.scheduler)
     app.state.session_secret = "test_secret_key"
 
+    await db.add_account(Account(phone="+1234567890", session_string="test_session"))
+
     transport = ASGITransport(app=app)
     auth_header = base64.b64encode(b":testpass").decode()
     async with AsyncClient(
@@ -355,6 +357,9 @@ async def test_settings_shows_accounts(tmp_path):
 @pytest.mark.asyncio
 async def test_settings_no_accounts(client):
     """Settings page shows 'no accounts' message when DB has no accounts."""
+    db = client._transport.app.state.db
+    for acc in await db.get_accounts(active_only=False):
+        await db.delete_account(acc.id)
     resp = await client.get("/settings/")
     assert resp.status_code == 200
     assert "Добавьте первый аккаунт" in resp.text

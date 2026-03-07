@@ -11,7 +11,7 @@ class LogBuffer(logging.Handler):
 
     def emit(self, record: logging.LogRecord) -> None:
         self._records.append({
-            "time": self.formatTime(record, "%Y-%m-%d %H:%M:%S"),
+            "time": logging.Formatter().formatTime(record, "%Y-%m-%d %H:%M:%S"),
             "level": record.levelname,
             "logger": record.name,
             "message": self.format(record),
