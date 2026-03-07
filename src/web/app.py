@@ -27,7 +27,7 @@ from src.telegram.auth import TelegramAuth
 from src.telegram.client_pool import ClientPool
 from src.telegram.collector import Collector
 from src.telegram.notifier import Notifier
-from src.web.csrf import OriginCSRFMiddleware
+from src.web.csrf import OriginCSRFMiddleware, is_secure_request
 from src.web.session import (
     COOKIE_MAX_AGE,
     COOKIE_NAME,
@@ -78,7 +78,7 @@ class BasicAuthMiddleware(BaseHTTPMiddleware):
                         max_age=COOKIE_MAX_AGE,
                         httponly=True,
                         samesite="lax",
-                        secure=request.url.scheme == "https",
+                        secure=is_secure_request(request),
                     )
                 return response
 

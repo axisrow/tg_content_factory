@@ -17,16 +17,67 @@ def _normalize_port(scheme: str, port: int | None) -> int:
     return 80
 
 
+def _split_header_value(value: str | None) -> str | None:
+    if not value:
+        return None
+    return value.split(",", 1)[0].strip() or None
+
+
+def _forwarded_values(request: Request) -> tuple[str, str, int]:
+    forwarded = _split_header_value(request.headers.get("forwarded"))
+    proto: str | None = None
+    host: str | None = None
+    port: int | None = None
+
+    if forwarded:
+        for part in forwarded.split(";"):
+            key, _, raw_value = part.strip().partition("=")
+            if not raw_value:
+                continue
+            value = raw_value.strip().strip('"')
+            if key.lower() == "proto" and value:
+                proto = value
+            elif key.lower() == "host" and value:
+                host = value
+
+    if not proto:
+        proto = _split_header_value(request.headers.get("x-forwarded-proto"))
+    if not host:
+        host = _split_header_value(request.headers.get("x-forwarded-host"))
+    if not host:
+        host = request.headers.get("host") or request.url.netloc
+
+    if host.startswith("["):
+        end = host.find("]")
+        hostname = host[1:end] if end != -1 else host
+        remainder = host[end + 1 :] if end != -1 else ""
+        if remainder.startswith(":") and remainder[1:].isdigit():
+            port = int(remainder[1:])
+    elif ":" in host and host.rsplit(":", 1)[1].isdigit():
+        hostname, raw_port = host.rsplit(":", 1)
+        port = int(raw_port)
+    else:
+        hostname = host
+
+    scheme = proto or request.url.scheme
+    return scheme, hostname, _normalize_port(scheme, port)
+
+
+def is_secure_request(request: Request) -> bool:
+    scheme, _, _ = _forwarded_values(request)
+    return scheme == "https"
+
+
 def _is_same_origin(origin_or_referer: str, request: Request) -> bool:
     parsed = urlparse(origin_or_referer)
     if parsed.scheme not in {"http", "https"} or not parsed.hostname:
         return False
 
     source_port = _normalize_port(parsed.scheme, parsed.port)
-    target_port = _normalize_port(request.url.scheme, request.url.port)
+    target_scheme, target_host, target_port = _forwarded_values(request)
     return (
-        parsed.scheme == request.url.scheme
-        and parsed.hostname == request.url.hostname
+        parsed.scheme == target_scheme
+        and parsed.hostname == target_host
         and source_port == target_port
     )
 

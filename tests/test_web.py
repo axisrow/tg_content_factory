@@ -438,6 +438,21 @@ async def test_csrf_allows_same_origin_post(client):
 
 
 @pytest.mark.asyncio
+async def test_csrf_allows_same_origin_post_behind_proxy(client):
+    resp = await client.post(
+        "/channels/add",
+        data={"identifier": "@testchan"},
+        headers={
+            "Origin": "https://example.com",
+            "X-Forwarded-Proto": "https",
+            "X-Forwarded-Host": "example.com",
+        },
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+
+
+@pytest.mark.asyncio
 async def test_resolve_channel_fail(tmp_path):
     """Failed resolve redirects with error query param."""
     config = AppConfig()
