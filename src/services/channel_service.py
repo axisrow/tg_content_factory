@@ -1,20 +1,14 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 from src.database import Database
 from src.models import Channel
 from src.telegram.client_pool import ClientPool
 
-if TYPE_CHECKING:
-    from src.collection_queue import CollectionQueue
-
 
 class ChannelService:
-    def __init__(self, db: Database, pool: ClientPool, queue: CollectionQueue):
+    def __init__(self, db: Database, pool: ClientPool):
         self._db = db
         self._pool = pool
-        self._queue = queue
 
     async def list_for_page(
         self, include_filtered: bool = True
@@ -72,15 +66,6 @@ class ChannelService:
         await self._db.set_channel_active(pk, not channel.is_active)
 
     async def delete(self, pk: int) -> None:
-        channel = await self._db.get_channel_by_pk(pk)
-        if channel is not None:
-            tasks = await self._db.get_active_collection_tasks_for_channel(channel.channel_id)
-            for task in tasks:
-                if task.id is not None:
-                    await self._queue.cancel_task(
-                        task.id,
-                        note="Канал удалён пользователем.",
-                    )
         await self._db.delete_channel(pk)
 
     async def get_by_pk(self, pk: int) -> Channel | None:

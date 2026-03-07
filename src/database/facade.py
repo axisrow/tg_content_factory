@@ -298,13 +298,6 @@ class Database:
         self._require()
         return await self._tasks.get_collection_tasks(limit)
 
-    async def get_active_collection_tasks_for_channel(
-        self,
-        channel_id: int,
-    ) -> list[CollectionTask]:
-        self._require()
-        return await self._tasks.get_active_collection_tasks_for_channel(channel_id)
-
     async def get_active_stats_task(self) -> CollectionTask | None:
         self._require()
         return await self._tasks.get_active_stats_task()
@@ -331,9 +324,9 @@ class Database:
         self._require()
         return await self._tasks.requeue_running_stats_tasks_on_startup(now)
 
-    async def cancel_collection_task(self, task_id: int, note: str | None = None) -> bool:
+    async def cancel_collection_task(self, task_id: int) -> bool:
         self._require()
-        return await self._tasks.cancel_collection_task(task_id, note=note)
+        return await self._tasks.cancel_collection_task(task_id)
 
     async def log_search(self, phone: str, query: str, results_count: int) -> None:
         self._require()

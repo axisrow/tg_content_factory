@@ -4,8 +4,8 @@ import logging
 
 from src.database import Database
 from src.models import NotificationBot
-from src.services.notification_target_service import NotificationTargetService
 from src.telegram import botfather
+from src.telegram.client_pool import ClientPool
 
 logger = logging.getLogger(__name__)
 
@@ -17,18 +17,23 @@ class NotificationService:
     def __init__(
         self,
         db: Database,
-        target_service: NotificationTargetService,
+        pool: ClientPool,
         bot_name_prefix: str = _DEFAULT_BOT_NAME_PREFIX,
         bot_username_prefix: str = _DEFAULT_BOT_USERNAME_PREFIX,
     ):
         self._db = db
-        self._target_service = target_service
+        self._pool = pool
         self._bot_name_prefix = bot_name_prefix
         self._bot_username_prefix = bot_username_prefix
 
     async def setup_bot(self) -> NotificationBot:
         """Create a personal notification bot via BotFather and save it to DB."""
-        async with self._target_service.use_client() as (client, _phone):
+        result = await self._pool.get_available_client()
+        if not result:
+            raise RuntimeError("No available Telegram client in pool")
+        client, phone = result
+
+        try:
             me = await client.get_me()
             tg_user_id: int = me.id
             tg_username: str | None = getattr(me, "username", None)
@@ -58,6 +63,9 @@ class NotificationService:
             except Exception as exc:
                 logger.warning("Could not resolve bot entity for @%s: %s", bot_username, exc)
 
+        finally:
+            await self._pool.release_client(phone)
+
         bot = NotificationBot(
             tg_user_id=tg_user_id,
             tg_username=tg_username,
@@ -70,14 +78,25 @@ class NotificationService:
         return bot
 
     async def get_status(self) -> NotificationBot | None:
-        """Return bot info for the selected notification account, or None if not set up."""
-        async with self._target_service.use_client() as (client, _phone):
+        """Return bot info for the primary account's user, or None if not set up."""
+        result = await self._pool.get_available_client()
+        if not result:
+            return None
+        client, phone = result
+        try:
             me = await client.get_me()
+        finally:
+            await self._pool.release_client(phone)
         return await self._db.get_notification_bot(me.id)
 
     async def teardown_bot(self) -> None:
         """Delete the notification bot via BotFather and remove it from DB."""
-        async with self._target_service.use_client() as (client, _phone):
+        result = await self._pool.get_available_client()
+        if not result:
+            raise RuntimeError("No available Telegram client in pool")
+        client, phone = result
+
+        try:
             me = await client.get_me()
             tg_user_id: int = me.id
             bot = await self._db.get_notification_bot(tg_user_id)
@@ -85,6 +104,8 @@ class NotificationService:
                 raise RuntimeError("No notification bot found for this user")
 
             await botfather.delete_bot(client, bot.bot_username)
+        finally:
+            await self._pool.release_client(phone)
 
         await self._db.delete_notification_bot(tg_user_id)
         logger.info("Notification bot deleted for user %s", tg_user_id)

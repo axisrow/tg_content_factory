@@ -112,7 +112,6 @@ async def test_login_page(client):
 async def test_settings_page(client):
     resp = await client.get("/settings/")
     assert resp.status_code == 200
-    assert "Аккаунт для уведомлений" in resp.text
 
 
 @pytest.mark.asyncio
@@ -446,58 +445,6 @@ async def test_add_channel_redirect_has_msg(client):
 
 
 @pytest.mark.asyncio
-async def test_save_notification_account_round_trip(client):
-    from src.models import Account
-
-    db = client._transport.app.state.db
-    await db.add_account(
-        Account(phone="+79990000001", session_string="session", is_primary=True)
-    )
-
-    resp = await client.post(
-        "/settings/save-notification-account",
-        data={"notification_account_phone": "+79990000001"},
-        follow_redirects=False,
-    )
-    assert resp.status_code == 303
-    assert "msg=notification_account_saved" in resp.headers["location"]
-    assert await db.get_setting("notification_account_phone") == "+79990000001"
-
-    resp = await client.get("/settings/")
-    assert '+79990000001' in resp.text
-
-
-@pytest.mark.asyncio
-async def test_settings_page_shows_stale_notification_account_warning(client):
-    db = client._transport.app.state.db
-    await db.set_setting("notification_account_phone", "+79990000009")
-
-    resp = await client.get("/settings/")
-    assert resp.status_code == 200
-    assert "Выбранный аккаунт уведомлений удалён." in resp.text
-
-
-@pytest.mark.asyncio
-async def test_notification_status_returns_error_for_unavailable_selected_account(client):
-    from src.models import Account
-
-    db = client._transport.app.state.db
-    await db.add_account(
-        Account(phone="+79990000002", session_string="session", is_primary=True)
-    )
-    await db.set_setting("notification_account_phone", "+79990000002")
-
-    resp = await client.get(
-        "/settings/notifications/status",
-        headers={"Accept": "application/json"},
-    )
-    assert resp.status_code == 409
-    data = resp.json()
-    assert data["configured"] is False
-    assert "не подключён" in data["error"]
-
-
-@pytest.mark.asyncio
 async def test_channel_type_displayed(client):
     """Channel type column is shown on channels page after adding a channel."""
     await client.post("/channels/add", data={"identifier": "@testchan"})
@@ -790,27 +737,6 @@ async def test_collect_filtered_channel_is_allowed(client):
     assert len(tasks) == 1
 
     await client._transport.app.state.collection_queue.shutdown()
-
-
-@pytest.mark.asyncio
-async def test_delete_channel_cancels_pending_collection_tasks(client):
-    from src.models import Channel
-
-    db = client._transport.app.state.db
-    await db.add_channel(
-        Channel(channel_id=-100664, title="Delete me", username="deleteme", channel_type="channel")
-    )
-    channel = next(ch for ch in await db.get_channels() if ch.channel_id == -100664)
-    task_id = await db.create_collection_task(channel.channel_id, channel.title)
-
-    resp = await client.post(f"/channels/{channel.id}/delete", follow_redirects=False)
-    assert resp.status_code == 303
-    assert "msg=channel_deleted" in resp.headers["location"]
-
-    task = await db.get_collection_task(task_id)
-    assert task is not None
-    assert task.status == "cancelled"
-    assert task.note == "Канал удалён пользователем."
 
 
 @pytest.mark.asyncio

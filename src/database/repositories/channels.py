@@ -17,8 +17,7 @@ class ChannelsRepository:
                VALUES (?, ?, ?, ?, ?)
                ON CONFLICT(channel_id) DO UPDATE
                SET title=excluded.title, username=excluded.username,
-                   channel_type=excluded.channel_type,
-                   is_active=excluded.is_active""",
+                   channel_type=excluded.channel_type""",
             (
                 channel.channel_id,
                 channel.title,
