@@ -31,6 +31,9 @@ async def settings_page(request: Request):
     api_id_raw = await db.get_setting("tg_api_id") or ""
     api_hash_raw = await db.get_setting("tg_api_hash") or ""
     min_subscribers_filter = int(await db.get_setting("min_subscribers_filter") or 0)
+    saved_interval = await db.get_setting("collect_interval_minutes")
+    config = request.app.state.config
+    collect_interval_minutes = int(saved_interval) if saved_interval else config.scheduler.collect_interval_minutes
     accounts = await db.get_accounts()
     connected_phones = set(pool.clients.keys())
     notification_target = await deps.get_notification_target_service(request).describe_target()
@@ -58,8 +61,22 @@ async def settings_page(request: Request):
             "notification_selected_phone": notification_target.configured_phone or "",
             "notification_bot": notification_bot,
             "notification_bot_error": notification_bot_error,
+            "collect_interval_minutes": collect_interval_minutes,
         },
     )
+
+
+@router.post("/save-scheduler")
+async def save_scheduler_settings(request: Request):
+    form = await request.form()
+    interval = int(form.get("collect_interval_minutes", 60))
+    interval = max(1, min(1440, interval))
+    db = deps.get_db(request)
+    await db.set_setting("collect_interval_minutes", str(interval))
+    scheduler = getattr(request.app.state, "scheduler", None)
+    if scheduler:
+        scheduler.update_interval(interval)
+    return RedirectResponse(url="/settings?msg=scheduler_saved", status_code=303)
 
 
 @router.post("/save-filters")

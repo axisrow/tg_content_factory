@@ -23,7 +23,7 @@ class WebConfig(BaseModel):
 
 
 class SchedulerConfig(BaseModel):
-    collect_interval_minutes: int = 30
+    collect_interval_minutes: int = 60
     search_interval_minutes: int = 60
     delay_between_channels_sec: int = 2
     delay_between_requests_sec: int = 1

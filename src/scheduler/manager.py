@@ -74,9 +74,11 @@ class SchedulerManager:
             return
 
         self._scheduler = AsyncIOScheduler()
+        saved_interval = await self._db.get_setting("collect_interval_minutes") if self._db else None
+        collect_interval = int(saved_interval) if saved_interval else self._config.collect_interval_minutes
         self._scheduler.add_job(
             self._run_collection,
-            IntervalTrigger(minutes=self._config.collect_interval_minutes),
+            IntervalTrigger(minutes=collect_interval),
             id=self._job_id,
             replace_existing=True,
         )
@@ -96,7 +98,7 @@ class SchedulerManager:
         self._scheduler.start()
         logger.info(
             "Scheduler started: collecting every %d minutes",
-            self._config.collect_interval_minutes,
+            collect_interval,
         )
 
     async def stop(self) -> None:
@@ -115,6 +117,12 @@ class SchedulerManager:
         self._scheduler.shutdown(wait=False)
         self._scheduler = None
         logger.info("Scheduler stopped")
+
+    def update_interval(self, minutes: int) -> None:
+        """Reschedule the collection job with a new interval."""
+        if self._scheduler and self._scheduler.running:
+            self._scheduler.reschedule_job(self._job_id, trigger=IntervalTrigger(minutes=minutes))
+            logger.info("Collection interval updated to %d minutes", minutes)
 
     async def trigger_now(self) -> dict:
         """Trigger immediate collection run."""

@@ -4,7 +4,7 @@ from src.config import AppConfig, load_config, resolve_session_encryption_secret
 def test_default_config():
     config = AppConfig()
     assert config.web.port == 8080
-    assert config.scheduler.collect_interval_minutes == 30
+    assert config.scheduler.collect_interval_minutes == 60
     assert config.database.path == "data/tg_search.db"
     assert config.llm.enabled is False
 

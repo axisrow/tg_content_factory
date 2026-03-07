@@ -10,6 +10,28 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
+@router.post("/collect-all")
+async def collect_all_channels(request: Request):
+    is_htmx = request.headers.get("HX-Request") == "true"
+
+    if getattr(request.app.state, "shutting_down", False):
+        if is_htmx:
+            return HTMLResponse('<span id="collect-all-btn" title="Сервер останавливается">⚠️</span>')
+        return RedirectResponse(url="/channels?error=shutting_down", status_code=303)
+
+    scheduler = getattr(request.app.state, "scheduler", None)
+    if scheduler:
+        await scheduler.trigger_background()
+
+    if is_htmx:
+        return HTMLResponse(
+            '<span id="collect-all-btn">'
+            '<button class="outline" disabled title="Запущен">⏳ Загрузка...</button>'
+            '</span>'
+        )
+    return RedirectResponse(url="/channels?msg=collect_all_started", status_code=303)
+
+
 @router.post("/{pk}/collect")
 async def collect_channel(request: Request, pk: int):
     is_htmx = request.headers.get("HX-Request") == "true"

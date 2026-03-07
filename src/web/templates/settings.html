@@ -41,6 +41,18 @@
 </article>
 
 <article>
+    <header>Планировщик</header>
+    <form method="post" action="/settings/save-scheduler" class="settings-form">
+        <label for="collect_interval_minutes">Интервал сбора сообщений (минуты)
+            <input type="number" id="collect_interval_minutes" name="collect_interval_minutes"
+                   min="1" max="1440" value="{{ collect_interval_minutes }}">
+            <small>Как часто планировщик автоматически собирает новые сообщения из каналов. Диапазон: 1–1440 минут.</small>
+        </label>
+        <button type="submit">Сохранить</button>
+    </form>
+</article>
+
+<article>
     <header>Фильтры каналов</header>
     <form method="post" action="/settings/save-filters" class="settings-form">
         <label for="min_subscribers_filter">Минимальное количество подписчиков
