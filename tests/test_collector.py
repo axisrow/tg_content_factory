@@ -453,7 +453,9 @@ async def test_backfill_does_not_send_keyword_notifications(db):
 
     mock_client = AsyncMock()
     mock_client.get_entity = AsyncMock(return_value=SimpleNamespace())
-    mock_client.iter_messages = MagicMock(side_effect=lambda *a, **kw: _AsyncIterMessages(mock_msgs))
+    mock_client.iter_messages = MagicMock(
+        side_effect=lambda *a, **kw: _AsyncIterMessages(mock_msgs)
+    )
 
     pool = make_mock_pool(get_available_client=AsyncMock(return_value=(mock_client, "+7000")))
     notifier = AsyncMock()
