@@ -48,8 +48,8 @@ async def client(tmp_path):
     async def _no_users(self):
         return []
 
-    async def _leave_channels(self, phone, channel_ids):
-        return {cid: True for cid in channel_ids}
+    async def _leave_channels(self, phone, dialogs):
+        return {cid: True for cid, _ in dialogs}
 
     app.state.pool = type(
         "Pool",
@@ -137,7 +137,7 @@ async def test_my_telegram_page_requires_auth(tmp_path):
 
 @pytest.mark.asyncio
 async def test_leave_channels_success():
-    """All channel_ids → True when delete_dialog succeeds; PeerChannel for negative, PeerUser for positive."""
+    """All dialogs → True; PeerChannel for channels/groups, PeerUser for dm/bot."""
     from telethon.tl.types import PeerChannel, PeerUser
 
     from src.telegram.client_pool import ClientPool
@@ -156,8 +156,9 @@ async def test_leave_channels_success():
     pool.get_client_by_phone = AsyncMock(return_value=(mock_client, "+1234567890"))
     pool.release_client = AsyncMock()
 
+    dialogs = [(-100111, "channel"), (999, "dm")]
     with patch("src.telegram.client_pool.asyncio.sleep", AsyncMock()):
-        result = await ClientPool.leave_channels(pool, "+1234567890", [-100111, 999])
+        result = await ClientPool.leave_channels(pool, "+1234567890", dialogs)
 
     assert result == {-100111: True, 999: True}
     assert mock_client.delete_dialog.await_count == 2
@@ -192,8 +193,9 @@ async def test_leave_channels_partial_failure():
     pool.get_client_by_phone = AsyncMock(return_value=(mock_client, "+1234567890"))
     pool.release_client = AsyncMock()
 
+    dialogs = [(-100111, "channel"), (-100222, "supergroup")]
     with patch("src.telegram.client_pool.asyncio.sleep", AsyncMock()):
-        result = await ClientPool.leave_channels(pool, "+1234567890", [-100111, -100222])
+        result = await ClientPool.leave_channels(pool, "+1234567890", dialogs)
 
     assert result[-100111] is False
     assert result[-100222] is True
@@ -224,8 +226,9 @@ async def test_leave_channels_flood_breaks_loop():
     pool.release_client = AsyncMock()
     pool.report_flood = AsyncMock()
 
+    dialogs = [(-100111, "channel"), (-100222, "supergroup")]
     with patch("src.telegram.client_pool.asyncio.sleep", AsyncMock()):
-        result = await ClientPool.leave_channels(pool, "+1234567890", [-100111, -100222])
+        result = await ClientPool.leave_channels(pool, "+1234567890", dialogs)
 
     assert result[-100111] is False
     assert result[-100222] is False
@@ -237,7 +240,7 @@ async def test_leave_dialogs_post(client):
     """POST /my-telegram/leave redirects with left/failed counts."""
     resp = await client.post(
         "/my-telegram/leave",
-        data={"phone": "+1234567890", "channel_ids": ["-100111", "-100222"]},
+        data={"phone": "+1234567890", "channel_ids": ["-100111:channel", "-100222:supergroup"]},
     )
     assert resp.status_code == 200  # follow_redirects=True → final GET
     assert "left=2" in str(resp.url) or "Отписались" in resp.text

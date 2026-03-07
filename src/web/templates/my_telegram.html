@@ -98,7 +98,7 @@
     <tbody>
     {% for d in channels %}
     <tr>
-        <td><input type="checkbox" name="channel_ids" value="{{ d.channel_id }}"
+        <td><input type="checkbox" name="channel_ids" value="{{ d.channel_id }}:{{ d.channel_type }}"
                    class="cb-channels" onchange="updateLeaveBar()"></td>
         <td><span class="badge-active">{{ d.channel_type }}</span></td>
         <td>{{ d.title }}</td>
@@ -124,7 +124,7 @@
     <tbody>
     {% for d in groups %}
     <tr>
-        <td><input type="checkbox" name="channel_ids" value="{{ d.channel_id }}"
+        <td><input type="checkbox" name="channel_ids" value="{{ d.channel_id }}:{{ d.channel_type }}"
                    class="cb-groups" onchange="updateLeaveBar()"></td>
         <td><span class="badge-active">{{ d.channel_type }}</span></td>
         <td>{{ d.title }}</td>
@@ -150,7 +150,7 @@
     <tbody>
     {% for d in dms %}
     <tr>
-        <td><input type="checkbox" name="channel_ids" value="{{ d.channel_id }}"
+        <td><input type="checkbox" name="channel_ids" value="{{ d.channel_id }}:{{ d.channel_type }}"
                    class="cb-dms" onchange="updateLeaveBar()"></td>
         <td>{{ d.title }}</td>
         <td>{% if d.username %}<a href="https://t.me/{{ d.username }}" target="_blank" rel="noopener">@{{ d.username }}</a>{% else %}<span style="color:var(--pico-muted-color)">—</span>{% endif %}</td>
@@ -174,7 +174,7 @@
     <tbody>
     {% for d in bots %}
     <tr>
-        <td><input type="checkbox" name="channel_ids" value="{{ d.channel_id }}"
+        <td><input type="checkbox" name="channel_ids" value="{{ d.channel_id }}:{{ d.channel_type }}"
                    class="cb-bots" onchange="updateLeaveBar()"></td>
         <td>{{ d.title }}</td>
         <td>{% if d.username %}<a href="https://t.me/{{ d.username }}" target="_blank" rel="noopener">@{{ d.username }}</a>{% else %}<span style="color:var(--pico-muted-color)">—</span>{% endif %}</td>

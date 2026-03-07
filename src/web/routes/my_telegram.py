@@ -38,8 +38,12 @@ async def my_telegram_page(
 async def leave_dialogs(request: Request):
     form = await request.form()
     phone = form.get("phone", "")
-    ids = [int(x) for x in form.getlist("channel_ids") if x.lstrip("-").isdigit()]
-    results = await deps.channel_service(request).leave_dialogs(phone, ids)
+    dialogs: list[tuple[int, str]] = []
+    for item in form.getlist("channel_ids"):
+        parts = item.split(":", 1)
+        if len(parts) == 2 and parts[0].lstrip("-").isdigit():
+            dialogs.append((int(parts[0]), parts[1]))
+    results = await deps.channel_service(request).leave_dialogs(phone, dialogs)
     left = sum(1 for v in results.values() if v)
     failed = len(results) - left
     return RedirectResponse(
