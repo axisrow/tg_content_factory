@@ -153,6 +153,7 @@ async def test_get_my_dialogs_enriches_already_added(db):
     assert by_id[-100111]["already_added"] is True
     assert by_id[-100222]["already_added"] is False
     assert by_id[999]["already_added"] is False
+    assert by_id[888]["already_added"] is False
 
 
 @pytest.mark.asyncio

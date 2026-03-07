@@ -7,7 +7,7 @@
 <p>Нет подключённых аккаунтов. Добавьте аккаунт в <a href="/settings">Настройках</a>.</p>
 {% else %}
 
-<form method="get" action="/my-telegram" style="max-width:400px;margin-bottom:1.5rem">
+<div style="max-width:400px;margin-bottom:1.5rem">
     <label>
         Аккаунт
         <select name="phone"
@@ -21,8 +21,32 @@
             {% endfor %}
         </select>
     </label>
-</form>
+</div>
 <span id="dialogs-loading" class="htmx-indicator" aria-label="Загрузка…">⏳ Загрузка диалогов…</span>
+
+<style>
+.tab-pane { display: none; }
+#tab-channels:checked ~ #pane-channels { display: block; }
+#tab-groups:checked ~ #pane-groups { display: block; }
+#tab-dms:checked ~ #pane-dms { display: block; }
+#tab-bots:checked ~ #pane-bots { display: block; }
+
+.tab-label {
+    cursor: pointer;
+    padding: 0.4rem 0.8rem;
+    border-radius: 4px 4px 0 0;
+    color: var(--pico-muted-color);
+    user-select: none;
+}
+#tab-channels:checked ~ [role="tablist"] label[for="tab-channels"],
+#tab-groups:checked ~ [role="tablist"] label[for="tab-groups"],
+#tab-dms:checked ~ [role="tablist"] label[for="tab-dms"],
+#tab-bots:checked ~ [role="tablist"] label[for="tab-bots"] {
+    color: var(--pico-color);
+    border-bottom: 2px solid var(--pico-primary);
+    margin-bottom: -2px;
+}
+</style>
 
 {% if dialogs %}
 {% set channels = dialogs | selectattr("channel_type", "in", ["channel", "monoforum", "scam", "fake", "restricted"]) | list %}
@@ -120,29 +144,6 @@
 {% else %}<p>Нет ботов.</p>{% endif %}
 </div>
 
-<style>
-.tab-pane { display: none; }
-#tab-channels:checked ~ #pane-channels { display: block; }
-#tab-groups:checked ~ #pane-groups { display: block; }
-#tab-dms:checked ~ #pane-dms { display: block; }
-#tab-bots:checked ~ #pane-bots { display: block; }
-
-.tab-label {
-    cursor: pointer;
-    padding: 0.4rem 0.8rem;
-    border-radius: 4px 4px 0 0;
-    color: var(--pico-muted-color);
-    user-select: none;
-}
-#tab-channels:checked ~ [role="tablist"] label[for="tab-channels"],
-#tab-groups:checked ~ [role="tablist"] label[for="tab-groups"],
-#tab-dms:checked ~ [role="tablist"] label[for="tab-dms"],
-#tab-bots:checked ~ [role="tablist"] label[for="tab-bots"] {
-    color: var(--pico-color);
-    border-bottom: 2px solid var(--pico-primary);
-    margin-bottom: -2px;
-}
-</style>
 {% else %}
 <p>Нет диалогов.</p>
 {% endif %}
