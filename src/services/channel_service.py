@@ -90,5 +90,10 @@ class ChannelService:
                     )
         await self._db.delete_channel(pk)
 
+    async def leave_dialogs(
+        self, phone: str, dialogs: list[tuple[int, str]]
+    ) -> dict[int, bool]:
+        return await self._pool.leave_channels(phone, dialogs)
+
     async def get_by_pk(self, pk: int) -> Channel | None:
         return await self._db.get_channel_by_pk(pk)

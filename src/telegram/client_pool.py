@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 
 from telethon import TelegramClient
 from telethon.errors import FloodWaitError, UsernameInvalidError, UsernameNotOccupiedError
-from telethon.tl.types import ChannelForbidden, PeerChannel
+from telethon.tl.types import ChannelForbidden, PeerChannel, PeerUser
 
 from src.database import Database
 from src.models import TelegramUserInfo
@@ -377,6 +377,42 @@ class ClientPool:
             return items
         finally:
             await self.release_client(phone)
+
+    async def leave_channels(
+        self, phone: str, dialogs: list[tuple[int, str]]
+    ) -> dict[int, bool]:
+        """Leave/unsubscribe from a list of dialogs for the given account.
+
+        dialogs: list of (channel_id, channel_type) where channel_type comes from
+        get_dialogs_for_phone (e.g. "channel", "supergroup", "dm", "bot").
+        """
+        result = await self.get_client_by_phone(phone)
+        if not result:
+            return {cid: False for cid, _ in dialogs}
+        client, phone = result
+        outcomes: dict[int, bool] = {}
+        try:
+            for cid, ctype in dialogs:
+                try:
+                    peer = PeerUser(cid) if ctype in ("dm", "bot") else PeerChannel(abs(cid))
+                    entity = await client.get_entity(peer)
+                    await client.delete_dialog(entity)
+                    outcomes[cid] = True
+                    await asyncio.sleep(0.3)
+                except FloodWaitError as e:
+                    logger.warning("leave_channels: flood wait %ds for %d", e.seconds, cid)
+                    await self.report_flood(phone, e.seconds)
+                    outcomes[cid] = False
+                    for remaining_cid, _ in dialogs:
+                        if remaining_cid not in outcomes:
+                            outcomes[remaining_cid] = False
+                    break
+                except Exception as e:
+                    logger.warning("leave_channels: failed for %d: %s", cid, e)
+                    outcomes[cid] = False
+        finally:
+            await self.release_client(phone)
+        return outcomes
 
     async def get_dialogs(self) -> list[dict]:
         """Get list of subscribed channels and groups."""
