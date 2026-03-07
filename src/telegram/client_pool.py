@@ -36,6 +36,15 @@ class ClientPool:
         self.clients: dict[str, TelegramClient] = {}
         self._lock = asyncio.Lock()
         self._in_use: set[str] = set()
+        self._dialogs_fetched: set[str] = set()
+
+    def is_dialogs_fetched(self, phone: str) -> bool:
+        """Return True if get_dialogs() was already called for this phone in this process."""
+        return phone in self._dialogs_fetched
+
+    def mark_dialogs_fetched(self, phone: str) -> None:
+        """Mark that get_dialogs() has been called for this phone."""
+        self._dialogs_fetched.add(phone)
 
     async def initialize(self) -> None:
         """Connect all active accounts from DB."""
@@ -47,12 +56,12 @@ class ClientPool:
                 self.clients[acc.phone] = client
                 logger.info("Connected account: %s (primary=%s)", acc.phone, acc.is_primary)
                 try:
-                    me = await client.get_me()
+                    me = await asyncio.wait_for(client.get_me(), timeout=15.0)
                     is_premium = bool(getattr(me, "premium", False))
                     if is_premium != acc.is_premium:
                         await self._db.update_account_premium(acc.phone, is_premium)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning("Failed to fetch premium status for %s: %s", acc.phone, e)
             except Exception as e:
                 logger.error("Failed to connect %s: %s", acc.phone, e)
 
@@ -83,23 +92,61 @@ class ClientPool:
 
             return None
 
-    async def get_premium_client(self) -> tuple[TelegramClient, str] | None:
-        """Get first available premium client. Returns (client, phone) or None."""
+    async def get_client_by_phone(self, phone: str) -> tuple[TelegramClient, str] | None:
+        """Get a specific active connected client when it is not flood-waited."""
         async with self._lock:
             now = datetime.now(timezone.utc)
+            accounts = await self._db.get_accounts(active_only=True)
+            account = next((acc for acc in accounts if acc.phone == phone), None)
+            if account is None:
+                return None
+
+            flood_until = self._normalize_utc(account.flood_wait_until)
+            if flood_until and flood_until > now:
+                return None
+
+            client = self.clients.get(phone)
+            if client is None:
+                return None
+
+            if phone not in self._in_use:
+                self._in_use.add(phone)
+            return client, phone
+
+    async def get_premium_client(self) -> tuple[TelegramClient, str] | None:
+        """Get first available premium client.
+
+        Flood wait is ignored because premium search uses a different API method.
+        """
+        async with self._lock:
             accounts = await self._db.get_accounts(active_only=True)
             for acc in accounts:
                 if not acc.is_premium:
                     continue
                 if acc.phone in self._in_use:
                     continue
-                flood_until = self._normalize_utc(acc.flood_wait_until)
-                if flood_until and flood_until > now:
-                    continue
                 if acc.phone in self.clients:
                     self._in_use.add(acc.phone)
                     return self.clients[acc.phone], acc.phone
+
+            # Fallback: share client if all in use
+            for acc in accounts:
+                if not acc.is_premium:
+                    continue
+                if acc.phone in self.clients:
+                    return self.clients[acc.phone], acc.phone
+
             return None
+
+    async def get_premium_unavailability_reason(self) -> str:
+        accounts = await self._db.get_accounts(active_only=True)
+        premium = [acc for acc in accounts if acc.is_premium]
+        if not premium:
+            return "Нет аккаунтов с Telegram Premium. Добавьте Premium-аккаунт в настройках."
+        connected = [acc for acc in premium if acc.phone in self.clients]
+        if not connected:
+            return "Premium-аккаунт не подключён. Перезапустите сервер."
+        return "Premium-аккаунт недоступен."
 
     async def get_stats_availability(self) -> StatsClientAvailability:
         """Describe stats client availability for batch scheduling decisions."""
@@ -154,6 +201,7 @@ class ClientPool:
                 await self.clients[phone].disconnect()
             except Exception:
                 pass
+            self._dialogs_fetched.discard(phone)
             del self.clients[phone]
 
     async def disconnect_all(self) -> None:
@@ -176,17 +224,19 @@ class ClientPool:
 
         for phone, client in self.clients.items():
             try:
-                me = await client.get_me()
+                me = await asyncio.wait_for(client.get_me(), timeout=15.0)
                 avatar_base64 = None
                 try:
                     buf = io.BytesIO()
-                    downloaded = await client.download_profile_photo("me", file=buf)
+                    downloaded = await asyncio.wait_for(
+                        client.download_profile_photo("me", file=buf), timeout=15.0
+                    )
                     if downloaded:
                         buf.seek(0)
                         encoded = base64.b64encode(buf.read()).decode()
                         avatar_base64 = f"data:image/jpeg;base64,{encoded}"
                 except Exception:
-                    pass
+                    logger.debug("Failed to download avatar for %s", phone)
 
                 result.append(TelegramUserInfo(
                     phone=phone,
@@ -224,7 +274,7 @@ class ClientPool:
                 raise RuntimeError("no_client")
             client, phone = result
             try:
-                entity = await client.get_entity(peer)
+                entity = await asyncio.wait_for(client.get_entity(peer), timeout=30.0)
                 if not hasattr(entity, "title"):
                     logger.info(
                         "resolve_channel: '%s' is a user, not a channel/group", identifier
@@ -266,6 +316,9 @@ class ClientPool:
                     "channel_type": channel_type,
                     "deactivate": deactivate,
                 }
+            except asyncio.TimeoutError:
+                logger.warning("resolve_channel: get_entity timed out for '%s'", identifier)
+                return None
             except FloodWaitError as e:
                 await self.release_client(phone)
                 await self.report_flood(phone, e.seconds)
@@ -292,36 +345,44 @@ class ClientPool:
             return []
         client, phone = result
         try:
-            dialogs = []
-            async for dialog in client.iter_dialogs():
-                if dialog.is_channel or dialog.is_group:
-                    entity = dialog.entity
-                    if getattr(entity, "scam", False):
-                        channel_type = "scam"
-                    elif getattr(entity, "fake", False):
-                        channel_type = "fake"
-                    elif getattr(entity, "restricted", False):
-                        channel_type = "restricted"
-                    elif getattr(entity, "monoforum", False):
-                        channel_type = "monoforum"
-                    elif getattr(entity, "forum", False):
-                        channel_type = "forum"
-                    elif getattr(entity, "gigagroup", False):
-                        channel_type = "gigagroup"
-                    elif getattr(entity, "megagroup", False):
-                        channel_type = "supergroup"
-                    elif getattr(entity, "broadcast", False):
-                        channel_type = "channel"
-                    else:
-                        channel_type = "group"
-                    deactivate = channel_type in ("scam", "fake", "restricted")
-                    dialogs.append({
-                        "channel_id": entity.id,
-                        "title": dialog.title,
-                        "username": getattr(entity, "username", None),
-                        "channel_type": channel_type,
-                        "deactivate": deactivate,
-                    })
+            async def _iter_dialogs() -> list[dict]:
+                result: list[dict] = []
+                async for dialog in client.iter_dialogs():
+                    if dialog.is_channel or dialog.is_group:
+                        entity = dialog.entity
+                        if getattr(entity, "scam", False):
+                            channel_type = "scam"
+                        elif getattr(entity, "fake", False):
+                            channel_type = "fake"
+                        elif getattr(entity, "restricted", False):
+                            channel_type = "restricted"
+                        elif getattr(entity, "monoforum", False):
+                            channel_type = "monoforum"
+                        elif getattr(entity, "forum", False):
+                            channel_type = "forum"
+                        elif getattr(entity, "gigagroup", False):
+                            channel_type = "gigagroup"
+                        elif getattr(entity, "megagroup", False):
+                            channel_type = "supergroup"
+                        elif getattr(entity, "broadcast", False):
+                            channel_type = "channel"
+                        else:
+                            channel_type = "group"
+                        deactivate = channel_type in ("scam", "fake", "restricted")
+                        result.append({
+                            "channel_id": entity.id,
+                            "title": dialog.title,
+                            "username": getattr(entity, "username", None),
+                            "channel_type": channel_type,
+                            "deactivate": deactivate,
+                        })
+                return result
+
+            try:
+                dialogs = await asyncio.wait_for(_iter_dialogs(), timeout=60.0)
+            except asyncio.TimeoutError:
+                logger.warning("get_dialogs: iter_dialogs timed out for %s", phone)
+                dialogs = []
             return dialogs
         finally:
             await self.release_client(phone)

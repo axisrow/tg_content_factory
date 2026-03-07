@@ -112,6 +112,7 @@ async def test_login_page(client):
 async def test_settings_page(client):
     resp = await client.get("/settings/")
     assert resp.status_code == 200
+    assert "Аккаунт для уведомлений" in resp.text
 
 
 @pytest.mark.asyncio
@@ -145,6 +146,25 @@ async def test_search_with_invalid_channel_id_returns_error(client):
     resp = await client.get("/?q=test&mode=channel&channel_id=abc")
     assert resp.status_code == 200
     assert "Некорректный ID канала: abc" in resp.text
+
+
+@pytest.mark.asyncio
+async def test_search_runtime_error_is_rendered(client, monkeypatch):
+    from src.web import deps
+
+    class BrokenSearchService:
+        async def search(self, **kwargs):
+            raise RuntimeError("boom")
+
+        async def check_quota(self, query=""):
+            return None
+
+    monkeypatch.setattr(deps, "search_service", lambda request: BrokenSearchService())
+
+    resp = await client.get("/?q=test&mode=telegram")
+
+    assert resp.status_code == 200
+    assert "Ошибка поиска: boom" in resp.text
 
 
 @pytest.fixture
@@ -286,6 +306,20 @@ async def test_settings_no_accounts(client):
     assert resp.status_code == 200
     assert "Добавьте первый аккаунт" in resp.text
     assert "/auth/login" in resp.text
+
+
+@pytest.mark.asyncio
+async def test_settings_rejects_invalid_api_id(client):
+    db = client._transport.app.state.db
+
+    resp = await client.post(
+        "/settings/save-credentials",
+        data={"api_id": "abc", "api_hash": "hash"},
+    )
+
+    assert resp.status_code == 200
+    assert resp.url.params.get("error") == "invalid_api_id"
+    assert await db.get_setting("tg_api_id") is None
 
 
 @pytest.mark.asyncio
@@ -442,6 +476,58 @@ async def test_add_channel_redirect_has_msg(client):
     )
     assert resp.status_code == 303
     assert "msg=channel_added" in resp.headers["location"]
+
+
+@pytest.mark.asyncio
+async def test_save_notification_account_round_trip(client):
+    from src.models import Account
+
+    db = client._transport.app.state.db
+    await db.add_account(
+        Account(phone="+79990000001", session_string="session", is_primary=True)
+    )
+
+    resp = await client.post(
+        "/settings/save-notification-account",
+        data={"notification_account_phone": "+79990000001"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    assert "msg=notification_account_saved" in resp.headers["location"]
+    assert await db.get_setting("notification_account_phone") == "+79990000001"
+
+    resp = await client.get("/settings/")
+    assert '+79990000001' in resp.text
+
+
+@pytest.mark.asyncio
+async def test_settings_page_shows_stale_notification_account_warning(client):
+    db = client._transport.app.state.db
+    await db.set_setting("notification_account_phone", "+79990000009")
+
+    resp = await client.get("/settings/")
+    assert resp.status_code == 200
+    assert "Выбранный аккаунт уведомлений удалён." in resp.text
+
+
+@pytest.mark.asyncio
+async def test_notification_status_returns_error_for_unavailable_selected_account(client):
+    from src.models import Account
+
+    db = client._transport.app.state.db
+    await db.add_account(
+        Account(phone="+79990000002", session_string="session", is_primary=True)
+    )
+    await db.set_setting("notification_account_phone", "+79990000002")
+
+    resp = await client.get(
+        "/settings/notifications/status",
+        headers={"Accept": "application/json"},
+    )
+    assert resp.status_code == 409
+    data = resp.json()
+    assert data["configured"] is False
+    assert "не подключён" in data["error"]
 
 
 @pytest.mark.asyncio
@@ -616,7 +702,7 @@ async def test_filter_analyze_applies_filters(client):
 
     resp = await client.post("/channels/filter/analyze")
     assert resp.status_code == 200
-    assert "low_uniqueness" in resp.text
+    assert "low_uniqueness" in resp.text or "Низкая уникальность" in resp.text
 
     channel = await db.get_channel_by_channel_id(-100551)
     assert channel is not None
@@ -737,6 +823,27 @@ async def test_collect_filtered_channel_is_allowed(client):
     assert len(tasks) == 1
 
     await client._transport.app.state.collection_queue.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_delete_channel_cancels_pending_collection_tasks(client):
+    from src.models import Channel
+
+    db = client._transport.app.state.db
+    await db.add_channel(
+        Channel(channel_id=-100664, title="Delete me", username="deleteme", channel_type="channel")
+    )
+    channel = next(ch for ch in await db.get_channels() if ch.channel_id == -100664)
+    task_id = await db.create_collection_task(channel.channel_id, channel.title)
+
+    resp = await client.post(f"/channels/{channel.id}/delete", follow_redirects=False)
+    assert resp.status_code == 303
+    assert "msg=channel_deleted" in resp.headers["location"]
+
+    task = await db.get_collection_task(task_id)
+    assert task is not None
+    assert task.status == "cancelled"
+    assert task.note == "Канал удалён пользователем."
 
 
 @pytest.mark.asyncio

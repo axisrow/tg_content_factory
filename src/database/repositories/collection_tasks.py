@@ -128,6 +128,19 @@ class CollectionTasksRepository:
         rows = await cur.fetchall()
         return [self._to_task(r) for r in rows]
 
+    async def get_active_collection_tasks_for_channel(
+        self,
+        channel_id: int,
+    ) -> list[CollectionTask]:
+        cur = await self._db.execute(
+            "SELECT * FROM collection_tasks "
+            "WHERE channel_id = ? AND status IN ('pending', 'running') "
+            "ORDER BY id ASC",
+            (channel_id,),
+        )
+        rows = await cur.fetchall()
+        return [self._to_task(r) for r in rows]
+
     async def get_active_stats_task(self) -> CollectionTask | None:
         cur = await self._db.execute(
             "SELECT * FROM collection_tasks "
@@ -194,6 +207,26 @@ class CollectionTasksRepository:
             parent_task_id=parent_task_id,
         )
 
+    async def get_pending_channel_tasks(self) -> list[CollectionTask]:
+        cur = await self._db.execute(
+            "SELECT * FROM collection_tasks "
+            "WHERE channel_id != 0 AND status = 'pending' "
+            "ORDER BY id ASC"
+        )
+        rows = await cur.fetchall()
+        return [self._to_task(r) for r in rows]
+
+    async def fail_running_collection_tasks_on_startup(self) -> int:
+        now = datetime.now(tz=timezone.utc).isoformat()
+        cur = await self._db.execute(
+            "UPDATE collection_tasks "
+            "SET status = 'failed', completed_at = ? "
+            "WHERE channel_id != 0 AND status = 'running'",
+            (now,),
+        )
+        await self._db.commit()
+        return cur.rowcount or 0
+
     async def requeue_running_stats_tasks_on_startup(self, now: datetime) -> int:
         now_iso = now.astimezone(timezone.utc).isoformat()
         cur = await self._db.execute(
@@ -205,12 +238,18 @@ class CollectionTasksRepository:
         await self._db.commit()
         return cur.rowcount or 0
 
-    async def cancel_collection_task(self, task_id: int) -> bool:
+    async def cancel_collection_task(self, task_id: int, note: str | None = None) -> bool:
         now = datetime.now(tz=timezone.utc).isoformat()
+        sets = ["status = 'cancelled'", "completed_at = ?"]
+        params: list = [now]
+        if note is not None:
+            sets.append("note = ?")
+            params.append(note)
+        params.append(task_id)
         cur = await self._db.execute(
-            "UPDATE collection_tasks SET status = 'cancelled', completed_at = ? "
+            f"UPDATE collection_tasks SET {', '.join(sets)} "
             "WHERE id = ? AND status IN ('pending', 'running')",
-            (now, task_id),
+            tuple(params),
         )
         await self._db.commit()
         return cur.rowcount > 0

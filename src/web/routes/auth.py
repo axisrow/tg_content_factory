@@ -1,5 +1,9 @@
+import logging
+
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
+
+logger = logging.getLogger(__name__)
 
 from src.models import Account
 
@@ -149,8 +153,8 @@ async def verify_code(
             try:
                 me = await client.get_me()
                 is_premium = bool(getattr(me, "premium", False))
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("Failed to get premium status during auth for %s: %s", phone, e)
 
         account = Account(
             phone=phone,

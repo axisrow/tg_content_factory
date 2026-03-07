@@ -120,6 +120,24 @@ class FilterRepository:
         rows = await cur.fetchall()
         return {row["channel_id"]: (row["total"], row["short"] or 0) for row in rows}
 
+    async def count_matching_prefixes_in_other_channels(
+        self, channel_id: int, prefixes: list[str]
+    ) -> int:
+        """Сколько из переданных prefixes уже есть в сообщениях других каналов."""
+        if not prefixes:
+            return 0
+        placeholders = ",".join("?" * len(prefixes))
+        sql = f"""
+            SELECT COUNT(DISTINCT substr(text, 1, 100))
+            FROM messages
+            WHERE channel_id != ?
+              AND text IS NOT NULL
+              AND substr(text, 1, 100) IN ({placeholders})
+        """
+        cur = await self._db.execute(sql, (channel_id, *prefixes))
+        row = await cur.fetchone()
+        return row[0] if row else 0
+
     async def fetch_cross_dupe_map(
         self, channel_id: int | None = None
     ) -> dict[int, tuple[int, int]]:

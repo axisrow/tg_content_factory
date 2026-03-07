@@ -71,11 +71,12 @@
                     {% set flag_emoji = {
                         "low_uniqueness": ("🖨️", "Низкая уникальность контента"),
                         "low_subscriber_ratio": ("📉", "Мало подписчиков"),
-                        "low_subscriber_manual": ("👥", "Мало подписчиков (абс.)"),
-                        "manual": ("✋", "Ручная фильтрация"),
+                        "low_subscriber_manual": ("✋", "Мало подписчиков (абс.)"),
+                        "manual": ("🚫", "Ручная фильтрация"),
                         "cross_channel_spam": ("📢", "Кросс-канальный спам"),
                         "non_cyrillic": ("🌐", "Не кириллический контент"),
-                        "chat_noise": ("💬", "Шум чата")
+                        "chat_noise": ("💬", "Шум чата"),
+                        "username_changed": ("🔀", "Сменил юзернейм")
                     } %}
                     {% if ch.filter_flags %}
                         {% for flag in ch.filter_flags.split(',') %}
@@ -98,6 +99,11 @@
                 <form method="post" action="/channels/{{ ch.id }}/filter-toggle" style="display:inline">
                     <button type="submit" class="outline emoji-btn" title="Вернуть">🔁</button>
                 </form>
+                {% if ch.message_count > 0 %}
+                <form method="post" action="/channels/{{ ch.channel_id }}/purge-messages" style="display:inline" onsubmit="return confirm('Удалить {{ ch.message_count }} сообщений из этого канала?')">
+                    <button type="submit" class="contrast outline emoji-btn" title="Очистить сообщения">🧹</button>
+                </form>
+                {% endif %}
                 {% endif %}
                 <span id="collect-btn-{{ ch.id }}">
                     <form action="/channels/{{ ch.id }}/collect" method="post"

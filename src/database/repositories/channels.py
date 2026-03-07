@@ -17,7 +17,8 @@ class ChannelsRepository:
                VALUES (?, ?, ?, ?, ?)
                ON CONFLICT(channel_id) DO UPDATE
                SET title=excluded.title, username=excluded.username,
-                   channel_type=excluded.channel_type""",
+                   channel_type=excluded.channel_type,
+                   is_active=excluded.is_active""",
             (
                 channel.channel_id,
                 channel.title,
@@ -166,6 +167,15 @@ class ChannelsRepository:
         await self._db.execute(
             "UPDATE channels SET channel_type=? WHERE channel_id=?",
             (channel_type, channel_id),
+        )
+        await self._db.commit()
+
+    async def update_channel_meta(
+        self, channel_id: int, *, username: str | None, title: str | None
+    ) -> None:
+        await self._db.execute(
+            "UPDATE channels SET username = ?, title = ? WHERE channel_id = ?",
+            (username, title, channel_id),
         )
         await self._db.commit()
 

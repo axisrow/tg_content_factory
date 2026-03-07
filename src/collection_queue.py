@@ -20,17 +20,17 @@ class CollectionQueue:
 
     async def enqueue(self, channel: Channel, force: bool = False) -> int:
         task_id = await self._db.create_collection_task(
-            channel.channel_id, channel.title, channel_username=channel.username
+            channel.channel_id, channel.title, channel_username=channel.username,
+            payload={"force": True} if force else None,
         )
         await self._queue.put((task_id, channel, force))
         self._ensure_worker()
         return task_id
 
-    async def cancel_task(self, task_id: int) -> bool:
+    async def cancel_task(self, task_id: int, note: str | None = None) -> bool:
         if task_id == self._current_task_id:
             await self._collector.cancel()
-            return await self._db.cancel_collection_task(task_id)
-        return await self._db.cancel_collection_task(task_id)
+        return await self._db.cancel_collection_task(task_id, note=note)
 
     def _ensure_worker(self) -> None:
         if self._worker is None or self._worker.done():
@@ -57,10 +57,25 @@ class CollectionQueue:
             fresh_channel = None
             if channel.id is not None:
                 fresh_channel = await self._db.get_channel_by_pk(channel.id)
+                if fresh_channel is None:
+                    await self._db.cancel_collection_task(
+                        task_id,
+                        note="Канал удалён до начала сбора.",
+                    )
+                    logger.info(
+                        "Task %d skipped: channel %d was deleted before collection",
+                        task_id,
+                        channel.channel_id,
+                    )
+                    self._queue.task_done()
+                    continue
             if fresh_channel is not None:
                 channel = fresh_channel
             if channel.is_filtered and not force:
-                await self._db.cancel_collection_task(task_id)
+                await self._db.cancel_collection_task(
+                    task_id,
+                    note="Канал отфильтрован до начала сбора.",
+                )
                 logger.info(
                     "Task %d skipped: channel %d is filtered",
                     task_id,
@@ -80,7 +95,10 @@ class CollectionQueue:
                     channel, full=True, progress_callback=_progress, force=force
                 )
                 if self._collector.is_cancelled:
-                    await self._db.cancel_collection_task(task_id)
+                    await self._db.cancel_collection_task(
+                        task_id,
+                        note="Задача отменена во время сбора.",
+                    )
                     logger.info("Task %d cancelled during collection", task_id)
                 else:
                     note = None
@@ -108,6 +126,27 @@ class CollectionQueue:
             finally:
                 self._current_task_id = None
                 self._queue.task_done()
+
+    async def requeue_startup_tasks(self) -> int:
+        """Re-enqueue pending collection tasks that survived a server restart."""
+        pending = await self._db.get_pending_channel_tasks()
+        count = 0
+        for task in pending:
+            channel = await self._db.get_channel_by_channel_id(task.channel_id)
+            if channel is None:
+                await self._db.cancel_collection_task(task.id)
+                logger.warning(
+                    "Cancelled orphaned task %d: channel %d not found",
+                    task.id, task.channel_id,
+                )
+                continue
+            force = bool((task.payload or {}).get("force", False))
+            await self._queue.put((task.id, channel, force))
+            count += 1
+        if count:
+            self._ensure_worker()
+            logger.info("Re-enqueued %d pending collection tasks on startup", count)
+        return count
 
     async def shutdown(self) -> None:
         if self._worker and not self._worker.done():

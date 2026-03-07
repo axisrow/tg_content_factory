@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from src.database import Database
 from src.models import NotificationBot
+from src.services.notification_target_service import NotificationTargetService
 from src.telegram import botfather
-from src.telegram.client_pool import ClientPool
 
 logger = logging.getLogger(__name__)
 
@@ -17,24 +18,19 @@ class NotificationService:
     def __init__(
         self,
         db: Database,
-        pool: ClientPool,
+        target_service: NotificationTargetService,
         bot_name_prefix: str = _DEFAULT_BOT_NAME_PREFIX,
         bot_username_prefix: str = _DEFAULT_BOT_USERNAME_PREFIX,
     ):
         self._db = db
-        self._pool = pool
+        self._target_service = target_service
         self._bot_name_prefix = bot_name_prefix
         self._bot_username_prefix = bot_username_prefix
 
     async def setup_bot(self) -> NotificationBot:
         """Create a personal notification bot via BotFather and save it to DB."""
-        result = await self._pool.get_available_client()
-        if not result:
-            raise RuntimeError("No available Telegram client in pool")
-        client, phone = result
-
-        try:
-            me = await client.get_me()
+        async with self._target_service.use_client() as (client, _phone):
+            me = await asyncio.wait_for(client.get_me(), timeout=15.0)
             tg_user_id: int = me.id
             tg_username: str | None = getattr(me, "username", None)
 
@@ -51,20 +47,17 @@ class NotificationService:
 
             # Send /start to the new bot so it gets initialised
             try:
-                await client.send_message(bot_username, "/start")
+                await asyncio.wait_for(client.send_message(bot_username, "/start"), timeout=30.0)
             except Exception as exc:
                 logger.warning("Could not send /start to @%s: %s", bot_username, exc)
 
             # Resolve the bot's Telegram ID
             bot_id: int | None = None
             try:
-                entity = await client.get_entity(bot_username)
+                entity = await asyncio.wait_for(client.get_entity(bot_username), timeout=30.0)
                 bot_id = entity.id
             except Exception as exc:
                 logger.warning("Could not resolve bot entity for @%s: %s", bot_username, exc)
-
-        finally:
-            await self._pool.release_client(phone)
 
         bot = NotificationBot(
             tg_user_id=tg_user_id,
@@ -78,34 +71,21 @@ class NotificationService:
         return bot
 
     async def get_status(self) -> NotificationBot | None:
-        """Return bot info for the primary account's user, or None if not set up."""
-        result = await self._pool.get_available_client()
-        if not result:
-            return None
-        client, phone = result
-        try:
-            me = await client.get_me()
-        finally:
-            await self._pool.release_client(phone)
+        """Return bot info for the selected notification account, or None if not set up."""
+        async with self._target_service.use_client() as (client, _phone):
+            me = await asyncio.wait_for(client.get_me(), timeout=15.0)
         return await self._db.get_notification_bot(me.id)
 
     async def teardown_bot(self) -> None:
         """Delete the notification bot via BotFather and remove it from DB."""
-        result = await self._pool.get_available_client()
-        if not result:
-            raise RuntimeError("No available Telegram client in pool")
-        client, phone = result
-
-        try:
-            me = await client.get_me()
+        async with self._target_service.use_client() as (client, _phone):
+            me = await asyncio.wait_for(client.get_me(), timeout=15.0)
             tg_user_id: int = me.id
             bot = await self._db.get_notification_bot(tg_user_id)
             if bot is None:
                 raise RuntimeError("No notification bot found for this user")
 
             await botfather.delete_bot(client, bot.bot_username)
-        finally:
-            await self._pool.release_client(phone)
 
         await self._db.delete_notification_bot(tg_user_id)
         logger.info("Notification bot deleted for user %s", tg_user_id)

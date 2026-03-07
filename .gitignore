@@ -42,3 +42,9 @@ venv/
 
 # Logs
 *.log
+
+# Generated reports
+reports/
+
+# Tasks
+tasks/

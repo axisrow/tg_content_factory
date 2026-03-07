@@ -34,8 +34,18 @@
             <td>{{ "%.1f"|format(r.cross_dupe_pct) if r.cross_dupe_pct is not none else "-" }}</td>
             <td>
                 {% if r.flags %}
+                    {% set flag_labels = {
+                        "low_uniqueness": ("🖨️", "Низкая уникальность контента"),
+                        "low_subscriber_ratio": ("📉", "Мало подписчиков"),
+                        "low_subscriber_manual": ("✋", "Мало подписчиков (абс.)"),
+                        "manual": ("🚫", "Ручная фильтрация"),
+                        "cross_channel_spam": ("📢", "Кросс-канальный спам"),
+                        "non_cyrillic": ("🌐", "Не кириллический контент"),
+                        "chat_noise": ("💬", "Шум чата"),
+                    } %}
                     {% for flag in r.flags %}
-                        <mark style="margin-right:0.25rem">{{ flag }}</mark>
+                        {% set label = flag_labels.get(flag, (flag, flag)) %}
+                        <span title="{{ label[1] }}" style="margin-right:0.25rem">{{ label[0] }}</span>
                     {% endfor %}
                 {% else %}
                     -

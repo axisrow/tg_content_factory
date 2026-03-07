@@ -41,8 +41,12 @@
         keyword_deleted: "Ключевое слово удалено.",
         account_connected: "Аккаунт подключён.",
         credentials_saved: "API-данные сохранены.",
+        filters_saved: "Фильтры сохранены.",
         account_toggled: "Статус аккаунта изменён.",
         account_deleted: "Аккаунт удалён.",
+        notification_account_saved: "Аккаунт для уведомлений сохранён.",
+        notification_bot_created: "Notification bot создан.",
+        notification_bot_deleted: "Notification bot удалён.",
         scheduler_started: "Планировщик запущен.",
         scheduler_stopped: "Планировщик остановлен.",
         collect_started: "Сбор сообщений запущен в фоне.",
@@ -66,7 +70,13 @@
         shutting_down: "Приложение завершает работу.",
         stats_running: "Сбор статистики уже выполняется.",
         channel_filtered: "Канал помечен как бесполезный и исключён из сбора.",
-        filter_snapshot_required: "Сначала выполните анализ фильтров и примените его из отчёта."
+        filter_snapshot_required: "Сначала выполните анализ фильтров и примените его из отчёта.",
+        invalid_value: "Указано некорректное значение.",
+        invalid_api_id: "API ID должен состоять только из цифр.",
+        notification_account_invalid: "Выбран неизвестный аккаунт уведомлений.",
+        notification_account_unavailable: "Выбранный аккаунт уведомлений недоступен.",
+        notification_bot_missing: "Для выбранного аккаунта notification bot не найден.",
+        notification_action_failed: "Не удалось выполнить действие с notification bot."
     };
     var params = new URLSearchParams(window.location.search);
     var code = params.get("msg");

@@ -207,6 +207,22 @@ async def test_resolve_channel_user_returns_none(db):
     result = await pool.resolve_channel("@AlexP87")
     assert result is None
 
+@pytest.mark.asyncio
+async def test_get_premium_client_fallback_when_in_use(db):
+    """get_premium_client() may reuse an in-use premium client as a single-account fallback."""
+    acc = Account(phone="+70001111111", session_string="s1", is_primary=True, is_premium=True)
+    await db.add_account(acc)
+
+    auth = MagicMock()
+    pool = ClientPool(auth, db)
+    pool.clients["+70001111111"] = AsyncMock()
+    pool._in_use.add("+70001111111")  # Simulate concurrent usage
+
+    result = await pool.get_premium_client()
+    assert result is not None
+    client, phone = result
+    assert phone == "+70001111111"
+
 
 @pytest.mark.asyncio
 async def test_resolve_channel_strips_post_id_from_url(db):

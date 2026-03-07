@@ -1,18 +1,44 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+import re
+from datetime import date, datetime, timedelta
 
 import aiosqlite
 
 from src.models import Message
 
 logger = logging.getLogger(__name__)
+_DATE_ONLY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def _normalize_date_to(date_to: str) -> tuple[str, str]:
+    """Return SQL operator and upper bound for inclusive day filters."""
+    try:
+        parsed = date.fromisoformat(date_to)
+    except ValueError:
+        return "<=", date_to
+    return "<", (parsed + timedelta(days=1)).isoformat()
 
 
 class MessagesRepository:
     def __init__(self, db: aiosqlite.Connection):
         self._db = db
+
+    @staticmethod
+    def _normalize_date_from(value: str | None) -> str | None:
+        if not value:
+            return None
+        return value
+
+    @staticmethod
+    def _normalize_date_to(value: str | None) -> tuple[str | None, str]:
+        if not value:
+            return None, "<="
+        if _DATE_ONLY_RE.fullmatch(value):
+            next_day = date.fromisoformat(value) + timedelta(days=1)
+            return next_day.isoformat(), "<"
+        return value, "<="
 
     async def insert_message(self, msg: Message) -> bool:
         try:
@@ -72,20 +98,26 @@ class MessagesRepository:
         limit: int = 50,
         offset: int = 0,
     ) -> tuple[list[Message], int]:
-        conditions: list[str] = []
+        # Exclude messages from filtered channels; allow messages whose channel
+        # is not yet in the channels table (NULL join) for backward-compat.
+        conditions: list[str] = ["(c.is_filtered IS NULL OR c.is_filtered = 0)"]
         params: list = []
 
         if channel_id:
             conditions.append("m.channel_id = ?")
             params.append(channel_id)
-        if date_from:
-            conditions.append("m.date >= ?")
-            params.append(date_from)
-        if date_to:
-            conditions.append("m.date <= ?")
-            params.append(date_to)
+        normalized_date_from = self._normalize_date_from(date_from)
+        normalized_date_to, date_to_operator = self._normalize_date_to(date_to)
 
-        where = " WHERE " + " AND ".join(conditions) if conditions else ""
+        if normalized_date_from:
+            conditions.append("m.date >= ?")
+            params.append(normalized_date_from)
+        if normalized_date_to:
+            conditions.append(f"m.date {date_to_operator} ?")
+            params.append(normalized_date_to)
+
+        channel_join = " LEFT JOIN channels c ON m.channel_id = c.channel_id"
+        where = " WHERE " + " AND ".join(conditions)
 
         if query:
             fts_query = '"' + query.replace('"', '""') + '"'
@@ -94,7 +126,7 @@ class MessagesRepository:
                 " WHERE messages_fts MATCH ?) AS fts ON m.id = fts.rowid"
             )
             count_cur = await self._db.execute(
-                f"SELECT COUNT(*) as cnt FROM messages m{fts_join}{where}",
+                f"SELECT COUNT(*) as cnt FROM messages m{fts_join}{channel_join}{where}",
                 (fts_query, *params),
             )
             row = await count_cur.fetchone()
@@ -102,8 +134,7 @@ class MessagesRepository:
 
             cur = await self._db.execute(
                 f"""SELECT m.*, c.title as channel_title, c.username as channel_username
-                    FROM messages m{fts_join}
-                    LEFT JOIN channels c ON m.channel_id = c.channel_id
+                    FROM messages m{fts_join}{channel_join}
                     {where}
                     ORDER BY m.date DESC
                     LIMIT ? OFFSET ?""",
@@ -111,15 +142,14 @@ class MessagesRepository:
             )
         else:
             count_cur = await self._db.execute(
-                f"SELECT COUNT(*) as cnt FROM messages m{where}", tuple(params)
+                f"SELECT COUNT(*) as cnt FROM messages m{channel_join}{where}", tuple(params)
             )
             row = await count_cur.fetchone()
             total = row["cnt"] if row else 0
 
             cur = await self._db.execute(
                 f"""SELECT m.*, c.title as channel_title, c.username as channel_username
-                    FROM messages m
-                    LEFT JOIN channels c ON m.channel_id = c.channel_id
+                    FROM messages m{channel_join}
                     {where}
                     ORDER BY m.date DESC
                     LIMIT ? OFFSET ?""",
@@ -146,6 +176,13 @@ class MessagesRepository:
             for r in rows
         ]
         return messages, total
+
+    async def delete_messages_for_channel(self, channel_id: int) -> int:
+        cur = await self._db.execute(
+            "DELETE FROM messages WHERE channel_id = ?", (channel_id,)
+        )
+        await self._db.commit()
+        return cur.rowcount or 0
 
     async def get_stats(self) -> dict:
         stats: dict[str, int] = {}
