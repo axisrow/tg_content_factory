@@ -1098,7 +1098,9 @@ async def test_collect_all_htmx_noop_when_tasks_already_exist(client):
 
 
 @pytest.mark.asyncio
-async def test_collect_all_non_htmx_redirects_with_new_message_and_creates_tasks(client, monkeypatch):
+async def test_collect_all_non_htmx_redirects_with_new_message_and_creates_tasks(
+    client, monkeypatch
+):
     """POST /channels/collect-all without HTMX redirects with queue message."""
     from src.models import Channel
 
@@ -1142,7 +1144,9 @@ async def test_collect_all_non_htmx_redirects_with_empty_message_when_no_channel
 
 
 @pytest.mark.asyncio
-async def test_enqueue_all_channels_skips_inactive_filtered_and_duplicate_tasks(client, monkeypatch):
+async def test_enqueue_all_channels_skips_inactive_filtered_and_duplicate_tasks(
+    client, monkeypatch
+):
     from src.models import Channel
     from src.services.collection_service import CollectionService
 
@@ -1158,7 +1162,14 @@ async def test_enqueue_all_channels_skips_inactive_filtered_and_duplicate_tasks(
     await db.add_channel(Channel(channel_id=-100709, title="Active 2", username="active2"))
     await db.add_channel(Channel(channel_id=-100710, title="Filtered", username="filtered"))
     await db.set_channels_filtered_bulk([(-100710, "manual")])
-    await db.add_channel(Channel(channel_id=-100711, title="Inactive", username="inactive", is_active=False))
+    await db.add_channel(
+        Channel(
+            channel_id=-100711,
+            title="Inactive",
+            username="inactive",
+            is_active=False,
+        )
+    )
 
     channel = await db.get_channel_by_channel_id(-100708)
     assert channel is not None
