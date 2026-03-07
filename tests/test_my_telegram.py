@@ -48,6 +48,9 @@ async def client(tmp_path):
     async def _no_users(self):
         return []
 
+    async def _leave_channels(self, phone, channel_ids):
+        return {cid: True for cid in channel_ids}
+
     app.state.pool = type(
         "Pool",
         (),
@@ -56,6 +59,7 @@ async def client(tmp_path):
             "get_users_info": _no_users,
             "get_dialogs": _get_dialogs,
             "get_dialogs_for_phone": _get_dialogs_for_phone,
+            "leave_channels": _leave_channels,
         },
     )()
 
@@ -129,6 +133,79 @@ async def test_my_telegram_page_requires_auth(tmp_path):
         resp = await c.get("/my-telegram/")
     assert resp.status_code == 401
     await db.close()
+
+
+@pytest.mark.asyncio
+async def test_leave_channels_success():
+    """All channel_ids → True when delete_dialog succeeds."""
+    from src.telegram.client_pool import ClientPool
+
+    pool = MagicMock(spec=ClientPool)
+    mock_client = MagicMock()
+    mock_client.get_entity = AsyncMock(return_value=MagicMock())
+    mock_client.delete_dialog = AsyncMock()
+
+    pool.get_client_by_phone = AsyncMock(return_value=(mock_client, "+1234567890"))
+    pool.release_client = AsyncMock()
+
+    with patch("src.telegram.client_pool.asyncio.sleep", AsyncMock()):
+        result = await ClientPool.leave_channels(pool, "+1234567890", [-100111, -100222])
+
+    assert result == {-100111: True, -100222: True}
+    assert mock_client.delete_dialog.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_leave_channels_partial_failure():
+    """One delete_dialog raises → that id is False, others True."""
+    from src.telegram.client_pool import ClientPool
+
+    pool = MagicMock(spec=ClientPool)
+    mock_client = MagicMock()
+
+    call_count = 0
+
+    async def _get_entity(cid):
+        return MagicMock()
+
+    async def _delete_dialog(entity):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise RuntimeError("flood")
+
+    mock_client.get_entity = _get_entity
+    mock_client.delete_dialog = _delete_dialog
+
+    pool.get_client_by_phone = AsyncMock(return_value=(mock_client, "+1234567890"))
+    pool.release_client = AsyncMock()
+
+    with patch("src.telegram.client_pool.asyncio.sleep", AsyncMock()):
+        result = await ClientPool.leave_channels(pool, "+1234567890", [-100111, -100222])
+
+    assert result[-100111] is False
+    assert result[-100222] is True
+
+
+@pytest.mark.asyncio
+async def test_leave_dialogs_post(client):
+    """POST /my-telegram/leave redirects with left/failed counts."""
+    resp = await client.post(
+        "/my-telegram/leave",
+        data={"phone": "+1234567890", "channel_ids": ["-100111", "-100222"]},
+    )
+    assert resp.status_code == 200  # follow_redirects=True → final GET
+    assert "left=2" in str(resp.url) or "Отписались" in resp.text
+
+
+@pytest.mark.asyncio
+async def test_leave_dialogs_flash_message(client):
+    """GET with left/failed params shows flash banner."""
+    resp = await client.get("/my-telegram/?phone=%2B1234567890&left=2&failed=1")
+    assert resp.status_code == 200
+    assert "Отписались" in resp.text
+    assert "<strong>2</strong>" in resp.text
+    assert "<strong>1</strong>" in resp.text
 
 
 @pytest.mark.asyncio

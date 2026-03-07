@@ -378,6 +378,27 @@ class ClientPool:
         finally:
             await self.release_client(phone)
 
+    async def leave_channels(self, phone: str, channel_ids: list[int]) -> dict[int, bool]:
+        """Leave/unsubscribe from a list of dialogs for the given account."""
+        result = await self.get_client_by_phone(phone)
+        if not result:
+            return {cid: False for cid in channel_ids}
+        client, phone = result
+        outcomes: dict[int, bool] = {}
+        try:
+            for cid in channel_ids:
+                try:
+                    entity = await client.get_entity(cid)
+                    await client.delete_dialog(entity)
+                    outcomes[cid] = True
+                    await asyncio.sleep(0.3)
+                except Exception as e:
+                    logger.warning("leave_channels: failed for %d: %s", cid, e)
+                    outcomes[cid] = False
+        finally:
+            await self.release_client(phone)
+        return outcomes
+
     async def get_dialogs(self) -> list[dict]:
         """Get list of subscribed channels and groups."""
         result = await self.get_available_client()

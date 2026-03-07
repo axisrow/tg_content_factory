@@ -24,6 +24,12 @@
 </div>
 <span id="dialogs-loading" class="htmx-indicator" aria-label="Загрузка…">⏳ Загрузка диалогов…</span>
 
+{% if left or failed %}
+<p style="margin-bottom:1rem">
+    Отписались: <strong>{{ left }}</strong>{% if failed %}, не удалось: <strong>{{ failed }}</strong>{% endif %}
+</p>
+{% endif %}
+
 <style>
 .tab-pane { display: none; }
 #tab-channels:checked ~ #pane-channels { display: block; }
@@ -56,6 +62,18 @@
 
 <p style="color:var(--pico-muted-color)">Всего диалогов: <strong>{{ dialogs|length }}</strong></p>
 
+<form method="post" action="/my-telegram/leave" id="leave-form">
+<input type="hidden" name="phone" value="{{ selected_phone }}">
+
+<div id="leave-bar" style="display:none;gap:0.75rem;align-items:center;margin-bottom:1rem">
+    <span id="leave-count">0 выбрано</span>
+    <button type="submit"
+            onclick="return confirm('Отписаться от выбранных диалогов?')">
+        Отписаться
+    </button>
+    <button type="button" class="secondary" onclick="clearSelection()">Сбросить</button>
+</div>
+
 <input type="radio" name="tab" id="tab-channels" checked hidden>
 <input type="radio" name="tab" id="tab-groups" hidden>
 <input type="radio" name="tab" id="tab-dms" hidden>
@@ -72,10 +90,16 @@
 {% if channels %}
 <div style="overflow-x:auto">
 <table>
-    <thead><tr><th>Тип</th><th>Название</th><th>Username</th><th>В базе</th></tr></thead>
+    <thead><tr>
+        <th><input type="checkbox" id="select-all-channels"
+                   onchange="selectAll('channels', this.checked)"></th>
+        <th>Тип</th><th>Название</th><th>Username</th><th>В базе</th>
+    </tr></thead>
     <tbody>
     {% for d in channels %}
     <tr>
+        <td><input type="checkbox" name="channel_ids" value="{{ d.channel_id }}"
+                   class="cb-channels" onchange="updateLeaveBar()"></td>
         <td><span class="badge-active">{{ d.channel_type }}</span></td>
         <td>{{ d.title }}</td>
         <td>{% if d.username %}<a href="https://t.me/{{ d.username }}" target="_blank" rel="noopener">@{{ d.username }}</a>{% else %}<span style="color:var(--pico-muted-color)">—</span>{% endif %}</td>
@@ -92,10 +116,16 @@
 {% if groups %}
 <div style="overflow-x:auto">
 <table>
-    <thead><tr><th>Тип</th><th>Название</th><th>Username</th><th>В базе</th></tr></thead>
+    <thead><tr>
+        <th><input type="checkbox" id="select-all-groups"
+                   onchange="selectAll('groups', this.checked)"></th>
+        <th>Тип</th><th>Название</th><th>Username</th><th>В базе</th>
+    </tr></thead>
     <tbody>
     {% for d in groups %}
     <tr>
+        <td><input type="checkbox" name="channel_ids" value="{{ d.channel_id }}"
+                   class="cb-groups" onchange="updateLeaveBar()"></td>
         <td><span class="badge-active">{{ d.channel_type }}</span></td>
         <td>{{ d.title }}</td>
         <td>{% if d.username %}<a href="https://t.me/{{ d.username }}" target="_blank" rel="noopener">@{{ d.username }}</a>{% else %}<span style="color:var(--pico-muted-color)">—</span>{% endif %}</td>
@@ -112,10 +142,16 @@
 {% if dms %}
 <div style="overflow-x:auto">
 <table>
-    <thead><tr><th>Название</th><th>Username</th></tr></thead>
+    <thead><tr>
+        <th><input type="checkbox" id="select-all-dms"
+                   onchange="selectAll('dms', this.checked)"></th>
+        <th>Название</th><th>Username</th>
+    </tr></thead>
     <tbody>
     {% for d in dms %}
     <tr>
+        <td><input type="checkbox" name="channel_ids" value="{{ d.channel_id }}"
+                   class="cb-dms" onchange="updateLeaveBar()"></td>
         <td>{{ d.title }}</td>
         <td>{% if d.username %}<a href="https://t.me/{{ d.username }}" target="_blank" rel="noopener">@{{ d.username }}</a>{% else %}<span style="color:var(--pico-muted-color)">—</span>{% endif %}</td>
     </tr>
@@ -130,10 +166,16 @@
 {% if bots %}
 <div style="overflow-x:auto">
 <table>
-    <thead><tr><th>Название</th><th>Username</th></tr></thead>
+    <thead><tr>
+        <th><input type="checkbox" id="select-all-bots"
+                   onchange="selectAll('bots', this.checked)"></th>
+        <th>Название</th><th>Username</th>
+    </tr></thead>
     <tbody>
     {% for d in bots %}
     <tr>
+        <td><input type="checkbox" name="channel_ids" value="{{ d.channel_id }}"
+                   class="cb-bots" onchange="updateLeaveBar()"></td>
         <td>{{ d.title }}</td>
         <td>{% if d.username %}<a href="https://t.me/{{ d.username }}" target="_blank" rel="noopener">@{{ d.username }}</a>{% else %}<span style="color:var(--pico-muted-color)">—</span>{% endif %}</td>
     </tr>
@@ -143,6 +185,31 @@
 </div>
 {% else %}<p>Нет ботов.</p>{% endif %}
 </div>
+
+</form>
+
+<script>
+function updateLeaveBar() {
+    var n = document.querySelectorAll('input[name="channel_ids"]:checked').length;
+    document.getElementById('leave-count').textContent = n + ' выбрано';
+    document.getElementById('leave-bar').style.display = n > 0 ? 'flex' : 'none';
+}
+function selectAll(pane, checked) {
+    document.querySelectorAll('.cb-' + pane).forEach(function(cb) {
+        cb.checked = checked;
+    });
+    updateLeaveBar();
+}
+function clearSelection() {
+    document.querySelectorAll('input[name="channel_ids"]').forEach(function(cb) {
+        cb.checked = false;
+    });
+    document.querySelectorAll('[id^="select-all-"]').forEach(function(cb) {
+        cb.checked = false;
+    });
+    updateLeaveBar();
+}
+</script>
 
 {% else %}
 <p>Нет диалогов.</p>
