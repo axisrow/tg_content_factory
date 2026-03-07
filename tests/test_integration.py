@@ -59,6 +59,9 @@ async def app_with_db(tmp_path):
     async def _get_dialogs(self):
         return []
 
+    async def _get_dialogs_for_phone(self, phone, include_dm=False):
+        return []
+
     pool = type(
         "Pool",
         (),
@@ -67,6 +70,7 @@ async def app_with_db(tmp_path):
             "get_users_info": _no_users,
             "resolve_channel": _resolve_channel,
             "get_dialogs": _get_dialogs,
+            "get_dialogs_for_phone": _get_dialogs_for_phone,
         },
     )()
     app.state.pool = pool
