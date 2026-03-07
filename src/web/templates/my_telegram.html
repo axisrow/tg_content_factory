@@ -11,7 +11,8 @@
     <label>
         Аккаунт
         <select name="phone"
-                hx-get="/my-telegram"
+                hx-get="/my-telegram/"
+                hx-include="this"
                 hx-target="body"
                 hx-push-url="true"
                 hx-trigger="change"
