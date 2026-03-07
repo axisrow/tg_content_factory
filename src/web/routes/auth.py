@@ -3,9 +3,9 @@ import logging
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
-logger = logging.getLogger(__name__)
-
 from src.models import Account
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 

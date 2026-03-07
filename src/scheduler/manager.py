@@ -9,6 +9,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 
 from src.config import SchedulerConfig
+from src.settings_utils import parse_int_setting
 from src.telegram.collector import Collector
 
 if TYPE_CHECKING:
@@ -39,10 +40,15 @@ class SchedulerManager:
         self._last_search_stats: dict | None = None
         self._bg_task: asyncio.Task | None = None
         self._search_bg_task: asyncio.Task | None = None
+        self._current_interval_minutes: int = config.collect_interval_minutes
 
     @property
     def is_running(self) -> bool:
         return self._scheduler is not None and self._scheduler.running
+
+    @property
+    def is_collecting(self) -> bool:
+        return self._collector.is_running
 
     @property
     def last_run(self) -> datetime | None:
@@ -62,7 +68,8 @@ class SchedulerManager:
 
     @property
     def interval_minutes(self) -> int:
-        return self._config.collect_interval_minutes
+        # Before start() is called, reflects config default (not yet loaded from DB).
+        return self._current_interval_minutes
 
     @property
     def search_interval_minutes(self) -> int:
@@ -74,9 +81,19 @@ class SchedulerManager:
             return
 
         self._scheduler = AsyncIOScheduler()
+        saved_interval = (
+            await self._db.get_setting("collect_interval_minutes") if self._db else None
+        )
+        collect_interval = parse_int_setting(
+            saved_interval,
+            setting_name="collect_interval_minutes",
+            default=self._config.collect_interval_minutes,
+            logger=logger,
+        )
+        self._current_interval_minutes = collect_interval
         self._scheduler.add_job(
             self._run_collection,
-            IntervalTrigger(minutes=self._config.collect_interval_minutes),
+            IntervalTrigger(minutes=collect_interval),
             id=self._job_id,
             replace_existing=True,
         )
@@ -96,7 +113,7 @@ class SchedulerManager:
         self._scheduler.start()
         logger.info(
             "Scheduler started: collecting every %d minutes",
-            self._config.collect_interval_minutes,
+            collect_interval,
         )
 
     async def stop(self) -> None:
@@ -116,13 +133,24 @@ class SchedulerManager:
         self._scheduler = None
         logger.info("Scheduler stopped")
 
+    def update_interval(self, minutes: int) -> None:
+        """Reschedule the collection job with a new interval."""
+        self._current_interval_minutes = minutes
+        if self._scheduler and self._scheduler.running:
+            self._scheduler.reschedule_job(self._job_id, trigger=IntervalTrigger(minutes=minutes))
+            logger.info("Collection interval updated to %d minutes", minutes)
+        else:
+            logger.debug(
+                "Scheduler not running; interval %d minutes will apply on next start", minutes
+            )
+
     async def trigger_now(self) -> dict:
         """Trigger immediate collection run."""
         return await self._run_collection()
 
     async def trigger_background(self) -> None:
         """Fire-and-forget collection run."""
-        if self._collector.is_running:
+        if self._collector.is_running or (self._bg_task and not self._bg_task.done()):
             return
         self._bg_task = asyncio.create_task(self._run_collection())
 

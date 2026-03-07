@@ -1,8 +1,12 @@
+import asyncio
 import base64
+import re
+from pathlib import Path
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from src.collection_queue import CollectionQueue
 from src.config import AppConfig
 from src.database import Database
 from src.models import Account
@@ -11,6 +15,7 @@ from src.search.ai_search import AISearchEngine
 from src.search.engine import SearchEngine
 from src.telegram.collector import Collector
 from src.web.app import create_app
+from src.web.routes.channel_collection import _COLLECT_ALL_BTN
 from src.web.session import COOKIE_NAME, create_session_token
 
 
@@ -66,6 +71,7 @@ async def client(tmp_path):
     app.state.notifier = None
     collector = Collector(app.state.pool, db, config.scheduler)
     app.state.collector = collector
+    app.state.collection_queue = CollectionQueue(collector, db)
     app.state.search_engine = SearchEngine(db)
     app.state.ai_search = AISearchEngine(config.llm, db)
     app.state.scheduler = SchedulerManager(collector, config.scheduler)
@@ -81,6 +87,7 @@ async def client(tmp_path):
     ) as c:
         yield c
 
+    await app.state.collection_queue.shutdown()
     await db.close()
 
 
@@ -113,6 +120,53 @@ async def test_settings_page(client):
     resp = await client.get("/settings/")
     assert resp.status_code == 200
     assert "Аккаунт для уведомлений" in resp.text
+
+
+@pytest.mark.asyncio
+async def test_settings_page_hides_credentials_form_when_env_credentials_configured(
+    client, monkeypatch
+):
+    monkeypatch.setenv("TG_API_ID", "12345")
+    monkeypatch.setenv("TG_API_HASH", "env-hash")
+
+    resp = await client.get("/settings/")
+
+    assert resp.status_code == 200
+    assert "Управляется через окружение" in resp.text
+    assert 'action="/settings/save-credentials"' not in resp.text
+    assert "Telegram-аккаунты" in resp.text
+    assert 'href="/auth/login" role="button">Добавить аккаунт</a>' in resp.text
+    template_text = Path("src/web/templates/settings.html").read_text(encoding="utf-8")
+    assert template_text.index("<header>Telegram-аккаунты</header>") < template_text.index(
+        "<header>Планировщик</header>"
+    )
+
+
+@pytest.mark.asyncio
+async def test_settings_page_keeps_credentials_form_for_invalid_env_api_id(client, monkeypatch):
+    monkeypatch.setenv("TG_API_ID", "not-a-number")
+    monkeypatch.setenv("TG_API_HASH", "env-hash")
+
+    resp = await client.get("/settings/")
+
+    assert resp.status_code == 200
+    assert "Управляется через окружение" not in resp.text
+    assert 'action="/settings/save-credentials"' in resp.text
+
+
+@pytest.mark.asyncio
+async def test_settings_page_ignores_invalid_persisted_numeric_settings(client):
+    db = client._transport.app.state.db
+    await db.set_setting("min_subscribers_filter", "broken")
+    await db.set_setting("collect_interval_minutes", "oops")
+
+    resp = await client.get("/settings/")
+
+    assert resp.status_code == 200
+    assert 'name="min_subscribers_filter"' in resp.text
+    assert 'value="0"' in resp.text
+    assert 'name="collect_interval_minutes"' in resp.text
+    assert 'value="60"' in resp.text
 
 
 @pytest.mark.asyncio
@@ -800,7 +854,6 @@ async def test_filter_toggle_sets_manual_flag(client):
 @pytest.mark.asyncio
 async def test_collect_filtered_channel_is_allowed(client):
     """Manual collect (web UI) must proceed even when channel is filtered."""
-    from src.collection_queue import CollectionQueue
     from src.models import Channel
 
     db = client._transport.app.state.db
@@ -964,3 +1017,179 @@ async def test_search_results_private_channel_link(client):
     resp = await client.get("/?q=Secret&mode=local")
     assert resp.status_code == 200
     assert "t.me/c/-100999/7" in resp.text
+
+
+@pytest.mark.asyncio
+async def test_collect_all_status_idle(client):
+    """GET /channels/collect-all/status when idle returns original button."""
+    resp = await client.get("/channels/collect-all/status")
+    assert resp.status_code == 200
+    assert 'Загрузить все' in resp.text
+    assert 'disabled' not in resp.text
+
+
+@pytest.mark.asyncio
+async def test_collect_all_status_running(client):
+    """GET /channels/collect-all/status when collecting returns spinner with polling attrs."""
+    app = client._transport.app.state
+    app.collector._running = True
+    try:
+        resp = await client.get("/channels/collect-all/status")
+    finally:
+        app.collector._running = False
+    assert resp.status_code == 200
+    assert 'disabled' in resp.text
+    assert 'hx-trigger="every 3s"' in resp.text
+
+
+@pytest.mark.asyncio
+async def test_collect_all_htmx_returns_spinner(client):
+    """POST /channels/collect-all with HTMX header returns spinner fragment."""
+    resp = await client.post(
+        "/channels/collect-all",
+        headers={"HX-Request": "true"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 200
+    assert 'disabled' in resp.text
+    assert 'hx-trigger="every 3s"' in resp.text
+
+
+@pytest.mark.asyncio
+async def test_collect_all_htmx_without_scheduler_returns_unavailable(client):
+    app = client._transport.app.state
+    scheduler = app.scheduler
+    app.scheduler = None
+    try:
+        resp = await client.post(
+            "/channels/collect-all",
+            headers={"HX-Request": "true"},
+            follow_redirects=False,
+        )
+    finally:
+        app.scheduler = scheduler
+
+    assert resp.status_code == 200
+    assert "Недоступно" in resp.text
+    assert "hx-trigger" not in resp.text
+
+
+@pytest.mark.asyncio
+async def test_collect_all_non_htmx_redirects_and_starts_background(client):
+    """POST /channels/collect-all without HTMX header redirects and starts collection."""
+    app = client._transport.app.state
+    scheduler = None
+
+    class BlockingCollector:
+        def __init__(self):
+            self.started_event = asyncio.Event()
+            self.release_event = asyncio.Event()
+            self._running = False
+
+        @property
+        def is_running(self):
+            return self._running
+
+        async def collect_all_channels(self):
+            self._running = True
+            self.started_event.set()
+            try:
+                await self.release_event.wait()
+                return {"channels": 0, "messages": 0, "errors": 0}
+            finally:
+                self._running = False
+
+    collector = BlockingCollector()
+    scheduler = SchedulerManager(collector, AppConfig().scheduler)
+    original_collector = app.collector
+    original_scheduler = app.scheduler
+    app.collector = collector
+    app.scheduler = scheduler
+    try:
+        resp = await client.post("/channels/collect-all", follow_redirects=False)
+        assert resp.status_code == 303
+        assert "msg=collect_all_started" in resp.headers["location"]
+
+        await asyncio.wait_for(collector.started_event.wait(), timeout=1.0)
+        assert scheduler._bg_task is not None
+        assert not scheduler._bg_task.done()
+    finally:
+        collector.release_event.set()
+        await scheduler.stop()
+        app.collector = original_collector
+        app.scheduler = original_scheduler
+
+
+@pytest.mark.asyncio
+async def test_channels_page_collect_all_button_matches_htmx_fragment(client):
+    template_path = Path("src/web/templates/channels.html")
+    template_text = template_path.read_text(encoding="utf-8")
+    match = re.search(r'(<span id="collect-all-btn">.*?</span>)', template_text, re.S)
+    assert match is not None
+    template_fragment = match.group(1)
+
+    for expected in (
+        'id="collect-all-btn"',
+        'action="/channels/collect-all"',
+        'hx-post="/channels/collect-all"',
+        'hx-target="#collect-all-btn"',
+        'hx-swap="outerHTML"',
+        'class="outline"',
+        'Загрузить все',
+    ):
+        assert expected in template_fragment
+        assert expected in _COLLECT_ALL_BTN
+
+
+@pytest.mark.asyncio
+async def test_save_scheduler_valid(client):
+    """POST /settings/save-scheduler with valid interval persists and redirects."""
+    resp = await client.post(
+        "/settings/save-scheduler",
+        data={"collect_interval_minutes": "30"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    assert "msg=scheduler_saved" in resp.headers["location"]
+    db = client._transport.app.state.db
+    assert await db.get_setting("collect_interval_minutes") == "30"
+
+
+@pytest.mark.asyncio
+async def test_save_scheduler_invalid_value(client):
+    """POST /settings/save-scheduler with non-numeric value redirects to error."""
+    resp = await client.post(
+        "/settings/save-scheduler",
+        data={"collect_interval_minutes": "abc"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    assert "error=invalid_value" in resp.headers["location"]
+
+
+@pytest.mark.asyncio
+async def test_save_scheduler_clamps_to_min(client):
+    """POST /settings/save-scheduler clamps value below 1 to 1."""
+    resp = await client.post(
+        "/settings/save-scheduler",
+        data={"collect_interval_minutes": "0"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    assert "msg=scheduler_saved" in resp.headers["location"]
+    db = client._transport.app.state.db
+    assert await db.get_setting("collect_interval_minutes") == "1"
+
+
+@pytest.mark.asyncio
+async def test_save_scheduler_clamps_to_max(client):
+    """POST /settings/save-scheduler clamps value above 1440 to 1440."""
+    resp = await client.post(
+        "/settings/save-scheduler",
+        data={"collect_interval_minutes": "9999"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    assert "msg=scheduler_saved" in resp.headers["location"]
+    db = client._transport.app.state.db
+    assert await db.get_setting("collect_interval_minutes") == "1440"

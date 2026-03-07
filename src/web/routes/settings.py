@@ -1,10 +1,15 @@
+import logging
+import os
+
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from src.services.notification_service import NotificationService
+from src.settings_utils import parse_int_setting
 from src.web import deps
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 CREDENTIALS_MASK = "••••••••"
 
@@ -30,7 +35,24 @@ async def settings_page(request: Request):
     pool = deps.get_pool(request)
     api_id_raw = await db.get_setting("tg_api_id") or ""
     api_hash_raw = await db.get_setting("tg_api_hash") or ""
-    min_subscribers_filter = int(await db.get_setting("min_subscribers_filter") or 0)
+    min_subscribers_filter = parse_int_setting(
+        await db.get_setting("min_subscribers_filter"),
+        setting_name="min_subscribers_filter",
+        default=0,
+        logger=logger,
+    )
+    saved_interval = await db.get_setting("collect_interval_minutes")
+    config = request.app.state.config
+    telegram_credentials_from_env = bool(
+        os.environ.get("TG_API_ID", "").strip().isdigit()
+        and os.environ.get("TG_API_HASH", "").strip()
+    )
+    collect_interval_minutes = parse_int_setting(
+        saved_interval,
+        setting_name="collect_interval_minutes",
+        default=config.scheduler.collect_interval_minutes,
+        logger=logger,
+    )
     accounts = await db.get_accounts()
     connected_phones = set(pool.clients.keys())
     notification_target = await deps.get_notification_target_service(request).describe_target()
@@ -48,6 +70,7 @@ async def settings_page(request: Request):
         "settings.html",
         {
             "is_configured": auth.is_configured,
+            "telegram_credentials_from_env": telegram_credentials_from_env,
             "api_id": CREDENTIALS_MASK if api_id_raw else "",
             "api_hash": CREDENTIALS_MASK if api_hash_raw else "",
             "min_subscribers_filter": min_subscribers_filter,
@@ -58,8 +81,25 @@ async def settings_page(request: Request):
             "notification_selected_phone": notification_target.configured_phone or "",
             "notification_bot": notification_bot,
             "notification_bot_error": notification_bot_error,
+            "collect_interval_minutes": collect_interval_minutes,
         },
     )
+
+
+@router.post("/save-scheduler")
+async def save_scheduler_settings(request: Request):
+    form = await request.form()
+    try:
+        interval = int(form.get("collect_interval_minutes", 60))
+    except (TypeError, ValueError):
+        return RedirectResponse(url="/settings?error=invalid_value", status_code=303)
+    interval = max(1, min(1440, interval))
+    db = deps.get_db(request)
+    await db.set_setting("collect_interval_minutes", str(interval))
+    scheduler = getattr(request.app.state, "scheduler", None)
+    if scheduler:
+        scheduler.update_interval(interval)
+    return RedirectResponse(url="/settings?msg=scheduler_saved", status_code=303)
 
 
 @router.post("/save-filters")

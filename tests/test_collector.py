@@ -53,6 +53,20 @@ async def test_collect_all_skips_filtered_channels(db):
 
 
 @pytest.mark.asyncio
+async def test_collect_all_invalid_min_subscribers_setting_falls_back_to_zero(db):
+    await db.set_setting("min_subscribers_filter", "broken")
+    ch = Channel(channel_id=-100124, title="Normal")
+    await db.add_channel(ch)
+
+    pool = make_mock_pool(get_available_client=AsyncMock(return_value=None))
+    collector = Collector(pool, db, SchedulerConfig())
+
+    stats = await collector.collect_all_channels()
+    assert stats["channels"] == 1
+    assert stats["errors"] == 0
+
+
+@pytest.mark.asyncio
 async def test_collect_single_channel_skips_filtered(db):
     """collect_single_channel returns 0 immediately for filtered channels."""
     ch = Channel(
@@ -328,7 +342,7 @@ async def test_backfill_uses_no_limit(db):
 
     pool = make_mock_pool(get_available_client=AsyncMock(return_value=(mock_client, "+7000")))
 
-    config = SchedulerConfig(messages_per_channel=100, delay_between_requests_sec=0)
+    config = SchedulerConfig(delay_between_requests_sec=0)
     collector = Collector(pool, db, config)
     await collector._collect_channel(ch)
 
@@ -338,8 +352,8 @@ async def test_backfill_uses_no_limit(db):
 
 
 @pytest.mark.asyncio
-async def test_incremental_uses_configured_limit(db):
-    """Subsequent runs (last_collected_id>0) should use configured limit."""
+async def test_incremental_uses_no_limit(db):
+    """Subsequent runs (last_collected_id>0) should use limit=None (all new messages)."""
     ch = Channel(channel_id=-100123, title="Test", username="test", last_collected_id=50)
     await db.add_channel(ch)
 
@@ -349,12 +363,12 @@ async def test_incremental_uses_configured_limit(db):
 
     pool = make_mock_pool(get_available_client=AsyncMock(return_value=(mock_client, "+7000")))
 
-    config = SchedulerConfig(messages_per_channel=200, delay_between_requests_sec=0)
+    config = SchedulerConfig(delay_between_requests_sec=0)
     collector = Collector(pool, db, config)
     await collector._collect_channel(ch)
 
     call_kwargs = mock_client.iter_messages.call_args
-    assert call_kwargs[1].get("limit") == 200 or call_kwargs.kwargs.get("limit") == 200
+    assert call_kwargs[1].get("limit") is None or call_kwargs.kwargs.get("limit") is None
 
 
 @pytest.mark.asyncio
@@ -453,7 +467,9 @@ async def test_backfill_does_not_send_keyword_notifications(db):
 
     mock_client = AsyncMock()
     mock_client.get_entity = AsyncMock(return_value=SimpleNamespace())
-    mock_client.iter_messages = MagicMock(side_effect=lambda *a, **kw: _AsyncIterMessages(mock_msgs))
+    mock_client.iter_messages = MagicMock(
+        side_effect=lambda *a, **kw: _AsyncIterMessages(mock_msgs)
+    )
 
     pool = make_mock_pool(get_available_client=AsyncMock(return_value=(mock_client, "+7000")))
     notifier = AsyncMock()
