@@ -11,7 +11,7 @@
       hx-get="/my-telegram" hx-target="body" hx-push-url="true" hx-indicator="#dialogs-loading">
     <label>
         Аккаунт
-        <select name="phone" onchange="this.form.submit()">
+        <select name="phone" onchange="htmx.trigger(this.form, 'submit')">
             {% for acc in accounts %}
             <option value="{{ acc }}" {% if acc == selected_phone %}selected{% endif %}>{{ acc }}</option>
             {% endfor %}
