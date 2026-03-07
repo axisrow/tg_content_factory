@@ -627,24 +627,33 @@ class Collector:
                 subscriber_count = getattr(full.full_chat, "participants_count", None)
 
                 views_list, reactions_list, forwards_list = [], [], []
-                async for msg in client.iter_messages(
-                    entity,
-                    limit=50,
-                    wait_time=self._config.delay_between_requests_sec,
-                ):
-                    if self._cancel_event.is_set():
-                        break
-                    if getattr(msg, "views", None) is not None:
-                        views_list.append(msg.views)
-                    if getattr(msg, "forwards", None) is not None:
-                        forwards_list.append(msg.forwards)
-                    reactions = getattr(msg, "reactions", None)
-                    if reactions:
-                        total = sum(
-                            getattr(r, "count", 0)
-                            for r in getattr(reactions, "results", [])
-                        )
-                        reactions_list.append(total)
+
+                async def _collect_stats_messages() -> None:
+                    async for msg in client.iter_messages(
+                        entity,
+                        limit=50,
+                        wait_time=self._config.delay_between_requests_sec,
+                    ):
+                        if self._cancel_event.is_set():
+                            break
+                        if getattr(msg, "views", None) is not None:
+                            views_list.append(msg.views)
+                        if getattr(msg, "forwards", None) is not None:
+                            forwards_list.append(msg.forwards)
+                        reactions = getattr(msg, "reactions", None)
+                        if reactions:
+                            total = sum(
+                                getattr(r, "count", 0)
+                                for r in getattr(reactions, "results", [])
+                            )
+                            reactions_list.append(total)
+
+                try:
+                    await asyncio.wait_for(_collect_stats_messages(), timeout=90.0)
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        "iter_messages timed out for stats on channel %d", channel.channel_id
+                    )
 
                 stats = ChannelStats(
                     channel_id=channel.channel_id,
