@@ -14,7 +14,7 @@ router = APIRouter()
 async def channels_list(request: Request):
     service = deps.channel_service(request)
     show_all = request.query_params.get("view") == "all"
-    channels, _, latest_stats = await service.list_for_page(
+    channels, latest_stats = await service.list_for_page(
         include_filtered=show_all
     )
     error = request.query_params.get("error")
