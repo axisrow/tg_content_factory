@@ -150,21 +150,6 @@ class Collector:
                     return stats
                 logger.info("Found %d active unfiltered channels to collect", len(channels))
 
-                # Pre-fetch dialogs to populate Telethon entity cache.
-                # StringSession loses entity cache between restarts, so
-                # get_dialogs() is needed for PeerChannel lookups to work.
-                result = await self._pool.get_available_client()
-                if result:
-                    client, phone = result
-                    try:
-                        logger.info("Pre-fetching dialogs...")
-                        await asyncio.wait_for(client.get_dialogs(), timeout=30)
-                        logger.info("Dialogs pre-fetched successfully")
-                    except Exception as e:
-                        logger.warning("Failed to pre-fetch dialogs: %s", e)
-                    finally:
-                        await self._pool.release_client(phone)
-
                 min_subs_raw = await self._db.get_setting("min_subscribers_filter")
                 min_subs = int(min_subs_raw) if min_subs_raw else 0
 
@@ -246,10 +231,12 @@ class Collector:
             return 0
 
         client, phone = result
-        # Populate entity cache when using PeerChannel (StringSession loses cache between restarts)
-        if not channel.username:
+        # Populate entity cache when using PeerChannel (StringSession loses cache between restarts).
+        # Only needed once per process lifetime per phone — the in-memory cache persists.
+        if not channel.username and not self._pool.is_dialogs_fetched(phone):
             try:
                 await asyncio.wait_for(client.get_dialogs(), timeout=30)
+                self._pool.mark_dialogs_fetched(phone)
             except Exception:
                 pass
         messages_batch: list[Message] = []

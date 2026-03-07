@@ -36,6 +36,15 @@ class ClientPool:
         self.clients: dict[str, TelegramClient] = {}
         self._lock = asyncio.Lock()
         self._in_use: set[str] = set()
+        self._dialogs_fetched: set[str] = set()
+
+    def is_dialogs_fetched(self, phone: str) -> bool:
+        """Return True if get_dialogs() was already called for this phone in this process."""
+        return phone in self._dialogs_fetched
+
+    def mark_dialogs_fetched(self, phone: str) -> None:
+        """Mark that get_dialogs() has been called for this phone."""
+        self._dialogs_fetched.add(phone)
 
     async def initialize(self) -> None:
         """Connect all active accounts from DB."""
