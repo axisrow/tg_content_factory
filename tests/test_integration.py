@@ -424,22 +424,56 @@ class TestSchedulerStartStop:
     async def test_trigger_returns_immediately(self, app_with_db):
         """POST /scheduler/trigger returns redirect with ?msg=triggered instantly."""
         app, _ = app_with_db
-        collector = app.state.collector
-        collector.collect_all_channels = AsyncMock(return_value={
-            "channels": 0, "messages": 0, "errors": 0,
-        })
+        scheduler = None
+
+        class BlockingCollector:
+            def __init__(self):
+                self.started_event = asyncio.Event()
+                self.release_event = asyncio.Event()
+                self._running = False
+
+            @property
+            def is_running(self):
+                return self._running
+
+            async def collect_all_channels(self):
+                self._running = True
+                self.started_event.set()
+                try:
+                    await self.release_event.wait()
+                    return {"channels": 0, "messages": 0, "errors": 0}
+                finally:
+                    self._running = False
+
+        collector = BlockingCollector()
+        scheduler = SchedulerManager(collector, SchedulerConfig())
+        app.state.collector = collector
+        app.state.scheduler = scheduler
 
         transport = ASGITransport(app=app)
         auth_header = base64.b64encode(b":testpass").decode()
-        async with AsyncClient(
-            transport=transport,
-            base_url="http://test",
-            follow_redirects=False,
-            headers={"Authorization": f"Basic {auth_header}"},
-        ) as c:
-            resp = await c.post("/scheduler/trigger")
-            assert resp.status_code == 303
-            assert "msg=triggered" in resp.headers["location"]
+        try:
+            async with AsyncClient(
+                transport=transport,
+                base_url="http://test",
+                follow_redirects=False,
+                headers={"Authorization": f"Basic {auth_header}"},
+            ) as c:
+                resp = await c.post("/scheduler/trigger")
+                assert resp.status_code == 303
+                assert "msg=triggered" in resp.headers["location"]
+
+            await asyncio.wait_for(collector.started_event.wait(), timeout=1.0)
+            assert scheduler._bg_task is not None
+            assert not scheduler._bg_task.done()
+            assert collector.is_running is True
+        finally:
+            collector.release_event.set()
+            if scheduler is not None:
+                await scheduler.stop()
+
+        assert scheduler._bg_task is None
+        assert collector.is_running is False
 
     @pytest.mark.asyncio
     async def test_trigger_while_collecting(self, app_with_db):
@@ -716,26 +750,45 @@ class TestGracefulShutdown:
     @pytest.mark.asyncio
     async def test_trigger_task_cancelled_on_stop(self, test_db):
         """trigger_background -> stop -> task is cancelled, collector not running."""
+        await test_db.add_channel(
+            Channel(channel_id=-100765, title="Blocking Channel", username="blocking_channel")
+        )
         pool = _make_pool(get_available_client=AsyncMock(return_value=None))
 
-        config = SchedulerConfig()
+        config = SchedulerConfig(delay_between_requests_sec=0)
         collector = Collector(pool, test_db, config)
         manager = SchedulerManager(collector, config)
 
-        # Use a slow coroutine so the task is still running when we stop
-        async def _slow_collect():
-            await asyncio.sleep(10)
-            return {"channels": 0, "messages": 0, "errors": 0}
+        started_event = asyncio.Event()
+        release_event = asyncio.Event()
+        cancelled_event = asyncio.Event()
 
-        collector.collect_all_channels = AsyncMock(side_effect=_slow_collect)
+        async def _blocking_collect(_channel, **_kwargs):
+            started_event.set()
+            try:
+                await release_event.wait()
+                return 0
+            except asyncio.CancelledError:
+                cancelled_event.set()
+                raise
 
-        await manager.trigger_background()
-        assert manager._bg_task is not None
-        assert not manager._bg_task.done()
+        collector._collect_channel = AsyncMock(side_effect=_blocking_collect)
 
-        await manager.stop()
+        try:
+            await manager.trigger_background()
+            assert manager._bg_task is not None
+            await asyncio.wait_for(started_event.wait(), timeout=1.0)
+            assert not manager._bg_task.done()
+            assert collector.is_running is True
+
+            await manager.stop()
+            await asyncio.wait_for(cancelled_event.wait(), timeout=1.0)
+        finally:
+            release_event.set()
+
         assert manager._bg_task is None
         assert collector.is_running is False
+        assert cancelled_event.is_set()
 
     @pytest.mark.asyncio
     async def test_stop_without_bg_task_is_safe(self, test_db):
