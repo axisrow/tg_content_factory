@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
 from src.database import Database
@@ -10,6 +11,13 @@ if TYPE_CHECKING:
     from src.telegram.collector import Collector
 
 EnqueueResult = Literal["not_found", "filtered", "queued"]
+
+
+@dataclass(slots=True)
+class BulkEnqueueResult:
+    queued_count: int
+    skipped_existing_count: int
+    total_candidates: int
 
 
 class CollectionService:
@@ -26,6 +34,27 @@ class CollectionService:
             return "filtered"
         await self._queue.enqueue(channel, force=force)
         return "queued"
+
+    async def enqueue_all_channels(self, force: bool = False) -> BulkEnqueueResult:
+        channels = await self._db.get_channels(active_only=True, include_filtered=False)
+        queued_count = 0
+        skipped_existing_count = 0
+
+        for channel in channels:
+            active_tasks = await self._db.get_active_collection_tasks_for_channel(
+                channel.channel_id
+            )
+            if active_tasks:
+                skipped_existing_count += 1
+                continue
+            await self._queue.enqueue(channel, force=force)
+            queued_count += 1
+
+        return BulkEnqueueResult(
+            queued_count=queued_count,
+            skipped_existing_count=skipped_existing_count,
+            total_candidates=len(channels),
+        )
 
     async def collect_channel_stats(self, channel: Channel) -> None:
         await self._collector.collect_channel_stats(channel)
