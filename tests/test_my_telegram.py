@@ -118,7 +118,7 @@ async def test_my_telegram_page_requires_auth(tmp_path):
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test", follow_redirects=False) as c:
         resp = await c.get("/my-telegram/")
-    assert resp.status_code in (401, 302, 303)
+    assert resp.status_code == 401
     await db.close()
 
 
