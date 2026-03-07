@@ -318,7 +318,12 @@ class Collector:
                             await self._db.set_channel_active(channel.id, False)
                         return 0
                     new_username = getattr(fallback_entity, "username", None)
-                    new_title = getattr(fallback_entity, "title", None) or channel.title
+                    new_title = (
+                        getattr(fallback_entity, "title", None)
+                        or channel.title
+                        or channel.username
+                        or str(channel_id)
+                    )
                     await self._db.update_channel_meta(
                         channel_id, username=new_username, title=new_title
                     )
@@ -627,6 +632,8 @@ class Collector:
                     limit=50,
                     wait_time=self._config.delay_between_requests_sec,
                 ):
+                    if self._cancel_event.is_set():
+                        break
                     if getattr(msg, "views", None) is not None:
                         views_list.append(msg.views)
                     if getattr(msg, "forwards", None) is not None:
