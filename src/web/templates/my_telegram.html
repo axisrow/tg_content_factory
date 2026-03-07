@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block title %}Мой Телеграм — TG Post Search{% endblock %}
+{% block content %}
+<h1>Мой Телеграм</h1>
+
+{% if not accounts %}
+<p>Нет подключённых аккаунтов. Добавьте аккаунт в <a href="/settings">Настройках</a>.</p>
+{% else %}
+
+<form method="get" action="/my-telegram" style="max-width:400px;margin-bottom:1.5rem"
+      hx-get="/my-telegram" hx-target="body" hx-push-url="true" hx-indicator="#dialogs-loading">
+    <label>
+        Аккаунт
+        <select name="phone" onchange="htmx.trigger(this.form, 'submit')">
+            {% for acc in accounts %}
+            <option value="{{ acc }}" {% if acc == selected_phone %}selected{% endif %}>{{ acc }}</option>
+            {% endfor %}
+        </select>
+    </label>
+</form>
+<span id="dialogs-loading" class="htmx-indicator" aria-label="Загрузка…">⏳ Загрузка диалогов…</span>
+
+{% if dialogs %}
+<p style="color:var(--pico-muted-color)">Всего диалогов: <strong>{{ dialogs|length }}</strong></p>
+<div style="overflow-x:auto">
+<table>
+    <thead>
+        <tr>
+            <th>Тип</th>
+            <th>Название</th>
+            <th>Username</th>
+            <th>В базе</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for d in dialogs %}
+        <tr>
+            <td>
+                {% if d.channel_type == "channel" %}
+                <span class="badge-active">channel</span>
+                {% elif d.channel_type == "supergroup" %}
+                <span class="badge-active">supergroup</span>
+                {% elif d.channel_type == "group" %}
+                <span class="badge-inactive">group</span>
+                {% elif d.channel_type == "dm" %}
+                <span class="badge-inactive">dm</span>
+                {% elif d.channel_type == "forum" %}
+                <span class="badge-active">forum</span>
+                {% elif d.channel_type == "gigagroup" %}
+                <span class="badge-active">gigagroup</span>
+                {% elif d.channel_type == "monoforum" %}
+                <span class="badge-active">monoforum</span>
+                {% else %}
+                <span class="badge-inactive">{{ d.channel_type }}</span>
+                {% endif %}
+            </td>
+            <td>{{ d.title }}</td>
+            <td>{% if d.username %}<a href="https://t.me/{{ d.username }}" target="_blank" rel="noopener">@{{ d.username }}</a>{% else %}<span style="color:var(--pico-muted-color)">—</span>{% endif %}</td>
+            <td>{% if d.already_added %}<span class="badge-active">✓</span>{% else %}<span style="color:var(--pico-muted-color)">—</span>{% endif %}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+</div>
+{% else %}
+<p>Нет диалогов.</p>
+{% endif %}
+
+{% endif %}
+{% endblock %}

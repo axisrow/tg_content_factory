@@ -59,6 +59,9 @@ async def app_with_db(tmp_path):
     async def _get_dialogs(self):
         return []
 
+    async def _get_dialogs_for_phone(self, phone, include_dm=False):
+        return []
+
     pool = type(
         "Pool",
         (),
@@ -67,6 +70,7 @@ async def app_with_db(tmp_path):
             "get_users_info": _no_users,
             "resolve_channel": _resolve_channel,
             "get_dialogs": _get_dialogs,
+            "get_dialogs_for_phone": _get_dialogs_for_phone,
         },
     )()
     app.state.pool = pool
@@ -164,7 +168,7 @@ class TestAuthFlow:
 
     @pytest.mark.asyncio
     async def test_all_protected_pages_require_auth(self, noauth_client):
-        for path in ["/settings/", "/channels/", "/dashboard/", "/scheduler/", "/keywords/"]:
+        for path in ["/settings/", "/channels/", "/dashboard/", "/scheduler/", "/keywords/", "/my-telegram/"]:
             resp = await noauth_client.get(path, follow_redirects=False)
             assert resp.status_code == 401, f"{path} should require auth"
 
