@@ -71,7 +71,10 @@ async def settings_page(request: Request):
 @router.post("/save-scheduler")
 async def save_scheduler_settings(request: Request):
     form = await request.form()
-    interval = int(form.get("collect_interval_minutes", 60))
+    try:
+        interval = int(form.get("collect_interval_minutes", 60))
+    except (TypeError, ValueError):
+        return RedirectResponse(url="/settings?error=invalid_value", status_code=303)
     interval = max(1, min(1440, interval))
     db = deps.get_db(request)
     await db.set_setting("collect_interval_minutes", str(interval))

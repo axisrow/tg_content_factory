@@ -247,7 +247,7 @@ class Collector:
 
         is_first_run = channel.last_collected_id == 0
         should_notify_keywords = self._notifier is not None and not is_first_run
-        limit = None if is_first_run else self._config.messages_per_channel
+        limit = None  # first_run: все; incremental: все новые (диапазон ограничен min_id)
         logger.info(
             "Collecting channel %d (%s), first_run=%s, min_id=%d, limit=%s",
             channel_id, channel.username or channel.title, is_first_run, min_id, limit,

@@ -338,8 +338,8 @@ async def test_backfill_uses_no_limit(db):
 
 
 @pytest.mark.asyncio
-async def test_incremental_uses_configured_limit(db):
-    """Subsequent runs (last_collected_id>0) should use configured limit."""
+async def test_incremental_uses_no_limit(db):
+    """Subsequent runs (last_collected_id>0) should use limit=None (all new messages)."""
     ch = Channel(channel_id=-100123, title="Test", username="test", last_collected_id=50)
     await db.add_channel(ch)
 
@@ -354,7 +354,7 @@ async def test_incremental_uses_configured_limit(db):
     await collector._collect_channel(ch)
 
     call_kwargs = mock_client.iter_messages.call_args
-    assert call_kwargs[1].get("limit") == 200 or call_kwargs.kwargs.get("limit") == 200
+    assert call_kwargs[1].get("limit") is None or call_kwargs.kwargs.get("limit") is None
 
 
 @pytest.mark.asyncio

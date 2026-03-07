@@ -9,6 +9,33 @@ from src.web import deps
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
+_COLLECT_ALL_BTN = (
+    '<span id="collect-all-btn">'
+    '<form method="post" action="/channels/collect-all" style="display:inline"'
+    ' hx-post="/channels/collect-all" hx-target="#collect-all-btn" hx-swap="outerHTML">'
+    '<button type="submit" class="outline" style="padding: 0.25rem 0.75rem;">Загрузить все</button>'
+    '</form>'
+    '</span>'
+)
+
+_COLLECT_ALL_SPINNER = (
+    '<span id="collect-all-btn"'
+    ' hx-get="/channels/collect-all/status"'
+    ' hx-trigger="every 3s"'
+    ' hx-target="#collect-all-btn"'
+    ' hx-swap="outerHTML">'
+    '<button class="outline" disabled title="Запущен">⏳ Загрузка...</button>'
+    '</span>'
+)
+
+
+@router.get("/collect-all/status")
+async def collect_all_status(request: Request):
+    scheduler = getattr(request.app.state, "scheduler", None)
+    if scheduler and scheduler.is_collecting:
+        return HTMLResponse(_COLLECT_ALL_SPINNER)
+    return HTMLResponse(_COLLECT_ALL_BTN)
+
 
 @router.post("/collect-all")
 async def collect_all_channels(request: Request):
@@ -26,11 +53,7 @@ async def collect_all_channels(request: Request):
         await scheduler.trigger_background()
 
     if is_htmx:
-        return HTMLResponse(
-            '<span id="collect-all-btn">'
-            '<button class="outline" disabled title="Запущен">⏳ Загрузка...</button>'
-            '</span>'
-        )
+        return HTMLResponse(_COLLECT_ALL_SPINNER)
     return RedirectResponse(url="/channels?msg=collect_all_started", status_code=303)
 
 

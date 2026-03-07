@@ -39,10 +39,15 @@ class SchedulerManager:
         self._last_search_stats: dict | None = None
         self._bg_task: asyncio.Task | None = None
         self._search_bg_task: asyncio.Task | None = None
+        self._current_interval_minutes: int = config.collect_interval_minutes
 
     @property
     def is_running(self) -> bool:
         return self._scheduler is not None and self._scheduler.running
+
+    @property
+    def is_collecting(self) -> bool:
+        return self._collector.is_running
 
     @property
     def last_run(self) -> datetime | None:
@@ -62,7 +67,7 @@ class SchedulerManager:
 
     @property
     def interval_minutes(self) -> int:
-        return self._config.collect_interval_minutes
+        return self._current_interval_minutes
 
     @property
     def search_interval_minutes(self) -> int:
@@ -80,6 +85,7 @@ class SchedulerManager:
         collect_interval = (
             int(saved_interval) if saved_interval else self._config.collect_interval_minutes
         )
+        self._current_interval_minutes = collect_interval
         self._scheduler.add_job(
             self._run_collection,
             IntervalTrigger(minutes=collect_interval),
@@ -124,9 +130,14 @@ class SchedulerManager:
 
     def update_interval(self, minutes: int) -> None:
         """Reschedule the collection job with a new interval."""
+        self._current_interval_minutes = minutes
         if self._scheduler and self._scheduler.running:
             self._scheduler.reschedule_job(self._job_id, trigger=IntervalTrigger(minutes=minutes))
             logger.info("Collection interval updated to %d minutes", minutes)
+        else:
+            logger.debug(
+                "Scheduler not running; interval %d minutes will apply on next start", minutes
+            )
 
     async def trigger_now(self) -> dict:
         """Trigger immediate collection run."""
