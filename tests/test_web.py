@@ -964,3 +964,47 @@ async def test_search_results_private_channel_link(client):
     resp = await client.get("/?q=Secret&mode=local")
     assert resp.status_code == 200
     assert "t.me/c/-100999/7" in resp.text
+
+
+@pytest.mark.asyncio
+async def test_collect_all_status_idle(client):
+    """GET /channels/collect-all/status when idle returns original button."""
+    resp = await client.get("/channels/collect-all/status")
+    assert resp.status_code == 200
+    assert 'Загрузить все' in resp.text
+    assert 'disabled' not in resp.text
+
+
+@pytest.mark.asyncio
+async def test_collect_all_status_running(client):
+    """GET /channels/collect-all/status when collecting returns spinner with polling attrs."""
+    app = client._transport.app.state
+    app.collector._running = True
+    try:
+        resp = await client.get("/channels/collect-all/status")
+    finally:
+        app.collector._running = False
+    assert resp.status_code == 200
+    assert 'disabled' in resp.text
+    assert 'hx-trigger="every 3s"' in resp.text
+
+
+@pytest.mark.asyncio
+async def test_collect_all_htmx_returns_spinner(client):
+    """POST /channels/collect-all with HTMX header returns spinner fragment."""
+    resp = await client.post(
+        "/channels/collect-all",
+        headers={"HX-Request": "true"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 200
+    assert 'disabled' in resp.text
+    assert 'hx-trigger="every 3s"' in resp.text
+
+
+@pytest.mark.asyncio
+async def test_collect_all_non_htmx_redirects(client):
+    """POST /channels/collect-all without HTMX header redirects."""
+    resp = await client.post("/channels/collect-all", follow_redirects=False)
+    assert resp.status_code == 303
+    assert "msg=collect_all_started" in resp.headers["location"]

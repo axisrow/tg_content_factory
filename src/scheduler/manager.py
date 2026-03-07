@@ -67,6 +67,7 @@ class SchedulerManager:
 
     @property
     def interval_minutes(self) -> int:
+        # Before start() is called, reflects config default (not yet loaded from DB).
         return self._current_interval_minutes
 
     @property
