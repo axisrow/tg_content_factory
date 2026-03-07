@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import logging
 
-from src.settings_utils import parse_int_setting
 from src.config import load_config, resolve_session_encryption_secret
 from src.database import Database
+from src.settings_utils import parse_int_setting
 from src.telegram.auth import TelegramAuth
 from src.telegram.client_pool import ClientPool
 

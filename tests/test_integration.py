@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from src.cli.runtime import init_pool
 from src.config import AppConfig, SchedulerConfig, load_config
 from src.database import Database
 from src.models import Channel, Keyword, Message
@@ -24,7 +25,6 @@ from src.telegram.auth import TelegramAuth
 from src.telegram.client_pool import ClientPool
 from src.telegram.collector import Collector
 from src.web.app import create_app
-from src.cli.runtime import init_pool
 from tests.helpers import make_mock_pool as _make_pool
 
 # ---------------------------------------------------------------------------

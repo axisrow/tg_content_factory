@@ -95,13 +95,24 @@ def load_config(path: str | Path = "config.yaml") -> AppConfig:
     """Load application config from YAML, substituting env variables."""
     path = Path(path)
     if not path.exists():
-        return AppConfig()
+        config = AppConfig()
+    else:
+        with open(path) as f:
+            raw = yaml.safe_load(f) or {}
 
-    with open(path) as f:
-        raw = yaml.safe_load(f) or {}
+        substituted = _walk_and_substitute(raw)
+        config = AppConfig.model_validate(substituted)
 
-    substituted = _walk_and_substitute(raw)
-    return AppConfig.model_validate(substituted)
+    # Direct environment fallback for Telegram credentials keeps the app usable
+    # even when config.yaml omits placeholders or the file is absent.
+    if config.telegram.api_id == 0:
+        env_api_id = os.environ.get("TG_API_ID", "").strip()
+        if env_api_id.isdigit():
+            config.telegram.api_id = int(env_api_id)
+    if not config.telegram.api_hash:
+        config.telegram.api_hash = os.environ.get("TG_API_HASH", "").strip()
+
+    return config
 
 
 def resolve_session_encryption_secret(config: AppConfig) -> str | None:

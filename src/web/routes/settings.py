@@ -1,10 +1,11 @@
 import logging
+import os
 
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
-from src.settings_utils import parse_int_setting
 from src.services.notification_service import NotificationService
+from src.settings_utils import parse_int_setting
 from src.web import deps
 
 router = APIRouter()
@@ -42,6 +43,9 @@ async def settings_page(request: Request):
     )
     saved_interval = await db.get_setting("collect_interval_minutes")
     config = request.app.state.config
+    telegram_credentials_from_env = bool(
+        os.environ.get("TG_API_ID", "").strip() and os.environ.get("TG_API_HASH", "").strip()
+    )
     collect_interval_minutes = parse_int_setting(
         saved_interval,
         setting_name="collect_interval_minutes",
@@ -65,6 +69,7 @@ async def settings_page(request: Request):
         "settings.html",
         {
             "is_configured": auth.is_configured,
+            "telegram_credentials_from_env": telegram_credentials_from_env,
             "api_id": CREDENTIALS_MASK if api_id_raw else "",
             "api_hash": CREDENTIALS_MASK if api_hash_raw else "",
             "min_subscribers_filter": min_subscribers_filter,

@@ -21,8 +21,8 @@ from src.scheduler.manager import SchedulerManager
 from src.search.ai_search import AISearchEngine
 from src.search.engine import SearchEngine
 from src.services.notification_target_service import NotificationTargetService
-from src.settings_utils import parse_int_setting
 from src.services.stats_task_dispatcher import StatsTaskDispatcher
+from src.settings_utils import parse_int_setting
 from src.telegram.auth import TelegramAuth
 from src.telegram.client_pool import ClientPool
 from src.telegram.collector import Collector

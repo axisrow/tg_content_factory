@@ -123,6 +123,26 @@ async def test_settings_page(client):
 
 
 @pytest.mark.asyncio
+async def test_settings_page_hides_credentials_form_when_env_credentials_configured(
+    client, monkeypatch
+):
+    monkeypatch.setenv("TG_API_ID", "12345")
+    monkeypatch.setenv("TG_API_HASH", "env-hash")
+
+    resp = await client.get("/settings/")
+
+    assert resp.status_code == 200
+    assert "Управляется через окружение" in resp.text
+    assert 'action="/settings/save-credentials"' not in resp.text
+    assert "Telegram-аккаунты" in resp.text
+    assert 'href="/auth/login" role="button">Добавить аккаунт</a>' in resp.text
+    template_text = Path("src/web/templates/settings.html").read_text(encoding="utf-8")
+    assert template_text.index("<header>Telegram-аккаунты</header>") < template_text.index(
+        "<header>Планировщик</header>"
+    )
+
+
+@pytest.mark.asyncio
 async def test_settings_page_ignores_invalid_persisted_numeric_settings(client):
     db = client._transport.app.state.db
     await db.set_setting("min_subscribers_filter", "broken")
