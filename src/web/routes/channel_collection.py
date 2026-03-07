@@ -4,23 +4,11 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from starlette.background import BackgroundTask
 
-from src.web import deps
 from src.services.collection_service import BulkEnqueueResult
+from src.web import deps
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
-
-# NOTE: _COLLECT_ALL_BTN and _COLLECT_ALL_SPINNER must stay in sync with the
-# corresponding fragment in templates/channels.html (the initial page render uses
-# the Jinja template; HTMX responses use these Python constants).
-_COLLECT_ALL_BTN = (
-    '<span id="collect-all-btn">'
-    '<form method="post" action="/channels/collect-all" style="display:inline"'
-    ' hx-post="/channels/collect-all" hx-target="#collect-all-btn" hx-swap="outerHTML">'
-    '<button type="submit" class="outline" style="padding: 0.25rem 0.75rem;">Загрузить все</button>'
-    '</form>'
-    '</span>'
-)
 
 _COLLECT_ALL_FORM = (
     '<form method="post" action="/channels/collect-all" style="display:inline"'
@@ -29,19 +17,27 @@ _COLLECT_ALL_FORM = (
     '</form>'
 )
 
+# NOTE: _COLLECT_ALL_BTN and _COLLECT_ALL_FORM must stay in sync with the
+# corresponding fragment in templates/channels.html. The initial page render uses
+# the Jinja template; HTMX responses reuse these Python constants.
+_COLLECT_ALL_BTN = f'<span id="collect-all-btn">{_COLLECT_ALL_FORM}</span>'
+
+
 def _collect_all_result_fragment(result: BulkEnqueueResult) -> str:
-    scheduler_link = '<a href="/scheduler" class="secondary outline" role="button">Открыть планировщик</a>'
     if result.total_candidates == 0:
         message = "Нет активных каналов для загрузки."
+        extra = ""
     elif result.queued_count > 0:
         message = f"Добавлено задач: {result.queued_count}."
+        extra = '<a href="/scheduler" class="secondary outline" role="button">Открыть планировщик</a>'
     else:
         message = "Новых задач не добавлено: всё уже в очереди."
+        extra = '<a href="/scheduler" class="secondary outline" role="button">Открыть планировщик</a>'
     return (
         '<span id="collect-all-btn">'
         '<span style="display:inline-flex;gap:0.5rem;align-items:center;flex-wrap:wrap">'
         f"<small>{message}</small>"
-        f"{scheduler_link}"
+        f"{extra}"
         f"{_COLLECT_ALL_FORM}"
         "</span>"
         "</span>"
@@ -56,11 +52,6 @@ def _collect_all_redirect_url(result: BulkEnqueueResult) -> str:
     else:
         msg = "collect_all_noop"
     return f"/channels?msg={msg}"
-
-
-@router.get("/collect-all/status")
-async def collect_all_status(request: Request):
-    return HTMLResponse(_COLLECT_ALL_BTN)
 
 
 @router.post("/collect-all")

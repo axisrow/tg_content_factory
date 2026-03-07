@@ -315,6 +315,10 @@ class Database:
         self._require()
         return await self._tasks.get_active_collection_tasks_for_channel(channel_id)
 
+    async def get_channel_ids_with_active_tasks(self) -> set[int]:
+        self._require()
+        return await self._tasks.get_channel_ids_with_active_tasks()
+
     async def get_active_stats_task(self) -> CollectionTask | None:
         self._require()
         return await self._tasks.get_active_stats_task()

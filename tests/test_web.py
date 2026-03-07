@@ -14,7 +14,7 @@ from src.search.ai_search import AISearchEngine
 from src.search.engine import SearchEngine
 from src.telegram.collector import Collector
 from src.web.app import create_app
-from src.web.routes.channel_collection import _COLLECT_ALL_BTN
+from src.web.routes.channel_collection import _COLLECT_ALL_BTN, _COLLECT_ALL_FORM
 from src.web.session import COOKIE_NAME, create_session_token
 
 
@@ -1034,29 +1034,6 @@ async def test_search_results_private_channel_link(client):
 
 
 @pytest.mark.asyncio
-async def test_collect_all_status_idle(client):
-    """GET /channels/collect-all/status when idle returns original button."""
-    resp = await client.get("/channels/collect-all/status")
-    assert resp.status_code == 200
-    assert 'Загрузить все' in resp.text
-    assert 'disabled' not in resp.text
-
-
-@pytest.mark.asyncio
-async def test_collect_all_status_running_returns_original_button(client):
-    """GET /channels/collect-all/status stays actionable even when there are active tasks."""
-    app = client._transport.app.state
-    app.collector._running = True
-    try:
-        resp = await client.get("/channels/collect-all/status")
-    finally:
-        app.collector._running = False
-    assert resp.status_code == 200
-    assert 'Загрузить все' in resp.text
-    assert 'disabled' not in resp.text
-
-
-@pytest.mark.asyncio
 async def test_collect_all_htmx_returns_scheduler_link_and_creates_tasks(client, monkeypatch):
     """POST /channels/collect-all with HTMX header returns explicit status and queues tasks."""
     from src.models import Channel
@@ -1158,6 +1135,15 @@ async def test_collect_all_non_htmx_redirects_with_empty_message_when_no_channel
     assert resp.status_code == 303
     assert "msg=collect_all_empty" in resp.headers["location"]
 
+    resp = await client.post(
+        "/channels/collect-all",
+        headers={"HX-Request": "true"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 200
+    assert "Нет активных каналов для загрузки." in resp.text
+    assert 'href="/scheduler"' not in resp.text
+
 
 @pytest.mark.asyncio
 async def test_enqueue_all_channels_skips_inactive_filtered_and_duplicate_tasks(client, monkeypatch):
@@ -1194,6 +1180,20 @@ async def test_enqueue_all_channels_skips_inactive_filtered_and_duplicate_tasks(
 
 
 @pytest.mark.asyncio
+async def test_get_channel_ids_with_active_tasks_returns_distinct_non_stats_ids(client):
+    db = client._transport.app.state.db
+    await db.create_collection_task(-100801, "One")
+    task_id = await db.create_collection_task(-100802, "Two")
+    await db.update_collection_task(task_id, "running")
+    await db.create_collection_task(-100801, "One duplicate")
+    await db.create_collection_task(0, "Stats task")
+
+    active_ids = await db.get_channel_ids_with_active_tasks()
+
+    assert active_ids == {-100801, -100802}
+
+
+@pytest.mark.asyncio
 async def test_channels_page_collect_all_button_matches_htmx_fragment(client):
     template_path = Path("src/web/templates/channels.html")
     template_text = template_path.read_text(encoding="utf-8")
@@ -1212,6 +1212,8 @@ async def test_channels_page_collect_all_button_matches_htmx_fragment(client):
     ):
         assert expected in template_fragment
         assert expected in _COLLECT_ALL_BTN
+
+    assert _COLLECT_ALL_BTN == f'<span id="collect-all-btn">{_COLLECT_ALL_FORM}</span>'
 
 
 @pytest.mark.asyncio
