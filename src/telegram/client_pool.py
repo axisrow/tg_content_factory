@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 
 from telethon import TelegramClient
 from telethon.errors import FloodWaitError, UsernameInvalidError, UsernameNotOccupiedError
-from telethon.tl.types import ChannelForbidden, PeerChannel
+from telethon.tl.types import ChannelForbidden, PeerChannel, PeerUser
 
 from src.database import Database
 from src.models import TelegramUserInfo
@@ -388,7 +388,8 @@ class ClientPool:
         try:
             for cid in channel_ids:
                 try:
-                    entity = await client.get_entity(PeerChannel(abs(cid)))
+                    peer = PeerChannel(abs(cid)) if cid < 0 else PeerUser(cid)
+                    entity = await client.get_entity(peer)
                     await client.delete_dialog(entity)
                     outcomes[cid] = True
                     await asyncio.sleep(0.3)

@@ -137,22 +137,34 @@ async def test_my_telegram_page_requires_auth(tmp_path):
 
 @pytest.mark.asyncio
 async def test_leave_channels_success():
-    """All channel_ids → True when delete_dialog succeeds."""
+    """All channel_ids → True when delete_dialog succeeds; PeerChannel for negative, PeerUser for positive."""
+    from telethon.tl.types import PeerChannel, PeerUser
+
     from src.telegram.client_pool import ClientPool
 
     pool = MagicMock(spec=ClientPool)
     mock_client = MagicMock()
-    mock_client.get_entity = AsyncMock(return_value=MagicMock())
+    received_peers = []
+
+    async def _get_entity(peer):
+        received_peers.append(peer)
+        return MagicMock()
+
+    mock_client.get_entity = _get_entity
     mock_client.delete_dialog = AsyncMock()
 
     pool.get_client_by_phone = AsyncMock(return_value=(mock_client, "+1234567890"))
     pool.release_client = AsyncMock()
 
     with patch("src.telegram.client_pool.asyncio.sleep", AsyncMock()):
-        result = await ClientPool.leave_channels(pool, "+1234567890", [-100111, -100222])
+        result = await ClientPool.leave_channels(pool, "+1234567890", [-100111, 999])
 
-    assert result == {-100111: True, -100222: True}
+    assert result == {-100111: True, 999: True}
     assert mock_client.delete_dialog.await_count == 2
+    assert isinstance(received_peers[0], PeerChannel)
+    assert received_peers[0].channel_id == 100111
+    assert isinstance(received_peers[1], PeerUser)
+    assert received_peers[1].user_id == 999
 
 
 @pytest.mark.asyncio
