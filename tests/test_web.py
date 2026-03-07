@@ -143,6 +143,18 @@ async def test_settings_page_hides_credentials_form_when_env_credentials_configu
 
 
 @pytest.mark.asyncio
+async def test_settings_page_keeps_credentials_form_for_invalid_env_api_id(client, monkeypatch):
+    monkeypatch.setenv("TG_API_ID", "not-a-number")
+    monkeypatch.setenv("TG_API_HASH", "env-hash")
+
+    resp = await client.get("/settings/")
+
+    assert resp.status_code == 200
+    assert "Управляется через окружение" not in resp.text
+    assert 'action="/settings/save-credentials"' in resp.text
+
+
+@pytest.mark.asyncio
 async def test_settings_page_ignores_invalid_persisted_numeric_settings(client):
     db = client._transport.app.state.db
     await db.set_setting("min_subscribers_filter", "broken")
