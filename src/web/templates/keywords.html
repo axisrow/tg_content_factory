@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}Ключевые слова — TG Post Search{% endblock %}
+{% block content %}
+<h1>Ключевые слова</h1>
+
+<article>
+    <header>Добавить ключевое слово</header>
+    <form method="post" action="/keywords/add">
+        <div class="grid">
+            <label>
+                Паттерн
+                <input type="text" name="pattern" required placeholder="bitcoin">
+            </label>
+            <label>
+                <input type="checkbox" name="is_regex" value="true">
+                Regex
+            </label>
+        </div>
+        <button type="submit">Добавить</button>
+    </form>
+</article>
+
+{% if keywords %}
+<div style="overflow-x:auto">
+<table>
+    <thead>
+        <tr>
+            <th>Паттерн</th>
+            <th>Regex</th>
+            <th>Активен</th>
+            <th>Действия</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for kw in keywords %}
+        <tr>
+            <td><code>{{ kw.pattern }}</code></td>
+            <td>{% if kw.is_regex %}<span class="badge-active">●</span>{% else %}<span class="badge-inactive">●</span>{% endif %}</td>
+            <td>{% if kw.is_active %}<span class="badge-active">●</span>{% else %}<span class="badge-inactive">●</span>{% endif %}</td>
+            <td>
+                <form method="post" action="/keywords/{{ kw.id }}/toggle" style="display:inline">
+                    <button type="submit" class="secondary outline emoji-btn" title="{{ 'Отключить' if kw.is_active else 'Включить' }}">
+                        {{ "⏸️" if kw.is_active else "▶️" }}
+                    </button>
+                </form>
+                <form method="post" action="/keywords/{{ kw.id }}/delete" style="display:inline" onsubmit="return confirm('Вы уверены, что хотите удалить это ключевое слово?')">
+                    <button type="submit" class="contrast outline emoji-btn" title="Удалить">🗑️</button>
+                </form>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+</div>
+{% else %}
+<p>Нет ключевых слов.</p>
+{% endif %}
+{% endblock %}
