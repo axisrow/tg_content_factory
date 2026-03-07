@@ -24,6 +24,7 @@ venv/
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
+pytest-of-*/
 
 # macOS
 .DS_Store
