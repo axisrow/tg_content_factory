@@ -849,8 +849,8 @@ async def test_prefilter_skipped_when_force(db):
 
 
 @pytest.mark.asyncio
-async def test_precheck_runs_when_force_and_first_run(db):
-    """force=True + first_run (last_collected_id=0) → precheck должен выполняться."""
+async def test_precheck_skipped_when_force_and_first_run(db):
+    """force=True + first_run (last_collected_id=0) → precheck пропускается."""
     ch = Channel(
         channel_id=-100207, title="Force First Run",
         channel_type="supergroup", last_collected_id=0,
@@ -859,7 +859,6 @@ async def test_precheck_runs_when_force_and_first_run(db):
 
     mock_client = AsyncMock()
     mock_client.get_entity = AsyncMock(return_value=SimpleNamespace())
-    # iter_messages вызывается дважды: сначала precheck (limit=10), затем основной сбор
     mock_client.iter_messages = MagicMock(return_value=_AsyncIterEmpty())
 
     pool = make_mock_pool(get_available_client=AsyncMock(return_value=(mock_client, "+7000")))
@@ -867,8 +866,8 @@ async def test_precheck_runs_when_force_and_first_run(db):
 
     await collector._collect_channel(ch, force=True)
 
-    # Precheck вызывает iter_messages один раз (sample), затем основной сбор — ещё раз
-    assert mock_client.iter_messages.call_count == 2
+    # Precheck пропущен при force=True — iter_messages вызывается только для основного сбора
+    assert mock_client.iter_messages.call_count == 1
 
 
 @pytest.mark.asyncio

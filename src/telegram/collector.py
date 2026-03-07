@@ -379,7 +379,7 @@ class Collector:
                             return 0
 
             # Pre-check: sample 10 posts to detect cross-channel duplicates
-            if is_first_run:
+            if is_first_run and not force:
                 try:
                     sample_prefixes = await asyncio.wait_for(
                         self._precheck_sample(client, entity, PRECHECK_CROSS_DUPE_SAMPLE),
