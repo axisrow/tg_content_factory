@@ -12,6 +12,7 @@ from src.filters.criteria import (
     NON_CYRILLIC_THRESHOLD,
 )
 from src.filters.models import ChannelFilterResult, FilterReport
+from src.settings_utils import parse_int_setting
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +23,14 @@ class ChannelAnalyzer:
             raise RuntimeError("Database not initialized")
         self._database = db
         self._repo = db.filter_repo
+
+    async def _load_min_subscribers_filter(self) -> int:
+        return parse_int_setting(
+            await self._database.get_setting("min_subscribers_filter"),
+            setting_name="min_subscribers_filter",
+            default=0,
+            logger=logger,
+        )
 
     async def _build_report(self, channel_id: int | None = None) -> FilterReport:
         channels = await self._repo.fetch_channels_for_analysis(channel_id)
@@ -34,8 +43,7 @@ class ChannelAnalyzer:
         cross_dupe_map = await self._repo.fetch_cross_dupe_map(channel_id)
         cyrillic_map = await self._repo.fetch_cyrillic_map(channel_id)
 
-        min_subs_raw = await self._database.get_setting("min_subscribers_filter")
-        min_subs = int(min_subs_raw) if min_subs_raw else 0
+        min_subs = await self._load_min_subscribers_filter()
 
         results: list[ChannelFilterResult] = []
         for channel in channels:
@@ -190,8 +198,7 @@ class ChannelAnalyzer:
                 to_filter.append((channel.channel_id, "low_subscriber_ratio"))
 
         # Применить ручной порог min_subscribers_filter
-        min_subs_raw = await self._database.get_setting("min_subscribers_filter")
-        min_subs = int(min_subs_raw) if min_subs_raw else 0
+        min_subs = await self._load_min_subscribers_filter()
         if min_subs > 0:
             already = {cid for cid, _ in to_filter}
             for channel in channels:

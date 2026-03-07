@@ -1,3 +1,4 @@
+import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -94,6 +95,100 @@ def _make_mock_msg(msg_id, views=100, forwards=5, reactions_count=10):
         forwards=forwards,
         reactions=reactions,
     )
+
+
+class _FakeRouteStatsCollector:
+    def __init__(
+        self,
+        *,
+        result: ChannelStats | None = None,
+        error: Exception | None = None,
+    ):
+        self.is_running = False
+        self.is_stats_running = False
+        self.calls: list[Channel] = []
+        self._result = result
+        self._error = error
+
+    async def collect_channel_stats(self, channel: Channel) -> ChannelStats | None:
+        self.calls.append(channel)
+        if self._error is not None:
+            raise self._error
+        return self._result
+
+
+async def _wait_for_task_status(db, task_id: int, status: str, *, timeout: float = 1.0):
+    async def _poll():
+        while True:
+            task = await db.get_collection_task(task_id)
+            if task is not None and task.status == status:
+                return task
+            await asyncio.sleep(0.01)
+
+    return await asyncio.wait_for(_poll(), timeout=timeout)
+
+
+async def _create_stats_web_test_context(tmp_path, collector):
+    from src.config import AppConfig
+    from src.database import Database
+    from src.scheduler.manager import SchedulerManager
+    from src.search.ai_search import AISearchEngine
+    from src.search.engine import SearchEngine
+    from src.web.app import create_app
+
+    config = AppConfig()
+    config.database.path = str(tmp_path / "test.db")
+    config.telegram.api_id = 12345
+    config.telegram.api_hash = "test_hash"
+    config.web.password = "testpass"
+    app = create_app(config)
+
+    db = Database(config.database.path)
+    await db.initialize()
+    app.state.db = db
+
+    ch = Channel(channel_id=-100123, title="Test Channel", username="test")
+    await db.add_channel(ch)
+    channels = await db.get_channels()
+    pk = channels[0].id
+
+    async def _no_users(self):
+        return []
+
+    async def _resolve_channel(self, identifier):
+        return {
+            "channel_id": -100123,
+            "title": "Test Channel",
+            "username": "test",
+            "channel_type": "channel",
+        }
+
+    async def _get_dialogs(self):
+        return []
+
+    app.state.pool = type(
+        "Pool",
+        (),
+        {
+            "clients": {},
+            "get_users_info": _no_users,
+            "resolve_channel": _resolve_channel,
+            "get_dialogs": _get_dialogs,
+        },
+    )()
+
+    from src.telegram.auth import TelegramAuth
+
+    app.state.auth = TelegramAuth(12345, "test_hash")
+    app.state.notifier = None
+    app.state.collector = collector
+    app.state.search_engine = SearchEngine(db)
+    app.state.ai_search = AISearchEngine(config.llm, db)
+    app.state.scheduler = SchedulerManager(
+        Collector(app.state.pool, db, config.scheduler), config.scheduler
+    )
+    app.state.session_secret = "test_secret_key"
+    return app, db, pk
 
 
 @pytest.mark.asyncio
@@ -202,86 +297,73 @@ async def test_stats_web_endpoint(tmp_path):
     import base64
 
     from httpx import ASGITransport, AsyncClient
-
-    from src.config import AppConfig
-    from src.database import Database
-    from src.scheduler.manager import SchedulerManager
-    from src.search.ai_search import AISearchEngine
-    from src.search.engine import SearchEngine
-    from src.web.app import create_app
-
-    config = AppConfig()
-    config.database.path = str(tmp_path / "test.db")
-    config.telegram.api_id = 12345
-    config.telegram.api_hash = "test_hash"
-    config.web.password = "testpass"
-    app = create_app(config)
-
-    db = Database(config.database.path)
-    await db.initialize()
-    app.state.db = db
-
-    ch = Channel(channel_id=-100123, title="Test Channel", username="test")
-    await db.add_channel(ch)
-    channels = await db.get_channels()
-    pk = channels[0].id
-
-    async def _no_users(self):
-        return []
-
-    async def _resolve_channel(self, identifier):
-        return {
-            "channel_id": -100123,
-            "title": "Test Channel",
-            "username": "test",
-            "channel_type": "channel",
-        }
-
-    async def _get_dialogs(self):
-        return []
-
-    app.state.pool = type(
-        "Pool",
-        (),
-        {
-            "clients": {},
-            "get_users_info": _no_users,
-            "resolve_channel": _resolve_channel,
-            "get_dialogs": _get_dialogs,
-        },
-    )()
-
-    from src.telegram.auth import TelegramAuth
-
-    app.state.auth = TelegramAuth(12345, "test_hash")
-    app.state.notifier = None
-
-    collector = MagicMock()
-    collector.collect_channel_stats = AsyncMock(
-        return_value=ChannelStats(channel_id=-100123, subscriber_count=999)
+    collector = _FakeRouteStatsCollector(
+        result=ChannelStats(channel_id=-100123, subscriber_count=999)
     )
-    collector.is_running = False
-    collector.is_stats_running = False
-    app.state.collector = collector
-    app.state.search_engine = SearchEngine(db)
-    app.state.ai_search = AISearchEngine(config.llm, db)
-    app.state.scheduler = SchedulerManager(
-        Collector(app.state.pool, db, config.scheduler), config.scheduler
-    )
-    app.state.session_secret = "test_secret_key"
+    app, db, pk = await _create_stats_web_test_context(tmp_path, collector)
 
-    transport = ASGITransport(app=app)
-    auth_header = base64.b64encode(b":testpass").decode()
-    async with AsyncClient(
-        transport=transport,
-        base_url="http://test",
-        follow_redirects=False,
-        headers={"Authorization": f"Basic {auth_header}"},
-    ) as c:
-        resp = await c.post(f"/channels/{pk}/stats")
-        assert resp.status_code == 303
-        assert "msg=stats_collection_started" in resp.headers["location"]
-    await db.close()
+    try:
+        transport = ASGITransport(app=app)
+        auth_header = base64.b64encode(b":testpass").decode()
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            follow_redirects=False,
+            headers={"Authorization": f"Basic {auth_header}"},
+        ) as c:
+            resp = await c.post(f"/channels/{pk}/stats")
+            assert resp.status_code == 303
+            assert "msg=stats_collection_started" in resp.headers["location"]
+
+        tasks = await db.get_collection_tasks()
+        assert len(tasks) == 1
+        assert tasks[0].channel_id == -100123
+        assert tasks[0].channel_username == "test"
+        assert tasks[0].id is not None
+
+        task = await _wait_for_task_status(db, tasks[0].id, "completed")
+        assert task.messages_collected == 1
+        assert len(collector.calls) == 1
+        assert collector.calls[0].channel_id == -100123
+        assert collector.calls[0].username == "test"
+    finally:
+        await db.close()
+
+
+@pytest.mark.asyncio
+async def test_stats_web_endpoint_marks_task_failed(tmp_path):
+    import base64
+
+    from httpx import ASGITransport, AsyncClient
+
+    collector = _FakeRouteStatsCollector(error=RuntimeError("stats route failed"))
+    app, db, pk = await _create_stats_web_test_context(tmp_path, collector)
+
+    try:
+        transport = ASGITransport(app=app)
+        auth_header = base64.b64encode(b":testpass").decode()
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            follow_redirects=False,
+            headers={"Authorization": f"Basic {auth_header}"},
+        ) as c:
+            resp = await c.post(f"/channels/{pk}/stats")
+            assert resp.status_code == 303
+            assert "msg=stats_collection_started" in resp.headers["location"]
+
+        tasks = await db.get_collection_tasks()
+        assert len(tasks) == 1
+        assert tasks[0].id is not None
+
+        task = await _wait_for_task_status(db, tasks[0].id, "failed")
+        assert task.error == "stats route failed"
+        assert task.messages_collected == 0
+        assert len(collector.calls) == 1
+        assert collector.calls[0].channel_id == -100123
+        assert collector.calls[0].username == "test"
+    finally:
+        await db.close()
 
 
 @pytest.mark.asyncio

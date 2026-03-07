@@ -11,7 +11,6 @@ scheduler:
   collect_interval_minutes: 30
   delay_between_channels_sec: 2
   delay_between_requests_sec: 1
-  messages_per_channel: 100
   max_flood_wait_sec: 300
 
 notifications:

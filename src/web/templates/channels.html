@@ -35,6 +35,14 @@
     <form method="post" action="/channels/stats/all" style="display:inline">
         <button type="submit" class="outline" style="padding: 0.25rem 0.75rem;">Обновить статистику</button>
     </form>
+    <span id="collect-all-btn">
+        <form method="post" action="/channels/collect-all" style="display:inline"
+              hx-post="/channels/collect-all"
+              hx-target="#collect-all-btn"
+              hx-swap="outerHTML">
+            <button type="submit" class="outline" style="padding: 0.25rem 0.75rem;">Загрузить все</button>
+        </form>
+    </span>
 </div>
 <div style="overflow-x:auto">
 <table class="channels-table">

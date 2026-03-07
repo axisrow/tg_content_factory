@@ -9,6 +9,64 @@ from src.web import deps
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
+# NOTE: _COLLECT_ALL_BTN and _COLLECT_ALL_SPINNER must stay in sync with the
+# corresponding fragment in templates/channels.html (the initial page render uses
+# the Jinja template; HTMX responses use these Python constants).
+_COLLECT_ALL_BTN = (
+    '<span id="collect-all-btn">'
+    '<form method="post" action="/channels/collect-all" style="display:inline"'
+    ' hx-post="/channels/collect-all" hx-target="#collect-all-btn" hx-swap="outerHTML">'
+    '<button type="submit" class="outline" style="padding: 0.25rem 0.75rem;">Загрузить все</button>'
+    '</form>'
+    '</span>'
+)
+
+_COLLECT_ALL_SPINNER = (
+    '<span id="collect-all-btn"'
+    ' hx-get="/channels/collect-all/status"'
+    ' hx-trigger="every 3s"'
+    ' hx-target="#collect-all-btn"'
+    ' hx-swap="outerHTML">'
+    '<button class="outline" disabled title="Запущен">⏳ Загрузка...</button>'
+    '</span>'
+)
+
+_COLLECT_ALL_UNAVAILABLE = (
+    '<span id="collect-all-btn" title="Планировщик недоступен">'
+    '<button class="outline" disabled>⚠️ Недоступно</button>'
+    '</span>'
+)
+
+
+@router.get("/collect-all/status")
+async def collect_all_status(request: Request):
+    scheduler = getattr(request.app.state, "scheduler", None)
+    if scheduler and scheduler.is_collecting:
+        return HTMLResponse(_COLLECT_ALL_SPINNER)
+    return HTMLResponse(_COLLECT_ALL_BTN)
+
+
+@router.post("/collect-all")
+async def collect_all_channels(request: Request):
+    is_htmx = request.headers.get("HX-Request") == "true"
+
+    if getattr(request.app.state, "shutting_down", False):
+        if is_htmx:
+            return HTMLResponse(
+                '<span id="collect-all-btn" title="Сервер останавливается">⚠️</span>'
+            )
+        return RedirectResponse(url="/channels?error=shutting_down", status_code=303)
+
+    scheduler = getattr(request.app.state, "scheduler", None)
+    if is_htmx:
+        if not scheduler:
+            return HTMLResponse(_COLLECT_ALL_UNAVAILABLE)
+        await scheduler.trigger_background()
+        return HTMLResponse(_COLLECT_ALL_SPINNER)
+    if scheduler:
+        await scheduler.trigger_background()
+    return RedirectResponse(url="/channels?msg=collect_all_started", status_code=303)
+
 
 @router.post("/{pk}/collect")
 async def collect_channel(request: Request, pk: int):

@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from src.cli.runtime import init_pool
 from src.config import AppConfig, SchedulerConfig, load_config
 from src.database import Database
 from src.models import Channel, Keyword, Message
@@ -424,22 +425,56 @@ class TestSchedulerStartStop:
     async def test_trigger_returns_immediately(self, app_with_db):
         """POST /scheduler/trigger returns redirect with ?msg=triggered instantly."""
         app, _ = app_with_db
-        collector = app.state.collector
-        collector.collect_all_channels = AsyncMock(return_value={
-            "channels": 0, "messages": 0, "errors": 0,
-        })
+        scheduler = None
+
+        class BlockingCollector:
+            def __init__(self):
+                self.started_event = asyncio.Event()
+                self.release_event = asyncio.Event()
+                self._running = False
+
+            @property
+            def is_running(self):
+                return self._running
+
+            async def collect_all_channels(self):
+                self._running = True
+                self.started_event.set()
+                try:
+                    await self.release_event.wait()
+                    return {"channels": 0, "messages": 0, "errors": 0}
+                finally:
+                    self._running = False
+
+        collector = BlockingCollector()
+        scheduler = SchedulerManager(collector, SchedulerConfig())
+        app.state.collector = collector
+        app.state.scheduler = scheduler
 
         transport = ASGITransport(app=app)
         auth_header = base64.b64encode(b":testpass").decode()
-        async with AsyncClient(
-            transport=transport,
-            base_url="http://test",
-            follow_redirects=False,
-            headers={"Authorization": f"Basic {auth_header}"},
-        ) as c:
-            resp = await c.post("/scheduler/trigger")
-            assert resp.status_code == 303
-            assert "msg=triggered" in resp.headers["location"]
+        try:
+            async with AsyncClient(
+                transport=transport,
+                base_url="http://test",
+                follow_redirects=False,
+                headers={"Authorization": f"Basic {auth_header}"},
+            ) as c:
+                resp = await c.post("/scheduler/trigger")
+                assert resp.status_code == 303
+                assert "msg=triggered" in resp.headers["location"]
+
+            await asyncio.wait_for(collector.started_event.wait(), timeout=1.0)
+            assert scheduler._bg_task is not None
+            assert not scheduler._bg_task.done()
+            assert collector.is_running is True
+        finally:
+            collector.release_event.set()
+            if scheduler is not None:
+                await scheduler.stop()
+
+        assert scheduler._bg_task is None
+        assert collector.is_running is False
 
     @pytest.mark.asyncio
     async def test_trigger_while_collecting(self, app_with_db):
@@ -716,26 +751,45 @@ class TestGracefulShutdown:
     @pytest.mark.asyncio
     async def test_trigger_task_cancelled_on_stop(self, test_db):
         """trigger_background -> stop -> task is cancelled, collector not running."""
+        await test_db.add_channel(
+            Channel(channel_id=-100765, title="Blocking Channel", username="blocking_channel")
+        )
         pool = _make_pool(get_available_client=AsyncMock(return_value=None))
 
-        config = SchedulerConfig()
+        config = SchedulerConfig(delay_between_requests_sec=0)
         collector = Collector(pool, test_db, config)
         manager = SchedulerManager(collector, config)
 
-        # Use a slow coroutine so the task is still running when we stop
-        async def _slow_collect():
-            await asyncio.sleep(10)
-            return {"channels": 0, "messages": 0, "errors": 0}
+        started_event = asyncio.Event()
+        release_event = asyncio.Event()
+        cancelled_event = asyncio.Event()
 
-        collector.collect_all_channels = AsyncMock(side_effect=_slow_collect)
+        async def _blocking_collect(_channel, **_kwargs):
+            started_event.set()
+            try:
+                await release_event.wait()
+                return 0
+            except asyncio.CancelledError:
+                cancelled_event.set()
+                raise
 
-        await manager.trigger_background()
-        assert manager._bg_task is not None
-        assert not manager._bg_task.done()
+        collector._collect_channel = AsyncMock(side_effect=_blocking_collect)
 
-        await manager.stop()
+        try:
+            await manager.trigger_background()
+            assert manager._bg_task is not None
+            await asyncio.wait_for(started_event.wait(), timeout=1.0)
+            assert not manager._bg_task.done()
+            assert collector.is_running is True
+
+            await manager.stop()
+            await asyncio.wait_for(cancelled_event.wait(), timeout=1.0)
+        finally:
+            release_event.set()
+
         assert manager._bg_task is None
         assert collector.is_running is False
+        assert cancelled_event.is_set()
 
     @pytest.mark.asyncio
     async def test_stop_without_bg_task_is_safe(self, test_db):
@@ -748,6 +802,38 @@ class TestGracefulShutdown:
         # Should not raise
         await manager.stop()
         assert manager._bg_task is None
+
+    @pytest.mark.asyncio
+    async def test_trigger_background_deduplicates_racing_calls(self, test_db):
+        await test_db.add_channel(
+            Channel(channel_id=-100876, title="Race Channel", username="race_channel")
+        )
+        pool = _make_pool(get_available_client=AsyncMock(return_value=None))
+        config = SchedulerConfig(delay_between_requests_sec=0)
+        collector = Collector(pool, test_db, config)
+        manager = SchedulerManager(collector, config)
+
+        started_event = asyncio.Event()
+        release_event = asyncio.Event()
+        call_count = 0
+
+        async def _blocking_collect(_channel, **_kwargs):
+            nonlocal call_count
+            call_count += 1
+            started_event.set()
+            await release_event.wait()
+            return 0
+
+        collector._collect_channel = AsyncMock(side_effect=_blocking_collect)
+
+        try:
+            await asyncio.gather(manager.trigger_background(), manager.trigger_background())
+            await asyncio.wait_for(started_event.wait(), timeout=1.0)
+            assert manager._bg_task is not None
+            assert call_count == 1
+        finally:
+            release_event.set()
+            await manager.stop()
 
 
 class TestAPICredentialsFallback:
@@ -777,3 +863,42 @@ class TestAPICredentialsFallback:
                 assert app.state.auth.is_configured is True
                 assert app.state.auth._api_id == 99999
                 assert app.state.auth._api_hash == "hash_from_db"
+
+    @pytest.mark.asyncio
+    async def test_invalid_api_id_in_db_does_not_crash_lifespan(self, tmp_path):
+        from src.web.app import lifespan
+
+        db_path = str(tmp_path / "bad-web.db")
+        db = Database(db_path)
+        await db.initialize()
+        await db.set_setting("tg_api_id", "not-a-number")
+        await db.set_setting("tg_api_hash", "hash_from_db")
+        await db.close()
+
+        config = AppConfig()
+        config.database.path = db_path
+
+        with patch.object(ClientPool, "initialize", new_callable=AsyncMock) as initialize:
+            app = create_app(config)
+            async with lifespan(app):
+                assert app.state.auth.is_configured is False
+                initialize.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_invalid_api_id_in_db_does_not_crash_cli_pool_init(self, tmp_path):
+        db_path = str(tmp_path / "bad-cli.db")
+        db = Database(db_path)
+        await db.initialize()
+        await db.set_setting("tg_api_id", "not-a-number")
+        await db.set_setting("tg_api_hash", "hash_from_db")
+
+        config = AppConfig()
+        config.database.path = db_path
+
+        with patch.object(ClientPool, "initialize", new_callable=AsyncMock) as initialize:
+            auth, pool = await init_pool(config, db)
+
+        assert auth.is_configured is False
+        assert isinstance(pool, ClientPool)
+        initialize.assert_awaited_once()
+        await db.close()
