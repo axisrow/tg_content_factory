@@ -30,7 +30,6 @@ class CollectionQueue:
     async def cancel_task(self, task_id: int, note: str | None = None) -> bool:
         if task_id == self._current_task_id:
             await self._collector.cancel()
-            return await self._db.cancel_collection_task(task_id, note=note)
         return await self._db.cancel_collection_task(task_id, note=note)
 
     def _ensure_worker(self) -> None:
