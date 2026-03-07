@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from urllib.parse import quote
+
 from fastapi import APIRouter, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 
 from src.web import deps
 
@@ -9,7 +11,12 @@ router = APIRouter()
 
 
 @router.get("/", response_class=HTMLResponse)
-async def my_telegram_page(request: Request, phone: str | None = None):
+async def my_telegram_page(
+    request: Request,
+    phone: str | None = None,
+    left: int = 0,
+    failed: int = 0,
+):
     pool = deps.get_pool(request)
     accounts = sorted(pool.clients.keys())
     selected_phone = phone or (accounts[0] if accounts else None)
@@ -21,5 +28,25 @@ async def my_telegram_page(request: Request, phone: str | None = None):
             "accounts": accounts,
             "selected_phone": selected_phone,
             "dialogs": dialogs,
+            "left": left,
+            "failed": failed,
         }
+    )
+
+
+@router.post("/leave")
+async def leave_dialogs(request: Request):
+    form = await request.form()
+    phone = form.get("phone", "")
+    dialogs: list[tuple[int, str]] = []
+    for item in form.getlist("channel_ids"):
+        parts = item.split(":", 1)
+        if len(parts) == 2 and parts[0].lstrip("-").isdigit():
+            dialogs.append((int(parts[0]), parts[1]))
+    results = await deps.channel_service(request).leave_dialogs(phone, dialogs)
+    left = sum(1 for v in results.values() if v)
+    failed = len(results) - left
+    return RedirectResponse(
+        url=f"/my-telegram/?phone={quote(phone, safe='')}&left={left}&failed={failed}",
+        status_code=303,
     )

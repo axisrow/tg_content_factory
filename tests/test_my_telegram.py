@@ -48,6 +48,9 @@ async def client(tmp_path):
     async def _no_users(self):
         return []
 
+    async def _leave_channels(self, phone, dialogs):
+        return {cid: True for cid, _ in dialogs}
+
     app.state.pool = type(
         "Pool",
         (),
@@ -56,6 +59,7 @@ async def client(tmp_path):
             "get_users_info": _no_users,
             "get_dialogs": _get_dialogs,
             "get_dialogs_for_phone": _get_dialogs_for_phone,
+            "leave_channels": _leave_channels,
         },
     )()
 
@@ -129,6 +133,127 @@ async def test_my_telegram_page_requires_auth(tmp_path):
         resp = await c.get("/my-telegram/")
     assert resp.status_code == 401
     await db.close()
+
+
+@pytest.mark.asyncio
+async def test_leave_channels_success():
+    """All dialogs → True; PeerChannel for channels/groups, PeerUser for dm/bot."""
+    from telethon.tl.types import PeerChannel, PeerUser
+
+    from src.telegram.client_pool import ClientPool
+
+    pool = MagicMock(spec=ClientPool)
+    mock_client = MagicMock()
+    received_peers = []
+
+    async def _get_entity(peer):
+        received_peers.append(peer)
+        return MagicMock()
+
+    mock_client.get_entity = _get_entity
+    mock_client.delete_dialog = AsyncMock()
+
+    pool.get_client_by_phone = AsyncMock(return_value=(mock_client, "+1234567890"))
+    pool.release_client = AsyncMock()
+
+    dialogs = [(-100111, "channel"), (999, "dm")]
+    with patch("src.telegram.client_pool.asyncio.sleep", AsyncMock()):
+        result = await ClientPool.leave_channels(pool, "+1234567890", dialogs)
+
+    assert result == {-100111: True, 999: True}
+    assert mock_client.delete_dialog.await_count == 2
+    assert isinstance(received_peers[0], PeerChannel)
+    assert received_peers[0].channel_id == 100111
+    assert isinstance(received_peers[1], PeerUser)
+    assert received_peers[1].user_id == 999
+
+
+@pytest.mark.asyncio
+async def test_leave_channels_partial_failure():
+    """One delete_dialog raises RuntimeError → that id is False, others True."""
+    from src.telegram.client_pool import ClientPool
+
+    pool = MagicMock(spec=ClientPool)
+    mock_client = MagicMock()
+
+    call_count = 0
+
+    async def _get_entity(peer):
+        return MagicMock()
+
+    async def _delete_dialog(entity):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise RuntimeError("some error")
+
+    mock_client.get_entity = _get_entity
+    mock_client.delete_dialog = _delete_dialog
+
+    pool.get_client_by_phone = AsyncMock(return_value=(mock_client, "+1234567890"))
+    pool.release_client = AsyncMock()
+
+    dialogs = [(-100111, "channel"), (-100222, "supergroup")]
+    with patch("src.telegram.client_pool.asyncio.sleep", AsyncMock()):
+        result = await ClientPool.leave_channels(pool, "+1234567890", dialogs)
+
+    assert result[-100111] is False
+    assert result[-100222] is True
+
+
+@pytest.mark.asyncio
+async def test_leave_channels_flood_breaks_loop():
+    """FloodWaitError → reports flood, marks all remaining ids as False, stops loop."""
+    from telethon.errors import FloodWaitError
+
+    from src.telegram.client_pool import ClientPool
+
+    pool = MagicMock(spec=ClientPool)
+    mock_client = MagicMock()
+
+    async def _get_entity(peer):
+        return MagicMock()
+
+    async def _delete_dialog(entity):
+        err = FloodWaitError(request=None)
+        err.seconds = 60
+        raise err
+
+    mock_client.get_entity = _get_entity
+    mock_client.delete_dialog = _delete_dialog
+
+    pool.get_client_by_phone = AsyncMock(return_value=(mock_client, "+1234567890"))
+    pool.release_client = AsyncMock()
+    pool.report_flood = AsyncMock()
+
+    dialogs = [(-100111, "channel"), (-100222, "supergroup")]
+    with patch("src.telegram.client_pool.asyncio.sleep", AsyncMock()):
+        result = await ClientPool.leave_channels(pool, "+1234567890", dialogs)
+
+    assert result[-100111] is False
+    assert result[-100222] is False
+    pool.report_flood.assert_awaited_once_with("+1234567890", 60)
+
+
+@pytest.mark.asyncio
+async def test_leave_dialogs_post(client):
+    """POST /my-telegram/leave redirects with left/failed counts."""
+    resp = await client.post(
+        "/my-telegram/leave",
+        data={"phone": "+1234567890", "channel_ids": ["-100111:channel", "-100222:supergroup"]},
+    )
+    assert resp.status_code == 200  # follow_redirects=True → final GET
+    assert "left=2" in str(resp.url) or "Отписались" in resp.text
+
+
+@pytest.mark.asyncio
+async def test_leave_dialogs_flash_message(client):
+    """GET with left/failed params shows flash banner."""
+    resp = await client.get("/my-telegram/?phone=%2B1234567890&left=2&failed=1")
+    assert resp.status_code == 200
+    assert "Отписались" in resp.text
+    assert "<strong>2</strong>" in resp.text
+    assert "<strong>1</strong>" in resp.text
 
 
 @pytest.mark.asyncio
