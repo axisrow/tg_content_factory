@@ -49,15 +49,20 @@ td, th {
 .channels-table td:nth-child(7) { width: 85px; }    /* Подписчики */
 
 .channels-table th:nth-child(8),
-.channels-table td:nth-child(8) { width: 145px; }   /* Действия */
+.channels-table td:nth-child(8) { width: 80px; }    /* Фильтр */
+
+.channels-table th:nth-child(9),
+.channels-table td:nth-child(9) { width: 145px; }   /* Действия */
 
 .emoji-btn {
-    padding: 0.1rem 0.3rem !important;
+    padding: 0.35rem 0.5rem !important;
+    min-height: 44px;
     font-size: 1rem;
     line-height: 1;
     margin: 0 1px;
     width: auto !important;
     display: inline-flex !important;
+    align-items: center;
 }
 
 .channels-table td:nth-child(1),
@@ -138,5 +143,7 @@ form button[style*="padding"] {
     flex-wrap: nowrap;
     padding-bottom: 0.25rem;
     -webkit-overflow-scrolling: touch;
+    -webkit-mask-image: linear-gradient(to right, black 85%, transparent 100%);
+    mask-image: linear-gradient(to right, black 85%, transparent 100%);
   }
 }

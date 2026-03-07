@@ -17,7 +17,7 @@ from httpx import ASGITransport, AsyncClient
 from src.cli.runtime import init_pool
 from src.config import AppConfig, SchedulerConfig, load_config
 from src.database import Database
-from src.models import Channel, Keyword, Message
+from src.models import Account, Channel, Keyword, Message
 from src.scheduler.manager import SchedulerManager
 from src.search.ai_search import AISearchEngine
 from src.search.engine import SearchEngine
@@ -78,6 +78,8 @@ async def app_with_db(tmp_path):
     app.state.search_engine = SearchEngine(db)
     app.state.ai_search = AISearchEngine(config.llm, db)
     app.state.scheduler = SchedulerManager(collector, config.scheduler)
+
+    await db.add_account(Account(phone="+1234567890", session_string="test_session"))
 
     yield app, db
 

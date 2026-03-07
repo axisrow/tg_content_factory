@@ -276,10 +276,10 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
 
     # Register routes
     from src.web.routes.auth import router as auth_router
-    from src.web.routes.debug import router as debug_router
     from src.web.routes.channel_collection import router as channel_collection_router
     from src.web.routes.channels import router as channels_router
     from src.web.routes.dashboard import router as dashboard_router
+    from src.web.routes.debug import router as debug_router
     from src.web.routes.filter import router as filter_router
     from src.web.routes.import_channels import router as import_router
     from src.web.routes.keywords import router as keywords_router

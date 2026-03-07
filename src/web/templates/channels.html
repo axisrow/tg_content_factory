@@ -13,7 +13,7 @@
                 <small>Форматы: <code>@username</code>, <code>t.me/username</code>, <code>https://t.me/username</code>, <code>https://t.me/+invite_hash</code>, <code>числовой ID</code></small>
             </label>
         </div>
-        <div style="display:flex;gap:0.5rem">
+        <div style="display:flex;gap:0.5rem;flex-wrap:wrap">
             <button type="submit" style="flex:1">Добавить</button>
             <button type="button" class="secondary" onclick="openSubscriptions()" style="white-space:nowrap">Мои подписки</button>
             <a href="/channels/import" role="button" class="secondary outline" style="white-space:nowrap">Импорт</a>
@@ -149,7 +149,7 @@
             <button aria-label="Close" rel="prev" onclick="this.closest('dialog').close()"></button>
             <h3>Мои подписки</h3>
         </header>
-        <div id="subscriptions-list">Загрузка...</div>
+        <div id="subscriptions-list" style="overflow-x:auto">Загрузка...</div>
         <footer>
             <button class="secondary" onclick="this.closest('dialog').close()">Отмена</button>
             <button onclick="addSelected()">Добавить выбранные</button>
