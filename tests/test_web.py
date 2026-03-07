@@ -1064,15 +1064,11 @@ async def test_collect_all_htmx_returns_scheduler_link_and_creates_tasks(client,
 
 
 @pytest.mark.asyncio
-async def test_collect_all_htmx_noop_when_tasks_already_exist(client, monkeypatch):
+async def test_collect_all_htmx_noop_when_tasks_already_exist(client):
     from src.models import Channel
 
     db = client._transport.app.state.db
-    monkeypatch.setattr(
-        client._transport.app.state.collection_queue,
-        "_ensure_worker",
-        lambda: None,
-    )
+    client._transport.app.state.collection_queue._ensure_worker = lambda: None
     await db.add_channel(Channel(channel_id=-100703, title="Ch3", username="ch3"))
     await db.add_channel(Channel(channel_id=-100704, title="Ch4", username="ch4"))
     channel = await db.get_channel_by_channel_id(-100703)
@@ -1168,7 +1164,7 @@ async def test_enqueue_all_channels_skips_inactive_filtered_and_duplicate_tasks(
     assert channel is not None
     await queue.enqueue(channel, force=True)
 
-    result = await CollectionService(db, collector, queue).enqueue_all_channels(force=True)
+    result = await CollectionService(db, collector, queue).enqueue_all_channels()
 
     assert result.total_candidates == 2
     assert result.queued_count == 1
