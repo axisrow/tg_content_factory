@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import base64
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -21,6 +22,7 @@ _FAKE_DIALOGS = [
     {"channel_id": -100111, "title": "My Channel", "username": "mychan", "channel_type": "channel", "deactivate": False},
     {"channel_id": -100222, "title": "My Group", "username": None, "channel_type": "supergroup", "deactivate": False},
     {"channel_id": 999, "title": "Some User", "username": "someuser", "channel_type": "dm", "deactivate": False},
+    {"channel_id": 888, "title": "My Bot", "username": "mybot", "channel_type": "bot", "deactivate": False},
 ]
 
 
@@ -98,6 +100,13 @@ async def test_my_telegram_page_shows_dialogs(client):
     assert resp.status_code == 200
     assert "My Channel" in resp.text
     assert "My Group" in resp.text
+    assert "Some User" in resp.text
+    assert "My Bot" in resp.text
+    # All 4 tabs present
+    assert "tab-channels" in resp.text
+    assert "tab-groups" in resp.text
+    assert "tab-dms" in resp.text
+    assert "tab-bots" in resp.text
 
 
 @pytest.mark.asyncio
@@ -146,3 +155,88 @@ async def test_get_my_dialogs_enriches_already_added(db):
     assert by_id[-100111]["already_added"] is True
     assert by_id[-100222]["already_added"] is False
     assert by_id[999]["already_added"] is False
+    assert by_id[888]["already_added"] is False
+
+
+@pytest.mark.asyncio
+async def test_get_my_dialogs_bot_type():
+    """entity with bot=True → channel_type='bot'."""
+    from src.telegram.client_pool import ClientPool
+
+    pool = MagicMock(spec=ClientPool)
+
+    bot_entity = MagicMock()
+    bot_entity.id = 777
+    bot_entity.username = "testbot"
+    bot_entity.bot = True
+
+    bot_dialog = MagicMock()
+    bot_dialog.entity = bot_entity
+    bot_dialog.title = "Test Bot"
+    bot_dialog.is_channel = False
+    bot_dialog.is_group = False
+
+    async def _fake_iter_dialogs():
+        yield bot_dialog
+
+    mock_client = MagicMock()
+    mock_client.iter_dialogs.return_value = _fake_iter_dialogs()
+
+    pool.get_client_by_phone = AsyncMock(return_value=(mock_client, "+1234567890"))
+    pool.release_client = AsyncMock()
+
+    # Call the real method
+    result = await ClientPool.get_dialogs_for_phone(pool, "+1234567890", include_dm=True)
+
+    assert len(result) == 1
+    assert result[0]["channel_type"] == "bot"
+    assert result[0]["channel_id"] == 777
+
+
+@pytest.mark.asyncio
+async def test_get_dialogs_for_phone_partial_on_timeout():
+    """When iter_dialogs times out, partial accumulated results are returned."""
+    from src.telegram.client_pool import ClientPool
+
+    pool = MagicMock(spec=ClientPool)
+
+    async def _slow_iter_dialogs():
+        # Yield one dialog then hang indefinitely
+        chan_entity = MagicMock()
+        chan_entity.id = -100999
+        chan_entity.username = "fastchan"
+        chan_entity.megagroup = False
+        chan_entity.broadcast = True
+        chan_entity.gigagroup = False
+        chan_entity.forum = False
+        chan_entity.scam = False
+        chan_entity.fake = False
+        chan_entity.restricted = False
+
+        dialog = MagicMock()
+        dialog.entity = chan_entity
+        dialog.title = "Fast Channel"
+        dialog.is_channel = True
+        dialog.is_group = False
+        yield dialog
+
+        await asyncio.sleep(120)
+
+    mock_client = MagicMock()
+    mock_client.iter_dialogs.return_value = _slow_iter_dialogs()
+
+    pool.get_client_by_phone = AsyncMock(return_value=(mock_client, "+1234567890"))
+    pool.release_client = AsyncMock()
+    pool._classify_entity = MagicMock(return_value=("channel", False))
+
+    # Patch wait_for to use a tiny timeout so we don't wait 60 s in tests
+    original_wait_for = asyncio.wait_for
+
+    async def fast_wait_for(coro, timeout):
+        return await original_wait_for(coro, timeout=min(timeout, 0.05))
+
+    with patch("src.telegram.client_pool.asyncio.wait_for", fast_wait_for):
+        result = await ClientPool.get_dialogs_for_phone(pool, "+1234567890")
+
+    assert len(result) == 1
+    assert result[0]["channel_id"] == -100999

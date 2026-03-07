@@ -7,61 +7,143 @@
 <p>Нет подключённых аккаунтов. Добавьте аккаунт в <a href="/settings">Настройках</a>.</p>
 {% else %}
 
-<form method="get" action="/my-telegram" style="max-width:400px;margin-bottom:1.5rem"
-      hx-get="/my-telegram" hx-target="body" hx-push-url="true" hx-indicator="#dialogs-loading">
+<div style="max-width:400px;margin-bottom:1.5rem">
     <label>
         Аккаунт
-        <select name="phone" onchange="htmx.trigger(this.form, 'submit')">
+        <select name="phone"
+                hx-get="/my-telegram"
+                hx-target="body"
+                hx-push-url="true"
+                hx-trigger="change"
+                hx-indicator="#dialogs-loading">
             {% for acc in accounts %}
             <option value="{{ acc }}" {% if acc == selected_phone %}selected{% endif %}>{{ acc }}</option>
             {% endfor %}
         </select>
     </label>
-</form>
+</div>
 <span id="dialogs-loading" class="htmx-indicator" aria-label="Загрузка…">⏳ Загрузка диалогов…</span>
 
+<style>
+.tab-pane { display: none; }
+#tab-channels:checked ~ #pane-channels { display: block; }
+#tab-groups:checked ~ #pane-groups { display: block; }
+#tab-dms:checked ~ #pane-dms { display: block; }
+#tab-bots:checked ~ #pane-bots { display: block; }
+
+.tab-label {
+    cursor: pointer;
+    padding: 0.4rem 0.8rem;
+    border-radius: 4px 4px 0 0;
+    color: var(--pico-muted-color);
+    user-select: none;
+}
+#tab-channels:checked ~ [role="tablist"] label[for="tab-channels"],
+#tab-groups:checked ~ [role="tablist"] label[for="tab-groups"],
+#tab-dms:checked ~ [role="tablist"] label[for="tab-dms"],
+#tab-bots:checked ~ [role="tablist"] label[for="tab-bots"] {
+    color: var(--pico-color);
+    border-bottom: 2px solid var(--pico-primary);
+    margin-bottom: -2px;
+}
+</style>
+
 {% if dialogs %}
+{% set channels = dialogs | selectattr("channel_type", "in", ["channel", "monoforum", "scam", "fake", "restricted"]) | list %}
+{% set groups = dialogs | selectattr("channel_type", "in", ["supergroup", "group", "gigagroup", "forum"]) | list %}
+{% set dms = dialogs | selectattr("channel_type", "equalto", "dm") | list %}
+{% set bots = dialogs | selectattr("channel_type", "equalto", "bot") | list %}
+
 <p style="color:var(--pico-muted-color)">Всего диалогов: <strong>{{ dialogs|length }}</strong></p>
+
+<input type="radio" name="tab" id="tab-channels" checked hidden>
+<input type="radio" name="tab" id="tab-groups" hidden>
+<input type="radio" name="tab" id="tab-dms" hidden>
+<input type="radio" name="tab" id="tab-bots" hidden>
+
+<div role="tablist" style="display:flex;gap:0.5rem;margin-bottom:1rem;border-bottom:2px solid var(--pico-muted-border-color)">
+    <label for="tab-channels" class="tab-label" role="tab">Каналы ({{ channels|length }})</label>
+    <label for="tab-groups" class="tab-label" role="tab">Группы ({{ groups|length }})</label>
+    <label for="tab-dms" class="tab-label" role="tab">ДМ ({{ dms|length }})</label>
+    <label for="tab-bots" class="tab-label" role="tab">Боты ({{ bots|length }})</label>
+</div>
+
+<div class="tab-pane" id="pane-channels">
+{% if channels %}
 <div style="overflow-x:auto">
 <table>
-    <thead>
-        <tr>
-            <th>Тип</th>
-            <th>Название</th>
-            <th>Username</th>
-            <th>В базе</th>
-        </tr>
-    </thead>
+    <thead><tr><th>Тип</th><th>Название</th><th>Username</th><th>В базе</th></tr></thead>
     <tbody>
-        {% for d in dialogs %}
-        <tr>
-            <td>
-                {% if d.channel_type == "channel" %}
-                <span class="badge-active">channel</span>
-                {% elif d.channel_type == "supergroup" %}
-                <span class="badge-active">supergroup</span>
-                {% elif d.channel_type == "group" %}
-                <span class="badge-inactive">group</span>
-                {% elif d.channel_type == "dm" %}
-                <span class="badge-inactive">dm</span>
-                {% elif d.channel_type == "forum" %}
-                <span class="badge-active">forum</span>
-                {% elif d.channel_type == "gigagroup" %}
-                <span class="badge-active">gigagroup</span>
-                {% elif d.channel_type == "monoforum" %}
-                <span class="badge-active">monoforum</span>
-                {% else %}
-                <span class="badge-inactive">{{ d.channel_type }}</span>
-                {% endif %}
-            </td>
-            <td>{{ d.title }}</td>
-            <td>{% if d.username %}<a href="https://t.me/{{ d.username }}" target="_blank" rel="noopener">@{{ d.username }}</a>{% else %}<span style="color:var(--pico-muted-color)">—</span>{% endif %}</td>
-            <td>{% if d.already_added %}<span class="badge-active">✓</span>{% else %}<span style="color:var(--pico-muted-color)">—</span>{% endif %}</td>
-        </tr>
-        {% endfor %}
+    {% for d in channels %}
+    <tr>
+        <td><span class="badge-active">{{ d.channel_type }}</span></td>
+        <td>{{ d.title }}</td>
+        <td>{% if d.username %}<a href="https://t.me/{{ d.username }}" target="_blank" rel="noopener">@{{ d.username }}</a>{% else %}<span style="color:var(--pico-muted-color)">—</span>{% endif %}</td>
+        <td>{% if d.already_added %}<span class="badge-active">✓</span>{% else %}<span style="color:var(--pico-muted-color)">—</span>{% endif %}</td>
+    </tr>
+    {% endfor %}
     </tbody>
 </table>
 </div>
+{% else %}<p>Нет каналов.</p>{% endif %}
+</div>
+
+<div class="tab-pane" id="pane-groups">
+{% if groups %}
+<div style="overflow-x:auto">
+<table>
+    <thead><tr><th>Тип</th><th>Название</th><th>Username</th><th>В базе</th></tr></thead>
+    <tbody>
+    {% for d in groups %}
+    <tr>
+        <td><span class="badge-active">{{ d.channel_type }}</span></td>
+        <td>{{ d.title }}</td>
+        <td>{% if d.username %}<a href="https://t.me/{{ d.username }}" target="_blank" rel="noopener">@{{ d.username }}</a>{% else %}<span style="color:var(--pico-muted-color)">—</span>{% endif %}</td>
+        <td>{% if d.already_added %}<span class="badge-active">✓</span>{% else %}<span style="color:var(--pico-muted-color)">—</span>{% endif %}</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+</table>
+</div>
+{% else %}<p>Нет групп.</p>{% endif %}
+</div>
+
+<div class="tab-pane" id="pane-dms">
+{% if dms %}
+<div style="overflow-x:auto">
+<table>
+    <thead><tr><th>Название</th><th>Username</th></tr></thead>
+    <tbody>
+    {% for d in dms %}
+    <tr>
+        <td>{{ d.title }}</td>
+        <td>{% if d.username %}<a href="https://t.me/{{ d.username }}" target="_blank" rel="noopener">@{{ d.username }}</a>{% else %}<span style="color:var(--pico-muted-color)">—</span>{% endif %}</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+</table>
+</div>
+{% else %}<p>Нет личных диалогов.</p>{% endif %}
+</div>
+
+<div class="tab-pane" id="pane-bots">
+{% if bots %}
+<div style="overflow-x:auto">
+<table>
+    <thead><tr><th>Название</th><th>Username</th></tr></thead>
+    <tbody>
+    {% for d in bots %}
+    <tr>
+        <td>{{ d.title }}</td>
+        <td>{% if d.username %}<a href="https://t.me/{{ d.username }}" target="_blank" rel="noopener">@{{ d.username }}</a>{% else %}<span style="color:var(--pico-muted-color)">—</span>{% endif %}</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+</table>
+</div>
+{% else %}<p>Нет ботов.</p>{% endif %}
+</div>
+
 {% else %}
 <p>Нет диалогов.</p>
 {% endif %}

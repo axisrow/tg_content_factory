@@ -342,8 +342,9 @@ class ClientPool:
             return []
         client, phone = result
         try:
-            async def _iter() -> list[dict]:
-                items: list[dict] = []
+            items: list[dict] = []
+
+            async def _iter() -> None:
                 async for dialog in client.iter_dialogs():
                     entity = dialog.entity
                     if dialog.is_channel or dialog.is_group:
@@ -356,20 +357,24 @@ class ClientPool:
                             "deactivate": deactivate,
                         })
                     elif include_dm:
+                        is_bot = getattr(entity, "bot", False)
                         items.append({
                             "channel_id": entity.id,
                             "title": dialog.title,
                             "username": getattr(entity, "username", None),
-                            "channel_type": "dm",
+                            "channel_type": "bot" if is_bot else "dm",
                             "deactivate": False,
                         })
-                return items
 
             try:
-                return await asyncio.wait_for(_iter(), timeout=60.0)
+                await asyncio.wait_for(_iter(), timeout=60.0)
             except asyncio.TimeoutError:
-                logger.warning("get_dialogs_for_phone: timed out for %s", phone)
-                return []
+                logger.warning(
+                    "get_dialogs_for_phone: timed out for %s, returning %d partial results",
+                    phone,
+                    len(items),
+                )
+            return items
         finally:
             await self.release_client(phone)
 
