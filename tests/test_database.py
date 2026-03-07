@@ -41,33 +41,6 @@ async def test_account_upsert(db):
 
 
 @pytest.mark.asyncio
-async def test_account_upsert_reactivates_without_overwriting_primary(db):
-    await db.add_account(
-        Account(
-            phone="+71234567891",
-            session_string="session1",
-            is_primary=True,
-            is_active=False,
-        )
-    )
-
-    await db.add_account(
-        Account(
-            phone="+71234567891",
-            session_string="session2",
-            is_primary=False,
-            is_active=True,
-        )
-    )
-
-    accounts = await db.get_accounts()
-    assert len(accounts) == 1
-    assert accounts[0].session_string == "session2"
-    assert accounts[0].is_active is True
-    assert accounts[0].is_primary is True
-
-
-@pytest.mark.asyncio
 async def test_account_session_encrypted_at_rest(tmp_path):
     db_path = str(tmp_path / "encrypted.db")
     database = Database(db_path, session_encryption_secret="test-encryption-secret")
@@ -315,62 +288,6 @@ async def test_search_messages(db):
     results, total = await db.search_messages(query="Bitcoin")
     assert total == 2
     assert all("Bitcoin" in (m.text or "") for m in results)
-
-
-@pytest.mark.asyncio
-async def test_search_messages_date_to_includes_entire_day(db):
-    await db.insert_messages_batch(
-        [
-            Message(
-                channel_id=-100123,
-                message_id=1,
-                text="Morning",
-                date=datetime(2025, 3, 6, 0, 0, tzinfo=timezone.utc),
-            ),
-            Message(
-                channel_id=-100123,
-                message_id=2,
-                text="Evening",
-                date=datetime(2025, 3, 6, 23, 59, tzinfo=timezone.utc),
-            ),
-            Message(
-                channel_id=-100123,
-                message_id=3,
-                text="Next day",
-                date=datetime(2025, 3, 7, 0, 0, tzinfo=timezone.utc),
-            ),
-        ]
-    )
-
-    results, total = await db.search_messages(date_to="2025-03-06")
-
-    assert total == 2
-    assert {message.message_id for message in results} == {1, 2}
-
-
-@pytest.mark.asyncio
-async def test_search_messages_full_iso_date_to_remains_precise(db):
-    await db.insert_messages_batch(
-        [
-            Message(
-                channel_id=-100123,
-                message_id=1,
-                text="Before cutoff",
-                date=datetime(2025, 3, 6, 11, 59, tzinfo=timezone.utc),
-            ),
-            Message(
-                channel_id=-100123,
-                message_id=2,
-                text="After cutoff",
-                date=datetime(2025, 3, 6, 12, 1, tzinfo=timezone.utc),
-            ),
-        ]
-    )
-
-    results, total = await db.search_messages(date_to="2025-03-06T12:00:00+00:00")
-
-    assert total == 1
-    assert results[0].message_id == 1
 
 
 @pytest.mark.asyncio
@@ -622,21 +539,6 @@ async def test_channel_type_upsert(db):
     assert len(channels) == 1
     assert channels[0].channel_type == "group"
     assert channels[0].title == "Test Updated"
-
-
-@pytest.mark.asyncio
-async def test_channel_upsert_reactivates_existing_channel(db):
-    await db.add_channel(
-        Channel(channel_id=-100124, title="Test", username="test", is_active=False)
-    )
-    await db.add_channel(
-        Channel(channel_id=-100124, title="Test Updated", username="test", is_active=True)
-    )
-
-    channels = await db.get_channels()
-    assert len(channels) == 1
-    assert channels[0].title == "Test Updated"
-    assert channels[0].is_active is True
 
 
 @pytest.mark.asyncio

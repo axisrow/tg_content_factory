@@ -20,7 +20,6 @@ from src.database import Database
 from src.scheduler.manager import SchedulerManager
 from src.search.ai_search import AISearchEngine
 from src.search.engine import SearchEngine
-from src.services.notification_target_service import NotificationTargetService
 from src.services.stats_task_dispatcher import StatsTaskDispatcher
 from src.telegram.auth import TelegramAuth
 from src.telegram.client_pool import ClientPool
@@ -138,11 +137,11 @@ async def lifespan(app: FastAPI):
         await pool.initialize()
     app.state.pool = pool
 
-    # Notification account selection + notifier
-    notification_target_service = NotificationTargetService(db, pool)
-    app.state.notification_target_service = notification_target_service
-
-    notifier = Notifier(notification_target_service, config.notifications.admin_chat_id)
+    # Notifier
+    primary_client = None
+    if pool.clients:
+        primary_client = next(iter(pool.clients.values()))
+    notifier = Notifier(primary_client, config.notifications.admin_chat_id)
     app.state.notifier = notifier
 
     # Collector

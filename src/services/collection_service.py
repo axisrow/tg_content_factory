@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Literal
+from typing import Literal
 
+from src.collection_queue import CollectionQueue
 from src.database import Database
 from src.models import Channel
-
-if TYPE_CHECKING:
-    from src.collection_queue import CollectionQueue
-    from src.telegram.collector import Collector
+from src.telegram.collector import Collector
 
 EnqueueResult = Literal["not_found", "filtered", "queued"]
 

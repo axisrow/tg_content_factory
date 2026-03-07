@@ -26,7 +26,6 @@ class AccountsRepository:
                VALUES (?, ?, ?, ?, ?)
                ON CONFLICT(phone) DO UPDATE SET
                    session_string=excluded.session_string,
-                   is_active=excluded.is_active,
                    is_premium=excluded.is_premium""",
             (
                 account.phone,
