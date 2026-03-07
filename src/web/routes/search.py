@@ -1,7 +1,7 @@
 import logging
 
 from fastapi import APIRouter, Query, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 
 from src.models import SearchResult
 from src.web import deps
@@ -20,6 +20,14 @@ async def search_page(
     mode: str = Query("local"),
     page: int = Query(1),
 ):
+    # Onboarding: redirect if no accounts configured
+    auth = deps.get_auth(request)
+    if not auth.is_configured:
+        return RedirectResponse(url="/settings", status_code=303)
+    db = deps.get_db(request)
+    if not await db.get_accounts(active_only=False):
+        return RedirectResponse(url="/settings?msg=no_accounts", status_code=303)
+
     result = None
     limit = 50
     offset = (page - 1) * limit
@@ -32,6 +40,7 @@ async def search_page(
             channel_id_error = f"Некорректный ID канала: {channel_id}"
 
     service = deps.search_service(request)
+    channels = await db.get_channels()
 
     if q:
         if channel_id_error and mode in {"local", "channel"}:
@@ -56,8 +65,6 @@ async def search_page(
                     error=f"Ошибка поиска: {exc}",
                 )
 
-    db = deps.get_db(request)
-    channels = await db.get_channels()
     ai_enabled = deps.get_ai_search(request).enabled
     try:
         search_quota = await service.check_quota()
