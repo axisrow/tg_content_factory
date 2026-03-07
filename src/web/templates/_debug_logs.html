@@ -1,0 +1,10 @@
+{% for r in records|reverse %}
+<tr class="log-{{ r.level|lower }}">
+  <td><code>{{ r.time }}</code></td>
+  <td><strong>{{ r.level }}</strong></td>
+  <td><small>{{ r.logger }}</small></td>
+  <td><code>{{ r.message }}</code></td>
+</tr>
+{% else %}
+<tr><td colspan="4">Логов нет.</td></tr>
+{% endfor %}
