@@ -237,8 +237,8 @@ class Collector:
             try:
                 await asyncio.wait_for(client.get_dialogs(), timeout=30)
                 self._pool.mark_dialogs_fetched(phone)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("Failed to prefetch dialogs for %s: %s", phone, e)
         messages_batch: list[Message] = []
         all_messages: list[Message] = []
         persisted_max_msg_id = min_id
@@ -318,7 +318,7 @@ class Collector:
                             await self._db.set_channel_active(channel.id, False)
                         return 0
                     new_username = getattr(fallback_entity, "username", None)
-                    new_title = getattr(fallback_entity, "title", channel.title)
+                    new_title = getattr(fallback_entity, "title", None) or channel.title
                     await self._db.update_channel_meta(
                         channel_id, username=new_username, title=new_title
                     )
@@ -390,17 +390,18 @@ class Collector:
                         "Precheck timed out for channel %d, skipping precheck", channel_id
                     )
                     sample_prefixes = []
-                if len(sample_prefixes) >= PRECHECK_CROSS_DUPE_MIN_SAMPLE:
+                unique_prefixes = list(dict.fromkeys(sample_prefixes))
+                if len(unique_prefixes) >= PRECHECK_CROSS_DUPE_MIN_SAMPLE:
                     matches = await self._db.filter_repo.count_matching_prefixes_in_other_channels(
-                        channel_id, sample_prefixes
+                        channel_id, unique_prefixes
                     )
-                    if matches / len(sample_prefixes) >= PRECHECK_CROSS_DUPE_RATIO:
+                    if matches / len(unique_prefixes) >= PRECHECK_CROSS_DUPE_RATIO:
                         await self._db.set_channels_filtered_bulk(
                             [(channel_id, "cross_channel_spam")]
                         )
                         logger.info(
                             "Pre-filter: channel %d has %d/%d cross-dupe messages, skipping",
-                            channel_id, matches, len(sample_prefixes),
+                            channel_id, matches, len(unique_prefixes),
                         )
                         return 0
 
@@ -507,7 +508,7 @@ class Collector:
         if should_notify_keywords and all_messages:
             await self._check_keywords(all_messages)
 
-        if is_first_run and len(all_messages) >= 50:
+        if is_first_run and not force and len(all_messages) >= 50:
             cur = await self._db.execute(
                 "SELECT COUNT(*) as total, COUNT(DISTINCT substr(text,1,100)) as uniq"
                 " FROM messages WHERE channel_id = ? AND text IS NOT NULL AND length(text) > 10",
@@ -607,11 +608,17 @@ class Collector:
             client, phone = result
             try:
                 if channel.username:
-                    entity = await client.get_entity(channel.username)
+                    entity = await asyncio.wait_for(
+                        client.get_entity(channel.username), timeout=30.0
+                    )
                 else:
-                    entity = await client.get_entity(PeerChannel(channel.channel_id))
+                    entity = await asyncio.wait_for(
+                        client.get_entity(PeerChannel(channel.channel_id)), timeout=30.0
+                    )
 
-                full = await client(GetFullChannelRequest(entity))
+                full = await asyncio.wait_for(
+                    client(GetFullChannelRequest(entity)), timeout=30.0
+                )
                 subscriber_count = getattr(full.full_chat, "participants_count", None)
 
                 views_list, reactions_list, forwards_list = [], [], []
