@@ -27,7 +27,6 @@ class SchedulerConfig(BaseModel):
     search_interval_minutes: int = 60
     delay_between_channels_sec: int = 2
     delay_between_requests_sec: int = 1
-    messages_per_channel: int = 100
     max_flood_wait_sec: int = 300
 
 

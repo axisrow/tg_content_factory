@@ -1,10 +1,14 @@
+import logging
+
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
+from src.settings_utils import parse_int_setting
 from src.services.notification_service import NotificationService
 from src.web import deps
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 CREDENTIALS_MASK = "••••••••"
 
@@ -30,15 +34,20 @@ async def settings_page(request: Request):
     pool = deps.get_pool(request)
     api_id_raw = await db.get_setting("tg_api_id") or ""
     api_hash_raw = await db.get_setting("tg_api_hash") or ""
-    min_subscribers_filter = int(await db.get_setting("min_subscribers_filter") or 0)
+    min_subscribers_filter = parse_int_setting(
+        await db.get_setting("min_subscribers_filter"),
+        setting_name="min_subscribers_filter",
+        default=0,
+        logger=logger,
+    )
     saved_interval = await db.get_setting("collect_interval_minutes")
     config = request.app.state.config
-    try:
-        collect_interval_minutes = (
-            int(saved_interval) if saved_interval else config.scheduler.collect_interval_minutes
-        )
-    except (TypeError, ValueError):
-        collect_interval_minutes = config.scheduler.collect_interval_minutes
+    collect_interval_minutes = parse_int_setting(
+        saved_interval,
+        setting_name="collect_interval_minutes",
+        default=config.scheduler.collect_interval_minutes,
+        logger=logger,
+    )
     accounts = await db.get_accounts()
     connected_phones = set(pool.clients.keys())
     notification_target = await deps.get_notification_target_service(request).describe_target()

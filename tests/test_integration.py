@@ -24,6 +24,7 @@ from src.telegram.auth import TelegramAuth
 from src.telegram.client_pool import ClientPool
 from src.telegram.collector import Collector
 from src.web.app import create_app
+from src.cli.runtime import init_pool
 from tests.helpers import make_mock_pool as _make_pool
 
 # ---------------------------------------------------------------------------
@@ -802,6 +803,38 @@ class TestGracefulShutdown:
         await manager.stop()
         assert manager._bg_task is None
 
+    @pytest.mark.asyncio
+    async def test_trigger_background_deduplicates_racing_calls(self, test_db):
+        await test_db.add_channel(
+            Channel(channel_id=-100876, title="Race Channel", username="race_channel")
+        )
+        pool = _make_pool(get_available_client=AsyncMock(return_value=None))
+        config = SchedulerConfig(delay_between_requests_sec=0)
+        collector = Collector(pool, test_db, config)
+        manager = SchedulerManager(collector, config)
+
+        started_event = asyncio.Event()
+        release_event = asyncio.Event()
+        call_count = 0
+
+        async def _blocking_collect(_channel, **_kwargs):
+            nonlocal call_count
+            call_count += 1
+            started_event.set()
+            await release_event.wait()
+            return 0
+
+        collector._collect_channel = AsyncMock(side_effect=_blocking_collect)
+
+        try:
+            await asyncio.gather(manager.trigger_background(), manager.trigger_background())
+            await asyncio.wait_for(started_event.wait(), timeout=1.0)
+            assert manager._bg_task is not None
+            assert call_count == 1
+        finally:
+            release_event.set()
+            await manager.stop()
+
 
 class TestAPICredentialsFallback:
     """When config has no API creds, lifespan loads them from DB settings."""
@@ -830,3 +863,42 @@ class TestAPICredentialsFallback:
                 assert app.state.auth.is_configured is True
                 assert app.state.auth._api_id == 99999
                 assert app.state.auth._api_hash == "hash_from_db"
+
+    @pytest.mark.asyncio
+    async def test_invalid_api_id_in_db_does_not_crash_lifespan(self, tmp_path):
+        from src.web.app import lifespan
+
+        db_path = str(tmp_path / "bad-web.db")
+        db = Database(db_path)
+        await db.initialize()
+        await db.set_setting("tg_api_id", "not-a-number")
+        await db.set_setting("tg_api_hash", "hash_from_db")
+        await db.close()
+
+        config = AppConfig()
+        config.database.path = db_path
+
+        with patch.object(ClientPool, "initialize", new_callable=AsyncMock) as initialize:
+            app = create_app(config)
+            async with lifespan(app):
+                assert app.state.auth.is_configured is False
+                initialize.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_invalid_api_id_in_db_does_not_crash_cli_pool_init(self, tmp_path):
+        db_path = str(tmp_path / "bad-cli.db")
+        db = Database(db_path)
+        await db.initialize()
+        await db.set_setting("tg_api_id", "not-a-number")
+        await db.set_setting("tg_api_hash", "hash_from_db")
+
+        config = AppConfig()
+        config.database.path = db_path
+
+        with patch.object(ClientPool, "initialize", new_callable=AsyncMock) as initialize:
+            auth, pool = await init_pool(config, db)
+
+        assert auth.is_configured is False
+        assert isinstance(pool, ClientPool)
+        initialize.assert_awaited_once()
+        await db.close()
