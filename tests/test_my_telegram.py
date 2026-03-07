@@ -19,10 +19,14 @@ from src.telegram.collector import Collector
 from src.web.app import create_app
 
 _FAKE_DIALOGS = [
-    {"channel_id": -100111, "title": "My Channel", "username": "mychan", "channel_type": "channel", "deactivate": False},
-    {"channel_id": -100222, "title": "My Group", "username": None, "channel_type": "supergroup", "deactivate": False},
-    {"channel_id": 999, "title": "Some User", "username": "someuser", "channel_type": "dm", "deactivate": False},
-    {"channel_id": 888, "title": "My Bot", "username": "mybot", "channel_type": "bot", "deactivate": False},
+    {"channel_id": -100111, "title": "My Channel", "username": "mychan",
+     "channel_type": "channel", "deactivate": False},
+    {"channel_id": -100222, "title": "My Group", "username": None,
+     "channel_type": "supergroup", "deactivate": False},
+    {"channel_id": 999, "title": "Some User", "username": "someuser",
+     "channel_type": "dm", "deactivate": False},
+    {"channel_id": 888, "title": "My Bot", "username": "mybot",
+     "channel_type": "bot", "deactivate": False},
 ]
 
 
@@ -129,7 +133,9 @@ async def test_my_telegram_page_requires_auth(tmp_path):
     app.state.session_secret = "test_secret_key"
 
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test", follow_redirects=False) as c:
+    async with AsyncClient(
+        transport=transport, base_url="http://test", follow_redirects=False
+    ) as c:
         resp = await c.get("/my-telegram/")
     assert resp.status_code == 401
     await db.close()
