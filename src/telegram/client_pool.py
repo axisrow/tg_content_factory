@@ -338,7 +338,30 @@ class ClientPool:
         logger.warning("resolve_channel: all clients flood-waited for '%s'", identifier)
         return None
 
-    async def get_dialogs_for_phone(self, phone: str, include_dm: bool = True) -> list[dict]:
+    @staticmethod
+    def _classify_entity(entity) -> tuple[str, bool]:
+        """Return (channel_type, deactivate) for a Telegram channel/group entity."""
+        if getattr(entity, "scam", False):
+            channel_type = "scam"
+        elif getattr(entity, "fake", False):
+            channel_type = "fake"
+        elif getattr(entity, "restricted", False):
+            channel_type = "restricted"
+        elif getattr(entity, "monoforum", False):
+            channel_type = "monoforum"
+        elif getattr(entity, "forum", False):
+            channel_type = "forum"
+        elif getattr(entity, "gigagroup", False):
+            channel_type = "gigagroup"
+        elif getattr(entity, "megagroup", False):
+            channel_type = "supergroup"
+        elif getattr(entity, "broadcast", False):
+            channel_type = "channel"
+        else:
+            channel_type = "group"
+        return channel_type, channel_type in ("scam", "fake", "restricted")
+
+    async def get_dialogs_for_phone(self, phone: str, include_dm: bool = False) -> list[dict]:
         """Get all dialogs for a specific connected account."""
         result = await self.get_client_by_phone(phone)
         if not result:
@@ -350,25 +373,7 @@ class ClientPool:
                 async for dialog in client.iter_dialogs():
                     entity = dialog.entity
                     if dialog.is_channel or dialog.is_group:
-                        if getattr(entity, "scam", False):
-                            channel_type = "scam"
-                        elif getattr(entity, "fake", False):
-                            channel_type = "fake"
-                        elif getattr(entity, "restricted", False):
-                            channel_type = "restricted"
-                        elif getattr(entity, "monoforum", False):
-                            channel_type = "monoforum"
-                        elif getattr(entity, "forum", False):
-                            channel_type = "forum"
-                        elif getattr(entity, "gigagroup", False):
-                            channel_type = "gigagroup"
-                        elif getattr(entity, "megagroup", False):
-                            channel_type = "supergroup"
-                        elif getattr(entity, "broadcast", False):
-                            channel_type = "channel"
-                        else:
-                            channel_type = "group"
-                        deactivate = channel_type in ("scam", "fake", "restricted")
+                        channel_type, deactivate = self._classify_entity(entity)
                         items.append({
                             "channel_id": entity.id,
                             "title": dialog.title,
@@ -406,25 +411,7 @@ class ClientPool:
                 async for dialog in client.iter_dialogs():
                     if dialog.is_channel or dialog.is_group:
                         entity = dialog.entity
-                        if getattr(entity, "scam", False):
-                            channel_type = "scam"
-                        elif getattr(entity, "fake", False):
-                            channel_type = "fake"
-                        elif getattr(entity, "restricted", False):
-                            channel_type = "restricted"
-                        elif getattr(entity, "monoforum", False):
-                            channel_type = "monoforum"
-                        elif getattr(entity, "forum", False):
-                            channel_type = "forum"
-                        elif getattr(entity, "gigagroup", False):
-                            channel_type = "gigagroup"
-                        elif getattr(entity, "megagroup", False):
-                            channel_type = "supergroup"
-                        elif getattr(entity, "broadcast", False):
-                            channel_type = "channel"
-                        else:
-                            channel_type = "group"
-                        deactivate = channel_type in ("scam", "fake", "restricted")
+                        channel_type, deactivate = self._classify_entity(entity)
                         result.append({
                             "channel_id": entity.id,
                             "title": dialog.title,

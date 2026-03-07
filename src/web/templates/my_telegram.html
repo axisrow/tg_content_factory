@@ -7,7 +7,8 @@
 <p>Нет подключённых аккаунтов. Добавьте аккаунт в <a href="/settings">Настройках</a>.</p>
 {% else %}
 
-<form method="get" action="/my-telegram" style="max-width:400px;margin-bottom:1.5rem">
+<form method="get" action="/my-telegram" style="max-width:400px;margin-bottom:1.5rem"
+      hx-get="/my-telegram" hx-target="body" hx-push-url="true" hx-indicator="#dialogs-loading">
     <label>
         Аккаунт
         <select name="phone" onchange="this.form.submit()">
@@ -17,6 +18,7 @@
         </select>
     </label>
 </form>
+<span id="dialogs-loading" class="htmx-indicator" aria-label="Загрузка…">⏳ Загрузка диалогов…</span>
 
 {% if dialogs %}
 <p style="color:var(--pico-muted-color)">Всего диалогов: <strong>{{ dialogs|length }}</strong></p>
