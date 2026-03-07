@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from urllib.parse import quote
+
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
@@ -41,6 +43,6 @@ async def leave_dialogs(request: Request):
     left = sum(1 for v in results.values() if v)
     failed = len(results) - left
     return RedirectResponse(
-        url=f"/my-telegram/?phone={phone}&left={left}&failed={failed}",
+        url=f"/my-telegram/?phone={quote(phone, safe='')}&left={left}&failed={failed}",
         status_code=303,
     )

@@ -388,10 +388,18 @@ class ClientPool:
         try:
             for cid in channel_ids:
                 try:
-                    entity = await client.get_entity(cid)
+                    entity = await client.get_entity(PeerChannel(abs(cid)))
                     await client.delete_dialog(entity)
                     outcomes[cid] = True
                     await asyncio.sleep(0.3)
+                except FloodWaitError as e:
+                    logger.warning("leave_channels: flood wait %ds for %d", e.seconds, cid)
+                    await self.report_flood(phone, e.seconds)
+                    outcomes[cid] = False
+                    for remaining in channel_ids:
+                        if remaining not in outcomes:
+                            outcomes[remaining] = False
+                    break
                 except Exception as e:
                     logger.warning("leave_channels: failed for %d: %s", cid, e)
                     outcomes[cid] = False

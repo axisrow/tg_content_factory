@@ -157,7 +157,7 @@ async def test_leave_channels_success():
 
 @pytest.mark.asyncio
 async def test_leave_channels_partial_failure():
-    """One delete_dialog raises → that id is False, others True."""
+    """One delete_dialog raises RuntimeError → that id is False, others True."""
     from src.telegram.client_pool import ClientPool
 
     pool = MagicMock(spec=ClientPool)
@@ -165,14 +165,14 @@ async def test_leave_channels_partial_failure():
 
     call_count = 0
 
-    async def _get_entity(cid):
+    async def _get_entity(peer):
         return MagicMock()
 
     async def _delete_dialog(entity):
         nonlocal call_count
         call_count += 1
         if call_count == 1:
-            raise RuntimeError("flood")
+            raise RuntimeError("some error")
 
     mock_client.get_entity = _get_entity
     mock_client.delete_dialog = _delete_dialog
@@ -185,6 +185,39 @@ async def test_leave_channels_partial_failure():
 
     assert result[-100111] is False
     assert result[-100222] is True
+
+
+@pytest.mark.asyncio
+async def test_leave_channels_flood_breaks_loop():
+    """FloodWaitError → reports flood, marks all remaining ids as False, stops loop."""
+    from telethon.errors import FloodWaitError
+
+    from src.telegram.client_pool import ClientPool
+
+    pool = MagicMock(spec=ClientPool)
+    mock_client = MagicMock()
+
+    async def _get_entity(peer):
+        return MagicMock()
+
+    async def _delete_dialog(entity):
+        err = FloodWaitError(request=None)
+        err.seconds = 60
+        raise err
+
+    mock_client.get_entity = _get_entity
+    mock_client.delete_dialog = _delete_dialog
+
+    pool.get_client_by_phone = AsyncMock(return_value=(mock_client, "+1234567890"))
+    pool.release_client = AsyncMock()
+    pool.report_flood = AsyncMock()
+
+    with patch("src.telegram.client_pool.asyncio.sleep", AsyncMock()):
+        result = await ClientPool.leave_channels(pool, "+1234567890", [-100111, -100222])
+
+    assert result[-100111] is False
+    assert result[-100222] is False
+    pool.report_flood.assert_awaited_once_with("+1234567890", 60)
 
 
 @pytest.mark.asyncio
