@@ -38,6 +38,10 @@ def make_mock_pool(**kwargs) -> MagicMock:
     pool.release_client = AsyncMock()
     pool.report_flood = AsyncMock()
     pool.get_client_by_phone = AsyncMock(return_value=None)
+    # Simulate the per-phone dialogs-fetched tracking used by _collect_channel
+    _dialogs_fetched: set[str] = set()
+    pool.is_dialogs_fetched = lambda phone: phone in _dialogs_fetched
+    pool.mark_dialogs_fetched = lambda phone: _dialogs_fetched.add(phone)
     for key, value in kwargs.items():
         setattr(pool, key, value)
     return pool

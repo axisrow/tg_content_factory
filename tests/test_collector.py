@@ -128,9 +128,9 @@ async def test_collect_positive_id_end_to_end(db):
 
 
 @pytest.mark.asyncio
-async def test_collect_all_prefetches_dialogs(db):
-    """collect_all_channels must call get_dialogs() to populate entity cache."""
-    ch = Channel(channel_id=123, title="Test", username="test")
+async def test_collect_no_username_channel_fetches_dialogs_once(db):
+    """For no-username channels get_dialogs() is called once per process to warm entity cache."""
+    ch = Channel(channel_id=123, title="No Username")
     await db.add_channel(ch)
 
     mock_client = AsyncMock()
@@ -141,9 +141,14 @@ async def test_collect_all_prefetches_dialogs(db):
     pool = make_mock_pool(get_available_client=AsyncMock(return_value=(mock_client, "+7000")))
 
     collector = Collector(pool, db, SchedulerConfig())
+    # First collection — cache is cold, get_dialogs() must be called
     await collector.collect_all_channels()
-
     mock_client.get_dialogs.assert_awaited_once()
+
+    # Second collection — cache is warm, get_dialogs() must NOT be called again
+    mock_client.get_dialogs.reset_mock()
+    await collector.collect_all_channels()
+    mock_client.get_dialogs.assert_not_awaited()
 
 
 @pytest.mark.asyncio
