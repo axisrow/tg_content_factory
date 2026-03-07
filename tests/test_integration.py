@@ -168,7 +168,7 @@ class TestAuthFlow:
 
     @pytest.mark.asyncio
     async def test_all_protected_pages_require_auth(self, noauth_client):
-        for path in ["/settings/", "/channels/", "/dashboard/", "/scheduler/", "/keywords/", "/my-telegram/"]:
+        for path in ["/settings/", "/channels/", "/dashboard/", "/scheduler/", "/keywords/", "/my-telegram/", "/debug/"]:
             resp = await noauth_client.get(path, follow_redirects=False)
             assert resp.status_code == 401, f"{path} should require auth"
 

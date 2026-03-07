@@ -54,6 +54,9 @@ async def client(tmp_path):
             },
         ]
 
+    async def _get_dialogs_for_phone(self, phone, include_dm=False):
+        return []
+
     app.state.pool = type(
         "Pool",
         (),
@@ -62,6 +65,7 @@ async def client(tmp_path):
             "get_users_info": _no_users,
             "resolve_channel": _resolve_channel,
             "get_dialogs": _get_dialogs,
+            "get_dialogs_for_phone": _get_dialogs_for_phone,
         },
     )()
     from src.telegram.auth import TelegramAuth

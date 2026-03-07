@@ -170,7 +170,7 @@ function openSubscriptions() {
                 list.innerHTML = "<p>Нет каналов в подписках.</p>";
                 return;
             }
-            var html = '<form id="bulk-form" method="post" action="/channels/add-bulk">';
+            var html = '<form id="bulk-form" method="post" action="/channels/add-bulk" hx-post="/channels/add-bulk" hx-target="body" hx-push-url="true">';
             html += '<table><thead><tr><th></th><th>Название</th><th>Username</th><th>ID</th></tr></thead><tbody>';
             for (var i = 0; i < dialogs.length; i++) {
                 var d = dialogs[i];
@@ -195,7 +195,7 @@ function openSubscriptions() {
 function addSelected() {
     var form = document.getElementById("bulk-form");
     if (form) {
-        form.submit();
+        htmx.trigger(form, 'submit');
     }
 }
 </script>
