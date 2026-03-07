@@ -9,6 +9,20 @@ router = APIRouter()
 CREDENTIALS_MASK = "••••••••"
 
 
+def _notification_service(request: Request) -> NotificationService:
+    notif_cfg = request.app.state.config.notifications
+    return NotificationService(
+        deps.get_db(request),
+        deps.get_notification_target_service(request),
+        notif_cfg.bot_name_prefix,
+        notif_cfg.bot_username_prefix,
+    )
+
+
+def _wants_json(request: Request) -> bool:
+    return "application/json" in request.headers.get("accept", "")
+
+
 @router.get("/", response_class=HTMLResponse)
 async def settings_page(request: Request):
     auth = deps.get_auth(request)
@@ -19,6 +33,16 @@ async def settings_page(request: Request):
     min_subscribers_filter = int(await db.get_setting("min_subscribers_filter") or 0)
     accounts = await db.get_accounts()
     connected_phones = set(pool.clients.keys())
+    notification_target = await deps.get_notification_target_service(request).describe_target()
+    notification_bot = None
+    notification_bot_error = None
+    if notification_target.state == "available" and callable(
+        getattr(pool, "get_client_by_phone", None)
+    ):
+        try:
+            notification_bot = await _notification_service(request).get_status()
+        except RuntimeError as exc:
+            notification_bot_error = str(exc)
     return deps.get_templates(request).TemplateResponse(
         request,
         "settings.html",
@@ -28,7 +52,12 @@ async def settings_page(request: Request):
             "api_hash": CREDENTIALS_MASK if api_hash_raw else "",
             "min_subscribers_filter": min_subscribers_filter,
             "accounts": accounts,
+            "account_phones": [acc.phone for acc in accounts],
             "connected_phones": connected_phones,
+            "notification_target": notification_target,
+            "notification_selected_phone": notification_target.configured_phone or "",
+            "notification_bot": notification_bot,
+            "notification_bot_error": notification_bot_error,
         },
     )
 
@@ -51,6 +80,19 @@ async def save_filters(request: Request):
         if to_filter:
             await db.set_channels_filtered_bulk(to_filter)
     return RedirectResponse(url="/settings?msg=filters_saved", status_code=303)
+
+
+@router.post("/save-notification-account")
+async def save_notification_account(request: Request):
+    form = await request.form()
+    selected_phone = str(form.get("notification_account_phone", "")).strip()
+    db = deps.get_db(request)
+    valid_phones = {acc.phone for acc in await db.get_accounts()}
+    if selected_phone and selected_phone not in valid_phones:
+        return RedirectResponse(url="/settings?error=notification_account_invalid", status_code=303)
+
+    await deps.get_notification_target_service(request).set_configured_phone(selected_phone or None)
+    return RedirectResponse(url="/settings?msg=notification_account_saved", status_code=303)
 
 
 @router.post("/save-credentials")
@@ -98,27 +140,34 @@ async def delete_account(request: Request, account_id: int):
 
 @router.post("/notifications/setup")
 async def setup_notification_bot(request: Request):
-    pool = deps.get_pool(request)
-    db = deps.get_db(request)
-    notif_cfg = request.app.state.config.notifications
-    svc = NotificationService(db, pool, notif_cfg.bot_name_prefix, notif_cfg.bot_username_prefix)
     try:
-        bot = await svc.setup_bot()
+        bot = await _notification_service(request).setup_bot()
+    except RuntimeError as exc:
+        if _wants_json(request):
+            return JSONResponse({"error": str(exc)}, status_code=409)
+        return RedirectResponse(
+            url="/settings?error=notification_account_unavailable",
+            status_code=303,
+        )
     except Exception as exc:
-        return JSONResponse({"error": str(exc)}, status_code=500)
-    return JSONResponse({
-        "bot_username": bot.bot_username,
-        "bot_id": bot.bot_id,
-    })
+        if _wants_json(request):
+            return JSONResponse({"error": str(exc)}, status_code=500)
+        return RedirectResponse(url="/settings?error=notification_action_failed", status_code=303)
+
+    if _wants_json(request):
+        return JSONResponse({
+            "bot_username": bot.bot_username,
+            "bot_id": bot.bot_id,
+        })
+    return RedirectResponse(url="/settings?msg=notification_bot_created", status_code=303)
 
 
 @router.get("/notifications/status")
 async def notification_bot_status(request: Request):
-    pool = deps.get_pool(request)
-    db = deps.get_db(request)
-    notif_cfg = request.app.state.config.notifications
-    svc = NotificationService(db, pool, notif_cfg.bot_name_prefix, notif_cfg.bot_username_prefix)
-    bot = await svc.get_status()
+    try:
+        bot = await _notification_service(request).get_status()
+    except RuntimeError as exc:
+        return JSONResponse({"configured": False, "error": str(exc)}, status_code=409)
     if bot is None:
         return JSONResponse({"configured": False})
     return JSONResponse({
@@ -131,12 +180,20 @@ async def notification_bot_status(request: Request):
 
 @router.post("/notifications/delete")
 async def delete_notification_bot(request: Request):
-    pool = deps.get_pool(request)
-    db = deps.get_db(request)
-    notif_cfg = request.app.state.config.notifications
-    svc = NotificationService(db, pool, notif_cfg.bot_name_prefix, notif_cfg.bot_username_prefix)
     try:
-        await svc.teardown_bot()
+        await _notification_service(request).teardown_bot()
+    except RuntimeError as exc:
+        if _wants_json(request):
+            return JSONResponse({"error": str(exc)}, status_code=409)
+        error_code = "notification_bot_missing"
+        if "аккаунт" in str(exc).lower():
+            error_code = "notification_account_unavailable"
+        return RedirectResponse(url=f"/settings?error={error_code}", status_code=303)
     except Exception as exc:
-        return JSONResponse({"error": str(exc)}, status_code=500)
-    return JSONResponse({"deleted": True})
+        if _wants_json(request):
+            return JSONResponse({"error": str(exc)}, status_code=500)
+        return RedirectResponse(url="/settings?error=notification_action_failed", status_code=303)
+
+    if _wants_json(request):
+        return JSONResponse({"deleted": True})
+    return RedirectResponse(url="/settings?msg=notification_bot_deleted", status_code=303)

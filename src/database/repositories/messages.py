@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from datetime import date, datetime, timedelta
 
 import aiosqlite
@@ -8,6 +9,7 @@ import aiosqlite
 from src.models import Message
 
 logger = logging.getLogger(__name__)
+_DATE_ONLY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
 def _normalize_date_to(date_to: str) -> tuple[str, str]:
@@ -22,6 +24,21 @@ def _normalize_date_to(date_to: str) -> tuple[str, str]:
 class MessagesRepository:
     def __init__(self, db: aiosqlite.Connection):
         self._db = db
+
+    @staticmethod
+    def _normalize_date_from(value: str | None) -> str | None:
+        if not value:
+            return None
+        return value
+
+    @staticmethod
+    def _normalize_date_to(value: str | None) -> tuple[str | None, str]:
+        if not value:
+            return None, "<="
+        if _DATE_ONLY_RE.fullmatch(value):
+            next_day = date.fromisoformat(value) + timedelta(days=1)
+            return next_day.isoformat(), "<"
+        return value, "<="
 
     async def insert_message(self, msg: Message) -> bool:
         try:
@@ -89,12 +106,14 @@ class MessagesRepository:
         if channel_id:
             conditions.append("m.channel_id = ?")
             params.append(channel_id)
-        if date_from:
+        normalized_date_from = self._normalize_date_from(date_from)
+        normalized_date_to, date_to_operator = self._normalize_date_to(date_to)
+
+        if normalized_date_from:
             conditions.append("m.date >= ?")
-            params.append(date_from)
-        if date_to:
-            operator, normalized_date_to = _normalize_date_to(date_to)
-            conditions.append(f"m.date {operator} ?")
+            params.append(normalized_date_from)
+        if normalized_date_to:
+            conditions.append(f"m.date {date_to_operator} ?")
             params.append(normalized_date_to)
 
         channel_join = " LEFT JOIN channels c ON m.channel_id = c.channel_id"

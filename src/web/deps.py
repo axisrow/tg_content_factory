@@ -15,6 +15,7 @@ from src.services.account_service import AccountService
 from src.services.channel_service import ChannelService
 from src.services.collection_service import CollectionService
 from src.services.keyword_service import KeywordService
+from src.services.notification_target_service import NotificationTargetService
 from src.services.scheduler_service import SchedulerService
 from src.services.search_service import SearchService
 from src.telegram.auth import TelegramAuth
@@ -45,7 +46,11 @@ def get_collector(request: Request) -> Collector:
 
 
 def get_queue(request: Request) -> CollectionQueue:
-    return request.app.state.collection_queue
+    queue = getattr(request.app.state, "collection_queue", None)
+    if queue is None:
+        queue = CollectionQueue(get_collector(request), get_db(request))
+        request.app.state.collection_queue = queue
+    return queue
 
 
 def get_scheduler(request: Request) -> SchedulerManager:
@@ -68,11 +73,19 @@ def get_templates(request: Request) -> Jinja2Templates:
     return request.app.state.templates
 
 
+def get_notification_target_service(request: Request) -> NotificationTargetService:
+    service = getattr(request.app.state, "notification_target_service", None)
+    if service is None:
+        service = NotificationTargetService(get_db(request), get_pool(request))
+        request.app.state.notification_target_service = service
+    return service
+
+
 def channel_service(request: Request) -> ChannelService:
     return _request_cached(
         request,
         "_channel_service",
-        lambda: ChannelService(get_db(request), get_pool(request)),
+        lambda: ChannelService(get_db(request), get_pool(request), get_queue(request)),
     )
 
 

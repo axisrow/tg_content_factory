@@ -83,6 +83,27 @@ class ClientPool:
 
             return None
 
+    async def get_client_by_phone(self, phone: str) -> tuple[TelegramClient, str] | None:
+        """Get a specific active connected client when it is not flood-waited."""
+        async with self._lock:
+            now = datetime.now(timezone.utc)
+            accounts = await self._db.get_accounts(active_only=True)
+            account = next((acc for acc in accounts if acc.phone == phone), None)
+            if account is None:
+                return None
+
+            flood_until = self._normalize_utc(account.flood_wait_until)
+            if flood_until and flood_until > now:
+                return None
+
+            client = self.clients.get(phone)
+            if client is None:
+                return None
+
+            if phone not in self._in_use:
+                self._in_use.add(phone)
+            return client, phone
+
     async def get_premium_client(self) -> tuple[TelegramClient, str] | None:
         """Get first available premium client.
 
