@@ -9,6 +9,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 
 from src.config import SchedulerConfig
+from src.settings_utils import parse_int_setting
 from src.telegram.collector import Collector
 
 if TYPE_CHECKING:
@@ -83,15 +84,12 @@ class SchedulerManager:
         saved_interval = (
             await self._db.get_setting("collect_interval_minutes") if self._db else None
         )
-        try:
-            collect_interval = (
-                int(saved_interval) if saved_interval else self._config.collect_interval_minutes
-            )
-        except (TypeError, ValueError):
-            logger.warning(
-                "Invalid collect_interval_minutes in DB (%r), using config default", saved_interval
-            )
-            collect_interval = self._config.collect_interval_minutes
+        collect_interval = parse_int_setting(
+            saved_interval,
+            setting_name="collect_interval_minutes",
+            default=self._config.collect_interval_minutes,
+            logger=logger,
+        )
         self._current_interval_minutes = collect_interval
         self._scheduler.add_job(
             self._run_collection,
@@ -152,7 +150,7 @@ class SchedulerManager:
 
     async def trigger_background(self) -> None:
         """Fire-and-forget collection run."""
-        if self._collector.is_running:
+        if self._collector.is_running or (self._bg_task and not self._bg_task.done()):
             return
         self._bg_task = asyncio.create_task(self._run_collection())
 

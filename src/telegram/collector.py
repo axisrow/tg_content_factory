@@ -36,6 +36,7 @@ from src.filters.criteria import (
     PRECHECK_CROSS_DUPE_SAMPLE,
 )
 from src.models import Channel, ChannelStats, Message
+from src.settings_utils import parse_int_setting
 from src.telegram.client_pool import ClientPool
 from src.telegram.notifier import Notifier
 
@@ -98,6 +99,14 @@ class Collector:
     def is_cancelled(self) -> bool:
         return self._cancel_event.is_set()
 
+    async def _load_min_subscribers_filter(self) -> int:
+        return parse_int_setting(
+            await self._db.get_setting("min_subscribers_filter"),
+            setting_name="min_subscribers_filter",
+            default=0,
+            logger=logger,
+        )
+
     async def collect_single_channel(
         self,
         channel: Channel,
@@ -126,8 +135,7 @@ class Collector:
                 if full:
                     channel = Channel(**{**channel.model_dump(), "last_collected_id": 0})
 
-                min_subs_raw = await self._db.get_setting("min_subscribers_filter")
-                min_subs = int(min_subs_raw) if min_subs_raw else 0
+                min_subs = await self._load_min_subscribers_filter()
                 return await self._collect_channel(
                     channel, progress_callback=progress_callback, force=force, min_subs=min_subs
                 )
@@ -150,8 +158,7 @@ class Collector:
                     return stats
                 logger.info("Found %d active unfiltered channels to collect", len(channels))
 
-                min_subs_raw = await self._db.get_setting("min_subscribers_filter")
-                min_subs = int(min_subs_raw) if min_subs_raw else 0
+                min_subs = await self._load_min_subscribers_filter()
 
                 for channel in channels:
                     if self._cancel_event.is_set():

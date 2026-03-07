@@ -21,6 +21,7 @@ from src.scheduler.manager import SchedulerManager
 from src.search.ai_search import AISearchEngine
 from src.search.engine import SearchEngine
 from src.services.notification_target_service import NotificationTargetService
+from src.settings_utils import parse_int_setting
 from src.services.stats_task_dispatcher import StatsTaskDispatcher
 from src.telegram.auth import TelegramAuth
 from src.telegram.client_pool import ClientPool
@@ -129,7 +130,12 @@ async def lifespan(app: FastAPI):
         stored_id = await db.get_setting("tg_api_id")
         stored_hash = await db.get_setting("tg_api_hash")
         if stored_id and stored_hash:
-            api_id = int(stored_id)
+            api_id = parse_int_setting(
+                stored_id,
+                setting_name="tg_api_id",
+                default=0,
+                logger=logger,
+            )
             api_hash = stored_hash
 
     auth = TelegramAuth(api_id, api_hash)

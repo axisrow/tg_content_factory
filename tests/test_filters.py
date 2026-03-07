@@ -262,6 +262,18 @@ class TestChannelAnalyzer:
         assert row["is_filtered"] == 1
         assert "low_uniqueness" in row["filter_flags"]
 
+    async def test_analyze_all_invalid_min_subscribers_setting_falls_back_to_zero(self, db, raw_db):
+        await db.set_setting("min_subscribers_filter", "broken")
+        await _insert_channel(raw_db, 601)
+        await _insert_messages(raw_db, 601, ["hello world", "hello again"])
+
+        analyzer = ChannelAnalyzer(db)
+        report = await analyzer.analyze_all()
+
+        found = [result for result in report.results if result.channel_id == 601]
+        assert len(found) == 1
+        assert "low_subscriber_manual" not in found[0].flags
+
     async def test_apply_filters_resets_stale(self, db, raw_db):
         # Channel 710 was previously filtered
         await _insert_channel(raw_db, 710, title="Previously Filtered")

@@ -31,6 +31,12 @@ _COLLECT_ALL_SPINNER = (
     '</span>'
 )
 
+_COLLECT_ALL_UNAVAILABLE = (
+    '<span id="collect-all-btn" title="Планировщик недоступен">'
+    '<button class="outline" disabled>⚠️ Недоступно</button>'
+    '</span>'
+)
+
 
 @router.get("/collect-all/status")
 async def collect_all_status(request: Request):
@@ -52,11 +58,13 @@ async def collect_all_channels(request: Request):
         return RedirectResponse(url="/channels?error=shutting_down", status_code=303)
 
     scheduler = getattr(request.app.state, "scheduler", None)
+    if is_htmx:
+        if not scheduler:
+            return HTMLResponse(_COLLECT_ALL_UNAVAILABLE)
+        await scheduler.trigger_background()
+        return HTMLResponse(_COLLECT_ALL_SPINNER)
     if scheduler:
         await scheduler.trigger_background()
-
-    if is_htmx:
-        return HTMLResponse(_COLLECT_ALL_SPINNER)
     return RedirectResponse(url="/channels?msg=collect_all_started", status_code=303)
 
 

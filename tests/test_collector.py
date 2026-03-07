@@ -53,6 +53,20 @@ async def test_collect_all_skips_filtered_channels(db):
 
 
 @pytest.mark.asyncio
+async def test_collect_all_invalid_min_subscribers_setting_falls_back_to_zero(db):
+    await db.set_setting("min_subscribers_filter", "broken")
+    ch = Channel(channel_id=-100124, title="Normal")
+    await db.add_channel(ch)
+
+    pool = make_mock_pool(get_available_client=AsyncMock(return_value=None))
+    collector = Collector(pool, db, SchedulerConfig())
+
+    stats = await collector.collect_all_channels()
+    assert stats["channels"] == 1
+    assert stats["errors"] == 0
+
+
+@pytest.mark.asyncio
 async def test_collect_single_channel_skips_filtered(db):
     """collect_single_channel returns 0 immediately for filtered channels."""
     ch = Channel(
@@ -328,7 +342,7 @@ async def test_backfill_uses_no_limit(db):
 
     pool = make_mock_pool(get_available_client=AsyncMock(return_value=(mock_client, "+7000")))
 
-    config = SchedulerConfig(messages_per_channel=100, delay_between_requests_sec=0)
+    config = SchedulerConfig(delay_between_requests_sec=0)
     collector = Collector(pool, db, config)
     await collector._collect_channel(ch)
 
@@ -349,7 +363,7 @@ async def test_incremental_uses_no_limit(db):
 
     pool = make_mock_pool(get_available_client=AsyncMock(return_value=(mock_client, "+7000")))
 
-    config = SchedulerConfig(messages_per_channel=200, delay_between_requests_sec=0)
+    config = SchedulerConfig(delay_between_requests_sec=0)
     collector = Collector(pool, db, config)
     await collector._collect_channel(ch)
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 
+from src.settings_utils import parse_int_setting
 from src.config import load_config, resolve_session_encryption_secret
 from src.database import Database
 from src.telegram.auth import TelegramAuth
@@ -33,7 +34,12 @@ async def init_pool(config, db: Database):
         stored_id = await db.get_setting("tg_api_id")
         stored_hash = await db.get_setting("tg_api_hash")
         if stored_id and stored_hash:
-            api_id = int(stored_id)
+            api_id = parse_int_setting(
+                stored_id,
+                setting_name="tg_api_id",
+                default=0,
+                logger=logging.getLogger(__name__),
+            )
             api_hash = stored_hash
 
     auth = TelegramAuth(api_id, api_hash)
