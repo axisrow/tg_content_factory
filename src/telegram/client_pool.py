@@ -201,6 +201,7 @@ class ClientPool:
                 await self.clients[phone].disconnect()
             except Exception:
                 pass
+            self._dialogs_fetched.discard(phone)
             del self.clients[phone]
 
     async def disconnect_all(self) -> None:
