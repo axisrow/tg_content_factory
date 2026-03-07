@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with this codebase.
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## Commands
 
@@ -28,10 +28,12 @@ python -m src.main [--config CONFIG] serve [--web-pass PASS]
 python -m src.main [--config CONFIG] collect [--channel-id ID]
 python -m src.main [--config CONFIG] search "query" [--limit N] [--mode MODE]
 
-python -m src.main channel list|add|delete|toggle|collect
+python -m src.main channel list|add|delete|toggle|collect|stats|refresh-types|import
+python -m src.main filter analyze|apply|reset|precheck
 python -m src.main keyword list|add|delete|toggle
 python -m src.main account list|toggle|delete
-python -m src.main scheduler start|trigger
+python -m src.main scheduler start|trigger|search
+python -m src.main notification setup|status|delete
 ```
 
 ## Architecture
@@ -43,6 +45,10 @@ Three layers: **CLI/Web** → **Telegram + Search + Scheduler** → **SQLite**
 - Search layer: `SearchEngine` (local DB), `AISearchEngine` (LLM-powered)
 - Scheduler: APScheduler wrapper (`src/scheduler/manager.py`) triggers periodic collection
 - DB: single SQLite file via aiosqlite (`src/database.py`), schema auto-created on init
+- Filters: `ChannelAnalyzer` (`src/filters/analyzer.py`) scores channels by uniqueness, subscriber ratio, cross-channel spam, language; thresholds in `src/filters/criteria.py`
+- Collection service (`src/services/collection_service.py`): orchestration layer between web/CLI and Collector/Queue — handles enqueue logic, stats collection
+- Parsers (`src/parsers.py`): identifier extraction for channel import — t.me links, @usernames, negative IDs; file parsing (txt/csv/xlsx)
+- Notification bot: personal bot created via BotFather through a connected account (`src/telegram/notifier.py`)
 
 ## Key Patterns
 
@@ -56,6 +62,10 @@ Three layers: **CLI/Web** → **Telegram + Search + Scheduler** → **SQLite**
 - **CollectionQueue** (`src/collection_queue.py`): `asyncio.Queue` + single worker task, task status (`pending/running/completed/failed/cancelled`) tracked in DB
 - **DB migrations**: `_migrate()` in database.py uses `PRAGMA table_info` to detect missing columns and issues `ALTER TABLE ADD COLUMN` as needed
 - **Keyword matching**: plain text (case-insensitive substring) and regex (`re.IGNORECASE`)
+- **Channel filters**: `ChannelAnalyzer` checks `low_uniqueness`, `low_subscriber_ratio`, `cross_channel_spam`, `non_cyrillic`, `chat_noise`; filtered channels skipped during collection unless `force=True`
+- **Collection service**: `enqueue_channel_by_pk(pk, force)` respects `is_filtered` flag; `enqueue_all_channels()` uses `full=False` for incremental collection
+- **HTMX progressive enhancement**: collect routes check `HX-Request` header to return HTML fragments vs redirects
+- **Identifier parsing**: `parse_identifiers()` splits text by comma/semicolon/newline; `extract_identifiers()` regex-extracts t.me links, @usernames, negative IDs; `parse_file()` handles txt/csv/xlsx
 
 ## Conventions
 
