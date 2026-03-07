@@ -44,7 +44,8 @@ async def settings_page(request: Request):
     saved_interval = await db.get_setting("collect_interval_minutes")
     config = request.app.state.config
     telegram_credentials_from_env = bool(
-        os.environ.get("TG_API_ID", "").strip() and os.environ.get("TG_API_HASH", "").strip()
+        os.environ.get("TG_API_ID", "").strip().isdigit()
+        and os.environ.get("TG_API_HASH", "").strip()
     )
     collect_interval_minutes = parse_int_setting(
         saved_interval,
