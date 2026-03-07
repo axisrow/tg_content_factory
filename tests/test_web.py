@@ -1,4 +1,3 @@
-import asyncio
 import base64
 import re
 from pathlib import Path
@@ -15,7 +14,7 @@ from src.search.ai_search import AISearchEngine
 from src.search.engine import SearchEngine
 from src.telegram.collector import Collector
 from src.web.app import create_app
-from src.web.routes.channel_collection import _COLLECT_ALL_BTN
+from src.web.routes.channel_collection import _COLLECT_ALL_BTN, _COLLECT_ALL_FORM
 from src.web.session import COOKIE_NAME, create_session_token
 
 
@@ -1035,104 +1034,170 @@ async def test_search_results_private_channel_link(client):
 
 
 @pytest.mark.asyncio
-async def test_collect_all_status_idle(client):
-    """GET /channels/collect-all/status when idle returns original button."""
-    resp = await client.get("/channels/collect-all/status")
-    assert resp.status_code == 200
-    assert 'Загрузить все' in resp.text
-    assert 'disabled' not in resp.text
+async def test_collect_all_htmx_returns_scheduler_link_and_creates_tasks(client, monkeypatch):
+    """POST /channels/collect-all with HTMX header returns explicit status and queues tasks."""
+    from src.models import Channel
 
+    db = client._transport.app.state.db
+    monkeypatch.setattr(
+        client._transport.app.state.collection_queue,
+        "_ensure_worker",
+        lambda: None,
+    )
+    await db.add_channel(Channel(channel_id=-100701, title="Ch1", username="ch1"))
+    await db.add_channel(Channel(channel_id=-100702, title="Ch2", username="ch2"))
 
-@pytest.mark.asyncio
-async def test_collect_all_status_running(client):
-    """GET /channels/collect-all/status when collecting returns spinner with polling attrs."""
-    app = client._transport.app.state
-    app.collector._running = True
-    try:
-        resp = await client.get("/channels/collect-all/status")
-    finally:
-        app.collector._running = False
-    assert resp.status_code == 200
-    assert 'disabled' in resp.text
-    assert 'hx-trigger="every 3s"' in resp.text
-
-
-@pytest.mark.asyncio
-async def test_collect_all_htmx_returns_spinner(client):
-    """POST /channels/collect-all with HTMX header returns spinner fragment."""
     resp = await client.post(
         "/channels/collect-all",
         headers={"HX-Request": "true"},
         follow_redirects=False,
     )
     assert resp.status_code == 200
-    assert 'disabled' in resp.text
-    assert 'hx-trigger="every 3s"' in resp.text
+    assert "Добавлено задач: 2." in resp.text
+    assert 'href="/scheduler"' in resp.text
+    assert 'Загрузить все' in resp.text
+
+    tasks = await db.get_collection_tasks()
+    assert len(tasks) == 2
+    assert {task.channel_id for task in tasks} == {-100701, -100702}
+    assert all(task.status == "pending" for task in tasks)
 
 
 @pytest.mark.asyncio
-async def test_collect_all_htmx_without_scheduler_returns_unavailable(client):
-    app = client._transport.app.state
-    scheduler = app.scheduler
-    app.scheduler = None
-    try:
-        resp = await client.post(
-            "/channels/collect-all",
-            headers={"HX-Request": "true"},
-            follow_redirects=False,
-        )
-    finally:
-        app.scheduler = scheduler
+async def test_collect_all_htmx_noop_when_tasks_already_exist(client):
+    from src.models import Channel
+
+    db = client._transport.app.state.db
+    client._transport.app.state.collection_queue._ensure_worker = lambda: None
+    await db.add_channel(Channel(channel_id=-100703, title="Ch3", username="ch3"))
+    await db.add_channel(Channel(channel_id=-100704, title="Ch4", username="ch4"))
+    channel = await db.get_channel_by_channel_id(-100703)
+    assert channel is not None
+    await client._transport.app.state.collection_queue.enqueue(channel, force=True)
+
+    resp = await client.post(
+        "/channels/collect-all",
+        headers={"HX-Request": "true"},
+        follow_redirects=False,
+    )
 
     assert resp.status_code == 200
-    assert "Недоступно" in resp.text
-    assert "hx-trigger" not in resp.text
+    assert "Добавлено задач: 1." in resp.text
+
+    resp = await client.post(
+        "/channels/collect-all",
+        headers={"HX-Request": "true"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 200
+    assert "Новых задач не добавлено" in resp.text
+
+    tasks = await db.get_collection_tasks(limit=10)
+    assert len(tasks) == 2
+    assert {task.channel_id for task in tasks} == {-100703, -100704}
 
 
 @pytest.mark.asyncio
-async def test_collect_all_non_htmx_redirects_and_starts_background(client):
-    """POST /channels/collect-all without HTMX header redirects and starts collection."""
-    app = client._transport.app.state
-    scheduler = None
+async def test_collect_all_non_htmx_redirects_with_new_message_and_creates_tasks(
+    client, monkeypatch
+):
+    """POST /channels/collect-all without HTMX redirects with queue message."""
+    from src.models import Channel
 
-    class BlockingCollector:
-        def __init__(self):
-            self.started_event = asyncio.Event()
-            self.release_event = asyncio.Event()
-            self._running = False
+    db = client._transport.app.state.db
+    monkeypatch.setattr(
+        client._transport.app.state.collection_queue,
+        "_ensure_worker",
+        lambda: None,
+    )
+    await db.add_channel(Channel(channel_id=-100705, title="Ch5", username="ch5"))
+    await db.add_channel(Channel(channel_id=-100706, title="Filtered", username="filtered"))
+    await db.set_channels_filtered_bulk([(-100706, "manual")])
+    await db.add_channel(
+        Channel(channel_id=-100707, title="Inactive", username="inactive", is_active=False)
+    )
 
-        @property
-        def is_running(self):
-            return self._running
+    resp = await client.post("/channels/collect-all", follow_redirects=False)
+    assert resp.status_code == 303
+    assert "msg=collect_all_queued" in resp.headers["location"]
 
-        async def collect_all_channels(self):
-            self._running = True
-            self.started_event.set()
-            try:
-                await self.release_event.wait()
-                return {"channels": 0, "messages": 0, "errors": 0}
-            finally:
-                self._running = False
+    tasks = await db.get_collection_tasks()
+    assert len(tasks) == 1
+    assert tasks[0].channel_id == -100705
+    assert tasks[0].status == "pending"
 
-    collector = BlockingCollector()
-    scheduler = SchedulerManager(collector, AppConfig().scheduler)
-    original_collector = app.collector
-    original_scheduler = app.scheduler
-    app.collector = collector
-    app.scheduler = scheduler
-    try:
-        resp = await client.post("/channels/collect-all", follow_redirects=False)
-        assert resp.status_code == 303
-        assert "msg=collect_all_started" in resp.headers["location"]
 
-        await asyncio.wait_for(collector.started_event.wait(), timeout=1.0)
-        assert scheduler._bg_task is not None
-        assert not scheduler._bg_task.done()
-    finally:
-        collector.release_event.set()
-        await scheduler.stop()
-        app.collector = original_collector
-        app.scheduler = original_scheduler
+@pytest.mark.asyncio
+async def test_collect_all_non_htmx_redirects_with_empty_message_when_no_channels(client):
+    resp = await client.post("/channels/collect-all", follow_redirects=False)
+    assert resp.status_code == 303
+    assert "msg=collect_all_empty" in resp.headers["location"]
+
+    resp = await client.post(
+        "/channels/collect-all",
+        headers={"HX-Request": "true"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 200
+    assert "Нет активных каналов для загрузки." in resp.text
+    assert 'href="/scheduler"' not in resp.text
+
+
+@pytest.mark.asyncio
+async def test_enqueue_all_channels_skips_inactive_filtered_and_duplicate_tasks(
+    client, monkeypatch
+):
+    from src.models import Channel
+    from src.services.collection_service import CollectionService
+
+    db = client._transport.app.state.db
+    collector = client._transport.app.state.collector
+    queue = client._transport.app.state.collection_queue
+    monkeypatch.setattr(
+        queue,
+        "_ensure_worker",
+        lambda: None,
+    )
+    await db.add_channel(Channel(channel_id=-100708, title="Active 1", username="active1"))
+    await db.add_channel(Channel(channel_id=-100709, title="Active 2", username="active2"))
+    await db.add_channel(Channel(channel_id=-100710, title="Filtered", username="filtered"))
+    await db.set_channels_filtered_bulk([(-100710, "manual")])
+    await db.add_channel(
+        Channel(
+            channel_id=-100711,
+            title="Inactive",
+            username="inactive",
+            is_active=False,
+        )
+    )
+
+    channel = await db.get_channel_by_channel_id(-100708)
+    assert channel is not None
+    await queue.enqueue(channel, force=True)
+
+    result = await CollectionService(db, collector, queue).enqueue_all_channels()
+
+    assert result.total_candidates == 2
+    assert result.queued_count == 1
+    assert result.skipped_existing_count == 1
+
+    tasks = await db.get_collection_tasks(limit=10)
+    assert len(tasks) == 2
+    assert {task.channel_id for task in tasks} == {-100708, -100709}
+
+
+@pytest.mark.asyncio
+async def test_get_channel_ids_with_active_tasks_returns_distinct_non_stats_ids(client):
+    db = client._transport.app.state.db
+    await db.create_collection_task(-100801, "One")
+    task_id = await db.create_collection_task(-100802, "Two")
+    await db.update_collection_task(task_id, "running")
+    await db.create_collection_task(-100801, "One duplicate")
+    await db.create_collection_task(0, "Stats task")
+
+    active_ids = await db.get_channel_ids_with_active_tasks()
+
+    assert active_ids == {-100801, -100802}
 
 
 @pytest.mark.asyncio
@@ -1154,6 +1219,8 @@ async def test_channels_page_collect_all_button_matches_htmx_fragment(client):
     ):
         assert expected in template_fragment
         assert expected in _COLLECT_ALL_BTN
+
+    assert _COLLECT_ALL_BTN == f'<span id="collect-all-btn">{_COLLECT_ALL_FORM}</span>'
 
 
 @pytest.mark.asyncio

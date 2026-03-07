@@ -4,46 +4,58 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from starlette.background import BackgroundTask
 
+from src.services.collection_service import BulkEnqueueResult
 from src.web import deps
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
-# NOTE: _COLLECT_ALL_BTN and _COLLECT_ALL_SPINNER must stay in sync with the
-# corresponding fragment in templates/channels.html (the initial page render uses
-# the Jinja template; HTMX responses use these Python constants).
-_COLLECT_ALL_BTN = (
-    '<span id="collect-all-btn">'
+_COLLECT_ALL_FORM = (
     '<form method="post" action="/channels/collect-all" style="display:inline"'
     ' hx-post="/channels/collect-all" hx-target="#collect-all-btn" hx-swap="outerHTML">'
     '<button type="submit" class="outline" style="padding: 0.25rem 0.75rem;">Загрузить все</button>'
     '</form>'
-    '</span>'
 )
 
-_COLLECT_ALL_SPINNER = (
-    '<span id="collect-all-btn"'
-    ' hx-get="/channels/collect-all/status"'
-    ' hx-trigger="every 3s"'
-    ' hx-target="#collect-all-btn"'
-    ' hx-swap="outerHTML">'
-    '<button class="outline" disabled title="Запущен">⏳ Загрузка...</button>'
-    '</span>'
-)
-
-_COLLECT_ALL_UNAVAILABLE = (
-    '<span id="collect-all-btn" title="Планировщик недоступен">'
-    '<button class="outline" disabled>⚠️ Недоступно</button>'
-    '</span>'
-)
+# NOTE: _COLLECT_ALL_BTN and _COLLECT_ALL_FORM must stay in sync with the
+# corresponding fragment in templates/channels.html. The initial page render uses
+# the Jinja template; HTMX responses reuse these Python constants.
+_COLLECT_ALL_BTN = f'<span id="collect-all-btn">{_COLLECT_ALL_FORM}</span>'
 
 
-@router.get("/collect-all/status")
-async def collect_all_status(request: Request):
-    scheduler = getattr(request.app.state, "scheduler", None)
-    if scheduler and scheduler.is_collecting:
-        return HTMLResponse(_COLLECT_ALL_SPINNER)
-    return HTMLResponse(_COLLECT_ALL_BTN)
+def _collect_all_result_fragment(result: BulkEnqueueResult) -> str:
+    scheduler_link = (
+        '<a href="/scheduler" class="secondary outline" role="button">'
+        "Открыть планировщик</a>"
+    )
+    if result.total_candidates == 0:
+        message = "Нет активных каналов для загрузки."
+        extra = ""
+    elif result.queued_count > 0:
+        message = f"Добавлено задач: {result.queued_count}."
+        extra = scheduler_link
+    else:
+        message = "Новых задач не добавлено: всё уже в очереди."
+        extra = scheduler_link
+    return (
+        '<span id="collect-all-btn">'
+        '<span style="display:inline-flex;gap:0.5rem;align-items:center;flex-wrap:wrap">'
+        f"<small>{message}</small>"
+        f"{extra}"
+        f"{_COLLECT_ALL_FORM}"
+        "</span>"
+        "</span>"
+    )
+
+
+def _collect_all_redirect_url(result: BulkEnqueueResult) -> str:
+    if result.total_candidates == 0:
+        msg = "collect_all_empty"
+    elif result.queued_count > 0:
+        msg = "collect_all_queued"
+    else:
+        msg = "collect_all_noop"
+    return f"/channels?msg={msg}"
 
 
 @router.post("/collect-all")
@@ -57,15 +69,12 @@ async def collect_all_channels(request: Request):
             )
         return RedirectResponse(url="/channels?error=shutting_down", status_code=303)
 
-    scheduler = getattr(request.app.state, "scheduler", None)
+    service = deps.collection_service(request)
+    result = await service.enqueue_all_channels()
+
     if is_htmx:
-        if not scheduler:
-            return HTMLResponse(_COLLECT_ALL_UNAVAILABLE)
-        await scheduler.trigger_background()
-        return HTMLResponse(_COLLECT_ALL_SPINNER)
-    if scheduler:
-        await scheduler.trigger_background()
-    return RedirectResponse(url="/channels?msg=collect_all_started", status_code=303)
+        return HTMLResponse(_collect_all_result_fragment(result))
+    return RedirectResponse(url=_collect_all_redirect_url(result), status_code=303)
 
 
 @router.post("/{pk}/collect")

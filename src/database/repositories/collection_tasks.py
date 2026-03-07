@@ -141,6 +141,14 @@ class CollectionTasksRepository:
         rows = await cur.fetchall()
         return [self._to_task(r) for r in rows]
 
+    async def get_channel_ids_with_active_tasks(self) -> set[int]:
+        cur = await self._db.execute(
+            "SELECT DISTINCT channel_id FROM collection_tasks "
+            "WHERE channel_id != 0 AND status IN ('pending', 'running')"
+        )
+        rows = await cur.fetchall()
+        return {int(row["channel_id"]) for row in rows}
+
     async def get_active_stats_task(self) -> CollectionTask | None:
         cur = await self._db.execute(
             "SELECT * FROM collection_tasks "
