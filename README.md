@@ -1,19 +1,22 @@
-# TG Post Search
+# TG Agent
+
+A personal Telegram monitoring toolkit — collect messages, search across channels, get keyword alerts. Built as a pet project for my own use.
 
 [Русская версия](README.ru.md)
 
-Telegram Post Search & Monitoring — a tool for collecting, searching, and monitoring messages from Telegram channels with a web dashboard.
-
 ## Features
 
-- Multi-account Telegram client pool with flood-wait fallback
-- Incremental message collection from channels
-- Keyword monitoring with Telegram notifications (plain text & regex)
-- Full-text search: local DB, direct Telegram, AI-powered (LLM)
-- Web dashboard (FastAPI + Pico CSS)
-- HTTP Basic Auth
-- Session cookie uses `Secure` flag on HTTPS requests
-- Docker ready
+- **All chat types** — channels, supergroups, gigagroups, forums, public and private
+- **Multi-account** with automatic flood-wait rotation
+- **3 search modes** — local DB (FTS5), direct Telegram API, AI/LLM-powered
+- All search results are cached in a local SQLite database
+- **Scheduled collection** — incremental message fetching on a timer
+- **Keyword monitoring** — plain text and regex, with Telegram bot notifications
+- **Built-in anti-spam filters** — deduplication, low-uniqueness detection, cross-channel spam, subscriber ratio filters, non-Cyrillic content filter
+- **Task queue** — background job processing with status tracking
+- **Web dashboard** — FastAPI + Pico CSS, manage everything from a browser
+- **Security** — session encryption (Fernet + PBKDF2), HTTP Basic Auth, HMAC-signed cookies
+- **Docker-ready**
 
 ## Quick Start
 
@@ -26,11 +29,6 @@ Telegram Post Search & Monitoring — a tool for collecting, searching, and moni
 
 ```bash
 pip install .
-```
-
-Copy and fill in environment variables:
-
-```bash
 cp .env.example .env
 ```
 
@@ -40,11 +38,9 @@ Edit `.env`:
 TG_API_ID=your_api_id
 TG_API_HASH=your_api_hash
 WEB_PASS=your_password
-SESSION_ENCRYPTION_KEY=    # required to encrypt account session strings in DB
+SESSION_ENCRYPTION_KEY=    # encrypts account session strings in DB
 LLM_API_KEY=               # optional, for AI search
 ```
-
-Edit `config.yaml` if needed (defaults work out of the box).
 
 Start the server:
 
@@ -54,11 +50,11 @@ python -m src.main serve
 
 Open http://localhost:8080 in your browser.
 
-### Docker
+## Docker
 
 ```bash
 cp .env.example .env
-# edit .env with your credentials
+# fill in your credentials
 docker-compose up -d
 ```
 
@@ -71,14 +67,14 @@ docker-compose up -d
 | `TG_API_ID` | Yes | Telegram API ID |
 | `TG_API_HASH` | Yes | Telegram API Hash |
 | `WEB_PASS` | Yes | Web panel password |
-| `SESSION_ENCRYPTION_KEY` | No* | Explicit key for encrypting Telegram session strings in DB |
+| `SESSION_ENCRYPTION_KEY` | No* | Key for encrypting Telegram session strings in DB |
 | `LLM_API_KEY` | No | API key for AI-powered search |
 
-`*` If not set, new sessions are stored in plaintext. If DB already contains encrypted sessions (`enc:v*`), app startup fails fast until this key is provided.
+\* If not set, sessions are stored in plaintext. If the DB already contains encrypted sessions (`enc:v*`), startup fails until this key is provided.
 
 ### config.yaml
 
-Config supports `${ENV_VAR}` substitution. Empty env vars are dropped (defaults apply).
+Supports `${ENV_VAR}` substitution. Empty env vars are dropped (defaults apply).
 
 | Section | Description |
 |---|---|
@@ -88,80 +84,68 @@ Config supports `${ENV_VAR}` substitution. Empty env vars are dropped (defaults 
 | `notifications` | `admin_chat_id` for keyword match alerts |
 | `database` | SQLite path (default: `data/tg_search.db`) |
 | `llm` | LLM provider, model, API key, enabled flag |
-| `security` | Session encryption settings (`session_encryption_key`) |
+| `security` | Session encryption settings |
 
-## Usage
-
-### CLI Commands
+## CLI
 
 ```bash
-# Start web server
+# Web server
 python -m src.main [--config CONFIG] serve [--web-pass PASS]
 
-# One-shot message collection
-python -m src.main [--config CONFIG] collect
+# One-shot collection
+python -m src.main [--config CONFIG] collect [--channel-id ID]
 
-# Search local database
-python -m src.main [--config CONFIG] search "query" [--limit N]
+# Search
+python -m src.main [--config CONFIG] search "query" [--limit N] [--mode MODE]
+
+# Channel management
+python -m src.main channel list|add|delete|toggle|collect|stats|refresh-types|import
+
+# Content filters
+python -m src.main filter analyze|apply|reset|precheck
+
+# Keywords
+python -m src.main keyword list|add|delete|toggle
+
+# Accounts
+python -m src.main account list|toggle|delete
+
+# Scheduler
+python -m src.main scheduler start|trigger|search
+
+# Notification bot
+python -m src.main notification setup|status|delete
 ```
 
-### Web Interface
+## Web Interface
 
 | Page | Path | Description |
 |---|---|---|
 | Dashboard | `/` | Stats, scheduler status, connected accounts |
-| Auth | `/auth/login` | Add Telegram accounts (phone + code + optional 2FA) |
-| Accounts | `/accounts` | Manage connected accounts (toggle, delete) |
-| Channels | `/channels` | Add/remove channels, manage keywords |
-| Search | `/search` | Search messages (local / Telegram / AI modes) |
-| Scheduler | `/scheduler` | Start/stop/trigger automatic collection |
+| Auth | `/auth/login` | Add Telegram accounts (phone + code + 2FA) |
+| Accounts | `/accounts` | Manage connected accounts |
+| Channels | `/channels` | Add/remove channels, keywords, import |
+| Search | `/search` | Search messages (local / Telegram / AI) |
+| Filters | `/filter` | Anti-spam filter report and controls |
+| Scheduler | `/scheduler` | Start/stop/trigger collection and keyword search |
 
-### Workflow
+## Roadmap
 
-1. Start the server (`python -m src.main serve`)
-2. Open the web dashboard and add a Telegram account via Auth page
-3. Add channels to monitor
-4. (Optional) Configure keywords for notifications
-5. Start the scheduler or trigger manual collection
-6. Search collected messages
-
-## Architecture
-
-```
-┌─────────────────────────────────────────────┐
-│                   CLI (main.py)              │
-│           serve / collect / search           │
-└──────┬──────────────┬───────────────┬────────┘
-       │              │               │
-┌──────▼──────┐ ┌─────▼──────┐ ┌──────▼──────┐
-│  Web Layer  │ │  Telegram   │ │   Search    │
-│  FastAPI +  │ │  ClientPool │ │   Engine    │
-│  Templates  │ │  Collector  │ │  + AI Search│
-│  Auth MW    │ │  Notifier   │ │             │
-└──────┬──────┘ └─────┬──────┘ └──────┬──────┘
-       │              │               │
-┌──────▼──────────────▼───────────────▼──────┐
-│              Database (aiosqlite)           │
-│              data/tg_search.db             │
-└────────────────────────────────────────────┘
-```
+- LLM-powered content factory
+- LLM-powered intelligent search
+- LLM-based chat spam moderation
+- Direct message handling
+- Telegram action automation (broadcasts, etc.)
 
 ## Development
 
-### Setup
-
 ```bash
+# Install dev dependencies
 pip install -e ".[dev]"
-```
 
-### Testing
-
-```bash
+# Run tests
 pytest tests/ -v
-```
 
-### Linting
-
-```bash
+# Lint
 ruff check src/ tests/
 ```

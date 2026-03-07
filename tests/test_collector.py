@@ -537,6 +537,74 @@ async def test_collection_queue_skips_filtered_channel(db):
 
 
 @pytest.mark.asyncio
+async def test_enqueue_all_channels_uses_incremental_queue_tasks(db):
+    from src.collection_queue import CollectionQueue
+    from src.services.collection_service import CollectionService
+
+    await db.add_channel(
+        Channel(
+            channel_id=-100161,
+            title="Incremental Channel",
+            username="incremental_ch",
+            last_collected_id=42,
+        )
+    )
+
+    pool = make_mock_pool(get_available_client=AsyncMock(return_value=None))
+    collector = Collector(pool, db, SchedulerConfig())
+    collector.collect_single_channel = AsyncMock(return_value=3)
+    queue = CollectionQueue(collector, db)
+    queue._ensure_worker = lambda: None
+
+    service = CollectionService(db, collector, queue)
+    result = await service.enqueue_all_channels()
+
+    assert result.queued_count == 1
+
+    task = (await db.get_collection_tasks(limit=1))[0]
+    assert task.payload == {"force": True, "full": False}
+
+    await queue._run_worker()
+
+    collector.collect_single_channel.assert_awaited_once()
+    _, kwargs = collector.collect_single_channel.await_args
+    assert kwargs["force"] is True
+    assert kwargs["full"] is False
+    assert kwargs["progress_callback"] is not None
+
+    await queue.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_collection_queue_force_tasks_keep_full_collection(db):
+    from src.collection_queue import CollectionQueue
+
+    await db.add_channel(Channel(channel_id=-100162, title="Full Channel", username="full_ch"))
+
+    pool = make_mock_pool(get_available_client=AsyncMock(return_value=None))
+    collector = Collector(pool, db, SchedulerConfig())
+    collector.collect_single_channel = AsyncMock(return_value=1)
+    queue = CollectionQueue(collector, db)
+    queue._ensure_worker = lambda: None
+
+    stored_ch = next(c for c in await db.get_channels() if c.channel_id == -100162)
+    task_id = await queue.enqueue(stored_ch, force=True)
+
+    task = await db.get_collection_task(task_id)
+    assert task is not None
+    assert task.payload == {"force": True}
+
+    await queue._run_worker()
+
+    collector.collect_single_channel.assert_awaited_once()
+    _, kwargs = collector.collect_single_channel.await_args
+    assert kwargs["force"] is True
+    assert kwargs["full"] is True
+
+    await queue.shutdown()
+
+
+@pytest.mark.asyncio
 async def test_requeue_startup_tasks(db):
     """requeue_startup_tasks re-enqueues pending tasks that survived a restart."""
     from src.collection_queue import CollectionQueue
@@ -562,6 +630,49 @@ async def test_requeue_startup_tasks(db):
     task = await db.get_collection_task(task_id)
     # Task was picked up: either completed (0 messages) or failed
     assert task.status in ("completed", "failed")
+
+    await queue.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_requeue_startup_tasks_preserves_incremental_flag(db):
+    from src.collection_queue import CollectionQueue
+
+    await db.add_channel(
+        Channel(
+            channel_id=-100163,
+            title="Pending Incremental",
+            username="pending_incremental",
+            last_collected_id=15,
+        )
+    )
+    task_id = await db.create_collection_task(
+        -100163,
+        "Pending Incremental",
+        channel_username="pending_incremental",
+        payload={"force": True, "full": False},
+    )
+
+    pool = make_mock_pool(get_available_client=AsyncMock(return_value=None))
+    collector = Collector(pool, db, SchedulerConfig())
+    collector.collect_single_channel = AsyncMock(return_value=2)
+    queue = CollectionQueue(collector, db)
+    queue._ensure_worker = lambda: None
+
+    count = await queue.requeue_startup_tasks()
+
+    assert count == 1
+
+    await queue._run_worker()
+
+    collector.collect_single_channel.assert_awaited_once()
+    _, kwargs = collector.collect_single_channel.await_args
+    assert kwargs["force"] is True
+    assert kwargs["full"] is False
+
+    task = await db.get_collection_task(task_id)
+    assert task is not None
+    assert task.status == "completed"
 
     await queue.shutdown()
 

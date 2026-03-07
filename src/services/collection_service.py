@@ -45,7 +45,9 @@ class CollectionService:
             if channel.channel_id in busy_channel_ids:
                 skipped_existing_count += 1
                 continue
-            await self._queue.enqueue(channel, force=True)
+            # Bulk collection should continue from last_collected_id when the
+            # channel already has history, instead of reloading the full archive.
+            await self._queue.enqueue(channel, force=True, full=False)
             queued_count += 1
 
         return BulkEnqueueResult(
