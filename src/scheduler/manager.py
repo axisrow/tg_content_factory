@@ -74,8 +74,12 @@ class SchedulerManager:
             return
 
         self._scheduler = AsyncIOScheduler()
-        saved_interval = await self._db.get_setting("collect_interval_minutes") if self._db else None
-        collect_interval = int(saved_interval) if saved_interval else self._config.collect_interval_minutes
+        saved_interval = (
+            await self._db.get_setting("collect_interval_minutes") if self._db else None
+        )
+        collect_interval = (
+            int(saved_interval) if saved_interval else self._config.collect_interval_minutes
+        )
         self._scheduler.add_job(
             self._run_collection,
             IntervalTrigger(minutes=collect_interval),

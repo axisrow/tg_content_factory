@@ -16,7 +16,9 @@ async def collect_all_channels(request: Request):
 
     if getattr(request.app.state, "shutting_down", False):
         if is_htmx:
-            return HTMLResponse('<span id="collect-all-btn" title="Сервер останавливается">⚠️</span>')
+            return HTMLResponse(
+                '<span id="collect-all-btn" title="Сервер останавливается">⚠️</span>'
+            )
         return RedirectResponse(url="/channels?error=shutting_down", status_code=303)
 
     scheduler = getattr(request.app.state, "scheduler", None)
