@@ -518,7 +518,7 @@ class Collector:
             return len(all_messages)
 
         if should_notify_keywords and all_messages:
-            await self._check_keywords(all_messages)
+            await self._check_notification_queries(all_messages)
 
         if is_first_run and not force and len(all_messages) >= 50:
             cur = await self._db.execute(
@@ -553,31 +553,31 @@ class Collector:
                 prefixes.append(msg.text[:100])
         return prefixes
 
-    async def _check_keywords(self, messages: list[Message]) -> None:
-        """Check messages against active keywords and notify."""
+    async def _check_notification_queries(self, messages: list[Message]) -> None:
+        """Check messages against active notification queries and notify."""
         if not self._notifier:
             return
 
-        keywords = await self._db.get_keywords(active_only=True)
-        if not keywords:
+        queries = await self._db.get_notification_queries(active_only=True)
+        if not queries:
             return
 
         for msg in messages:
             if not msg.text:
                 continue
-            for kw in keywords:
+            for sq in queries:
                 matched = False
-                if kw.is_regex:
+                if sq.is_regex:
                     try:
-                        matched = bool(re.search(kw.pattern, msg.text, re.IGNORECASE))
+                        matched = bool(re.search(sq.query, msg.text, re.IGNORECASE))
                     except re.error:
                         pass
                 else:
-                    matched = kw.pattern.lower() in msg.text.lower()
+                    matched = sq.query.lower() in msg.text.lower()
 
                 if matched:
                     await self._notifier.notify(
-                        f"Keyword '{kw.pattern}' found in channel {msg.channel_id}:\n"
+                        f"Query '{sq.query}' found in channel {msg.channel_id}:\n"
                         f"{msg.text[:200]}"
                     )
 

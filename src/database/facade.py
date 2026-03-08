@@ -13,7 +13,6 @@ from src.database.repositories.channel_stats import ChannelStatsRepository
 from src.database.repositories.channels import ChannelsRepository
 from src.database.repositories.collection_tasks import CollectionTasksRepository
 from src.database.repositories.filters import FilterRepository
-from src.database.repositories.keywords import KeywordsRepository
 from src.database.repositories.messages import MessagesRepository
 from src.database.repositories.notification_bots import NotificationBotsRepository
 from src.database.repositories.search_log import SearchLogRepository
@@ -26,9 +25,9 @@ from src.models import (
     ChannelStats,
     CollectionTask,
     CollectionTaskStatus,
-    Keyword,
     Message,
     NotificationBot,
+    SearchQuery,
     StatsAllTaskPayload,
 )
 from src.security import SessionCipher
@@ -47,7 +46,6 @@ class Database:
         self._accounts: AccountsRepository | None = None
         self._channels: ChannelsRepository | None = None
         self._messages: MessagesRepository | None = None
-        self._keywords: KeywordsRepository | None = None
         self._tasks: CollectionTasksRepository | None = None
         self._search_log: SearchLogRepository | None = None
         self._channel_stats: ChannelStatsRepository | None = None
@@ -89,7 +87,6 @@ class Database:
         self._accounts = AccountsRepository(self._db, session_cipher=session_cipher)
         self._channels = ChannelsRepository(self._db)
         self._messages = MessagesRepository(self._db)
-        self._keywords = KeywordsRepository(self._db)
         self._tasks = CollectionTasksRepository(self._db)
         self._search_log = SearchLogRepository(self._db)
         self._channel_stats = ChannelStatsRepository(self._db)
@@ -101,7 +98,6 @@ class Database:
             accounts=self._accounts,
             channels=self._channels,
             messages=self._messages,
-            keywords=self._keywords,
             tasks=self._tasks,
             search_log=self._search_log,
             channel_stats=self._channel_stats,
@@ -145,7 +141,6 @@ class Database:
                 self._accounts,
                 self._channels,
                 self._messages,
-                self._keywords,
                 self._tasks,
                 self._search_log,
                 self._channel_stats,
@@ -276,21 +271,11 @@ class Database:
         self._require()
         return await self._messages.get_stats()
 
-    async def add_keyword(self, keyword: Keyword) -> int:
+    async def get_notification_queries(
+        self, active_only: bool = True
+    ) -> list[SearchQuery]:
         self._require()
-        return await self._keywords.add_keyword(keyword)
-
-    async def get_keywords(self, active_only: bool = False) -> list[Keyword]:
-        self._require()
-        return await self._keywords.get_keywords(active_only)
-
-    async def set_keyword_active(self, keyword_id: int, active: bool) -> None:
-        self._require()
-        await self._keywords.set_keyword_active(keyword_id, active)
-
-    async def delete_keyword(self, keyword_id: int) -> None:
-        self._require()
-        await self._keywords.delete_keyword(keyword_id)
+        return await self._search_queries.get_notification_queries(active_only)
 
     async def create_collection_task(
         self,

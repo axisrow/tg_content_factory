@@ -21,9 +21,19 @@ async def add_search_query(
     name: str = Form(...),
     query: str = Form(...),
     interval_minutes: int = Form(60),
+    is_regex: bool = Form(False),
+    notify_on_collect: bool = Form(False),
+    track_stats: bool = Form(False),
 ):
     svc = deps.search_query_service(request)
-    await svc.add(name, query, interval_minutes)
+    await svc.add(
+        name,
+        query,
+        interval_minutes,
+        is_regex=is_regex,
+        notify_on_collect=notify_on_collect,
+        track_stats=track_stats,
+    )
     scheduler = deps.get_scheduler(request)
     if scheduler.is_running:
         await scheduler.sync_search_query_jobs()

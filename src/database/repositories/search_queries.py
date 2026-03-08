@@ -13,9 +13,18 @@ class SearchQueriesRepository:
 
     async def add(self, sq: SearchQuery) -> int:
         cur = await self._db.execute(
-            "INSERT INTO search_queries (name, query, is_active, interval_minutes) "
-            "VALUES (?, ?, ?, ?)",
-            (sq.name, sq.query, int(sq.is_active), sq.interval_minutes),
+            "INSERT INTO search_queries "
+            "(name, query, is_regex, is_active, notify_on_collect, track_stats, interval_minutes) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                sq.name,
+                sq.query,
+                int(sq.is_regex),
+                int(sq.is_active),
+                int(sq.notify_on_collect),
+                int(sq.track_stats),
+                sq.interval_minutes,
+            ),
         )
         await self._db.commit()
         return cur.lastrowid or 0
@@ -110,13 +119,25 @@ class SearchQueriesRepository:
         rows = await cur.fetchall()
         return {r["query_id"]: r["last"] for r in rows if r["last"]}
 
+    async def get_notification_queries(self, active_only: bool = True) -> list[SearchQuery]:
+        sql = "SELECT * FROM search_queries WHERE notify_on_collect = 1"
+        if active_only:
+            sql += " AND is_active = 1"
+        sql += " ORDER BY id"
+        cur = await self._db.execute(sql)
+        rows = await cur.fetchall()
+        return [self._row_to_model(r) for r in rows]
+
     @staticmethod
     def _row_to_model(row) -> SearchQuery:
         return SearchQuery(
             id=row["id"],
             name=row["name"],
             query=row["query"],
+            is_regex=bool(row["is_regex"]),
             is_active=bool(row["is_active"]),
+            notify_on_collect=bool(row["notify_on_collect"]),
+            track_stats=bool(row["track_stats"]),
             interval_minutes=row["interval_minutes"],
             created_at=datetime.fromisoformat(row["created_at"]) if row["created_at"] else None,
         )

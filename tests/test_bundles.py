@@ -16,9 +16,9 @@ from src.models import (
     Channel,
     ChannelStats,
     CollectionTaskStatus,
-    Keyword,
     Message,
     NotificationBot,
+    SearchQuery,
     StatsAllTaskPayload,
 )
 
@@ -402,16 +402,16 @@ class TestCollectionBundle:
         val = await b.get_setting("mykey")
         assert val == "myval"
 
-    async def test_keywords_crud(self, db):
+    async def test_notification_queries(self, db):
         b = CollectionBundle.from_database(db)
-        kid = await b.add_keyword(Keyword(pattern="test"))
-        assert kid > 0
-        kws = await b.list_keywords()
-        assert any(k.id == kid for k in kws)
-        await b.set_keyword_active(kid, False)
-        await b.delete_keyword(kid)
-        kws3 = await b.list_keywords()
-        assert all(k.id != kid for k in kws3)
+        sq = SearchQuery(name="test", query="test", notify_on_collect=True, track_stats=False)
+        sq_id = await b.search_queries.add(sq)
+        assert sq_id > 0
+        nqs = await b.list_notification_queries()
+        assert any(q.id == sq_id for q in nqs)
+        await b.search_queries.delete(sq_id)
+        nqs2 = await b.list_notification_queries()
+        assert all(q.id != sq_id for q in nqs2)
 
     async def test_channel_stats(self, db):
         b = CollectionBundle.from_database(db)
@@ -480,10 +480,10 @@ class TestSchedulerBundle:
         val = await b.get_setting("skey")
         assert val == "sval"
 
-    async def test_list_keywords(self, db):
+    async def test_list_notification_queries(self, db):
         b = SchedulerBundle.from_database(db)
-        kws = await b.list_keywords()
-        assert isinstance(kws, list)
+        nqs = await b.list_notification_queries()
+        assert isinstance(nqs, list)
 
     async def test_get_collection_tasks(self, db):
         b = SchedulerBundle.from_database(db)

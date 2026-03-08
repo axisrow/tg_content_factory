@@ -15,8 +15,24 @@ class SearchQueryService:
             bundle = SearchQueryBundle.from_database(bundle)
         self._bundle = bundle
 
-    async def add(self, name: str, query: str, interval_minutes: int = 60) -> int:
-        sq = SearchQuery(name=name, query=query, interval_minutes=interval_minutes)
+    async def add(
+        self,
+        name: str,
+        query: str,
+        interval_minutes: int = 60,
+        *,
+        is_regex: bool = False,
+        notify_on_collect: bool = False,
+        track_stats: bool = True,
+    ) -> int:
+        sq = SearchQuery(
+            name=name,
+            query=query,
+            interval_minutes=interval_minutes,
+            is_regex=is_regex,
+            notify_on_collect=notify_on_collect,
+            track_stats=track_stats,
+        )
         return await self._bundle.add(sq)
 
     async def list(self, active_only: bool = False) -> list[SearchQuery]:

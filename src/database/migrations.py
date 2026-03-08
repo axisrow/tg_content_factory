@@ -216,6 +216,37 @@ async def run_migrations(db: aiosqlite.Connection) -> None:
     )
     await db.commit()
 
+    # Migrate search_queries: add new columns
+    cur = await db.execute("PRAGMA table_info(search_queries)")
+    sq_columns = {row["name"] for row in await cur.fetchall()}
+    if "is_regex" not in sq_columns:
+        await db.execute("ALTER TABLE search_queries ADD COLUMN is_regex INTEGER DEFAULT 0")
+        await db.commit()
+    if "notify_on_collect" not in sq_columns:
+        await db.execute(
+            "ALTER TABLE search_queries ADD COLUMN notify_on_collect INTEGER DEFAULT 0"
+        )
+        await db.commit()
+    if "track_stats" not in sq_columns:
+        await db.execute("ALTER TABLE search_queries ADD COLUMN track_stats INTEGER DEFAULT 1")
+        await db.commit()
+
+    # Migrate keywords → search_queries and drop keywords table
+    cur = await db.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='keywords'"
+    )
+    if await cur.fetchone():
+        await db.execute(
+            """
+            INSERT INTO search_queries
+                (name, query, is_regex, is_active, notify_on_collect, track_stats)
+            SELECT pattern, pattern, is_regex, is_active, 1, 0 FROM keywords
+            """
+        )
+        await db.execute("DROP TABLE keywords")
+        await db.commit()
+        logger.info("Migrated keywords → search_queries and dropped keywords table")
+
     cur = await db.execute("SELECT value FROM settings WHERE key = 'fts5_initialized'")
     if not await cur.fetchone():
         try:

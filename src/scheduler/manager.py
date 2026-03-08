@@ -27,8 +27,8 @@ class _LegacySchedulerBundle:
     async def get_setting(self, key: str) -> str | None:
         return await self._store.get_setting(key)
 
-    async def list_keywords(self, active_only: bool = False):
-        return await self._store.get_keywords(active_only=active_only)
+    async def list_notification_queries(self, active_only: bool = True):
+        return await self._store.get_notification_queries(active_only=active_only)
 
 
 class SchedulerManager:
@@ -197,36 +197,36 @@ class SchedulerManager:
         return stats
 
     async def _run_keyword_search(self) -> dict:
-        """Search by active keywords using search_telegram, respecting quotas."""
+        """Search by active notification queries using search_telegram, respecting quotas."""
         if not self._search_engine:
             return {"keywords": 0, "results": 0, "errors": 0}
 
         logger.info("Starting scheduled keyword search")
-        keywords = await self._scheduler_bundle.list_keywords(active_only=True)
+        queries = await self._scheduler_bundle.list_notification_queries(active_only=True)
         total_results = 0
         searched = 0
         errors = 0
 
-        for kw in keywords:
-            pattern = kw.pattern
+        for sq in queries:
+            query = sq.query
             try:
-                quota = await self._search_engine.check_search_quota(pattern)
+                quota = await self._search_engine.check_search_quota(query)
                 if quota and quota.get("remains") == 0 and not quota.get("query_is_free"):
                     logger.info("Search quota exhausted, stopping keyword search")
                     break
 
-                result = await self._search_engine.search_telegram(pattern, limit=50)
+                result = await self._search_engine.search_telegram(query, limit=50)
                 if result.error:
-                    logger.warning("Search for '%s' returned error: %s", pattern, result.error)
+                    logger.warning("Search for '%s' returned error: %s", query, result.error)
                     errors += 1
                 else:
                     total_results += result.total
                     searched += 1
                     logger.info(
-                        "Keyword '%s': found %d messages", pattern, result.total
+                        "Query '%s': found %d messages", query, result.total
                     )
             except Exception:
-                logger.exception("Error searching keyword '%s'", pattern)
+                logger.exception("Error searching query '%s'", query)
                 errors += 1
 
         stats = {"keywords": searched, "results": total_results, "errors": errors}
@@ -239,7 +239,8 @@ class SchedulerManager:
         if not self._sq_bundle or not self._scheduler:
             return
 
-        active_queries = await self._sq_bundle.get_all(active_only=True)
+        all_active = await self._sq_bundle.get_all(active_only=True)
+        active_queries = [sq for sq in all_active if sq.track_stats]
         active_ids = {f"sq_{sq.id}" for sq in active_queries}
 
         existing_jobs = self._scheduler.get_all_jobs()
