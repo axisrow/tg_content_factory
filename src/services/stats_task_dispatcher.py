@@ -37,9 +37,7 @@ class _DatabaseChannelsAdapter:
             return getattr(self._db, self._RENAMES[name])
         if name in self._ALLOWED:
             return getattr(self._db, name)
-        if name not in self._RENAMES and name not in self._ALLOWED:
-            raise AttributeError(f"{type(self).__name__!s} has no attribute {name!r}")
-        raise AssertionError("unreachable")
+        raise AttributeError(f"{type(self).__name__!s} has no attribute {name!r}")
 
 
 class StatsTaskDispatcher:

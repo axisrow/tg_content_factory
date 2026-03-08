@@ -163,7 +163,8 @@ async def _run_write_checks(config_path: str) -> list[CheckResult]:
                 await copy_db.set_account_active(acc.id, not original)
                 refreshed = await copy_db.get_accounts()
                 toggled = next(a for a in refreshed if a.id == acc.id)
-                assert toggled.is_active is (not original)
+                if toggled.is_active is not (not original):
+                    raise RuntimeError("account active state did not change")
                 results.append(CheckResult(
                     "account_toggle", Status.PASS,
                     f"id={acc.id} active: {original} -> {not original}",
@@ -179,7 +180,8 @@ async def _run_write_checks(config_path: str) -> list[CheckResult]:
             )
             keywords = await copy_db.get_keywords()
             found = any(k.id == added_kw_id for k in keywords)
-            assert found, "keyword not found after add"
+            if not found:
+                raise RuntimeError("keyword not found after add")
             results.append(CheckResult(
                 "keyword_add", Status.PASS,
                 f'Added id={added_kw_id} pattern="__test_cli__"',
@@ -193,7 +195,8 @@ async def _run_write_checks(config_path: str) -> list[CheckResult]:
                 await copy_db.set_keyword_active(added_kw_id, False)
                 keywords = await copy_db.get_keywords()
                 kw = next(k for k in keywords if k.id == added_kw_id)
-                assert kw.is_active is False
+                if kw.is_active is not False:
+                    raise RuntimeError("keyword active state did not change")
                 results.append(CheckResult(
                     "keyword_toggle", Status.PASS,
                     f"id={added_kw_id} active: True -> False",
@@ -211,7 +214,8 @@ async def _run_write_checks(config_path: str) -> list[CheckResult]:
                 await copy_db.delete_keyword(added_kw_id)
                 keywords = await copy_db.get_keywords()
                 found = any(k.id == added_kw_id for k in keywords)
-                assert not found, "keyword still present after delete"
+                if found:
+                    raise RuntimeError("keyword still present after delete")
                 results.append(CheckResult(
                     "keyword_delete", Status.PASS,
                     f"id={added_kw_id} deleted, verified absent",
@@ -236,7 +240,8 @@ async def _run_write_checks(config_path: str) -> list[CheckResult]:
                 await copy_db.set_channel_active(ch.id, not original)
                 refreshed = await copy_db.get_channels_with_counts()
                 toggled = next(c for c in refreshed if c.id == ch.id)
-                assert toggled.is_active is (not original)
+                if toggled.is_active is not (not original):
+                    raise RuntimeError("channel active state did not change")
                 results.append(CheckResult(
                     "channel_toggle", Status.PASS,
                     f"id={ch.id} active: {original} -> {not original}",
@@ -320,6 +325,8 @@ async def _run_telegram_live_checks(config_path: str) -> list[CheckResult]:
         results.append(CheckResult("tg_pool_init", Status.FAIL, str(exc)))
         await _cleanup_telegram(pool, copy_db, tmp_path, results)
         return results
+
+    engine = SearchEngine(copy_db, pool)
 
     # 3. tg_users_info
     try:
@@ -441,7 +448,6 @@ async def _run_telegram_live_checks(config_path: str) -> list[CheckResult]:
 
     # 8. tg_search_my_chats
     try:
-        engine = SearchEngine(copy_db, pool)
         result = await _tg_call(engine.search_my_chats("test", limit=5))
         results.append(CheckResult(
             "tg_search_my_chats", Status.PASS,
@@ -458,7 +464,6 @@ async def _run_telegram_live_checks(config_path: str) -> list[CheckResult]:
     else:
         try:
             ch = channels[0]
-            engine = SearchEngine(copy_db, pool)
             result = await _tg_call(
                 engine.search_in_channel(ch.channel_id, "test", limit=5),
             )
@@ -471,7 +476,6 @@ async def _run_telegram_live_checks(config_path: str) -> list[CheckResult]:
 
     # 10. tg_search_premium
     try:
-        engine = SearchEngine(copy_db, pool)
         result = await _tg_call(engine.search_telegram("test", limit=5))
         if result.error and "Premium" in result.error:
             results.append(
@@ -487,7 +491,6 @@ async def _run_telegram_live_checks(config_path: str) -> list[CheckResult]:
 
     # 11. tg_search_quota
     try:
-        engine = SearchEngine(copy_db, pool)
         quota = await _tg_call(engine.check_search_quota("test"))
         if quota is None:
             results.append(
