@@ -27,6 +27,7 @@ from telethon.tl.types import (
 
 from src.config import SchedulerConfig
 from src.database import Database
+from src.database.bundles import CollectionBundle
 from src.filters.criteria import (
     LOW_SUBSCRIBER_RATIO_CHAT_THRESHOLD,
     LOW_SUBSCRIBER_RATIO_THRESHOLD,
@@ -63,7 +64,7 @@ class Collector:
     def __init__(
         self,
         pool: ClientPool,
-        db: Database,
+        db: Database | CollectionBundle,
         config: SchedulerConfig,
         notifier: Notifier | None = None,
     ):

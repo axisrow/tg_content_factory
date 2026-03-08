@@ -7,7 +7,15 @@ import pytest
 from cryptography.fernet import Fernet
 
 from src.database import Database
-from src.models import Account, Channel, Keyword, Message
+from src.models import (
+    Account,
+    Channel,
+    CollectionTaskStatus,
+    CollectionTaskType,
+    Keyword,
+    Message,
+    StatsAllTaskPayload,
+)
 
 
 def _encrypt_v1(secret: str, plaintext: str) -> str:
@@ -856,65 +864,115 @@ async def test_migrate_adds_is_premium_column(tmp_path):
 @pytest.mark.asyncio
 async def test_stats_task_claim_and_continuation(db):
     now = datetime.now(timezone.utc)
-    payload = {
-        "task_kind": "stats_all",
-        "channel_ids": [-1001, -1002],
-        "next_index": 0,
-        "batch_size": 20,
-        "channels_ok": 0,
-        "channels_err": 0,
-    }
-    tid = await db.create_collection_task(
-        0,
-        "Обновление статистики",
+    payload = StatsAllTaskPayload(channel_ids=[-1001, -1002])
+    tid = await db.create_stats_task(
+        payload,
         run_after=now,
-        payload=payload,
     )
 
     claimed = await db.claim_next_due_stats_task(now)
     assert claimed is not None
     assert claimed.id == tid
-    assert claimed.status == "running"
-    assert claimed.payload is not None
-    assert claimed.payload["task_kind"] == "stats_all"
+    assert claimed.task_type == CollectionTaskType.STATS_ALL
+    assert claimed.status == CollectionTaskStatus.RUNNING
+    assert isinstance(claimed.payload, StatsAllTaskPayload)
+    assert claimed.payload.task_kind == CollectionTaskType.STATS_ALL.value
 
     continuation_id = await db.create_stats_continuation_task(
-        payload={**payload, "next_index": 1},
+        payload=StatsAllTaskPayload(channel_ids=[-1001, -1002], next_index=1),
         run_after=now,
         parent_task_id=tid,
     )
     continuation = await db.get_collection_task(continuation_id)
     assert continuation is not None
     assert continuation.parent_task_id == tid
-    assert continuation.status == "pending"
-    assert continuation.payload is not None
-    assert continuation.payload["next_index"] == 1
+    assert continuation.status == CollectionTaskStatus.PENDING
+    assert isinstance(continuation.payload, StatsAllTaskPayload)
+    assert continuation.payload.next_index == 1
 
 
 @pytest.mark.asyncio
 async def test_requeue_running_stats_tasks_on_startup(db):
-    payload = {
-        "task_kind": "stats_all",
-        "channel_ids": [],
-        "next_index": 0,
-        "batch_size": 20,
-        "channels_ok": 0,
-        "channels_err": 0,
-    }
-    tid = await db.create_collection_task(
-        0,
-        "Обновление статистики",
-        payload=payload,
-    )
-    await db.update_collection_task(tid, "running")
+    tid = await db.create_stats_task(StatsAllTaskPayload(channel_ids=[]))
+    await db.update_collection_task(tid, CollectionTaskStatus.RUNNING)
 
     requeued = await db.requeue_running_stats_tasks_on_startup(datetime.now(timezone.utc))
     assert requeued == 1
 
     task = await db.get_collection_task(tid)
     assert task is not None
-    assert task.status == "pending"
+    assert task.status == CollectionTaskStatus.PENDING
     assert task.run_after is not None
+
+
+@pytest.mark.asyncio
+async def test_stats_payload_round_trip_serialization(db):
+    payload = StatsAllTaskPayload(channel_ids=[-1001], next_index=3, channels_ok=2, channels_err=1)
+    task_id = await db.create_stats_task(payload)
+
+    task = await db.get_collection_task(task_id)
+    assert task is not None
+    assert task.task_type == CollectionTaskType.STATS_ALL
+    assert isinstance(task.payload, StatsAllTaskPayload)
+    assert task.payload.model_dump() == payload.model_dump()
+
+
+@pytest.mark.asyncio
+async def test_cancel_collection_task_preserves_typed_status(db):
+    task_id = await db.create_collection_task(-100123, "Channel")
+    cancelled = await db.cancel_collection_task(task_id, note="cancelled in test")
+
+    task = await db.get_collection_task(task_id)
+    assert cancelled is True
+    assert task is not None
+    assert task.task_type == CollectionTaskType.CHANNEL_COLLECT
+    assert task.status == CollectionTaskStatus.CANCELLED
+    assert task.note == "cancelled in test"
+
+
+@pytest.mark.asyncio
+async def test_migration_backfills_collection_task_type(tmp_path):
+    db_path = tmp_path / "legacy_tasks.db"
+    conn = await aiosqlite.connect(db_path)
+    conn.row_factory = aiosqlite.Row
+    await conn.executescript(
+        """
+        CREATE TABLE collection_tasks (
+            id INTEGER PRIMARY KEY,
+            channel_id INTEGER NOT NULL,
+            channel_title TEXT,
+            status TEXT DEFAULT 'pending',
+            messages_collected INTEGER DEFAULT 0,
+            error TEXT,
+            run_after TEXT,
+            payload TEXT,
+            parent_task_id INTEGER,
+            created_at TEXT DEFAULT (datetime('now')),
+            started_at TEXT,
+            completed_at TEXT
+        );
+        INSERT INTO collection_tasks (id, channel_id, channel_title, status, payload)
+        VALUES
+            (1, 0, 'Stats', 'pending', '{"task_kind":"stats_all","channel_ids":[],"next_index":0,"batch_size":20,"channels_ok":0,"channels_err":0}'),
+            (2, -1001, 'Channel', 'pending', NULL);
+        """
+    )
+    await conn.commit()
+    await conn.close()
+
+    database = Database(str(db_path))
+    await database.initialize()
+
+    stats_task = await database.get_collection_task(1)
+    channel_task = await database.get_collection_task(2)
+    assert stats_task is not None
+    assert channel_task is not None
+    assert stats_task.task_type == CollectionTaskType.STATS_ALL
+    assert stats_task.channel_id is None
+    assert channel_task.task_type == CollectionTaskType.CHANNEL_COLLECT
+    assert channel_task.channel_id == -1001
+
+    await database.close()
 
 
 @pytest.mark.asyncio

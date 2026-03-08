@@ -7,6 +7,7 @@ import aiosqlite
 
 from src.database.connection import DBConnection
 from src.database.migrations import run_migrations
+from src.database.bundles import DatabaseRepositories
 from src.database.repositories.accounts import AccountsRepository
 from src.database.repositories.channel_stats import ChannelStatsRepository
 from src.database.repositories.channels import ChannelsRepository
@@ -23,9 +24,11 @@ from src.models import (
     Channel,
     ChannelStats,
     CollectionTask,
+    CollectionTaskStatus,
     Keyword,
     Message,
     NotificationBot,
+    StatsAllTaskPayload,
 )
 from src.security import SessionCipher
 
@@ -50,6 +53,7 @@ class Database:
         self._settings: SettingsRepository | None = None
         self._filters: FilterRepository | None = None
         self._notification_bots: NotificationBotsRepository | None = None
+        self._repos: DatabaseRepositories | None = None
 
     async def _has_encrypted_sessions(self) -> bool:
         assert self._db is not None
@@ -90,6 +94,18 @@ class Database:
         self._settings = SettingsRepository(self._db)
         self._filters = FilterRepository(self._db)
         self._notification_bots = NotificationBotsRepository(self._db)
+        self._repos = DatabaseRepositories(
+            accounts=self._accounts,
+            channels=self._channels,
+            messages=self._messages,
+            keywords=self._keywords,
+            tasks=self._tasks,
+            search_log=self._search_log,
+            channel_stats=self._channel_stats,
+            settings=self._settings,
+            filters=self._filters,
+            notification_bots=self._notification_bots,
+        )
 
         await self._accounts.migrate_sessions()
 
@@ -111,6 +127,12 @@ class Database:
         self._require()
         assert self._filters is not None
         return self._filters
+
+    @property
+    def repos(self) -> DatabaseRepositories:
+        self._require()
+        assert self._repos is not None
+        return self._repos
 
     def _require(self) -> None:
         if any(
@@ -292,7 +314,7 @@ class Database:
     async def update_collection_task(
         self,
         task_id: int,
-        status: str,
+        status: CollectionTaskStatus | str,
         messages_collected: int | None = None,
         error: str | None = None,
         note: str | None = None,
@@ -327,10 +349,24 @@ class Database:
         self._require()
         return await self._tasks.claim_next_due_stats_task(now)
 
+    async def create_stats_task(
+        self,
+        payload: StatsAllTaskPayload,
+        *,
+        run_after: datetime | None = None,
+        parent_task_id: int | None = None,
+    ) -> int:
+        self._require()
+        return await self._tasks.create_stats_task(
+            payload,
+            run_after=run_after,
+            parent_task_id=parent_task_id,
+        )
+
     async def create_stats_continuation_task(
         self,
         *,
-        payload: dict[str, Any],
+        payload: StatsAllTaskPayload,
         run_after: datetime | None,
         parent_task_id: int,
     ) -> int:

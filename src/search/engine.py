@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from src.database import Database
+from src.database.bundles import SearchBundle
 from src.models import SearchResult
 from src.search.local_search import LocalSearch
 from src.search.persistence import SearchPersistence
@@ -11,9 +12,11 @@ from src.telegram.client_pool import ClientPool
 class SearchEngine:
     """Facade for local and Telegram-based search strategies."""
 
-    def __init__(self, db: Database, pool: ClientPool | None = None):
-        self._local = LocalSearch(db)
-        self._telegram = TelegramSearch(pool, SearchPersistence(db))
+    def __init__(self, search: SearchBundle | Database, pool: ClientPool | None = None):
+        if isinstance(search, Database):
+            search = SearchBundle.from_database(search)
+        self._local = LocalSearch(search)
+        self._telegram = TelegramSearch(pool, SearchPersistence(search))
 
     async def search_local(
         self,

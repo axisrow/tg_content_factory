@@ -1,6 +1,8 @@
 import base64
 import re
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -8,7 +10,7 @@ from httpx import ASGITransport, AsyncClient
 from src.collection_queue import CollectionQueue
 from src.config import AppConfig
 from src.database import Database
-from src.models import Account
+from src.models import Account, CollectionTaskStatus, CollectionTaskType, StatsAllTaskPayload
 from src.scheduler.manager import SchedulerManager
 from src.search.ai_search import AISearchEngine
 from src.search.engine import SearchEngine
@@ -918,7 +920,7 @@ async def test_delete_channel_cancels_pending_collection_tasks(client):
 
     task = await db.get_collection_task(task_id)
     assert task is not None
-    assert task.status == "cancelled"
+    assert task.status == CollectionTaskStatus.CANCELLED
     assert task.note == "Канал удалён пользователем."
 
 
@@ -932,10 +934,11 @@ async def test_stats_all_creates_pending_task(client):
 
     tasks = await db.get_collection_tasks()
     assert len(tasks) == 1
-    assert tasks[0].channel_id == 0
-    assert tasks[0].status == "pending"
-    assert tasks[0].payload is not None
-    assert tasks[0].payload["task_kind"] == "stats_all"
+    assert tasks[0].task_type == CollectionTaskType.STATS_ALL
+    assert tasks[0].channel_id is None
+    assert tasks[0].status == CollectionTaskStatus.PENDING
+    assert isinstance(tasks[0].payload, StatsAllTaskPayload)
+    assert tasks[0].payload.task_kind == CollectionTaskType.STATS_ALL.value
 
 
 @pytest.mark.asyncio
@@ -953,21 +956,13 @@ async def test_stats_all_queued_when_collector_running(client):
 
     tasks = await db.get_collection_tasks()
     assert len(tasks) == 1
-    assert tasks[0].status == "pending"
+    assert tasks[0].status == CollectionTaskStatus.PENDING
 
 
 @pytest.mark.asyncio
 async def test_stats_all_blocks_duplicate_active_task(client):
     db = client._transport.app.state.db
-    payload = {
-        "task_kind": "stats_all",
-        "channel_ids": [],
-        "next_index": 0,
-        "batch_size": 20,
-        "channels_ok": 0,
-        "channels_err": 0,
-    }
-    await db.create_collection_task(0, "Обновление статистики", payload=payload)
+    await db.create_stats_task(StatsAllTaskPayload(channel_ids=[]))
 
     resp = await client.post("/channels/stats/all", follow_redirects=False)
     assert resp.status_code == 303
@@ -993,8 +988,8 @@ async def test_stats_all_prioritizes_channels_without_stats(client):
 
     tasks = await db.get_collection_tasks()
     payload = tasks[0].payload
-    assert payload is not None
-    channel_ids = payload["channel_ids"]
+    assert isinstance(payload, StatsAllTaskPayload)
+    channel_ids = payload.channel_ids
     assert channel_ids.index(-100901) > channel_ids.index(-100902)
     assert channel_ids.index(-100901) > channel_ids.index(-100903)
 
@@ -1200,9 +1195,9 @@ async def test_get_channel_ids_with_active_tasks_returns_distinct_non_stats_ids(
     db = client._transport.app.state.db
     await db.create_collection_task(-100801, "One")
     task_id = await db.create_collection_task(-100802, "Two")
-    await db.update_collection_task(task_id, "running")
+    await db.update_collection_task(task_id, CollectionTaskStatus.RUNNING)
     await db.create_collection_task(-100801, "One duplicate")
-    await db.create_collection_task(0, "Stats task")
+    await db.create_stats_task(StatsAllTaskPayload(channel_ids=[]))
 
     active_ids = await db.get_channel_ids_with_active_tasks()
 
@@ -1284,3 +1279,173 @@ async def test_save_scheduler_clamps_to_max(client):
     assert "msg=scheduler_saved" in resp.headers["location"]
     db = client._transport.app.state.db
     assert await db.get_setting("collect_interval_minutes") == "1440"
+
+
+@pytest.mark.asyncio
+async def test_save_filters_valid(client):
+    from src.models import Channel, ChannelStats
+
+    db = client._transport.app.state.db
+    await db.add_channel(Channel(channel_id=-100501, title="Small"))
+    await db.save_channel_stats(ChannelStats(channel_id=-100501, subscriber_count=3))
+
+    resp = await client.post(
+        "/settings/save-filters",
+        data={"min_subscribers_filter": "10"},
+        follow_redirects=False,
+    )
+
+    assert resp.status_code == 303
+    assert "msg=filters_saved" in resp.headers["location"]
+    assert await db.get_setting("min_subscribers_filter") == "10"
+    channel = await db.get_channel_by_channel_id(-100501)
+    assert channel is not None
+    assert channel.is_filtered is True
+
+
+@pytest.mark.asyncio
+async def test_save_filters_invalid_value(client):
+    resp = await client.post(
+        "/settings/save-filters",
+        data={"min_subscribers_filter": "bad"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    assert "error=invalid_value" in resp.headers["location"]
+
+
+@pytest.mark.asyncio
+async def test_save_credentials_valid_and_masked_path(client):
+    db = client._transport.app.state.db
+    auth = client._transport.app.state.auth
+
+    resp = await client.post(
+        "/settings/save-credentials",
+        data={"api_id": "54321", "api_hash": "hash-1"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    assert "msg=credentials_saved" in resp.headers["location"]
+    assert await db.get_setting("tg_api_id") == "54321"
+    assert await db.get_setting("tg_api_hash") == "hash-1"
+    assert auth._api_id == 54321
+    assert auth._api_hash == "hash-1"
+
+    resp = await client.post(
+        "/settings/save-credentials",
+        data={"api_id": "••••••••", "api_hash": "hash-2"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    assert "msg=credentials_saved" in resp.headers["location"]
+    assert await db.get_setting("tg_api_id") == "54321"
+    assert await db.get_setting("tg_api_hash") == "hash-2"
+    assert auth._api_id == 54321
+    assert auth._api_hash == "hash-2"
+
+
+@pytest.mark.asyncio
+async def test_notification_setup_and_delete_json(client, monkeypatch):
+    from types import SimpleNamespace
+
+    from src.models import Account
+
+    db = client._transport.app.state.db
+    pool = client._transport.app.state.pool
+    await db.add_account(Account(phone="+79990000003", session_string="session", is_primary=True))
+    await db.set_setting("notification_account_phone", "+79990000003")
+    pool.clients["+79990000003"] = object()
+
+    fake_client = SimpleNamespace(
+        get_me=AsyncMock(return_value=SimpleNamespace(id=42, username="owner")),
+        send_message=AsyncMock(),
+        get_entity=AsyncMock(return_value=SimpleNamespace(id=777)),
+    )
+    pool.get_client_by_phone = AsyncMock(return_value=(fake_client, "+79990000003"))
+    pool.release_client = AsyncMock()
+
+    async def _create_bot(_client, _name, _username):
+        return "token-123"
+
+    async def _delete_bot(_client, _username):
+        return None
+
+    monkeypatch.setattr("src.services.notification_service.botfather.create_bot", _create_bot)
+    monkeypatch.setattr("src.services.notification_service.botfather.delete_bot", _delete_bot)
+
+    resp = await client.post(
+        "/settings/notifications/setup",
+        headers={"Accept": "application/json"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["bot_username"] == "leadhunter_owner_bot"
+
+    status_resp = await client.get(
+        "/settings/notifications/status",
+        headers={"Accept": "application/json"},
+    )
+    assert status_resp.status_code == 200
+    assert status_resp.json()["configured"] is True
+
+    delete_resp = await client.post(
+        "/settings/notifications/delete",
+        headers={"Accept": "application/json"},
+    )
+    assert delete_resp.status_code == 200
+    assert delete_resp.json() == {"deleted": True}
+
+
+@pytest.mark.asyncio
+async def test_notification_setup_returns_conflict_when_account_unavailable(client):
+    from src.models import Account
+
+    db = client._transport.app.state.db
+    await db.add_account(Account(phone="+79990000004", session_string="session", is_primary=True))
+    await db.set_setting("notification_account_phone", "+79990000004")
+
+    resp = await client.post(
+        "/settings/notifications/setup",
+        headers={"Accept": "application/json"},
+    )
+    assert resp.status_code == 409
+    assert "не подключён" in resp.json()["error"]
+
+
+@pytest.mark.asyncio
+async def test_collect_stats_route_marks_task_completed(client):
+    from src.models import ChannelStats
+
+    db = client._transport.app.state.db
+    await client.post("/channels/add", data={"identifier": "@teststats"})
+    channel = next(ch for ch in await db.get_channels() if ch.username == "teststats")
+
+    client._transport.app.state.collector.collect_channel_stats = AsyncMock(
+        return_value=ChannelStats(channel_id=channel.channel_id, subscriber_count=10)
+    )
+
+    resp = await client.post(f"/channels/{channel.id}/stats", follow_redirects=False)
+    assert resp.status_code == 303
+    assert "msg=stats_collection_started" in resp.headers["location"]
+
+    tasks = await db.get_collection_tasks()
+    assert tasks[0].status == CollectionTaskStatus.COMPLETED
+    assert tasks[0].messages_collected == 1
+
+
+@pytest.mark.asyncio
+async def test_collect_stats_route_marks_task_failed(client):
+    db = client._transport.app.state.db
+    await client.post("/channels/add", data={"identifier": "@teststatsfail"})
+    channel = next(ch for ch in await db.get_channels() if ch.username == "teststatsfail")
+
+    client._transport.app.state.collector.collect_channel_stats = AsyncMock(
+        side_effect=RuntimeError("stats broken")
+    )
+
+    resp = await client.post(f"/channels/{channel.id}/stats", follow_redirects=False)
+    assert resp.status_code == 303
+
+    tasks = await db.get_collection_tasks()
+    assert tasks[0].status == CollectionTaskStatus.FAILED
+    assert tasks[0].error == "stats broken"

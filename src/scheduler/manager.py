@@ -9,14 +9,26 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 
 from src.config import SchedulerConfig
+from src.database import Database
+from src.database.bundles import SchedulerBundle
 from src.settings_utils import parse_int_setting
 from src.telegram.collector import Collector
 
 if TYPE_CHECKING:
-    from src.database import Database
     from src.search.engine import SearchEngine
 
 logger = logging.getLogger(__name__)
+
+
+class _LegacySchedulerBundle:
+    def __init__(self, store):
+        self._store = store
+
+    async def get_setting(self, key: str) -> str | None:
+        return await self._store.get_setting(key)
+
+    async def list_keywords(self, active_only: bool = False):
+        return await self._store.get_keywords(active_only=active_only)
 
 
 class SchedulerManager:
@@ -24,13 +36,19 @@ class SchedulerManager:
         self,
         collector: Collector,
         config: SchedulerConfig,
+        scheduler_bundle: SchedulerBundle | Database | None = None,
         search_engine: SearchEngine | None = None,
-        db: Database | None = None,
     ):
         self._collector = collector
         self._config = config
+        if scheduler_bundle is None:
+            scheduler_bundle = getattr(collector, "_db", None)
+        if isinstance(scheduler_bundle, Database):
+            scheduler_bundle = SchedulerBundle.from_database(scheduler_bundle)
+        elif not isinstance(scheduler_bundle, SchedulerBundle):
+            scheduler_bundle = _LegacySchedulerBundle(scheduler_bundle)
+        self._scheduler_bundle = scheduler_bundle
         self._search_engine = search_engine
-        self._db = db
         self._scheduler: AsyncIOScheduler | None = None
         self._job_id = "collect_all"
         self._search_job_id = "keyword_search"
@@ -81,9 +99,7 @@ class SchedulerManager:
             return
 
         self._scheduler = AsyncIOScheduler()
-        saved_interval = (
-            await self._db.get_setting("collect_interval_minutes") if self._db else None
-        )
+        saved_interval = await self._scheduler_bundle.get_setting("collect_interval_minutes")
         collect_interval = parse_int_setting(
             saved_interval,
             setting_name="collect_interval_minutes",
@@ -98,7 +114,7 @@ class SchedulerManager:
             replace_existing=True,
         )
 
-        if self._search_engine and self._db:
+        if self._search_engine:
             self._scheduler.add_job(
                 self._run_keyword_search,
                 IntervalTrigger(minutes=self._config.search_interval_minutes),
@@ -177,11 +193,11 @@ class SchedulerManager:
 
     async def _run_keyword_search(self) -> dict:
         """Search by active keywords using search_telegram, respecting quotas."""
-        if not self._search_engine or not self._db:
+        if not self._search_engine:
             return {"keywords": 0, "results": 0, "errors": 0}
 
         logger.info("Starting scheduled keyword search")
-        keywords = await self._db.get_keywords(active_only=True)
+        keywords = await self._scheduler_bundle.list_keywords(active_only=True)
         total_results = 0
         searched = 0
         errors = 0
