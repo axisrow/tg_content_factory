@@ -5,6 +5,7 @@ import logging
 
 from src.config import LLMConfig
 from src.database import Database
+from src.database.bundles import SearchBundle
 from src.models import SearchResult
 
 logger = logging.getLogger(__name__)
@@ -16,9 +17,11 @@ _SYSTEM_PROMPT = """Ты — ассистент для поиска по Telegra
 
 
 class AISearchEngine:
-    def __init__(self, config: LLMConfig, db: Database):
+    def __init__(self, config: LLMConfig, search: SearchBundle | Database):
         self._config = config
-        self._db = db
+        if isinstance(search, Database):
+            search = SearchBundle.from_database(search)
+        self._search = search
         self._agent = None
 
     @property
@@ -33,7 +36,7 @@ class AISearchEngine:
         try:
             from deepagents import create_deep_agent
 
-            db = self._db
+            search = self._search
 
             def search_posts_tool(query: str) -> str:
                 """Search collected posts in the database."""
@@ -42,10 +45,10 @@ class AISearchEngine:
                 try:
                     asyncio.get_running_loop()
                     with concurrent.futures.ThreadPoolExecutor() as executor:
-                        future = executor.submit(asyncio.run, db.search_messages(query, limit=20))
+                        future = executor.submit(asyncio.run, search.search_messages(query, limit=20))
                         messages, total = future.result()
                 except RuntimeError:
-                    messages, total = asyncio.run(db.search_messages(query, limit=20))
+                    messages, total = asyncio.run(search.search_messages(query, limit=20))
 
                 if not messages:
                     return f"No results found for: {query}"
@@ -74,7 +77,7 @@ class AISearchEngine:
         """Run AI-powered search."""
         if not self._agent:
             # Fallback to basic local search
-            messages, total = await self._db.search_messages(query, limit=20)
+            messages, total = await self._search.search_messages(query, limit=20)
             return SearchResult(
                 messages=messages,
                 total=total,
@@ -87,7 +90,7 @@ class AISearchEngine:
             summary = str(response)
 
             # Also get raw messages for display
-            messages, total = await self._db.search_messages(query, limit=20)
+            messages, total = await self._search.search_messages(query, limit=20)
 
             return SearchResult(
                 messages=messages,
@@ -97,7 +100,7 @@ class AISearchEngine:
             )
         except Exception as e:
             logger.error("AI search error: %s", e)
-            messages, total = await self._db.search_messages(query, limit=20)
+            messages, total = await self._search.search_messages(query, limit=20)
             return SearchResult(
                 messages=messages,
                 total=total,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel
@@ -61,17 +62,40 @@ class Keyword(BaseModel):
     is_active: bool = True
 
 
+class CollectionTaskStatus(StrEnum):
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+class CollectionTaskType(StrEnum):
+    CHANNEL_COLLECT = "channel_collect"
+    STATS_ALL = "stats_all"
+
+
+class StatsAllTaskPayload(BaseModel):
+    task_kind: str = CollectionTaskType.STATS_ALL.value
+    channel_ids: list[int]
+    next_index: int = 0
+    batch_size: int = 20
+    channels_ok: int = 0
+    channels_err: int = 0
+
+
 class CollectionTask(BaseModel):
     id: int | None = None
-    channel_id: int
+    channel_id: int | None = None
     channel_title: str | None = None
     channel_username: str | None = None
-    status: str = "pending"  # pending / running / completed / failed / cancelled
+    task_type: CollectionTaskType = CollectionTaskType.CHANNEL_COLLECT
+    status: CollectionTaskStatus = CollectionTaskStatus.PENDING
     messages_collected: int = 0
     error: str | None = None
     note: str | None = None
     run_after: datetime | None = None
-    payload: dict[str, Any] | None = None
+    payload: dict[str, Any] | StatsAllTaskPayload | None = None
     parent_task_id: int | None = None
     created_at: datetime | None = None
     started_at: datetime | None = None

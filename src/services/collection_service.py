@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
 from src.database import Database
+from src.database.bundles import ChannelBundle
 from src.models import Channel
 
 if TYPE_CHECKING:
@@ -21,13 +22,20 @@ class BulkEnqueueResult:
 
 
 class CollectionService:
-    def __init__(self, db: Database, collector: Collector, queue: CollectionQueue):
-        self._db = db
+    def __init__(
+        self,
+        channels: ChannelBundle | Database,
+        collector: Collector,
+        queue: CollectionQueue,
+    ):
+        if isinstance(channels, Database):
+            channels = ChannelBundle.from_database(channels)
+        self._channels = channels
         self._collector = collector
         self._queue = queue
 
     async def enqueue_channel_by_pk(self, pk: int, force: bool = False) -> EnqueueResult:
-        channel = await self._db.get_channel_by_pk(pk)
+        channel = await self._channels.get_by_pk(pk)
         if not channel:
             return "not_found"
         if channel.is_filtered and not force:
@@ -36,8 +44,8 @@ class CollectionService:
         return "queued"
 
     async def enqueue_all_channels(self) -> BulkEnqueueResult:
-        channels = await self._db.get_channels(active_only=True, include_filtered=False)
-        busy_channel_ids = await self._db.get_channel_ids_with_active_tasks()
+        channels = await self._channels.list_channels(active_only=True, include_filtered=False)
+        busy_channel_ids = await self._channels.get_channel_ids_with_active_tasks()
         queued_count = 0
         skipped_existing_count = 0
 

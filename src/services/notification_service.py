@@ -4,6 +4,7 @@ import asyncio
 import logging
 
 from src.database import Database
+from src.database.bundles import NotificationBundle
 from src.models import NotificationBot
 from src.services.notification_target_service import NotificationTargetService
 from src.telegram import botfather
@@ -17,12 +18,14 @@ _DEFAULT_BOT_USERNAME_PREFIX = "leadhunter_"
 class NotificationService:
     def __init__(
         self,
-        db: Database,
+        notifications: NotificationBundle | Database,
         target_service: NotificationTargetService,
         bot_name_prefix: str = _DEFAULT_BOT_NAME_PREFIX,
         bot_username_prefix: str = _DEFAULT_BOT_USERNAME_PREFIX,
     ):
-        self._db = db
+        if isinstance(notifications, Database):
+            notifications = NotificationBundle.from_database(notifications)
+        self._notifications = notifications
         self._target_service = target_service
         self._bot_name_prefix = bot_name_prefix
         self._bot_username_prefix = bot_username_prefix
@@ -66,7 +69,7 @@ class NotificationService:
             bot_username=bot_username,
             bot_token=token,
         )
-        await self._db.save_notification_bot(bot)
+        await self._notifications.save_bot(bot)
         logger.info("Notification bot @%s set up for user %s", bot_username, tg_user_id)
         return bot
 
@@ -74,18 +77,18 @@ class NotificationService:
         """Return bot info for the selected notification account, or None if not set up."""
         async with self._target_service.use_client() as (client, _phone):
             me = await asyncio.wait_for(client.get_me(), timeout=15.0)
-        return await self._db.get_notification_bot(me.id)
+        return await self._notifications.get_bot(me.id)
 
     async def teardown_bot(self) -> None:
         """Delete the notification bot via BotFather and remove it from DB."""
         async with self._target_service.use_client() as (client, _phone):
             me = await asyncio.wait_for(client.get_me(), timeout=15.0)
             tg_user_id: int = me.id
-            bot = await self._db.get_notification_bot(tg_user_id)
+            bot = await self._notifications.get_bot(tg_user_id)
             if bot is None:
                 raise RuntimeError("No notification bot found for this user")
 
             await botfather.delete_bot(client, bot.bot_username)
 
-        await self._db.delete_notification_bot(tg_user_id)
+        await self._notifications.delete_bot(tg_user_id)
         logger.info("Notification bot deleted for user %s", tg_user_id)

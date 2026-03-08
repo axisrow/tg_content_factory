@@ -33,7 +33,9 @@ async def run_migrations(db: aiosqlite.Connection) -> None:
         await db.commit()
 
     cur = await db.execute("PRAGMA table_info(collection_tasks)")
-    task_columns = {row["name"] for row in await cur.fetchall()}
+    task_rows = await cur.fetchall()
+    task_columns = {row["name"] for row in task_rows}
+    task_column_meta = {row["name"]: row for row in task_rows}
     if "run_after" not in task_columns:
         await db.execute("ALTER TABLE collection_tasks ADD COLUMN run_after TEXT")
         await db.commit()
@@ -49,6 +51,78 @@ async def run_migrations(db: aiosqlite.Connection) -> None:
     if "note" not in task_columns:
         await db.execute("ALTER TABLE collection_tasks ADD COLUMN note TEXT")
         await db.commit()
+    channel_id_row = task_column_meta.get("channel_id")
+    channel_id_notnull = bool(channel_id_row["notnull"]) if channel_id_row is not None else False
+    if "task_type" not in task_columns or channel_id_notnull:
+        await db.execute(
+            """
+            CREATE TABLE collection_tasks_tmp (
+                id INTEGER PRIMARY KEY,
+                channel_id INTEGER,
+                channel_title TEXT,
+                channel_username TEXT,
+                task_type TEXT NOT NULL DEFAULT 'channel_collect',
+                status TEXT DEFAULT 'pending',
+                messages_collected INTEGER DEFAULT 0,
+                error TEXT,
+                note TEXT,
+                run_after TEXT,
+                payload TEXT,
+                parent_task_id INTEGER,
+                created_at TEXT DEFAULT (datetime('now')),
+                started_at TEXT,
+                completed_at TEXT
+            )
+            """
+        )
+        await db.execute(
+            """
+            INSERT INTO collection_tasks_tmp (
+                id,
+                channel_id,
+                channel_title,
+                channel_username,
+                task_type,
+                status,
+                messages_collected,
+                error,
+                note,
+                run_after,
+                payload,
+                parent_task_id,
+                created_at,
+                started_at,
+                completed_at
+            )
+            SELECT
+                id,
+                CASE WHEN channel_id = 0 THEN NULL ELSE channel_id END,
+                channel_title,
+                channel_username,
+                CASE WHEN channel_id = 0 THEN 'stats_all' ELSE 'channel_collect' END,
+                status,
+                messages_collected,
+                error,
+                note,
+                run_after,
+                payload,
+                parent_task_id,
+                created_at,
+                started_at,
+                completed_at
+            FROM collection_tasks
+            """
+        )
+        await db.execute("DROP TABLE collection_tasks")
+        await db.execute("ALTER TABLE collection_tasks_tmp RENAME TO collection_tasks")
+        await db.commit()
+    await db.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_collection_tasks_type_status_run_after
+        ON collection_tasks(task_type, status, run_after)
+        """
+    )
+    await db.commit()
 
     await db.execute("UPDATE channels SET channel_type='supergroup' WHERE channel_type='group'")
     await db.execute("UPDATE channels SET channel_type='group' WHERE channel_type='chat'")

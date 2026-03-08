@@ -46,11 +46,14 @@ CREATE TABLE IF NOT EXISTS settings (
 
 CREATE TABLE IF NOT EXISTS collection_tasks (
     id INTEGER PRIMARY KEY,
-    channel_id INTEGER NOT NULL,
+    channel_id INTEGER,
     channel_title TEXT,
+    channel_username TEXT,
+    task_type TEXT NOT NULL DEFAULT 'channel_collect',
     status TEXT DEFAULT 'pending',
     messages_collected INTEGER DEFAULT 0,
     error TEXT,
+    note TEXT,
     run_after TEXT,
     payload TEXT,
     parent_task_id INTEGER,

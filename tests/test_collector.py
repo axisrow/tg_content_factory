@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from telethon.errors import FloodWaitError, UsernameNotOccupiedError
 from telethon.tl.types import PeerChannel
 
 from src.config import SchedulerConfig
@@ -11,7 +12,7 @@ from src.models import Channel, ChannelStats, Message
 from src.telegram.collector import Collector
 from tests.helpers import AsyncIterEmpty as _AsyncIterEmpty
 from tests.helpers import AsyncIterMessages as _AsyncIterMessages
-from tests.helpers import make_mock_pool
+from tests.helpers import FakeTelethonClient, make_mock_message, make_mock_pool
 
 
 @pytest.mark.asyncio
@@ -192,6 +193,36 @@ async def test_collect_channel_falls_back_to_username_on_cache_miss(db):
 
 
 @pytest.mark.asyncio
+async def test_collect_channel_marks_username_changed_when_numeric_fallback_succeeds(db):
+    ch = Channel(channel_id=1970788983, title="Old Title", username="old_name")
+    channel_id = await db.add_channel(ch)
+    stored = await db.get_channel_by_pk(channel_id)
+    assert stored is not None
+
+    fallback_entity = SimpleNamespace(username="new_name", title="New Title")
+    client = FakeTelethonClient(
+        entity_resolver=lambda arg: (
+            UsernameNotOccupiedError(request=None)
+            if arg == "old_name"
+            else fallback_entity
+        ),
+    )
+
+    pool = make_mock_pool(get_available_client=AsyncMock(return_value=(client, "+7000")))
+    collector = Collector(pool, db, SchedulerConfig(delay_between_requests_sec=0))
+
+    count = await collector._collect_channel(stored)
+
+    assert count == 0
+    updated = await db.get_channel_by_channel_id(stored.channel_id)
+    assert updated is not None
+    assert updated.username == "new_name"
+    assert updated.title == "New Title"
+    assert updated.is_filtered is True
+    assert "username_changed" in updated.filter_flags
+
+
+@pytest.mark.asyncio
 async def test_collect_channel_no_username_no_cache_reports_error(db):
     """Channel with no username and empty cache -> error logged, 0 messages."""
     ch = Channel(channel_id=1970788983, title="Private Group")
@@ -234,14 +265,7 @@ async def test_collect_all_dialogs_timeout(db):
 
 def _make_mock_message(msg_id, text=None, media=None, sender_id=None):
     """Helper to create a mock Telethon message."""
-    return SimpleNamespace(
-        id=msg_id,
-        text=text,
-        media=media,
-        sender_id=sender_id,
-        sender=None,
-        date=datetime(2025, 1, 1, tzinfo=timezone.utc),
-    )
+    return make_mock_message(msg_id, text=text, media=media, sender_id=sender_id)
 
 
 @pytest.mark.asyncio
@@ -503,6 +527,45 @@ async def test_incremental_collection_sends_keyword_notifications(db):
 
     assert count == 1
     notifier.notify.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_collect_channel_retries_after_short_flood_wait(db):
+    ch = Channel(channel_id=-100171, title="Retry", username="retry", last_collected_id=5)
+    ch_id = await db.add_channel(ch)
+    await db.update_channel_last_id(ch.channel_id, 5)
+    stored = await db.get_channel_by_pk(ch_id)
+    assert stored is not None
+
+    client = FakeTelethonClient(entity_resolver=lambda _arg: SimpleNamespace())
+
+    pool = make_mock_pool(get_available_client=AsyncMock(return_value=(client, "+7000")))
+    collector = Collector(
+        pool,
+        db,
+        SchedulerConfig(delay_between_requests_sec=0, max_flood_wait_sec=10),
+    )
+
+    call_index = {"idx": 0}
+
+    def _iter_messages_factory(*_args, **_kwargs):
+        idx = call_index["idx"]
+        call_index["idx"] += 1
+        if idx == 0:
+            async def _generator():
+                yield _make_mock_message(6, text="msg 6")
+                raise FloodWaitError(request=None, capture=3)
+            return _generator()
+        return _AsyncIterMessages([_make_mock_message(7, text="msg 7")])
+
+    client.iter_messages = MagicMock(side_effect=_iter_messages_factory)
+    count = await collector._collect_channel(stored)
+
+    assert count == 2
+    updated = await db.get_channel_by_channel_id(stored.channel_id)
+    assert updated is not None
+    assert updated.last_collected_id == 7
+    pool.report_flood.assert_awaited_once()
 
 
 @pytest.mark.asyncio

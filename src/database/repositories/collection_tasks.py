@@ -6,7 +6,12 @@ from typing import Any
 
 import aiosqlite
 
-from src.models import CollectionTask
+from src.models import (
+    CollectionTask,
+    CollectionTaskStatus,
+    CollectionTaskType,
+    StatsAllTaskPayload,
+)
 
 
 class CollectionTasksRepository:
@@ -14,14 +19,28 @@ class CollectionTasksRepository:
         self._db = db
 
     @staticmethod
-    def _parse_payload(raw: str | None) -> dict[str, Any] | None:
+    def _deserialize_payload(
+        raw: str | None,
+    ) -> dict[str, Any] | StatsAllTaskPayload | None:
         if not raw:
             return None
         try:
             parsed = json.loads(raw)
         except json.JSONDecodeError:
             return None
-        return parsed if isinstance(parsed, dict) else None
+        if not isinstance(parsed, dict):
+            return None
+        if parsed.get("task_kind") == CollectionTaskType.STATS_ALL.value:
+            return StatsAllTaskPayload.model_validate(parsed)
+        return parsed
+
+    @staticmethod
+    def _serialize_payload(payload: dict[str, Any] | StatsAllTaskPayload | None) -> str | None:
+        if payload is None:
+            return None
+        if isinstance(payload, StatsAllTaskPayload):
+            return payload.model_dump_json()
+        return json.dumps(payload)
 
     @staticmethod
     def _to_task(row: aiosqlite.Row) -> CollectionTask:
@@ -30,12 +49,13 @@ class CollectionTasksRepository:
             channel_id=row["channel_id"],
             channel_title=row["channel_title"],
             channel_username=row["channel_username"],
-            status=row["status"],
+            task_type=CollectionTaskType(row["task_type"]),
+            status=CollectionTaskStatus(row["status"]),
             messages_collected=row["messages_collected"],
             error=row["error"],
             note=row["note"],
             run_after=(datetime.fromisoformat(row["run_after"]) if row["run_after"] else None),
-            payload=CollectionTasksRepository._parse_payload(row["payload"]),
+            payload=CollectionTasksRepository._deserialize_payload(row["payload"]),
             parent_task_id=row["parent_task_id"],
             created_at=(datetime.fromisoformat(row["created_at"]) if row["created_at"] else None),
             started_at=(datetime.fromisoformat(row["started_at"]) if row["started_at"] else None),
@@ -59,14 +79,44 @@ class CollectionTasksRepository:
         run_after_iso = (
             run_after.astimezone(timezone.utc).isoformat() if run_after else None
         )
-        payload_json = json.dumps(payload) if payload is not None else None
+        payload_json = self._serialize_payload(payload)
         cur = await self._db.execute(
             "INSERT INTO collection_tasks "
-            "(channel_id, channel_title, channel_username, run_after, payload, parent_task_id) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
+            "(channel_id, channel_title, channel_username, task_type, run_after, payload, parent_task_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
             (
-                channel_id, channel_title, channel_username,
-                run_after_iso, payload_json, parent_task_id,
+                channel_id,
+                channel_title,
+                channel_username,
+                CollectionTaskType.CHANNEL_COLLECT.value,
+                run_after_iso,
+                payload_json,
+                parent_task_id,
+            ),
+        )
+        await self._db.commit()
+        return cur.lastrowid or 0
+
+    async def create_stats_task(
+        self,
+        payload: StatsAllTaskPayload,
+        *,
+        run_after: datetime | None = None,
+        parent_task_id: int | None = None,
+    ) -> int:
+        run_after_iso = run_after.astimezone(timezone.utc).isoformat() if run_after else None
+        cur = await self._db.execute(
+            "INSERT INTO collection_tasks "
+            "(channel_id, channel_title, channel_username, task_type, run_after, payload, parent_task_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                None,
+                "Обновление статистики",
+                None,
+                CollectionTaskType.STATS_ALL.value,
+                run_after_iso,
+                self._serialize_payload(payload),
+                parent_task_id,
             ),
         )
         await self._db.commit()
@@ -82,18 +132,19 @@ class CollectionTasksRepository:
     async def update_collection_task(
         self,
         task_id: int,
-        status: str,
+        status: CollectionTaskStatus | str,
         messages_collected: int | None = None,
         error: str | None = None,
         note: str | None = None,
     ) -> None:
+        status_value = status.value if isinstance(status, CollectionTaskStatus) else status
         now = datetime.now(tz=timezone.utc).isoformat()
         sets = ["status = ?"]
-        params: list = [status]
-        if status == "running":
+        params: list[Any] = [status_value]
+        if status_value == CollectionTaskStatus.RUNNING.value:
             sets.append("started_at = ?")
             params.append(now)
-        if status in ("completed", "failed"):
+        if status_value in (CollectionTaskStatus.COMPLETED.value, CollectionTaskStatus.FAILED.value):
             sets.append("completed_at = ?")
             params.append(now)
         if messages_collected is not None:
@@ -134,9 +185,14 @@ class CollectionTasksRepository:
     ) -> list[CollectionTask]:
         cur = await self._db.execute(
             "SELECT * FROM collection_tasks "
-            "WHERE channel_id = ? AND status IN ('pending', 'running') "
+            "WHERE task_type = ? AND channel_id = ? AND status IN (?, ?) "
             "ORDER BY id ASC",
-            (channel_id,),
+            (
+                CollectionTaskType.CHANNEL_COLLECT.value,
+                channel_id,
+                CollectionTaskStatus.PENDING.value,
+                CollectionTaskStatus.RUNNING.value,
+            ),
         )
         rows = await cur.fetchall()
         return [self._to_task(r) for r in rows]
@@ -144,7 +200,12 @@ class CollectionTasksRepository:
     async def get_channel_ids_with_active_tasks(self) -> set[int]:
         cur = await self._db.execute(
             "SELECT DISTINCT channel_id FROM collection_tasks "
-            "WHERE channel_id != 0 AND status IN ('pending', 'running')"
+            "WHERE task_type = ? AND status IN (?, ?) AND channel_id IS NOT NULL",
+            (
+                CollectionTaskType.CHANNEL_COLLECT.value,
+                CollectionTaskStatus.PENDING.value,
+                CollectionTaskStatus.RUNNING.value,
+            ),
         )
         rows = await cur.fetchall()
         return {int(row["channel_id"]) for row in rows}
@@ -152,8 +213,13 @@ class CollectionTasksRepository:
     async def get_active_stats_task(self) -> CollectionTask | None:
         cur = await self._db.execute(
             "SELECT * FROM collection_tasks "
-            "WHERE channel_id = 0 AND status IN ('pending', 'running') "
-            "ORDER BY id ASC LIMIT 1"
+            "WHERE task_type = ? AND status IN (?, ?) "
+            "ORDER BY id ASC LIMIT 1",
+            (
+                CollectionTaskType.STATS_ALL.value,
+                CollectionTaskStatus.PENDING.value,
+                CollectionTaskStatus.RUNNING.value,
+            ),
         )
         row = await cur.fetchone()
         if row is None:
@@ -162,16 +228,19 @@ class CollectionTasksRepository:
 
     async def claim_next_due_stats_task(self, now: datetime) -> CollectionTask | None:
         now_iso = now.astimezone(timezone.utc).isoformat()
-        selected_id: int | None = None
         try:
             await self._db.execute("BEGIN IMMEDIATE")
             cur = await self._db.execute(
                 "SELECT id FROM collection_tasks "
-                "WHERE channel_id = 0 "
-                "AND status = 'pending' "
+                "WHERE task_type = ? "
+                "AND status = ? "
                 "AND (run_after IS NULL OR run_after <= ?) "
                 "ORDER BY COALESCE(run_after, ''), id ASC LIMIT 1",
-                (now_iso,),
+                (
+                    CollectionTaskType.STATS_ALL.value,
+                    CollectionTaskStatus.PENDING.value,
+                    now_iso,
+                ),
             )
             row = await cur.fetchone()
             if row is None:
@@ -181,8 +250,8 @@ class CollectionTasksRepository:
             updated = await self._db.execute(
                 "UPDATE collection_tasks "
                 "SET status = 'running', started_at = ?, completed_at = NULL "
-                "WHERE id = ? AND status = 'pending'",
-                (now_iso, selected_id),
+                "WHERE id = ? AND status = ?",
+                (now_iso, selected_id, CollectionTaskStatus.PENDING.value),
             )
             if (updated.rowcount or 0) == 0:
                 await self._db.commit()
@@ -203,23 +272,25 @@ class CollectionTasksRepository:
     async def create_stats_continuation_task(
         self,
         *,
-        payload: dict[str, Any],
+        payload: StatsAllTaskPayload,
         run_after: datetime | None,
         parent_task_id: int,
     ) -> int:
-        return await self.create_collection_task(
-            0,
-            "Обновление статистики",
+        return await self.create_stats_task(
+            payload,
             run_after=run_after,
-            payload=payload,
             parent_task_id=parent_task_id,
         )
 
     async def get_pending_channel_tasks(self) -> list[CollectionTask]:
         cur = await self._db.execute(
             "SELECT * FROM collection_tasks "
-            "WHERE channel_id != 0 AND status = 'pending' "
-            "ORDER BY id ASC"
+            "WHERE task_type = ? AND status = ? "
+            "ORDER BY id ASC",
+            (
+                CollectionTaskType.CHANNEL_COLLECT.value,
+                CollectionTaskStatus.PENDING.value,
+            ),
         )
         rows = await cur.fetchall()
         return [self._to_task(r) for r in rows]
@@ -229,8 +300,12 @@ class CollectionTasksRepository:
         cur = await self._db.execute(
             "UPDATE collection_tasks "
             "SET status = 'failed', completed_at = ? "
-            "WHERE channel_id != 0 AND status = 'running'",
-            (now,),
+            "WHERE task_type = ? AND status = ?",
+            (
+                now,
+                CollectionTaskType.CHANNEL_COLLECT.value,
+                CollectionTaskStatus.RUNNING.value,
+            ),
         )
         await self._db.commit()
         return cur.rowcount or 0
@@ -240,8 +315,12 @@ class CollectionTasksRepository:
         cur = await self._db.execute(
             "UPDATE collection_tasks "
             "SET status = 'pending', started_at = NULL, run_after = COALESCE(run_after, ?) "
-            "WHERE channel_id = 0 AND status = 'running'",
-            (now_iso,),
+            "WHERE task_type = ? AND status = ?",
+            (
+                now_iso,
+                CollectionTaskType.STATS_ALL.value,
+                CollectionTaskStatus.RUNNING.value,
+            ),
         )
         await self._db.commit()
         return cur.rowcount or 0
@@ -249,15 +328,19 @@ class CollectionTasksRepository:
     async def cancel_collection_task(self, task_id: int, note: str | None = None) -> bool:
         now = datetime.now(tz=timezone.utc).isoformat()
         sets = ["status = 'cancelled'", "completed_at = ?"]
-        params: list = [now]
+        params: list[Any] = [now]
         if note is not None:
             sets.append("note = ?")
             params.append(note)
         params.append(task_id)
         cur = await self._db.execute(
             f"UPDATE collection_tasks SET {', '.join(sets)} "
-            "WHERE id = ? AND status IN ('pending', 'running')",
-            tuple(params),
+            "WHERE id = ? AND status IN (?, ?)",
+            (
+                *params,
+                CollectionTaskStatus.PENDING.value,
+                CollectionTaskStatus.RUNNING.value,
+            ),
         )
         await self._db.commit()
         return cur.rowcount > 0
