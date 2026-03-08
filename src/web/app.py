@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.responses import Response
+from starlette.responses import RedirectResponse, Response
 
 from src.config import AppConfig, load_config
 from src.web.assembly import (
@@ -18,39 +18,30 @@ from src.web.assembly import (
     register_routes,
 )
 from src.web.bootstrap import build_container_with_templates, start_container, stop_container
-from src.web.csrf import OriginCSRFMiddleware, is_secure_request
-from src.web.paths import TEMPLATES_DIR
-from src.web.session import (
-    COOKIE_MAX_AGE,
-    COOKIE_NAME,
-    create_session_token,
-    verify_session_token,
+from src.web.csrf import OriginCSRFMiddleware
+from src.web.panel_auth import (
+    get_cookie_user,
+    is_public_path,
+    login_redirect_url,
+    redirect_target_from_request,
+    set_session_cookie,
 )
+from src.web.paths import TEMPLATES_DIR
 
 logger = logging.getLogger(__name__)
 
 
 class BasicAuthMiddleware(BaseHTTPMiddleware):
-    _USERNAME = "admin"
-
     def __init__(self, app, password: str):
         super().__init__(app)
         self.password = password
 
     async def dispatch(self, request, call_next):
-        if request.url.path in ("/health", "/logout"):
+        if is_public_path(request.url.path):
             return await call_next(request)
 
-        container = getattr(request.app.state, "container", None)
-        secret = getattr(container, "session_secret", None) or getattr(
-            request.app.state, "session_secret", None
-        )
-
-        cookie = request.cookies.get(COOKIE_NAME)
-        if cookie and secret:
-            cookie_user = verify_session_token(cookie, secret)
-            if cookie_user and cookie_user == self._USERNAME:
-                return await call_next(request)
+        if get_cookie_user(request):
+            return await call_next(request)
 
         auth = request.headers.get("Authorization", "")
         if auth.startswith("Basic "):
@@ -61,17 +52,20 @@ class BasicAuthMiddleware(BaseHTTPMiddleware):
             _, _, pwd = decoded.partition(":")
             if secrets.compare_digest(pwd, self.password):
                 response = await call_next(request)
-                if secret:
-                    token = create_session_token(self._USERNAME, secret)
-                    response.set_cookie(
-                        COOKIE_NAME,
-                        token,
-                        max_age=COOKIE_MAX_AGE,
-                        httponly=True,
-                        samesite="lax",
-                        secure=is_secure_request(request),
-                    )
+                set_session_cookie(response, request)
                 return response
+
+        target = login_redirect_url(redirect_target_from_request(request))
+        if request.headers.get("HX-Request") == "true":
+            return Response(
+                "Unauthorized",
+                status_code=401,
+                headers={"HX-Redirect": target},
+            )
+
+        accept = request.headers.get("Accept", "")
+        if "text/html" in accept:
+            return RedirectResponse(url=target, status_code=303)
 
         return Response(
             "Unauthorized",

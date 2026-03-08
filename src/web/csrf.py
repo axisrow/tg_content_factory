@@ -82,6 +82,10 @@ def _is_same_origin(origin_or_referer: str, request: Request) -> bool:
     )
 
 
+def is_same_origin_url(origin_or_referer: str, request: Request) -> bool:
+    return _is_same_origin(origin_or_referer, request)
+
+
 class OriginCSRFMiddleware(BaseHTTPMiddleware):
     """
     Lightweight CSRF protection: for unsafe methods, enforce same-origin
