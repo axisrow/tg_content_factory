@@ -253,7 +253,7 @@ class Collector:
         stop_due_to_persistence_error = False
 
         is_first_run = channel.last_collected_id == 0
-        should_notify_keywords = self._notifier is not None and not is_first_run
+        should_notify = self._notifier is not None and not is_first_run
         limit = None  # first_run: все; incremental: все новые (диапазон ограничен min_id)
         logger.info(
             "Collecting channel %d (%s), first_run=%s, min_id=%d, limit=%s",
@@ -517,7 +517,7 @@ class Collector:
                     )
             return len(all_messages)
 
-        if should_notify_keywords and all_messages:
+        if should_notify and all_messages:
             await self._check_notification_queries(all_messages)
 
         if is_first_run and not force and len(all_messages) >= 50:
