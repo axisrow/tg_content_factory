@@ -4,6 +4,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from starlette.background import BackgroundTask
 
+from src.models import CollectionTaskStatus, StatsAllTaskPayload
 from src.services.collection_service import BulkEnqueueResult
 from src.web import deps
 
@@ -135,18 +136,12 @@ async def collect_all_stats(request: Request):
         ch for ch in channels if ch.channel_id in latest_stats
     ]
     ordered_channels = channels_without_stats + channels_with_stats
-    payload = {
-        "task_kind": "stats_all",
-        "channel_ids": [ch.channel_id for ch in ordered_channels],
-        "next_index": 0,
-        "batch_size": 20,
-        "channels_ok": 0,
-        "channels_err": 0,
-    }
-    await db.create_collection_task(
-        0,
-        "Обновление статистики",
-        payload=payload,
+    payload = StatsAllTaskPayload(
+        channel_ids=[ch.channel_id for ch in ordered_channels],
+        batch_size=20,
+    )
+    await db.create_stats_task(
+        payload,
     )
 
     msg = "stats_collection_queued" if collector.is_running else "stats_collection_started"
@@ -167,17 +162,23 @@ async def collect_stats(request: Request, pk: int):
     task_id = await db.create_collection_task(
         channel.channel_id, channel.title, channel_username=channel.username
     )
-    await db.update_collection_task(task_id, "running")
+    await db.update_collection_task(task_id, CollectionTaskStatus.RUNNING)
 
     async def _run_channel_stats():
         try:
             result = await collector.collect_channel_stats(channel)
             await db.update_collection_task(
-                task_id, "completed", messages_collected=1 if result else 0
+                task_id,
+                CollectionTaskStatus.COMPLETED,
+                messages_collected=1 if result else 0,
             )
         except Exception as exc:
             logger.exception("collect_channel_stats failed")
-            await db.update_collection_task(task_id, "failed", error=str(exc))
+            await db.update_collection_task(
+                task_id,
+                CollectionTaskStatus.FAILED,
+                error=str(exc),
+            )
 
     task = BackgroundTask(_run_channel_stats)
     return RedirectResponse(

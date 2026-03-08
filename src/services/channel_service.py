@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from src.database import Database
+from src.database.bundles import ChannelBundle
 from src.models import Channel
 from src.telegram.client_pool import ClientPool
 
@@ -11,18 +12,25 @@ if TYPE_CHECKING:
 
 
 class ChannelService:
-    def __init__(self, db: Database, pool: ClientPool, queue: CollectionQueue):
-        self._db = db
+    def __init__(
+        self,
+        channels: ChannelBundle | Database,
+        pool: ClientPool,
+        queue: CollectionQueue | None,
+    ):
+        if isinstance(channels, Database):
+            channels = ChannelBundle.from_database(channels)
+        self._channels = channels
         self._pool = pool
         self._queue = queue
 
     async def list_for_page(
         self, include_filtered: bool = True
     ) -> tuple[list[Channel], dict]:
-        channels = await self._db.get_channels_with_counts(
+        channels = await self._channels.list_channels_with_counts(
             include_filtered=include_filtered
         )
-        latest_stats = await self._db.get_latest_stats_for_all()
+        latest_stats = await self._channels.get_latest_stats_for_all()
         return channels, latest_stats
 
     async def add_by_identifier(self, identifier: str) -> bool:
@@ -36,11 +44,11 @@ class ChannelService:
             channel_type=info.get("channel_type"),
             is_active=not info.get("deactivate", False),
         )
-        await self._db.add_channel(channel)
+        await self._channels.add_channel(channel)
         return True
 
     async def get_dialogs_with_added_flags(self) -> list[dict]:
-        existing = await self._db.get_channels()
+        existing = await self._channels.list_channels()
         existing_ids = {ch.channel_id for ch in existing}
         dialogs = await self._pool.get_dialogs()
         for dialog in dialogs:
@@ -54,7 +62,7 @@ class ChannelService:
             if cid not in dialogs_map:
                 continue
             dialog = dialogs_map[cid]
-            await self._db.add_channel(
+            await self._channels.add_channel(
                 Channel(
                     channel_id=dialog["channel_id"],
                     title=dialog["title"],
@@ -66,29 +74,29 @@ class ChannelService:
 
     async def get_my_dialogs(self, phone: str) -> list[dict]:
         """Get all dialogs for a specific account, enriched with already_added flag."""
-        existing_ids = {ch.channel_id for ch in await self._db.get_channels()}
+        existing_ids = {ch.channel_id for ch in await self._channels.list_channels()}
         dialogs = await self._pool.get_dialogs_for_phone(phone, include_dm=True)
         for d in dialogs:
             d["already_added"] = d["channel_id"] in existing_ids
         return dialogs
 
     async def toggle(self, pk: int) -> None:
-        channel = await self._db.get_channel_by_pk(pk)
+        channel = await self._channels.get_by_pk(pk)
         if not channel:
             return
-        await self._db.set_channel_active(pk, not channel.is_active)
+        await self._channels.set_active(pk, not channel.is_active)
 
     async def delete(self, pk: int) -> None:
-        channel = await self._db.get_channel_by_pk(pk)
+        channel = await self._channels.get_by_pk(pk)
         if channel is not None:
-            tasks = await self._db.get_active_collection_tasks_for_channel(channel.channel_id)
+            tasks = await self._channels.get_active_collection_tasks_for_channel(channel.channel_id)
             for task in tasks:
-                if task.id is not None:
+                if task.id is not None and self._queue is not None:
                     await self._queue.cancel_task(
                         task.id,
                         note="Канал удалён пользователем.",
                     )
-        await self._db.delete_channel(pk)
+        await self._channels.delete_channel(pk)
 
     async def leave_dialogs(
         self, phone: str, dialogs: list[tuple[int, str]]
@@ -96,4 +104,4 @@ class ChannelService:
         return await self._pool.leave_channels(phone, dialogs)
 
     async def get_by_pk(self, pk: int) -> Channel | None:
-        return await self._db.get_channel_by_pk(pk)
+        return await self._channels.get_by_pk(pk)

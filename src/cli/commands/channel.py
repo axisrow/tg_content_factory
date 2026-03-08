@@ -7,7 +7,7 @@ from pathlib import Path
 
 from src.cli import runtime
 from src.cli.commands.common import resolve_channel
-from src.models import Channel
+from src.models import Channel, CollectionTaskStatus
 from src.parsers import deduplicate_identifiers, parse_file, parse_identifiers
 from src.telegram.collector import Collector
 
@@ -262,14 +262,22 @@ def run(args: argparse.Namespace) -> None:
                     print(f"Channel '{args.identifier}' not found")
                     return
                 task_id = await db.create_collection_task(ch.channel_id, ch.title)
-                await db.update_collection_task(task_id, "running")
+                await db.update_collection_task(task_id, CollectionTaskStatus.RUNNING)
                 collector = Collector(pool, db, config.scheduler)
                 try:
                     count = await collector.collect_single_channel(ch, full=True, force=True)
-                    await db.update_collection_task(task_id, "completed", messages_collected=count)
+                    await db.update_collection_task(
+                        task_id,
+                        CollectionTaskStatus.COMPLETED,
+                        messages_collected=count,
+                    )
                     print(f"Collected {count} messages from channel {ch.channel_id}")
                 except Exception as exc:
-                    await db.update_collection_task(task_id, "failed", error=str(exc)[:500])
+                    await db.update_collection_task(
+                        task_id,
+                        CollectionTaskStatus.FAILED,
+                        error=str(exc)[:500],
+                    )
                     raise
         finally:
             if pool:

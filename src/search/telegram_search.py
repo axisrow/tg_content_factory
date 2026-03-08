@@ -278,22 +278,44 @@ class TelegramSearch:
 
         client, phone = result
         try:
+            await asyncio.wait_for(client.get_dialogs(), timeout=30.0)
+
             entity = None
             if channel_id:
                 try:
                     entity = await asyncio.wait_for(
-                        client.get_entity(PeerChannel(channel_id)), timeout=30.0
+                        client.get_entity(PeerChannel(channel_id)), timeout=30.0,
                     )
-                except Exception as exc:
-                    logger.warning("Cannot resolve channel %s: %s", channel_id, exc)
-                    return SearchResult(
-                        messages=[],
-                        total=0,
-                        query=query,
-                        error=f"Не удалось найти канал {channel_id}: {exc}",
+                except Exception:
+                    logger.debug(
+                        "PeerChannel(%s) not in cache, trying username fallback",
+                        channel_id,
                     )
-            else:
-                await asyncio.wait_for(client.get_dialogs(), timeout=30.0)
+                    ch_record = await self._persistence._search.channels \
+                        .get_channel_by_channel_id(channel_id)
+                    username = ch_record.username if ch_record else None
+                    if username:
+                        try:
+                            entity = await asyncio.wait_for(
+                                client.get_entity(username), timeout=30.0,
+                            )
+                        except Exception as exc2:
+                            logger.warning(
+                                "Cannot resolve channel %s (@%s): %s",
+                                channel_id, username, exc2,
+                            )
+                            return SearchResult(
+                                messages=[], total=0, query=query,
+                                error=f"Не удалось найти канал {channel_id}: {exc2}",
+                            )
+                    else:
+                        return SearchResult(
+                            messages=[], total=0, query=query,
+                            error=(
+                                f"Не удалось найти канал {channel_id}"
+                                " (нет username для fallback)"
+                            ),
+                        )
 
             async def _collect_in_channel() -> tuple[list[Message], dict[int, Channel]]:
                 collected: list[Message] = []

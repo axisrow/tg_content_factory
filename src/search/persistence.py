@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from src.database import Database
+from src.database.bundles import SearchBundle
 from src.models import Channel, Message
 
 
 class SearchPersistence:
-    def __init__(self, db: Database):
-        self._db = db
+    def __init__(self, search: SearchBundle):
+        self._search = search
 
     async def cache_search_results(
         self,
@@ -16,12 +16,12 @@ class SearchPersistence:
         query: str,
     ) -> None:
         for ch in channels.values():
-            await self._db.add_channel(ch)
+            await self._search.add_channel(ch)
 
         if messages:
-            await self._db.insert_messages_batch(messages)
+            await self._search.insert_messages_batch(messages)
 
-        await self._db.log_search(phone, query, len(messages))
+        await self._search.log_search(phone, query, len(messages))
 
     async def cache_messages_and_channels(
         self,
@@ -29,6 +29,6 @@ class SearchPersistence:
         messages: list[Message],
     ) -> None:
         for ch in channels.values():
-            await self._db.add_channel(ch)
+            await self._search.add_channel(ch)
         if messages:
-            await self._db.insert_messages_batch(messages)
+            await self._search.insert_messages_batch(messages)

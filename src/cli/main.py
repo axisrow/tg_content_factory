@@ -13,6 +13,7 @@ from src.cli.commands import (
     scheduler,
     search,
     serve,
+    test as test_cmd,
 )
 from src.cli.commands import filter as filter_cmd
 from src.cli.commands import my_telegram as my_telegram_cmd
@@ -38,6 +39,7 @@ def main() -> None:
         "scheduler": scheduler.run,
         "notification": notification.run,
         "my-telegram": my_telegram_cmd.run,
+        "test": test_cmd.run,
     }
 
     handler = commands.get(args.command)
@@ -50,6 +52,7 @@ def main() -> None:
             "scheduler": "scheduler_action",
             "notification": "notification_action",
             "my-telegram": "my_telegram_action",
+            "test": "test_action",
         }
         if args.command in sub_attr and not getattr(args, sub_attr[args.command], None):
             parser.parse_args([args.command, "--help"])

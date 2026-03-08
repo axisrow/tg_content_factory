@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from src.database import Database
+from src.database.bundles import NotificationBundle
 from src.models import Account
 from src.telegram.client_pool import ClientPool
 
@@ -21,19 +22,21 @@ class NotificationTargetStatus:
 
 
 class NotificationTargetService:
-    def __init__(self, db: Database, pool: ClientPool):
-        self._db = db
+    def __init__(self, notifications: NotificationBundle | Database, pool: ClientPool):
+        if isinstance(notifications, Database):
+            notifications = NotificationBundle.from_database(notifications)
+        self._notifications = notifications
         self._pool = pool
 
     async def get_configured_phone(self) -> str | None:
-        raw = (await self._db.get_setting(SETTING_KEY) or "").strip()
+        raw = (await self._notifications.get_setting(SETTING_KEY) or "").strip()
         return raw or None
 
     async def set_configured_phone(self, phone: str | None) -> None:
-        await self._db.set_setting(SETTING_KEY, phone or "")
+        await self._notifications.set_setting(SETTING_KEY, phone or "")
 
     async def describe_target(self) -> NotificationTargetStatus:
-        accounts = await self._db.get_accounts()
+        accounts = await self._notifications.list_accounts()
         configured_phone = await self.get_configured_phone()
 
         if configured_phone:
