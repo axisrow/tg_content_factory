@@ -276,7 +276,7 @@ class CollectionBundle:
         return self.filters
 
     async def execute(self, query: str, params: tuple | list = ()):
-        return await self.channels._db.execute(query, tuple(params))
+        return await self.messages._db.execute(query, tuple(params))
 
     async def list_channels(
         self,

@@ -5,9 +5,9 @@ from typing import Any
 
 import aiosqlite
 
+from src.database.bundles import DatabaseRepositories
 from src.database.connection import DBConnection
 from src.database.migrations import run_migrations
-from src.database.bundles import DatabaseRepositories
 from src.database.repositories.accounts import AccountsRepository
 from src.database.repositories.channel_stats import ChannelStatsRepository
 from src.database.repositories.channels import ChannelsRepository

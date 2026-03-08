@@ -147,7 +147,9 @@ class CollectionQueue:
         pending = await self._channels.get_pending_channel_tasks()
         count = 0
         for task in pending:
-            assert task.channel_id is not None
+            if task.channel_id is None:
+                logger.warning("Skipping task %d: channel_id is None", task.id)
+                continue
             channel = await self._channels.get_by_channel_id(task.channel_id)
             if channel is None:
                 await self._channels.cancel_collection_task(task.id)

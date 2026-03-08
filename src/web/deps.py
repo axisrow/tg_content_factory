@@ -32,9 +32,9 @@ from src.telegram.auth import TelegramAuth
 from src.telegram.client_pool import ClientPool
 from src.telegram.collector import Collector
 from src.telegram.notifier import Notifier
+from src.web.bootstrap import TEMPLATES_DIR
 from src.web.container import AppContainer
 from src.web.log_handler import LogBuffer
-from src.web.bootstrap import TEMPLATES_DIR
 
 T = TypeVar("T")
 
@@ -164,11 +164,11 @@ def get_notification_target_service(request: Request) -> NotificationTargetServi
     return get_container(request).notification_target_service
 
 
-def get_notifier(request: Request) -> Notifier:
+def get_notifier(request: Request) -> Notifier | None:
     return get_container(request).notifier
 
 
-def get_log_buffer(request: Request) -> LogBuffer:
+def get_log_buffer(request: Request) -> LogBuffer | None:
     return get_container(request).log_buffer
 
 

@@ -1346,7 +1346,6 @@ async def test_save_credentials_valid_and_masked_path(client):
 
 @pytest.mark.asyncio
 async def test_notification_setup_and_delete_json(client, monkeypatch):
-    from types import SimpleNamespace
 
     from src.models import Account
 
