@@ -23,7 +23,6 @@ from src.search.engine import SearchEngine
 from src.services.account_service import AccountService
 from src.services.channel_service import ChannelService
 from src.services.collection_service import CollectionService
-from src.services.keyword_service import KeywordService
 from src.services.notification_service import NotificationService
 from src.services.notification_target_service import NotificationTargetService
 from src.services.scheduler_service import SchedulerService
@@ -203,14 +202,6 @@ def channel_service(request: Request) -> ChannelService:
         request,
         "_channel_service",
         lambda: ChannelService(get_channel_bundle(request), get_pool(request), get_queue(request)),
-    )
-
-
-def keyword_service(request: Request) -> KeywordService:
-    return _request_cached(
-        request,
-        "_keyword_service",
-        lambda: KeywordService(get_collection_bundle(request)),
     )
 
 

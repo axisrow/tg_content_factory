@@ -8,7 +8,6 @@ from src.cli.commands import (
     account,
     channel,
     collect,
-    keyword,
     notification,
     scheduler,
     search,
@@ -37,7 +36,6 @@ def main() -> None:
         "search": search.run,
         "channel": channel.run,
         "filter": filter_cmd.run,
-        "keyword": keyword.run,
         "search-query": search_query.run,
         "account": account.run,
         "scheduler": scheduler.run,
@@ -51,7 +49,6 @@ def main() -> None:
         sub_attr = {
             "channel": "channel_action",
             "filter": "filter_action",
-            "keyword": "keyword_action",
             "search-query": "search_query_action",
             "account": "account_action",
             "scheduler": "scheduler_action",

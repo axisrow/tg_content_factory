@@ -14,7 +14,7 @@ from enum import Enum
 from src.cli import runtime
 from src.database import Database
 from src.filters.analyzer import ChannelAnalyzer
-from src.models import Keyword, Message
+from src.models import Message, SearchQuery
 
 logger = logging.getLogger(__name__)
 
@@ -72,14 +72,16 @@ async def _check_channel_list(db) -> CheckResult:
         return CheckResult("channel_list", Status.FAIL, str(exc))
 
 
-async def _check_keyword_list(db) -> CheckResult:
+async def _check_notification_queries(db) -> CheckResult:
     try:
-        keywords = await db.get_keywords()
-        if not keywords:
-            return CheckResult("keyword_list", Status.SKIP, "No keywords configured")
-        return CheckResult("keyword_list", Status.PASS, f"{len(keywords)} keywords")
+        queries = await db.get_notification_queries(active_only=False)
+        if not queries:
+            return CheckResult("notification_queries", Status.SKIP, "No notification queries")
+        return CheckResult(
+            "notification_queries", Status.PASS, f"{len(queries)} queries"
+        )
     except Exception as exc:
-        return CheckResult("keyword_list", Status.FAIL, str(exc))
+        return CheckResult("notification_queries", Status.FAIL, str(exc))
 
 
 async def _check_local_search(db) -> CheckResult:
@@ -172,59 +174,68 @@ async def _run_write_checks(config_path: str) -> list[CheckResult]:
         except Exception as exc:
             results.append(CheckResult("account_toggle", Status.FAIL, str(exc)))
 
-        # 3. keyword_add
-        added_kw_id: int | None = None
+        # 3. search_query_add
+        added_sq_id: int | None = None
         try:
-            added_kw_id = await copy_db.add_keyword(
-                Keyword(pattern="__test_cli__"),
+            sq_repo = copy_db.repos.search_queries
+            added_sq_id = await sq_repo.add(
+                SearchQuery(name="__test_cli__", query="__test_cli__"),
             )
-            keywords = await copy_db.get_keywords()
-            found = any(k.id == added_kw_id for k in keywords)
+            queries = await sq_repo.get_all()
+            found = any(q.id == added_sq_id for q in queries)
             if not found:
-                raise RuntimeError("keyword not found after add")
+                raise RuntimeError("search query not found after add")
             results.append(CheckResult(
-                "keyword_add", Status.PASS,
-                f'Added id={added_kw_id} pattern="__test_cli__"',
+                "search_query_add", Status.PASS,
+                f'Added id={added_sq_id} query="__test_cli__"',
             ))
         except Exception as exc:
-            results.append(CheckResult("keyword_add", Status.FAIL, str(exc)))
+            results.append(CheckResult("search_query_add", Status.FAIL, str(exc)))
 
-        # 4. keyword_toggle
-        if added_kw_id is not None:
+        # 4. search_query_toggle
+        if added_sq_id is not None:
             try:
-                await copy_db.set_keyword_active(added_kw_id, False)
-                keywords = await copy_db.get_keywords()
-                kw = next(k for k in keywords if k.id == added_kw_id)
-                if kw.is_active is not False:
-                    raise RuntimeError("keyword active state did not change")
+                await sq_repo.set_active(added_sq_id, False)
+                queries = await sq_repo.get_all()
+                sq = next(q for q in queries if q.id == added_sq_id)
+                if sq.is_active is not False:
+                    raise RuntimeError("search query active state did not change")
                 results.append(CheckResult(
-                    "keyword_toggle", Status.PASS,
-                    f"id={added_kw_id} active: True -> False",
+                    "search_query_toggle", Status.PASS,
+                    f"id={added_sq_id} active: True -> False",
                 ))
             except Exception as exc:
-                results.append(CheckResult("keyword_toggle", Status.FAIL, str(exc)))
+                results.append(
+                    CheckResult("search_query_toggle", Status.FAIL, str(exc))
+                )
         else:
             results.append(
-                CheckResult("keyword_toggle", Status.SKIP, "keyword_add failed"),
+                CheckResult(
+                    "search_query_toggle", Status.SKIP, "search_query_add failed"
+                ),
             )
 
-        # 5. keyword_delete
-        if added_kw_id is not None:
+        # 5. search_query_delete
+        if added_sq_id is not None:
             try:
-                await copy_db.delete_keyword(added_kw_id)
-                keywords = await copy_db.get_keywords()
-                found = any(k.id == added_kw_id for k in keywords)
+                await sq_repo.delete(added_sq_id)
+                queries = await sq_repo.get_all()
+                found = any(q.id == added_sq_id for q in queries)
                 if found:
-                    raise RuntimeError("keyword still present after delete")
+                    raise RuntimeError("search query still present after delete")
                 results.append(CheckResult(
-                    "keyword_delete", Status.PASS,
-                    f"id={added_kw_id} deleted, verified absent",
+                    "search_query_delete", Status.PASS,
+                    f"id={added_sq_id} deleted, verified absent",
                 ))
             except Exception as exc:
-                results.append(CheckResult("keyword_delete", Status.FAIL, str(exc)))
+                results.append(
+                    CheckResult("search_query_delete", Status.FAIL, str(exc))
+                )
         else:
             results.append(
-                CheckResult("keyword_delete", Status.SKIP, "keyword_add failed"),
+                CheckResult(
+                    "search_query_delete", Status.SKIP, "search_query_add failed"
+                ),
             )
 
         # 6. channel_toggle
@@ -559,7 +570,7 @@ def run(args: argparse.Namespace) -> None:
                     _check_get_stats(db),
                     _check_account_list(db),
                     _check_channel_list(db),
-                    _check_keyword_list(db),
+                    _check_notification_queries(db),
                     _check_local_search(db),
                     _check_collection_tasks(db),
                     _check_recent_searches(db),

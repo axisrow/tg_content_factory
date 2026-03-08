@@ -480,12 +480,13 @@ async def test_collect_channel_does_not_advance_last_id_when_flush_fails(db):
 
 
 @pytest.mark.asyncio
-async def test_backfill_does_not_send_keyword_notifications(db):
-    from src.models import Keyword
+async def test_backfill_does_not_send_notification_queries(db):
+    from src.models import SearchQuery
 
     ch = Channel(channel_id=-100128, title="Test", username="test128", last_collected_id=0)
     await db.add_channel(ch)
-    await db.add_keyword(Keyword(pattern="urgent"))
+    repo = db.repos.search_queries
+    await repo.add(SearchQuery(name="urgent", query="urgent", notify_on_collect=True))
 
     mock_msgs = [_make_mock_message(i, text=f"urgent msg {i}") for i in range(1, 3)]
 
@@ -506,12 +507,13 @@ async def test_backfill_does_not_send_keyword_notifications(db):
 
 
 @pytest.mark.asyncio
-async def test_incremental_collection_sends_keyword_notifications(db):
-    from src.models import Keyword
+async def test_incremental_collection_sends_notification_queries(db):
+    from src.models import SearchQuery
 
     ch = Channel(channel_id=-100129, title="Test", username="test129", last_collected_id=10)
     await db.add_channel(ch)
-    await db.add_keyword(Keyword(pattern="urgent"))
+    repo = db.repos.search_queries
+    await repo.add(SearchQuery(name="urgent", query="urgent", notify_on_collect=True))
 
     mock_msgs = [_make_mock_message(11, text="urgent update")]
 

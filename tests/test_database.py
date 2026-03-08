@@ -12,8 +12,8 @@ from src.models import (
     Channel,
     CollectionTaskStatus,
     CollectionTaskType,
-    Keyword,
     Message,
+    SearchQuery,
     StatsAllTaskPayload,
 )
 
@@ -382,18 +382,19 @@ async def test_search_messages_full_iso_date_to_remains_precise(db):
 
 
 @pytest.mark.asyncio
-async def test_keywords_crud(db):
-    kw = Keyword(pattern="bitcoin", is_regex=False)
-    kid = await db.add_keyword(kw)
-    assert kid > 0
+async def test_notification_queries_crud(db):
+    sq = SearchQuery(name="bitcoin", query="bitcoin", is_regex=False, notify_on_collect=True)
+    repo = db.repos.search_queries
+    sq_id = await repo.add(sq)
+    assert sq_id > 0
 
-    keywords = await db.get_keywords()
-    assert len(keywords) == 1
-    assert keywords[0].pattern == "bitcoin"
+    queries = await db.get_notification_queries(active_only=False)
+    assert len(queries) == 1
+    assert queries[0].query == "bitcoin"
 
-    await db.delete_keyword(keywords[0].id)
-    keywords = await db.get_keywords()
-    assert len(keywords) == 0
+    await repo.delete(sq_id)
+    queries = await db.get_notification_queries(active_only=False)
+    assert len(queries) == 0
 
 
 @pytest.mark.asyncio
@@ -402,7 +403,7 @@ async def test_stats(db):
     assert stats["accounts"] == 0
     assert stats["channels"] == 0
     assert stats["messages"] == 0
-    assert stats["keywords"] == 0
+    assert stats["search_queries"] == 0
 
 
 @pytest.mark.asyncio
@@ -430,14 +431,14 @@ async def test_stats_with_data(db):
         for i in range(1, 4)
     ]
     await db.insert_messages_batch(msgs)
-    kw = Keyword(pattern="test")
-    await db.add_keyword(kw)
+    repo = db.repos.search_queries
+    await repo.add(SearchQuery(name="test", query="test"))
 
     stats = await db.get_stats()
     assert stats["accounts"] == 1
     assert stats["channels"] == 1
     assert stats["messages"] == 3
-    assert stats["keywords"] == 1
+    assert stats["search_queries"] == 1
 
 
 @pytest.mark.asyncio

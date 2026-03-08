@@ -69,20 +69,6 @@ def build_parser() -> argparse.ArgumentParser:
     flt_sub.add_parser("reset", help="Reset all channel filters")
     flt_sub.add_parser("precheck", help="Apply pre-filter by subscriber ratio (no Telegram needed)")
 
-    kw_parser = sub.add_parser("keyword", help="Keyword management")
-    kw_sub = kw_parser.add_subparsers(dest="keyword_action")
-    kw_sub.add_parser("list", help="List keywords")
-
-    kw_add = kw_sub.add_parser("add", help="Add keyword")
-    kw_add.add_argument("pattern", help="Keyword pattern")
-    kw_add.add_argument("--regex", action="store_true", help="Treat pattern as regex")
-
-    kw_del = kw_sub.add_parser("delete", help="Delete keyword")
-    kw_del.add_argument("id", type=int, help="Keyword id")
-
-    kw_toggle = kw_sub.add_parser("toggle", help="Toggle keyword active state")
-    kw_toggle.add_argument("id", type=int, help="Keyword id")
-
     sq_parser = sub.add_parser("search-query", help="Search query management")
     sq_sub = sq_parser.add_subparsers(dest="search_query_action")
     sq_sub.add_parser("list", help="List search queries")

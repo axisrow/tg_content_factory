@@ -32,13 +32,6 @@ CREATE TABLE IF NOT EXISTS messages (
     UNIQUE(channel_id, message_id)
 );
 
-CREATE TABLE IF NOT EXISTS keywords (
-    id INTEGER PRIMARY KEY,
-    pattern TEXT NOT NULL,
-    is_regex INTEGER DEFAULT 0,
-    is_active INTEGER DEFAULT 1
-);
-
 CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
@@ -107,7 +100,10 @@ CREATE TABLE IF NOT EXISTS search_queries (
     id               INTEGER PRIMARY KEY,
     name             TEXT NOT NULL,
     query            TEXT NOT NULL,
+    is_regex         INTEGER DEFAULT 0,
     is_active        INTEGER DEFAULT 1,
+    notify_on_collect INTEGER DEFAULT 0,
+    track_stats      INTEGER DEFAULT 1,
     interval_minutes INTEGER NOT NULL DEFAULT 60,
     created_at       TEXT DEFAULT (datetime('now'))
 );

@@ -10,7 +10,7 @@ import pytest
 
 from src.config import AppConfig
 from src.database import Database
-from src.models import Account, Channel, Keyword, Message
+from src.models import Account, Channel, Message
 
 NOW = datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
 
@@ -71,12 +71,6 @@ def _add_channel(db: Database, channel_id: int = 100, title: str = "TestCh") -> 
     )
 
 
-def _add_keyword(db: Database, pattern: str = "test", is_regex: bool = False) -> int:
-    return asyncio.run(
-        db.add_keyword(Keyword(pattern=pattern, is_regex=is_regex))
-    )
-
-
 def _add_message(db: Database, channel_id: int = 100, message_id: int = 1, text: str = "hello"):
     asyncio.run(
         db.insert_message(
@@ -117,46 +111,6 @@ class TestCLIAccount:
         pk = _add_account(cli_env)
         from src.cli.commands.account import run
         run(_ns(account_action="delete", id=pk))
-        assert "Deleted" in capsys.readouterr().out
-
-
-# ---------------------------------------------------------------------------
-# keyword
-# ---------------------------------------------------------------------------
-
-
-class TestCLIKeyword:
-    def test_list_empty(self, cli_env, capsys):
-        from src.cli.commands.keyword import run
-        run(_ns(keyword_action="list"))
-        assert "No keywords found" in capsys.readouterr().out
-
-    def test_add(self, cli_env, capsys):
-        from src.cli.commands.keyword import run
-        run(_ns(keyword_action="add", pattern="urgent", regex=False))
-        assert "Added keyword" in capsys.readouterr().out
-
-    def test_add_regex(self, cli_env, capsys):
-        from src.cli.commands.keyword import run
-        run(_ns(keyword_action="add", pattern="test.*", regex=True))
-        assert "(regex)" in capsys.readouterr().out
-
-    def test_list_with_data(self, cli_env, capsys):
-        _add_keyword(cli_env, "findme")
-        from src.cli.commands.keyword import run
-        run(_ns(keyword_action="list"))
-        assert "findme" in capsys.readouterr().out
-
-    def test_toggle(self, cli_env, capsys):
-        kid = _add_keyword(cli_env)
-        from src.cli.commands.keyword import run
-        run(_ns(keyword_action="toggle", id=kid))
-        assert "active=" in capsys.readouterr().out
-
-    def test_delete(self, cli_env, capsys):
-        kid = _add_keyword(cli_env)
-        from src.cli.commands.keyword import run
-        run(_ns(keyword_action="delete", id=kid))
         assert "Deleted" in capsys.readouterr().out
 
 

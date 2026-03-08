@@ -9,7 +9,6 @@ from src.database.repositories.channel_stats import ChannelStatsRepository
 from src.database.repositories.channels import ChannelsRepository
 from src.database.repositories.collection_tasks import CollectionTasksRepository
 from src.database.repositories.filters import FilterRepository
-from src.database.repositories.keywords import KeywordsRepository
 from src.database.repositories.messages import MessagesRepository
 from src.database.repositories.notification_bots import NotificationBotsRepository
 from src.database.repositories.search_log import SearchLogRepository
@@ -21,7 +20,6 @@ from src.models import (
     ChannelStats,
     CollectionTask,
     CollectionTaskStatus,
-    Keyword,
     Message,
     NotificationBot,
     SearchQuery,
@@ -38,7 +36,6 @@ class DatabaseRepositories:
     accounts: AccountsRepository
     channels: ChannelsRepository
     messages: MessagesRepository
-    keywords: KeywordsRepository
     tasks: CollectionTasksRepository
     search_log: SearchLogRepository
     channel_stats: ChannelStatsRepository
@@ -254,7 +251,7 @@ class CollectionBundle:
     messages: MessagesRepository
     filters: FilterRepository
     settings: SettingsRepository
-    keywords: KeywordsRepository
+    search_queries: SearchQueriesRepository
     tasks: CollectionTasksRepository
     channel_stats: ChannelStatsRepository
 
@@ -266,7 +263,7 @@ class CollectionBundle:
             repos.messages,
             repos.filters,
             repos.settings,
-            repos.keywords,
+            repos.search_queries,
             repos.tasks,
             repos.channel_stats,
         )
@@ -356,17 +353,10 @@ class CollectionBundle:
     async def set_setting(self, key: str, value: str) -> None:
         await self.settings.set_setting(key, value)
 
-    async def add_keyword(self, keyword: Keyword) -> int:
-        return await self.keywords.add_keyword(keyword)
-
-    async def list_keywords(self, active_only: bool = False) -> list[Keyword]:
-        return await self.keywords.get_keywords(active_only)
-
-    async def set_keyword_active(self, keyword_id: int, active: bool) -> None:
-        await self.keywords.set_keyword_active(keyword_id, active)
-
-    async def delete_keyword(self, keyword_id: int) -> None:
-        await self.keywords.delete_keyword(keyword_id)
+    async def list_notification_queries(
+        self, active_only: bool = True
+    ) -> list[SearchQuery]:
+        return await self.search_queries.get_notification_queries(active_only)
 
     async def get_channel_stats(self, channel_id: int, limit: int = 1) -> list[ChannelStats]:
         return await self.channel_stats.get_channel_stats(channel_id, limit)
@@ -466,14 +456,14 @@ class SearchBundle:
 @dataclass(frozen=True)
 class SchedulerBundle:
     settings: SettingsRepository
-    keywords: KeywordsRepository
+    search_queries: SearchQueriesRepository
     tasks: CollectionTasksRepository
     search_log: SearchLogRepository
 
     @classmethod
     def from_database(cls, db: "Database") -> "SchedulerBundle":
         repos = db.repos
-        return cls(repos.settings, repos.keywords, repos.tasks, repos.search_log)
+        return cls(repos.settings, repos.search_queries, repos.tasks, repos.search_log)
 
     async def get_setting(self, key: str) -> str | None:
         return await self.settings.get_setting(key)
@@ -481,8 +471,10 @@ class SchedulerBundle:
     async def set_setting(self, key: str, value: str) -> None:
         await self.settings.set_setting(key, value)
 
-    async def list_keywords(self, active_only: bool = False) -> list[Keyword]:
-        return await self.keywords.get_keywords(active_only)
+    async def list_notification_queries(
+        self, active_only: bool = True
+    ) -> list[SearchQuery]:
+        return await self.search_queries.get_notification_queries(active_only)
 
     async def get_collection_tasks(self, limit: int = 20) -> list[CollectionTask]:
         return await self.tasks.get_collection_tasks(limit)

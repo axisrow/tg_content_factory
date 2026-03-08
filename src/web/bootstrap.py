@@ -76,7 +76,7 @@ async def build_container_with_templates(
         repos.messages,
         repos.filters,
         repos.settings,
-        repos.keywords,
+        repos.search_queries,
         repos.tasks,
         repos.channel_stats,
     )
@@ -88,7 +88,7 @@ async def build_container_with_templates(
     search_bundle = SearchBundle(repos.messages, repos.search_log, repos.channels)
     scheduler_bundle = SchedulerBundle(
         repos.settings,
-        repos.keywords,
+        repos.search_queries,
         repos.tasks,
         repos.search_log,
     )

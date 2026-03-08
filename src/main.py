@@ -7,7 +7,6 @@ from src.cli.commands import (
     account,
     channel,
     collect,
-    keyword,
     scheduler,
     search,
     search_query,
@@ -55,10 +54,6 @@ def cmd_search(args: argparse.Namespace) -> None:
 
 def cmd_channel(args: argparse.Namespace) -> None:
     _run_with_legacy_runtime(channel.run, args)
-
-
-def cmd_keyword(args: argparse.Namespace) -> None:
-    _run_with_legacy_runtime(keyword.run, args)
 
 
 def cmd_search_query(args: argparse.Namespace) -> None:
