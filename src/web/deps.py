@@ -37,11 +37,12 @@ from src.web.container import AppContainer
 from src.web.log_handler import LogBuffer
 
 T = TypeVar("T")
+_MISSING = object()
 
 
 def _request_cached(request: Request, key: str, factory: Callable[[], T]) -> T:
-    value = getattr(request.state, key, None)
-    if value is None:
+    value = getattr(request.state, key, _MISSING)
+    if value is _MISSING:
         value = factory()
         setattr(request.state, key, value)
     return value
@@ -58,6 +59,9 @@ def get_container(request: Request) -> AppContainer:
     container = getattr(request.app.state, "container", None)
     if container is not None:
         return container
+    cached = getattr(request.state, "_container", None)
+    if cached is not None:
+        return cached
 
     db = _require_app_state_attr(request, "db")
     repos = db.repos
@@ -67,7 +71,7 @@ def get_container(request: Request) -> AppContainer:
     notification_bundle = NotificationBundle.from_database(db)
     search_bundle = SearchBundle.from_database(db)
     scheduler_bundle = SchedulerBundle.from_database(db)
-    return AppContainer(
+    container = AppContainer(
         config=_require_app_state_attr(request, "config"),
         db=db,
         repos=repos,
@@ -101,6 +105,8 @@ def get_container(request: Request) -> AppContainer:
         bg_tasks=getattr(request.app.state, "bg_tasks", set()),
         shutting_down=getattr(request.app.state, "shutting_down", False),
     )
+    request.state._container = container
+    return container
 
 
 def get_db(request: Request) -> Database:

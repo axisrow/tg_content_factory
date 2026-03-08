@@ -18,7 +18,7 @@ from src.web.assembly import (
     register_builtin_endpoints,
     register_routes,
 )
-from src.web.bootstrap import build_container, start_container, stop_container
+from src.web.bootstrap import build_container_with_templates, start_container, stop_container
 from src.web.csrf import OriginCSRFMiddleware, is_secure_request
 from src.web.session import (
     COOKIE_MAX_AGE,
@@ -82,7 +82,11 @@ class BasicAuthMiddleware(BaseHTTPMiddleware):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    container = await build_container(app.state.config, log_buffer=app.state.log_buffer)
+    container = await build_container_with_templates(
+        app.state.config,
+        log_buffer=app.state.log_buffer,
+        templates=app.state.templates,
+    )
     configure_app(app, container)
     logger.info("Application started")
     try:

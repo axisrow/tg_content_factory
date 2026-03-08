@@ -55,6 +55,15 @@ async def load_telegram_credentials(db: Database, config: AppConfig) -> tuple[in
 
 
 async def build_container(config: AppConfig, *, log_buffer: LogBuffer) -> AppContainer:
+    return await build_container_with_templates(config, log_buffer=log_buffer, templates=None)
+
+
+async def build_container_with_templates(
+    config: AppConfig,
+    *,
+    log_buffer: LogBuffer,
+    templates: Jinja2Templates | None,
+) -> AppContainer:
     db = Database(
         config.database.path,
         session_encryption_secret=resolve_session_encryption_secret(config),
@@ -128,7 +137,7 @@ async def build_container(config: AppConfig, *, log_buffer: LogBuffer) -> AppCon
         search_engine=search_engine,
         ai_search=ai_search,
         scheduler=scheduler,
-        templates=Jinja2Templates(directory=str(TEMPLATES_DIR)),
+        templates=templates or Jinja2Templates(directory=str(TEMPLATES_DIR)),
         log_buffer=log_buffer,
         session_secret=session_secret,
         bg_tasks=set(),
@@ -144,11 +153,13 @@ async def start_container(container: AppContainer) -> None:
     if container.auth.is_configured:
         await container.pool.initialize()
 
-    requeued = await container.collection_queue.requeue_startup_tasks()
-    if requeued:
-        logger.info("Re-enqueued %d pending collection tasks on startup", requeued)
+    if container.collection_queue is not None:
+        requeued = await container.collection_queue.requeue_startup_tasks()
+        if requeued:
+            logger.info("Re-enqueued %d pending collection tasks on startup", requeued)
 
-    await container.stats_dispatcher.start()
+    if container.stats_dispatcher is not None:
+        await container.stats_dispatcher.start()
     container.ai_search.initialize()
 
 
@@ -162,16 +173,20 @@ async def _cancel_bg_tasks(tasks: set[asyncio.Task]) -> None:
 
 async def stop_container(container: AppContainer) -> None:
     container.shutting_down = True
-    for name, coro in [
-        ("stats_dispatcher", container.stats_dispatcher.stop()),
+    shutdown_coroutines = []
+    if container.stats_dispatcher is not None:
+        shutdown_coroutines.append(("stats_dispatcher", container.stats_dispatcher.stop()))
+    if container.collection_queue is not None:
+        shutdown_coroutines.append(("collection_queue", container.collection_queue.shutdown()))
+    shutdown_coroutines.extend([
         ("scheduler", container.scheduler.stop()),
         ("collector", container.collector.cancel()),
-        ("collection_queue", container.collection_queue.shutdown()),
         ("bg_tasks", _cancel_bg_tasks(container.bg_tasks)),
         ("pool", container.pool.disconnect_all()),
         ("auth", container.auth.cleanup()),
         ("db", container.db.close()),
-    ]:
+    ])
+    for name, coro in shutdown_coroutines:
         try:
             await asyncio.wait_for(coro, timeout=5.0)
         except asyncio.TimeoutError:
