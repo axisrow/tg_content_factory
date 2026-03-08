@@ -530,9 +530,6 @@ class SearchQueryBundle:
     async def get_stats_for_all(self, days: int = 30) -> dict[int, list[SearchQueryDailyStat]]:
         return await self.search_queries.get_stats_for_all(days)
 
-    async def get_total_count(self, query_id: int, days: int = 30) -> int:
-        return await self.search_queries.get_total_count(query_id, days)
-
     async def get_last_recorded_at(self, query_id: int) -> str | None:
         return await self.search_queries.get_last_recorded_at(query_id)
 

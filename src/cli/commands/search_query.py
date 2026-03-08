@@ -50,7 +50,7 @@ def run(args: argparse.Namespace) -> None:
                 if not stats:
                     print("No stats found.")
                     return
-                max_count = max(s.count for s in stats) if stats else 1
+                max_count = max(s.count for s in stats)
                 for s in stats:
                     bar_len = int(s.count / max_count * 40) if max_count else 0
                     bar = "#" * bar_len

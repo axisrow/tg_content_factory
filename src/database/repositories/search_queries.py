@@ -94,18 +94,6 @@ class SearchQueriesRepository:
             )
         return result
 
-    async def get_total_count(self, query_id: int, days: int = 30) -> int:
-        cur = await self._db.execute(
-            """
-            SELECT COALESCE(SUM(match_count), 0) AS total
-            FROM search_query_stats
-            WHERE query_id = ? AND recorded_at >= datetime('now', ?)
-            """,
-            (query_id, f"-{days} days"),
-        )
-        row = await cur.fetchone()
-        return row["total"] if row else 0
-
     async def get_last_recorded_at(self, query_id: int) -> str | None:
         cur = await self._db.execute(
             "SELECT MAX(recorded_at) AS last FROM search_query_stats WHERE query_id = ?",

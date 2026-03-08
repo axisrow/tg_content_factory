@@ -92,5 +92,5 @@ async def test_get_last_recorded_at_all(bundle):
 
 @pytest.mark.asyncio
 async def test_interval_minutes_validation():
-    with pytest.raises(Exception):
+    with pytest.raises(ValueError):
         SearchQuery(name="bad", query="q", interval_minutes=0)
