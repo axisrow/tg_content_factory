@@ -15,7 +15,7 @@ A personal Telegram monitoring toolkit — collect messages, search across chann
 - **Built-in anti-spam filters** — deduplication, low-uniqueness detection, cross-channel spam, subscriber ratio filters, non-Cyrillic content filter
 - **Task queue** — background job processing with status tracking
 - **Web dashboard** — FastAPI + Pico CSS, manage everything from a browser
-- **Security** — session encryption (Fernet + PBKDF2), HTTP Basic Auth, HMAC-signed cookies
+- **Security** — session encryption (Fernet + PBKDF2), web panel password, HTTP Basic fallback, HMAC-signed cookies
 - **Docker-ready**
 
 ## Quick Start
@@ -48,7 +48,7 @@ Start the server:
 python -m src.main serve
 ```
 
-Open http://localhost:8080 in your browser.
+Open http://localhost:8080 in your browser and enter the `WEB_PASS` password.
 
 ## Docker
 
@@ -121,8 +121,9 @@ python -m src.main notification setup|status|delete
 
 | Page | Path | Description |
 |---|---|---|
+| Web login | `/login` | Sign in to the web panel with `WEB_PASS` |
 | Dashboard | `/` | Stats, scheduler status, connected accounts |
-| Auth | `/auth/login` | Add Telegram accounts (phone + code + 2FA) |
+| Telegram auth | `/auth/login` | Add Telegram accounts (phone + code + 2FA) |
 | Accounts | `/accounts` | Manage connected accounts |
 | Channels | `/channels` | Add/remove channels, keywords, import |
 | Search | `/search` | Search messages (local / Telegram / AI) |

@@ -123,6 +123,24 @@ async def test_login_page(client):
 
 
 @pytest.mark.asyncio
+async def test_web_login_page_without_auth(unauth_client):
+    resp = await unauth_client.get("/login", follow_redirects=False)
+    assert resp.status_code == 200
+    assert "Вход в веб-панель" in resp.text
+    assert 'action="/login"' in resp.text
+
+
+@pytest.mark.asyncio
+async def test_web_login_rejects_unsafe_next_without_auth(unauth_client):
+    resp = await unauth_client.get(
+        "/login?next=https://evil.example",
+        follow_redirects=False,
+    )
+    assert resp.status_code == 200
+    assert 'name="next" value="/"' in resp.text
+
+
+@pytest.mark.asyncio
 async def test_settings_page(client):
     resp = await client.get("/settings/")
     assert resp.status_code == 200
@@ -239,8 +257,34 @@ async def unauth_client(client):
 
 
 @pytest.mark.asyncio
-async def test_no_auth_returns_401(unauth_client):
-    resp = await unauth_client.get("/")
+async def test_no_auth_browser_redirects_to_web_login(unauth_client):
+    resp = await unauth_client.get(
+        "/",
+        headers={"Accept": "text/html"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    assert resp.headers["location"] == "/login?next=%2F"
+
+
+@pytest.mark.asyncio
+async def test_no_auth_htmx_returns_hx_redirect(unauth_client):
+    resp = await unauth_client.get(
+        "/",
+        headers={"HX-Request": "true"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 401
+    assert resp.headers["HX-Redirect"] == "/login?next=%2F"
+
+
+@pytest.mark.asyncio
+async def test_no_auth_api_returns_401(unauth_client):
+    resp = await unauth_client.get(
+        "/",
+        headers={"Accept": "application/json"},
+        follow_redirects=False,
+    )
     assert resp.status_code == 401
     assert "WWW-Authenticate" in resp.headers
 
@@ -272,9 +316,73 @@ async def test_cookie_auth_without_basic(client):
 
 
 @pytest.mark.asyncio
-async def test_logout_clears_cookie(client):
-    resp = await client.get("/logout", follow_redirects=False)
+async def test_web_login_post_sets_cookie_and_redirects_to_next(unauth_client):
+    resp = await unauth_client.post(
+        "/login",
+        data={"password": "testpass", "next": "/channels/"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    assert resp.headers["location"] == "/channels/"
+    assert COOKIE_NAME in resp.headers.get("set-cookie", "")
+
+    page = await unauth_client.get("/channels/", follow_redirects=False)
+    assert page.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_web_login_post_rejects_invalid_password(unauth_client):
+    resp = await unauth_client.post(
+        "/login",
+        data={"password": "wrong", "next": "/channels/"},
+        follow_redirects=False,
+    )
     assert resp.status_code == 401
+    assert "Неверный пароль" in resp.text
+    assert COOKIE_NAME not in resp.headers.get("set-cookie", "")
+
+
+@pytest.mark.asyncio
+async def test_web_login_post_blocks_open_redirect(unauth_client):
+    resp = await unauth_client.post(
+        "/login",
+        data={"password": "testpass", "next": "https://evil.example"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    assert resp.headers["location"] == "/"
+
+
+@pytest.mark.asyncio
+async def test_web_login_post_blocks_backslash_redirect(unauth_client):
+    resp = await unauth_client.post(
+        "/login",
+        data={"password": "testpass", "next": "/\\evil.com"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    assert resp.headers["location"] == "/"
+
+
+@pytest.mark.asyncio
+async def test_web_login_redirects_authenticated_user_to_next(client):
+    token = create_session_token("admin", "test_secret_key")
+    transport = client._transport
+    async with AsyncClient(
+        transport=transport,
+        base_url="http://test",
+        cookies={COOKIE_NAME: token},
+    ) as c:
+        resp = await c.get("/login?next=/channels/", follow_redirects=False)
+        assert resp.status_code == 303
+        assert resp.headers["location"] == "/channels/"
+
+
+@pytest.mark.asyncio
+async def test_logout_clears_cookie_and_redirects_to_login(client):
+    resp = await client.get("/logout", follow_redirects=False)
+    assert resp.status_code == 303
+    assert resp.headers["location"] == "/login"
     assert COOKIE_NAME in resp.headers.get("set-cookie", "")
     cookie_header = resp.headers.get("set-cookie", "")
     assert 'Max-Age=0' in cookie_header or 'max-age=0' in cookie_header
@@ -305,14 +413,20 @@ async def test_cookie_secure_on_https(client):
 @pytest.mark.asyncio
 async def test_invalid_cookie_falls_back(unauth_client):
     unauth_client.cookies.set(COOKIE_NAME, "fake.token")
-    resp = await unauth_client.get("/")
-    assert resp.status_code == 401
+    resp = await unauth_client.get(
+        "/",
+        headers={"Accept": "text/html"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    assert resp.headers["location"] == "/login?next=%2F"
 
 
 @pytest.mark.asyncio
 async def test_logout_no_auth_required(unauth_client):
     resp = await unauth_client.get("/logout", follow_redirects=False)
-    assert resp.status_code == 401
+    assert resp.status_code == 303
+    assert resp.headers["location"] == "/login"
 
 
 @pytest.mark.asyncio

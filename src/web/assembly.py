@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import logging
-from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+import secrets
+
+from fastapi import FastAPI, Form, Request
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from starlette.responses import Response
 
 from src.web.container import AppContainer
+from src.web.panel_auth import get_cookie_user, sanitize_next, set_session_cookie
 from src.web.paths import STATIC_DIR, TEMPLATES_DIR
 from src.web.session import COOKIE_NAME
 
@@ -28,6 +30,8 @@ def configure_app(app: FastAPI, container: AppContainer | None) -> None:
         app.state.session_secret = container.session_secret
     elif not hasattr(app.state, "templates"):
         app.state.templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+    if not hasattr(app.state, "session_secret"):
+        app.state.session_secret = secrets.token_hex(32)
     if STATIC_DIR.exists():
         mount_names = {route.name for route in app.routes}
         if "static" not in mount_names:
@@ -54,19 +58,35 @@ def register_builtin_endpoints(app: FastAPI) -> None:
             {"status": status, "db": db_ok, "accounts_connected": accounts_connected}
         )
 
+    @app.get("/login", response_class=HTMLResponse)
+    async def login_page(request: Request, next: str = "/"):
+        target = sanitize_next(next)
+        if get_cookie_user(request):
+            return RedirectResponse(url=target, status_code=303)
+        return request.app.state.templates.TemplateResponse(
+            request,
+            "web_login.html",
+            {"error": None, "next": target},
+        )
+
+    @app.post("/login", response_class=HTMLResponse)
+    async def login_submit(request: Request, password: str = Form(...), next: str = Form("/")):
+        target = sanitize_next(next)
+        expected_password = request.app.state.config.web.password
+        if expected_password and secrets.compare_digest(password, expected_password):
+            response = RedirectResponse(url=target, status_code=303)
+            set_session_cookie(response, request)
+            return response
+        return request.app.state.templates.TemplateResponse(
+            request,
+            "web_login.html",
+            {"error": "Неверный пароль", "next": target},
+            status_code=401,  # RFC 7235 / Starlette convention for failed auth
+        )
+
     @app.get("/logout")
     async def logout():
-        html = (
-            "<!DOCTYPE html><html lang='ru'><head><meta charset='UTF-8'>"
-            "<title>Выход</title>"
-            "<link rel='stylesheet' "
-            "href='https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css'>"
-            "</head><body><main class='container' style='text-align:center;margin-top:20vh'>"
-            "<h2>Вы вышли из системы</h2>"
-            "<p><a href='/'>Войти снова</a></p>"
-            "</main></body></html>"
-        )
-        response = Response(content=html, status_code=401, media_type="text/html")
+        response = RedirectResponse(url="/login", status_code=303)
         response.delete_cookie(COOKIE_NAME)
         return response
 
