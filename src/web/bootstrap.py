@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import secrets
-from pathlib import Path
 
 from fastapi.templating import Jinja2Templates
 
@@ -30,11 +29,9 @@ from src.telegram.collector import Collector
 from src.telegram.notifier import Notifier
 from src.web.container import AppContainer
 from src.web.log_handler import LogBuffer
+from src.web.paths import TEMPLATES_DIR
 
 logger = logging.getLogger(__name__)
-
-WEB_DIR = Path(__file__).parent
-TEMPLATES_DIR = WEB_DIR / "templates"
 
 
 async def load_telegram_credentials(db: Database, config: AppConfig) -> tuple[int, str]:

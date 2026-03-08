@@ -43,6 +43,7 @@ class DatabaseRepositories:
     filters: FilterRepository
     notification_bots: NotificationBotsRepository
 
+
 @dataclass(frozen=True)
 class AccountBundle:
     accounts: AccountsRepository
