@@ -1,5 +1,7 @@
 # TG Agent
 
+[![Release](https://img.shields.io/github/v/release/axisrow/tg_content_factory)](https://github.com/axisrow/tg_content_factory/releases)
+
 Персональный тулкит для мониторинга Telegram — сбор сообщений, поиск по каналам, уведомления по ключевым словам. Pet-проект для собственных нужд.
 
 [English version](README.md)
