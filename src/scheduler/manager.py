@@ -124,7 +124,7 @@ class SchedulerManager:
                 replace_existing=True,
             )
             logger.info(
-                "Keyword search job added: every %d minutes",
+                "Notification search job added: every %d minutes",
                 self._config.search_interval_minutes,
             )
 
@@ -176,11 +176,11 @@ class SchedulerManager:
         self._bg_task = asyncio.create_task(self._run_collection())
 
     async def trigger_search_now(self) -> dict:
-        """Trigger immediate keyword search."""
+        """Trigger immediate notification query search."""
         return await self._run_keyword_search()
 
     async def trigger_search_background(self) -> None:
-        """Fire-and-forget keyword search run."""
+        """Fire-and-forget notification query search run."""
         if self._search_bg_task and not self._search_bg_task.done():
             return
         self._search_bg_task = asyncio.create_task(self._run_keyword_search())
@@ -206,7 +206,7 @@ class SchedulerManager:
         if not self._search_engine:
             return {"queries": 0, "results": 0, "errors": 0}
 
-        logger.info("Starting scheduled keyword search")
+        logger.info("Starting scheduled notification query search")
         queries = await self._scheduler_bundle.list_notification_queries(active_only=True)
         total_results = 0
         searched = 0
