@@ -43,11 +43,6 @@ class DatabaseRepositories:
     filters: FilterRepository
     notification_bots: NotificationBotsRepository
 
-    @classmethod
-    def from_database(cls, db: "Database") -> "DatabaseRepositories":
-        return db.repos
-
-
 @dataclass(frozen=True)
 class AccountBundle:
     accounts: AccountsRepository
@@ -271,13 +266,6 @@ class CollectionBundle:
             repos.channel_stats,
         )
 
-    @property
-    def filter_repo(self) -> FilterRepository:
-        return self.filters
-
-    async def execute(self, query: str, params: tuple | list = ()):
-        return await self.messages._db.execute(query, tuple(params))
-
     async def list_channels(
         self,
         active_only: bool = False,
@@ -288,27 +276,11 @@ class CollectionBundle:
     async def get_by_pk(self, pk: int) -> Channel | None:
         return await self.channels.get_channel_by_pk(pk)
 
-    async def get_channels(
-        self,
-        active_only: bool = False,
-        include_filtered: bool = True,
-    ) -> list[Channel]:
-        return await self.list_channels(active_only=active_only, include_filtered=include_filtered)
-
     async def get_by_channel_id(self, channel_id: int) -> Channel | None:
         return await self.channels.get_channel_by_channel_id(channel_id)
 
-    async def get_channel_by_pk(self, pk: int) -> Channel | None:
-        return await self.get_by_pk(pk)
-
-    async def get_channel_by_channel_id(self, channel_id: int) -> Channel | None:
-        return await self.get_by_channel_id(channel_id)
-
     async def update_last_id(self, channel_id: int, last_id: int) -> None:
         await self.channels.update_channel_last_id(channel_id, last_id)
-
-    async def update_channel_last_id(self, channel_id: int, last_id: int) -> None:
-        await self.update_last_id(channel_id, last_id)
 
     async def update_meta(
         self,
@@ -319,26 +291,11 @@ class CollectionBundle:
     ) -> None:
         await self.channels.update_channel_meta(channel_id, username=username, title=title)
 
-    async def update_channel_meta(
-        self,
-        channel_id: int,
-        *,
-        username: str | None,
-        title: str | None,
-    ) -> None:
-        await self.update_meta(channel_id, username=username, title=title)
-
     async def set_active(self, pk: int, active: bool) -> None:
         await self.channels.set_channel_active(pk, active)
 
-    async def set_channel_active(self, pk: int, active: bool) -> None:
-        await self.set_active(pk, active)
-
     async def set_type(self, channel_id: int, channel_type: str) -> None:
         await self.channels.set_channel_type(channel_id, channel_type)
-
-    async def set_channel_type(self, channel_id: int, channel_type: str) -> None:
-        await self.set_type(channel_id, channel_type)
 
     async def set_filtered_bulk(
         self,
@@ -347,14 +304,6 @@ class CollectionBundle:
         commit: bool = True,
     ) -> int:
         return await self.channels.set_filtered_bulk(updates, commit=commit)
-
-    async def set_channels_filtered_bulk(
-        self,
-        updates: list[tuple[int, str]],
-        *,
-        commit: bool = True,
-    ) -> int:
-        return await self.set_filtered_bulk(updates, commit=commit)
 
     async def reset_all_filters(self, *, commit: bool = True) -> int:
         return await self.channels.reset_all_filters(commit=commit)
@@ -408,9 +357,6 @@ class CollectionBundle:
     async def list_keywords(self, active_only: bool = False) -> list[Keyword]:
         return await self.keywords.get_keywords(active_only)
 
-    async def get_keywords(self, active_only: bool = False) -> list[Keyword]:
-        return await self.list_keywords(active_only)
-
     async def set_keyword_active(self, keyword_id: int, active: bool) -> None:
         await self.keywords.set_keyword_active(keyword_id, active)
 
@@ -419,9 +365,6 @@ class CollectionBundle:
 
     async def get_channel_stats(self, channel_id: int, limit: int = 1) -> list[ChannelStats]:
         return await self.channel_stats.get_channel_stats(channel_id, limit)
-
-    async def save_channel_stats(self, stats: ChannelStats) -> int:
-        return await self.channel_stats.save_channel_stats(stats)
 
     async def create_collection_task(
         self,

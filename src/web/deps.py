@@ -47,12 +47,19 @@ def _request_cached(request: Request, key: str, factory: Callable[[], T]) -> T:
     return value
 
 
+def _require_app_state_attr(request: Request, name: str):
+    value = getattr(request.app.state, name, None)
+    if value is None:
+        raise RuntimeError(f"Application state is missing required attribute: {name}")
+    return value
+
+
 def get_container(request: Request) -> AppContainer:
     container = getattr(request.app.state, "container", None)
     if container is not None:
         return container
 
-    db = request.app.state.db
+    db = _require_app_state_attr(request, "db")
     repos = db.repos
     account_bundle = AccountBundle.from_database(db)
     channel_bundle = ChannelBundle.from_database(db)
@@ -61,7 +68,7 @@ def get_container(request: Request) -> AppContainer:
     search_bundle = SearchBundle.from_database(db)
     scheduler_bundle = SchedulerBundle.from_database(db)
     return AppContainer(
-        config=request.app.state.config,
+        config=_require_app_state_attr(request, "config"),
         db=db,
         repos=repos,
         account_bundle=account_bundle,
@@ -70,27 +77,27 @@ def get_container(request: Request) -> AppContainer:
         notification_bundle=notification_bundle,
         search_bundle=search_bundle,
         scheduler_bundle=scheduler_bundle,
-        auth=request.app.state.auth,
-        pool=request.app.state.pool,
+        auth=_require_app_state_attr(request, "auth"),
+        pool=_require_app_state_attr(request, "pool"),
         notification_target_service=getattr(
             request.app.state,
             "notification_target_service",
-            NotificationTargetService(notification_bundle, request.app.state.pool),
+            NotificationTargetService(notification_bundle, _require_app_state_attr(request, "pool")),
         ),
         notifier=getattr(request.app.state, "notifier", None),
-        collector=request.app.state.collector,
+        collector=_require_app_state_attr(request, "collector"),
         collection_queue=getattr(request.app.state, "collection_queue", None),
         stats_dispatcher=getattr(request.app.state, "stats_dispatcher", None),
-        search_engine=request.app.state.search_engine,
-        ai_search=request.app.state.ai_search,
-        scheduler=request.app.state.scheduler,
+        search_engine=_require_app_state_attr(request, "search_engine"),
+        ai_search=_require_app_state_attr(request, "ai_search"),
+        scheduler=_require_app_state_attr(request, "scheduler"),
         templates=getattr(
             request.app.state,
             "templates",
             Jinja2Templates(directory=str(TEMPLATES_DIR)),
         ),
         log_buffer=getattr(request.app.state, "log_buffer", None),
-        session_secret=getattr(request.app.state, "session_secret", ""),
+        session_secret=_require_app_state_attr(request, "session_secret"),
         bg_tasks=getattr(request.app.state, "bg_tasks", set()),
         shutting_down=getattr(request.app.state, "shutting_down", False),
     )

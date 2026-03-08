@@ -121,11 +121,15 @@ async def _init_db_copy(config_path: str) -> tuple[Database, str, object]:
 
     tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
     tmp.close()
-    shutil.copy2(live_path, tmp.name)
-
-    copy_db = Database(tmp.name, session_encryption_secret=encryption_secret)
-    await copy_db.initialize()
-    return copy_db, tmp.name, config
+    try:
+        shutil.copy2(live_path, tmp.name)
+        copy_db = Database(tmp.name, session_encryption_secret=encryption_secret)
+        await copy_db.initialize()
+        return copy_db, tmp.name, config
+    except Exception:
+        if os.path.exists(tmp.name):
+            os.unlink(tmp.name)
+        raise
 
 
 async def _run_write_checks(config_path: str) -> list[CheckResult]:

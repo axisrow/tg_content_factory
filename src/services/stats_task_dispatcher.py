@@ -17,20 +17,23 @@ logger = logging.getLogger(__name__)
 
 
 class _DatabaseChannelsAdapter:
+    _ATTR_MAP = {
+        "get_by_channel_id": "get_channel_by_channel_id",
+        "get_collection_task": "get_collection_task",
+        "update_collection_task": "update_collection_task",
+        "update_collection_task_progress": "update_collection_task_progress",
+        "requeue_running_stats_tasks_on_startup": "requeue_running_stats_tasks_on_startup",
+        "claim_next_due_stats_task": "claim_next_due_stats_task",
+        "create_stats_continuation_task": "create_stats_continuation_task",
+    }
+
     def __init__(self, db: Database):
         self._db = db
 
     def __getattr__(self, name: str):
-        mapping = {
-            "get_by_channel_id": "get_channel_by_channel_id",
-            "get_collection_task": "get_collection_task",
-            "update_collection_task": "update_collection_task",
-            "update_collection_task_progress": "update_collection_task_progress",
-            "requeue_running_stats_tasks_on_startup": "requeue_running_stats_tasks_on_startup",
-            "claim_next_due_stats_task": "claim_next_due_stats_task",
-            "create_stats_continuation_task": "create_stats_continuation_task",
-        }
-        target = mapping.get(name, name)
+        target = self._ATTR_MAP.get(name)
+        if target is None:
+            raise AttributeError(f"{type(self).__name__!s} has no attribute {name!r}")
         return getattr(self._db, target)
 
 

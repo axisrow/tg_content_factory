@@ -6,11 +6,13 @@ import secrets
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.templating import Jinja2Templates
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
 
 from src.config import AppConfig, load_config
 from src.web.assembly import (
+    TEMPLATES_DIR,
     build_log_buffer,
     configure_app,
     register_builtin_endpoints,
@@ -99,6 +101,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
     app = FastAPI(title="TG Post Search", lifespan=lifespan)
     app.state.config = config
     app.state.log_buffer = build_log_buffer()
+    app.state.templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
     configure_app(app, None)
 
     if config.web.password:

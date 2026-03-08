@@ -96,7 +96,7 @@ async def build_container(config: AppConfig, *, log_buffer: LogBuffer) -> AppCon
     pool = ClientPool(auth, db, config.scheduler.max_flood_wait_sec)
     notification_target_service = NotificationTargetService(notification_bundle, pool)
     notifier = Notifier(notification_target_service, config.notifications.admin_chat_id)
-    collector = Collector(pool, collection_bundle, config.scheduler, notifier)
+    collector = Collector(pool, db, config.scheduler, notifier)
     collection_queue = CollectionQueue(collector, channel_bundle)
     stats_dispatcher = StatsTaskDispatcher(collector, channel_bundle, default_batch_size=20)
     search_engine = SearchEngine(search_bundle, pool)

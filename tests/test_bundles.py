@@ -299,80 +299,58 @@ class TestCollectionBundle:
         b = CollectionBundle.from_database(db)
         assert b.channels is not None
 
-    async def test_execute(self, db):
-        b = CollectionBundle.from_database(db)
-        cur = await b.execute("SELECT 1")
-        row = await cur.fetchone()
-        assert row[0] == 1
-
-    async def test_list_channels_and_alias(self, db):
+    async def test_list_channels(self, db):
         b = CollectionBundle.from_database(db)
         await b.channels.add_channel(_channel(channel_id=1001))
         chs = await b.list_channels()
         assert len(chs) >= 1
-        chs2 = await b.get_channels()
-        assert len(chs2) == len(chs)
 
-    async def test_get_by_pk_and_alias(self, db):
+    async def test_get_by_pk(self, db):
         b = CollectionBundle.from_database(db)
         pk = await b.channels.add_channel(_channel(channel_id=1002))
-        ch1 = await b.get_by_pk(pk)
-        ch2 = await b.get_channel_by_pk(pk)
-        assert ch1 is not None and ch2 is not None
-        assert ch1.channel_id == ch2.channel_id == 1002
+        ch = await b.get_by_pk(pk)
+        assert ch is not None
+        assert ch.channel_id == 1002
 
-    async def test_get_by_channel_id_and_alias(self, db):
+    async def test_get_by_channel_id(self, db):
         b = CollectionBundle.from_database(db)
         await b.channels.add_channel(_channel(channel_id=1003))
-        ch1 = await b.get_by_channel_id(1003)
-        ch2 = await b.get_channel_by_channel_id(1003)
-        assert ch1 is not None and ch2 is not None
+        ch = await b.get_by_channel_id(1003)
+        assert ch is not None
 
-    async def test_update_last_id_and_alias(self, db):
+    async def test_update_last_id(self, db):
         b = CollectionBundle.from_database(db)
         await b.channels.add_channel(_channel(channel_id=1004))
-        await b.update_last_id(1004, 555)
-        await b.update_channel_last_id(1004, 556)
+        await b.update_last_id(1004, 556)
         ch = await b.get_by_channel_id(1004)
         assert ch is not None and ch.last_collected_id == 556
 
-    async def test_update_meta_and_alias(self, db):
+    async def test_update_meta(self, db):
         b = CollectionBundle.from_database(db)
         await b.channels.add_channel(_channel(channel_id=1005))
-        await b.update_meta(1005, username="u1", title="t1")
-        ch = await b.get_by_channel_id(1005)
-        assert ch is not None and ch.username == "u1"
-        await b.update_channel_meta(1005, username="u2", title="t2")
+        await b.update_meta(1005, username="u2", title="t2")
         ch = await b.get_by_channel_id(1005)
         assert ch is not None and ch.username == "u2"
 
-    async def test_set_active_and_alias(self, db):
+    async def test_set_active(self, db):
         b = CollectionBundle.from_database(db)
         pk = await b.channels.add_channel(_channel(channel_id=1006))
-        await b.set_active(pk, False)
-        ch = await b.get_by_pk(pk)
-        assert ch is not None and ch.is_active is False
-        await b.set_channel_active(pk, True)
+        await b.set_active(pk, True)
         ch = await b.get_by_pk(pk)
         assert ch is not None and ch.is_active is True
 
-    async def test_set_type_and_alias(self, db):
+    async def test_set_type(self, db):
         b = CollectionBundle.from_database(db)
         await b.channels.add_channel(_channel(channel_id=1007))
-        await b.set_type(1007, "channel")
-        ch = await b.get_by_channel_id(1007)
-        assert ch is not None and ch.channel_type == "channel"
-        await b.set_channel_type(1007, "supergroup")
+        await b.set_type(1007, "supergroup")
         ch = await b.get_by_channel_id(1007)
         assert ch is not None and ch.channel_type == "supergroup"
 
-    async def test_set_filtered_bulk_and_alias(self, db):
+    async def test_set_filtered_bulk(self, db):
         b = CollectionBundle.from_database(db)
         await b.channels.add_channel(_channel(channel_id=1008))
         count = await b.set_filtered_bulk([(1008, "spam")])
         assert count == 1
-        count2 = await b.set_channels_filtered_bulk([(1008, "spam2")])
-        assert count2 >= 0
 
     async def test_reset_all_filters(self, db):
         b = CollectionBundle.from_database(db)
@@ -430,8 +408,6 @@ class TestCollectionBundle:
         assert kid > 0
         kws = await b.list_keywords()
         assert any(k.id == kid for k in kws)
-        kws2 = await b.get_keywords()
-        assert len(kws2) == len(kws)
         await b.set_keyword_active(kid, False)
         await b.delete_keyword(kid)
         kws3 = await b.list_keywords()
@@ -440,7 +416,9 @@ class TestCollectionBundle:
     async def test_channel_stats(self, db):
         b = CollectionBundle.from_database(db)
         await b.channels.add_channel(_channel(channel_id=1014))
-        sid = await b.save_channel_stats(ChannelStats(channel_id=1014, subscriber_count=99))
+        sid = await b.channel_stats.save_channel_stats(
+            ChannelStats(channel_id=1014, subscriber_count=99)
+        )
         assert sid > 0
         rows = await b.get_channel_stats(1014)
         assert len(rows) == 1
@@ -449,11 +427,6 @@ class TestCollectionBundle:
         b = CollectionBundle.from_database(db)
         tid = await b.create_collection_task(1015, "ch1015")
         assert tid > 0
-
-    async def test_filter_repo_property(self, db):
-        b = CollectionBundle.from_database(db)
-        assert b.filter_repo is not None
-
 
 # ---------------------------------------------------------------------------
 # SearchBundle
