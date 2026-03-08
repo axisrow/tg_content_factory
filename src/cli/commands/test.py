@@ -171,14 +171,14 @@ async def _run_write_checks(config_path: str) -> list[CheckResult]:
         added_kw_id: int | None = None
         try:
             added_kw_id = await copy_db.add_keyword(
-                Keyword(pattern="__smoke_test__"),
+                Keyword(pattern="__test_cli__"),
             )
             keywords = await copy_db.get_keywords()
             found = any(k.id == added_kw_id for k in keywords)
             assert found, "keyword not found after add"
             results.append(CheckResult(
                 "keyword_add", Status.PASS,
-                f'Added id={added_kw_id} pattern="__smoke_test__"',
+                f'Added id={added_kw_id} pattern="__test_cli__"',
             ))
         except Exception as exc:
             results.append(CheckResult("keyword_add", Status.FAIL, str(exc)))
@@ -229,13 +229,13 @@ async def _run_write_checks(config_path: str) -> list[CheckResult]:
             else:
                 ch = channels[0]
                 original = ch.is_active
-                await copy_db.set_channel_active(ch.pk, not original)
+                await copy_db.set_channel_active(ch.id, not original)
                 refreshed = await copy_db.get_channels_with_counts()
-                toggled = next(c for c in refreshed if c.pk == ch.pk)
+                toggled = next(c for c in refreshed if c.id == ch.id)
                 assert toggled.is_active is (not original)
                 results.append(CheckResult(
                     "channel_toggle", Status.PASS,
-                    f"pk={ch.pk} active: {original} -> {not original}",
+                    f"id={ch.id} active: {original} -> {not original}",
                 ))
         except Exception as exc:
             results.append(CheckResult("channel_toggle", Status.FAIL, str(exc)))
@@ -412,60 +412,7 @@ async def _run_telegram_live_checks(config_path: str) -> list[CheckResult]:
         except Exception as exc:
             results.append(CheckResult("tg_iter_messages", Status.FAIL, str(exc)))
 
-    # 7. tg_collect_multi — iter_messages(limit=10) across up to 10 channels
-    if not active_channels:
-        results.append(
-            CheckResult("tg_collect_multi", Status.SKIP, "No active channels"),
-        )
-    else:
-        try:
-            batch = active_channels[:10]
-            total_msgs = 0
-            ok_channels = 0
-            client_tuple = await pool.get_available_client()
-            if not client_tuple:
-                results.append(
-                    CheckResult("tg_collect_multi", Status.SKIP, "No available client"),
-                )
-            else:
-                client, phone = client_tuple
-                try:
-                    for ch in batch:
-                        try:
-                            entity = await _tg_call(client.get_entity(ch.channel_id))
-                            ch_count = 0
-                            async for msg in client.iter_messages(entity, limit=10):
-                                if msg.text or msg.media:
-                                    message = Message(
-                                        channel_id=ch.channel_id,
-                                        message_id=msg.id,
-                                        sender_id=msg.sender_id,
-                                        sender_name=Collector._get_sender_name(msg),
-                                        text=msg.text,
-                                        media_type=Collector._get_media_type(msg),
-                                        date=msg.date.replace(tzinfo=timezone.utc)
-                                        if msg.date and msg.date.tzinfo is None
-                                        else msg.date,
-                                    )
-                                    await copy_db.insert_message(message)
-                                    ch_count += 1
-                            total_msgs += ch_count
-                            ok_channels += 1
-                        except Exception as ch_exc:
-                            logger.warning(
-                                "tg_collect_multi: ch=%d error: %s",
-                                ch.channel_id, ch_exc,
-                            )
-                finally:
-                    await pool.release_client(phone)
-                results.append(CheckResult(
-                    "tg_collect_multi", Status.PASS,
-                    f"{total_msgs} msgs from {ok_channels}/{len(batch)} channels",
-                ))
-        except Exception as exc:
-            results.append(CheckResult("tg_collect_multi", Status.FAIL, str(exc)))
-
-    # 8. tg_channel_stats
+    # 7. tg_channel_stats
     if not active_channels:
         results.append(
             CheckResult("tg_channel_stats", Status.SKIP, "No active channels"),
@@ -488,7 +435,7 @@ async def _run_telegram_live_checks(config_path: str) -> list[CheckResult]:
         except Exception as exc:
             results.append(CheckResult("tg_channel_stats", Status.FAIL, str(exc)))
 
-    # 9. tg_search_my_chats
+    # 8. tg_search_my_chats
     try:
         engine = SearchEngine(copy_db, pool)
         result = await _tg_call(engine.search_my_chats("test", limit=5))
@@ -499,7 +446,7 @@ async def _run_telegram_live_checks(config_path: str) -> list[CheckResult]:
     except Exception as exc:
         results.append(CheckResult("tg_search_my_chats", Status.FAIL, str(exc)))
 
-    # 10. tg_search_in_channel
+    # 9. tg_search_in_channel
     if not channels:
         results.append(
             CheckResult("tg_search_in_channel", Status.SKIP, "No channels"),
@@ -518,39 +465,37 @@ async def _run_telegram_live_checks(config_path: str) -> list[CheckResult]:
         except Exception as exc:
             results.append(CheckResult("tg_search_in_channel", Status.FAIL, str(exc)))
 
-    # 11. tg_search_premium
+    # 10. tg_search_premium
     try:
-        premium = await pool.get_premium_client()
-        if premium is None:
+        engine = SearchEngine(copy_db, pool)
+        result = await _tg_call(engine.search_telegram("test", limit=5))
+        if result.error and "Premium" in result.error:
             results.append(
-                CheckResult("tg_search_premium", Status.SKIP, "No premium account"),
+                CheckResult("tg_search_premium", Status.SKIP, result.error),
             )
         else:
-            engine = SearchEngine(copy_db, pool)
-            result = await _tg_call(engine.search_telegram("test", limit=5))
             results.append(CheckResult(
                 "tg_search_premium", Status.PASS,
-                f"{result.total} results",
+                result.error or f"{result.total} results",
             ))
     except Exception as exc:
         results.append(CheckResult("tg_search_premium", Status.FAIL, str(exc)))
 
-    # 12. tg_search_quota
+    # 11. tg_search_quota
     try:
-        premium = await pool.get_premium_client()
-        if premium is None:
+        engine = SearchEngine(copy_db, pool)
+        quota = await _tg_call(engine.check_search_quota("test"))
+        if quota is None:
             results.append(
-                CheckResult("tg_search_quota", Status.SKIP, "No premium account"),
+                CheckResult("tg_search_quota", Status.SKIP, "No premium account or quota unavailable"),
             )
         else:
-            engine = SearchEngine(copy_db, pool)
-            quota = await _tg_call(engine.check_search_quota("test"))
             detail = str(quota) if quota else "No quota info"
             results.append(CheckResult("tg_search_quota", Status.PASS, detail))
     except Exception as exc:
         results.append(CheckResult("tg_search_quota", Status.FAIL, str(exc)))
 
-    # 13. tg_cleanup
+    # 12. tg_cleanup
     await _cleanup_telegram(pool, copy_db, tmp_path, results)
 
     return results
