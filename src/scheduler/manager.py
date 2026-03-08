@@ -217,7 +217,7 @@ class SchedulerManager:
             try:
                 quota = await self._search_engine.check_search_quota(query)
                 if quota and quota.get("remains") == 0 and not quota.get("query_is_free"):
-                    logger.info("Search quota exhausted, stopping keyword search")
+                    logger.info("Search quota exhausted, stopping notification search")
                     break
 
                 result = await self._search_engine.search_telegram(query, limit=50)
