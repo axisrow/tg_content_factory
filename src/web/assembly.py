@@ -61,7 +61,7 @@ def register_builtin_endpoints(app: FastAPI) -> None:
     @app.get("/login", response_class=HTMLResponse)
     async def login_page(request: Request, next: str = "/"):
         target = sanitize_next(next)
-        if get_cookie_user(request):
+        if not request.app.state.config.web.password or get_cookie_user(request):
             return RedirectResponse(url=target, status_code=303)
         return request.app.state.templates.TemplateResponse(
             request,

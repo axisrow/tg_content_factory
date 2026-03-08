@@ -365,6 +365,17 @@ async def test_web_login_post_blocks_backslash_redirect(unauth_client):
 
 
 @pytest.mark.asyncio
+async def test_web_login_post_blocks_percent_encoded_backslash_redirect(unauth_client):
+    resp = await unauth_client.post(
+        "/login",
+        data={"password": "testpass", "next": "/%5Cevil.com"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    assert resp.headers["location"] == "/"
+
+
+@pytest.mark.asyncio
 async def test_web_login_redirects_authenticated_user_to_next(client):
     token = create_session_token("admin", "test_secret_key")
     transport = client._transport

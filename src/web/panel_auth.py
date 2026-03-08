@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from urllib.parse import urlencode, urlparse
+from urllib.parse import unquote, urlencode, urlparse
 
 from fastapi import Request
 from starlette.responses import Response
@@ -18,10 +18,7 @@ PANEL_USERNAME = "admin"
 
 
 def get_session_secret(request: Request) -> str | None:
-    container = getattr(request.app.state, "container", None)
-    return getattr(container, "session_secret", None) or getattr(
-        request.app.state, "session_secret", None
-    )
+    return getattr(request.app.state, "session_secret", None)
 
 
 def get_cookie_user(request: Request) -> str | None:
@@ -64,7 +61,8 @@ def sanitize_next(next_value: str | None) -> str:
         return "/"
     if not next_value.startswith("/") or next_value.startswith("//"):
         return "/"
-    if "\\" in next_value:  # block backslash-based open redirects (e.g. /\evil.com)
+    # Block backslash-based open redirects (e.g. /\evil.com, /%5Cevil.com)
+    if "\\" in unquote(next_value):
         return "/"
     if next_value == LOGIN_PATH:
         return "/"
@@ -89,6 +87,5 @@ def redirect_target_from_request(request: Request) -> str:
     return "/"
 
 
-def login_redirect_url(next_value: str | None) -> str:
-    safe_next = sanitize_next(next_value)
-    return f"{LOGIN_PATH}?{urlencode({'next': safe_next})}"
+def login_redirect_url(next_value: str) -> str:
+    return f"{LOGIN_PATH}?{urlencode({'next': next_value})}"
