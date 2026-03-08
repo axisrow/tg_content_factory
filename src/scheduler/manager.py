@@ -204,7 +204,7 @@ class SchedulerManager:
         premium global search API) to discover messages across channels not yet collected.
         """
         if not self._search_engine:
-            return {"keywords": 0, "results": 0, "errors": 0}
+            return {"queries": 0, "results": 0, "errors": 0}
 
         logger.info("Starting scheduled keyword search")
         queries = await self._scheduler_bundle.list_notification_queries(active_only=True)
@@ -234,10 +234,10 @@ class SchedulerManager:
                 logger.exception("Error searching query '%s'", query)
                 errors += 1
 
-        stats = {"keywords": searched, "results": total_results, "errors": errors}
+        stats = {"queries": searched, "results": total_results, "errors": errors}
         self._last_search_run = datetime.now(timezone.utc)
         self._last_search_stats = stats
-        logger.info("Keyword search complete: %s", stats)
+        logger.info("Notification query search complete: %s", stats)
         return stats
 
     async def sync_search_query_jobs(self) -> None:
