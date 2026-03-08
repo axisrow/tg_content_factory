@@ -27,11 +27,13 @@ td, th {
     min-width: 900px;
 }
 
+.channels-table th { white-space: nowrap; }
+
 .channels-table th:nth-child(1),
 .channels-table td:nth-child(1) { width: 110px; }   /* ID канала */
 
 .channels-table th:nth-child(2),
-.channels-table td:nth-child(2) { width: 180px; }   /* Название */
+.channels-table td:nth-child(2) { width: 160px; }   /* Название */
 
 .channels-table th:nth-child(3),
 .channels-table td:nth-child(3) { width: 130px; }   /* Username */
@@ -43,10 +45,10 @@ td, th {
 .channels-table td:nth-child(5) { width: 62px; }    /* Активен */
 
 .channels-table th:nth-child(6),
-.channels-table td:nth-child(6) { width: 80px; }    /* Сообщений */
+.channels-table td:nth-child(6) { width: 100px; }   /* Сообщений */
 
 .channels-table th:nth-child(7),
-.channels-table td:nth-child(7) { width: 85px; }    /* Подписчики */
+.channels-table td:nth-child(7) { width: 105px; }   /* Подписчики */
 
 .channels-table th:nth-child(8),
 .channels-table td:nth-child(8) { width: 80px; }    /* Фильтр */
@@ -145,5 +147,8 @@ form button[style*="padding"] {
     -webkit-overflow-scrolling: touch;
     -webkit-mask-image: linear-gradient(to right, black 85%, transparent 100%);
     mask-image: linear-gradient(to right, black 85%, transparent 100%);
+  }
+  nav.container > ul:last-child li a {
+    white-space: nowrap;
   }
 }
