@@ -15,6 +15,7 @@ from src.database.bundles import (
     NotificationBundle,
     SchedulerBundle,
     SearchBundle,
+    SearchQueryBundle,
 )
 from src.scheduler.manager import SchedulerManager
 from src.search.ai_search import AISearchEngine
@@ -26,6 +27,7 @@ from src.services.keyword_service import KeywordService
 from src.services.notification_service import NotificationService
 from src.services.notification_target_service import NotificationTargetService
 from src.services.scheduler_service import SchedulerService
+from src.services.search_query_service import SearchQueryService
 from src.services.search_service import SearchService
 from src.services.stats_task_dispatcher import StatsTaskDispatcher
 from src.telegram.auth import TelegramAuth
@@ -138,6 +140,10 @@ def get_scheduler_bundle(request: Request) -> SchedulerBundle:
     return get_container(request).scheduler_bundle
 
 
+def get_search_query_bundle(request: Request) -> SearchQueryBundle:
+    return SearchQueryBundle.from_database(get_db(request))
+
+
 def get_pool(request: Request) -> ClientPool:
     return get_container(request).pool
 
@@ -244,6 +250,14 @@ def notification_service(request: Request) -> NotificationService:
             get_container(request).config.notifications.bot_name_prefix,
             get_container(request).config.notifications.bot_username_prefix,
         ),
+    )
+
+
+def search_query_service(request: Request) -> SearchQueryService:
+    return _request_cached(
+        request,
+        "_search_query_service",
+        lambda: SearchQueryService(get_search_query_bundle(request)),
     )
 
 

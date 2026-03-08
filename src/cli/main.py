@@ -12,6 +12,7 @@ from src.cli.commands import (
     notification,
     scheduler,
     search,
+    search_query,
     serve,
 )
 from src.cli.commands import filter as filter_cmd
@@ -37,6 +38,7 @@ def main() -> None:
         "channel": channel.run,
         "filter": filter_cmd.run,
         "keyword": keyword.run,
+        "search-query": search_query.run,
         "account": account.run,
         "scheduler": scheduler.run,
         "notification": notification.run,
@@ -50,6 +52,7 @@ def main() -> None:
             "channel": "channel_action",
             "filter": "filter_action",
             "keyword": "keyword_action",
+            "search-query": "search_query_action",
             "account": "account_action",
             "scheduler": "scheduler_action",
             "notification": "notification_action",

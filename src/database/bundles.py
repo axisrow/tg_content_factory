@@ -13,6 +13,7 @@ from src.database.repositories.keywords import KeywordsRepository
 from src.database.repositories.messages import MessagesRepository
 from src.database.repositories.notification_bots import NotificationBotsRepository
 from src.database.repositories.search_log import SearchLogRepository
+from src.database.repositories.search_queries import SearchQueriesRepository
 from src.database.repositories.settings import SettingsRepository
 from src.models import (
     Account,
@@ -23,6 +24,8 @@ from src.models import (
     Keyword,
     Message,
     NotificationBot,
+    SearchQuery,
+    SearchQueryDailyStat,
     StatsAllTaskPayload,
 )
 
@@ -42,6 +45,7 @@ class DatabaseRepositories:
     settings: SettingsRepository
     filters: FilterRepository
     notification_bots: NotificationBotsRepository
+    search_queries: SearchQueriesRepository
 
 
 @dataclass(frozen=True)
@@ -485,3 +489,49 @@ class SchedulerBundle:
 
     async def get_recent_searches(self, limit: int = 20) -> list[dict]:
         return await self.search_log.get_recent_searches(limit)
+
+
+@dataclass(frozen=True)
+class SearchQueryBundle:
+    search_queries: SearchQueriesRepository
+    messages: MessagesRepository
+
+    @classmethod
+    def from_database(cls, db: "Database") -> "SearchQueryBundle":
+        repos = db.repos
+        return cls(repos.search_queries, repos.messages)
+
+    async def add(self, sq: SearchQuery) -> int:
+        return await self.search_queries.add(sq)
+
+    async def get_all(self, active_only: bool = False) -> list[SearchQuery]:
+        return await self.search_queries.get_all(active_only)
+
+    async def get_by_id(self, sq_id: int) -> SearchQuery | None:
+        return await self.search_queries.get_by_id(sq_id)
+
+    async def set_active(self, sq_id: int, active: bool) -> None:
+        await self.search_queries.set_active(sq_id, active)
+
+    async def delete(self, sq_id: int) -> None:
+        await self.search_queries.delete(sq_id)
+
+    async def count_fts_matches(self, query: str) -> int:
+        return await self.messages.count_fts_matches(query)
+
+    async def record_stat(self, query_id: int, match_count: int) -> None:
+        await self.search_queries.record_stat(query_id, match_count)
+
+    async def get_daily_stats(
+        self, query_id: int, days: int = 30
+    ) -> list[SearchQueryDailyStat]:
+        return await self.search_queries.get_daily_stats(query_id, days)
+
+    async def get_stats_for_all(self, days: int = 30) -> dict[int, list[SearchQueryDailyStat]]:
+        return await self.search_queries.get_stats_for_all(days)
+
+    async def get_total_count(self, query_id: int, days: int = 30) -> int:
+        return await self.search_queries.get_total_count(query_id, days)
+
+    async def get_last_recorded_at(self, query_id: int) -> str | None:
+        return await self.search_queries.get_last_recorded_at(query_id)

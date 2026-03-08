@@ -177,6 +177,17 @@ class MessagesRepository:
         ]
         return messages, total
 
+    async def count_fts_matches(self, query: str) -> int:
+        fts_query = '"' + query.replace('"', '""') + '"'
+        cur = await self._db.execute(
+            "SELECT COUNT(*) AS cnt FROM messages m"
+            " INNER JOIN (SELECT rowid FROM messages_fts"
+            " WHERE messages_fts MATCH ?) AS fts ON m.id = fts.rowid",
+            (fts_query,),
+        )
+        row = await cur.fetchone()
+        return row["cnt"] if row else 0
+
     async def delete_messages_for_channel(self, channel_id: int) -> int:
         cur = await self._db.execute(
             "DELETE FROM messages WHERE channel_id = ?", (channel_id,)

@@ -122,6 +122,20 @@ class NotificationBot(BaseModel):
     created_at: datetime | None = None
 
 
+class SearchQuery(BaseModel):
+    id: int | None = None
+    name: str
+    query: str
+    is_active: bool = True
+    interval_minutes: int = 60
+    created_at: datetime | None = None
+
+
+class SearchQueryDailyStat(BaseModel):
+    day: str  # "2026-03-07"
+    count: int
+
+
 class SearchResult(BaseModel):
     messages: list[Message]
     total: int
