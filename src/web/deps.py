@@ -77,6 +77,9 @@ def get_container(request: Request) -> AppContainer:
             notification_bundle,
             _require_app_state_attr(request, "pool"),
         )
+    templates = getattr(request.app.state, "templates", None)
+    if templates is None:
+        templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
     container = AppContainer(
         config=_require_app_state_attr(request, "config"),
         db=db,
@@ -97,11 +100,7 @@ def get_container(request: Request) -> AppContainer:
         search_engine=_require_app_state_attr(request, "search_engine"),
         ai_search=_require_app_state_attr(request, "ai_search"),
         scheduler=_require_app_state_attr(request, "scheduler"),
-        templates=getattr(
-            request.app.state,
-            "templates",
-            Jinja2Templates(directory=str(TEMPLATES_DIR)),
-        ),
+        templates=templates,
         log_buffer=getattr(request.app.state, "log_buffer", None),
         session_secret=_require_app_state_attr(request, "session_secret"),
         bg_tasks=getattr(request.app.state, "bg_tasks", set()),
