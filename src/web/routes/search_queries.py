@@ -25,7 +25,7 @@ async def add_search_query(
     svc = deps.search_query_service(request)
     await svc.add(name, query, interval_minutes)
     scheduler = deps.get_scheduler(request)
-    if scheduler.is_running and hasattr(scheduler, "_sq_bundle") and scheduler._sq_bundle:
+    if scheduler.is_running:
         await scheduler.sync_search_query_jobs()
     return RedirectResponse(url="/search-queries?msg=sq_added", status_code=303)
 
@@ -35,7 +35,7 @@ async def toggle_search_query(request: Request, sq_id: int):
     svc = deps.search_query_service(request)
     await svc.toggle(sq_id)
     scheduler = deps.get_scheduler(request)
-    if scheduler.is_running and hasattr(scheduler, "_sq_bundle") and scheduler._sq_bundle:
+    if scheduler.is_running:
         await scheduler.sync_search_query_jobs()
     return RedirectResponse(url="/search-queries?msg=sq_toggled", status_code=303)
 
@@ -45,7 +45,7 @@ async def delete_search_query(request: Request, sq_id: int):
     svc = deps.search_query_service(request)
     await svc.delete(sq_id)
     scheduler = deps.get_scheduler(request)
-    if scheduler.is_running and hasattr(scheduler, "_sq_bundle") and scheduler._sq_bundle:
+    if scheduler.is_running:
         await scheduler.sync_search_query_jobs()
     return RedirectResponse(url="/search-queries?msg=sq_deleted", status_code=303)
 

@@ -535,3 +535,6 @@ class SearchQueryBundle:
 
     async def get_last_recorded_at(self, query_id: int) -> str | None:
         return await self.search_queries.get_last_recorded_at(query_id)
+
+    async def get_last_recorded_at_all(self) -> dict[int, str]:
+        return await self.search_queries.get_last_recorded_at_all()

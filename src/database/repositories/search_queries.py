@@ -46,6 +46,12 @@ class SearchQueriesRepository:
         await self._db.commit()
 
     async def record_stat(self, query_id: int, match_count: int) -> None:
+        # One stat per query per day: delete existing entry for today, then insert
+        await self._db.execute(
+            "DELETE FROM search_query_stats "
+            "WHERE query_id = ? AND date(recorded_at) = date('now')",
+            (query_id,),
+        )
         await self._db.execute(
             "INSERT INTO search_query_stats (query_id, match_count) VALUES (?, ?)",
             (query_id, match_count),
@@ -107,6 +113,14 @@ class SearchQueriesRepository:
         )
         row = await cur.fetchone()
         return row["last"] if row else None
+
+    async def get_last_recorded_at_all(self) -> dict[int, str]:
+        cur = await self._db.execute(
+            "SELECT query_id, MAX(recorded_at) AS last "
+            "FROM search_query_stats GROUP BY query_id"
+        )
+        rows = await cur.fetchall()
+        return {r["query_id"]: r["last"] for r in rows if r["last"]}
 
     @staticmethod
     def _row_to_model(row) -> SearchQuery:

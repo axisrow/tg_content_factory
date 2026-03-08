@@ -52,14 +52,14 @@ class SearchQueryService:
     ) -> list[dict]:
         queries = await self._bundle.get_all()
         all_stats = await self._bundle.get_stats_for_all(days)
+        last_runs = await self._bundle.get_last_recorded_at_all()
         result = []
         for sq in queries:
             total = sum(s.count for s in all_stats.get(sq.id, []))
-            last_run = await self._bundle.get_last_recorded_at(sq.id)
             result.append({
                 "query": sq,
                 "total_30d": total,
-                "last_run": last_run,
+                "last_run": last_runs.get(sq.id),
                 "daily_stats": all_stats.get(sq.id, []),
             })
         return result

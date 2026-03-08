@@ -73,6 +73,7 @@ def get_container(request: Request) -> AppContainer:
     notification_bundle = NotificationBundle.from_database(db)
     search_bundle = SearchBundle.from_database(db)
     scheduler_bundle = SchedulerBundle.from_database(db)
+    search_query_bundle = SearchQueryBundle.from_database(db)
     notification_target_service = getattr(request.app.state, "notification_target_service", None)
     if notification_target_service is None:
         notification_target_service = NotificationTargetService(
@@ -92,6 +93,7 @@ def get_container(request: Request) -> AppContainer:
         notification_bundle=notification_bundle,
         search_bundle=search_bundle,
         scheduler_bundle=scheduler_bundle,
+        search_query_bundle=search_query_bundle,
         auth=_require_app_state_attr(request, "auth"),
         pool=_require_app_state_attr(request, "pool"),
         notification_target_service=notification_target_service,
@@ -141,7 +143,7 @@ def get_scheduler_bundle(request: Request) -> SchedulerBundle:
 
 
 def get_search_query_bundle(request: Request) -> SearchQueryBundle:
-    return SearchQueryBundle.from_database(get_db(request))
+    return get_container(request).search_query_bundle
 
 
 def get_pool(request: Request) -> ClientPool:

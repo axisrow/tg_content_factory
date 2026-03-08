@@ -16,6 +16,7 @@ from src.database.bundles import (
     NotificationBundle,
     SchedulerBundle,
     SearchBundle,
+    SearchQueryBundle,
 )
 from src.scheduler.manager import SchedulerManager
 from src.search.ai_search import AISearchEngine
@@ -40,6 +41,7 @@ class AppContainer:
     notification_bundle: NotificationBundle
     search_bundle: SearchBundle
     scheduler_bundle: SchedulerBundle
+    search_query_bundle: SearchQueryBundle
     auth: TelegramAuth
     pool: ClientPool
     notification_target_service: NotificationTargetService
