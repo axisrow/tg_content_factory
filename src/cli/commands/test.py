@@ -495,7 +495,10 @@ async def _run_telegram_live_checks(config_path: str) -> list[CheckResult]:
         quota = await _tg_call(engine.check_search_quota("test"))
         if quota is None:
             results.append(
-                CheckResult("tg_search_quota", Status.SKIP, "No premium account or quota unavailable"),
+                CheckResult(
+                    "tg_search_quota", Status.SKIP,
+                    "No premium account or quota unavailable",
+                ),
             )
         else:
             detail = str(quota) if quota else "No quota info"

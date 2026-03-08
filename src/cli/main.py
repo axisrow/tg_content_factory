@@ -13,10 +13,12 @@ from src.cli.commands import (
     scheduler,
     search,
     serve,
-    test as test_cmd,
 )
 from src.cli.commands import filter as filter_cmd
 from src.cli.commands import my_telegram as my_telegram_cmd
+from src.cli.commands import (
+    test as test_cmd,
+)
 from src.cli.parser import build_parser
 from src.cli.runtime import setup_logging
 

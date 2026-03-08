@@ -11,6 +11,8 @@ from src.cli.commands import (
     scheduler,
     search,
     serve,
+)
+from src.cli.commands import (
     test as test_cmd,
 )
 from src.cli.main import main

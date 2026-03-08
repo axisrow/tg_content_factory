@@ -953,7 +953,9 @@ async def test_migration_backfills_collection_task_type(tmp_path):
         );
         INSERT INTO collection_tasks (id, channel_id, channel_title, status, payload)
         VALUES
-            (1, 0, 'Stats', 'pending', '{"task_kind":"stats_all","channel_ids":[],"next_index":0,"batch_size":20,"channels_ok":0,"channels_err":0}'),
+            (1, 0, 'Stats', 'pending',
+             '{"task_kind":"stats_all","channel_ids":[],'
+             '"next_index":0,"batch_size":20,"channels_ok":0,"channels_err":0}'),
             (2, -1001, 'Channel', 'pending', NULL);
         """
     )

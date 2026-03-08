@@ -45,7 +45,8 @@ class AISearchEngine:
                 try:
                     asyncio.get_running_loop()
                     with concurrent.futures.ThreadPoolExecutor() as executor:
-                        future = executor.submit(asyncio.run, search.search_messages(query, limit=20))
+                        coro = search.search_messages(query, limit=20)
+                        future = executor.submit(asyncio.run, coro)
                         messages, total = future.result()
                 except RuntimeError:
                     messages, total = asyncio.run(search.search_messages(query, limit=20))

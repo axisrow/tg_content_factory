@@ -82,7 +82,8 @@ class CollectionTasksRepository:
         payload_json = self._serialize_payload(payload)
         cur = await self._db.execute(
             "INSERT INTO collection_tasks "
-            "(channel_id, channel_title, channel_username, task_type, run_after, payload, parent_task_id) "
+            "(channel_id, channel_title, channel_username, task_type,"
+            " run_after, payload, parent_task_id) "
             "VALUES (?, ?, ?, ?, ?, ?, ?)",
             (
                 channel_id,
@@ -107,7 +108,8 @@ class CollectionTasksRepository:
         run_after_iso = run_after.astimezone(timezone.utc).isoformat() if run_after else None
         cur = await self._db.execute(
             "INSERT INTO collection_tasks "
-            "(channel_id, channel_title, channel_username, task_type, run_after, payload, parent_task_id) "
+            "(channel_id, channel_title, channel_username, task_type,"
+            " run_after, payload, parent_task_id) "
             "VALUES (?, ?, ?, ?, ?, ?, ?)",
             (
                 None,
@@ -144,7 +146,8 @@ class CollectionTasksRepository:
         if status_value == CollectionTaskStatus.RUNNING.value:
             sets.append("started_at = ?")
             params.append(now)
-        if status_value in (CollectionTaskStatus.COMPLETED.value, CollectionTaskStatus.FAILED.value):
+        terminal = (CollectionTaskStatus.COMPLETED.value, CollectionTaskStatus.FAILED.value)
+        if status_value in terminal:
             sets.append("completed_at = ?")
             params.append(now)
         if messages_collected is not None:
