@@ -53,7 +53,7 @@ class SchedulerManager:
         self._sq_bundle = search_query_bundle
         self._scheduler: AsyncIOScheduler | None = None
         self._job_id = "collect_all"
-        self._search_job_id = "keyword_search"
+        self._search_job_id = "notification_search"
         self._last_run: datetime | None = None
         self._last_stats: dict | None = None
         self._last_search_run: datetime | None = None
@@ -197,7 +197,12 @@ class SchedulerManager:
         return stats
 
     async def _run_keyword_search(self) -> dict:
-        """Search by active notification queries using search_telegram, respecting quotas."""
+        """Search Telegram API by notification queries (premium global search).
+
+        This complements the local text/regex matching in Collector._check_notification_queries
+        which runs at collection time. This method uses SearchEngine.search_telegram (Telegram's
+        premium global search API) to discover messages across channels not yet collected.
+        """
         if not self._search_engine:
             return {"keywords": 0, "results": 0, "errors": 0}
 

@@ -54,7 +54,8 @@ class SearchQueryService:
         if not sq:
             return 0
         count = await self._bundle.count_fts_matches(sq.query)
-        await self._bundle.record_stat(sq_id, count)
+        if sq.track_stats:
+            await self._bundle.record_stat(sq_id, count)
         logger.info("Search query '%s' (id=%d): %d matches", sq.name, sq_id, count)
         return count
 

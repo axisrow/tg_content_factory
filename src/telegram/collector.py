@@ -554,7 +554,11 @@ class Collector:
         return prefixes
 
     async def _check_notification_queries(self, messages: list[Message]) -> None:
-        """Check messages against active notification queries and notify."""
+        """Check messages against active notification queries and send batched notifications.
+
+        Sends one notification per query per collection run with a count and
+        a preview of the first matching message to avoid flooding.
+        """
         if not self._notifier:
             return
 
@@ -562,6 +566,8 @@ class Collector:
         if not queries:
             return
 
+        # Collect matches per query: {sq_id: (sq, count, first_preview)}
+        matches: dict[int, tuple[str, int, str]] = {}
         for msg in messages:
             if not msg.text:
                 continue
@@ -576,10 +582,22 @@ class Collector:
                     matched = sq.query.lower() in msg.text.lower()
 
                 if matched:
-                    await self._notifier.notify(
-                        f"Query '{sq.query}' found in channel {msg.channel_id}:\n"
-                        f"{msg.text[:200]}"
-                    )
+                    key = sq.id or id(sq)
+                    if key in matches:
+                        name, count, preview = matches[key]
+                        matches[key] = (name, count + 1, preview)
+                    else:
+                        matches[key] = (sq.name, 1, msg.text[:200])
+
+        for _sq_id, (name, count, preview) in matches.items():
+            if count == 1:
+                await self._notifier.notify(
+                    f"Query '{name}' matched in channel:\n{preview}"
+                )
+            else:
+                await self._notifier.notify(
+                    f"Query '{name}' matched {count} times. First:\n{preview}"
+                )
 
     async def _channel_still_exists(self, channel_id: int) -> bool:
         return await self._db.get_channel_by_channel_id(channel_id) is not None

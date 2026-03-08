@@ -705,7 +705,10 @@ class TestNotificationQueryMatch:
         ]
         await collector._check_notification_queries(msgs)
 
+        # Batched: one notification per query per run
         assert notifier.notify.await_count == 1
+        call_text = notifier.notify.call_args[0][0]
+        assert "BITCOIN" in call_text
 
     @pytest.mark.asyncio
     async def test_regex_query_matches(self, test_db):
@@ -744,7 +747,10 @@ class TestNotificationQueryMatch:
         ]
         await collector._check_notification_queries(msgs)
 
-        assert notifier.notify.await_count == 2
+        # Batched: one notification per query (2 matches → single notification with count)
+        assert notifier.notify.await_count == 1
+        call_text = notifier.notify.call_args[0][0]
+        assert "2 times" in call_text
 
     @pytest.mark.asyncio
     async def test_invalid_regex_does_not_crash(self, test_db):
