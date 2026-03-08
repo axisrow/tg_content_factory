@@ -12,7 +12,6 @@ from starlette.responses import Response
 
 from src.config import AppConfig, load_config
 from src.web.assembly import (
-    TEMPLATES_DIR,
     build_log_buffer,
     configure_app,
     register_builtin_endpoints,
@@ -20,6 +19,7 @@ from src.web.assembly import (
 )
 from src.web.bootstrap import build_container_with_templates, start_container, stop_container
 from src.web.csrf import OriginCSRFMiddleware, is_secure_request
+from src.web.paths import TEMPLATES_DIR
 from src.web.session import (
     COOKIE_MAX_AGE,
     COOKIE_NAME,
