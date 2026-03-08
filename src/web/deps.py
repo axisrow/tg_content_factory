@@ -15,6 +15,7 @@ from src.database.bundles import (
     NotificationBundle,
     SchedulerBundle,
     SearchBundle,
+    SearchQueryBundle,
 )
 from src.scheduler.manager import SchedulerManager
 from src.search.ai_search import AISearchEngine
@@ -26,6 +27,7 @@ from src.services.keyword_service import KeywordService
 from src.services.notification_service import NotificationService
 from src.services.notification_target_service import NotificationTargetService
 from src.services.scheduler_service import SchedulerService
+from src.services.search_query_service import SearchQueryService
 from src.services.search_service import SearchService
 from src.services.stats_task_dispatcher import StatsTaskDispatcher
 from src.telegram.auth import TelegramAuth
@@ -71,6 +73,7 @@ def get_container(request: Request) -> AppContainer:
     notification_bundle = NotificationBundle.from_database(db)
     search_bundle = SearchBundle.from_database(db)
     scheduler_bundle = SchedulerBundle.from_database(db)
+    search_query_bundle = SearchQueryBundle.from_database(db)
     notification_target_service = getattr(request.app.state, "notification_target_service", None)
     if notification_target_service is None:
         notification_target_service = NotificationTargetService(
@@ -90,6 +93,7 @@ def get_container(request: Request) -> AppContainer:
         notification_bundle=notification_bundle,
         search_bundle=search_bundle,
         scheduler_bundle=scheduler_bundle,
+        search_query_bundle=search_query_bundle,
         auth=_require_app_state_attr(request, "auth"),
         pool=_require_app_state_attr(request, "pool"),
         notification_target_service=notification_target_service,
@@ -136,6 +140,10 @@ def get_search_bundle(request: Request) -> SearchBundle:
 
 def get_scheduler_bundle(request: Request) -> SchedulerBundle:
     return get_container(request).scheduler_bundle
+
+
+def get_search_query_bundle(request: Request) -> SearchQueryBundle:
+    return get_container(request).search_query_bundle
 
 
 def get_pool(request: Request) -> ClientPool:
@@ -244,6 +252,14 @@ def notification_service(request: Request) -> NotificationService:
             get_container(request).config.notifications.bot_name_prefix,
             get_container(request).config.notifications.bot_username_prefix,
         ),
+    )
+
+
+def search_query_service(request: Request) -> SearchQueryService:
+    return _request_cached(
+        request,
+        "_search_query_service",
+        lambda: SearchQueryService(get_search_query_bundle(request)),
     )
 
 

@@ -102,4 +102,24 @@ END;
 CREATE TRIGGER IF NOT EXISTS messages_fts_ad AFTER DELETE ON messages BEGIN
     INSERT INTO messages_fts(messages_fts, rowid, text) VALUES ('delete', old.id, old.text);
 END;
+
+CREATE TABLE IF NOT EXISTS search_queries (
+    id               INTEGER PRIMARY KEY,
+    name             TEXT NOT NULL,
+    query            TEXT NOT NULL,
+    is_active        INTEGER DEFAULT 1,
+    interval_minutes INTEGER NOT NULL DEFAULT 60,
+    created_at       TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS search_query_stats (
+    id          INTEGER PRIMARY KEY,
+    query_id    INTEGER NOT NULL,
+    match_count INTEGER NOT NULL DEFAULT 0,
+    recorded_at TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY (query_id) REFERENCES search_queries(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_sqs_query_date
+    ON search_query_stats(query_id, recorded_at);
 """

@@ -4,7 +4,7 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class Account(BaseModel):
@@ -120,6 +120,20 @@ class NotificationBot(BaseModel):
     bot_username: str
     bot_token: str
     created_at: datetime | None = None
+
+
+class SearchQuery(BaseModel):
+    id: int | None = None
+    name: str
+    query: str
+    is_active: bool = True
+    interval_minutes: int = Field(60, ge=1)
+    created_at: datetime | None = None
+
+
+class SearchQueryDailyStat(BaseModel):
+    day: str  # "2026-03-07"
+    count: int
 
 
 class SearchResult(BaseModel):

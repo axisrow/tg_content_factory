@@ -17,6 +17,7 @@ from src.database.repositories.keywords import KeywordsRepository
 from src.database.repositories.messages import MessagesRepository
 from src.database.repositories.notification_bots import NotificationBotsRepository
 from src.database.repositories.search_log import SearchLogRepository
+from src.database.repositories.search_queries import SearchQueriesRepository
 from src.database.repositories.settings import SettingsRepository
 from src.database.schema import SCHEMA_SQL
 from src.models import (
@@ -53,6 +54,7 @@ class Database:
         self._settings: SettingsRepository | None = None
         self._filters: FilterRepository | None = None
         self._notification_bots: NotificationBotsRepository | None = None
+        self._search_queries: SearchQueriesRepository | None = None
         self._repos: DatabaseRepositories | None = None
 
     async def _has_encrypted_sessions(self) -> bool:
@@ -94,6 +96,7 @@ class Database:
         self._settings = SettingsRepository(self._db)
         self._filters = FilterRepository(self._db)
         self._notification_bots = NotificationBotsRepository(self._db)
+        self._search_queries = SearchQueriesRepository(self._db)
         self._repos = DatabaseRepositories(
             accounts=self._accounts,
             channels=self._channels,
@@ -105,6 +108,7 @@ class Database:
             settings=self._settings,
             filters=self._filters,
             notification_bots=self._notification_bots,
+            search_queries=self._search_queries,
         )
 
         await self._accounts.migrate_sessions()
@@ -148,6 +152,7 @@ class Database:
                 self._settings,
                 self._filters,
                 self._notification_bots,
+                self._search_queries,
             )
         ):
             raise RuntimeError("Database.initialize() has not been called")

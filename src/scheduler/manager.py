@@ -10,7 +10,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 
 from src.config import SchedulerConfig
 from src.database import Database
-from src.database.bundles import SchedulerBundle
+from src.database.bundles import SchedulerBundle, SearchQueryBundle
 from src.settings_utils import parse_int_setting
 from src.telegram.collector import Collector
 
@@ -38,6 +38,7 @@ class SchedulerManager:
         config: SchedulerConfig,
         scheduler_bundle: SchedulerBundle | Database | None = None,
         search_engine: SearchEngine | None = None,
+        search_query_bundle: SearchQueryBundle | None = None,
     ):
         self._collector = collector
         self._config = config
@@ -49,6 +50,7 @@ class SchedulerManager:
             scheduler_bundle = _LegacySchedulerBundle(scheduler_bundle)
         self._scheduler_bundle = scheduler_bundle
         self._search_engine = search_engine
+        self._sq_bundle = search_query_bundle
         self._scheduler: AsyncIOScheduler | None = None
         self._job_id = "collect_all"
         self._search_job_id = "keyword_search"
@@ -125,6 +127,9 @@ class SchedulerManager:
                 "Keyword search job added: every %d minutes",
                 self._config.search_interval_minutes,
             )
+
+        if self._sq_bundle:
+            await self.sync_search_query_jobs()
 
         self._scheduler.start()
         logger.info(
@@ -229,3 +234,41 @@ class SchedulerManager:
         self._last_search_stats = stats
         logger.info("Keyword search complete: %s", stats)
         return stats
+
+    async def sync_search_query_jobs(self) -> None:
+        if not self._sq_bundle or not self._scheduler:
+            return
+
+        active_queries = await self._sq_bundle.get_all(active_only=True)
+        active_ids = {f"sq_{sq.id}" for sq in active_queries}
+
+        existing_jobs = self._scheduler.get_all_jobs()
+        for job in existing_jobs:
+            if job.id.startswith("sq_") and job.id not in active_ids:
+                self._scheduler.remove_job(job.id)
+                logger.info("Removed search query job %s", job.id)
+
+        for sq in active_queries:
+            job_id = f"sq_{sq.id}"
+            self._scheduler.add_job(
+                self._run_search_query,
+                IntervalTrigger(minutes=sq.interval_minutes),
+                id=job_id,
+                replace_existing=True,
+                args=[sq.id],
+            )
+        logger.info("Synced %d search query jobs", len(active_queries))
+
+    async def _run_search_query(self, sq_id: int) -> None:
+        if not self._sq_bundle:
+            return
+        sq = await self._sq_bundle.get_by_id(sq_id)
+        if not sq:
+            logger.warning("Search query id=%d not found, skipping", sq_id)
+            return
+        try:
+            count = await self._sq_bundle.count_fts_matches(sq.query)
+            await self._sq_bundle.record_stat(sq_id, count)
+            logger.info("Search query '%s' (id=%d): %d matches", sq.name, sq_id, count)
+        except Exception:
+            logger.exception("Error running search query id=%d", sq_id)

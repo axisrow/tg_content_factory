@@ -83,6 +83,25 @@ def build_parser() -> argparse.ArgumentParser:
     kw_toggle = kw_sub.add_parser("toggle", help="Toggle keyword active state")
     kw_toggle.add_argument("id", type=int, help="Keyword id")
 
+    sq_parser = sub.add_parser("search-query", help="Search query management")
+    sq_sub = sq_parser.add_subparsers(dest="search_query_action")
+    sq_sub.add_parser("list", help="List search queries")
+
+    sq_add = sq_sub.add_parser("add", help="Add search query")
+    sq_add.add_argument("query", help="FTS5 search query text")
+    sq_add.add_argument("--name", required=True, help="Query display name")
+    sq_add.add_argument("--interval", type=int, default=60, help="Run interval in minutes")
+
+    sq_del = sq_sub.add_parser("delete", help="Delete search query")
+    sq_del.add_argument("id", type=int, help="Search query id")
+
+    sq_toggle = sq_sub.add_parser("toggle", help="Toggle search query active state")
+    sq_toggle.add_argument("id", type=int, help="Search query id")
+
+    sq_stats = sq_sub.add_parser("stats", help="Show daily stats for a search query")
+    sq_stats.add_argument("id", type=int, help="Search query id")
+    sq_stats.add_argument("--days", type=int, default=30, help="Number of days")
+
     acc_parser = sub.add_parser("account", help="Account management")
     acc_sub = acc_parser.add_subparsers(dest="account_action")
     acc_sub.add_parser("list", help="List accounts")

@@ -132,6 +132,44 @@ form button[style*="padding"] {
 .log-warning td { color: var(--pico-color-amber-550); }
 .log-debug td { opacity: 0.5; }
 
+.bar-chart {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    margin: 0.5rem 0;
+}
+.bar-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.7rem;
+}
+.bar-row .bar-label {
+    width: 70px;
+    text-align: right;
+    flex-shrink: 0;
+    color: #6b7280;
+}
+.bar-row .bar-track {
+    flex: 1;
+    background: #f3f4f6;
+    border-radius: 3px;
+    height: 14px;
+    position: relative;
+}
+.bar-row .bar-fill {
+    background: #3b82f6;
+    height: 100%;
+    border-radius: 3px;
+    min-width: 1px;
+}
+.bar-row .bar-count {
+    width: 40px;
+    text-align: left;
+    flex-shrink: 0;
+    color: #374151;
+}
+
 @media (max-width: 576px) {
   nav.container > ul:first-child li strong {
     white-space: nowrap;

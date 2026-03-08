@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+{% block title %}Поисковые запросы — TG Post Search{% endblock %}
+{% block content %}
+<h1>Поисковые запросы</h1>
+
+<article>
+    <header>Добавить запрос</header>
+    <form method="post" action="/search-queries/add">
+        <div class="grid">
+            <label>
+                Название
+                <input type="text" name="name" required placeholder="Аренда квартир">
+            </label>
+            <label>
+                Запрос (фразовый поиск)
+                <input type="text" name="query" required placeholder="аренда квартир">
+            </label>
+            <label>
+                Интервал (мин)
+                <input type="number" name="interval_minutes" value="60" min="5">
+            </label>
+        </div>
+        <button type="submit">Добавить</button>
+    </form>
+</article>
+
+{% if items %}
+<div style="overflow-x:auto">
+<table>
+    <thead>
+        <tr>
+            <th>Название</th>
+            <th>Запрос</th>
+            <th>Интервал</th>
+            <th>Активен</th>
+            <th>Всего (30д)</th>
+            <th>Посл. запуск</th>
+            <th>Действия</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for item in items %}
+        {% set sq = item.query %}
+        <tr>
+            <td>{{ sq.name }}</td>
+            <td><code>{{ sq.query }}</code></td>
+            <td>{{ sq.interval_minutes }} мин</td>
+            <td>{% if sq.is_active %}<span class="badge-active">●</span>{% else %}<span class="badge-inactive">●</span>{% endif %}</td>
+            <td>{{ item.total_30d }}</td>
+            <td>{{ item.last_run[:16] if item.last_run else "—" }}</td>
+            <td>
+                <form method="post" action="/search-queries/{{ sq.id }}/run" style="display:inline">
+                    <button type="submit" class="secondary outline emoji-btn" title="Запустить сейчас">▶️</button>
+                </form>
+                <form method="post" action="/search-queries/{{ sq.id }}/toggle" style="display:inline">
+                    <button type="submit" class="secondary outline emoji-btn" title="{{ 'Отключить' if sq.is_active else 'Включить' }}">
+                        {{ "⏸️" if sq.is_active else "🔄" }}
+                    </button>
+                </form>
+                <form method="post" action="/search-queries/{{ sq.id }}/delete" style="display:inline" onsubmit="return confirm('Удалить этот запрос и всю его статистику?')">
+                    <button type="submit" class="contrast outline emoji-btn" title="Удалить">🗑️</button>
+                </form>
+            </td>
+        </tr>
+        {% if item.daily_stats %}
+        <tr>
+            <td colspan="7">
+                <details>
+                    <summary>График по дням ({{ item.daily_stats | length }} дн.)</summary>
+                    {% set max_count = item.daily_stats | map(attribute='count') | max %}
+                    <div class="bar-chart">
+                        {% for stat in item.daily_stats %}
+                        <div class="bar-row">
+                            <span class="bar-label">{{ stat.day[5:] }}</span>
+                            <span class="bar-track">
+                                <span class="bar-fill" style="width: {{ (stat.count / max_count * 100) | round(1) if max_count else 0 }}%"></span>
+                            </span>
+                            <span class="bar-count">{{ stat.count }}</span>
+                        </div>
+                        {% endfor %}
+                    </div>
+                </details>
+            </td>
+        </tr>
+        {% endif %}
+        {% endfor %}
+    </tbody>
+</table>
+</div>
+{% else %}
+<p>Нет поисковых запросов.</p>
+{% endif %}
+{% endblock %}

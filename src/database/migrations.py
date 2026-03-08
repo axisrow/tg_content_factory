@@ -185,6 +185,37 @@ async def run_migrations(db: aiosqlite.Connection) -> None:
         await db.commit()
         logger.info("Migrated notification_bots: removed NOT NULL from bot_id")
 
+    await db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS search_queries (
+            id               INTEGER PRIMARY KEY,
+            name             TEXT NOT NULL,
+            query            TEXT NOT NULL,
+            is_active        INTEGER DEFAULT 1,
+            interval_minutes INTEGER NOT NULL DEFAULT 60,
+            created_at       TEXT DEFAULT (datetime('now'))
+        )
+        """
+    )
+    await db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS search_query_stats (
+            id          INTEGER PRIMARY KEY,
+            query_id    INTEGER NOT NULL,
+            match_count INTEGER NOT NULL DEFAULT 0,
+            recorded_at TEXT DEFAULT (datetime('now')),
+            FOREIGN KEY (query_id) REFERENCES search_queries(id)
+        )
+        """
+    )
+    await db.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_sqs_query_date
+            ON search_query_stats(query_id, recorded_at)
+        """
+    )
+    await db.commit()
+
     cur = await db.execute("SELECT value FROM settings WHERE key = 'fts5_initialized'")
     if not await cur.fetchone():
         try:
