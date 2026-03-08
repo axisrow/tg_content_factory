@@ -66,6 +66,9 @@ Three layers: **CLI/Web** → **Telegram + Search + Scheduler** → **SQLite**
 - **Collection service**: `enqueue_channel_by_pk(pk, force)` respects `is_filtered` flag; `enqueue_all_channels()` uses `full=False` for incremental collection
 - **HTMX progressive enhancement**: collect routes check `HX-Request` header to return HTML fragments vs redirects
 - **Identifier parsing**: `parse_identifiers()` splits text by comma/semicolon/newline; `extract_identifiers()` regex-extracts t.me links, @usernames, negative IDs; `parse_file()` handles txt/csv/xlsx
+- **aiosqlite connection cleanup**: in tests using raw `aiosqlite.connect()`, always wrap in `try/finally` with `await conn.close()` — an unclosed worker-thread blocks pytest process exit
+- **SQL in triple-quoted strings**: Python does NOT concatenate adjacent string literals inside `"""..."""`; for values with quotes use parameterized `execute()` with `?`-placeholders, not inline values in `executescript()`
+- **pytest-timeout**: global 30s timeout configured in `pyproject.toml` (`timeout = 30`), dependency `pytest-timeout` in `[dev]`
 
 ## Conventions
 

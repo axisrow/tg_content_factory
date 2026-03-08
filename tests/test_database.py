@@ -933,34 +933,46 @@ async def test_cancel_collection_task_preserves_typed_status(db):
 @pytest.mark.asyncio
 async def test_migration_backfills_collection_task_type(tmp_path):
     db_path = tmp_path / "legacy_tasks.db"
-    conn = await aiosqlite.connect(db_path)
-    conn.row_factory = aiosqlite.Row
-    await conn.executescript(
-        """
-        CREATE TABLE collection_tasks (
-            id INTEGER PRIMARY KEY,
-            channel_id INTEGER NOT NULL,
-            channel_title TEXT,
-            status TEXT DEFAULT 'pending',
-            messages_collected INTEGER DEFAULT 0,
-            error TEXT,
-            run_after TEXT,
-            payload TEXT,
-            parent_task_id INTEGER,
-            created_at TEXT DEFAULT (datetime('now')),
-            started_at TEXT,
-            completed_at TEXT
-        );
-        INSERT INTO collection_tasks (id, channel_id, channel_title, status, payload)
-        VALUES
-            (1, 0, 'Stats', 'pending',
-             '{"task_kind":"stats_all","channel_ids":[],'
-             '"next_index":0,"batch_size":20,"channels_ok":0,"channels_err":0}'),
-            (2, -1001, 'Channel', 'pending', NULL);
-        """
+    stats_payload = (
+        '{"task_kind":"stats_all","channel_ids":[],'
+        '"next_index":0,"batch_size":20,"channels_ok":0,"channels_err":0}'
     )
-    await conn.commit()
-    await conn.close()
+    conn = await aiosqlite.connect(db_path)
+    try:
+        conn.row_factory = aiosqlite.Row
+        await conn.executescript(
+            """
+            CREATE TABLE collection_tasks (
+                id INTEGER PRIMARY KEY,
+                channel_id INTEGER NOT NULL,
+                channel_title TEXT,
+                status TEXT DEFAULT 'pending',
+                messages_collected INTEGER DEFAULT 0,
+                error TEXT,
+                run_after TEXT,
+                payload TEXT,
+                parent_task_id INTEGER,
+                created_at TEXT DEFAULT (datetime('now')),
+                started_at TEXT,
+                completed_at TEXT
+            );
+            """
+        )
+        await conn.execute(
+            "INSERT INTO collection_tasks"
+            " (id, channel_id, channel_title, status, payload)"
+            " VALUES (?, ?, ?, ?, ?)",
+            (1, 0, "Stats", "pending", stats_payload),
+        )
+        await conn.execute(
+            "INSERT INTO collection_tasks"
+            " (id, channel_id, channel_title, status, payload)"
+            " VALUES (?, ?, ?, ?, ?)",
+            (2, -1001, "Channel", "pending", None),
+        )
+        await conn.commit()
+    finally:
+        await conn.close()
 
     database = Database(str(db_path))
     await database.initialize()
