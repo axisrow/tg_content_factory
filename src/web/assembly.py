@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import logging
-from pathlib import Path
-
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -10,11 +8,8 @@ from fastapi.templating import Jinja2Templates
 from starlette.responses import Response
 
 from src.web.container import AppContainer
+from src.web.paths import STATIC_DIR, TEMPLATES_DIR
 from src.web.session import COOKIE_NAME
-
-WEB_DIR = Path(__file__).parent
-STATIC_DIR = WEB_DIR / "static"
-TEMPLATES_DIR = WEB_DIR / "templates"
 
 
 def configure_app(app: FastAPI, container: AppContainer | None) -> None:

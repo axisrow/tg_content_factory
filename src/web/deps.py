@@ -32,9 +32,9 @@ from src.telegram.auth import TelegramAuth
 from src.telegram.client_pool import ClientPool
 from src.telegram.collector import Collector
 from src.telegram.notifier import Notifier
-from src.web.bootstrap import TEMPLATES_DIR
 from src.web.container import AppContainer
 from src.web.log_handler import LogBuffer
+from src.web.paths import TEMPLATES_DIR
 
 T = TypeVar("T")
 _MISSING = object()
