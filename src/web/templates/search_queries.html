@@ -63,7 +63,7 @@
                 {% if sq.notify_on_collect %}<span title="Уведомления при сборе">🔔</span>{% endif %}
                 {% if sq.track_stats %}<span title="Отслеживание статистики">📊</span>{% endif %}
             </td>
-            <td>{{ sq.interval_minutes }} мин</td>
+            <td>{% if sq.track_stats %}{{ sq.interval_minutes }} мин{% else %}—{% endif %}</td>
             <td>{% if sq.is_active %}<span class="badge-active">●</span>{% else %}<span class="badge-inactive">●</span>{% endif %}</td>
             <td>{{ item.total_30d }}</td>
             <td>{{ item.last_run[:16] if item.last_run else "—" }}</td>
