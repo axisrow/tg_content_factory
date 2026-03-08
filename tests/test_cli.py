@@ -297,26 +297,26 @@ class TestCLIScheduler:
 
 
 # ---------------------------------------------------------------------------
-# test (smoke_test command)
+# test command
 # ---------------------------------------------------------------------------
 
 
 class TestCLITest:
     def test_read(self, cli_env, capsys):
-        from src.cli.commands.smoke_test import run
+        from src.cli.commands.test import run
         run(_ns(command="test", test_action="read"))
         out = capsys.readouterr().out
         assert "PASS" in out
         assert "db_init" in out
 
     def test_write(self, cli_env, capsys):
-        from src.cli.commands.smoke_test import run
+        from src.cli.commands.test import run
         run(_ns(command="test", test_action="write"))
         out = capsys.readouterr().out
         assert "Write Tests" in out
 
     def test_all(self, cli_env_with_pool, capsys):
-        from src.cli.commands.smoke_test import run
+        from src.cli.commands.test import run
         run(_ns(command="test", test_action="all"))
         out = capsys.readouterr().out
         assert "Read Tests" in out

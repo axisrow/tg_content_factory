@@ -11,7 +11,7 @@ from src.cli.commands import (
     scheduler,
     search,
     serve,
-    smoke_test,
+    test as test_cmd,
 )
 from src.cli.main import main
 
@@ -66,8 +66,8 @@ def cmd_scheduler(args: argparse.Namespace) -> None:
     _run_with_legacy_runtime(scheduler.run, args)
 
 
-def cmd_smoke_test(args: argparse.Namespace) -> None:
-    _run_with_legacy_runtime(smoke_test.run, args)
+def cmd_test(args: argparse.Namespace) -> None:
+    _run_with_legacy_runtime(test_cmd.run, args)
 
 
 if __name__ == "__main__":

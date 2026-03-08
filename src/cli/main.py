@@ -13,10 +13,10 @@ from src.cli.commands import (
     scheduler,
     search,
     serve,
+    test as test_cmd,
 )
 from src.cli.commands import filter as filter_cmd
 from src.cli.commands import my_telegram as my_telegram_cmd
-from src.cli.commands import smoke_test as smoke_test_cmd
 from src.cli.parser import build_parser
 from src.cli.runtime import setup_logging
 
@@ -39,7 +39,7 @@ def main() -> None:
         "scheduler": scheduler.run,
         "notification": notification.run,
         "my-telegram": my_telegram_cmd.run,
-        "test": smoke_test_cmd.run,
+        "test": test_cmd.run,
     }
 
     handler = commands.get(args.command)
