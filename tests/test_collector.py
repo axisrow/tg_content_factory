@@ -12,8 +12,7 @@ from src.models import Channel, ChannelStats, Message
 from src.telegram.collector import Collector
 from tests.helpers import AsyncIterEmpty as _AsyncIterEmpty
 from tests.helpers import AsyncIterMessages as _AsyncIterMessages
-from tests.helpers import FakeTelethonClient, make_mock_message
-from tests.helpers import make_mock_pool
+from tests.helpers import FakeTelethonClient, make_mock_message, make_mock_pool
 
 
 @pytest.mark.asyncio

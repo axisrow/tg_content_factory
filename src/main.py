@@ -3,7 +3,16 @@ from __future__ import annotations
 import argparse
 
 from src.cli import runtime
-from src.cli.commands import account, channel, collect, keyword, scheduler, search, serve
+from src.cli.commands import (
+    account,
+    channel,
+    collect,
+    keyword,
+    scheduler,
+    search,
+    serve,
+    smoke_test,
+)
 from src.cli.main import main
 
 _init_db = runtime.init_db
@@ -55,6 +64,10 @@ def cmd_account(args: argparse.Namespace) -> None:
 
 def cmd_scheduler(args: argparse.Namespace) -> None:
     _run_with_legacy_runtime(scheduler.run, args)
+
+
+def cmd_smoke_test(args: argparse.Namespace) -> None:
+    _run_with_legacy_runtime(smoke_test.run, args)
 
 
 if __name__ == "__main__":

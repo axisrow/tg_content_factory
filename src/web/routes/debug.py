@@ -10,7 +10,8 @@ router = APIRouter()
 
 @router.get("/", response_class=HTMLResponse)
 async def debug_page(request: Request):
-    records = deps.get_log_buffer(request).get_records()
+    log_buffer = deps.get_log_buffer(request)
+    records = log_buffer.get_records() if log_buffer is not None else []
     return deps.get_templates(request).TemplateResponse(
         request, "debug.html", {"records": records}
     )
@@ -18,7 +19,8 @@ async def debug_page(request: Request):
 
 @router.get("/logs", response_class=HTMLResponse)
 async def debug_logs_partial(request: Request):
-    records = deps.get_log_buffer(request).get_records()
+    log_buffer = deps.get_log_buffer(request)
+    records = log_buffer.get_records() if log_buffer is not None else []
     return deps.get_templates(request).TemplateResponse(
         request, "_debug_logs.html", {"records": records}
     )

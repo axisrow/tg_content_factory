@@ -43,15 +43,15 @@ class AppContainer:
     auth: TelegramAuth
     pool: ClientPool
     notification_target_service: NotificationTargetService
-    notifier: Notifier
+    notifier: Notifier | None
     collector: Collector
-    collection_queue: CollectionQueue
-    stats_dispatcher: StatsTaskDispatcher
+    collection_queue: CollectionQueue | None
+    stats_dispatcher: StatsTaskDispatcher | None
     search_engine: SearchEngine
     ai_search: AISearchEngine
     scheduler: SchedulerManager
     templates: Jinja2Templates
-    log_buffer: LogBuffer
+    log_buffer: LogBuffer | None
     session_secret: str
     bg_tasks: set[asyncio.Task]
     shutting_down: bool = False

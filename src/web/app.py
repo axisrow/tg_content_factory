@@ -10,8 +10,13 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
 
 from src.config import AppConfig, load_config
-from src.web.assembly import build_log_buffer, configure_app, register_builtin_endpoints, register_routes
-from src.web.bootstrap import build_container, stop_container, start_container
+from src.web.assembly import (
+    build_log_buffer,
+    configure_app,
+    register_builtin_endpoints,
+    register_routes,
+)
+from src.web.bootstrap import build_container, start_container, stop_container
 from src.web.csrf import OriginCSRFMiddleware, is_secure_request
 from src.web.session import (
     COOKIE_MAX_AGE,

@@ -4,9 +4,9 @@ import logging
 from pathlib import Path
 
 from fastapi import FastAPI, Request
-from fastapi.templating import Jinja2Templates
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
 from starlette.responses import Response
 
 from src.web.container import AppContainer
@@ -21,6 +21,16 @@ def configure_app(app: FastAPI, container: AppContainer | None) -> None:
     if container is not None:
         app.state.container = container
         app.state.templates = container.templates
+        # Expose frequently accessed attributes for backward compat with
+        # code that reads app.state.<attr> directly (routes, tests).
+        app.state.db = container.db
+        app.state.auth = container.auth
+        app.state.pool = container.pool
+        app.state.collector = container.collector
+        app.state.search_engine = container.search_engine
+        app.state.ai_search = container.ai_search
+        app.state.scheduler = container.scheduler
+        app.state.session_secret = container.session_secret
     elif not hasattr(app.state, "templates"):
         app.state.templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
     if STATIC_DIR.exists():
