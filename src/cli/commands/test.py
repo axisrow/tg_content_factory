@@ -276,7 +276,8 @@ async def _run_write_checks(config_path: str) -> list[CheckResult]:
     try:
         if tmp_path:
             os.unlink(tmp_path)
-            assert not os.path.exists(tmp_path)
+            if os.path.exists(tmp_path):
+                raise RuntimeError(f"Temp file still exists after unlink: {tmp_path}")
         results.append(CheckResult("write_cleanup", Status.PASS, "Temp DB removed"))
     except Exception as exc:
         results.append(CheckResult("write_cleanup", Status.FAIL, str(exc)))
