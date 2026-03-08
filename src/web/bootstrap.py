@@ -16,6 +16,7 @@ from src.database.bundles import (
     NotificationBundle,
     SchedulerBundle,
     SearchBundle,
+    SearchQueryBundle,
 )
 from src.scheduler.manager import SchedulerManager
 from src.search.ai_search import AISearchEngine
@@ -107,11 +108,13 @@ async def build_container_with_templates(
     stats_dispatcher = StatsTaskDispatcher(collector, channel_bundle, default_batch_size=20)
     search_engine = SearchEngine(search_bundle, pool)
     ai_search = AISearchEngine(config.llm, search_bundle)
+    search_query_bundle = SearchQueryBundle(repos.search_queries, repos.messages)
     scheduler = SchedulerManager(
         collector,
         config.scheduler,
         scheduler_bundle=scheduler_bundle,
         search_engine=search_engine,
+        search_query_bundle=search_query_bundle,
     )
 
     return AppContainer(
@@ -124,6 +127,7 @@ async def build_container_with_templates(
         notification_bundle=notification_bundle,
         search_bundle=search_bundle,
         scheduler_bundle=scheduler_bundle,
+        search_query_bundle=search_query_bundle,
         auth=auth,
         pool=pool,
         notification_target_service=notification_target_service,
