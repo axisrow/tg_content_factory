@@ -27,8 +27,8 @@ class _LegacySchedulerBundle:
     async def get_setting(self, key: str) -> str | None:
         return await self._store.get_setting(key)
 
-    async def list_keywords(self, active_only: bool = False):
-        return await self._store.get_keywords(active_only=active_only)
+    async def list_notification_queries(self, active_only: bool = True):
+        return await self._store.get_notification_queries(active_only=active_only)
 
 
 class SchedulerManager:
@@ -53,7 +53,7 @@ class SchedulerManager:
         self._sq_bundle = search_query_bundle
         self._scheduler: AsyncIOScheduler | None = None
         self._job_id = "collect_all"
-        self._search_job_id = "keyword_search"
+        self._search_job_id = "notification_search"
         self._last_run: datetime | None = None
         self._last_stats: dict | None = None
         self._last_search_run: datetime | None = None
@@ -124,7 +124,7 @@ class SchedulerManager:
                 replace_existing=True,
             )
             logger.info(
-                "Keyword search job added: every %d minutes",
+                "Notification search job added: every %d minutes",
                 self._config.search_interval_minutes,
             )
 
@@ -176,11 +176,11 @@ class SchedulerManager:
         self._bg_task = asyncio.create_task(self._run_collection())
 
     async def trigger_search_now(self) -> dict:
-        """Trigger immediate keyword search."""
+        """Trigger immediate notification query search."""
         return await self._run_keyword_search()
 
     async def trigger_search_background(self) -> None:
-        """Fire-and-forget keyword search run."""
+        """Fire-and-forget notification query search run."""
         if self._search_bg_task and not self._search_bg_task.done():
             return
         self._search_bg_task = asyncio.create_task(self._run_keyword_search())
@@ -197,49 +197,55 @@ class SchedulerManager:
         return stats
 
     async def _run_keyword_search(self) -> dict:
-        """Search by active keywords using search_telegram, respecting quotas."""
-        if not self._search_engine:
-            return {"keywords": 0, "results": 0, "errors": 0}
+        """Search Telegram API by notification queries (premium global search).
 
-        logger.info("Starting scheduled keyword search")
-        keywords = await self._scheduler_bundle.list_keywords(active_only=True)
+        This complements the local text/regex matching in Collector._check_notification_queries
+        which runs at collection time. This method uses SearchEngine.search_telegram (Telegram's
+        premium global search API) to discover messages across channels not yet collected.
+        """
+        if not self._search_engine:
+            return {"queries": 0, "results": 0, "errors": 0}
+
+        logger.info("Starting scheduled notification query search")
+        queries = await self._scheduler_bundle.list_notification_queries(active_only=True)
         total_results = 0
         searched = 0
         errors = 0
 
-        for kw in keywords:
-            pattern = kw.pattern
+        for sq in queries:
+            query = sq.query
             try:
-                quota = await self._search_engine.check_search_quota(pattern)
+                quota = await self._search_engine.check_search_quota(query)
                 if quota and quota.get("remains") == 0 and not quota.get("query_is_free"):
-                    logger.info("Search quota exhausted, stopping keyword search")
+                    logger.info("Search quota exhausted, stopping notification search")
                     break
 
-                result = await self._search_engine.search_telegram(pattern, limit=50)
+                result = await self._search_engine.search_telegram(query, limit=50)
                 if result.error:
-                    logger.warning("Search for '%s' returned error: %s", pattern, result.error)
+                    logger.warning("Search for '%s' returned error: %s", query, result.error)
                     errors += 1
                 else:
                     total_results += result.total
                     searched += 1
                     logger.info(
-                        "Keyword '%s': found %d messages", pattern, result.total
+                        "Query '%s': found %d messages", query, result.total
                     )
             except Exception:
-                logger.exception("Error searching keyword '%s'", pattern)
+                logger.exception("Error searching query '%s'", query)
                 errors += 1
 
-        stats = {"keywords": searched, "results": total_results, "errors": errors}
+        stats = {"queries": searched, "results": total_results, "errors": errors}
         self._last_search_run = datetime.now(timezone.utc)
         self._last_search_stats = stats
-        logger.info("Keyword search complete: %s", stats)
+        logger.info("Notification query search complete: %s", stats)
         return stats
 
     async def sync_search_query_jobs(self) -> None:
         if not self._sq_bundle or not self._scheduler:
             return
 
-        active_queries = await self._sq_bundle.get_all(active_only=True)
+        all_active = await self._sq_bundle.get_all(active_only=True)
+        active_queries = [sq for sq in all_active if sq.track_stats]
         active_ids = {f"sq_{sq.id}" for sq in active_queries}
 
         existing_jobs = self._scheduler.get_all_jobs()

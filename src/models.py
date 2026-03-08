@@ -55,13 +55,6 @@ class Message(BaseModel):
     channel_username: str | None = None
 
 
-class Keyword(BaseModel):
-    id: int | None = None
-    pattern: str
-    is_regex: bool = False
-    is_active: bool = True
-
-
 class CollectionTaskStatus(StrEnum):
     PENDING = "pending"
     RUNNING = "running"
@@ -126,7 +119,10 @@ class SearchQuery(BaseModel):
     id: int | None = None
     name: str
     query: str
+    is_regex: bool = False
     is_active: bool = True
+    notify_on_collect: bool = False
+    track_stats: bool = True
     interval_minutes: int = Field(60, ge=1)
     created_at: datetime | None = None
 

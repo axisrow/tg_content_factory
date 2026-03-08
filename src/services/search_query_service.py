@@ -15,8 +15,24 @@ class SearchQueryService:
             bundle = SearchQueryBundle.from_database(bundle)
         self._bundle = bundle
 
-    async def add(self, name: str, query: str, interval_minutes: int = 60) -> int:
-        sq = SearchQuery(name=name, query=query, interval_minutes=interval_minutes)
+    async def add(
+        self,
+        name: str,
+        query: str,
+        interval_minutes: int = 60,
+        *,
+        is_regex: bool = False,
+        notify_on_collect: bool = False,
+        track_stats: bool = True,
+    ) -> int:
+        sq = SearchQuery(
+            name=name,
+            query=query,
+            interval_minutes=interval_minutes,
+            is_regex=is_regex,
+            notify_on_collect=notify_on_collect,
+            track_stats=track_stats,
+        )
         return await self._bundle.add(sq)
 
     async def list(self, active_only: bool = False) -> list[SearchQuery]:
@@ -38,7 +54,8 @@ class SearchQueryService:
         if not sq:
             return 0
         count = await self._bundle.count_fts_matches(sq.query)
-        await self._bundle.record_stat(sq_id, count)
+        if sq.track_stats:
+            await self._bundle.record_stat(sq_id, count)
         logger.info("Search query '%s' (id=%d): %d matches", sq.name, sq_id, count)
         return count
 

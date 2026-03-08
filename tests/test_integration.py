@@ -17,7 +17,7 @@ from httpx import ASGITransport, AsyncClient
 from src.cli.runtime import init_pool
 from src.config import AppConfig, SchedulerConfig, load_config
 from src.database import Database
-from src.models import Account, Channel, Keyword, Message
+from src.models import Account, Channel, Message, SearchQuery
 from src.scheduler.manager import SchedulerManager
 from src.search.ai_search import AISearchEngine
 from src.search.engine import SearchEngine
@@ -170,7 +170,7 @@ class TestAuthFlow:
     async def test_all_protected_pages_require_auth(self, noauth_client):
         for path in [
             "/settings/", "/channels/", "/dashboard/",
-            "/scheduler/", "/keywords/", "/my-telegram/", "/debug/",
+            "/scheduler/", "/search-queries/", "/my-telegram/", "/debug/",
         ]:
             resp = await noauth_client.get(path, follow_redirects=False)
             assert resp.status_code == 401, f"{path} should require auth"
@@ -246,51 +246,65 @@ class TestChannelCRUD:
         assert "Visible Channel" in resp.text
 
 
-class TestKeywordCRUD:
-    """Add keyword → list → delete."""
+class TestSearchQueryCRUD:
+    """Add search query → list → delete."""
 
     @pytest.mark.asyncio
-    async def test_add_plain_keyword(self, auth_client, test_db):
+    async def test_add_plain_query(self, auth_client, test_db):
         resp = await auth_client.post(
-            "/keywords/add",
-            data={"pattern": "bitcoin", "is_regex": ""},
+            "/search-queries/add",
+            data={
+                "name": "bitcoin",
+                "query": "bitcoin",
+                "interval_minutes": "60",
+                "track_stats": "true",
+            },
         )
         assert resp.status_code == 200
 
-        keywords = await test_db.get_keywords()
-        assert len(keywords) == 1
-        assert keywords[0].pattern == "bitcoin"
-        assert keywords[0].is_regex is False
+        repo = test_db.repos.search_queries
+        queries = await repo.get_all()
+        assert len(queries) == 1
+        assert queries[0].query == "bitcoin"
+        assert queries[0].is_regex is False
 
     @pytest.mark.asyncio
-    async def test_add_regex_keyword(self, auth_client, test_db):
+    async def test_add_regex_query(self, auth_client, test_db):
         resp = await auth_client.post(
-            "/keywords/add",
-            data={"pattern": r"BTC|ETH", "is_regex": "on"},
+            "/search-queries/add",
+            data={
+                "name": "crypto",
+                "query": r"BTC|ETH",
+                "interval_minutes": "60",
+                "is_regex": "true",
+                "track_stats": "true",
+            },
         )
         assert resp.status_code == 200
 
-        keywords = await test_db.get_keywords()
-        assert len(keywords) == 1
-        assert keywords[0].is_regex is True
+        repo = test_db.repos.search_queries
+        queries = await repo.get_all()
+        assert len(queries) == 1
+        assert queries[0].is_regex is True
 
     @pytest.mark.asyncio
-    async def test_delete_keyword(self, auth_client, test_db):
-        kw = Keyword(pattern="delete_me")
-        kid = await test_db.add_keyword(kw)
+    async def test_delete_query(self, auth_client, test_db):
+        repo = test_db.repos.search_queries
+        sq = SearchQuery(name="delete_me", query="delete_me")
+        sq_id = await repo.add(sq)
 
-        resp = await auth_client.post(f"/keywords/{kid}/delete")
+        resp = await auth_client.post(f"/search-queries/{sq_id}/delete")
         assert resp.status_code == 200
 
-        keywords = await test_db.get_keywords()
-        assert len(keywords) == 0
+        queries = await repo.get_all()
+        assert len(queries) == 0
 
     @pytest.mark.asyncio
-    async def test_keyword_appears_on_keywords_page(self, auth_client, test_db):
-        kw = Keyword(pattern="ethereum")
-        await test_db.add_keyword(kw)
+    async def test_query_appears_on_page(self, auth_client, test_db):
+        repo = test_db.repos.search_queries
+        await repo.add(SearchQuery(name="ethereum", query="ethereum"))
 
-        resp = await auth_client.get("/keywords/")
+        resp = await auth_client.get("/search-queries/")
         assert "ethereum" in resp.text
 
 
@@ -658,13 +672,15 @@ class TestFloodWaitRotation:
         client2.get_entity.assert_awaited()
 
 
-class TestKeywordRegexMatch:
-    """Regex patterns match correctly during collection check."""
+class TestNotificationQueryMatch:
+    """Notification query patterns match correctly during collection check."""
 
     @pytest.mark.asyncio
-    async def test_plain_keyword_case_insensitive(self, test_db):
-        kw = Keyword(pattern="bitcoin", is_regex=False, is_active=True)
-        await test_db.add_keyword(kw)
+    async def test_plain_query_case_insensitive(self, test_db):
+        repo = test_db.repos.search_queries
+        await repo.add(SearchQuery(
+            name="bitcoin", query="bitcoin", notify_on_collect=True,
+        ))
 
         notifier = AsyncMock()
         notifier.notify = AsyncMock()
@@ -687,15 +703,20 @@ class TestKeywordRegexMatch:
                 date=datetime.now(timezone.utc),
             ),
         ]
-        await collector._check_keywords(msgs)
+        await collector._check_notification_queries(msgs)
 
-        # Should notify once (only BITCOIN matches)
+        # Batched: one notification per query per run
         assert notifier.notify.await_count == 1
+        call_text = notifier.notify.call_args[0][0]
+        assert "BITCOIN" in call_text
 
     @pytest.mark.asyncio
-    async def test_regex_keyword_matches(self, test_db):
-        kw = Keyword(pattern=r"\b(BTC|ETH)\b", is_regex=True, is_active=True)
-        await test_db.add_keyword(kw)
+    async def test_regex_query_matches(self, test_db):
+        repo = test_db.repos.search_queries
+        await repo.add(SearchQuery(
+            name="crypto", query=r"\b(BTC|ETH)\b",
+            is_regex=True, notify_on_collect=True,
+        ))
 
         notifier = AsyncMock()
         notifier.notify = AsyncMock()
@@ -724,15 +745,20 @@ class TestKeywordRegexMatch:
                 date=datetime.now(timezone.utc),
             ),
         ]
-        await collector._check_keywords(msgs)
+        await collector._check_notification_queries(msgs)
 
-        # BTC + ETH = 2 notifications
-        assert notifier.notify.await_count == 2
+        # Batched: one notification per query (2 matches → single notification with count)
+        assert notifier.notify.await_count == 1
+        call_text = notifier.notify.call_args[0][0]
+        assert "2 times" in call_text
 
     @pytest.mark.asyncio
     async def test_invalid_regex_does_not_crash(self, test_db):
-        kw = Keyword(pattern=r"[invalid(", is_regex=True, is_active=True)
-        await test_db.add_keyword(kw)
+        repo = test_db.repos.search_queries
+        await repo.add(SearchQuery(
+            name="bad", query=r"[invalid(",
+            is_regex=True, notify_on_collect=True,
+        ))
 
         notifier = AsyncMock()
         notifier.notify = AsyncMock()
@@ -749,8 +775,7 @@ class TestKeywordRegexMatch:
                 date=datetime.now(timezone.utc),
             ),
         ]
-        # Should not raise
-        await collector._check_keywords(msgs)
+        await collector._check_notification_queries(msgs)
         assert notifier.notify.await_count == 0
 
 

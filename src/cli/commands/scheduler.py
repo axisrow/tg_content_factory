@@ -46,7 +46,7 @@ def run(args: argparse.Namespace) -> None:
                     collector, config.scheduler, search_engine=search_engine, db=db
                 )
                 stats = await manager.trigger_search_now()
-                print(f"Keyword search complete: {stats}")
+                print(f"Notification query search complete: {stats}")
         finally:
             await pool.disconnect_all()
             await db.close()

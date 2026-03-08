@@ -201,7 +201,7 @@ class MessagesRepository:
             "accounts": "SELECT COUNT(*) as cnt FROM accounts",
             "channels": "SELECT COUNT(*) as cnt FROM channels",
             "messages": "SELECT COUNT(*) as cnt FROM messages",
-            "keywords": "SELECT COUNT(*) as cnt FROM keywords",
+            "search_queries": "SELECT COUNT(*) as cnt FROM search_queries",
         }
         for table, sql in queries.items():
             cur = await self._db.execute(sql)

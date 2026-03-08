@@ -253,7 +253,7 @@ class Collector:
         stop_due_to_persistence_error = False
 
         is_first_run = channel.last_collected_id == 0
-        should_notify_keywords = self._notifier is not None and not is_first_run
+        should_notify = self._notifier is not None and not is_first_run
         limit = None  # first_run: все; incremental: все новые (диапазон ограничен min_id)
         logger.info(
             "Collecting channel %d (%s), first_run=%s, min_id=%d, limit=%s",
@@ -517,8 +517,8 @@ class Collector:
                     )
             return len(all_messages)
 
-        if should_notify_keywords and all_messages:
-            await self._check_keywords(all_messages)
+        if should_notify and all_messages:
+            await self._check_notification_queries(all_messages)
 
         if is_first_run and not force and len(all_messages) >= 50:
             cur = await self._db.execute(
@@ -553,33 +553,51 @@ class Collector:
                 prefixes.append(msg.text[:100])
         return prefixes
 
-    async def _check_keywords(self, messages: list[Message]) -> None:
-        """Check messages against active keywords and notify."""
+    async def _check_notification_queries(self, messages: list[Message]) -> None:
+        """Check messages against active notification queries and send batched notifications.
+
+        Sends one notification per query per collection run with a count and
+        a preview of the first matching message to avoid flooding.
+        """
         if not self._notifier:
             return
 
-        keywords = await self._db.get_keywords(active_only=True)
-        if not keywords:
+        queries = await self._db.get_notification_queries(active_only=True)
+        if not queries:
             return
 
+        # Collect matches per query: {sq_id: (sq, count, first_preview)}
+        matches: dict[int, tuple[str, int, str]] = {}
         for msg in messages:
             if not msg.text:
                 continue
-            for kw in keywords:
+            for sq in queries:
                 matched = False
-                if kw.is_regex:
+                if sq.is_regex:
                     try:
-                        matched = bool(re.search(kw.pattern, msg.text, re.IGNORECASE))
+                        matched = bool(re.search(sq.query, msg.text, re.IGNORECASE))
                     except re.error:
                         pass
                 else:
-                    matched = kw.pattern.lower() in msg.text.lower()
+                    matched = sq.query.lower() in msg.text.lower()
 
                 if matched:
-                    await self._notifier.notify(
-                        f"Keyword '{kw.pattern}' found in channel {msg.channel_id}:\n"
-                        f"{msg.text[:200]}"
-                    )
+                    key = sq.id or id(sq)
+                    if key in matches:
+                        name, count, preview = matches[key]
+                        matches[key] = (name, count + 1, preview)
+                    else:
+                        matches[key] = (sq.name, 1, msg.text[:200])
+
+        for _sq_id, (name, count, preview) in matches.items():
+            if count == 1:
+                await self._notifier.notify(
+                    f"Query '{name}' matched in channel:\n{preview}"
+                )
+            else:
+                await self._notifier.notify(
+                    f"Query '{name}' matched {count} times. First:\n{preview}"
+                )
 
     async def _channel_still_exists(self, channel_id: int) -> bool:
         return await self._db.get_channel_by_channel_id(channel_id) is not None
