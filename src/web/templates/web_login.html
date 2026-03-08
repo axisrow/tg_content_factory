@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="ru" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Вход — TG Post Search</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <main class="container" style="max-width: 28rem; min-height: 100vh; display: grid; align-items: center;">
+        <article>
+            <header>Вход в веб-панель</header>
+            <p>Введите пароль из <code>WEB_PASS</code>, чтобы открыть TG Post Search.</p>
+
+            {% if error %}
+            <div class="flash-error" role="alert">{{ error }}</div>
+            {% endif %}
+
+            <form method="post" action="/login">
+                <input type="hidden" name="next" value="{{ next }}">
+                <label for="password">Пароль</label>
+                <input
+                    type="password"
+                    id="password"
+                    name="password"
+                    autocomplete="current-password"
+                    required
+                    autofocus
+                >
+                <button type="submit">Войти</button>
+            </form>
+        </article>
+    </main>
+</body>
+</html>
