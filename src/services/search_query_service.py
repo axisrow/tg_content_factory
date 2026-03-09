@@ -103,12 +103,11 @@ class SearchQueryService:
     ) -> list[dict]:
         queries = await self._bundle.get_all()
         last_runs = await self._bundle.get_last_recorded_at_all()
+        tracked = [sq for sq in queries if sq.track_stats]
+        stats_map = await self._bundle.get_fts_daily_stats_batch(tracked, days)
         result = []
         for sq in queries:
-            if sq.track_stats:
-                daily = await self._bundle.get_fts_daily_stats_for_query(sq, days)
-            else:
-                daily = []
+            daily = stats_map.get(sq.id, [])
             total = sum(s.count for s in daily)
             result.append({
                 "query": sq,
