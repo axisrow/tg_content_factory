@@ -11,39 +11,39 @@
     <form method="post" action="/search-queries/add">
         <div class="grid">
             <label>
-                Запрос
+                Запрос <span class="hint" data-tooltip="Текст для поиска в собранных сообщениях. Поддерживает обычный текст, regex и FTS5-синтаксис">?</span>
                 <input type="text" name="query" required placeholder="аренда квартир">
             </label>
             <label>
-                Интервал (мин)
+                Интервал (мин) <span class="hint" data-tooltip="Как часто запускать поиск по новым сообщениям (минимум 5 минут)">?</span>
                 <input type="number" name="interval_minutes" value="60" min="5">
             </label>
         </div>
         <fieldset>
             <label>
                 <input type="checkbox" name="is_regex" value="true" id="add-is-regex" onchange="if(this.checked) document.getElementById('add-is-fts').checked=false">
-                Regex
+                Regex <span class="hint" data-tooltip="Интерпретировать запрос как регулярное выражение (re.IGNORECASE)">?</span>
             </label>
             <label>
                 <input type="checkbox" name="is_fts" value="true" id="add-is-fts" onchange="if(this.checked) document.getElementById('add-is-regex').checked=false">
-                FTS5
+                FTS5 <span class="hint" data-tooltip="Полнотекстовый поиск с поддержкой операторов: OR, AND, NOT, префикс*, «точная фраза»">?</span>
             </label>
             <label>
                 <input type="checkbox" name="notify_on_collect" value="true">
-                Уведомлять при сборе
+                Уведомлять при сборе <span class="hint" data-tooltip="Отправлять уведомление в Telegram при каждом обнаружении новых совпадений">?</span>
             </label>
             <label>
                 <input type="checkbox" name="track_stats" value="true" checked>
-                Отслеживать статистику
+                Отслеживать статистику <span class="hint" data-tooltip="Считать совпадения и строить график по дням. Отключите, если запрос нужен только для уведомлений">?</span>
             </label>
         </fieldset>
         <div class="grid">
             <label>
-                Исключения
+                Исключения <span class="hint" data-tooltip="Сообщения, содержащие любую из этих строк, будут пропущены (без учёта регистра)">?</span>
                 <textarea name="exclude_patterns" rows="2" placeholder="по одному на строку"></textarea>
             </label>
             <label>
-                Макс. длина текста
+                Макс. длина текста <span class="hint" data-tooltip="Пропускать сообщения длиннее указанного числа символов. Полезно для фильтрации спама и копипасты">?</span>
                 <input type="number" name="max_length" min="1" placeholder="без ограничения">
             </label>
         </div>
@@ -79,8 +79,12 @@
             <td>{{ item.total_30d }}</td>
             <td>{{ item.last_run[:16] if item.last_run else "—" }}</td>
             <td>
-                <a href="/?q={{ sq.query|urlencode }}{% if sq.is_fts %}&is_fts=1{% endif %}"
+                {% if sq.is_regex %}
+                <span class="secondary outline emoji-btn" style="opacity:.4;cursor:default" data-tooltip="Regex-запросы нельзя открыть в поиске">🔍</span>
+                {% else %}
+                <a href="/?q={{ sq.query|urlencode }}{% if sq.is_fts %}&is_fts=1{% endif %}{% if sq.max_length %}&msg_length_op=lt&msg_length_val={{ sq.max_length }}{% endif %}"
                    class="secondary outline emoji-btn" role="button" data-tooltip="Найти посты">🔍</a>
+                {% endif %}
                 <button type="button" class="secondary outline emoji-btn" data-tooltip="Редактировать" onclick="toggleEdit({{ sq.id }})">✏️</button>
                 <form method="post" action="/search-queries/{{ sq.id }}/run" style="display:inline">
                     <button type="submit" class="secondary outline emoji-btn" data-tooltip="Запустить сейчас">▶️</button>
@@ -100,39 +104,39 @@
                 <form method="post" action="/search-queries/{{ sq.id }}/edit">
                     <div class="grid">
                         <label>
-                            Запрос
+                            Запрос <span class="hint" data-tooltip="Текст для поиска в собранных сообщениях. Поддерживает обычный текст, regex и FTS5-синтаксис">?</span>
                             <input type="text" name="query" value="{{ sq.query }}" required>
                         </label>
                         <label>
-                            Интервал (мин)
+                            Интервал (мин) <span class="hint" data-tooltip="Как часто запускать поиск по новым сообщениям (минимум 5 минут)">?</span>
                             <input type="number" name="interval_minutes" value="{{ sq.interval_minutes }}" min="5">
                         </label>
                     </div>
                     <fieldset>
                         <label>
                             <input type="checkbox" name="is_regex" value="true" {{ "checked" if sq.is_regex }} id="edit-is-regex-{{ sq.id }}" onchange="if(this.checked) document.getElementById('edit-is-fts-{{ sq.id }}').checked=false">
-                            Regex
+                            Regex <span class="hint" data-tooltip="Интерпретировать запрос как регулярное выражение (re.IGNORECASE)">?</span>
                         </label>
                         <label>
                             <input type="checkbox" name="is_fts" value="true" {{ "checked" if sq.is_fts }} id="edit-is-fts-{{ sq.id }}" onchange="if(this.checked) document.getElementById('edit-is-regex-{{ sq.id }}').checked=false">
-                            FTS5
+                            FTS5 <span class="hint" data-tooltip="Полнотекстовый поиск с поддержкой операторов: OR, AND, NOT, префикс*, «точная фраза»">?</span>
                         </label>
                         <label>
                             <input type="checkbox" name="notify_on_collect" value="true" {{ "checked" if sq.notify_on_collect }}>
-                            Уведомлять при сборе
+                            Уведомлять при сборе <span class="hint" data-tooltip="Отправлять уведомление в Telegram при каждом обнаружении новых совпадений">?</span>
                         </label>
                         <label>
                             <input type="checkbox" name="track_stats" value="true" {{ "checked" if sq.track_stats }}>
-                            Отслеживать статистику
+                            Отслеживать статистику <span class="hint" data-tooltip="Считать совпадения и строить график по дням. Отключите, если запрос нужен только для уведомлений">?</span>
                         </label>
                     </fieldset>
                     <div class="grid">
                         <label>
-                            Исключения
+                            Исключения <span class="hint" data-tooltip="Сообщения, содержащие любую из этих строк, будут пропущены (без учёта регистра)">?</span>
                             <textarea name="exclude_patterns" rows="2" placeholder="по одному на строку">{{ sq.exclude_patterns }}</textarea>
                         </label>
                         <label>
-                            Макс. длина текста
+                            Макс. длина текста <span class="hint" data-tooltip="Пропускать сообщения длиннее указанного числа символов. Полезно для фильтрации спама и копипасты">?</span>
                             <input type="number" name="max_length" min="1" value="{{ sq.max_length or '' }}" placeholder="без ограничения">
                         </label>
                     </div>
@@ -141,7 +145,7 @@
                 </form>
             </td>
         </tr>
-        {% if item.daily_stats %}
+        {% if item.total_30d %}
         <tr>
             <td colspan="7">
                 <details>

@@ -177,6 +177,72 @@ form button[style*="padding"] {
     white-space: nowrap;
 }
 
+/* Tooltip hint icons */
+.hint {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.1em;
+    height: 1.1em;
+    border-radius: 50%;
+    background: var(--pico-muted-border-color);
+    color: var(--pico-muted-color);
+    font-size: 0.7em;
+    font-weight: 700;
+    cursor: help;
+    vertical-align: middle;
+    margin-left: 0.3em;
+    position: relative;
+}
+.hint::after {
+    content: attr(data-tooltip);
+    position: absolute;
+    bottom: calc(100% + 6px);
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--pico-tooltip-background-color, #1e293b);
+    color: var(--pico-tooltip-color, #fff);
+    font-size: 0.82rem;
+    font-weight: 400;
+    line-height: 1.35;
+    padding: 0.5em 0.7em;
+    border-radius: 0.35rem;
+    white-space: normal;
+    width: max-content;
+    max-width: 260px;
+    text-align: left;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.15s;
+    z-index: 99;
+}
+.hint::before {
+    content: "";
+    position: absolute;
+    bottom: calc(100% + 1px);
+    left: 50%;
+    transform: translateX(-50%);
+    border: 5px solid transparent;
+    border-top-color: var(--pico-tooltip-background-color, #1e293b);
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.15s;
+    z-index: 99;
+}
+.hint:hover::after,
+.hint:hover::before {
+    opacity: 1;
+}
+/* Keep tooltip within viewport for left-aligned labels */
+label:first-child .hint::after {
+    left: 0;
+    transform: none;
+}
+label:first-child .hint::before {
+    left: 0.5em;
+    transform: none;
+}
+
 .d-none { display: none !important; }
 
 @media (max-width: 576px) {

@@ -18,7 +18,9 @@ async def search_page(
     date_from: str = Query(""),
     date_to: str = Query(""),
     mode: str = Query("local"),
-    is_fts: str = Query(""),
+    is_fts: bool = Query(False),
+    msg_length_op: str = Query(""),
+    msg_length_val: int | None = Query(None),
     page: int = Query(1),
 ):
     # Onboarding: redirect if no accounts configured
@@ -40,6 +42,9 @@ async def search_page(
         except ValueError:
             channel_id_error = f"Некорректный ID канала: {channel_id}"
 
+    min_length = msg_length_val if msg_length_op == "gt" and msg_length_val is not None else None
+    max_length = msg_length_val if msg_length_op == "lt" and msg_length_val is not None else None
+
     service = deps.search_service(request)
     channels = await db.get_channels()
 
@@ -56,7 +61,9 @@ async def search_page(
                     date_from=date_from or None,
                     date_to=date_to or None,
                     offset=offset,
-                    is_fts=bool(is_fts),
+                    is_fts=is_fts,
+                    min_length=min_length,
+                    max_length=max_length,
                 )
             except Exception as exc:
                 logger.exception("Search request failed: mode=%s query=%r", mode, q)
@@ -90,6 +97,8 @@ async def search_page(
             "date_to": date_to,
             "mode": mode,
             "is_fts": is_fts,
+            "msg_length_op": msg_length_op,
+            "msg_length_val": msg_length_val or "",
             "page": page,
             "total_pages": total_pages,
             "ai_enabled": ai_enabled,
