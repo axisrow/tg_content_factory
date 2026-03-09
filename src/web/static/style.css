@@ -24,37 +24,39 @@ td, th {
 .channels-table {
     table-layout: fixed;
     width: 100%;
-    min-width: 900px;
+    min-width: 1050px;
 }
 
 .channels-table th { white-space: nowrap; }
 
 .channels-table th:nth-child(1),
-.channels-table td:nth-child(1) { width: 110px; }   /* ID канала */
+.channels-table td:nth-child(1) { width: 100px; }   /* ID канала */
 
 .channels-table th:nth-child(2),
-.channels-table td:nth-child(2) { width: 160px; }   /* Название */
+.channels-table td:nth-child(2) { width: 145px; }   /* Название */
 
 .channels-table th:nth-child(3),
-.channels-table td:nth-child(3) { width: 130px; }   /* Username */
+.channels-table td:nth-child(3) { width: 120px; }   /* Username */
 
 .channels-table th:nth-child(4),
-.channels-table td:nth-child(4) { width: 95px; }    /* Тип */
+.channels-table td:nth-child(4) { width: 90px; }    /* Тип */
 
 .channels-table th:nth-child(5),
-.channels-table td:nth-child(5) { width: 62px; }    /* Активен */
+.channels-table td:nth-child(5) { width: 60px; }    /* Статус */
 
 .channels-table th:nth-child(6),
-.channels-table td:nth-child(6) { width: 100px; }   /* Сообщений */
+.channels-table td:nth-child(6) { width: 90px; }    /* Сообщений */
 
 .channels-table th:nth-child(7),
-.channels-table td:nth-child(7) { width: 105px; }   /* Подписчики */
+.channels-table td:nth-child(7) { width: 95px; }    /* Подписчики */
 
 .channels-table th:nth-child(8),
-.channels-table td:nth-child(8) { width: 80px; }    /* Фильтр */
+.channels-table td:nth-child(8) { width: 70px; }    /* Фильтр */
 
 .channels-table th:nth-child(9),
-.channels-table td:nth-child(9) { width: 145px; }   /* Действия */
+.channels-table td:nth-child(9) { width: 195px; }   /* Действия */
+
+.channels-table td:nth-child(9) { white-space: nowrap; }
 
 .emoji-btn {
     padding: 0.35rem 0.5rem !important;
@@ -132,43 +134,50 @@ form button[style*="padding"] {
 .log-warning td { color: var(--pico-color-amber-550); }
 .log-debug td { opacity: 0.5; }
 
-.bar-chart {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    margin: 0.5rem 0;
+
+/* Search queries table */
+.sq-table {
+    table-layout: fixed;
+    width: 100%;
+    min-width: 900px;
 }
-.bar-row {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    font-size: 0.7rem;
+.sq-table th { white-space: nowrap; }
+
+/* Колонки: Запрос | Режим | Интервал | Активен | Всего(30д) | Посл.запуск | Действия */
+.sq-table th:nth-child(1),
+.sq-table td:nth-child(1) { width: 35%; }          /* Запрос */
+
+.sq-table th:nth-child(2),
+.sq-table td:nth-child(2) { width: 5%; }           /* Режим */
+
+.sq-table th:nth-child(3),
+.sq-table td:nth-child(3) { width: 8%; }           /* Интервал */
+
+.sq-table th:nth-child(4),
+.sq-table td:nth-child(4) { width: 7%; }           /* Активен */
+
+.sq-table th:nth-child(5),
+.sq-table td:nth-child(5) { width: 9%; }           /* Всего (30д) */
+
+.sq-table th:nth-child(6),
+.sq-table td:nth-child(6) { width: 13%; }          /* Посл. запуск */
+
+.sq-table th:nth-child(7),
+.sq-table td:nth-child(7) { width: 23%; }          /* Действия */
+
+/* Обрезка длинных запросов */
+.sq-table td:nth-child(1) {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
-.bar-row .bar-label {
-    width: 70px;
-    text-align: right;
-    flex-shrink: 0;
-    color: #6b7280;
+
+/* Кнопки действий в одну строку */
+.sq-table td:nth-child(7) {
+    white-space: nowrap;
 }
-.bar-row .bar-track {
-    flex: 1;
-    background: #f3f4f6;
-    border-radius: 3px;
-    height: 14px;
-    position: relative;
-}
-.bar-row .bar-fill {
-    background: #3b82f6;
-    height: 100%;
-    border-radius: 3px;
-    min-width: 1px;
-}
-.bar-row .bar-count {
-    width: 40px;
-    text-align: left;
-    flex-shrink: 0;
-    color: #374151;
-}
+
+.d-none { display: none !important; }
 
 @media (max-width: 576px) {
   nav.container > ul:first-child li strong {

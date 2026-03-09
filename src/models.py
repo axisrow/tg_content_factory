@@ -4,7 +4,7 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class Account(BaseModel):
@@ -117,14 +117,28 @@ class NotificationBot(BaseModel):
 
 class SearchQuery(BaseModel):
     id: int | None = None
-    name: str
     query: str
     is_regex: bool = False
+    is_fts: bool = False
     is_active: bool = True
     notify_on_collect: bool = False
     track_stats: bool = True
     interval_minutes: int = Field(60, ge=1)
+    exclude_patterns: str = ""
+    max_length: int | None = None
     created_at: datetime | None = None
+
+    @model_validator(mode="after")
+    def check_mode_exclusive(self) -> "SearchQuery":
+        if self.is_regex and self.is_fts:
+            raise ValueError("is_regex and is_fts are mutually exclusive")
+        return self
+
+    @property
+    def exclude_patterns_list(self) -> list[str]:
+        if not self.exclude_patterns:
+            return []
+        return [p.strip() for p in self.exclude_patterns.splitlines() if p.strip()]
 
 
 class SearchQueryDailyStat(BaseModel):

@@ -1573,3 +1573,40 @@ async def test_collect_stats_route_marks_task_failed(client):
     tasks = await db.get_collection_tasks()
     assert tasks[0].status == CollectionTaskStatus.FAILED
     assert tasks[0].error == "stats broken"
+
+
+@pytest.mark.asyncio
+async def test_edit_search_query_route(client):
+    # Add a search query first
+    resp = await client.post(
+        "/search-queries/add",
+        data={"query": "original", "interval_minutes": "60", "track_stats": "true"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+
+    db = client._transport.app.state.db
+    queries = await db.repos.search_queries.get_all()
+    assert len(queries) == 1
+    sq_id = queries[0].id
+
+    # Edit the query
+    resp = await client.post(
+        f"/search-queries/{sq_id}/edit",
+        data={
+            "query": "updated",
+            "interval_minutes": "30",
+            "is_regex": "true",
+            "notify_on_collect": "true",
+        },
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    assert "msg=sq_edited" in resp.headers["location"]
+
+    updated = await db.repos.search_queries.get_by_id(sq_id)
+    assert updated.query == "updated"
+    assert updated.interval_minutes == 30
+    assert updated.is_regex is True
+    assert updated.notify_on_collect is True
+    assert updated.track_stats is False

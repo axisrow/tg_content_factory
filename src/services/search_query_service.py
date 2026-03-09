@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import date as date_cls
 
 from src.database import Database
 from src.database.bundles import SearchQueryBundle
@@ -17,21 +18,25 @@ class SearchQueryService:
 
     async def add(
         self,
-        name: str,
         query: str,
         interval_minutes: int = 60,
         *,
         is_regex: bool = False,
+        is_fts: bool = False,
         notify_on_collect: bool = False,
         track_stats: bool = True,
+        exclude_patterns: str = "",
+        max_length: int | None = None,
     ) -> int:
         sq = SearchQuery(
-            name=name,
             query=query,
             interval_minutes=interval_minutes,
             is_regex=is_regex,
+            is_fts=is_fts,
             notify_on_collect=notify_on_collect,
             track_stats=track_stats,
+            exclude_patterns=exclude_patterns,
+            max_length=max_length,
         )
         return await self._bundle.add(sq)
 
@@ -46,6 +51,36 @@ class SearchQueryService:
         if sq:
             await self._bundle.set_active(sq_id, not sq.is_active)
 
+    async def update(
+        self,
+        sq_id: int,
+        query: str,
+        interval_minutes: int,
+        *,
+        is_regex: bool = False,
+        is_fts: bool = False,
+        notify_on_collect: bool = False,
+        track_stats: bool = True,
+        exclude_patterns: str = "",
+        max_length: int | None = None,
+    ) -> bool:
+        existing = await self._bundle.get_by_id(sq_id)
+        if not existing:
+            return False
+        sq = SearchQuery(
+            query=query,
+            interval_minutes=interval_minutes,
+            is_regex=is_regex,
+            is_fts=is_fts,
+            is_active=existing.is_active,
+            notify_on_collect=notify_on_collect,
+            track_stats=track_stats,
+            exclude_patterns=exclude_patterns,
+            max_length=max_length,
+        )
+        await self._bundle.update(sq_id, sq)
+        return True
+
     async def delete(self, sq_id: int) -> None:
         await self._bundle.delete(sq_id)
 
@@ -53,10 +88,12 @@ class SearchQueryService:
         sq = await self._bundle.get_by_id(sq_id)
         if not sq:
             return 0
-        count = await self._bundle.count_fts_matches(sq.query)
+        daily = await self._bundle.get_fts_daily_stats_for_query(sq, days=1)
+        today = date_cls.today().isoformat()
+        count = next((d.count for d in daily if d.day == today), 0)
         if sq.track_stats:
             await self._bundle.record_stat(sq_id, count)
-        logger.info("Search query '%s' (id=%d): %d matches", sq.name, sq_id, count)
+        logger.info("Search query '%s' (id=%d): %d matches today", sq.query, sq_id, count)
         return count
 
     async def get_daily_stats(
@@ -68,15 +105,17 @@ class SearchQueryService:
         self, days: int = 30
     ) -> list[dict]:
         queries = await self._bundle.get_all()
-        all_stats = await self._bundle.get_stats_for_all(days)
         last_runs = await self._bundle.get_last_recorded_at_all()
+        tracked = [sq for sq in queries if sq.track_stats]
+        stats_map = await self._bundle.get_fts_daily_stats_batch(tracked, days)
         result = []
         for sq in queries:
-            total = sum(s.count for s in all_stats.get(sq.id, []))
+            daily = stats_map.get(sq.id, [])
+            total = sum(s.count for s in daily)
             result.append({
                 "query": sq,
                 "total_30d": total,
                 "last_run": last_runs.get(sq.id),
-                "daily_stats": all_stats.get(sq.id, []),
+                "daily_stats": daily,
             })
         return result

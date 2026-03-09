@@ -101,10 +101,13 @@ CREATE TABLE IF NOT EXISTS search_queries (
     name             TEXT NOT NULL,
     query            TEXT NOT NULL,
     is_regex         INTEGER DEFAULT 0,
+    is_fts           INTEGER DEFAULT 0,
     is_active        INTEGER DEFAULT 1,
     notify_on_collect INTEGER DEFAULT 0,
     track_stats      INTEGER DEFAULT 1,
     interval_minutes INTEGER NOT NULL DEFAULT 60,
+    exclude_patterns TEXT DEFAULT '',
+    max_length       INTEGER DEFAULT NULL,
     created_at       TEXT DEFAULT (datetime('now'))
 );
 
