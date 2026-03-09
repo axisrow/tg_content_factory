@@ -27,6 +27,7 @@ class AgentManager:
     def __init__(self, db: Database) -> None:
         self._db = db
         self._server = None
+        self._active_tasks: set[asyncio.Task] = set()
 
     def initialize(self) -> None:
         from src.agent.tools import make_mcp_server
@@ -53,12 +54,14 @@ class AgentManager:
         history = await self._db.get_agent_messages(thread_id)
         prompt = self._build_prompt(history[:-1], message)
 
-        model = os.environ.get("AGENT_MODEL") or None
+        extra: dict = {}
+        if agent_model := os.environ.get("AGENT_MODEL"):
+            extra["model"] = agent_model
         options = ClaudeAgentOptions(
             system_prompt=_SYSTEM_PROMPT,
             mcp_servers={"telegram_db": self._server},
             allowed_tools=_ALLOWED_TOOLS,
-            model=model,
+            **extra,
         )
 
         queue: asyncio.Queue[str | None] = asyncio.Queue()
@@ -95,6 +98,8 @@ class AgentManager:
                 await queue.put(None)  # sentinel
 
         task = asyncio.create_task(_run_query())
+        self._active_tasks.add(task)
+        task.add_done_callback(self._active_tasks.discard)
         try:
             while True:
                 item = await queue.get()
@@ -107,4 +112,9 @@ class AgentManager:
                 await task
 
     async def close_all(self) -> None:
-        pass
+        tasks = list(self._active_tasks)
+        for t in tasks:
+            t.cancel()
+        for t in tasks:
+            with suppress(asyncio.CancelledError):
+                await t

@@ -429,6 +429,7 @@ class Database:
     # ── Agent chat ─────────────────────────────────────────────────────────────
 
     async def create_agent_thread(self, title: str = "Новый тред") -> int:
+        self._require()
         assert self._db is not None
         cur = await self._db.execute(
             "INSERT INTO agent_threads (title) VALUES (?)", (title,)
@@ -438,6 +439,7 @@ class Database:
         return cur.lastrowid
 
     async def get_agent_threads(self) -> list[dict]:
+        self._require()
         assert self._db is not None
         cur = await self._db.execute(
             "SELECT id, title, created_at FROM agent_threads ORDER BY created_at DESC"
@@ -446,6 +448,7 @@ class Database:
         return [dict(r) for r in rows]
 
     async def get_agent_thread(self, thread_id: int) -> dict | None:
+        self._require()
         assert self._db is not None
         cur = await self._db.execute(
             "SELECT id, title, created_at FROM agent_threads WHERE id = ?", (thread_id,)
@@ -454,6 +457,7 @@ class Database:
         return dict(row) if row else None
 
     async def rename_agent_thread(self, thread_id: int, title: str) -> None:
+        self._require()
         assert self._db is not None
         await self._db.execute(
             "UPDATE agent_threads SET title = ? WHERE id = ?", (title, thread_id)
@@ -461,11 +465,13 @@ class Database:
         await self._db.commit()
 
     async def delete_agent_thread(self, thread_id: int) -> None:
+        self._require()
         assert self._db is not None
         await self._db.execute("DELETE FROM agent_threads WHERE id = ?", (thread_id,))
         await self._db.commit()
 
     async def get_agent_messages(self, thread_id: int) -> list[dict]:
+        self._require()
         assert self._db is not None
         cur = await self._db.execute(
             "SELECT id, thread_id, role, content, created_at"
@@ -476,6 +482,7 @@ class Database:
         return [dict(r) for r in rows]
 
     async def save_agent_message(self, thread_id: int, role: str, content: str) -> None:
+        self._require()
         assert self._db is not None
         await self._db.execute(
             "INSERT INTO agent_messages (thread_id, role, content) VALUES (?, ?, ?)",
