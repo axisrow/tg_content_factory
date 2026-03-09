@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Отчёт фильтрации — TG Post Search{% endblock %}
+{% block title %}Отчёт фильтрации — TG Agent{% endblock %}
 {% block content %}
 <h1>Отчёт анализа каналов</h1>
 
@@ -45,7 +45,7 @@
                     } %}
                     {% for flag in r.flags %}
                         {% set label = flag_labels.get(flag, (flag, flag)) %}
-                        <span title="{{ label[1] }}" style="margin-right:0.25rem">{{ label[0] }}</span>
+                        <span data-tooltip="{{ label[1] }}" style="margin-right:0.25rem">{{ label[0] }}</span>
                     {% endfor %}
                 {% else %}
                     -

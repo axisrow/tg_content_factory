@@ -117,14 +117,22 @@ class NotificationBot(BaseModel):
 
 class SearchQuery(BaseModel):
     id: int | None = None
-    name: str
     query: str
     is_regex: bool = False
+    is_fts: bool = False
     is_active: bool = True
     notify_on_collect: bool = False
     track_stats: bool = True
     interval_minutes: int = Field(60, ge=1)
+    exclude_patterns: str = ""
+    max_length: int | None = None
     created_at: datetime | None = None
+
+    @property
+    def exclude_patterns_list(self) -> list[str]:
+        if not self.exclude_patterns:
+            return []
+        return [p.strip() for p in self.exclude_patterns.splitlines() if p.strip()]
 
 
 class SearchQueryDailyStat(BaseModel):

@@ -18,21 +18,25 @@ async def search_queries_page(request: Request):
 @router.post("/add")
 async def add_search_query(
     request: Request,
-    name: str = Form(...),
     query: str = Form(...),
     interval_minutes: int = Form(60),
     is_regex: bool = Form(False),
+    is_fts: bool = Form(False),
     notify_on_collect: bool = Form(False),
     track_stats: bool = Form(False),
+    exclude_patterns: str = Form(""),
+    max_length: int | None = Form(None),
 ):
     svc = deps.search_query_service(request)
     await svc.add(
-        name,
         query,
         interval_minutes,
         is_regex=is_regex,
+        is_fts=is_fts,
         notify_on_collect=notify_on_collect,
         track_stats=track_stats,
+        exclude_patterns=exclude_patterns,
+        max_length=max_length,
     )
     scheduler = deps.get_scheduler(request)
     if scheduler.is_running:
@@ -48,6 +52,37 @@ async def toggle_search_query(request: Request, sq_id: int):
     if scheduler.is_running:
         await scheduler.sync_search_query_jobs()
     return RedirectResponse(url="/search-queries?msg=sq_toggled", status_code=303)
+
+
+@router.post("/{sq_id}/edit")
+async def edit_search_query(
+    request: Request,
+    sq_id: int,
+    query: str = Form(...),
+    interval_minutes: int = Form(60),
+    is_regex: bool = Form(False),
+    is_fts: bool = Form(False),
+    notify_on_collect: bool = Form(False),
+    track_stats: bool = Form(False),
+    exclude_patterns: str = Form(""),
+    max_length: int | None = Form(None),
+):
+    svc = deps.search_query_service(request)
+    await svc.update(
+        sq_id,
+        query,
+        interval_minutes,
+        is_regex=is_regex,
+        is_fts=is_fts,
+        notify_on_collect=notify_on_collect,
+        track_stats=track_stats,
+        exclude_patterns=exclude_patterns,
+        max_length=max_length,
+    )
+    scheduler = deps.get_scheduler(request)
+    if scheduler.is_running:
+        await scheduler.sync_search_query_jobs()
+    return RedirectResponse(url="/search-queries?msg=sq_edited", status_code=303)
 
 
 @router.post("/{sq_id}/delete")

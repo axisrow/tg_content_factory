@@ -75,8 +75,28 @@ def build_parser() -> argparse.ArgumentParser:
 
     sq_add = sq_sub.add_parser("add", help="Add search query")
     sq_add.add_argument("query", help="FTS5 search query text")
-    sq_add.add_argument("--name", required=True, help="Query display name")
     sq_add.add_argument("--interval", type=int, default=60, help="Run interval in minutes")
+    sq_add.add_argument("--fts", action="store_true", help="Use FTS5 boolean syntax (no quoting)")
+    sq_add.add_argument(
+        "--exclude-patterns", default="", help="Exclude patterns, one per line (use \\n)"
+    )
+    sq_add.add_argument("--max-length", type=int, default=None, help="Max message text length")
+
+    sq_edit = sq_sub.add_parser("edit", help="Edit search query")
+    sq_edit.add_argument("id", type=int, help="Search query id")
+    sq_edit.add_argument("--query", help="New query text")
+    sq_edit.add_argument("--interval", type=int, help="New interval in minutes")
+    sq_edit.add_argument("--regex", action="store_true", default=None)
+    sq_edit.add_argument("--no-regex", dest="regex", action="store_false")
+    sq_edit.add_argument("--fts", action="store_true", default=None)
+    sq_edit.add_argument("--no-fts", dest="fts", action="store_false")
+    sq_edit.add_argument("--notify", action="store_true", default=None)
+    sq_edit.add_argument("--no-notify", dest="notify", action="store_false")
+    sq_edit.add_argument("--track-stats", action="store_true", default=None)
+    sq_edit.add_argument("--no-track-stats", dest="track_stats", action="store_false")
+    sq_edit.add_argument("--exclude-patterns", default=None, help="Exclude patterns (use \\n)")
+    sq_edit.add_argument("--max-length", type=int, default=None, help="Max message text length")
+    sq_edit.add_argument("--no-max-length", dest="max_length", action="store_const", const=None)
 
     sq_del = sq_sub.add_parser("delete", help="Delete search query")
     sq_del.add_argument("id", type=int, help="Search query id")

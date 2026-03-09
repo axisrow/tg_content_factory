@@ -6,7 +6,7 @@ from datetime import date, datetime, timedelta
 
 import aiosqlite
 
-from src.models import Message
+from src.models import Message, SearchQuery
 
 logger = logging.getLogger(__name__)
 _DATE_ONLY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -187,6 +187,91 @@ class MessagesRepository:
         )
         row = await cur.fetchone()
         return row["cnt"] if row else 0
+
+    async def get_fts_daily_stats(self, query: str, days: int = 30) -> list:
+        from src.models import SearchQueryDailyStat
+
+        fts_query = '"' + query.replace('"', '""') + '"'
+        cur = await self._db.execute(
+            """
+            SELECT date(m.date) AS day, COUNT(*) AS count
+            FROM messages m
+            INNER JOIN (SELECT rowid FROM messages_fts
+                        WHERE messages_fts MATCH ?) AS fts ON m.id = fts.rowid
+            LEFT JOIN channels c ON m.channel_id = c.channel_id
+            WHERE (c.is_filtered IS NULL OR c.is_filtered = 0)
+              AND m.date >= datetime('now', ?)
+            GROUP BY date(m.date)
+            ORDER BY day
+            """,
+            (fts_query, f"-{days} days"),
+        )
+        rows = await cur.fetchall()
+        return [SearchQueryDailyStat(day=r["day"], count=r["count"]) for r in rows]
+
+    @staticmethod
+    def _build_fts_match(query: str, is_fts: bool) -> str:
+        if is_fts:
+            return query
+        return '"' + query.replace('"', '""') + '"'
+
+    @staticmethod
+    def _build_extra_conditions(sq: SearchQuery) -> tuple[list[str], list]:
+        conditions: list[str] = []
+        params: list = []
+        if sq.max_length is not None:
+            conditions.append("LENGTH(m.text) < ?")
+            params.append(sq.max_length)
+        for pat in sq.exclude_patterns_list:
+            conditions.append("m.text NOT LIKE ?")
+            params.append(f"%{pat}%")
+        return conditions, params
+
+    async def count_fts_matches_for_query(self, sq: SearchQuery) -> int:
+        fts_query = self._build_fts_match(sq.query, sq.is_fts)
+        extra_conds, extra_params = self._build_extra_conditions(sq)
+        where_parts = ["(c.is_filtered IS NULL OR c.is_filtered = 0)"]
+        where_parts.extend(extra_conds)
+        where_clause = " AND ".join(where_parts)
+        cur = await self._db.execute(
+            f"SELECT COUNT(*) AS cnt FROM messages m"
+            f" INNER JOIN (SELECT rowid FROM messages_fts"
+            f" WHERE messages_fts MATCH ?) AS fts ON m.id = fts.rowid"
+            f" LEFT JOIN channels c ON m.channel_id = c.channel_id"
+            f" WHERE {where_clause}",
+            (fts_query, *extra_params),
+        )
+        row = await cur.fetchone()
+        return row["cnt"] if row else 0
+
+    async def get_fts_daily_stats_for_query(
+        self, sq: SearchQuery, days: int = 30
+    ) -> list:
+        from src.models import SearchQueryDailyStat
+
+        fts_query = self._build_fts_match(sq.query, sq.is_fts)
+        extra_conds, extra_params = self._build_extra_conditions(sq)
+        where_parts = [
+            "(c.is_filtered IS NULL OR c.is_filtered = 0)",
+            "m.date >= datetime('now', ?)",
+        ]
+        where_parts.extend(extra_conds)
+        where_clause = " AND ".join(where_parts)
+        cur = await self._db.execute(
+            f"""
+            SELECT date(m.date) AS day, COUNT(*) AS count
+            FROM messages m
+            INNER JOIN (SELECT rowid FROM messages_fts
+                        WHERE messages_fts MATCH ?) AS fts ON m.id = fts.rowid
+            LEFT JOIN channels c ON m.channel_id = c.channel_id
+            WHERE {where_clause}
+            GROUP BY date(m.date)
+            ORDER BY day
+            """,
+            (fts_query, f"-{days} days", *extra_params),
+        )
+        rows = await cur.fetchall()
+        return [SearchQueryDailyStat(day=r["day"], count=r["count"]) for r in rows]
 
     async def delete_messages_for_channel(self, channel_id: int) -> int:
         cur = await self._db.execute(

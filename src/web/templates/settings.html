@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Настройки — TG Post Search{% endblock %}
+{% block title %}Настройки — TG Agent{% endblock %}
 {% block content %}
 <h1>Настройки</h1>
 
@@ -35,12 +35,12 @@
                 <td>{{ acc.created_at.strftime('%Y-%m-%d') if acc.created_at else "—" }}</td>
                 <td>
                     <form method="post" action="/settings/{{ acc.id }}/toggle" style="display:inline">
-                        <button type="submit" class="secondary outline emoji-btn" title="{{ 'Отключить' if acc.is_active else 'Включить' }}">
+                        <button type="submit" class="secondary outline emoji-btn" data-tooltip="{{ 'Отключить' if acc.is_active else 'Включить' }}">
                             {{ "⏸️" if acc.is_active else "▶️" }}
                         </button>
                     </form>
                     <form method="post" action="/settings/{{ acc.id }}/delete" style="display:inline" onsubmit="return confirm('Вы уверены, что хотите удалить этот аккаунт?')">
-                        <button type="submit" class="contrast outline emoji-btn" title="Удалить">🗑️</button>
+                        <button type="submit" class="contrast outline emoji-btn" data-tooltip="Удалить">🗑️</button>
                     </form>
                 </td>
             </tr>

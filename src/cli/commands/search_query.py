@@ -19,23 +19,68 @@ def run(args: argparse.Namespace) -> None:
                 if not items:
                     print("No search queries found.")
                     return
-                fmt = "{:<5} {:<20} {:<30} {:<10} {:<10} {:<20}"
-                print(fmt.format("ID", "Name", "Query", "Interval", "Total30d", "Last run"))
-                print("-" * 100)
+                fmt = "{:<5} {:<40} {:<10} {:<10} {:<20}"
+                print(fmt.format("ID", "Query", "Interval", "Total30d", "Last run"))
+                print("-" * 90)
                 for item in items:
                     sq = item["query"]
                     print(fmt.format(
                         sq.id or 0,
-                        sq.name[:20],
-                        sq.query[:30],
+                        sq.query[:40],
                         f"{sq.interval_minutes}m",
                         item["total_30d"],
                         (item["last_run"] or "—")[:20],
                     ))
 
             elif args.search_query_action == "add":
-                sq_id = await svc.add(args.name, args.query, args.interval)
-                print(f"Added search query id={sq_id}: {args.name}")
+                exclude = (
+                    args.exclude_patterns.replace("\\n", "\n")
+                    if args.exclude_patterns else ""
+                )
+                sq_id = await svc.add(
+                    args.query,
+                    args.interval,
+                    is_fts=args.fts,
+                    exclude_patterns=exclude,
+                    max_length=args.max_length,
+                )
+                print(f"Added search query id={sq_id}: {args.query}")
+
+            elif args.search_query_action == "edit":
+                sq = await svc.get(args.id)
+                if not sq:
+                    print(f"Search query id={args.id} not found")
+                    return
+                notify = (
+                    args.notify if args.notify is not None
+                    else sq.notify_on_collect
+                )
+                tstats = (
+                    args.track_stats if args.track_stats is not None
+                    else sq.track_stats
+                )
+                is_fts = args.fts if args.fts is not None else sq.is_fts
+                exclude = (
+                    args.exclude_patterns.replace("\\n", "\n")
+                    if args.exclude_patterns is not None
+                    else sq.exclude_patterns
+                )
+                max_len = (
+                    args.max_length if args.max_length is not None
+                    else sq.max_length
+                )
+                await svc.update(
+                    args.id,
+                    args.query if args.query else sq.query,
+                    args.interval if args.interval else sq.interval_minutes,
+                    is_regex=args.regex if args.regex is not None else sq.is_regex,
+                    is_fts=is_fts,
+                    notify_on_collect=notify,
+                    track_stats=tstats,
+                    exclude_patterns=exclude,
+                    max_length=max_len,
+                )
+                print(f"Updated search query id={args.id}")
 
             elif args.search_query_action == "delete":
                 await svc.delete(args.id)

@@ -505,6 +505,9 @@ class SearchQueryBundle:
     async def set_active(self, sq_id: int, active: bool) -> None:
         await self.search_queries.set_active(sq_id, active)
 
+    async def update(self, sq_id: int, sq: SearchQuery) -> None:
+        await self.search_queries.update(sq_id, sq)
+
     async def delete(self, sq_id: int) -> None:
         await self.search_queries.delete(sq_id)
 
@@ -521,6 +524,19 @@ class SearchQueryBundle:
 
     async def get_stats_for_all(self, days: int = 30) -> dict[int, list[SearchQueryDailyStat]]:
         return await self.search_queries.get_stats_for_all(days)
+
+    async def get_fts_daily_stats(
+        self, query: str, days: int = 30
+    ) -> list[SearchQueryDailyStat]:
+        return await self.messages.get_fts_daily_stats(query, days)
+
+    async def count_fts_matches_for_query(self, sq: SearchQuery) -> int:
+        return await self.messages.count_fts_matches_for_query(sq)
+
+    async def get_fts_daily_stats_for_query(
+        self, sq: SearchQuery, days: int = 30
+    ) -> list[SearchQueryDailyStat]:
+        return await self.messages.get_fts_daily_stats_for_query(sq, days)
 
     async def get_last_recorded_at(self, query_id: int) -> str | None:
         return await self.search_queries.get_last_recorded_at(query_id)

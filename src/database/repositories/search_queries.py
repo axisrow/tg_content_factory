@@ -14,16 +14,20 @@ class SearchQueriesRepository:
     async def add(self, sq: SearchQuery) -> int:
         cur = await self._db.execute(
             "INSERT INTO search_queries "
-            "(name, query, is_regex, is_active, notify_on_collect, track_stats, interval_minutes) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "(name, query, is_regex, is_fts, is_active, notify_on_collect, "
+            "track_stats, interval_minutes, exclude_patterns, max_length) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
-                sq.name,
+                sq.query,
                 sq.query,
                 int(sq.is_regex),
+                int(sq.is_fts),
                 int(sq.is_active),
                 int(sq.notify_on_collect),
                 int(sq.track_stats),
                 sq.interval_minutes,
+                sq.exclude_patterns,
+                sq.max_length,
             ),
         )
         await self._db.commit()
@@ -46,6 +50,27 @@ class SearchQueriesRepository:
     async def set_active(self, sq_id: int, active: bool) -> None:
         await self._db.execute(
             "UPDATE search_queries SET is_active = ? WHERE id = ?", (int(active), sq_id)
+        )
+        await self._db.commit()
+
+    async def update(self, sq_id: int, sq: SearchQuery) -> None:
+        await self._db.execute(
+            "UPDATE search_queries SET name = ?, query = ?, is_regex = ?, is_fts = ?, "
+            "notify_on_collect = ?, track_stats = ?, interval_minutes = ?, "
+            "exclude_patterns = ?, max_length = ? "
+            "WHERE id = ?",
+            (
+                sq.query,
+                sq.query,
+                int(sq.is_regex),
+                int(sq.is_fts),
+                int(sq.notify_on_collect),
+                int(sq.track_stats),
+                sq.interval_minutes,
+                sq.exclude_patterns,
+                sq.max_length,
+                sq_id,
+            ),
         )
         await self._db.commit()
 
@@ -132,12 +157,14 @@ class SearchQueriesRepository:
     def _row_to_model(row) -> SearchQuery:
         return SearchQuery(
             id=row["id"],
-            name=row["name"],
             query=row["query"],
             is_regex=bool(row["is_regex"]),
+            is_fts=bool(row["is_fts"]) if row["is_fts"] is not None else False,
             is_active=bool(row["is_active"]),
             notify_on_collect=bool(row["notify_on_collect"]),
             track_stats=bool(row["track_stats"]),
             interval_minutes=row["interval_minutes"],
+            exclude_patterns=row["exclude_patterns"] or "",
+            max_length=row["max_length"],
             created_at=datetime.fromisoformat(row["created_at"]) if row["created_at"] else None,
         )
