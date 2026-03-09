@@ -82,6 +82,12 @@ class FakeClientPool(MagicMock):
         for key, value in kwargs.items():
             setattr(self, key, value)
 
+    @staticmethod
+    def _classify_entity(entity) -> tuple[str, bool]:
+        from src.telegram.client_pool import ClientPool
+
+        return ClientPool._classify_entity(entity)
+
 
 def make_mock_message(msg_id, text=None, media=None, sender_id=None, *, date=None):
     return SimpleNamespace(

@@ -49,7 +49,9 @@ class AgentManager:
         parts.append(f"<user>\n{message}\n</user>")
         return "\n".join(parts)
 
-    async def chat_stream(self, thread_id: int, message: str) -> AsyncGenerator[str, None]:
+    async def chat_stream(
+        self, thread_id: int, message: str, model: str | None = None
+    ) -> AsyncGenerator[str, None]:
         """Async generator yielding raw SSE lines: data: <json>\\n\\n"""
         history = await self._db.get_agent_messages(thread_id)
         # Callers must save the user message before calling chat_stream, so history[-1]
@@ -59,9 +61,10 @@ class AgentManager:
         )
         prompt = self._build_prompt(history[:-1], message)
 
+        resolved_model = model or os.environ.get("AGENT_MODEL")
         extra: dict = {}
-        if agent_model := os.environ.get("AGENT_MODEL"):
-            extra["model"] = agent_model
+        if resolved_model:
+            extra["model"] = resolved_model
         options = ClaudeAgentOptions(
             system_prompt=_SYSTEM_PROMPT,
             mcp_servers={"telegram_db": self._server},

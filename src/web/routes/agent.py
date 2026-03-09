@@ -13,8 +13,16 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
+ALLOWED_MODELS = {
+    "claude-sonnet-4-5",
+    "claude-opus-4-6",
+    "claude-haiku-4-5",
+}
+
+
 class ChatRequest(BaseModel):
     message: str
+    model: str | None = None
 
 
 @router.get("", response_class=HTMLResponse)
@@ -34,6 +42,10 @@ async def agent_page(request: Request, thread_id: int | None = None):
             messages = await db.get_agent_messages(thread_id)
     elif threads:
         return RedirectResponse(url=f"/agent?thread_id={threads[0]['id']}", status_code=303)
+    else:
+        # Auto-create first thread
+        thread_id = await db.create_agent_thread("Новый тред")
+        return RedirectResponse(url=f"/agent?thread_id={thread_id}", status_code=303)
 
     return deps.get_templates(request).TemplateResponse(
         request,
@@ -74,7 +86,7 @@ async def rename_thread(request: Request, thread_id: int):
 @router.get("/channels-json")
 async def get_channels_json(request: Request):
     db = deps.get_db(request)
-    channels = await db.get_channels(active_only=True)
+    channels = await db.get_channels(active_only=True, include_filtered=False)
     return JSONResponse([
         {
             "id": ch.channel_id,
@@ -141,6 +153,9 @@ async def chat(request: Request, thread_id: int):
     if not message:
         raise HTTPException(status_code=400, detail="Message cannot be empty")
 
+    raw_model = (body.get("model") or "").strip()
+    model = raw_model if raw_model in ALLOWED_MODELS else None
+
     db = deps.get_db(request)
 
     # Verify thread exists
@@ -160,7 +175,7 @@ async def chat(request: Request, thread_id: int):
         raise HTTPException(status_code=503, detail="AgentManager not initialized")
 
     async def generate():
-        async for chunk in agent_manager.chat_stream(thread_id, message):
+        async for chunk in agent_manager.chat_stream(thread_id, message, model=model):
             # Save before yielding so disconnect doesn't lose the message
             try:
                 data_str = chunk.removeprefix("data: ").strip()
