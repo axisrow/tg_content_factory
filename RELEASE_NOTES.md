@@ -1,5 +1,25 @@
 # Release Notes
 
+## v0.1.7
+
+### Features
+
+- **AI agent with Claude SDK** — SSE streaming, in-process MCP tools (`search_messages`, `get_channels`), contextual channel search (#25)
+- **Forum topics support** — `topic_id` field, `get_forum_topics()` API, topic filtering in agent context
+- **Context panel in agent UI** — channel, topic, and message limit selection
+- **Context format** — structured message lines: `[msg_id=...][date][author] text`
+
+### Fixes
+
+- Entity-cache fix in `get_forum_topics` — reuse `get_dialogs` caching to avoid `PeerChannel` lookup failures
+- Server-side `channel_id` validation — return 400 instead of 500, limit capped at 500
+
+### Internal
+
+- `topic_id` added to schema, migration, and `insert_message`
+- Scheduler refactor: move `datetime` import to module level
+- Add `aiohttp` dependency
+
 ## v0.1.6
 
 ### Новое
