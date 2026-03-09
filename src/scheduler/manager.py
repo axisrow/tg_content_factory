@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import TYPE_CHECKING
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -273,9 +273,7 @@ class SchedulerManager:
             logger.warning("Search query id=%d not found, skipping", sq_id)
             return
         try:
-            from datetime import date as date_cls
-
-            today = date_cls.today().isoformat()
+            today = date.today().isoformat()
             daily = await self._sq_bundle.get_fts_daily_stats_for_query(sq, days=1)
             today_count = 0
             for d in daily:
