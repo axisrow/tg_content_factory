@@ -131,7 +131,10 @@ async def test_fts_daily_stats_groups_by_day(bundle, db):
         msg = Message(channel_id=200, message_id=i + 1, text=text, date=dt)
         await db.repos.messages.insert_message(msg)
 
-    stats = await bundle.get_fts_daily_stats("alpha", days=30)
+    sq = SearchQuery(query="alpha")
+    sq_id = await bundle.add(sq)
+    sq = await bundle.get_by_id(sq_id)
+    stats = await bundle.get_fts_daily_stats_for_query(sq, days=30)
     assert len(stats) == 2
     total = sum(s.count for s in stats)
     assert total == 3

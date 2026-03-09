@@ -40,6 +40,7 @@ def run(args: argparse.Namespace) -> None:
                 sq_id = await svc.add(
                     args.query,
                     args.interval,
+                    is_regex=args.regex,
                     is_fts=args.fts,
                     exclude_patterns=exclude,
                     max_length=args.max_length,
@@ -66,7 +67,8 @@ def run(args: argparse.Namespace) -> None:
                     else sq.exclude_patterns
                 )
                 max_len = (
-                    args.max_length if args.max_length is not None
+                    None if args.max_length == -1
+                    else args.max_length if args.max_length is not None
                     else sq.max_length
                 )
                 await svc.update(

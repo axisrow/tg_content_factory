@@ -511,9 +511,6 @@ class SearchQueryBundle:
     async def delete(self, sq_id: int) -> None:
         await self.search_queries.delete(sq_id)
 
-    async def count_fts_matches(self, query: str) -> int:
-        return await self.messages.count_fts_matches(query)
-
     async def record_stat(self, query_id: int, match_count: int) -> None:
         await self.search_queries.record_stat(query_id, match_count)
 
@@ -525,11 +522,6 @@ class SearchQueryBundle:
     async def get_stats_for_all(self, days: int = 30) -> dict[int, list[SearchQueryDailyStat]]:
         return await self.search_queries.get_stats_for_all(days)
 
-    async def get_fts_daily_stats(
-        self, query: str, days: int = 30
-    ) -> list[SearchQueryDailyStat]:
-        return await self.messages.get_fts_daily_stats(query, days)
-
     async def count_fts_matches_for_query(self, sq: SearchQuery) -> int:
         return await self.messages.count_fts_matches_for_query(sq)
 
@@ -537,6 +529,11 @@ class SearchQueryBundle:
         self, sq: SearchQuery, days: int = 30
     ) -> list[SearchQueryDailyStat]:
         return await self.messages.get_fts_daily_stats_for_query(sq, days)
+
+    async def get_fts_daily_stats_batch(
+        self, queries: list[SearchQuery], days: int = 30
+    ) -> dict[int, list[SearchQueryDailyStat]]:
+        return await self.messages.get_fts_daily_stats_batch(queries, days)
 
     async def get_last_recorded_at(self, query_id: int) -> str | None:
         return await self.search_queries.get_last_recorded_at(query_id)
