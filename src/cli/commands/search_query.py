@@ -3,6 +3,8 @@ from __future__ import annotations
 import argparse
 import asyncio
 
+from pydantic import ValidationError
+
 from src.cli import runtime
 from src.database.bundles import SearchQueryBundle
 from src.services.search_query_service import SearchQueryService
@@ -37,14 +39,20 @@ def run(args: argparse.Namespace) -> None:
                     args.exclude_patterns.replace("\\n", "\n")
                     if args.exclude_patterns else ""
                 )
-                sq_id = await svc.add(
-                    args.query,
-                    args.interval,
-                    is_regex=args.regex,
-                    is_fts=args.fts,
-                    exclude_patterns=exclude,
-                    max_length=args.max_length,
-                )
+                try:
+                    sq_id = await svc.add(
+                        args.query,
+                        args.interval,
+                        is_regex=args.regex,
+                        is_fts=args.fts,
+                        notify_on_collect=args.notify,
+                        track_stats=args.track_stats,
+                        exclude_patterns=exclude,
+                        max_length=args.max_length,
+                    )
+                except ValidationError as e:
+                    print(f"Error: {e.errors()[0]['msg']}")
+                    return
                 print(f"Added search query id={sq_id}: {args.query}")
 
             elif args.search_query_action == "edit":
@@ -71,17 +79,21 @@ def run(args: argparse.Namespace) -> None:
                     else args.max_length if args.max_length is not None
                     else sq.max_length
                 )
-                await svc.update(
-                    args.id,
-                    args.query if args.query else sq.query,
-                    args.interval if args.interval else sq.interval_minutes,
-                    is_regex=args.regex if args.regex is not None else sq.is_regex,
-                    is_fts=is_fts,
-                    notify_on_collect=notify,
-                    track_stats=tstats,
-                    exclude_patterns=exclude,
-                    max_length=max_len,
-                )
+                try:
+                    await svc.update(
+                        args.id,
+                        args.query if args.query else sq.query,
+                        args.interval if args.interval else sq.interval_minutes,
+                        is_regex=args.regex if args.regex is not None else sq.is_regex,
+                        is_fts=is_fts,
+                        notify_on_collect=notify,
+                        track_stats=tstats,
+                        exclude_patterns=exclude,
+                        max_length=max_len,
+                    )
+                except ValidationError as e:
+                    print(f"Error: {e.errors()[0]['msg']}")
+                    return
                 print(f"Updated search query id={args.id}")
 
             elif args.search_query_action == "delete":

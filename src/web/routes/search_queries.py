@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
+from pydantic import ValidationError
 
 from src.web import deps
 
@@ -28,16 +29,19 @@ async def add_search_query(
     max_length: int | None = Form(None),
 ):
     svc = deps.search_query_service(request)
-    await svc.add(
-        query,
-        interval_minutes,
-        is_regex=is_regex,
-        is_fts=is_fts,
-        notify_on_collect=notify_on_collect,
-        track_stats=track_stats,
-        exclude_patterns=exclude_patterns,
-        max_length=max_length,
-    )
+    try:
+        await svc.add(
+            query,
+            interval_minutes,
+            is_regex=is_regex,
+            is_fts=is_fts,
+            notify_on_collect=notify_on_collect,
+            track_stats=track_stats,
+            exclude_patterns=exclude_patterns,
+            max_length=max_length,
+        )
+    except ValidationError:
+        return RedirectResponse(url="/search-queries?error=invalid_value", status_code=303)
     scheduler = deps.get_scheduler(request)
     if scheduler.is_running:
         await scheduler.sync_search_query_jobs()
@@ -68,17 +72,20 @@ async def edit_search_query(
     max_length: int | None = Form(None),
 ):
     svc = deps.search_query_service(request)
-    await svc.update(
-        sq_id,
-        query,
-        interval_minutes,
-        is_regex=is_regex,
-        is_fts=is_fts,
-        notify_on_collect=notify_on_collect,
-        track_stats=track_stats,
-        exclude_patterns=exclude_patterns,
-        max_length=max_length,
-    )
+    try:
+        await svc.update(
+            sq_id,
+            query,
+            interval_minutes,
+            is_regex=is_regex,
+            is_fts=is_fts,
+            notify_on_collect=notify_on_collect,
+            track_stats=track_stats,
+            exclude_patterns=exclude_patterns,
+            max_length=max_length,
+        )
+    except ValidationError:
+        return RedirectResponse(url="/search-queries?error=invalid_value", status_code=303)
     scheduler = deps.get_scheduler(request)
     if scheduler.is_running:
         await scheduler.sync_search_query_jobs()

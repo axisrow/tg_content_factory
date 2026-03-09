@@ -78,6 +78,8 @@ def build_parser() -> argparse.ArgumentParser:
     sq_add.add_argument("--interval", type=int, default=60, help="Run interval in minutes")
     sq_add.add_argument("--regex", action="store_true", help="Use regex matching")
     sq_add.add_argument("--fts", action="store_true", help="Use FTS5 boolean syntax (no quoting)")
+    sq_add.add_argument("--notify", action="store_true", help="Notify on collect")
+    sq_add.add_argument("--no-track-stats", dest="track_stats", action="store_false", default=True)
     sq_add.add_argument(
         "--exclude-patterns", default="", help="Exclude patterns, one per line (use \\n)"
     )
