@@ -31,6 +31,10 @@ class Notifier:
     def admin_chat_id(self) -> int | None:
         return self._admin_chat_id
 
+    def invalidate_me_cache(self) -> None:
+        """Invalidate the cached me.id. Call when the notification account changes."""
+        self._cached_me_id = None
+
     async def notify(self, text: str) -> bool:
         try:
             # Fast path: if me.id is cached and a bot is configured, skip the

@@ -134,6 +134,10 @@ async def save_notification_account(request: Request):
         return RedirectResponse(url="/settings?error=notification_account_invalid", status_code=303)
 
     await deps.get_notification_target_service(request).set_configured_phone(selected_phone or None)
+    # Invalidate cached me.id so the next notify() re-resolves it for the new account.
+    notifier = deps.get_notifier(request)
+    if notifier:
+        notifier.invalidate_me_cache()
     return RedirectResponse(url="/settings?msg=notification_account_saved", status_code=303)
 
 
