@@ -44,7 +44,7 @@
 .thread-item.active {
     background: var(--pico-primary-background);
     border-color: var(--pico-primary-border);
-    color: var(--pico-primary);
+    color: #fff;
     font-weight: 600;
 }
 .thread-item .thread-title {
@@ -62,6 +62,8 @@
     font-size: 0.8rem;
     line-height: 1;
     flex-shrink: 0;
+    min-height: unset;
+    width: auto;
 }
 .thread-delete-btn:hover { color: var(--pico-del-color, red); }
 .new-thread-btn {
@@ -108,15 +110,15 @@
 }
 .message-assistant {
     align-self: flex-start;
-    background: var(--pico-secondary-background);
+    background: var(--pico-card-background-color);
     border: 1px solid var(--pico-muted-border-color);
     border-bottom-left-radius: 3px;
 }
 .message-error {
     align-self: flex-start;
-    background: #ffeaea;
-    border: 1px solid #f5a;
-    color: #c00;
+    background: #fee2e2;
+    border: 1px solid #f87171;
+    color: #991b1b;
     border-radius: 10px;
     padding: 0.6rem 0.9rem;
     font-size: 0.9rem;
@@ -168,11 +170,43 @@
     text-align: center;
 }
 
+.agent-context {
+    width: 220px;
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+    padding: 0.75rem;
+    border-left: 1px solid var(--pico-muted-border-color);
+    font-size: 0.85rem;
+}
+.agent-context h3 {
+    margin: 0 0 0.25rem 0;
+    font-size: 0.85rem;
+    color: var(--pico-muted-color);
+    text-transform: uppercase;
+}
+.agent-context label { margin-bottom: 0.1rem; }
+.agent-context select,
+.agent-context input[type=number] { margin-bottom: 0; font-size: 0.85rem; }
+.message-context {
+    max-width: 95%;
+    align-self: stretch;
+    background: var(--pico-card-background-color);
+    border: 1px dashed var(--pico-muted-border-color);
+    border-radius: 6px;
+    padding: 0.5rem 0.75rem;
+    font-size: 0.8rem;
+    color: var(--pico-muted-color);
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
 </style>
 {% endblock %}
 
 {% block content %}
-<h2>Агент</h2>
+<h1>Агент</h1>
 
 
 <div class="agent-layout">
@@ -230,6 +264,27 @@
             </form>
         </div>
         {% endif %}
+    </div>
+
+    <!-- Right context panel -->
+    <div class="agent-context" id="context-panel">
+        <h3>Контекст</h3>
+        <label for="ctx-channel">Канал</label>
+        <select id="ctx-channel">
+            <option value="">— выберите —</option>
+        </select>
+        <div id="ctx-topic-wrap" style="display:none">
+            <label for="ctx-topic">Тема форума</label>
+            <select id="ctx-topic">
+                <option value="">Все темы</option>
+            </select>
+        </div>
+        <label for="ctx-limit">Сообщений</label>
+        <input type="number" id="ctx-limit" value="50" min="1" max="500">
+        <button id="ctx-load-btn" class="outline" {% if not active_thread %}disabled{% endif %}>
+            Загрузить
+        </button>
+        <small id="ctx-status" style="color:var(--pico-muted-color)"></small>
     </div>
 </div>
 
@@ -362,6 +417,91 @@
             alert('Ошибка удаления: ' + err.message);
         }
     };
+
+    // Context panel
+    async function loadChannels() {
+        try {
+            var resp = await fetch('/agent/channels-json');
+            var channels = await resp.json();
+            var sel = document.getElementById('ctx-channel');
+            channels.forEach(function(ch) {
+                var opt = document.createElement('option');
+                opt.value = ch.id;
+                opt.dataset.type = ch.channel_type;
+                opt.textContent = ch.title;
+                sel.appendChild(opt);
+            });
+        } catch(e) {
+            console.error('Failed to load channels:', e);
+            document.getElementById('ctx-status').textContent = 'Ошибка загрузки каналов';
+        }
+    }
+
+    var ctxChannel = document.getElementById('ctx-channel');
+    if (ctxChannel) {
+        ctxChannel.addEventListener('change', async function() {
+            var opt = this.options[this.selectedIndex];
+            var topicWrap = document.getElementById('ctx-topic-wrap');
+            var topicSel = document.getElementById('ctx-topic');
+            topicSel.innerHTML = '<option value="">Все темы</option>';
+            if (opt && opt.dataset.type === 'forum') {
+                topicWrap.style.display = '';
+                try {
+                    var resp = await fetch('/agent/forum-topics?channel_id=' + opt.value);
+                    var topics = await resp.json();
+                    topics.forEach(function(t) {
+                        var o = document.createElement('option');
+                        o.value = t.id;
+                        o.textContent = t.title;
+                        topicSel.appendChild(o);
+                    });
+                } catch(e) {
+                    console.error('Failed to load topics:', e);
+                }
+            } else {
+                topicWrap.style.display = 'none';
+            }
+        });
+    }
+
+    var ctxLoadBtn = document.getElementById('ctx-load-btn');
+    if (ctxLoadBtn) {
+        ctxLoadBtn.addEventListener('click', async function() {
+            if (!threadId) return;
+            var channelId = document.getElementById('ctx-channel').value;
+            if (!channelId) return;
+            var limit = parseInt(document.getElementById('ctx-limit').value) || 50;
+            var topicId = document.getElementById('ctx-topic').value || null;
+            var status = document.getElementById('ctx-status');
+            this.disabled = true;
+            status.textContent = 'Загрузка…';
+            try {
+                var resp = await fetch('/agent/threads/' + threadId + '/context', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({channel_id: channelId, limit: limit, topic_id: topicId})
+                });
+                var data = await resp.json();
+                var bubble = document.createElement('div');
+                bubble.className = 'message-bubble message-context';
+                bubble.textContent = data.content;
+                var msgContainer = document.getElementById('chat-messages');
+                if (msgContainer) {
+                    var emptyState = msgContainer.querySelector('.empty-state');
+                    if (emptyState) emptyState.remove();
+                    msgContainer.appendChild(bubble);
+                    msgContainer.scrollTop = msgContainer.scrollHeight;
+                }
+                status.textContent = 'Загружено ✓';
+            } catch(e) {
+                status.textContent = 'Ошибка: ' + e.message;
+            } finally {
+                this.disabled = false;
+            }
+        });
+    }
+
+    loadChannels();
 })();
 </script>
 {% endblock %}

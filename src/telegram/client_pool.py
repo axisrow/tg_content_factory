@@ -414,6 +414,45 @@ class ClientPool:
             await self.release_client(phone)
         return outcomes
 
+    async def get_forum_topics(self, channel_id: int) -> list[dict]:
+        """Fetch forum topics for a forum-type channel."""
+        from telethon.tl.functions.channels import GetForumTopicsRequest
+
+        result = await self.get_available_client()
+        if result is None:
+            return []
+        client, phone = result
+        try:
+            # Pre-populate entity cache (StringSession loses it between restarts)
+            if not self.is_dialogs_fetched(phone):
+                await asyncio.wait_for(client.get_dialogs(), timeout=30.0)
+                self.mark_dialogs_fetched(phone)
+            entity = await asyncio.wait_for(
+                client.get_entity(PeerChannel(channel_id)), timeout=30.0
+            )
+            response = await asyncio.wait_for(
+                client(
+                    GetForumTopicsRequest(
+                        channel=entity,
+                        offset_date=0,
+                        offset_id=0,
+                        offset_topic=0,
+                        limit=100,
+                    )
+                ),
+                timeout=30.0,
+            )
+            return [
+                {"id": t.id, "title": t.title}
+                for t in response.topics
+                if hasattr(t, "title")
+            ]
+        except Exception as e:
+            logger.warning("get_forum_topics failed for channel %d: %s", channel_id, e)
+            return []
+        finally:
+            await self.release_client(phone)
+
     async def get_dialogs(self) -> list[dict]:
         """Get list of subscribed channels and groups."""
         result = await self.get_available_client()
