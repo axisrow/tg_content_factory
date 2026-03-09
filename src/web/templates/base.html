@@ -16,6 +16,7 @@
             <li><strong><span style="white-space:nowrap">TG Agent</span></strong></li>
         </ul>
         <ul>
+            {% if agent_available %}<li><a href="/agent">Чат</a></li>{% endif %}
             <li><a href="/">Поиск</a></li>
             <li><a href="/dashboard">Панель</a></li>
             <li><a href="/channels">Каналы</a></li>
