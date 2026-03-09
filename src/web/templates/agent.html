@@ -431,7 +431,10 @@
                 opt.textContent = ch.title;
                 sel.appendChild(opt);
             });
-        } catch(e) { /* ignore */ }
+        } catch(e) {
+            console.error('Failed to load channels:', e);
+            document.getElementById('ctx-status').textContent = 'Ошибка загрузки каналов';
+        }
     }
 
     var ctxChannel = document.getElementById('ctx-channel');
@@ -452,7 +455,9 @@
                         o.textContent = t.title;
                         topicSel.appendChild(o);
                     });
-                } catch(e) { /* ignore */ }
+                } catch(e) {
+                    console.error('Failed to load topics:', e);
+                }
             } else {
                 topicWrap.style.display = 'none';
             }

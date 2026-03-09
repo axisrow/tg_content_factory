@@ -95,8 +95,11 @@ async def get_forum_topics(request: Request, channel_id: int):
 @router.post("/threads/{thread_id}/context")
 async def inject_context(request: Request, thread_id: int):
     data = await request.json()
-    channel_id = int(data["channel_id"])
-    limit = int(data.get("limit", 50))
+    channel_id_raw = data.get("channel_id")
+    if not channel_id_raw:
+        raise HTTPException(status_code=400, detail="channel_id is required")
+    channel_id = int(channel_id_raw)
+    limit = min(int(data.get("limit", 50)), 500)
     topic_id = data.get("topic_id")
     if topic_id is not None:
         topic_id = int(topic_id) if str(topic_id).strip() else None

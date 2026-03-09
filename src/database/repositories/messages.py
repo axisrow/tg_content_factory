@@ -181,7 +181,7 @@ class MessagesRepository:
                 sender_name=r["sender_name"],
                 text=r["text"],
                 media_type=r["media_type"],
-                topic_id=r["topic_id"] if "topic_id" in r.keys() else None,
+                topic_id=r["topic_id"],
                 date=datetime.fromisoformat(r["date"]),
                 collected_at=(
                     datetime.fromisoformat(r["collected_at"]) if r["collected_at"] else None
