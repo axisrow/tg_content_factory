@@ -426,11 +426,15 @@ class Collector:
             ):
                 topic_id = None
                 reply_to = getattr(msg, "reply_to", None)
-                if reply_to and hasattr(reply_to, "reply_to_top_id"):
-                    topic_id = reply_to.reply_to_top_id or reply_to.reply_to_msg_id
-                elif reply_to and hasattr(reply_to, "forum_topic") and reply_to.forum_topic:
-                    # General topic (id=1): has forum_topic=True but no top_id
-                    topic_id = 1
+                if reply_to and getattr(reply_to, "forum_topic", False):
+                    topic_id = (
+                        getattr(reply_to, "reply_to_top_id", None)
+                        or getattr(reply_to, "reply_to_msg_id", None)
+                        or 1
+                    )
+                elif reply_to:
+                    # Обычный reply (не форум) — topic_id не нужен
+                    pass
                 message = Message(
                     channel_id=channel_id,
                     message_id=msg.id,
