@@ -528,12 +528,20 @@
                 try {
                     var resp = await fetch('/agent/forum-topics?channel_id=' + opt.value);
                     var topics = await resp.json();
-                    topics.forEach(function(t) {
+                    if (topics.length === 0) {
                         var o = document.createElement('option');
-                        o.value = t.id;
-                        o.textContent = t.title;
+                        o.value = '';
+                        o.textContent = '(темы не загружены)';
+                        o.disabled = true;
                         topicSel.appendChild(o);
-                    });
+                    } else {
+                        topics.forEach(function(t) {
+                            var o = document.createElement('option');
+                            o.value = t.id;
+                            o.textContent = t.title;
+                            topicSel.appendChild(o);
+                        });
+                    }
                 } catch(e) {
                     console.error('Failed to load topics:', e);
                 }
