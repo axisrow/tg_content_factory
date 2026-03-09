@@ -9,9 +9,12 @@ logger = logging.getLogger(__name__)
 
 async def run_migrations(db: aiosqlite.Connection) -> None:
     cur = await db.execute("PRAGMA table_info(messages)")
-    columns = {row["name"] for row in await cur.fetchall()}
-    if "media_type" not in columns:
+    msg_columns = {row["name"] for row in await cur.fetchall()}
+    if "media_type" not in msg_columns:
         await db.execute("ALTER TABLE messages ADD COLUMN media_type TEXT")
+        await db.commit()
+    if "topic_id" not in msg_columns:
+        await db.execute("ALTER TABLE messages ADD COLUMN topic_id INTEGER")
         await db.commit()
 
     cur = await db.execute("PRAGMA table_info(accounts)")

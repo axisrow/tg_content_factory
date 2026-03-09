@@ -49,6 +49,7 @@ class Message(BaseModel):
     sender_name: str | None = None
     text: str | None = None
     media_type: str | None = None
+    topic_id: int | None = None
     date: datetime
     collected_at: datetime | None = None
     channel_title: str | None = None

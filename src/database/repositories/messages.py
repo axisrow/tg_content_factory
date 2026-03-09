@@ -72,6 +72,7 @@ class MessagesRepository:
                 m.sender_name,
                 m.text,
                 m.media_type,
+                m.topic_id,
                 m.date.isoformat(),
             )
             for m in messages
@@ -79,8 +80,8 @@ class MessagesRepository:
         try:
             cur = await self._db.executemany(
                 """INSERT OR IGNORE INTO messages
-                   (channel_id, message_id, sender_id, sender_name, text, media_type, date)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                   (channel_id, message_id, sender_id, sender_name, text, media_type, topic_id, date)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
                 data,
             )
             await self._db.commit()
@@ -100,6 +101,7 @@ class MessagesRepository:
         is_fts: bool = False,
         min_length: int | None = None,
         max_length: int | None = None,
+        topic_id: int | None = None,
     ) -> tuple[list[Message], int]:
         # Exclude messages from filtered channels; allow messages whose channel
         # is not yet in the channels table (NULL join) for backward-compat.
@@ -109,6 +111,9 @@ class MessagesRepository:
         if channel_id:
             conditions.append("m.channel_id = ?")
             params.append(channel_id)
+        if topic_id is not None:
+            conditions.append("m.topic_id = ?")
+            params.append(topic_id)
         normalized_date_from = self._normalize_date_from(date_from)
         normalized_date_to, date_to_operator = self._normalize_date_to(date_to)
 
@@ -176,6 +181,7 @@ class MessagesRepository:
                 sender_name=r["sender_name"],
                 text=r["text"],
                 media_type=r["media_type"],
+                topic_id=r["topic_id"] if "topic_id" in r.keys() else None,
                 date=datetime.fromisoformat(r["date"]),
                 collected_at=(
                     datetime.fromisoformat(r["collected_at"]) if r["collected_at"] else None
