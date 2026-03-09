@@ -383,7 +383,7 @@ async def test_search_messages_full_iso_date_to_remains_precise(db):
 
 @pytest.mark.asyncio
 async def test_notification_queries_crud(db):
-    sq = SearchQuery(name="bitcoin", query="bitcoin", is_regex=False, notify_on_collect=True)
+    sq = SearchQuery(query="bitcoin", is_regex=False, notify_on_collect=True)
     repo = db.repos.search_queries
     sq_id = await repo.add(sq)
     assert sq_id > 0
@@ -432,7 +432,7 @@ async def test_stats_with_data(db):
     ]
     await db.insert_messages_batch(msgs)
     repo = db.repos.search_queries
-    await repo.add(SearchQuery(name="test", query="test"))
+    await repo.add(SearchQuery(query="test"))
 
     stats = await db.get_stats()
     assert stats["accounts"] == 1

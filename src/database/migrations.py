@@ -230,6 +230,19 @@ async def run_migrations(db: aiosqlite.Connection) -> None:
     if "track_stats" not in sq_columns:
         await db.execute("ALTER TABLE search_queries ADD COLUMN track_stats INTEGER DEFAULT 1")
         await db.commit()
+    if "is_fts" not in sq_columns:
+        await db.execute("ALTER TABLE search_queries ADD COLUMN is_fts INTEGER DEFAULT 0")
+        await db.commit()
+    if "exclude_patterns" not in sq_columns:
+        await db.execute(
+            "ALTER TABLE search_queries ADD COLUMN exclude_patterns TEXT DEFAULT ''"
+        )
+        await db.commit()
+    if "max_length" not in sq_columns:
+        await db.execute(
+            "ALTER TABLE search_queries ADD COLUMN max_length INTEGER DEFAULT NULL"
+        )
+        await db.commit()
 
     # Migrate keywords → search_queries and drop keywords table
     cur = await db.execute(

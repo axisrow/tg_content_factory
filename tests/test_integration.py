@@ -254,7 +254,6 @@ class TestSearchQueryCRUD:
         resp = await auth_client.post(
             "/search-queries/add",
             data={
-                "name": "bitcoin",
                 "query": "bitcoin",
                 "interval_minutes": "60",
                 "track_stats": "true",
@@ -273,7 +272,6 @@ class TestSearchQueryCRUD:
         resp = await auth_client.post(
             "/search-queries/add",
             data={
-                "name": "crypto",
                 "query": r"BTC|ETH",
                 "interval_minutes": "60",
                 "is_regex": "true",
@@ -290,7 +288,7 @@ class TestSearchQueryCRUD:
     @pytest.mark.asyncio
     async def test_delete_query(self, auth_client, test_db):
         repo = test_db.repos.search_queries
-        sq = SearchQuery(name="delete_me", query="delete_me")
+        sq = SearchQuery(query="delete_me")
         sq_id = await repo.add(sq)
 
         resp = await auth_client.post(f"/search-queries/{sq_id}/delete")
@@ -302,7 +300,7 @@ class TestSearchQueryCRUD:
     @pytest.mark.asyncio
     async def test_query_appears_on_page(self, auth_client, test_db):
         repo = test_db.repos.search_queries
-        await repo.add(SearchQuery(name="ethereum", query="ethereum"))
+        await repo.add(SearchQuery(query="ethereum"))
 
         resp = await auth_client.get("/search-queries/")
         assert "ethereum" in resp.text

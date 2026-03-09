@@ -553,6 +553,26 @@ class Collector:
                 prefixes.append(msg.text[:100])
         return prefixes
 
+    @staticmethod
+    def _fts_query_matches(query_str: str, text: str) -> bool:
+        """Check if text matches an FTS5-style boolean query (local approximation).
+
+        Supports (A OR B) AND (C OR D) syntax as conjunction of disjunctions.
+        Falls back to simple substring check for plain queries.
+        """
+        text_lower = text.lower()
+        # Strip outer whitespace
+        q = query_str.strip()
+        # Split by AND (top-level conjunction)
+        parts = re.split(r"\bAND\b", q, flags=re.IGNORECASE)
+        for part in parts:
+            part = part.strip().strip("()")
+            # Split by OR (disjunction within each part)
+            alternatives = re.split(r"\bOR\b", part, flags=re.IGNORECASE)
+            if not any(alt.strip().strip('"').lower() in text_lower for alt in alternatives):
+                return False
+        return True
+
     async def _check_notification_queries(self, messages: list[Message]) -> None:
         """Check messages against active notification queries and send batched notifications.
 
@@ -572,12 +592,20 @@ class Collector:
             if not msg.text:
                 continue
             for sq in queries:
+                # Apply exclude_patterns and max_length filters first
+                if sq.max_length is not None and len(msg.text) >= sq.max_length:
+                    continue
+                if any(p.lower() in msg.text.lower() for p in sq.exclude_patterns_list):
+                    continue
+
                 matched = False
                 if sq.is_regex:
                     try:
                         matched = bool(re.search(sq.query, msg.text, re.IGNORECASE))
                     except re.error:
                         pass
+                elif sq.is_fts:
+                    matched = self._fts_query_matches(sq.query, msg.text)
                 else:
                     matched = sq.query.lower() in msg.text.lower()
 
@@ -587,7 +615,7 @@ class Collector:
                         name, count, preview = matches[key]
                         matches[key] = (name, count + 1, preview)
                     else:
-                        matches[key] = (sq.name, 1, msg.text[:200])
+                        matches[key] = (sq.query, 1, msg.text[:200])
 
         for _sq_id, (name, count, preview) in matches.items():
             if count == 1:

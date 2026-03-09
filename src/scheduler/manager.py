@@ -273,8 +273,18 @@ class SchedulerManager:
             logger.warning("Search query id=%d not found, skipping", sq_id)
             return
         try:
-            count = await self._sq_bundle.count_fts_matches(sq.query)
-            await self._sq_bundle.record_stat(sq_id, count)
-            logger.info("Search query '%s' (id=%d): %d matches", sq.name, sq_id, count)
+            from datetime import date as date_cls
+
+            today = date_cls.today().isoformat()
+            daily = await self._sq_bundle.get_fts_daily_stats_for_query(sq, days=1)
+            today_count = 0
+            for d in daily:
+                if d.day == today:
+                    today_count = d.count
+                    break
+            await self._sq_bundle.record_stat(sq_id, today_count)
+            logger.info(
+                "Search query '%s' (id=%d): %d matches today", sq.query, sq_id, today_count
+            )
         except Exception:
             logger.exception("Error running search query id=%d", sq_id)

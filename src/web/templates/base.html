@@ -3,16 +3,17 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{% block title %}TG Post Search{% endblock %}</title>
+    <title>{% block title %}TG Agent{% endblock %}</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔍</text></svg>">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
     <link rel="stylesheet" href="/static/style.css">
     <script src="https://unpkg.com/htmx.org@2.0.4" integrity="sha384-HGfztofotfshcF7+8n44JQL2oJmowVChPTg48S+jvZoztPfvwD79OC/LTtG6dMp+" crossorigin="anonymous"></script>
+    {% block head_scripts %}{% endblock %}
 </head>
 <body>
     <nav class="container">
         <ul>
-            <li><strong><span style="white-space:nowrap">TG Post Search</span></strong></li>
+            <li><strong><span style="white-space:nowrap">TG Agent</span></strong></li>
         </ul>
         <ul>
             <li><a href="/">Поиск</a></li>
@@ -31,7 +32,7 @@
         {% block content %}{% endblock %}
     </main>
     <footer class="container">
-        <small>TG Post Search v0.1.0</small>
+        <small>TG Agent v0.1.6</small>
     </footer>
 <script>
 (function() {
@@ -69,7 +70,8 @@
         sq_added: "Поисковый запрос добавлен.",
         sq_deleted: "Поисковый запрос удалён.",
         sq_toggled: "Статус поискового запроса изменён.",
-        sq_run: "Поисковый запрос выполнен."
+        sq_run: "Поисковый запрос выполнен.",
+        sq_edited: "Поисковый запрос обновлён."
     };
     var errors = {
         resolve: "Не удалось найти канал. Проверьте username или ссылку.",

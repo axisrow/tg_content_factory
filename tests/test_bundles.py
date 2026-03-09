@@ -404,7 +404,7 @@ class TestCollectionBundle:
 
     async def test_notification_queries(self, db):
         b = CollectionBundle.from_database(db)
-        sq = SearchQuery(name="test", query="test", notify_on_collect=True, track_stats=False)
+        sq = SearchQuery(query="test", notify_on_collect=True, track_stats=False)
         sq_id = await b.search_queries.add(sq)
         assert sq_id > 0
         nqs = await b.list_notification_queries()
