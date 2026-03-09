@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import os
+import shutil
 from collections.abc import AsyncGenerator
 from contextlib import suppress
 
@@ -32,6 +33,7 @@ class AgentManager:
     def initialize(self) -> None:
         from src.agent.tools import make_mcp_server
 
+        os.environ.setdefault("CLAUDE_CODE_STREAM_CLOSE_TIMEOUT", "120000")
         self._server = make_mcp_server(self._db)
         logger.info("AgentManager initialized (claude-agent-sdk)")
 
@@ -69,6 +71,8 @@ class AgentManager:
             system_prompt=_SYSTEM_PROMPT,
             mcp_servers={"telegram_db": self._server},
             allowed_tools=_ALLOWED_TOOLS,
+            cli_path=shutil.which("claude") or None,
+            stderr=lambda line: logger.debug("claude-cli stderr: %s", line),
             **extra,
         )
 

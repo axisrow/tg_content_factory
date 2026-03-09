@@ -420,6 +420,7 @@ class ClientPool:
 
         result = await self.get_available_client()
         if result is None:
+            logger.warning("get_forum_topics: no available client for channel %d", channel_id)
             return []
         client, phone = result
         try:
