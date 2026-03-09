@@ -157,6 +157,11 @@
     <form method="post" action="/settings/notifications/delete" style="display:inline">
         <button type="submit" class="contrast outline">Удалить notification bot</button>
     </form>
+    {% if notification_target.state == "available" %}
+    <form method="post" action="/settings/notifications/test" style="display:inline">
+        <button type="submit" class="outline">Тест</button>
+    </form>
+    {% endif %}
     {% elif notification_bot_error %}
     <p><small>{{ notification_bot_error }}</small></p>
     {% else %}

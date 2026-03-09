@@ -5,14 +5,16 @@ import asyncio
 
 from src.cli import runtime
 from src.services.notification_service import NotificationService
+from src.services.notification_target_service import NotificationTargetService
 
 
 def run(args: argparse.Namespace) -> None:
     async def _run() -> None:
         config, db = await runtime.init_db(args.config)
         _, pool = await runtime.init_pool(config, db)
+        target_svc = NotificationTargetService(db, pool)
         svc = NotificationService(
-            db, pool,
+            db, target_svc,
             config.notifications.bot_name_prefix,
             config.notifications.bot_username_prefix,
         )

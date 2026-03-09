@@ -102,7 +102,9 @@ async def build_container_with_templates(
     auth = TelegramAuth(api_id, api_hash)
     pool = ClientPool(auth, db, config.scheduler.max_flood_wait_sec)
     notification_target_service = NotificationTargetService(notification_bundle, pool)
-    notifier = Notifier(notification_target_service, config.notifications.admin_chat_id)
+    notifier = Notifier(
+        notification_target_service, config.notifications.admin_chat_id, notification_bundle
+    )
     collector = Collector(pool, db, config.scheduler, notifier)
     collection_queue = CollectionQueue(collector, channel_bundle)
     stats_dispatcher = StatsTaskDispatcher(collector, channel_bundle, default_batch_size=20)
