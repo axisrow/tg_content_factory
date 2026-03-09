@@ -271,3 +271,27 @@ async def run_migrations(db: aiosqlite.Connection) -> None:
             logger.info("FTS5 index built for existing messages")
         except Exception as exc:
             logger.warning("FTS5 index build failed (FTS5 may be unavailable): %s", exc)
+
+    # Agent chat tables
+    await db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS agent_threads (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            title      TEXT NOT NULL DEFAULT 'Новый тред',
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+        """
+    )
+    await db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS agent_messages (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            thread_id  INTEGER NOT NULL REFERENCES agent_threads(id) ON DELETE CASCADE,
+            role       TEXT NOT NULL CHECK(role IN ('user', 'assistant')),
+            content    TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+        """
+    )
+    await db.execute("PRAGMA foreign_keys = ON")
+    await db.commit()

@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import secrets
 
 from fastapi.templating import Jinja2Templates
 
+from src.agent.manager import AgentManager
 from src.collection_queue import CollectionQueue
 from src.config import AppConfig, resolve_session_encryption_secret
 from src.database import Database
@@ -110,6 +112,7 @@ async def build_container_with_templates(
     stats_dispatcher = StatsTaskDispatcher(collector, channel_bundle, default_batch_size=20)
     search_engine = SearchEngine(search_bundle, pool)
     ai_search = AISearchEngine(config.llm, search_bundle)
+    agent_manager = AgentManager(db)
     search_query_bundle = SearchQueryBundle(repos.search_queries, repos.messages)
     scheduler = SchedulerManager(
         collector,
@@ -117,6 +120,11 @@ async def build_container_with_templates(
         scheduler_bundle=scheduler_bundle,
         search_engine=search_engine,
         search_query_bundle=search_query_bundle,
+    )
+
+    _templates = templates or Jinja2Templates(directory=str(TEMPLATES_DIR))
+    _templates.env.globals["agent_available"] = bool(
+        os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("CLAUDE_CODE_OAUTH_TOKEN")
     )
 
     return AppContainer(
@@ -140,10 +148,11 @@ async def build_container_with_templates(
         search_engine=search_engine,
         ai_search=ai_search,
         scheduler=scheduler,
-        templates=templates or Jinja2Templates(directory=str(TEMPLATES_DIR)),
+        templates=_templates,
         log_buffer=log_buffer,
         session_secret=session_secret,
         bg_tasks=set(),
+        agent_manager=agent_manager,
         shutting_down=False,
     )
 
@@ -164,6 +173,8 @@ async def start_container(container: AppContainer) -> None:
     if container.stats_dispatcher is not None:
         await container.stats_dispatcher.start()
     container.ai_search.initialize()
+    if container.agent_manager is not None:
+        container.agent_manager.initialize()
 
 
 async def _cancel_bg_tasks(tasks: set[asyncio.Task]) -> None:
@@ -181,6 +192,8 @@ async def stop_container(container: AppContainer) -> None:
         shutdown_coroutines.append(("stats_dispatcher", container.stats_dispatcher.stop()))
     if container.collection_queue is not None:
         shutdown_coroutines.append(("collection_queue", container.collection_queue.shutdown()))
+    if container.agent_manager is not None:
+        shutdown_coroutines.append(("agent_manager", container.agent_manager.close_all()))
     shutdown_coroutines.extend([
         ("scheduler", container.scheduler.stop()),
         ("collector", container.collector.cancel()),

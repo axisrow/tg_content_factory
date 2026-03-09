@@ -1,0 +1,375 @@
+{% extends "base.html" %}
+{% block title %}Агент — TG Agent{% endblock %}
+
+{% block head_scripts %}
+<style>
+.agent-layout {
+    display: flex;
+    gap: 1rem;
+    height: calc(100vh - 220px);
+    min-height: 400px;
+}
+.agent-sidebar {
+    width: 240px;
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    overflow-y: auto;
+}
+.agent-sidebar h3 {
+    margin: 0 0 0.5rem 0;
+    font-size: 0.9rem;
+    color: var(--pico-muted-color);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+.thread-item {
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+    padding: 0.4rem 0.6rem;
+    border-radius: 6px;
+    border: 1px solid var(--pico-muted-border-color);
+    cursor: pointer;
+    text-decoration: none;
+    color: inherit;
+    font-size: 0.9rem;
+    background: transparent;
+    transition: background 0.15s;
+}
+.thread-item:hover {
+    background: var(--pico-secondary-background);
+}
+.thread-item.active {
+    background: var(--pico-primary-background);
+    border-color: var(--pico-primary-border);
+    color: var(--pico-primary);
+    font-weight: 600;
+}
+.thread-item .thread-title {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.thread-delete-btn {
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 0 2px;
+    color: var(--pico-muted-color);
+    font-size: 0.8rem;
+    line-height: 1;
+    flex-shrink: 0;
+}
+.thread-delete-btn:hover { color: var(--pico-del-color, red); }
+.new-thread-btn {
+    margin-top: auto;
+    width: 100%;
+}
+
+.agent-chat {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+}
+.chat-header {
+    font-size: 1rem;
+    font-weight: 600;
+    padding-bottom: 0.5rem;
+    border-bottom: 1px solid var(--pico-muted-border-color);
+    margin-bottom: 0.75rem;
+    color: var(--pico-muted-color);
+}
+.chat-messages {
+    flex: 1;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    padding-right: 0.5rem;
+}
+.message-bubble {
+    max-width: 85%;
+    padding: 0.6rem 0.9rem;
+    border-radius: 10px;
+    font-size: 0.9rem;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+.message-user {
+    align-self: flex-end;
+    background: var(--pico-primary);
+    color: #fff;
+    border-bottom-right-radius: 3px;
+}
+.message-assistant {
+    align-self: flex-start;
+    background: var(--pico-secondary-background);
+    border: 1px solid var(--pico-muted-border-color);
+    border-bottom-left-radius: 3px;
+}
+.message-error {
+    align-self: flex-start;
+    background: #ffeaea;
+    border: 1px solid #f5a;
+    color: #c00;
+    border-radius: 10px;
+    padding: 0.6rem 0.9rem;
+    font-size: 0.9rem;
+    max-width: 85%;
+}
+.typing-indicator {
+    display: inline-block;
+    color: var(--pico-muted-color);
+    font-style: italic;
+}
+.typing-indicator::after {
+    content: "...";
+    animation: dots 1.2s steps(3, end) infinite;
+}
+@keyframes dots {
+    0%, 20% { content: "."; }
+    40% { content: ".."; }
+    60%, 100% { content: "..."; }
+}
+
+.chat-input-area {
+    display: flex;
+    gap: 0.5rem;
+    padding-top: 0.75rem;
+    border-top: 1px solid var(--pico-muted-border-color);
+    margin-top: 0.75rem;
+}
+.chat-input-area textarea {
+    flex: 1;
+    resize: none;
+    min-height: 60px;
+    max-height: 140px;
+    font-size: 0.9rem;
+    margin-bottom: 0;
+}
+.chat-send-btn {
+    align-self: flex-end;
+    white-space: nowrap;
+}
+
+.empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    color: var(--pico-muted-color);
+    gap: 1rem;
+    text-align: center;
+}
+
+</style>
+{% endblock %}
+
+{% block content %}
+<h2>Агент</h2>
+
+
+<div class="agent-layout">
+    <!-- Sidebar: thread list -->
+    <div class="agent-sidebar">
+        <h3>Треды</h3>
+
+        {% for thread in threads %}
+        <a class="thread-item {% if active_thread and active_thread.id == thread.id %}active{% endif %}"
+           href="/agent?thread_id={{ thread.id }}"
+           data-thread-id="{{ thread.id }}">
+            <span class="thread-title" title="{{ thread.title }}">{{ thread.title }}</span>
+            <button class="thread-delete-btn"
+                    onclick="deleteThread(event, {{ thread.id }})"
+                    title="Удалить тред">✕</button>
+        </a>
+        {% else %}
+        <p style="font-size:0.8rem;color:var(--pico-muted-color)">Тредов пока нет</p>
+        {% endfor %}
+
+        <form method="post" action="/agent/threads" style="margin-top:auto">
+            <button type="submit" class="new-thread-btn outline" style="margin-top:0.5rem">+ Новый тред</button>
+        </form>
+    </div>
+
+    <!-- Main chat area -->
+    <div class="agent-chat">
+        {% if active_thread %}
+        <div class="chat-header">{{ active_thread.title }}</div>
+
+        <div class="chat-messages" id="chat-messages">
+            {% for msg in messages %}
+            <div class="message-bubble message-{{ msg.role }}">{{ msg.content }}</div>
+            {% else %}
+            <div class="empty-state">
+                <span style="font-size:2rem">🤖</span>
+                <p>Напишите первое сообщение</p>
+            </div>
+            {% endfor %}
+        </div>
+
+        <div class="chat-input-area">
+            <textarea id="chat-input"
+                      placeholder="Введите сообщение… (Enter — отправить, Shift+Enter — перенос строки)"
+                      ></textarea>
+            <button class="chat-send-btn" id="send-btn"
+                    onclick="sendMessage()">Отправить</button>
+        </div>
+        {% else %}
+        <div class="empty-state">
+            <span style="font-size:3rem">🤖</span>
+            <p>Создайте новый тред, чтобы начать диалог с агентом</p>
+            <form method="post" action="/agent/threads">
+                <button type="submit">+ Новый тред</button>
+            </form>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<script>
+(function() {
+    var threadId = {{ active_thread.id if active_thread else 'null' }};
+    var sending = false;
+
+    // Scroll to bottom on load
+    var chatMessages = document.getElementById('chat-messages');
+    if (chatMessages) {
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+    }
+
+    // Enter to send
+    var input = document.getElementById('chat-input');
+    if (input) {
+        input.addEventListener('keydown', function(e) {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendMessage();
+            }
+        });
+    }
+
+    window.sendMessage = async function() {
+        if (sending || !threadId) return;
+        var inputEl = document.getElementById('chat-input');
+        var sendBtn = document.getElementById('send-btn');
+        var text = (inputEl.value || '').trim();
+        if (!text) return;
+
+        sending = true;
+        inputEl.disabled = true;
+        sendBtn.disabled = true;
+        inputEl.value = '';
+
+        var container = document.getElementById('chat-messages');
+
+        // Remove empty-state if present
+        var emptyState = container.querySelector('.empty-state');
+        if (emptyState) emptyState.remove();
+
+        // Append user bubble
+        var userBubble = document.createElement('div');
+        userBubble.className = 'message-bubble message-user';
+        userBubble.textContent = text;
+        container.appendChild(userBubble);
+        container.scrollTop = container.scrollHeight;
+
+        // Append assistant bubble with typing indicator
+        var aiBubble = document.createElement('div');
+        aiBubble.className = 'message-bubble message-assistant';
+        aiBubble.innerHTML = '<span class="typing-indicator">Думаю</span>';
+        container.appendChild(aiBubble);
+        container.scrollTop = container.scrollHeight;
+
+        try {
+            var resp = await fetch('/agent/threads/' + threadId + '/chat', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({message: text})
+            });
+
+            if (!resp.ok) {
+                throw new Error('HTTP ' + resp.status);
+            }
+
+            var reader = resp.body.getReader();
+            var decoder = new TextDecoder();
+            var buffer = '';
+            var fullText = '';
+
+            while (true) {
+                var result = await reader.read();
+                if (result.done) break;
+
+                buffer += decoder.decode(result.value, {stream: true});
+                var lines = buffer.split('\n');
+                buffer = lines.pop(); // keep incomplete line
+
+                for (var line of lines) {
+                    line = line.trim();
+                    if (!line.startsWith('data:')) continue;
+                    var jsonStr = line.slice(5).trim();
+                    try {
+                        var data = JSON.parse(jsonStr);
+                        if (data.error) {
+                            aiBubble.className = 'message-error';
+                            aiBubble.textContent = data.error;
+                            fullText = data.error;
+                        } else if (data.text !== undefined) {
+                            fullText += data.text;
+                            aiBubble.textContent = fullText;
+                            container.scrollTop = container.scrollHeight;
+                        } else if (data.done) {
+                            aiBubble.textContent = data.full_text || fullText;
+                            container.scrollTop = container.scrollHeight;
+                        }
+                    } catch(e) { /* skip bad JSON */ }
+                }
+            }
+
+            // If bubble is still showing typing indicator, show error
+            if (aiBubble.querySelector('.typing-indicator')) {
+                aiBubble.textContent = 'Нет ответа от агента.';
+            }
+
+        } catch(err) {
+            aiBubble.className = 'message-error';
+            aiBubble.textContent = 'Ошибка соединения: ' + err.message;
+        }
+
+        // Refresh page title with thread name (auto-renamed on first message)
+        try {
+            var titleResp = await fetch('/agent?thread_id=' + threadId, {
+                headers: {'Accept': 'text/html'}
+            });
+            // We don't parse the page, just update sidebar if needed
+        } catch(e) {}
+
+        sending = false;
+        inputEl.disabled = false;
+        sendBtn.disabled = false;
+        inputEl.focus();
+        container.scrollTop = container.scrollHeight;
+    };
+
+    window.deleteThread = async function(e, tid) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (!confirm('Удалить тред?')) return;
+        try {
+            await fetch('/agent/threads/' + tid, {method: 'DELETE'});
+            // Redirect to agent page without thread
+            window.location.href = '/agent';
+        } catch(err) {
+            alert('Ошибка удаления: ' + err.message);
+        }
+    };
+})();
+</script>
+{% endblock %}
