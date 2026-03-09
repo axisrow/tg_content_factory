@@ -232,7 +232,7 @@ async def delete_notification_bot(request: Request):
 @router.post("/notifications/test")
 async def test_notification(request: Request):
     notifier = deps.get_notifier(request)
-    admin_chat_id = notifier._admin_chat_id if notifier else None
+    admin_chat_id = notifier.admin_chat_id if notifier else None
 
     bot = await _notification_service(request).get_status()
     if not admin_chat_id and bot:
@@ -245,6 +245,9 @@ async def test_notification(request: Request):
 
     if bot:
         try:
+            # Send /start from the notification account to the bot so the bot
+            # can initiate a conversation back. This assumes the notification
+            # account IS the admin user receiving push notifications.
             async with target_svc.use_client() as (client, _):
                 await asyncio.wait_for(
                     client.send_message(bot.bot_username, "/start"), timeout=30.0

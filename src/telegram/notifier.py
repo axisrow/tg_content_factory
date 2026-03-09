@@ -25,15 +25,27 @@ class Notifier:
         self._target_service = target_service
         self._admin_chat_id = admin_chat_id
         self._notification_bundle = notification_bundle
+        self._cached_me_id: int | None = None
+
+    @property
+    def admin_chat_id(self) -> int | None:
+        return self._admin_chat_id
 
     async def notify(self, text: str) -> bool:
         try:
             async with self._target_service.use_client() as (client, _phone):
                 if self._notification_bundle is not None:
-                    me = await asyncio.wait_for(client.get_me(), timeout=15.0)
-                    bot = await self._notification_bundle.get_bot(me.id)
+                    if self._cached_me_id is None:
+                        me = await asyncio.wait_for(client.get_me(), timeout=15.0)
+                        self._cached_me_id = me.id
+                    bot = await self._notification_bundle.get_bot(self._cached_me_id)
                     if bot is not None:
-                        return await _send_via_bot_api(bot.bot_token, me.id, text)
+                        return await _send_via_bot_api(bot.bot_token, self._cached_me_id, text)
+                    logger.warning(
+                        "No bot found for account %s, falling back to direct message "
+                        "(push notifications will not be delivered)",
+                        self._cached_me_id,
+                    )
                 target = self._admin_chat_id or "me"
                 await asyncio.wait_for(client.send_message(target, text), timeout=30.0)
             return True
