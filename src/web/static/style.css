@@ -265,3 +265,7 @@ label:first-child .hint::before {
     white-space: nowrap;
   }
 }
+
+/* Утилиты для цвета текста */
+.text-danger { color: var(--pico-del-color); }
+.text-muted  { color: var(--pico-muted-color); }

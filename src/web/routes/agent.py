@@ -4,7 +4,7 @@ import json
 import logging
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from pydantic import BaseModel
 
 from src.web import deps
@@ -69,6 +69,69 @@ async def rename_thread(request: Request, thread_id: int):
     db = deps.get_db(request)
     await db.rename_agent_thread(thread_id, title[:100])
     return {"ok": True}
+
+
+@router.get("/channels-json")
+async def get_channels_json(request: Request):
+    db = deps.get_db(request)
+    channels = await db.get_channels(active_only=True)
+    return JSONResponse([
+        {
+            "id": ch.channel_id,
+            "title": ch.title or str(ch.channel_id),
+            "channel_type": ch.channel_type,
+        }
+        for ch in channels
+    ])
+
+
+@router.get("/forum-topics")
+async def get_forum_topics(request: Request, channel_id: int):
+    pool = deps.get_pool(request)
+    topics = await pool.get_forum_topics(channel_id)
+    return JSONResponse(topics)
+
+
+@router.post("/threads/{thread_id}/context")
+async def inject_context(request: Request, thread_id: int):
+    data = await request.json()
+    channel_id_raw = data.get("channel_id")
+    if not channel_id_raw:
+        raise HTTPException(status_code=400, detail="channel_id is required")
+    channel_id = int(channel_id_raw)
+    limit = min(int(data.get("limit", 50)), 500)
+    topic_id = data.get("topic_id")
+    if topic_id is not None:
+        topic_id = int(topic_id) if str(topic_id).strip() else None
+
+    db = deps.get_db(request)
+    thread = await db.get_agent_thread(thread_id)
+    if thread is None:
+        raise HTTPException(status_code=404, detail="Thread not found")
+
+    messages, _ = await db.search_messages(
+        query="",
+        channel_id=channel_id,
+        limit=limit,
+        topic_id=topic_id,
+    )
+    channels = await db.get_channels()
+    ch = next((c for c in channels if c.channel_id == channel_id), None)
+    title = ch.title if ch else str(channel_id)
+
+    header = f"[КОНТЕКСТ: {title}"
+    if topic_id:
+        header += f", тема #{topic_id}"
+    header += f", {len(messages)} сообщений]"
+    lines = [header]
+    for m in messages:
+        preview = (m.text or "").replace("\n", " ")[:200]
+        author = m.sender_name or (f"id={m.sender_id}" if m.sender_id else "unknown")
+        lines.append(f"- [msg_id={m.message_id}][{m.date.strftime('%Y-%m-%d')}][{author}] {preview}")
+    content = "\n".join(lines)
+
+    await db.save_agent_message(thread_id=thread_id, role="user", content=content)
+    return JSONResponse({"content": content})
 
 
 @router.post("/threads/{thread_id}/chat")

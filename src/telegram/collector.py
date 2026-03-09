@@ -424,6 +424,13 @@ class Collector:
                 reverse=True,
                 wait_time=self._config.delay_between_requests_sec,
             ):
+                topic_id = None
+                reply_to = getattr(msg, "reply_to", None)
+                if reply_to and hasattr(reply_to, "reply_to_top_id"):
+                    topic_id = reply_to.reply_to_top_id or reply_to.reply_to_msg_id
+                elif reply_to and hasattr(reply_to, "forum_topic") and reply_to.forum_topic:
+                    # General topic (id=1): has forum_topic=True but no top_id
+                    topic_id = 1
                 message = Message(
                     channel_id=channel_id,
                     message_id=msg.id,
@@ -431,6 +438,7 @@ class Collector:
                     sender_name=self._get_sender_name(msg),
                     text=msg.text,
                     media_type=self._get_media_type(msg),
+                    topic_id=topic_id,
                     date=msg.date.replace(tzinfo=timezone.utc)
                     if msg.date and msg.date.tzinfo is None
                     else msg.date,
