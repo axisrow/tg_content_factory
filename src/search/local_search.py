@@ -17,6 +17,8 @@ class LocalSearch:
         limit: int = 50,
         offset: int = 0,
         is_fts: bool = False,
+        min_length: int | None = None,
+        max_length: int | None = None,
     ) -> SearchResult:
         messages, total = await self._search.search_messages(
             query=query,
@@ -26,5 +28,7 @@ class LocalSearch:
             limit=limit,
             offset=offset,
             is_fts=is_fts,
+            min_length=min_length,
+            max_length=max_length,
         )
         return SearchResult(messages=messages, total=total, query=query)

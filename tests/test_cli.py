@@ -213,17 +213,107 @@ class TestCLIFilter:
 class TestCLISearch:
     def test_local_empty(self, cli_env, capsys):
         from src.cli.commands.search import run
-        run(_ns(query="nonexistent", limit=20, mode="local", channel_id=None))
+        ns = _ns(
+            query="nonexistent", limit=20, mode="local",
+            channel_id=None, min_length=None, max_length=None, fts=False,
+        )
+        run(ns)
         assert "Found 0 results" in capsys.readouterr().out
 
     def test_local_with_data(self, cli_env, capsys):
         _add_channel(cli_env, channel_id=300, title="SearchCh")
         _add_message(cli_env, channel_id=300, message_id=1, text="important message")
         from src.cli.commands.search import run
-        run(_ns(query="important", limit=20, mode="local", channel_id=None))
+        ns = _ns(
+            query="important", limit=20, mode="local",
+            channel_id=None, min_length=None, max_length=None, fts=False,
+        )
+        run(ns)
         out = capsys.readouterr().out
         assert "Found" in out
         assert "important" in out
+
+
+# ---------------------------------------------------------------------------
+# search-query
+# ---------------------------------------------------------------------------
+
+
+def _add_search_query(
+    db: Database, query: str = "test query", interval: int = 60,
+    is_fts: bool = False, notify: bool = False, track_stats: bool = True,
+) -> int:
+    from src.database.bundles import SearchQueryBundle
+    from src.services.search_query_service import SearchQueryService
+
+    async def _add():
+        svc = SearchQueryService(SearchQueryBundle.from_database(db))
+        return await svc.add(
+            query, interval, is_fts=is_fts,
+            notify_on_collect=notify, track_stats=track_stats,
+        )
+
+    return asyncio.run(_add())
+
+
+def _sq_ns(**kwargs) -> argparse.Namespace:
+    defaults = dict(
+        search_query_action=None, query=None, interval=60, id=None,
+        regex=False, fts=False, notify=False, track_stats=True,
+        exclude_patterns="", max_length=None, days=30,
+    )
+    defaults.update(kwargs)
+    return _ns(**defaults)
+
+
+class TestCLISearchQuery:
+    def test_list_empty(self, cli_env, capsys):
+        from src.cli.commands.search_query import run
+        run(_sq_ns(search_query_action="list"))
+        assert "No search queries found" in capsys.readouterr().out
+
+    def test_list_with_data(self, cli_env, capsys):
+        _add_search_query(cli_env, query="hello world")
+        from src.cli.commands.search_query import run
+        run(_sq_ns(search_query_action="list"))
+        assert "hello world" in capsys.readouterr().out
+
+    def test_add(self, cli_env, capsys):
+        from src.cli.commands.search_query import run
+        run(_sq_ns(search_query_action="add", query="new query"))
+        assert "Added search query" in capsys.readouterr().out
+
+    def test_add_with_fts_and_notify(self, cli_env, capsys):
+        from src.cli.commands.search_query import run
+        run(_sq_ns(search_query_action="add", query="foo OR bar", fts=True, notify=True))
+        assert "Added search query" in capsys.readouterr().out
+
+    def test_add_no_track_stats(self, cli_env, capsys):
+        from src.cli.commands.search_query import run
+        run(_sq_ns(search_query_action="add", query="test", track_stats=False))
+        assert "Added search query" in capsys.readouterr().out
+
+    def test_edit(self, cli_env, capsys):
+        sq_id = _add_search_query(cli_env, query="original")
+        from src.cli.commands.search_query import run
+        run(_sq_ns(
+            search_query_action="edit", id=sq_id, query="updated",
+            regex=None, fts=None, notify=None, track_stats=None,
+            exclude_patterns=None, max_length=None, interval=None,
+        ))
+        assert "Updated search query" in capsys.readouterr().out
+
+    def test_toggle(self, cli_env, capsys):
+        sq_id = _add_search_query(cli_env, query="toggle_me")
+        from src.cli.commands.search_query import run
+        run(_sq_ns(search_query_action="toggle", id=sq_id))
+        assert "Toggled search query" in capsys.readouterr().out
+
+    def test_delete(self, cli_env, capsys):
+        sq_id = _add_search_query(cli_env, query="to_delete")
+        from src.cli.commands.search_query import run
+        run(_sq_ns(search_query_action="delete", id=sq_id))
+        assert "Deleted search query" in capsys.readouterr().out
 
 
 # ---------------------------------------------------------------------------

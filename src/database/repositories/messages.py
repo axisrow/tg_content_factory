@@ -98,6 +98,8 @@ class MessagesRepository:
         limit: int = 50,
         offset: int = 0,
         is_fts: bool = False,
+        min_length: int | None = None,
+        max_length: int | None = None,
     ) -> tuple[list[Message], int]:
         # Exclude messages from filtered channels; allow messages whose channel
         # is not yet in the channels table (NULL join) for backward-compat.
@@ -116,6 +118,13 @@ class MessagesRepository:
         if normalized_date_to:
             conditions.append(f"m.date {date_to_operator} ?")
             params.append(normalized_date_to)
+
+        if min_length is not None:
+            conditions.append("LENGTH(m.text) >= ?")
+            params.append(min_length)
+        if max_length is not None:
+            conditions.append("LENGTH(m.text) <= ?")
+            params.append(max_length)
 
         channel_join = " LEFT JOIN channels c ON m.channel_id = c.channel_id"
         where = " WHERE " + " AND ".join(conditions)
@@ -189,7 +198,7 @@ class MessagesRepository:
         conditions: list[str] = []
         params: list = []
         if sq.max_length is not None:
-            conditions.append("LENGTH(m.text) < ?")
+            conditions.append("LENGTH(m.text) <= ?")
             params.append(sq.max_length)
         for pat in sq.exclude_patterns_list:
             conditions.append("m.text NOT LIKE ?")
@@ -250,39 +259,41 @@ class MessagesRepository:
         result: dict[int, list] = {}
         if not queries:
             return result
-        union_parts = []
-        all_params: list = []
-        for sq in queries:
-            if sq.id is None:
-                continue
-            fts_query = self._build_fts_match(sq.query, sq.is_fts)
-            extra_conds, extra_params = self._build_extra_conditions(sq)
-            where_parts = [
-                "(c.is_filtered IS NULL OR c.is_filtered = 0)",
-                "m.date >= datetime('now', ?)",
-            ]
-            where_parts.extend(extra_conds)
-            where_clause = " AND ".join(where_parts)
-            union_parts.append(
-                f"SELECT ? AS sq_id, date(m.date) AS day, COUNT(*) AS count"
-                f" FROM messages m"
-                f" INNER JOIN (SELECT rowid FROM messages_fts"
-                f" WHERE messages_fts MATCH ?) AS fts ON m.id = fts.rowid"
-                f" LEFT JOIN channels c ON m.channel_id = c.channel_id"
-                f" WHERE {where_clause}"
-                f" GROUP BY date(m.date)"
-            )
-            all_params.extend([sq.id, fts_query, f"-{days} days", *extra_params])
-            result[sq.id] = []
-        if not union_parts:
-            return result
-        sql = " UNION ALL ".join(union_parts) + " ORDER BY sq_id, day"
-        cur = await self._db.execute(sql, all_params)
-        rows = await cur.fetchall()
-        for r in rows:
-            result[r["sq_id"]].append(
-                SearchQueryDailyStat(day=r["day"], count=r["count"])
-            )
+
+        # SQLite SQLITE_MAX_COMPOUND_SELECT defaults to 500; chunk to stay well under it
+        _chunk = 100
+        valid = [sq for sq in queries if sq.id is not None]
+        for chunk_start in range(0, len(valid), _chunk):
+            chunk = valid[chunk_start:chunk_start + _chunk]
+            union_parts = []
+            all_params: list = []
+            for sq in chunk:
+                fts_query = self._build_fts_match(sq.query, sq.is_fts)
+                extra_conds, extra_params = self._build_extra_conditions(sq)
+                where_parts = [
+                    "(c.is_filtered IS NULL OR c.is_filtered = 0)",
+                    "m.date >= datetime('now', ?)",
+                ]
+                where_parts.extend(extra_conds)
+                where_clause = " AND ".join(where_parts)
+                union_parts.append(
+                    f"SELECT ? AS sq_id, date(m.date) AS day, COUNT(*) AS count"
+                    f" FROM messages m"
+                    f" INNER JOIN (SELECT rowid FROM messages_fts"
+                    f" WHERE messages_fts MATCH ?) AS fts ON m.id = fts.rowid"
+                    f" LEFT JOIN channels c ON m.channel_id = c.channel_id"
+                    f" WHERE {where_clause}"
+                    f" GROUP BY date(m.date)"
+                )
+                all_params.extend([sq.id, fts_query, f"-{days} days", *extra_params])
+                result[sq.id] = []
+            sql = " UNION ALL ".join(union_parts) + " ORDER BY sq_id, day"
+            cur = await self._db.execute(sql, all_params)
+            rows = await cur.fetchall()
+            for r in rows:
+                result[r["sq_id"]].append(
+                    SearchQueryDailyStat(day=r["day"], count=r["count"])
+                )
         return result
 
     async def delete_messages_for_channel(self, channel_id: int) -> int:

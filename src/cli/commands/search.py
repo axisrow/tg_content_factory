@@ -32,7 +32,13 @@ def run(args: argparse.Namespace) -> None:
                     args.channel_id, args.query, limit=args.limit
                 )
             else:
-                result = await engine.search_local(args.query, limit=args.limit)
+                result = await engine.search_local(
+                    args.query,
+                    limit=args.limit,
+                    min_length=args.min_length,
+                    max_length=args.max_length,
+                    is_fts=args.fts,
+                )
 
             print(f"Found {result.total} results for '{result.query}':\n")
             for msg in result.messages:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from datetime import date as date_cls
+from datetime import timedelta
 
 from src.database import Database
 from src.database.bundles import SearchQueryBundle
@@ -88,6 +89,9 @@ class SearchQueryService:
         sq = await self._bundle.get_by_id(sq_id)
         if not sq:
             return 0
+        if sq.is_regex:
+            logger.info("Search query '%s' (id=%d): regex not counted via FTS", sq.query, sq_id)
+            return 0
         daily = await self._bundle.get_fts_daily_stats_for_query(sq, days=1)
         today = date_cls.today().isoformat()
         count = next((d.count for d in daily if d.day == today), 0)
@@ -106,11 +110,15 @@ class SearchQueryService:
     ) -> list[dict]:
         queries = await self._bundle.get_all()
         last_runs = await self._bundle.get_last_recorded_at_all()
-        tracked = [sq for sq in queries if sq.track_stats]
+        # Regex queries can't be counted via FTS5; exclude them from FTS stats batch
+        tracked = [sq for sq in queries if sq.track_stats and not sq.is_regex]
+        tracked_ids = {sq.id for sq in tracked}
+        # Only tracked non-regex queries have stats; others get empty daily_stats/total_30d=0
         stats_map = await self._bundle.get_fts_daily_stats_batch(tracked, days)
         result = []
         for sq in queries:
-            daily = stats_map.get(sq.id, [])
+            raw = stats_map.get(sq.id, []) if sq.id in tracked_ids else None
+            daily = self._fill_missing_days(raw, days)
             total = sum(s.count for s in daily)
             result.append({
                 "query": sq,
@@ -119,3 +127,25 @@ class SearchQueryService:
                 "daily_stats": daily,
             })
         return result
+
+    @staticmethod
+    def _fill_missing_days(
+        stats: list[SearchQueryDailyStat] | None, days: int
+    ) -> list[SearchQueryDailyStat]:
+        if stats is None:
+            return []
+        today = date_cls.today()
+        if not stats:
+            return [
+                SearchQueryDailyStat(day=(today - timedelta(days=i)).isoformat(), count=0)
+                for i in range(days, -1, -1)
+            ]
+        existing = {s.day: s for s in stats}
+        filled = []
+        for i in range(days, 0, -1):
+            d = (today - timedelta(days=i)).isoformat()
+            filled.append(existing.get(d, SearchQueryDailyStat(day=d, count=0)))
+        # include today
+        d = today.isoformat()
+        filled.append(existing.get(d, SearchQueryDailyStat(day=d, count=0)))
+        return filled
