@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import date as date_cls
 
 from src.database import Database
 from src.database.bundles import SearchQueryBundle
@@ -71,6 +72,7 @@ class SearchQueryService:
             interval_minutes=interval_minutes,
             is_regex=is_regex,
             is_fts=is_fts,
+            is_active=existing.is_active,
             notify_on_collect=notify_on_collect,
             track_stats=track_stats,
             exclude_patterns=exclude_patterns,
@@ -87,7 +89,8 @@ class SearchQueryService:
         if not sq:
             return 0
         daily = await self._bundle.get_fts_daily_stats_for_query(sq, days=1)
-        count = daily[0].count if daily else 0
+        today = date_cls.today().isoformat()
+        count = next((d.count for d in daily if d.day == today), 0)
         if sq.track_stats:
             await self._bundle.record_stat(sq_id, count)
         logger.info("Search query '%s' (id=%d): %d matches today", sq.query, sq_id, count)
