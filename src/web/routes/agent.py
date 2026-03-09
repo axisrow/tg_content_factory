@@ -26,11 +26,7 @@ async def agent_page(request: Request, thread_id: int | None = None):
     active_thread = None
 
     if thread_id is not None:
-        # Validate thread exists
-        for t in threads:
-            if t["id"] == thread_id:
-                active_thread = t
-                break
+        active_thread = await db.get_agent_thread(thread_id)
         if active_thread is None and threads:
             # Redirect to first existing thread
             return RedirectResponse(url=f"/agent?thread_id={threads[0]['id']}", status_code=303)
@@ -108,10 +104,10 @@ async def chat(request: Request, thread_id: int):
                 data = json.loads(data_str)
                 if data.get("done") and data.get("full_text"):
                     await db.save_agent_message(thread_id, "assistant", data["full_text"])
-                elif data.get("error"):
-                    await db.save_agent_message(thread_id, "assistant", data["error"])
-            except Exception:
+            except json.JSONDecodeError:
                 pass
+            except Exception:
+                logger.exception("Failed to save agent message for thread %d", thread_id)
             yield chunk
 
     return StreamingResponse(generate(), media_type="text/event-stream")
