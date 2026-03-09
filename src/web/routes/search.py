@@ -98,7 +98,7 @@ async def search_page(
             "mode": mode,
             "is_fts": is_fts,
             "msg_length_op": msg_length_op,
-            "msg_length_val": msg_length_val or "",
+            "msg_length_val": msg_length_val,
             "page": page,
             "total_pages": total_pages,
             "ai_enabled": ai_enabled,
