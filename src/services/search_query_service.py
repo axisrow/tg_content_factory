@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from datetime import date as date_cls
+from datetime import timedelta
 
 from src.database import Database
 from src.database.bundles import SearchQueryBundle
@@ -131,9 +132,7 @@ class SearchQueryService:
     ) -> list[SearchQueryDailyStat]:
         if not stats:
             return []
-        from datetime import date, timedelta
-
-        today = date.today()
+        today = date_cls.today()
         existing = {s.day: s for s in stats}
         filled = []
         for i in range(days, 0, -1):

@@ -24,7 +24,7 @@ async def add_search_query(
     is_regex: bool = Form(False),
     is_fts: bool = Form(False),
     notify_on_collect: bool = Form(False),
-    track_stats: bool = Form(True),
+    track_stats: bool = Form(False),
     exclude_patterns: str = Form(""),
     max_length: int | None = Form(None),
 ):
