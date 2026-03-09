@@ -42,12 +42,12 @@ class AgentManager:
         )
 
     def _build_prompt(self, history: list[dict], message: str) -> str:
-        lines = []
+        parts = []
         for msg in history:
-            role_label = "User" if msg["role"] == "user" else "Assistant"
-            lines.append(f"{role_label}: {msg['content']}")
-        lines.append(f"User: {message}")
-        return "\n".join(lines)
+            tag = "user" if msg["role"] == "user" else "assistant"
+            parts.append(f"<{tag}>\n{msg['content']}\n</{tag}>")
+        parts.append(f"<user>\n{message}\n</user>")
+        return "\n".join(parts)
 
     async def chat_stream(self, thread_id: int, message: str) -> AsyncGenerator[str, None]:
         """Async generator yielding raw SSE lines: data: <json>\\n\\n"""
