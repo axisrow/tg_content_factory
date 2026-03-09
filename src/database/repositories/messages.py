@@ -82,7 +82,8 @@ class MessagesRepository:
         try:
             cur = await self._db.executemany(
                 """INSERT OR IGNORE INTO messages
-                   (channel_id, message_id, sender_id, sender_name, text, media_type, topic_id, date)
+                   (channel_id, message_id, sender_id, sender_name,
+                    text, media_type, topic_id, date)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
                 data,
             )
