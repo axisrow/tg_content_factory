@@ -12,10 +12,11 @@ class DBConnection:
 
     async def connect(self) -> aiosqlite.Connection:
         Path(self._db_path).parent.mkdir(parents=True, exist_ok=True)
-        self.db = await aiosqlite.connect(self._db_path, timeout=10.0)
+        self.db = await aiosqlite.connect(self._db_path, timeout=10.0, isolation_level=None)
         self.db.row_factory = aiosqlite.Row
         await self.db.execute("PRAGMA journal_mode=WAL")
         await self.db.execute("PRAGMA synchronous=NORMAL")
+        await self.db.execute("PRAGMA foreign_keys=ON")
         return self.db
 
     async def close(self) -> None:

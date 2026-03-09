@@ -5,6 +5,7 @@ from dataclasses import dataclass
 
 from fastapi.templating import Jinja2Templates
 
+from src.agent.manager import AgentManager
 from src.collection_queue import CollectionQueue
 from src.config import AppConfig
 from src.database import Database
@@ -56,4 +57,5 @@ class AppContainer:
     log_buffer: LogBuffer | None
     session_secret: str
     bg_tasks: set[asyncio.Task]
+    agent_manager: AgentManager | None = None
     shutting_down: bool = False

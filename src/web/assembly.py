@@ -92,6 +92,7 @@ def register_builtin_endpoints(app: FastAPI) -> None:
 
 
 def register_routes(app: FastAPI) -> None:
+    from src.web.routes.agent import router as agent_router
     from src.web.routes.auth import router as auth_router
     from src.web.routes.channel_collection import router as channel_collection_router
     from src.web.routes.channels import router as channels_router
@@ -105,6 +106,7 @@ def register_routes(app: FastAPI) -> None:
     from src.web.routes.search_queries import router as search_queries_router
     from src.web.routes.settings import router as settings_router
 
+    app.include_router(agent_router, prefix="/agent")
     app.include_router(search_router)
     app.include_router(dashboard_router, prefix="/dashboard")
     app.include_router(auth_router, prefix="/auth")

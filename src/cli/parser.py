@@ -143,6 +143,21 @@ def build_parser() -> argparse.ArgumentParser:
     notif_sub.add_parser("status", help="Show notification bot status")
     notif_sub.add_parser("delete", help="Delete notification bot via BotFather")
 
+    agent_parser = sub.add_parser("agent", help="Agent chat management")
+    agent_sub = agent_parser.add_subparsers(dest="agent_action")
+
+    agent_sub.add_parser("threads", help="List agent threads")
+
+    agent_create = agent_sub.add_parser("thread-create", help="Create new thread")
+    agent_create.add_argument("--title", default=None, help="Thread title")
+
+    agent_delete = agent_sub.add_parser("thread-delete", help="Delete thread")
+    agent_delete.add_argument("thread_id", type=int, help="Thread ID")
+
+    agent_chat = agent_sub.add_parser("chat", help="Send message to agent")
+    agent_chat.add_argument("message", help="Message text")
+    agent_chat.add_argument("--thread-id", type=int, default=None, dest="thread_id")
+
     test_parser = sub.add_parser("test", help="Run diagnostic tests")
     test_sub = test_parser.add_subparsers(dest="test_action")
     test_sub.add_parser("all", help="Run all test sections (read + write + telegram)")

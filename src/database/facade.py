@@ -425,3 +425,67 @@ class Database:
         self._require()
         assert self._notification_bots is not None
         await self._notification_bots.delete_bot(tg_user_id)
+
+    # ── Agent chat ─────────────────────────────────────────────────────────────
+
+    async def create_agent_thread(self, title: str = "Новый тред") -> int:
+        self._require()
+        assert self._db is not None
+        cur = await self._db.execute(
+            "INSERT INTO agent_threads (title) VALUES (?)", (title,)
+        )
+        await self._db.commit()
+        assert cur.lastrowid is not None
+        return cur.lastrowid
+
+    async def get_agent_threads(self) -> list[dict]:
+        self._require()
+        assert self._db is not None
+        cur = await self._db.execute(
+            "SELECT id, title, created_at FROM agent_threads ORDER BY created_at DESC"
+        )
+        rows = await cur.fetchall()
+        return [dict(r) for r in rows]
+
+    async def get_agent_thread(self, thread_id: int) -> dict | None:
+        self._require()
+        assert self._db is not None
+        cur = await self._db.execute(
+            "SELECT id, title, created_at FROM agent_threads WHERE id = ?", (thread_id,)
+        )
+        row = await cur.fetchone()
+        return dict(row) if row else None
+
+    async def rename_agent_thread(self, thread_id: int, title: str) -> None:
+        self._require()
+        assert self._db is not None
+        await self._db.execute(
+            "UPDATE agent_threads SET title = ? WHERE id = ?", (title, thread_id)
+        )
+        await self._db.commit()
+
+    async def delete_agent_thread(self, thread_id: int) -> None:
+        self._require()
+        assert self._db is not None
+        await self._db.execute("DELETE FROM agent_threads WHERE id = ?", (thread_id,))
+        await self._db.commit()
+
+    async def get_agent_messages(self, thread_id: int) -> list[dict]:
+        self._require()
+        assert self._db is not None
+        cur = await self._db.execute(
+            "SELECT id, thread_id, role, content, created_at"
+            " FROM agent_messages WHERE thread_id = ? ORDER BY created_at ASC",
+            (thread_id,),
+        )
+        rows = await cur.fetchall()
+        return [dict(r) for r in rows]
+
+    async def save_agent_message(self, thread_id: int, role: str, content: str) -> None:
+        self._require()
+        assert self._db is not None
+        await self._db.execute(
+            "INSERT INTO agent_messages (thread_id, role, content) VALUES (?, ?, ?)",
+            (thread_id, role, content),
+        )
+        await self._db.commit()

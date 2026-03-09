@@ -6,6 +6,7 @@ from typing import TypeVar
 from fastapi import Request
 from fastapi.templating import Jinja2Templates
 
+from src.agent.manager import AgentManager
 from src.collection_queue import CollectionQueue
 from src.database import Database
 from src.database.bundles import (
@@ -107,6 +108,7 @@ def get_container(request: Request) -> AppContainer:
         log_buffer=getattr(request.app.state, "log_buffer", None),
         session_secret=_require_app_state_attr(request, "session_secret"),
         bg_tasks=getattr(request.app.state, "bg_tasks", set()),
+        agent_manager=getattr(request.app.state, "agent_manager", None),
         shutting_down=getattr(request.app.state, "shutting_down", False),
     )
     request.state._container = container
@@ -195,6 +197,10 @@ def get_log_buffer(request: Request) -> LogBuffer | None:
 
 def is_shutting_down(request: Request) -> bool:
     return get_container(request).shutting_down
+
+
+def get_agent_manager(request: Request) -> AgentManager | None:
+    return get_container(request).agent_manager
 
 
 def channel_service(request: Request) -> ChannelService:
