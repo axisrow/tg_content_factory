@@ -186,6 +186,7 @@ function openSubscriptions() {
             }
             html += '</tbody></table></form>';
             list.innerHTML = html;
+            htmx.process(list);
         })
         .catch(function() {
             list.innerHTML = "<p>Ошибка загрузки подписок.</p>";
