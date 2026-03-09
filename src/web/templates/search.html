@@ -38,7 +38,7 @@
                     <option value="lt" {{ 'selected' if msg_length_op == 'lt' else '' }}>&lt;</option>
                 </select>
                 <input type="number" name="msg_length_val" id="msg-length-val"
-                       min="1" placeholder="символов" value="{{ msg_length_val }}">
+                       min="1" placeholder="символов" value="{{ msg_length_val or '' }}">
             </div>
         </label>
     </div>
