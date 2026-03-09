@@ -252,6 +252,7 @@ class Database:
         date_to: str | None = None,
         limit: int = 50,
         offset: int = 0,
+        topic_id: int | None = None,
     ) -> tuple[list[Message], int]:
         self._require()
         return await self._messages.search_messages(
@@ -261,6 +262,7 @@ class Database:
             date_to=date_to,
             limit=limit,
             offset=offset,
+            topic_id=topic_id,
         )
 
     async def delete_messages_for_channel(self, channel_id: int) -> int:
