@@ -139,7 +139,8 @@ async def inject_context(request: Request, thread_id: int):
     for m in messages:
         preview = (m.text or "").replace("\n", " ")[:200]
         author = m.sender_name or (f"id={m.sender_id}" if m.sender_id else "unknown")
-        lines.append(f"- [msg_id={m.message_id}][{m.date.strftime('%Y-%m-%d')}][{author}] {preview}")
+        date_str = m.date.strftime("%Y-%m-%d")
+        lines.append(f"- [msg_id={m.message_id}][{date_str}][{author}] {preview}")
     content = "\n".join(lines)
 
     await db.save_agent_message(thread_id=thread_id, role="user", content=content)
