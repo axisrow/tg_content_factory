@@ -97,6 +97,7 @@ class MessagesRepository:
         date_to: str | None = None,
         limit: int = 50,
         offset: int = 0,
+        is_fts: bool = False,
     ) -> tuple[list[Message], int]:
         # Exclude messages from filtered channels; allow messages whose channel
         # is not yet in the channels table (NULL join) for backward-compat.
@@ -120,7 +121,7 @@ class MessagesRepository:
         where = " WHERE " + " AND ".join(conditions)
 
         if query:
-            fts_query = '"' + query.replace('"', '""') + '"'
+            fts_query = self._build_fts_match(query, is_fts)
             fts_join = (
                 " INNER JOIN (SELECT rowid FROM messages_fts"
                 " WHERE messages_fts MATCH ?) AS fts ON m.id = fts.rowid"
