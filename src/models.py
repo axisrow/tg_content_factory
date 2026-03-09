@@ -4,7 +4,7 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class Account(BaseModel):
@@ -127,6 +127,12 @@ class SearchQuery(BaseModel):
     exclude_patterns: str = ""
     max_length: int | None = None
     created_at: datetime | None = None
+
+    @model_validator(mode="after")
+    def check_mode_exclusive(self) -> "SearchQuery":
+        if self.is_regex and self.is_fts:
+            raise ValueError("is_regex and is_fts are mutually exclusive")
+        return self
 
     @property
     def exclude_patterns_list(self) -> list[str]:

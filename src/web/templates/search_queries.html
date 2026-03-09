@@ -185,8 +185,12 @@
 {% endif %}
 <script>
 function toggleEdit(id) {
+    var editRow = document.getElementById('edit-' + id);
+    if (!editRow.classList.contains('d-none')) {
+        editRow.querySelector('form').reset();
+    }
     document.getElementById('row-' + id).classList.toggle('d-none');
-    document.getElementById('edit-' + id).classList.toggle('d-none');
+    editRow.classList.toggle('d-none');
 }
 </script>
 {% endblock %}
