@@ -177,38 +177,6 @@ class MessagesRepository:
         ]
         return messages, total
 
-    async def count_fts_matches(self, query: str) -> int:
-        fts_query = '"' + query.replace('"', '""') + '"'
-        cur = await self._db.execute(
-            "SELECT COUNT(*) AS cnt FROM messages m"
-            " INNER JOIN (SELECT rowid FROM messages_fts"
-            " WHERE messages_fts MATCH ?) AS fts ON m.id = fts.rowid",
-            (fts_query,),
-        )
-        row = await cur.fetchone()
-        return row["cnt"] if row else 0
-
-    async def get_fts_daily_stats(self, query: str, days: int = 30) -> list:
-        from src.models import SearchQueryDailyStat
-
-        fts_query = '"' + query.replace('"', '""') + '"'
-        cur = await self._db.execute(
-            """
-            SELECT date(m.date) AS day, COUNT(*) AS count
-            FROM messages m
-            INNER JOIN (SELECT rowid FROM messages_fts
-                        WHERE messages_fts MATCH ?) AS fts ON m.id = fts.rowid
-            LEFT JOIN channels c ON m.channel_id = c.channel_id
-            WHERE (c.is_filtered IS NULL OR c.is_filtered = 0)
-              AND m.date >= datetime('now', ?)
-            GROUP BY date(m.date)
-            ORDER BY day
-            """,
-            (fts_query, f"-{days} days"),
-        )
-        rows = await cur.fetchall()
-        return [SearchQueryDailyStat(day=r["day"], count=r["count"]) for r in rows]
-
     @staticmethod
     def _build_fts_match(query: str, is_fts: bool) -> str:
         if is_fts:
