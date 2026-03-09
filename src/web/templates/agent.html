@@ -523,27 +523,24 @@
             var topicWrap = document.getElementById('ctx-topic-wrap');
             var topicSel = document.getElementById('ctx-topic');
             topicSel.innerHTML = '<option value="">Все темы</option>';
-            if (opt && opt.dataset.type === 'forum') {
-                topicWrap.style.display = '';
+            if (opt && opt.value) {
                 try {
                     var resp = await fetch('/agent/forum-topics?channel_id=' + opt.value);
                     var topics = await resp.json();
-                    if (topics.length === 0) {
-                        var o = document.createElement('option');
-                        o.value = '';
-                        o.textContent = '(темы не загружены)';
-                        o.disabled = true;
-                        topicSel.appendChild(o);
-                    } else {
+                    if (topics.length > 0) {
+                        topicWrap.style.display = '';
                         topics.forEach(function(t) {
                             var o = document.createElement('option');
                             o.value = t.id;
                             o.textContent = t.title;
                             topicSel.appendChild(o);
                         });
+                    } else {
+                        topicWrap.style.display = 'none';
                     }
                 } catch(e) {
                     console.error('Failed to load topics:', e);
+                    topicWrap.style.display = 'none';
                 }
             } else {
                 topicWrap.style.display = 'none';

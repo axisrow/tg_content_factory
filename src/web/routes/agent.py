@@ -101,6 +101,9 @@ async def get_channels_json(request: Request):
 async def get_forum_topics(request: Request, channel_id: int):
     pool = deps.get_pool(request)
     topics = await pool.get_forum_topics(channel_id)
+    if topics:
+        db = deps.get_db(request)
+        await db.set_channel_type(channel_id, "forum")
     return JSONResponse(topics)
 
 
