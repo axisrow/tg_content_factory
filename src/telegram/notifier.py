@@ -33,6 +33,14 @@ class Notifier:
 
     async def notify(self, text: str) -> bool:
         try:
+            # Fast path: if me.id is cached and a bot is configured, skip the
+            # Telegram client entirely — _send_via_bot_api is a pure HTTP call.
+            if self._notification_bundle is not None and self._cached_me_id is not None:
+                bot = await self._notification_bundle.get_bot(self._cached_me_id)
+                if bot is not None:
+                    return await _send_via_bot_api(bot.bot_token, self._cached_me_id, text)
+
+            # Slow path: need a client either to populate me.id or to send directly.
             async with self._target_service.use_client() as (client, _phone):
                 if self._notification_bundle is not None:
                     if self._cached_me_id is None:
