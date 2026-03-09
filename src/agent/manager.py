@@ -52,6 +52,11 @@ class AgentManager:
     async def chat_stream(self, thread_id: int, message: str) -> AsyncGenerator[str, None]:
         """Async generator yielding raw SSE lines: data: <json>\\n\\n"""
         history = await self._db.get_agent_messages(thread_id)
+        # Callers must save the user message before calling chat_stream, so history[-1]
+        # is always the user's message we're about to answer — exclude it from context.
+        assert not history or history[-1]["role"] == "user", (
+            "Expected last DB message to be the user message just saved"
+        )
         prompt = self._build_prompt(history[:-1], message)
 
         extra: dict = {}

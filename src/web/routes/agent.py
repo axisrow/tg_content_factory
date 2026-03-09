@@ -101,23 +101,17 @@ async def chat(request: Request, thread_id: int):
         raise HTTPException(status_code=503, detail="AgentManager not initialized")
 
     async def generate():
-        full_text_parts = []
-
         async for chunk in agent_manager.chat_stream(thread_id, message):
-            yield chunk
-            # Collect full_text from done event
+            # Save before yielding so disconnect doesn't lose the message
             try:
                 data_str = chunk.removeprefix("data: ").strip()
                 data = json.loads(data_str)
                 if data.get("done") and data.get("full_text"):
-                    full_text_parts.append(data["full_text"])
+                    await db.save_agent_message(thread_id, "assistant", data["full_text"])
                 elif data.get("error"):
-                    full_text_parts.append(data["error"])
+                    await db.save_agent_message(thread_id, "assistant", data["error"])
             except Exception:
                 pass
-
-        # Save assistant response
-        if full_text_parts:
-            await db.save_agent_message(thread_id, "assistant", full_text_parts[-1])
+            yield chunk
 
     return StreamingResponse(generate(), media_type="text/event-stream")
