@@ -729,6 +729,12 @@ class Collector:
                     ),
                 )
                 await self._db.save_channel_stats(stats)
+
+                # Update channel_type if missing
+                if channel.channel_type is None:
+                    channel_type, _deactivate = self._pool._classify_entity(entity)
+                    await self._db.set_channel_type(channel.channel_id, channel_type)
+
                 return stats
             except FloodWaitError as e:
                 logger.warning(

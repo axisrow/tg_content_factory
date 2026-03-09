@@ -1,5 +1,7 @@
 /* TG Post Search — Custom styles */
 
+html { font-size: 14px; }
+
 nav.container {
     padding-top: 1rem;
     padding-bottom: 1rem;
@@ -14,7 +16,7 @@ nav ul li a {
 }
 
 table {
-    font-size: 0.72rem;
+    font-size: 0.8rem;
 }
 
 td, th {
@@ -202,7 +204,7 @@ form button[style*="padding"] {
     transform: translateX(-50%);
     background: var(--pico-tooltip-background-color, #1e293b);
     color: var(--pico-tooltip-color, #fff);
-    font-size: 0.82rem;
+    font-size: 0.8rem;
     font-weight: 400;
     line-height: 1.35;
     padding: 0.5em 0.7em;
