@@ -424,7 +424,9 @@ class ClientPool:
         client, phone = result
         try:
             # Pre-populate entity cache (StringSession loses it between restarts)
-            await asyncio.wait_for(client.get_dialogs(), timeout=30.0)
+            if not self.is_dialogs_fetched(phone):
+                await asyncio.wait_for(client.get_dialogs(), timeout=30.0)
+                self.mark_dialogs_fetched(phone)
             entity = await asyncio.wait_for(
                 client.get_entity(PeerChannel(channel_id)), timeout=30.0
             )
