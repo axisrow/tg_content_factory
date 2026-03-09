@@ -112,11 +112,13 @@ class SearchQueryService:
         last_runs = await self._bundle.get_last_recorded_at_all()
         # Regex queries can't be counted via FTS5; exclude them from FTS stats batch
         tracked = [sq for sq in queries if sq.track_stats and not sq.is_regex]
+        tracked_ids = {sq.id for sq in tracked}
         # Only tracked non-regex queries have stats; others get empty daily_stats/total_30d=0
         stats_map = await self._bundle.get_fts_daily_stats_batch(tracked, days)
         result = []
         for sq in queries:
-            daily = self._fill_missing_days(stats_map.get(sq.id, []), days)
+            raw = stats_map.get(sq.id, []) if sq.id in tracked_ids else None
+            daily = self._fill_missing_days(raw, days)
             total = sum(s.count for s in daily)
             result.append({
                 "query": sq,
@@ -128,11 +130,16 @@ class SearchQueryService:
 
     @staticmethod
     def _fill_missing_days(
-        stats: list[SearchQueryDailyStat], days: int
+        stats: list[SearchQueryDailyStat] | None, days: int
     ) -> list[SearchQueryDailyStat]:
-        if not stats:
+        if stats is None:
             return []
         today = date_cls.today()
+        if not stats:
+            return [
+                SearchQueryDailyStat(day=(today - timedelta(days=i)).isoformat(), count=0)
+                for i in range(days, -1, -1)
+            ]
         existing = {s.day: s for s in stats}
         filled = []
         for i in range(days, 0, -1):
