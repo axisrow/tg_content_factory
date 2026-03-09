@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 
@@ -6,6 +7,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from src.services.notification_service import NotificationService
 from src.settings_utils import parse_int_setting
+from src.telegram.notifier import Notifier
 from src.web import deps
 
 router = APIRouter()
@@ -225,6 +227,38 @@ async def delete_notification_bot(request: Request):
     if _wants_json(request):
         return JSONResponse({"deleted": True})
     return RedirectResponse(url="/settings?msg=notification_bot_deleted", status_code=303)
+
+
+@router.post("/notifications/test")
+async def test_notification(request: Request):
+    notifier = deps.get_notifier(request)
+    admin_chat_id = notifier._admin_chat_id if notifier else None
+
+    bot = await _notification_service(request).get_status()
+    if not admin_chat_id and bot:
+        admin_chat_id = bot.tg_user_id
+
+    if not admin_chat_id and not bot:
+        return RedirectResponse(url="/settings?error=notification_test_failed", status_code=303)
+
+    target_svc = deps.get_notification_target_service(request)
+
+    if bot:
+        try:
+            async with target_svc.use_client() as (client, _):
+                await asyncio.wait_for(
+                    client.send_message(bot.bot_username, "/start"), timeout=30.0
+                )
+        except Exception as exc:
+            logger.warning("Could not send /start to @%s: %s", bot.bot_username, exc)
+
+    msg = "✅ Тест уведомлений: соединение установлено"
+    ok = await Notifier(
+        target_svc, admin_chat_id, deps.get_notification_bundle(request)
+    ).notify(msg)
+    if ok:
+        return RedirectResponse(url="/settings?msg=notification_test_sent", status_code=303)
+    return RedirectResponse(url="/settings?error=notification_test_failed", status_code=303)
 
 
 @router.post("/{account_id}/toggle")
