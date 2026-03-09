@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS messages (
     sender_name TEXT,
     text TEXT,
     media_type TEXT,
+    topic_id INTEGER,
     date TEXT NOT NULL,
     collected_at TEXT DEFAULT (datetime('now')),
     UNIQUE(channel_id, message_id)
