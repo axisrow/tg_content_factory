@@ -18,6 +18,7 @@ async def search_page(
     date_from: str = Query(""),
     date_to: str = Query(""),
     mode: str = Query("local"),
+    is_fts: str = Query(""),
     page: int = Query(1),
 ):
     # Onboarding: redirect if no accounts configured
@@ -55,6 +56,7 @@ async def search_page(
                     date_from=date_from or None,
                     date_to=date_to or None,
                     offset=offset,
+                    is_fts=bool(is_fts),
                 )
             except Exception as exc:
                 logger.exception("Search request failed: mode=%s query=%r", mode, q)
@@ -87,6 +89,7 @@ async def search_page(
             "date_from": date_from,
             "date_to": date_to,
             "mode": mode,
+            "is_fts": is_fts,
             "page": page,
             "total_pages": total_pages,
             "ai_enabled": ai_enabled,

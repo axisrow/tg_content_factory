@@ -16,6 +16,7 @@ class LocalSearch:
         date_to: str | None = None,
         limit: int = 50,
         offset: int = 0,
+        is_fts: bool = False,
     ) -> SearchResult:
         messages, total = await self._search.search_messages(
             query=query,
@@ -24,5 +25,6 @@ class LocalSearch:
             date_to=date_to,
             limit=limit,
             offset=offset,
+            is_fts=is_fts,
         )
         return SearchResult(messages=messages, total=total, query=query)

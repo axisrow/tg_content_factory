@@ -79,6 +79,8 @@
             <td>{{ item.total_30d }}</td>
             <td>{{ item.last_run[:16] if item.last_run else "—" }}</td>
             <td>
+                <a href="/?q={{ sq.query|urlencode }}{% if sq.is_fts %}&is_fts=1{% endif %}"
+                   class="secondary outline emoji-btn" role="button" data-tooltip="Найти посты">🔍</a>
                 <button type="button" class="secondary outline emoji-btn" data-tooltip="Редактировать" onclick="toggleEdit({{ sq.id }})">✏️</button>
                 <form method="post" action="/search-queries/{{ sq.id }}/run" style="display:inline">
                     <button type="submit" class="secondary outline emoji-btn" data-tooltip="Запустить сейчас">▶️</button>

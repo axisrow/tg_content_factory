@@ -19,6 +19,7 @@ class SearchService:
         date_from: str | None = None,
         date_to: str | None = None,
         offset: int = 0,
+        is_fts: bool = False,
     ) -> SearchResult:
         if mode == "ai" and self._ai_search:
             return await self._ai_search.search(query)
@@ -35,6 +36,7 @@ class SearchService:
             date_to=date_to,
             limit=limit,
             offset=offset,
+            is_fts=is_fts,
         )
 
     async def check_quota(self, query: str = "") -> dict | None:

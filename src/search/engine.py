@@ -26,6 +26,7 @@ class SearchEngine:
         date_to: str | None = None,
         limit: int = 50,
         offset: int = 0,
+        is_fts: bool = False,
     ) -> SearchResult:
         return await self._local.search(
             query=query,
@@ -34,6 +35,7 @@ class SearchEngine:
             date_to=date_to,
             limit=limit,
             offset=offset,
+            is_fts=is_fts,
         )
 
     async def check_search_quota(self, query: str = "") -> dict | None:
