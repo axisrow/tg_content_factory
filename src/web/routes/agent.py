@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 
 from fastapi import APIRouter, HTTPException, Request
@@ -84,18 +85,16 @@ async def chat(request: Request, thread_id: int):
     db = deps.get_db(request)
 
     # Verify thread exists
-    threads = await db.get_agent_threads()
-    if not any(t["id"] == thread_id for t in threads):
+    thread = await db.get_agent_thread(thread_id)
+    if thread is None:
         raise HTTPException(status_code=404, detail="Thread not found")
 
     # Save user message
     await db.save_agent_message(thread_id, "user", message)
 
     # Auto-rename thread from first message
-    for t in threads:
-        if t["id"] == thread_id and t["title"] == "Новый тред":
-            await db.rename_agent_thread(thread_id, message[:60])
-            break
+    if thread["title"] == "Новый тред":
+        await db.rename_agent_thread(thread_id, message[:60])
 
     agent_manager = deps.get_agent_manager(request)
     if agent_manager is None:
@@ -103,27 +102,22 @@ async def chat(request: Request, thread_id: int):
 
     async def generate():
         full_text_parts = []
-        had_error = False
 
         async for chunk in agent_manager.chat_stream(thread_id, message):
             yield chunk
             # Collect full_text from done event
-            import json
-
             try:
                 data_str = chunk.removeprefix("data: ").strip()
                 data = json.loads(data_str)
                 if data.get("done") and data.get("full_text"):
                     full_text_parts.append(data["full_text"])
                 elif data.get("error"):
-                    had_error = True
                     full_text_parts.append(data["error"])
             except Exception:
                 pass
 
         # Save assistant response
         if full_text_parts:
-            role = "assistant" if not had_error else "assistant"
-            await db.save_agent_message(thread_id, role, full_text_parts[-1])
+            await db.save_agent_message(thread_id, "assistant", full_text_parts[-1])
 
     return StreamingResponse(generate(), media_type="text/event-stream")

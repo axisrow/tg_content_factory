@@ -445,6 +445,14 @@ class Database:
         rows = await cur.fetchall()
         return [dict(r) for r in rows]
 
+    async def get_agent_thread(self, thread_id: int) -> dict | None:
+        assert self._db is not None
+        cur = await self._db.execute(
+            "SELECT id, title, created_at FROM agent_threads WHERE id = ?", (thread_id,)
+        )
+        row = await cur.fetchone()
+        return dict(row) if row else None
+
     async def rename_agent_thread(self, thread_id: int, title: str) -> None:
         assert self._db is not None
         await self._db.execute(

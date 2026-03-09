@@ -16,6 +16,7 @@ class DBConnection:
         self.db.row_factory = aiosqlite.Row
         await self.db.execute("PRAGMA journal_mode=WAL")
         await self.db.execute("PRAGMA synchronous=NORMAL")
+        await self.db.execute("PRAGMA foreign_keys=ON")
         return self.db
 
     async def close(self) -> None:

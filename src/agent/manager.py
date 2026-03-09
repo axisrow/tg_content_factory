@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 from collections.abc import AsyncGenerator
 from contextlib import suppress
 
@@ -35,7 +36,9 @@ class AgentManager:
 
     @property
     def available(self) -> bool:
-        return True
+        return bool(
+            os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("CLAUDE_CODE_OAUTH_TOKEN")
+        )
 
     def _build_prompt(self, history: list[dict], message: str) -> str:
         lines = []
@@ -50,10 +53,12 @@ class AgentManager:
         history = await self._db.get_agent_messages(thread_id)
         prompt = self._build_prompt(history[:-1], message)
 
+        model = os.environ.get("AGENT_MODEL") or None
         options = ClaudeAgentOptions(
             system_prompt=_SYSTEM_PROMPT,
             mcp_servers={"telegram_db": self._server},
             allowed_tools=_ALLOWED_TOOLS,
+            model=model,
         )
 
         queue: asyncio.Queue[str | None] = asyncio.Queue()

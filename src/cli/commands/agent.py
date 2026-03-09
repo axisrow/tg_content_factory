@@ -54,7 +54,7 @@ def run(args: argparse.Namespace) -> None:
                         continue
                     if "text" in payload:
                         print(payload["text"], end="", flush=True)
-                        full_text = payload.get("text", full_text)
+                        full_text += payload.get("text", "")
                     if payload.get("done"):
                         print()
                         break

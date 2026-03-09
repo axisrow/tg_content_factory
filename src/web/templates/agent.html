@@ -343,14 +343,6 @@
             aiBubble.textContent = 'Ошибка соединения: ' + err.message;
         }
 
-        // Refresh page title with thread name (auto-renamed on first message)
-        try {
-            var titleResp = await fetch('/agent?thread_id=' + threadId, {
-                headers: {'Accept': 'text/html'}
-            });
-            // We don't parse the page, just update sidebar if needed
-        } catch(e) {}
-
         sending = false;
         inputEl.disabled = false;
         sendBtn.disabled = false;

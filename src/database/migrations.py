@@ -293,5 +293,4 @@ async def run_migrations(db: aiosqlite.Connection) -> None:
         )
         """
     )
-    await db.execute("PRAGMA foreign_keys = ON")
     await db.commit()
