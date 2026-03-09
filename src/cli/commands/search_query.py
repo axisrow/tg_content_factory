@@ -83,7 +83,7 @@ def run(args: argparse.Namespace) -> None:
                     await svc.update(
                         args.id,
                         args.query if args.query else sq.query,
-                        args.interval if args.interval else sq.interval_minutes,
+                        args.interval if args.interval is not None else sq.interval_minutes,
                         is_regex=args.regex if args.regex is not None else sq.is_regex,
                         is_fts=is_fts,
                         notify_on_collect=notify,

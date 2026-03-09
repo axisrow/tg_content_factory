@@ -29,6 +29,18 @@
             Дата до
             <input type="date" name="date_to" id="date-to" value="{{ date_to }}">
         </label>
+        <label>
+            Длина сообщения
+            <div style="display: flex; gap: 0.5rem;">
+                <select name="msg_length_op" id="msg-length-op" style="width: auto; min-width: 5rem;">
+                    <option value="">Выкл</option>
+                    <option value="gt" {{ 'selected' if msg_length_op == 'gt' else '' }}>&gt;</option>
+                    <option value="lt" {{ 'selected' if msg_length_op == 'lt' else '' }}>&lt;</option>
+                </select>
+                <input type="number" name="msg_length_val" id="msg-length-val"
+                       min="1" placeholder="символов" value="{{ msg_length_val or '' }}">
+            </div>
+        </label>
     </div>
 
     <fieldset style="display: flex; align-items: center; gap: 1.5rem; flex-wrap: wrap; border: none; padding: 0; margin-bottom: var(--pico-spacing);">
@@ -60,6 +72,10 @@
             AI-поиск
         </label>
         {% endif %}
+        <label id="fts-label" style="margin-bottom: 0;" title="Полнотекстовый поиск FTS5 (поддерживает операторы AND, OR, NOT, фразы в кавычках)">
+            <input type="checkbox" name="is_fts" value="1" id="fts-checkbox" {{ 'checked' if is_fts else '' }}>
+            FTS5 <span class="hint" data-tooltip="Полнотекстовый поиск с поддержкой операторов: OR, AND, NOT, префикс*, «точная фраза»">?</span>
+        </label>
         <button type="submit" style="margin-bottom: 0; margin-left: auto;">Найти</button>
     </fieldset>
 </form>
@@ -116,11 +132,11 @@
 <nav>
     <ul>
         {% if page > 1 %}
-        <li><a href="/?q={{ q|urlencode }}&channel_id={{ channel_id or '' }}&date_from={{ date_from }}&date_to={{ date_to }}&mode={{ mode }}&is_fts={{ is_fts }}&page={{ page - 1 }}">Назад</a></li>
+        <li><a href="/?q={{ q|urlencode }}&channel_id={{ channel_id or '' }}&date_from={{ date_from }}&date_to={{ date_to }}&mode={{ mode }}&is_fts={{ 1 if is_fts else 0 }}&msg_length_op={{ msg_length_op }}{% if msg_length_val %}&msg_length_val={{ msg_length_val }}{% endif %}&page={{ page - 1 }}">Назад</a></li>
         {% endif %}
         <li>Страница {{ page }} из {{ total_pages }}</li>
         {% if page < total_pages %}
-        <li><a href="/?q={{ q|urlencode }}&channel_id={{ channel_id or '' }}&date_from={{ date_from }}&date_to={{ date_to }}&mode={{ mode }}&is_fts={{ is_fts }}&page={{ page + 1 }}">Далее</a></li>
+        <li><a href="/?q={{ q|urlencode }}&channel_id={{ channel_id or '' }}&date_from={{ date_from }}&date_to={{ date_to }}&mode={{ mode }}&is_fts={{ 1 if is_fts else 0 }}&msg_length_op={{ msg_length_op }}{% if msg_length_val %}&msg_length_val={{ msg_length_val }}{% endif %}&page={{ page + 1 }}">Далее</a></li>
         {% endif %}
     </ul>
 </nav>
@@ -138,15 +154,21 @@
     var channelSelect = document.getElementById('channel-select');
     var dateFrom = document.getElementById('date-from');
     var dateTo = document.getElementById('date-to');
+    var ftsLabel = document.getElementById('fts-label');
+    var ftsCheckbox = document.getElementById('fts-checkbox');
+    var msgLengthOp = document.getElementById('msg-length-op');
+    var msgLengthVal = document.getElementById('msg-length-val');
 
     function updateState() {
         var mode = document.querySelector('input[name="mode"]:checked').value;
-        // local: channel + dates enabled
-        // channel: channel enabled, dates disabled
-        // others: all disabled
+        var isLocal = (mode === 'local');
         channelSelect.disabled = (mode !== 'local' && mode !== 'channel');
-        dateFrom.disabled = (mode !== 'local');
-        dateTo.disabled = (mode !== 'local');
+        dateFrom.disabled = !isLocal;
+        dateTo.disabled = !isLocal;
+        ftsLabel.style.display = isLocal ? '' : 'none';
+        ftsCheckbox.disabled = !isLocal;
+        msgLengthOp.disabled = !isLocal;
+        msgLengthVal.disabled = !isLocal;
     }
 
     radios.forEach(function(r) {

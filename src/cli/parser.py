@@ -30,6 +30,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--channel-id", type=int, default=None,
         help="Channel ID for --mode=channel",
     )
+    search_parser.add_argument("--min-length", type=int, default=None, help="Min message length")
+    search_parser.add_argument("--max-length", type=int, default=None, help="Max message length")
+    search_parser.add_argument(
+        "--fts", action="store_true", default=False, help="Use FTS5 boolean syntax"
+    )
 
     ch_parser = sub.add_parser("channel", help="Channel management")
     ch_sub = ch_parser.add_subparsers(dest="channel_action")
