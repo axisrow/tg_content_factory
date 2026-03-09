@@ -524,22 +524,37 @@
             var topicSel = document.getElementById('ctx-topic');
             topicSel.innerHTML = '<option value="">Все темы</option>';
             if (opt && opt.value) {
-                try {
-                    var resp = await fetch('/agent/forum-topics?channel_id=' + opt.value);
-                    var topics = await resp.json();
-                    if (topics.length > 0) {
-                        topicWrap.style.display = '';
-                        topics.forEach(function(t) {
+                var knownType = opt.dataset.type;
+                var shouldFetch = !knownType || knownType === 'null' || knownType === 'undefined'
+                                  || knownType === 'forum';
+                if (shouldFetch) {
+                    try {
+                        var resp = await fetch('/agent/forum-topics?channel_id=' + opt.value);
+                        var topics = await resp.json();
+                        if (topics.length > 0) {
+                            topicWrap.style.display = '';
+                            opt.dataset.type = 'forum';
+                            topics.forEach(function(t) {
+                                var o = document.createElement('option');
+                                o.value = t.id;
+                                o.textContent = t.title;
+                                topicSel.appendChild(o);
+                            });
+                        } else if (knownType === 'forum') {
+                            topicWrap.style.display = '';
                             var o = document.createElement('option');
-                            o.value = t.id;
-                            o.textContent = t.title;
+                            o.value = '';
+                            o.textContent = '(темы не загружены)';
+                            o.disabled = true;
                             topicSel.appendChild(o);
-                        });
-                    } else {
-                        topicWrap.style.display = 'none';
+                        } else {
+                            topicWrap.style.display = 'none';
+                        }
+                    } catch(e) {
+                        console.error('Failed to load topics:', e);
+                        topicWrap.style.display = knownType === 'forum' ? '' : 'none';
                     }
-                } catch(e) {
-                    console.error('Failed to load topics:', e);
+                } else {
                     topicWrap.style.display = 'none';
                 }
             } else {
