@@ -34,6 +34,7 @@
 {% set groups = dialogs | selectattr("channel_type", "in", ["supergroup", "group", "gigagroup", "forum"]) | list %}
 {% set dms = dialogs | selectattr("channel_type", "equalto", "dm") | list %}
 {% set bots = dialogs | selectattr("channel_type", "equalto", "bot") | list %}
+{% set own = dialogs | selectattr("is_own") | list %}
 
 <p class="text-muted">Всего диалогов: <strong>{{ dialogs|length }}</strong></p>
 
@@ -51,13 +52,16 @@
 
 <ul class="nav nav-tabs nav-fill mb-3" role="tablist">
     <li class="nav-item" role="presentation">
-        <button class="nav-link active" id="tab-channels" data-bs-toggle="tab" data-bs-target="#pane-channels" type="button" role="tab">Каналы ({{ channels|length }})</button>
+        <button class="nav-link active" id="tab-dms" data-bs-toggle="tab" data-bs-target="#pane-dms" type="button" role="tab">ДМ ({{ dms|length }})</button>
+    </li>
+    <li class="nav-item" role="presentation">
+        <button class="nav-link" id="tab-own" data-bs-toggle="tab" data-bs-target="#pane-own" type="button" role="tab">Мои ({{ own|length }})</button>
+    </li>
+    <li class="nav-item" role="presentation">
+        <button class="nav-link" id="tab-channels" data-bs-toggle="tab" data-bs-target="#pane-channels" type="button" role="tab">Каналы ({{ channels|length }})</button>
     </li>
     <li class="nav-item" role="presentation">
         <button class="nav-link" id="tab-groups" data-bs-toggle="tab" data-bs-target="#pane-groups" type="button" role="tab">Группы ({{ groups|length }})</button>
-    </li>
-    <li class="nav-item" role="presentation">
-        <button class="nav-link" id="tab-dms" data-bs-toggle="tab" data-bs-target="#pane-dms" type="button" role="tab">ДМ ({{ dms|length }})</button>
     </li>
     <li class="nav-item" role="presentation">
         <button class="nav-link" id="tab-bots" data-bs-toggle="tab" data-bs-target="#pane-bots" type="button" role="tab">Боты ({{ bots|length }})</button>
@@ -65,7 +69,48 @@
 </ul>
 
 <div class="tab-content">
-    <div class="tab-pane fade show active" id="pane-channels" role="tabpanel">
+    <div class="tab-pane fade" id="pane-own" role="tabpanel">
+    {% if own %}
+    <!-- Desktop -->
+    <div class="table-responsive d-none d-md-block">
+    <table class="table table-striped table-sm">
+        <thead><tr>
+            <th><input type="checkbox" class="form-check-input" id="select-all-own"
+                       onchange="selectAll('own', this.checked)"></th>
+            <th>Тип</th><th>Название</th><th>Username</th><th>В базе</th>
+        </tr></thead>
+        <tbody>
+        {% for d in own %}
+        <tr>
+            <td><input type="checkbox" class="form-check-input cb-own" name="channel_ids" value="{{ d.channel_id }}:{{ d.channel_type }}"
+                       onchange="updateLeaveBar()"></td>
+            <td><span class="badge-active">{{ d.channel_type }}</span></td>
+            <td>{{ d.title }}</td>
+            <td>{% if d.username %}<a href="https://t.me/{{ d.username }}" target="_blank" rel="noopener">@{{ d.username }}</a>{% else %}<span class="text-muted">—</span>{% endif %}</td>
+            <td>{% if d.already_added %}<span class="badge-active">&#10003;</span>{% else %}<span class="text-muted">—</span>{% endif %}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    </div>
+    <!-- Mobile -->
+    <div class="d-md-none mobile-cards">
+        {% for d in own %}
+        <div class="card mb-2">
+            <div class="card-body py-2 d-flex align-items-center gap-2">
+                <input type="checkbox" class="form-check-input cb-own" name="channel_ids" value="{{ d.channel_id }}:{{ d.channel_type }}" onchange="updateLeaveBar()">
+                <div class="flex-fill min-w-0">
+                    <div class="text-truncate"><strong>{{ d.title }}</strong></div>
+                    <small class="text-muted">{{ d.channel_type }}{% if d.username %} &middot; @{{ d.username }}{% endif %}{% if d.already_added %} &middot; &#10003;{% endif %}</small>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}<p>Нет своих каналов/групп.</p>{% endif %}
+    </div>
+
+    <div class="tab-pane fade" id="pane-channels" role="tabpanel">
     {% if channels %}
     <!-- Desktop -->
     <div class="table-responsive d-none d-md-block">
@@ -147,7 +192,7 @@
     {% else %}<p>Нет групп.</p>{% endif %}
     </div>
 
-    <div class="tab-pane fade" id="pane-dms" role="tabpanel">
+    <div class="tab-pane fade show active" id="pane-dms" role="tabpanel">
     {% if dms %}
     <!-- Desktop -->
     <div class="table-responsive d-none d-md-block">

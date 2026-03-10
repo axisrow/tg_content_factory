@@ -11,12 +11,13 @@ A personal Telegram monitoring toolkit — collect messages, search across chann
 - **All chat types** — channels, supergroups, gigagroups, forums, public and private
 - **Multi-account** with automatic flood-wait rotation
 - **3 search modes** — local DB (FTS5), direct Telegram API, AI/LLM-powered
+- **AI Agent** — interactive chat powered by `claude-agent-sdk` (Anthropic) with MCP tools for database search and channel lookup; optional `deepagents` fallback for AI search (experimental, not tested)
 - All search results are cached in a local SQLite database
 - **Scheduled collection** — incremental message fetching on a timer
 - **Keyword monitoring** — plain text and regex, with Telegram bot notifications
 - **Built-in anti-spam filters** — deduplication, low-uniqueness detection, cross-channel spam, subscriber ratio filters, non-Cyrillic content filter
 - **Task queue** — background job processing with status tracking
-- **Web dashboard** — FastAPI + Pico CSS, manage everything from a browser
+- **Web dashboard** — FastAPI + Bootstrap 5, manage everything from a browser
 - **Security** — session encryption (Fernet + PBKDF2), web panel password, HTTP Basic fallback, HMAC-signed cookies
 - **Docker-ready**
 
@@ -70,7 +71,9 @@ docker-compose up -d
 | `TG_API_HASH` | Yes | Telegram API Hash |
 | `WEB_PASS` | Yes | Web panel password |
 | `SESSION_ENCRYPTION_KEY` | No* | Key for encrypting Telegram session strings in DB |
-| `LLM_API_KEY` | No | API key for AI-powered search |
+| `LLM_API_KEY` | No | API key for AI-powered search (deepagents) |
+| `ANTHROPIC_API_KEY` | No | Anthropic API key for AI Agent chat (`claude-agent-sdk`) |
+| `AGENT_MODEL` | No | Override agent model (default: SDK default) |
 
 \* If not set, sessions are stored in plaintext. If the DB already contains encrypted sessions (`enc:v*`), startup fails until this key is provided.
 
@@ -85,7 +88,7 @@ Supports `${ENV_VAR}` substitution. Empty env vars are dropped (defaults apply).
 | `scheduler` | Collection interval, delays, limits, max flood wait |
 | `notifications` | `admin_chat_id` for keyword match alerts |
 | `database` | SQLite path (default: `data/tg_search.db`) |
-| `llm` | LLM provider, model, API key, enabled flag |
+| `llm` | LLM provider, model, API key for AI search (deepagents) |
 | `security` | Session encryption settings |
 
 ## CLI
@@ -131,6 +134,7 @@ python -m src.main notification setup|status|delete
 | Search | `/search` | Search messages (local / Telegram / AI) |
 | Filters | `/filter` | Anti-spam filter report and controls |
 | Scheduler | `/scheduler` | Start/stop/trigger collection and keyword search |
+| Agent | `/agent` | AI chat assistant with access to collected messages |
 
 ## Roadmap
 

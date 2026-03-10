@@ -355,6 +355,10 @@ class ClientPool:
                             "username": getattr(entity, "username", None),
                             "channel_type": channel_type,
                             "deactivate": deactivate,
+                            "is_own": bool(
+                                getattr(entity, "creator", False)
+                                or getattr(entity, "admin_rights", None)
+                            ),
                         })
                     elif include_dm:
                         is_bot = getattr(entity, "bot", False)
@@ -364,6 +368,7 @@ class ClientPool:
                             "username": getattr(entity, "username", None),
                             "channel_type": "bot" if is_bot else "dm",
                             "deactivate": False,
+                            "is_own": False,
                         })
 
             try:
