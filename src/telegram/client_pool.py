@@ -415,8 +415,12 @@ class ClientPool:
         return outcomes
 
     async def get_forum_topics(self, channel_id: int) -> list[dict]:
-        """Fetch forum topics for a forum-type channel."""
-        from telethon.tl.functions.channels import GetForumTopicsRequest
+        """Fetch forum topics for a forum-type channel.
+
+        Uses entity-first approach: tries get_entity(PeerChannel) directly (fast, 10s timeout).
+        Falls back to get_dialogs() only if entity lookup fails with ValueError (cache miss).
+        """
+        from telethon.tl.functions.messages import GetForumTopicsRequest
 
         result = await self.get_available_client()
         if result is None:
@@ -424,18 +428,42 @@ class ClientPool:
             return []
         client, phone = result
         try:
-            # Pre-populate entity cache (StringSession loses it between restarts)
-            if not self.is_dialogs_fetched(phone):
-                await asyncio.wait_for(client.get_dialogs(), timeout=30.0)
-                self.mark_dialogs_fetched(phone)
-            entity = await asyncio.wait_for(
-                client.get_entity(PeerChannel(channel_id)), timeout=30.0
-            )
+            # Try direct entity lookup first (works when entity is already cached)
+            try:
+                entity = await asyncio.wait_for(
+                    client.get_entity(PeerChannel(channel_id)), timeout=10.0
+                )
+            except (ValueError, asyncio.TimeoutError):
+                # Cache miss — populate cache via get_dialogs and retry
+                if not self.is_dialogs_fetched(phone):
+                    await asyncio.wait_for(client.get_dialogs(), timeout=60.0)
+                    self.mark_dialogs_fetched(phone)
+                    try:
+                        entity = await asyncio.wait_for(
+                            client.get_entity(PeerChannel(channel_id)), timeout=10.0
+                        )
+                    except (ValueError, asyncio.TimeoutError):
+                        entity = None
+                else:
+                    entity = None
+
+                # Last resort — resolve by username from DB
+                if entity is None:
+                    channel = await self._db.get_channel_by_channel_id(channel_id)
+                    if channel and channel.username:
+                        entity = await asyncio.wait_for(
+                            client.get_entity(channel.username), timeout=10.0
+                        )
+                    else:
+                        raise LookupError(
+                            f"Cannot resolve entity for channel {channel_id}: "
+                            "not in cache and no username in DB"
+                        )
             response = await asyncio.wait_for(
                 client(
                     GetForumTopicsRequest(
-                        channel=entity,
-                        offset_date=0,
+                        peer=entity,
+                        offset_date=None,
                         offset_id=0,
                         offset_topic=0,
                         limit=100,
@@ -449,7 +477,9 @@ class ClientPool:
                 if hasattr(t, "title")
             ]
         except Exception as e:
-            logger.warning("get_forum_topics failed for channel %d: %s", channel_id, e)
+            logger.warning(
+                "get_forum_topics failed for channel %d: %s", channel_id, e, exc_info=True
+            )
             return []
         finally:
             await self.release_client(phone)

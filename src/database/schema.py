@@ -122,4 +122,13 @@ CREATE TABLE IF NOT EXISTS search_query_stats (
 
 CREATE INDEX IF NOT EXISTS idx_sqs_query_date
     ON search_query_stats(query_id, recorded_at);
+
+CREATE TABLE IF NOT EXISTS forum_topics (
+    id INTEGER PRIMARY KEY,
+    channel_id INTEGER NOT NULL,
+    topic_id INTEGER NOT NULL,
+    title TEXT NOT NULL,
+    updated_at TEXT DEFAULT (datetime('now')),
+    UNIQUE(channel_id, topic_id)
+);
 """
