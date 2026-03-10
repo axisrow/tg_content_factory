@@ -44,12 +44,29 @@ class AgentManager:
         )
 
     def _build_prompt(self, history: list[dict], message: str) -> str:
-        parts = []
-        for msg in history:
+        user_part = f"<user>\n{message}\n</user>"
+        budget = 180_000 * 4  # ~180k tokens in chars, room for system prompt + response
+        used = len(user_part)
+
+        # Take messages from most recent, drop oldest if over budget
+        kept: list[str] = []
+        for msg in reversed(history):
             tag = "user" if msg["role"] == "user" else "assistant"
-            parts.append(f"<{tag}>\n{msg['content']}\n</{tag}>")
-        parts.append(f"<user>\n{message}\n</user>")
-        return "\n".join(parts)
+            part = f"<{tag}>\n{msg['content']}\n</{tag}>"
+            if used + len(part) > budget:
+                break
+            kept.append(part)
+            used += len(part)
+
+        kept.reverse()
+        kept.append(user_part)
+        return "\n".join(kept)
+
+    async def estimate_prompt_tokens(self, thread_id: int, message: str) -> int:
+        """Estimate prompt token count (~4 chars per token) before saving."""
+        history = await self._db.get_agent_messages(thread_id)
+        prompt = self._build_prompt(history, message)
+        return len(prompt) // 4
 
     async def chat_stream(
         self, thread_id: int, message: str, model: str | None = None
@@ -72,7 +89,7 @@ class AgentManager:
             mcp_servers={"telegram_db": self._server},
             allowed_tools=_ALLOWED_TOOLS,
             cli_path=shutil.which("claude") or None,
-            stderr=lambda line: logger.debug("claude-cli stderr: %s", line),
+            stderr=lambda line: logger.warning("claude-cli stderr: %s", line),
             **extra,
         )
 

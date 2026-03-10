@@ -485,7 +485,8 @@
             });
 
             if (!resp.ok) {
-                throw new Error('HTTP ' + resp.status);
+                var errBody = await resp.json().catch(function() { return {}; });
+                throw new Error(errBody.detail || 'HTTP ' + resp.status);
             }
 
             var reader = resp.body.getReader();

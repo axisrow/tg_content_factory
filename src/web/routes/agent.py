@@ -184,11 +184,22 @@ async def chat(request: Request, thread_id: int):
     model = raw_model if raw_model in ALLOWED_MODELS else None
 
     db = deps.get_db(request)
+    agent_manager = deps.get_agent_manager(request)
+    if agent_manager is None:
+        raise HTTPException(status_code=503, detail="AgentManager not initialized")
 
     # Verify thread exists
     thread = await db.get_agent_thread(thread_id)
     if thread is None:
         raise HTTPException(status_code=404, detail="Thread not found")
+
+    # Check prompt size before saving
+    estimated = await agent_manager.estimate_prompt_tokens(thread_id, message)
+    if estimated > 180_000:
+        raise HTTPException(
+            status_code=400,
+            detail="Контекст слишком длинный. Создайте новый тред.",
+        )
 
     # Save user message
     await db.save_agent_message(thread_id, "user", message)
@@ -197,22 +208,19 @@ async def chat(request: Request, thread_id: int):
     if thread["title"] == "Новый тред":
         await db.rename_agent_thread(thread_id, message[:60])
 
-    agent_manager = deps.get_agent_manager(request)
-    if agent_manager is None:
-        raise HTTPException(status_code=503, detail="AgentManager not initialized")
-
     async def generate():
         async for chunk in agent_manager.chat_stream(thread_id, message, model=model):
-            # Save before yielding so disconnect doesn't lose the message
             try:
                 data_str = chunk.removeprefix("data: ").strip()
                 data = json.loads(data_str)
                 if data.get("done") and data.get("full_text"):
                     await db.save_agent_message(thread_id, "assistant", data["full_text"])
+                elif data.get("error"):
+                    await db.delete_last_agent_exchange(thread_id)
             except json.JSONDecodeError:
                 pass
             except Exception:
-                logger.exception("Failed to save agent message for thread %d", thread_id)
+                logger.exception("Failed to process agent message for thread %d", thread_id)
             yield chunk
 
     return StreamingResponse(generate(), media_type="text/event-stream")
