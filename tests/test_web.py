@@ -160,11 +160,12 @@ async def test_settings_page_hides_credentials_form_when_env_credentials_configu
     assert "Управляется через окружение" in resp.text
     assert 'action="/settings/save-credentials"' not in resp.text
     assert "Telegram-аккаунты" in resp.text
-    assert 'href="/auth/login" role="button">Добавить аккаунт</a>' in resp.text
+    assert 'href="/auth/login"' in resp.text
+    assert "Добавить аккаунт" in resp.text
     template_text = Path("src/web/templates/settings.html").read_text(encoding="utf-8")
-    assert template_text.index("<header>Telegram-аккаунты</header>") < template_text.index(
-        "<header>Планировщик</header>"
-    )
+    assert "Telegram-аккаунты" in template_text
+    assert "Планировщик" in template_text
+    assert template_text.index("Telegram-аккаунты") < template_text.index("Планировщик")
 
 
 @pytest.mark.asyncio
@@ -1343,7 +1344,7 @@ async def test_channels_page_collect_all_button_matches_htmx_fragment(client):
         'hx-post="/channels/collect-all"',
         'hx-target="#collect-all-btn"',
         'hx-swap="outerHTML"',
-        'class="outline"',
+        'btn-outline-primary',
         'Загрузить все',
     ):
         assert expected in template_fragment
@@ -1610,3 +1611,107 @@ async def test_edit_search_query_route(client):
     assert updated.is_regex is True
     assert updated.notify_on_collect is True
     assert updated.track_stats is False
+
+
+class TestWebAgent:
+    @pytest.mark.asyncio
+    async def test_agent_page_auto_creates_thread(self, client):
+        resp = await client.get("/agent")
+        assert resp.status_code == 200
+        assert "Новый тред" in resp.text
+        assert resp.url.path == "/agent"
+        assert "thread_id=" in str(resp.url.query)
+
+    @pytest.mark.asyncio
+    async def test_agent_page_redirects_to_first_thread(self, client):
+        db = client._transport.app.state.db
+        await db.create_agent_thread("First")
+        await db.create_agent_thread("Second")
+
+        resp = await client.get("/agent")
+        assert resp.status_code == 200
+        assert str(resp.url).endswith("?thread_id=1")
+
+    @pytest.mark.asyncio
+    async def test_agent_thread_creation_and_deletion(self, client):
+        # Create
+        resp_create = await client.post("/agent/threads", follow_redirects=False)
+        assert resp_create.status_code == 303
+        thread_id = resp_create.headers["location"].split("=")[1]
+
+        # Rename
+        resp_rename = await client.post(f"/agent/threads/{thread_id}/rename", json={"title": "Renamed"})
+        assert resp_rename.status_code == 200
+        
+        db = client._transport.app.state.db
+        thread = await db.get_agent_thread(int(thread_id))
+        assert thread["title"] == "Renamed"
+
+        # Delete
+        resp_delete = await client.delete(f"/agent/threads/{thread_id}")
+        assert resp_delete.status_code == 200
+        
+        thread_after = await db.get_agent_thread(int(thread_id))
+        assert thread_after is None
+
+    @pytest.mark.asyncio
+    async def test_get_channels_and_topics(self, client):
+        from src.models import Channel
+        db = client._transport.app.state.db
+        pool = client._transport.app.state.pool
+        
+        await db.add_channel(Channel(channel_id=1, title="Forum", channel_type="forum"))
+        pool.get_forum_topics = AsyncMock(return_value=[{"id": 10, "title": "Topic"}])
+        
+        resp_ch = await client.get("/agent/channels-json")
+        assert resp_ch.status_code == 200
+        assert len(resp_ch.json()) > 0
+        
+        resp_topics = await client.get("/agent/forum-topics?channel_id=1")
+        assert resp_topics.status_code == 200
+        assert resp_topics.json()[0]["title"] == "Topic"
+
+    @pytest.mark.asyncio
+    async def test_inject_context_success(self, client):
+        from src.models import Channel, Message
+        from datetime import datetime
+        db = client._transport.app.state.db
+        thread_id = await db.create_agent_thread("Context")
+        await db.add_channel(Channel(channel_id=1, title="Context Channel"))
+        await db.insert_message(Message(channel_id=1, message_id=1, text="ctx", date=datetime.now()))
+        
+        resp = await client.post(f"/agent/threads/{thread_id}/context", json={"channel_id": "1"})
+        assert resp.status_code == 200
+        assert "Context Channel" in resp.json()["content"]
+
+    @pytest.mark.asyncio
+    async def test_chat_stream_and_stop(self, client):
+        db = client._transport.app.state.db
+        thread_id = await db.create_agent_thread("Новый тред")
+        
+        # Mock AgentManager
+        agent_manager = AsyncMock()
+        async def mock_stream(*args, **kwargs):
+            yield 'data: {"done": true, "full_text": "Final"}\n\n'
+        agent_manager.chat_stream = mock_stream
+        agent_manager.estimate_prompt_tokens = AsyncMock(return_value=10)
+        agent_manager.cancel_stream = AsyncMock(return_value=True)
+        client._transport.app.state.agent_manager = agent_manager
+        
+        resp = await client.post(
+            f"/agent/threads/{thread_id}/chat", 
+            json={"message": "First message"}
+        )
+        assert resp.status_code == 200
+        assert "Final" in resp.text
+        
+        # Check thread was renamed and message saved
+        thread = await db.get_agent_thread(thread_id)
+        assert "First message" in thread["title"]
+        messages = await db.get_agent_messages(thread_id)
+        assert len(messages) == 2 # User + Assistant
+        
+        # Test stop
+        resp_stop = await client.post(f"/agent/threads/{thread_id}/stop")
+        assert resp_stop.status_code == 200
+        agent_manager.cancel_stream.assert_called_once_with(thread_id)
