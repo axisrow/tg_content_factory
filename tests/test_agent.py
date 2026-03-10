@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+from src.agent.context import format_context
 from src.agent.manager import AgentManager
 from src.agent.tools import make_mcp_server
+from src.models import Message
 
 
 @pytest.mark.asyncio
@@ -241,3 +244,76 @@ async def test_chat_stream_edge_history_mix(db):
     last_raw = chunks[-1].removeprefix("data: ").strip()
     last_payload = json.loads(last_raw)
     assert last_payload.get("done") is True
+
+
+# ── format_context tests ─────────────────────────────────────────────────────
+
+_NOW = datetime(2024, 1, 15, 12, 0, 0)
+
+
+def _msg(message_id: int, text: str, topic_id: int | None = None, sender: str = "User") -> Message:
+    return Message(
+        channel_id=100,
+        message_id=message_id,
+        text=text,
+        topic_id=topic_id,
+        sender_name=sender,
+        date=_NOW,
+    )
+
+
+def test_format_context_no_topics():
+    """Plain channel without topics → flat JSONL, no grouping headers."""
+    msgs = [_msg(1, "hello"), _msg(2, "world")]
+    result = format_context(msgs, "TestChan", topic_id=None, topics_map={})
+    assert "[КОНТЕКСТ: TestChan, 2 сообщений]" in result
+    assert "## Без темы" not in result
+    assert "## Тема" not in result
+    lines = [ln for ln in result.split("\n") if ln.startswith("{")]
+    assert len(lines) == 2
+    parsed = json.loads(lines[0])
+    assert parsed["author"] == "User"
+    assert parsed["date"] == "2024-01-15"
+
+
+def test_format_context_grouped_by_topics():
+    """Messages with different topic_ids → grouped with topic names."""
+    msgs = [
+        _msg(1, "q1", topic_id=10),
+        _msg(2, "q2", topic_id=10),
+        _msg(3, "hw1", topic_id=20),
+        _msg(4, "general", topic_id=None),
+    ]
+    topics_map = {10: "Вопросы по Python", 20: "Домашние задания"}
+    result = format_context(msgs, "ForumChan", topic_id=None, topics_map=topics_map)
+    assert "## Без темы" in result
+    assert "## Тема: Вопросы по Python" in result
+    assert "## Тема: Домашние задания" in result
+    # JSONL lines
+    jsonl_lines = [ln for ln in result.split("\n") if ln.startswith("{")]
+    assert len(jsonl_lines) == 4
+
+
+def test_format_context_single_topic_flat():
+    """When topic_id is selected → flat JSONL, topic name in header."""
+    msgs = [_msg(1, "msg1", topic_id=10), _msg(2, "msg2", topic_id=10)]
+    topics_map = {10: "Вопросы"}
+    result = format_context(msgs, "Chan", topic_id=10, topics_map=topics_map)
+    assert 'тема "Вопросы"' in result
+    assert "## Тема" not in result  # no grouping headers
+    jsonl_lines = [ln for ln in result.split("\n") if ln.startswith("{")]
+    assert len(jsonl_lines) == 2
+
+
+def test_format_context_topic_id_not_in_map():
+    """topic_id without a name in map → fallback to тема #id."""
+    msgs = [_msg(1, "msg1", topic_id=99)]
+    result = format_context(msgs, "Chan", topic_id=99, topics_map={})
+    assert "тема #99" in result
+
+
+def test_format_context_unknown_topic_in_grouping():
+    """Unknown topic_id during grouping → shows тема #id."""
+    msgs = [_msg(1, "msg1", topic_id=55)]
+    result = format_context(msgs, "Chan", topic_id=None, topics_map={})
+    assert "## Тема #55" in result

@@ -164,21 +164,12 @@ def run(args: argparse.Namespace) -> None:
                 )
                 title = ch.title if ch else str(args.channel_id)
 
-                header = f"[КОНТЕКСТ: {title}"
-                if args.topic_id:
-                    header += f", тема #{args.topic_id}"
-                header += f", {len(messages)} сообщений]"
-                lines = [header]
-                for m in messages:
-                    preview = (m.text or "").replace("\n", " ")[:200]
-                    author = m.sender_name or (
-                        f"id={m.sender_id}" if m.sender_id else "unknown"
-                    )
-                    date_str = m.date.strftime("%Y-%m-%d")
-                    lines.append(
-                        f"- [msg_id={m.message_id}][{date_str}][{author}] {preview}"
-                    )
-                content = "\n".join(lines)
+                topics = await db.get_forum_topics(args.channel_id)
+                topics_map = {t["id"]: t["title"] for t in topics}
+
+                from src.agent.context import format_context
+
+                content = format_context(messages, title, args.topic_id, topics_map)
 
                 await db.save_agent_message(
                     thread_id=args.thread_id, role="user", content=content
