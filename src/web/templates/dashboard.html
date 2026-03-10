@@ -3,39 +3,57 @@
 {% block content %}
 <h1>Панель</h1>
 
-<div class="grid">
-    <article>
-        <header>Аккаунты</header>
-        <p><strong>{{ stats.get('accounts', 0) }}</strong> в базе</p>
-        <p><strong>{{ accounts_connected }}</strong> подключено</p>
-        <footer><a href="/settings">Управление</a></footer>
-    </article>
-    <article>
-        <header>Каналы</header>
-        <p><strong>{{ stats.get('channels', 0) }}</strong> отслеживается</p>
-        <footer><a href="/channels">Управление</a></footer>
-    </article>
-    <article>
-        <header>Сообщения</header>
-        <p><strong>{{ stats.get('messages', 0) }}</strong> собрано</p>
-        <footer><a href="/">Поиск</a></footer>
-    </article>
-    <article>
-        <header>Поисковые запросы</header>
-        <p><strong>{{ stats.get('search_queries', 0) }}</strong> активных</p>
-        <footer><a href="/search-queries">Настроить</a></footer>
-    </article>
+<div class="row g-3 mb-4">
+    <div class="col-md-3">
+        <div class="card h-100">
+            <div class="card-body">
+                <h6 class="card-subtitle mb-2 text-muted">Аккаунты</h6>
+                <p class="mb-1"><strong>{{ stats.get('accounts', 0) }}</strong> в базе</p>
+                <p class="mb-0"><strong>{{ accounts_connected }}</strong> подключено</p>
+            </div>
+            <div class="card-footer"><a href="/settings">Управление</a></div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card h-100">
+            <div class="card-body">
+                <h6 class="card-subtitle mb-2 text-muted">Каналы</h6>
+                <p class="mb-0"><strong>{{ stats.get('channels', 0) }}</strong> отслеживается</p>
+            </div>
+            <div class="card-footer"><a href="/channels">Управление</a></div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card h-100">
+            <div class="card-body">
+                <h6 class="card-subtitle mb-2 text-muted">Сообщения</h6>
+                <p class="mb-0"><strong>{{ stats.get('messages', 0) }}</strong> собрано</p>
+            </div>
+            <div class="card-footer"><a href="/">Поиск</a></div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card h-100">
+            <div class="card-body">
+                <h6 class="card-subtitle mb-2 text-muted">Поисковые запросы</h6>
+                <p class="mb-0"><strong>{{ stats.get('search_queries', 0) }}</strong> активных</p>
+            </div>
+            <div class="card-footer"><a href="/search-queries">Настроить</a></div>
+        </div>
+    </div>
 </div>
 
-<article>
-    <header>Планировщик</header>
-    <p>Статус: <strong>{{ "Запущен" if scheduler_running else "Остановлен" }}</strong></p>
-    {% if last_run %}
-    <p>Последний запуск: {{ last_run.strftime('%Y-%m-%d %H:%M:%S UTC') }}</p>
-    {% endif %}
-    {% if last_stats %}
-    <p>Каналов обработано: {{ last_stats.channels }}, сообщений: {{ last_stats.messages }}, ошибок: {{ last_stats.errors }}</p>
-    {% endif %}
-    <footer><a href="/scheduler">Управление</a></footer>
-</article>
+<div class="card">
+    <div class="card-header fw-semibold">Планировщик</div>
+    <div class="card-body">
+        <p>Статус: <strong>{{ "Запущен" if scheduler_running else "Остановлен" }}</strong></p>
+        {% if last_run %}
+        <p>Последний запуск: {{ last_run.strftime('%Y-%m-%d %H:%M:%S UTC') }}</p>
+        {% endif %}
+        {% if last_stats %}
+        <p>Каналов обработано: {{ last_stats.channels }}, сообщений: {{ last_stats.messages }}, ошибок: {{ last_stats.errors }}</p>
+        {% endif %}
+    </div>
+    <div class="card-footer"><a href="/scheduler">Управление</a></div>
+</div>
 {% endblock %}

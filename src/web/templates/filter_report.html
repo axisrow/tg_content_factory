@@ -6,8 +6,8 @@
 <p>Всего каналов: <strong>{{ report.total_channels }}</strong>, подлежат фильтрации: <strong>{{ report.filtered_count }}</strong></p>
 
 {% if report.results %}
-<div style="overflow-x:auto">
-<table>
+<div class="table-responsive">
+<table class="table table-striped table-sm">
     <thead>
         <tr>
             <th>ID канала</th>
@@ -23,7 +23,7 @@
     </thead>
     <tbody>
         {% for r in report.results %}
-        <tr{% if r.is_filtered %} style="background-color: rgba(255,0,0,0.05)"{% endif %}>
+        <tr{% if r.is_filtered %} class="table-danger"{% endif %}>
             <td>{{ r.channel_id }}</td>
             <td>{{ r.title or "-" }}</td>
             <td>{{ r.message_count }}</td>
@@ -35,17 +35,17 @@
             <td>
                 {% if r.flags %}
                     {% set flag_labels = {
-                        "low_uniqueness": ("🖨️", "Низкая уникальность контента"),
-                        "low_subscriber_ratio": ("📉", "Мало подписчиков"),
-                        "low_subscriber_manual": ("✋", "Мало подписчиков (абс.)"),
-                        "manual": ("🚫", "Ручная фильтрация"),
-                        "cross_channel_spam": ("📢", "Кросс-канальный спам"),
-                        "non_cyrillic": ("🌐", "Не кириллический контент"),
-                        "chat_noise": ("💬", "Шум чата"),
+                        "low_uniqueness": ("&#128424;&#65039;", "Низкая уникальность контента"),
+                        "low_subscriber_ratio": ("&#128201;", "Мало подписчиков"),
+                        "low_subscriber_manual": ("&#9995;", "Мало подписчиков (абс.)"),
+                        "manual": ("&#128683;", "Ручная фильтрация"),
+                        "cross_channel_spam": ("&#128226;", "Кросс-канальный спам"),
+                        "non_cyrillic": ("&#127760;", "Не кириллический контент"),
+                        "chat_noise": ("&#128172;", "Шум чата"),
                     } %}
                     {% for flag in r.flags %}
                         {% set label = flag_labels.get(flag, (flag, flag)) %}
-                        <span data-tooltip="{{ label[1] }}" style="margin-right:0.25rem">{{ label[0] }}</span>
+                        <span title="{{ label[1] }}" style="margin-right:0.25rem">{{ label[0] }}</span>
                     {% endfor %}
                 {% else %}
                     -
@@ -57,8 +57,8 @@
 </table>
 </div>
 
-<div style="display:flex; gap:0.5rem; margin-top:1rem">
-    <a href="/channels" role="button" class="secondary">Назад к каналам</a>
+<div class="d-flex gap-2 mt-3">
+    <a href="/channels" class="btn btn-secondary">Назад к каналам</a>
 </div>
 {% else %}
 <p>Нет каналов для анализа.</p>
