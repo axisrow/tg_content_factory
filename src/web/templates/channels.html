@@ -232,22 +232,59 @@ function openSubscriptions() {
                 list.innerHTML = "<p>Нет каналов в подписках.</p>";
                 return;
             }
-            var html = '<form id="bulk-form" method="post" action="/channels/add-bulk">';
-            html += '<table class="table table-sm"><thead><tr><th></th><th>Название</th><th>Username</th><th>ID</th></tr></thead><tbody>';
-            for (var i = 0; i < dialogs.length; i++) {
-                var d = dialogs[i];
-                var disabled = d.already_added ? ' disabled' : '';
-                var checked = d.already_added ? ' checked' : '';
-                var label = d.already_added ? ' (добавлен)' : '';
-                html += '<tr>';
-                html += '<td><input type="checkbox" class="form-check-input" name="channel_ids" value="' + d.channel_id + '"' + disabled + checked + '></td>';
-                html += '<td>' + (d.title || '—') + label + '</td>';
-                html += '<td>' + (d.username ? '@' + d.username : '—') + '</td>';
-                html += '<td>' + d.channel_id + '</td>';
-                html += '</tr>';
-            }
-            html += '</tbody></table></form>';
-            list.innerHTML = html;
+            var form = document.createElement('form');
+            form.id = 'bulk-form';
+            form.method = 'post';
+            form.action = '/channels/add-bulk';
+
+            var table = document.createElement('table');
+            table.className = 'table table-sm';
+            var thead = document.createElement('thead');
+            var headerRow = document.createElement('tr');
+            ['', 'Название', 'Username', 'ID'].forEach(function(text) {
+                var th = document.createElement('th');
+                th.textContent = text;
+                headerRow.appendChild(th);
+            });
+            thead.appendChild(headerRow);
+            table.appendChild(thead);
+
+            var tbody = document.createElement('tbody');
+            dialogs.forEach(function(d) {
+                var row = document.createElement('tr');
+
+                var cellCheck = document.createElement('td');
+                var checkbox = document.createElement('input');
+                checkbox.type = 'checkbox';
+                checkbox.className = 'form-check-input';
+                checkbox.name = 'channel_ids';
+                checkbox.value = String(d.channel_id);
+                if (d.already_added) {
+                    checkbox.disabled = true;
+                    checkbox.checked = true;
+                }
+                cellCheck.appendChild(checkbox);
+                row.appendChild(cellCheck);
+
+                var cellTitle = document.createElement('td');
+                cellTitle.textContent = (d.title || '—') + (d.already_added ? ' (добавлен)' : '');
+                row.appendChild(cellTitle);
+
+                var cellUsername = document.createElement('td');
+                cellUsername.textContent = d.username ? '@' + d.username : '—';
+                row.appendChild(cellUsername);
+
+                var cellId = document.createElement('td');
+                cellId.textContent = String(d.channel_id);
+                row.appendChild(cellId);
+
+                tbody.appendChild(row);
+            });
+            table.appendChild(tbody);
+            form.appendChild(table);
+
+            list.innerHTML = '';
+            list.appendChild(form);
         })
         .catch(function() {
             list.innerHTML = "<p>Ошибка загрузки подписок.</p>";
