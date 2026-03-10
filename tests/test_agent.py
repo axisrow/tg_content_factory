@@ -305,6 +305,29 @@ def test_format_context_single_topic_flat():
     assert len(jsonl_lines) == 2
 
 
+def test_format_context_general_topic_zero():
+    """topic_id=0 (General) is handled correctly in both modes."""
+    msgs = [
+        _msg(1, "general msg", topic_id=0),
+        _msg(2, "python q", topic_id=10),
+        _msg(3, "no topic", topic_id=None),
+    ]
+    topics_map = {0: "General", 10: "Python"}
+
+    # Grouped mode (topic_id=None): 0 should appear as "Тема: General", not "Без темы"
+    result = format_context(msgs, "Forum", topic_id=None, topics_map=topics_map)
+    assert "## Тема: General" in result
+    assert "## Тема: Python" in result
+    assert "## Без темы" in result
+    jsonl_lines = [ln for ln in result.split("\n") if ln.startswith("{")]
+    assert len(jsonl_lines) == 3
+
+    # Single-topic mode (topic_id=0): flat JSONL with topic name in header
+    result2 = format_context(msgs, "Forum", topic_id=0, topics_map=topics_map)
+    assert 'тема "General"' in result2
+    assert "## Тема" not in result2  # no grouping headers
+
+
 def test_format_context_topic_id_not_in_map():
     """topic_id without a name in map → fallback to тема #id."""
     msgs = [_msg(1, "msg1", topic_id=99)]
