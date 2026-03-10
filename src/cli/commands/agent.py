@@ -125,6 +125,7 @@ def run(args: argparse.Namespace) -> None:
                         break
                     if "error" in payload:
                         print(f"\nОшибка: {payload['error']}")
+                        await db.delete_last_agent_exchange(thread_id)
                         break
 
                 if full_text:
