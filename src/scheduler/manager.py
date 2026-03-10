@@ -248,7 +248,7 @@ class SchedulerManager:
         active_queries = [sq for sq in all_active if sq.track_stats]
         active_ids = {f"sq_{sq.id}" for sq in active_queries}
 
-        existing_jobs = self._scheduler.get_all_jobs()
+        existing_jobs = self._scheduler.get_jobs()
         for job in existing_jobs:
             if job.id.startswith("sq_") and job.id not in active_ids:
                 self._scheduler.remove_job(job.id)
