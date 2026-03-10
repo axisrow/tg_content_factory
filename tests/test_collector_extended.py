@@ -1,11 +1,13 @@
 import asyncio
-import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
 from datetime import datetime, timezone
-from src.telegram.collector import Collector, AllStatsClientsFloodedError, NoActiveStatsClientsError
-from src.models import Channel, Message, ChannelStats, SearchQuery
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 from telethon.errors import FloodWaitError
-from telethon.tl.types import PeerChannel
+
+from src.models import Channel, ChannelStats, Message, SearchQuery
+from src.telegram.collector import AllStatsClientsFloodedError, Collector, NoActiveStatsClientsError
+
 
 @pytest.fixture
 def mock_pool():
@@ -47,10 +49,10 @@ def collector(mock_pool, mock_db):
 async def test_collect_channel_flood_wait_retry(collector, mock_pool, mock_db):
     channel = Channel(id=1, channel_id=123, title="Ch", last_collected_id=10)
     mock_db.get_channel_by_pk.return_value = channel
-    
+
     client = AsyncMock()
     mock_pool.get_available_client.return_value = (client, "+7999")
-    
+
     # First call to iter_messages raises FloodWait, second succeeds
     async def mock_iter(*args, **kwargs):
         if not hasattr(mock_iter, "called"):
@@ -60,13 +62,13 @@ async def test_collect_channel_flood_wait_retry(collector, mock_pool, mock_db):
         m.sender.first_name = "First"
         m.sender.last_name = "Last"
         yield m
-        
+
     client.iter_messages = mock_iter
     client.get_entity.return_value = MagicMock(id=123)
-    
+
     # Mock flush batch to return True
     mock_db.execute.return_value.fetchall.return_value = [{"message_id": 11}]
-    
+
     res = await collector.collect_single_channel(channel)
     assert res == 1
     mock_pool.report_flood.assert_called_once()
@@ -76,10 +78,10 @@ async def test_collect_channel_pre_filter_min_subs(collector, mock_pool, mock_db
     channel = Channel(channel_id=123, title="Ch")
     mock_db.get_setting.return_value = "100" # min_subscribers_filter
     mock_db.get_channel_stats.return_value = [ChannelStats(channel_id=123, subscriber_count=50)]
-    
+
     # Ensure client is available for internal calls before pre-filter
     mock_pool.get_available_client.return_value = (AsyncMock(), "+7999")
-    
+
     res = await collector.collect_single_channel(channel)
     assert res == 0
     mock_db.set_channels_filtered_bulk.assert_called_with([(123, "low_subscriber_manual")])
@@ -90,9 +92,9 @@ async def test_collect_channel_pre_filter_ratio(collector, mock_pool, mock_db):
     mock_db.get_channel_stats.return_value = [ChannelStats(channel_id=123, subscriber_count=10)]
     # Mock message count query
     mock_db.execute.return_value.fetchone.return_value = [100] # 10 subs / 100 msgs = 0.1 ratio
-    
+
     mock_pool.get_available_client.return_value = (AsyncMock(), "+7999")
-    
+
     res = await collector.collect_single_channel(channel)
     assert res == 0
     mock_db.set_channels_filtered_bulk.assert_called_with([(123, "low_subscriber_ratio")])
@@ -103,17 +105,17 @@ async def test_flush_batch_persistence_error(collector, mock_pool, mock_db):
     client = AsyncMock()
     mock_pool.get_available_client.return_value = (client, "+7999")
     client.get_entity.return_value = MagicMock(id=123)
-    
+
     async def mock_iter(*args, **kwargs):
         m = MagicMock(id=11, text="msg", date=datetime.now(timezone.utc))
         m.sender.first_name = "First"
         m.sender.last_name = "Last"
         yield m
     client.iter_messages = mock_iter
-    
+
     # Mock execute to return empty list (persistence failed)
     mock_db.execute.return_value.fetchall.return_value = []
-    
+
     res = await collector._collect_channel(channel)
     assert res == 0 # persisted_max_msg_id not updated, stop_due_to_persistence_error = True
 
@@ -122,7 +124,7 @@ async def test_notification_queries_logic(collector, mock_db):
     collector._notifier = AsyncMock()
     sq = SearchQuery(id=1, query="test", is_regex=False, is_fts=False)
     mock_db.get_notification_queries.return_value = [sq]
-    
+
     # Need messages with actual text
     msgs = [Message(channel_id=1, message_id=1, text="This is a test message", date=datetime.now())]
     await collector._check_notification_queries(msgs)
@@ -138,12 +140,12 @@ async def test_fts_query_matches_logic(collector):
 async def test_collect_channel_stats_flooded_error(collector, mock_pool):
     channel = Channel(channel_id=123)
     mock_pool.get_available_client.return_value = None
-    
+
     from src.telegram.client_pool import StatsClientAvailability
     mock_pool.get_stats_availability = AsyncMock(return_value=StatsClientAvailability(
         state="all_flooded", retry_after_sec=10, next_available_at_utc=datetime.now()
     ))
-    
+
     with pytest.raises(AllStatsClientsFloodedError):
         await collector._collect_channel_stats(channel)
 
@@ -160,7 +162,7 @@ async def test_collect_channel_entity_timeout(collector, mock_pool):
     client = AsyncMock()
     mock_pool.get_available_client.return_value = (client, "+7999")
     client.get_entity.side_effect = asyncio.TimeoutError()
-    
+
     res = await collector._collect_channel(channel)
     assert res == 0
 
@@ -169,10 +171,13 @@ async def test_collect_channel_username_changed(collector, mock_pool, mock_db):
     channel = Channel(channel_id=123, username="old_user")
     client = AsyncMock()
     mock_pool.get_available_client.return_value = (client, "+7999")
-    
+
     # Fails by username, succeeds by numeric ID
-    client.get_entity.side_effect = [ValueError(), MagicMock(id=123, username="new_user", title="New")]
-    
+    client.get_entity.side_effect = [
+        ValueError(),
+        MagicMock(id=123, username="new_user", title="New"),
+    ]
+
     res = await collector._collect_channel(channel)
     assert res == 0
     mock_db.update_channel_meta.assert_called_once()
