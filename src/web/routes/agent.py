@@ -145,17 +145,12 @@ async def inject_context(request: Request, thread_id: int):
     ch = next((c for c in channels if c.channel_id == channel_id), None)
     title = ch.title if ch else str(channel_id)
 
-    header = f"[КОНТЕКСТ: {title}"
-    if topic_id:
-        header += f", тема #{topic_id}"
-    header += f", {len(messages)} сообщений]"
-    lines = [header]
-    for m in messages:
-        preview = (m.text or "").replace("\n", " ")[:200]
-        author = m.sender_name or (f"id={m.sender_id}" if m.sender_id else "unknown")
-        date_str = m.date.strftime("%Y-%m-%d")
-        lines.append(f"- [msg_id={m.message_id}][{date_str}][{author}] {preview}")
-    content = "\n".join(lines)
+    topics = await db.get_forum_topics(channel_id)
+    topics_map = {t["id"]: t["title"] for t in topics}
+
+    from src.agent.context import format_context
+
+    content = format_context(messages, title, topic_id, topics_map)
 
     await db.save_agent_message(thread_id=thread_id, role="user", content=content)
     logger.info(

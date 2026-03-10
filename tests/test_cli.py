@@ -497,13 +497,28 @@ class TestCLIAgent:
     def test_context_with_topic_id(self, cli_env, capsys):
         tid = _create_thread(cli_env)
         _add_channel(cli_env, channel_id=401, title="TopicChan")
+        # Add forum topic so name is resolved
+        asyncio.run(
+            cli_env.upsert_forum_topics(401, [{"id": 42, "title": "Обсуждение"}])
+        )
         from src.cli.commands.agent import run
         run(_ns(
             agent_action="context", thread_id=tid,
             channel_id=401, limit=100, topic_id=42,
         ))
         out = capsys.readouterr().out
-        assert "тема #42" in out
+        assert 'тема "Обсуждение"' in out
+
+    def test_context_with_unknown_topic_id(self, cli_env, capsys):
+        tid = _create_thread(cli_env)
+        _add_channel(cli_env, channel_id=402, title="TopicChan2")
+        from src.cli.commands.agent import run
+        run(_ns(
+            agent_action="context", thread_id=tid,
+            channel_id=402, limit=100, topic_id=99,
+        ))
+        out = capsys.readouterr().out
+        assert "тема #99" in out
 
     def test_chat_with_model(self, cli_env, capsys):
         from unittest.mock import MagicMock
