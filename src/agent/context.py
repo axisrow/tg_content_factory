@@ -14,7 +14,7 @@ def format_context(
 ) -> str:
     """Format messages as JSONL with optional topic grouping."""
     header = f"[КОНТЕКСТ: {channel_title}"
-    if topic_id:
+    if topic_id is not None:
         topic_label = topics_map.get(topic_id)
         if topic_label:
             header += f', тема "{topic_label}"'
@@ -37,7 +37,7 @@ def format_context(
 
     has_topics = bool(topics_map) or any(m.topic_id for m in messages)
 
-    if topic_id or not has_topics:
+    if topic_id is not None or not has_topics:
         # Single topic or plain channel — flat JSONL, no grouping
         for m in messages:
             lines.append(_msg_line(m))

@@ -158,10 +158,7 @@ def run(args: argparse.Namespace) -> None:
                     limit=args.limit,
                     topic_id=args.topic_id,
                 )
-                channels = await db.get_channels()
-                ch = next(
-                    (c for c in channels if c.channel_id == args.channel_id), None
-                )
+                ch = await db.get_channel_by_channel_id(args.channel_id)
                 title = ch.title if ch else str(args.channel_id)
 
                 topics = await db.get_forum_topics(args.channel_id)
