@@ -5,6 +5,8 @@ from itertools import groupby
 
 from src.models import Message
 
+_MAX_TEXT_LEN = 200
+
 
 def format_context(
     messages: list[Message],
@@ -30,7 +32,7 @@ def format_context(
                 "date": m.date.strftime("%Y-%m-%d"),
                 "author": m.sender_name
                 or (f"id={m.sender_id}" if m.sender_id else "unknown"),
-                "text": (m.text or "").replace("\n", " ")[:200],
+                "text": (m.text or "").replace("\n", " ")[:_MAX_TEXT_LEN],
             },
             ensure_ascii=False,
         )
