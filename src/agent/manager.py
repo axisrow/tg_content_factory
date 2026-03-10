@@ -28,12 +28,12 @@ class AgentManager:
     def __init__(self, db: Database) -> None:
         self._db = db
         self._server = None
-        self._active_tasks: set[asyncio.Task] = set()
+        self._active_tasks: dict[int, asyncio.Task] = {}  # thread_id → task
 
     def initialize(self) -> None:
         from src.agent.tools import make_mcp_server
 
-        os.environ.setdefault("CLAUDE_CODE_STREAM_CLOSE_TIMEOUT", "120000")
+        os.environ.setdefault("CLAUDE_CODE_STREAM_CLOSE_TIMEOUT", "300000")
         self._server = make_mcp_server(self._db)
         logger.info("AgentManager initialized (claude-agent-sdk)")
 
@@ -79,39 +79,58 @@ class AgentManager:
         queue: asyncio.Queue[str | None] = asyncio.Queue()
 
         async def _run_query() -> None:
-            draining = False
-            try:
+            last_err: Exception | None = None
+            for attempt in range(2):
+                draining = False
                 full_text = ""
-                async for msg in query(prompt=prompt, options=options):
-                    if draining:
-                        continue  # drain to StopAsyncIteration to avoid cleanup Task
-                    try:
-                        if isinstance(msg, AssistantMessage):
-                            for block in msg.content:
-                                if isinstance(block, TextBlock):
-                                    full_text += block.text
-                                    chunk_payload = json.dumps(
-                                        {"text": block.text}, ensure_ascii=False
-                                    )
-                                    await queue.put(f"data: {chunk_payload}\n\n")
-                        elif isinstance(msg, ResultMessage):
-                            done_payload = json.dumps(
-                                {"done": True, "full_text": full_text}, ensure_ascii=False
-                            )
-                            await queue.put(f"data: {done_payload}\n\n")
-                            # NO return — let the loop exhaust naturally
-                    except asyncio.CancelledError:
-                        draining = True  # switch to drain mode, keep iterating
-            except Exception as e:
+                try:
+                    async for msg in query(prompt=prompt, options=options):
+                        if draining:
+                            continue  # drain to StopAsyncIteration to avoid cleanup Task
+                        try:
+                            if isinstance(msg, AssistantMessage):
+                                for block in msg.content:
+                                    if isinstance(block, TextBlock):
+                                        full_text += block.text
+                                        chunk_payload = json.dumps(
+                                            {"text": block.text}, ensure_ascii=False
+                                        )
+                                        await queue.put(f"data: {chunk_payload}\n\n")
+                            elif isinstance(msg, ResultMessage):
+                                done_payload = json.dumps(
+                                    {"done": True, "full_text": full_text},
+                                    ensure_ascii=False,
+                                )
+                                await queue.put(f"data: {done_payload}\n\n")
+                                # NO return — let the loop exhaust naturally
+                        except asyncio.CancelledError:
+                            draining = True  # switch to drain mode, keep iterating
+                    break  # success
+                except Exception as e:
+                    if attempt == 0 and "Control request timeout" in str(e):
+                        logger.warning(
+                            "Agent init timeout, retrying (thread %d)", thread_id
+                        )
+                        last_err = e
+                        continue
+                    last_err = e
+                    break
+            if last_err is not None:
                 logger.exception("Agent chat error for thread %d", thread_id)
-                err_payload = json.dumps({"error": f"Ошибка агента: {e}"}, ensure_ascii=False)
+                err_payload = json.dumps(
+                    {"error": f"Ошибка агента: {last_err}"}, ensure_ascii=False
+                )
                 await queue.put(f"data: {err_payload}\n\n")
-            finally:
-                await queue.put(None)  # sentinel
+            await queue.put(None)  # sentinel
 
         task = asyncio.create_task(_run_query())
-        self._active_tasks.add(task)
-        task.add_done_callback(self._active_tasks.discard)
+        self._active_tasks[thread_id] = task
+
+        def _cleanup(t: asyncio.Task) -> None:
+            if self._active_tasks.get(thread_id) is t:
+                del self._active_tasks[thread_id]
+
+        task.add_done_callback(_cleanup)
         try:
             while True:
                 item = await queue.get()
@@ -123,8 +142,19 @@ class AgentManager:
             with suppress(asyncio.CancelledError):
                 await task
 
+    async def cancel_stream(self, thread_id: int) -> bool:
+        """Cancel an active stream for the given thread. Returns True if cancelled."""
+        task = self._active_tasks.pop(thread_id, None)
+        if task is None:
+            return False
+        task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
+        return True
+
     async def close_all(self) -> None:
-        tasks = list(self._active_tasks)
+        tasks = list(self._active_tasks.values())
+        self._active_tasks.clear()
         for t in tasks:
             t.cancel()
         for t in tasks:
