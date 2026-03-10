@@ -124,7 +124,8 @@ async def inject_context(request: Request, thread_id: int):
     if not channel_id_raw:
         raise HTTPException(status_code=400, detail="channel_id is required")
     channel_id = int(channel_id_raw)
-    limit = min(int(data.get("limit", 50)), 500)
+    raw_limit = int(data.get("limit", 0))
+    limit = raw_limit if raw_limit > 0 else 100000
     topic_id = data.get("topic_id")
     if topic_id is not None:
         topic_id = int(topic_id) if str(topic_id).strip() else None
@@ -158,6 +159,18 @@ async def inject_context(request: Request, thread_id: int):
 
     await db.save_agent_message(thread_id=thread_id, role="user", content=content)
     return JSONResponse({"content": content})
+
+
+@router.post("/threads/{thread_id}/stop")
+async def stop_chat(request: Request, thread_id: int):
+    db = deps.get_db(request)
+    agent_manager = deps.get_agent_manager(request)
+    cancelled = False
+    if agent_manager is not None:
+        cancelled = await agent_manager.cancel_stream(thread_id)
+    if cancelled:
+        await db.delete_last_agent_exchange(thread_id)
+    return JSONResponse({"ok": True, "cancelled": cancelled})
 
 
 @router.post("/threads/{thread_id}/chat")
