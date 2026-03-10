@@ -526,7 +526,7 @@
             if (opt && opt.value) {
                 var knownType = opt.dataset.type;
                 var shouldFetch = !knownType || knownType === 'null' || knownType === 'undefined'
-                                  || knownType === 'forum' || knownType === 'supergroup';
+                                  || knownType === 'forum';
                 if (shouldFetch) {
                     try {
                         var resp = await fetch('/agent/forum-topics?channel_id=' + opt.value);
