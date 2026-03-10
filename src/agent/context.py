@@ -35,7 +35,7 @@ def format_context(
             ensure_ascii=False,
         )
 
-    has_topics = bool(topics_map) or any(m.topic_id for m in messages)
+    has_topics = bool(topics_map) or any(m.topic_id is not None for m in messages)
 
     if topic_id is not None or not has_topics:
         # Single topic or plain channel — flat JSONL, no grouping
@@ -43,11 +43,13 @@ def format_context(
             lines.append(_msg_line(m))
     else:
         # Forum with topics — group by topic
-        sorted_msgs = sorted(messages, key=lambda m: (m.topic_id or 0))
+        sorted_msgs = sorted(
+            messages, key=lambda m: m.topic_id if m.topic_id is not None else -1
+        )
         for tid, group in groupby(sorted_msgs, key=lambda m: m.topic_id):
-            if tid and tid in topics_map:
+            if tid is not None and tid in topics_map:
                 lines.append(f"\n## Тема: {topics_map[tid]}")
-            elif tid:
+            elif tid is not None:
                 lines.append(f"\n## Тема #{tid}")
             else:
                 lines.append("\n## Без темы")
