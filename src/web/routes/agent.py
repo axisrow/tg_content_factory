@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 ALLOWED_MODELS = {
     "claude-sonnet-4-5",
     "claude-opus-4-6",
-    "claude-haiku-4-5",
+    "claude-haiku-4-5-20251001",
 }
 
 
