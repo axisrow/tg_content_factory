@@ -9,7 +9,8 @@
         <p><a href="/auth/login" class="btn btn-primary">Добавить аккаунт</a></p>
 
         {% if accounts %}
-        <div class="table-responsive">
+        <!-- Desktop: table -->
+        <div class="table-responsive d-none d-md-block">
         <table class="table table-striped table-sm">
             <thead>
                 <tr>
@@ -48,6 +49,37 @@
             </tbody>
         </table>
         </div>
+
+        <!-- Mobile: cards -->
+        <div class="d-md-none mobile-cards">
+            {% for acc in accounts %}
+            <div class="card mb-2">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-center mb-1">
+                        <strong>{{ acc.phone }}</strong>
+                        {% if acc.is_active %}<span class="badge-active">&#9679; Активен</span>{% else %}<span class="badge-inactive">&#9679; Отключён</span>{% endif %}
+                    </div>
+                    <small class="text-muted">
+                        {% if acc.is_premium %}Premium{% endif %}
+                        {% if acc.is_primary %}&middot; Primary{% endif %}
+                        {% if acc.phone in connected_phones %}&middot; Подключён{% endif %}
+                        {% if acc.flood_wait_until %}&middot; Flood: {{ acc.flood_wait_until.strftime('%H:%M:%S') }}{% endif %}
+                        {% if acc.created_at %}&middot; {{ acc.created_at.strftime('%Y-%m-%d') }}{% endif %}
+                    </small>
+                    <div class="card-actions">
+                        <form method="post" action="/settings/{{ acc.id }}/toggle" class="d-inline">
+                            <button type="submit" class="btn btn-outline-secondary btn-sm emoji-btn" title="{{ 'Отключить' if acc.is_active else 'Включить' }}">
+                                {{ "⏏️" if acc.is_active else "▶️" }}
+                            </button>
+                        </form>
+                        <form method="post" action="/settings/{{ acc.id }}/delete" class="d-inline" onsubmit="return confirm('Вы уверены, что хотите удалить этот аккаунт?')">
+                            <button type="submit" class="btn btn-outline-danger btn-sm emoji-btn" title="Удалить">&#128465;&#65039;</button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
         {% else %}
         <p>Нет подключённых аккаунтов. <a href="/auth/login">Добавьте первый аккаунт</a>.</p>
         {% endif %}
@@ -83,14 +115,14 @@
 
         <form method="post" action="/settings/save-credentials" class="mt-3">
             <div class="row g-3 mb-3">
-                <div class="col-md-6">
+                <div class="col-12 col-md-6">
                     <label for="api_id" class="form-label">API ID</label>
                     <input type="text" class="form-control" id="api_id" name="api_id"
                            placeholder="12345678"
                            value="{{ api_id }}"
                            {% if not is_configured %}inputmode="numeric" required{% endif %}>
                 </div>
-                <div class="col-md-6">
+                <div class="col-12 col-md-6">
                     <label for="api_hash" class="form-label">API Hash</label>
                     <input type="text" class="form-control" id="api_hash" name="api_hash"
                            placeholder="abcdef1234567890abcdef1234567890"
@@ -98,7 +130,7 @@
                            {% if not is_configured %}required{% endif %}>
                 </div>
             </div>
-            <button type="submit" class="btn btn-primary" style="max-width:200px">Сохранить</button>
+            <button type="submit" class="btn btn-primary" class="w-auto">Сохранить</button>
         </form>
     </div>
 </div>
@@ -111,10 +143,10 @@
             <div class="mb-3">
                 <label for="collect_interval_minutes" class="form-label">Интервал сбора сообщений (минуты)</label>
                 <input type="number" class="form-control" id="collect_interval_minutes" name="collect_interval_minutes"
-                       min="1" max="1440" value="{{ collect_interval_minutes }}" style="max-width:200px">
+                       min="1" max="1440" value="{{ collect_interval_minutes }}" class="w-auto">
                 <div class="form-text">Как часто планировщик автоматически собирает новые сообщения из каналов. Диапазон: 1–1440 минут.</div>
             </div>
-            <button type="submit" class="btn btn-primary" style="max-width:200px">Сохранить</button>
+            <button type="submit" class="btn btn-primary" class="w-auto">Сохранить</button>
         </form>
     </div>
 </div>
@@ -127,10 +159,10 @@
                 <label for="min_subscribers_filter" class="form-label">Минимальное количество подписчиков</label>
                 <input type="number" class="form-control" id="min_subscribers_filter" name="min_subscribers_filter"
                        min="0" value="{{ min_subscribers_filter }}"
-                       placeholder="0 — отключено" style="max-width:200px">
+                       placeholder="0 — отключено" class="w-auto">
                 <div class="form-text">Каналы с числом подписчиков ниже порога будут помечены флагом &#9995; и пропущены при сборе. Значение 0 — фильтр отключён.</div>
             </div>
-            <button type="submit" class="btn btn-primary" style="max-width:200px">Сохранить</button>
+            <button type="submit" class="btn btn-primary" class="w-auto">Сохранить</button>
         </form>
     </div>
 </div>
@@ -141,7 +173,7 @@
         <form method="post" action="/settings/save-notification-account" class="mb-3">
             <div class="mb-3">
                 <label for="notification_account_phone" class="form-label">Аккаунт для уведомлений</label>
-                <select id="notification_account_phone" name="notification_account_phone" class="form-select" style="max-width:400px">
+                <select id="notification_account_phone" name="notification_account_phone" class="form-select" class="w-auto">
                     <option value="" {{ 'selected' if not notification_selected_phone else '' }}>Primary (default)</option>
                     {% for acc in accounts %}
                     <option value="{{ acc.phone }}" {{ 'selected' if notification_selected_phone == acc.phone else '' }}>
@@ -154,7 +186,7 @@
                 </select>
                 <div class="form-text">Если значение пустое, используется текущий primary-аккаунт. Автоматического fallback на другие аккаунты нет.</div>
             </div>
-            <button type="submit" class="btn btn-primary" style="max-width:200px">Сохранить выбор</button>
+            <button type="submit" class="btn btn-primary" class="w-auto">Сохранить выбор</button>
         </form>
 
         {% if notification_target.state == "available" %}

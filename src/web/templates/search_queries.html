@@ -11,11 +11,11 @@
     <div class="card-body">
         <form method="post" action="/search-queries/add">
             <div class="row g-3 mb-3">
-                <div class="col-md-8">
+                <div class="col-12 col-md-8">
                     <label class="form-label">Запрос <span class="hint" data-tooltip="Текст для поиска в собранных сообщениях. Поддерживает обычный текст, regex и FTS5-синтаксис">?</span></label>
                     <input type="text" class="form-control" name="query" required placeholder="аренда квартир">
                 </div>
-                <div class="col-md-4">
+                <div class="col-12 col-md-4">
                     <label class="form-label">Интервал (мин) <span class="hint" data-tooltip="Как часто запускать поиск по новым сообщениям (минимум 5 минут)">?</span></label>
                     <input type="number" class="form-control" name="interval_minutes" value="60" min="5">
                 </div>
@@ -39,11 +39,11 @@
                 </div>
             </div>
             <div class="row g-3 mb-3">
-                <div class="col-md-8">
+                <div class="col-12 col-md-8">
                     <label class="form-label">Исключения <span class="hint" data-tooltip="Сообщения, содержащие любую из этих строк, будут пропущены (без учёта регистра)">?</span></label>
                     <textarea class="form-control" name="exclude_patterns" rows="2" placeholder="по одному на строку"></textarea>
                 </div>
-                <div class="col-md-4">
+                <div class="col-12 col-md-4">
                     <label class="form-label">Макс. длина текста <span class="hint" data-tooltip="Пропускать сообщения длиннее указанного числа символов. Полезно для фильтрации спама и копипасты">?</span></label>
                     <input type="number" class="form-control" name="max_length" min="1" placeholder="без ограничения">
                 </div>
@@ -54,7 +54,8 @@
 </div>
 
 {% if items %}
-<div class="table-responsive">
+<!-- Desktop: table -->
+<div class="table-responsive d-none d-md-block">
 <table class="table table-striped table-sm sq-table">
     <thead>
         <tr>
@@ -105,11 +106,11 @@
             <td colspan="7">
                 <form method="post" action="/search-queries/{{ sq.id }}/edit">
                     <div class="row g-3 mb-3">
-                        <div class="col-md-8">
+                        <div class="col-12 col-md-8">
                             <label class="form-label">Запрос <span class="hint" data-tooltip="Текст для поиска в собранных сообщениях. Поддерживает обычный текст, regex и FTS5-синтаксис">?</span></label>
                             <input type="text" class="form-control" name="query" value="{{ sq.query }}" required>
                         </div>
-                        <div class="col-md-4">
+                        <div class="col-12 col-md-4">
                             <label class="form-label">Интервал (мин) <span class="hint" data-tooltip="Как часто запускать поиск по новым сообщениям (минимум 5 минут)">?</span></label>
                             <input type="number" class="form-control" name="interval_minutes" value="{{ sq.interval_minutes }}" min="5">
                         </div>
@@ -133,11 +134,11 @@
                         </div>
                     </div>
                     <div class="row g-3 mb-3">
-                        <div class="col-md-8">
+                        <div class="col-12 col-md-8">
                             <label class="form-label">Исключения</label>
                             <textarea class="form-control" name="exclude_patterns" rows="2" placeholder="по одному на строку">{{ sq.exclude_patterns }}</textarea>
                         </div>
-                        <div class="col-md-4">
+                        <div class="col-12 col-md-4">
                             <label class="form-label">Макс. длина текста</label>
                             <input type="number" class="form-control" name="max_length" min="1" value="{{ sq.max_length or '' }}" placeholder="без ограничения">
                         </div>
@@ -187,6 +188,44 @@
         {% endfor %}
     </tbody>
 </table>
+</div>
+
+<!-- Mobile: cards -->
+<div class="d-md-none mobile-cards">
+    {% for item in items %}
+    {% set sq = item.query %}
+    <div class="card mb-2">
+        <div class="card-body">
+            <div class="d-flex justify-content-between align-items-start mb-1">
+                <code class="text-truncate">{{ sq.query }}</code>
+                {% if sq.is_active %}<span class="badge-active">&#9679;</span>{% else %}<span class="badge-inactive">&#9679;</span>{% endif %}
+            </div>
+            <small class="text-muted">
+                {% if sq.is_regex %}regex{% endif %}{% if sq.is_fts %}fts{% endif %}
+                {% if sq.track_stats %}&middot; {{ sq.interval_minutes }} мин{% endif %}
+                &middot; {{ item.total_30d }} за 30д
+                {% if item.last_run %}&middot; {{ item.last_run[:16] }}{% endif %}
+            </small>
+            <div class="card-actions">
+                {% if not sq.is_regex %}
+                <a href="/?q={{ sq.query|urlencode }}{% if sq.is_fts %}&is_fts=1{% endif %}{% if sq.max_length %}&msg_length_op=lt&msg_length_val={{ sq.max_length }}{% endif %}"
+                   class="btn btn-outline-secondary btn-sm emoji-btn" title="Найти посты">&#128269;</a>
+                {% endif %}
+                <form method="post" action="/search-queries/{{ sq.id }}/run" class="d-inline">
+                    <button type="submit" class="btn btn-outline-secondary btn-sm emoji-btn" title="Запустить сейчас">&#9654;&#65039;</button>
+                </form>
+                <form method="post" action="/search-queries/{{ sq.id }}/toggle" class="d-inline">
+                    <button type="submit" class="btn btn-outline-secondary btn-sm emoji-btn" title="{{ 'Отключить' if sq.is_active else 'Включить' }}">
+                        {{ "⏏️" if sq.is_active else "🔄" }}
+                    </button>
+                </form>
+                <form method="post" action="/search-queries/{{ sq.id }}/delete" class="d-inline" onsubmit="return confirm('Удалить этот запрос и всю его статистику?')">
+                    <button type="submit" class="btn btn-outline-danger btn-sm emoji-btn" title="Удалить">&#128465;&#65039;</button>
+                </form>
+            </div>
+        </div>
+    </div>
+    {% endfor %}
 </div>
 {% else %}
 <p>Нет поисковых запросов.</p>

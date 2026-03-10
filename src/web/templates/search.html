@@ -10,7 +10,7 @@
     </div>
 
     <div class="row g-3 mb-3">
-        <div class="col-md-3">
+        <div class="col-12 col-sm-6 col-md-3">
             <label for="channel-select" class="form-label">Канал</label>
             <select name="channel_id" id="channel-select" class="form-select">
                 <option value="">Все каналы</option>
@@ -21,15 +21,15 @@
                 {% endfor %}
             </select>
         </div>
-        <div class="col-md-3">
+        <div class="col-6 col-sm-6 col-md-3">
             <label for="date-from" class="form-label">Дата от</label>
             <input type="date" class="form-control" name="date_from" id="date-from" value="{{ date_from }}">
         </div>
-        <div class="col-md-3">
+        <div class="col-6 col-sm-6 col-md-3">
             <label for="date-to" class="form-label">Дата до</label>
             <input type="date" class="form-control" name="date_to" id="date-to" value="{{ date_to }}">
         </div>
-        <div class="col-md-3">
+        <div class="col-12 col-sm-6 col-md-3">
             <label class="form-label">Длина сообщения</label>
             <div class="input-group">
                 <select name="msg_length_op" id="msg-length-op" class="form-select" style="max-width: 5rem;">
@@ -100,7 +100,8 @@
 {% endif %}
 
 {% if result.messages %}
-<div class="table-responsive">
+<!-- Desktop: table -->
+<div class="table-responsive d-none d-md-block">
 <table class="table table-striped table-hover table-sm">
     <thead>
         <tr>
@@ -125,6 +126,22 @@
         {% endfor %}
     </tbody>
 </table>
+</div>
+
+<!-- Mobile: cards -->
+<div class="d-md-none mobile-cards">
+    {% for msg in result.messages %}
+    <div class="card mb-2">
+        <div class="card-body">
+            <div class="d-flex justify-content-between align-items-center mb-1">
+                <strong class="text-truncate">{{ msg.channel_title or msg.channel_username or msg.channel_id }}</strong>
+                {% if msg.channel_username %}<a href="https://t.me/{{ msg.channel_username }}/{{ msg.message_id }}" target="_blank" rel="noopener">&#8599;</a>{% else %}<a href="https://t.me/c/{{ msg.channel_id }}/{{ msg.message_id }}" target="_blank" rel="noopener">&#8599;</a>{% endif %}
+            </div>
+            <small class="text-muted">{{ msg.date.strftime('%Y-%m-%d %H:%M') }}{% if msg.sender_name %} &middot; {{ msg.sender_name }}{% endif %}{% if msg.media_type %} &middot; {{ msg.media_type }}{% endif %}</small>
+            <p class="mb-0 mt-1" style="font-size:0.85rem">{{ msg.text[:200] if msg.text else "—" }}{{ "..." if msg.text and msg.text|length > 200 else "" }}</p>
+        </div>
+    </div>
+    {% endfor %}
 </div>
 
 {% if total_pages > 1 %}
