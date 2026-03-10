@@ -455,7 +455,7 @@ class ClientPool:
                             client.get_entity(channel.username), timeout=10.0
                         )
                     else:
-                        raise ValueError(
+                        raise LookupError(
                             f"Cannot resolve entity for channel {channel_id}: "
                             "not in cache and no username in DB"
                         )
