@@ -35,7 +35,7 @@ def format_context(
             ensure_ascii=False,
         )
 
-    has_topics = topics_map or any(m.topic_id for m in messages)
+    has_topics = bool(topics_map) or any(m.topic_id for m in messages)
 
     if topic_id or not has_topics:
         # Single topic or plain channel — flat JSONL, no grouping
