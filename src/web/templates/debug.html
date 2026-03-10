@@ -2,9 +2,9 @@
 {% block title %}Дебаг — TG Agent{% endblock %}
 {% block content %}
 <h1>Консоль сервера</h1>
-<p><small>Последние 500 записей. Обновляется каждые 3 секунды.</small></p>
-<figure>
-  <table role="grid">
+<p><small class="text-muted">Последние 500 записей. Обновляется каждые 3 секунды.</small></p>
+<div class="table-responsive" style="font-size:0.85rem">
+  <table class="table table-sm table-striped">
     <thead>
       <tr><th>Время</th><th>Уровень</th><th>Логгер</th><th>Сообщение</th></tr>
     </thead>
@@ -12,5 +12,5 @@
       {% include "_debug_logs.html" %}
     </tbody>
   </table>
-</figure>
+</div>
 {% endblock %}

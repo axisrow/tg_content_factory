@@ -12,9 +12,9 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 _COLLECT_ALL_FORM = (
-    '<form method="post" action="/channels/collect-all" style="display:inline"'
+    '<form method="post" action="/channels/collect-all" class="d-inline"'
     ' hx-post="/channels/collect-all" hx-target="#collect-all-btn" hx-swap="outerHTML">'
-    '<button type="submit" class="outline" style="padding: 0.25rem 0.75rem;">Загрузить все</button>'
+    '<button type="submit" class="btn btn-outline-primary btn-sm">Загрузить все</button>'
     '</form>'
 )
 
@@ -26,7 +26,7 @@ _COLLECT_ALL_BTN = f'<span id="collect-all-btn">{_COLLECT_ALL_FORM}</span>'
 
 def _collect_all_result_fragment(result: BulkEnqueueResult) -> str:
     scheduler_link = (
-        '<a href="/scheduler" class="secondary outline" role="button">'
+        '<a href="/scheduler" class="btn btn-outline-secondary btn-sm">'
         "Открыть планировщик</a>"
     )
     if result.total_candidates == 0:
@@ -102,12 +102,17 @@ async def collect_channel(request: Request, pk: int):
         collector = deps.get_collector(request)
         label = "В очереди" if collector.is_running else "Запущен"
         filtered_badge = ' <small title="Канал отфильтрован">⚡</small>' if is_filtered else ""
-        return HTMLResponse(
-            f'<span id="collect-btn-{pk}">'
-            f'<button class="outline emoji-btn" disabled title="{label}">⏳</button>'
-            f'{filtered_badge}'
-            f'</span>'
+        btn = (
+            f'<button class="btn btn-outline-primary btn-sm emoji-btn"'
+            f' disabled title="{label}">⏳</button>'
         )
+        # Update both desktop and mobile buttons via HTMX OOB swap
+        fragment = (
+            f'<span id="collect-btn-{pk}">{btn}{filtered_badge}</span>'
+            f'<span id="collect-btn-m-{pk}" hx-swap-oob="true">'
+            f'{btn}{filtered_badge}</span>'
+        )
+        return HTMLResponse(fragment)
 
     if enqueue_status == "not_found":
         return RedirectResponse(url="/channels?msg=channel_not_found", status_code=303)

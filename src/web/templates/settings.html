@@ -3,173 +3,220 @@
 {% block content %}
 <h1>Настройки</h1>
 
-<article>
-    <header>Telegram-аккаунты</header>
+<div class="card mb-4">
+    <div class="card-header fw-semibold">Telegram-аккаунты</div>
+    <div class="card-body">
+        <p><a href="/auth/login" class="btn btn-primary">Добавить аккаунт</a></p>
 
-    <p><a href="/auth/login" role="button">Добавить аккаунт</a></p>
+        {% if accounts %}
+        <!-- Desktop: table -->
+        <div class="table-responsive d-none d-md-block">
+        <table class="table table-striped table-sm">
+            <thead>
+                <tr>
+                    <th>Телефон</th>
+                    <th>Статус</th>
+                    <th class="text-center">Premium</th>
+                    <th class="text-center">Primary</th>
+                    <th class="text-center">Подключён</th>
+                    <th>Flood wait</th>
+                    <th>Добавлен</th>
+                    <th>Действия</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for acc in accounts %}
+                <tr>
+                    <td>{{ acc.phone }}</td>
+                    <td>{% if acc.is_active %}<span class="badge-active">&#9679; Активен</span>{% else %}<span class="badge-inactive">&#9679; Отключён</span>{% endif %}</td>
+                    <td class="text-center">{% if acc.is_premium %}<span class="badge-active">&#9679;</span>{% else %}<span class="badge-inactive">&#9679;</span>{% endif %}</td>
+                    <td class="text-center">{% if acc.is_primary %}<span class="badge-active">&#9679;</span>{% else %}<span class="badge-inactive">&#9679;</span>{% endif %}</td>
+                    <td class="text-center">{% if acc.phone in connected_phones %}<span class="badge-active">&#9679;</span>{% else %}<span class="badge-inactive">&#9679;</span>{% endif %}</td>
+                    <td>{{ acc.flood_wait_until.strftime('%H:%M:%S') if acc.flood_wait_until else "—" }}</td>
+                    <td>{{ acc.created_at.strftime('%Y-%m-%d') if acc.created_at else "—" }}</td>
+                    <td>
+                        <form method="post" action="/settings/{{ acc.id }}/toggle" class="d-inline">
+                            <button type="submit" class="btn btn-outline-secondary btn-sm emoji-btn" title="{{ 'Отключить' if acc.is_active else 'Включить' }}">
+                                {{ "⏏️" if acc.is_active else "▶️" }}
+                            </button>
+                        </form>
+                        <form method="post" action="/settings/{{ acc.id }}/delete" class="d-inline" onsubmit="return confirm('Вы уверены, что хотите удалить этот аккаунт?')">
+                            <button type="submit" class="btn btn-outline-danger btn-sm emoji-btn" title="Удалить">&#128465;&#65039;</button>
+                        </form>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        </div>
 
-    {% if accounts %}
-    <div style="overflow-x:auto">
-    <table>
-        <thead>
-            <tr>
-                <th>Телефон</th>
-                <th>Статус</th>
-                <th>Premium</th>
-                <th>Primary</th>
-                <th>Подключён</th>
-                <th>Flood wait</th>
-                <th>Добавлен</th>
-                <th>Действия</th>
-            </tr>
-        </thead>
-        <tbody>
+        <!-- Mobile: cards -->
+        <div class="d-md-none mobile-cards">
             {% for acc in accounts %}
-            <tr>
-                <td>{{ acc.phone }}</td>
-                <td>{% if acc.is_active %}<span class="badge-active">● Активен</span>{% else %}<span class="badge-inactive">● Отключён</span>{% endif %}</td>
-                <td>{% if acc.is_premium %}<span class="badge-active">●</span>{% else %}<span class="badge-inactive">●</span>{% endif %}</td>
-                <td>{% if acc.is_primary %}<span class="badge-active">●</span>{% else %}<span class="badge-inactive">●</span>{% endif %}</td>
-                <td>{% if acc.phone in connected_phones %}<span class="badge-active">●</span>{% else %}<span class="badge-inactive">●</span>{% endif %}</td>
-                <td>{{ acc.flood_wait_until.strftime('%H:%M:%S') if acc.flood_wait_until else "—" }}</td>
-                <td>{{ acc.created_at.strftime('%Y-%m-%d') if acc.created_at else "—" }}</td>
-                <td>
-                    <form method="post" action="/settings/{{ acc.id }}/toggle" style="display:inline">
-                        <button type="submit" class="secondary outline emoji-btn" data-tooltip="{{ 'Отключить' if acc.is_active else 'Включить' }}">
-                            {{ "⏸️" if acc.is_active else "▶️" }}
-                        </button>
-                    </form>
-                    <form method="post" action="/settings/{{ acc.id }}/delete" style="display:inline" onsubmit="return confirm('Вы уверены, что хотите удалить этот аккаунт?')">
-                        <button type="submit" class="contrast outline emoji-btn" data-tooltip="Удалить">🗑️</button>
-                    </form>
-                </td>
-            </tr>
+            <div class="card mb-2">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-center mb-1">
+                        <strong>{{ acc.phone }}</strong>
+                        {% if acc.is_active %}<span class="badge-active">&#9679; Активен</span>{% else %}<span class="badge-inactive">&#9679; Отключён</span>{% endif %}
+                    </div>
+                    <small class="text-muted">
+                        {% if acc.is_premium %}Premium{% endif %}
+                        {% if acc.is_primary %}&middot; Primary{% endif %}
+                        {% if acc.phone in connected_phones %}&middot; Подключён{% endif %}
+                        {% if acc.flood_wait_until %}&middot; Flood: {{ acc.flood_wait_until.strftime('%H:%M:%S') }}{% endif %}
+                        {% if acc.created_at %}&middot; {{ acc.created_at.strftime('%Y-%m-%d') }}{% endif %}
+                    </small>
+                    <div class="card-actions">
+                        <form method="post" action="/settings/{{ acc.id }}/toggle" class="d-inline">
+                            <button type="submit" class="btn btn-outline-secondary btn-sm emoji-btn" title="{{ 'Отключить' if acc.is_active else 'Включить' }}">
+                                {{ "⏏️" if acc.is_active else "▶️" }}
+                            </button>
+                        </form>
+                        <form method="post" action="/settings/{{ acc.id }}/delete" class="d-inline" onsubmit="return confirm('Вы уверены, что хотите удалить этот аккаунт?')">
+                            <button type="submit" class="btn btn-outline-danger btn-sm emoji-btn" title="Удалить">&#128465;&#65039;</button>
+                        </form>
+                    </div>
+                </div>
+            </div>
             {% endfor %}
-        </tbody>
-    </table>
+        </div>
+        {% else %}
+        <p>Нет подключённых аккаунтов. <a href="/auth/login">Добавьте первый аккаунт</a>.</p>
+        {% endif %}
     </div>
-    {% else %}
-    <p>Нет подключённых аккаунтов. <a href="/auth/login">Добавьте первый аккаунт</a>.</p>
-    {% endif %}
-</article>
+</div>
 
 {% if telegram_credentials_from_env %}
-<article>
-    <header>Telegram API credentials</header>
-    <p><mark>Управляется через окружение</mark> — `TG_API_ID` и `TG_API_HASH` заданы во внешней конфигурации, поэтому эта форма скрыта.</p>
-</article>
+<div class="card mb-4">
+    <div class="card-header fw-semibold">Telegram API credentials</div>
+    <div class="card-body">
+        <p><span class="badge bg-warning text-dark">Управляется через окружение</span> — <code>TG_API_ID</code> и <code>TG_API_HASH</code> заданы во внешней конфигурации, поэтому эта форма скрыта.</p>
+    </div>
+</div>
 {% else %}
-<article>
-    <header>Telegram API credentials</header>
-    {% if is_configured %}
-    <p><mark>Настроено</mark> — API credentials сохранены.</p>
-    {% else %}
-    <p><mark class="secondary">Не настроено</mark> — для работы приложения необходимо указать Telegram API credentials.</p>
-    {% endif %}
+<div class="card mb-4">
+    <div class="card-header fw-semibold">Telegram API credentials</div>
+    <div class="card-body">
+        {% if is_configured %}
+        <p><span class="badge bg-success">Настроено</span> — API credentials сохранены.</p>
+        {% else %}
+        <p><span class="badge bg-warning text-dark">Не настроено</span> — для работы приложения необходимо указать Telegram API credentials.</p>
+        {% endif %}
 
-    <details {% if not is_configured %}open{% endif %}>
-        <summary>Как получить API ID и API Hash</summary>
-        <ol>
-            <li>Перейдите на <a href="https://my.telegram.org/apps" target="_blank" rel="noopener">my.telegram.org/apps</a></li>
-            <li>Авторизуйтесь с вашим номером телефона Telegram</li>
-            <li>Заполните форму создания приложения (название и короткое имя — любые)</li>
-            <li>Скопируйте <strong>App api_id</strong> и <strong>App api_hash</strong></li>
-        </ol>
-    </details>
+        <details {% if not is_configured %}open{% endif %}>
+            <summary>Как получить API ID и API Hash</summary>
+            <ol class="mt-2">
+                <li>Перейдите на <a href="https://my.telegram.org/apps" target="_blank" rel="noopener">my.telegram.org/apps</a></li>
+                <li>Авторизуйтесь с вашим номером телефона Telegram</li>
+                <li>Заполните форму создания приложения (название и короткое имя — любые)</li>
+                <li>Скопируйте <strong>App api_id</strong> и <strong>App api_hash</strong></li>
+            </ol>
+        </details>
 
-    <form method="post" action="/settings/save-credentials" class="settings-form">
-        <div class="grid">
-            <label for="api_id">API ID
-                <input type="text" id="api_id" name="api_id"
-                       placeholder="12345678"
-                       value="{{ api_id }}"
-                       {% if not is_configured %}inputmode="numeric" required{% endif %}>
-            </label>
-            <label for="api_hash">API Hash
-                <input type="text" id="api_hash" name="api_hash"
-                       placeholder="abcdef1234567890abcdef1234567890"
-                       value="{{ api_hash }}"
-                       {% if not is_configured %}required{% endif %}>
-            </label>
-        </div>
-        <button type="submit">Сохранить</button>
-    </form>
-</article>
+        <form method="post" action="/settings/save-credentials" class="mt-3">
+            <div class="row g-3 mb-3">
+                <div class="col-12 col-md-6">
+                    <label for="api_id" class="form-label">API ID</label>
+                    <input type="text" class="form-control" id="api_id" name="api_id"
+                           placeholder="12345678"
+                           value="{{ api_id }}"
+                           {% if not is_configured %}inputmode="numeric" required{% endif %}>
+                </div>
+                <div class="col-12 col-md-6">
+                    <label for="api_hash" class="form-label">API Hash</label>
+                    <input type="text" class="form-control" id="api_hash" name="api_hash"
+                           placeholder="abcdef1234567890abcdef1234567890"
+                           value="{{ api_hash }}"
+                           {% if not is_configured %}required{% endif %}>
+                </div>
+            </div>
+            <button type="submit" class="btn btn-primary" class="w-auto">Сохранить</button>
+        </form>
+    </div>
+</div>
 {% endif %}
 
-<article>
-    <header>Планировщик</header>
-    <form method="post" action="/settings/save-scheduler" class="settings-form">
-        <label for="collect_interval_minutes">Интервал сбора сообщений (минуты)
-            <input type="number" id="collect_interval_minutes" name="collect_interval_minutes"
-                   min="1" max="1440" value="{{ collect_interval_minutes }}">
-            <small>Как часто планировщик автоматически собирает новые сообщения из каналов. Диапазон: 1–1440 минут.</small>
-        </label>
-        <button type="submit">Сохранить</button>
-    </form>
-</article>
+<div class="card mb-4">
+    <div class="card-header fw-semibold">Планировщик</div>
+    <div class="card-body">
+        <form method="post" action="/settings/save-scheduler">
+            <div class="mb-3">
+                <label for="collect_interval_minutes" class="form-label">Интервал сбора сообщений (минуты)</label>
+                <input type="number" class="form-control" id="collect_interval_minutes" name="collect_interval_minutes"
+                       min="1" max="1440" value="{{ collect_interval_minutes }}" class="w-auto">
+                <div class="form-text">Как часто планировщик автоматически собирает новые сообщения из каналов. Диапазон: 1–1440 минут.</div>
+            </div>
+            <button type="submit" class="btn btn-primary" class="w-auto">Сохранить</button>
+        </form>
+    </div>
+</div>
 
-<article>
-    <header>Фильтры каналов</header>
-    <form method="post" action="/settings/save-filters" class="settings-form">
-        <label for="min_subscribers_filter">Минимальное количество подписчиков
-            <input type="number" id="min_subscribers_filter" name="min_subscribers_filter"
-                   min="0" value="{{ min_subscribers_filter }}"
-                   placeholder="0 — отключено">
-            <small>Каналы с числом подписчиков ниже порога будут помечены флагом ✋ и пропущены при сборе. Значение 0 — фильтр отключён.</small>
-        </label>
-        <button type="submit">Сохранить</button>
-    </form>
-</article>
+<div class="card mb-4">
+    <div class="card-header fw-semibold">Фильтры каналов</div>
+    <div class="card-body">
+        <form method="post" action="/settings/save-filters">
+            <div class="mb-3">
+                <label for="min_subscribers_filter" class="form-label">Минимальное количество подписчиков</label>
+                <input type="number" class="form-control" id="min_subscribers_filter" name="min_subscribers_filter"
+                       min="0" value="{{ min_subscribers_filter }}"
+                       placeholder="0 — отключено" class="w-auto">
+                <div class="form-text">Каналы с числом подписчиков ниже порога будут помечены флагом &#9995; и пропущены при сборе. Значение 0 — фильтр отключён.</div>
+            </div>
+            <button type="submit" class="btn btn-primary" class="w-auto">Сохранить</button>
+        </form>
+    </div>
+</div>
 
-<article>
-    <header>Уведомления</header>
+<div class="card mb-4">
+    <div class="card-header fw-semibold">Уведомления</div>
+    <div class="card-body">
+        <form method="post" action="/settings/save-notification-account" class="mb-3">
+            <div class="mb-3">
+                <label for="notification_account_phone" class="form-label">Аккаунт для уведомлений</label>
+                <select id="notification_account_phone" name="notification_account_phone" class="form-select" class="w-auto">
+                    <option value="" {{ 'selected' if not notification_selected_phone else '' }}>Primary (default)</option>
+                    {% for acc in accounts %}
+                    <option value="{{ acc.phone }}" {{ 'selected' if notification_selected_phone == acc.phone else '' }}>
+                        {{ acc.phone }}{% if acc.is_primary %} [primary]{% endif %}{% if not acc.is_active %} [отключён]{% endif %}{% if acc.phone not in connected_phones %} [не подключён]{% endif %}
+                    </option>
+                    {% endfor %}
+                    {% if notification_selected_phone and notification_selected_phone not in account_phones %}
+                    <option value="{{ notification_selected_phone }}" selected>{{ notification_selected_phone }} [удалён]</option>
+                    {% endif %}
+                </select>
+                <div class="form-text">Если значение пустое, используется текущий primary-аккаунт. Автоматического fallback на другие аккаунты нет.</div>
+            </div>
+            <button type="submit" class="btn btn-primary" class="w-auto">Сохранить выбор</button>
+        </form>
 
-    <form method="post" action="/settings/save-notification-account" class="settings-form">
-        <label for="notification_account_phone">Аккаунт для уведомлений
-            <select id="notification_account_phone" name="notification_account_phone">
-                <option value="" {{ 'selected' if not notification_selected_phone else '' }}>Primary (default)</option>
-                {% for acc in accounts %}
-                <option value="{{ acc.phone }}" {{ 'selected' if notification_selected_phone == acc.phone else '' }}>
-                    {{ acc.phone }}{% if acc.is_primary %} [primary]{% endif %}{% if not acc.is_active %} [отключён]{% endif %}{% if acc.phone not in connected_phones %} [не подключён]{% endif %}
-                </option>
-                {% endfor %}
-                {% if notification_selected_phone and notification_selected_phone not in account_phones %}
-                <option value="{{ notification_selected_phone }}" selected>{{ notification_selected_phone }} [удалён]</option>
-                {% endif %}
-            </select>
-            <small>Если значение пустое, используется текущий primary-аккаунт. Автоматического fallback на другие аккаунты нет.</small>
-        </label>
-        <button type="submit">Сохранить выбор</button>
-    </form>
+        {% if notification_target.state == "available" %}
+        <p><span class="badge bg-success">Активно</span> {{ notification_target.message }}</p>
+        {% else %}
+        <p><span class="badge bg-warning text-dark">Недоступно</span> {{ notification_target.message }}</p>
+        {% endif %}
 
-    {% if notification_target.state == "available" %}
-    <p><mark>Активно</mark> {{ notification_target.message }}</p>
-    {% else %}
-    <p><mark class="secondary">Недоступно</mark> {{ notification_target.message }}</p>
-    {% endif %}
-
-    {% if notification_bot %}
-    <p>
-        Notification bot: <code>@{{ notification_bot.bot_username }}</code>
-        {% if notification_bot.bot_id %}(ID {{ notification_bot.bot_id }}){% endif %}
-    </p>
-    <form method="post" action="/settings/notifications/delete" style="display:inline">
-        <button type="submit" class="contrast outline">Удалить notification bot</button>
-    </form>
-    {% if notification_target.state == "available" %}
-    <form method="post" action="/settings/notifications/test" style="display:inline">
-        <button type="submit" class="outline">Тест</button>
-    </form>
-    {% endif %}
-    {% elif notification_bot_error %}
-    <p><small>{{ notification_bot_error }}</small></p>
-    {% else %}
-    <p>Для выбранного аккаунта notification bot ещё не настроен.</p>
-    <form method="post" action="/settings/notifications/setup" style="display:inline">
-        <button type="submit" class="outline">Создать notification bot</button>
-    </form>
-    {% endif %}
-</article>
+        {% if notification_bot %}
+        <p>
+            Notification bot: <code>@{{ notification_bot.bot_username }}</code>
+            {% if notification_bot.bot_id %}(ID {{ notification_bot.bot_id }}){% endif %}
+        </p>
+        <form method="post" action="/settings/notifications/delete" class="d-inline">
+            <button type="submit" class="btn btn-outline-danger">Удалить notification bot</button>
+        </form>
+        {% if notification_target.state == "available" %}
+        <form method="post" action="/settings/notifications/test" class="d-inline">
+            <button type="submit" class="btn btn-outline-primary">Тест</button>
+        </form>
+        {% endif %}
+        {% elif notification_bot_error %}
+        <p><small class="text-muted">{{ notification_bot_error }}</small></p>
+        {% else %}
+        <p>Для выбранного аккаунта notification bot ещё не настроен.</p>
+        <form method="post" action="/settings/notifications/setup" class="d-inline">
+            <button type="submit" class="btn btn-outline-primary">Создать notification bot</button>
+        </form>
+        {% endif %}
+    </div>
+</div>
 
 {% endblock %}
