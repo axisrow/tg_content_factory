@@ -499,3 +499,25 @@ class Database:
             (thread_id, role, content),
         )
         await self._db.commit()
+
+    async def delete_last_agent_exchange(self, thread_id: int) -> None:
+        """Delete the last user message and any assistant reply from a thread."""
+        self._require()
+        assert self._db is not None
+        # Find the last user message
+        cur = await self._db.execute(
+            "SELECT id FROM agent_messages"
+            " WHERE thread_id = ? AND role = 'user'"
+            " ORDER BY id DESC LIMIT 1",
+            (thread_id,),
+        )
+        row = await cur.fetchone()
+        if row is None:
+            return
+        last_user_id = row["id"]
+        # Delete that user message and any messages after it (assistant reply)
+        await self._db.execute(
+            "DELETE FROM agent_messages WHERE thread_id = ? AND id >= ?",
+            (thread_id, last_user_id),
+        )
+        await self._db.commit()

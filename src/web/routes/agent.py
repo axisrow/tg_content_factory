@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 ALLOWED_MODELS = {
     "claude-sonnet-4-5",
     "claude-opus-4-6",
-    "claude-haiku-4-5",
+    "claude-haiku-4-5-20251001",
 }
 
 
@@ -124,7 +124,8 @@ async def inject_context(request: Request, thread_id: int):
     if not channel_id_raw:
         raise HTTPException(status_code=400, detail="channel_id is required")
     channel_id = int(channel_id_raw)
-    limit = min(int(data.get("limit", 50)), 500)
+    raw_limit = int(data.get("limit", 0))
+    limit = min(raw_limit, 10_000) if raw_limit > 0 else 10_000
     topic_id = data.get("topic_id")
     if topic_id is not None:
         topic_id = int(topic_id) if str(topic_id).strip() else None
@@ -140,24 +141,38 @@ async def inject_context(request: Request, thread_id: int):
         limit=limit,
         topic_id=topic_id,
     )
-    channels = await db.get_channels()
-    ch = next((c for c in channels if c.channel_id == channel_id), None)
+    ch = await db.get_channel_by_channel_id(channel_id)
     title = ch.title if ch else str(channel_id)
 
-    header = f"[КОНТЕКСТ: {title}"
-    if topic_id:
-        header += f", тема #{topic_id}"
-    header += f", {len(messages)} сообщений]"
-    lines = [header]
-    for m in messages:
-        preview = (m.text or "").replace("\n", " ")[:200]
-        author = m.sender_name or (f"id={m.sender_id}" if m.sender_id else "unknown")
-        date_str = m.date.strftime("%Y-%m-%d")
-        lines.append(f"- [msg_id={m.message_id}][{date_str}][{author}] {preview}")
-    content = "\n".join(lines)
+    topics = await db.get_forum_topics(channel_id)
+    topics_map = {t["id"]: t["title"] for t in topics}
+
+    from src.agent.context import format_context
+
+    content = format_context(messages, title, topic_id, topics_map)
 
     await db.save_agent_message(thread_id=thread_id, role="user", content=content)
+    logger.info(
+        "Context loaded for thread %d: %d messages, %d chars",
+        thread_id, len(messages), len(content),
+    )
+    if len(content) > 200_000:
+        logger.warning(
+            "Large context for thread %d: %d chars (>200K) — may cause prompt overflow",
+            thread_id, len(content),
+        )
     return JSONResponse({"content": content})
+
+
+@router.post("/threads/{thread_id}/stop")
+async def stop_chat(request: Request, thread_id: int):
+    db = deps.get_db(request)
+    agent_manager = deps.get_agent_manager(request)
+    cancelled = False
+    if agent_manager is not None:
+        cancelled = await agent_manager.cancel_stream(thread_id)
+    await db.delete_last_agent_exchange(thread_id)
+    return JSONResponse({"ok": True, "cancelled": cancelled})
 
 
 @router.post("/threads/{thread_id}/chat")
@@ -171,11 +186,22 @@ async def chat(request: Request, thread_id: int):
     model = raw_model if raw_model in ALLOWED_MODELS else None
 
     db = deps.get_db(request)
+    agent_manager = deps.get_agent_manager(request)
+    if agent_manager is None:
+        raise HTTPException(status_code=503, detail="AgentManager not initialized")
 
     # Verify thread exists
     thread = await db.get_agent_thread(thread_id)
     if thread is None:
         raise HTTPException(status_code=404, detail="Thread not found")
+
+    # Check prompt size before saving
+    estimated = await agent_manager.estimate_prompt_tokens(thread_id, message)
+    if estimated > 100_000:
+        raise HTTPException(
+            status_code=400,
+            detail="Контекст слишком длинный. Создайте новый тред.",
+        )
 
     # Save user message
     await db.save_agent_message(thread_id, "user", message)
@@ -184,22 +210,19 @@ async def chat(request: Request, thread_id: int):
     if thread["title"] == "Новый тред":
         await db.rename_agent_thread(thread_id, message[:60])
 
-    agent_manager = deps.get_agent_manager(request)
-    if agent_manager is None:
-        raise HTTPException(status_code=503, detail="AgentManager not initialized")
-
     async def generate():
         async for chunk in agent_manager.chat_stream(thread_id, message, model=model):
-            # Save before yielding so disconnect doesn't lose the message
             try:
                 data_str = chunk.removeprefix("data: ").strip()
                 data = json.loads(data_str)
                 if data.get("done") and data.get("full_text"):
                     await db.save_agent_message(thread_id, "assistant", data["full_text"])
+                elif data.get("error"):
+                    await db.delete_last_agent_exchange(thread_id)
             except json.JSONDecodeError:
                 pass
             except Exception:
-                logger.exception("Failed to save agent message for thread %d", thread_id)
+                logger.exception("Failed to process agent message for thread %d", thread_id)
             yield chunk
 
     return StreamingResponse(generate(), media_type="text/event-stream")

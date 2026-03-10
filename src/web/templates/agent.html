@@ -314,7 +314,7 @@
                 <option value="">Авто</option>
                 <option value="claude-sonnet-4-5">Sonnet 4.5</option>
                 <option value="claude-opus-4-6">Opus 4.6</option>
-                <option value="claude-haiku-4-5">Haiku 4.5</option>
+                <option value="claude-haiku-4-5-20251001">Haiku 4.5</option>
             </select>
             <button class="chat-send-btn" id="send-btn"
                     onclick="sendMessage()">Отправить</button>
@@ -336,7 +336,7 @@
             </select>
         </div>
         <label for="ctx-limit">Сообщений</label>
-        <input type="number" id="ctx-limit" value="50" min="1" max="500">
+        <input type="number" id="ctx-limit" placeholder="все" min="1" max="10000">
         <button id="ctx-load-btn" class="outline" {% if not active_thread %}disabled{% endif %}>
             Загрузить
         </button>
@@ -348,6 +348,7 @@
 (function() {
     var threadId = {{ active_thread.id if active_thread else 'null' }};
     var sending = false;
+    var abortController = null;
 
     // Model selector: persist in localStorage
     var modelSelect = document.getElementById('model-select');
@@ -388,17 +389,70 @@
         });
     }
 
+    function setStopMode(active) {
+        var sendBtn = document.getElementById('send-btn');
+        var inputEl = document.getElementById('chat-input');
+        if (active) {
+            sendBtn.textContent = 'Стоп';
+            sendBtn.classList.add('secondary');
+            sendBtn.onclick = stopGeneration;
+            sendBtn.disabled = false;
+            inputEl.disabled = true;
+        } else {
+            sendBtn.textContent = 'Отправить';
+            sendBtn.classList.remove('secondary');
+            sendBtn.onclick = sendMessage;
+            sendBtn.disabled = false;
+            inputEl.disabled = false;
+        }
+    }
+
+    window.stopGeneration = async function() {
+        if (!sending || !threadId) return;
+        var sendBtn = document.getElementById('send-btn');
+        sendBtn.disabled = true;
+
+        // Abort the fetch to trigger server-side cancellation
+        if (abortController) {
+            abortController.abort();
+            abortController = null;
+        }
+
+        // Tell server to cancel and delete messages
+        try {
+            await fetch('/agent/threads/' + threadId + '/stop', {method: 'POST'});
+        } catch(e) { /* ignore */ }
+
+        // Remove pending bubbles (user + assistant from current exchange)
+        var container = document.getElementById('chat-messages');
+        container.querySelectorAll('.message-bubble[data-pending]').forEach(function(el) {
+            el.remove();
+        });
+
+        // Show empty state if no messages left
+        if (!container.querySelector('.message-bubble') && !container.querySelector('.message-context')) {
+            var empty = document.createElement('div');
+            empty.className = 'empty-state';
+            empty.innerHTML = '<span style="font-size:2rem">🤖</span><p>Напишите первое сообщение</p>';
+            container.appendChild(empty);
+        }
+
+        sending = false;
+        setStopMode(false);
+        document.getElementById('chat-input').focus();
+    };
+
     window.sendMessage = async function() {
         if (sending || !threadId) return;
         var inputEl = document.getElementById('chat-input');
-        var sendBtn = document.getElementById('send-btn');
         var text = (inputEl.value || '').trim();
         if (!text) return;
 
         sending = true;
-        inputEl.disabled = true;
-        sendBtn.disabled = true;
         inputEl.value = '';
+        setStopMode(true);
+
+        abortController = new AbortController();
 
         var container = document.getElementById('chat-messages');
 
@@ -409,6 +463,7 @@
         // Append user bubble
         var userBubble = document.createElement('div');
         userBubble.className = 'message-bubble message-user';
+        userBubble.setAttribute('data-pending', 'true');
         userBubble.textContent = text;
         container.appendChild(userBubble);
         container.scrollTop = container.scrollHeight;
@@ -416,6 +471,7 @@
         // Append assistant bubble with typing indicator
         var aiBubble = document.createElement('div');
         aiBubble.className = 'message-bubble message-assistant';
+        aiBubble.setAttribute('data-pending', 'true');
         aiBubble.innerHTML = '<span class="typing-indicator">Думаю</span>';
         container.appendChild(aiBubble);
         container.scrollTop = container.scrollHeight;
@@ -424,11 +480,13 @@
             var resp = await fetch('/agent/threads/' + threadId + '/chat', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({message: text, model: (document.getElementById('model-select') || {}).value || ''})
+                body: JSON.stringify({message: text, model: (document.getElementById('model-select') || {}).value || ''}),
+                signal: abortController.signal
             });
 
             if (!resp.ok) {
-                throw new Error('HTTP ' + resp.status);
+                var errBody = await resp.json().catch(function() { return {}; });
+                throw new Error(errBody.detail || 'HTTP ' + resp.status);
             }
 
             var reader = resp.body.getReader();
@@ -472,14 +530,19 @@
                 aiBubble.textContent = 'Нет ответа от агента.';
             }
 
+            // Stream completed successfully — remove pending markers
+            userBubble.removeAttribute('data-pending');
+            aiBubble.removeAttribute('data-pending');
+
         } catch(err) {
+            if (err.name === 'AbortError') return; // handled by stopGeneration
             aiBubble.className = 'message-error';
             aiBubble.textContent = 'Ошибка соединения: ' + err.message;
         }
 
         sending = false;
-        inputEl.disabled = false;
-        sendBtn.disabled = false;
+        abortController = null;
+        setStopMode(false);
         inputEl.focus();
         container.scrollTop = container.scrollHeight;
     };
@@ -569,7 +632,8 @@
             if (!threadId) return;
             var channelId = document.getElementById('ctx-channel').value;
             if (!channelId) return;
-            var limit = parseInt(document.getElementById('ctx-limit').value) || 50;
+            var limitVal = document.getElementById('ctx-limit').value.trim();
+            var limit = limitVal ? parseInt(limitVal) : 0;
             var topicId = document.getElementById('ctx-topic').value || null;
             var status = document.getElementById('ctx-status');
             this.disabled = true;
