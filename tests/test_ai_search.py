@@ -1,10 +1,13 @@
-import asyncio
-import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
-from src.search.ai_search import AISearchEngine
-from src.config import LLMConfig
-from src.models import SearchResult, Message
+import sys
 from datetime import datetime
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
+from src.config import LLMConfig
+from src.models import Message
+from src.search.ai_search import AISearchEngine
+
 
 @pytest.fixture
 def llm_config():
@@ -22,7 +25,7 @@ async def test_ai_search_disabled(mock_search_bundle):
     engine = AISearchEngine(config, mock_search_bundle)
     engine.initialize()
     assert engine._agent is None
-    
+
     res = await engine.search("test")
     assert "AI search is not available" in res.ai_summary
 
@@ -31,26 +34,19 @@ async def test_ai_search_initialization_success(llm_config, mock_search_bundle):
     with patch("deepagents.create_deep_agent") as mock_create:
         mock_agent = MagicMock()
         mock_create.return_value = mock_agent
-        
+
         engine = AISearchEngine(llm_config, mock_search_bundle)
         engine.initialize()
-        
+
         assert engine._agent == mock_agent
         mock_create.assert_called_once()
 
 @pytest.mark.asyncio
 async def test_ai_search_initialization_import_error(llm_config, mock_search_bundle):
-    # Mock __import__ to raise ImportError specifically for deepagents
-    real_import = __import__
-    def mock_import(name, *args, **kwargs):
-        if name == "deepagents":
-            raise ImportError("not found")
-        return real_import(name, *args, **kwargs)
-        
-    with patch("builtins.__import__", side_effect=mock_import):
-         engine = AISearchEngine(llm_config, mock_search_bundle)
-         engine.initialize()
-         assert engine._agent is None
+    with patch.dict(sys.modules, {"deepagents": None}):
+        engine = AISearchEngine(llm_config, mock_search_bundle)
+        engine.initialize()
+        assert engine._agent is None
 
 @pytest.mark.asyncio
 async def test_ai_search_initialization_general_error(llm_config, mock_search_bundle):
@@ -63,15 +59,15 @@ async def test_ai_search_initialization_general_error(llm_config, mock_search_bu
 async def test_ai_search_run_success(llm_config, mock_search_bundle):
     mock_agent = MagicMock()
     mock_agent.run.return_value = "AI Summary Result"
-    
+
     mock_search_bundle.search_messages.return_value = ([
         Message(channel_id=1, message_id=1, text="hello", date=datetime.now())
     ], 1)
-    
+
     with patch("deepagents.create_deep_agent", return_value=mock_agent):
         engine = AISearchEngine(llm_config, mock_search_bundle)
         engine.initialize()
-        
+
         res = await engine.search("hello")
         assert res.ai_summary == "AI Summary Result"
         assert res.total == 1
@@ -80,11 +76,11 @@ async def test_ai_search_run_success(llm_config, mock_search_bundle):
 async def test_ai_search_run_error(llm_config, mock_search_bundle):
     mock_agent = MagicMock()
     mock_agent.run.side_effect = Exception("AI Fail")
-    
+
     with patch("deepagents.create_deep_agent", return_value=mock_agent):
         engine = AISearchEngine(llm_config, mock_search_bundle)
         engine.initialize()
-        
+
         res = await engine.search("hello")
         assert "AI search error: AI Fail" in res.ai_summary
 
@@ -94,16 +90,16 @@ async def test_search_posts_tool_logic(llm_config, mock_search_bundle):
     mock_search_bundle.search_messages.return_value = ([
         Message(channel_id=1, message_id=1, text="content", date=datetime.now())
     ], 1)
-    
+
     with patch("deepagents.create_deep_agent") as mock_create:
         engine = AISearchEngine(llm_config, mock_search_bundle)
         engine.initialize()
-        
+
         # Extract the tool function from mock_create call
         args, kwargs = mock_create.call_args
         tools = kwargs['tools']
         search_tool = tools[0]
-        
+
         # Test tool without running loop (simulating thread pool behavior)
         result = search_tool("query")
         assert "Found 1 results" in result
@@ -112,11 +108,11 @@ async def test_search_posts_tool_logic(llm_config, mock_search_bundle):
 @pytest.mark.asyncio
 async def test_search_posts_tool_no_results(llm_config, mock_search_bundle):
     mock_search_bundle.search_messages.return_value = ([], 0)
-    
+
     with patch("deepagents.create_deep_agent") as mock_create:
         engine = AISearchEngine(llm_config, mock_search_bundle)
         engine.initialize()
         search_tool = mock_create.call_args[1]['tools'][0]
-        
+
         result = search_tool("nothing")
         assert "No results found" in result

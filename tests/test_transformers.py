@@ -1,15 +1,27 @@
-import pytest
-from unittest.mock import MagicMock
 from datetime import datetime, timezone
-from src.search.transformers import TelegramMessageTransformer
+from unittest.mock import MagicMock
+
 from telethon.tl.types import (
-    MessageMediaPhoto, MessageMediaDocument, MessageMediaWebPage,
-    MessageMediaGeo, MessageMediaGeoLive, MessageMediaContact,
-    MessageMediaPoll, MessageMediaDice, MessageMediaGame,
-    Document, DocumentAttributeSticker, DocumentAttributeVideo,
-    DocumentAttributeAudio, DocumentAttributeAnimated,
-    PeerUser, PeerChannel
+    Document,
+    DocumentAttributeAnimated,
+    DocumentAttributeAudio,
+    DocumentAttributeSticker,
+    DocumentAttributeVideo,
+    MessageMediaContact,
+    MessageMediaDice,
+    MessageMediaDocument,
+    MessageMediaGame,
+    MessageMediaGeo,
+    MessageMediaGeoLive,
+    MessageMediaPhoto,
+    MessageMediaPoll,
+    MessageMediaWebPage,
+    PeerChannel,
+    PeerUser,
 )
+
+from src.search.transformers import TelegramMessageTransformer
+
 
 def test_media_type_none():
     msg = MagicMock(media=None)
@@ -56,13 +68,14 @@ def test_media_type_gif():
     assert TelegramMessageTransformer.media_type_from_message(msg) == "gif"
 
 def test_media_type_simple_types():
-    assert TelegramMessageTransformer.media_type_from_message(MagicMock(media=MagicMock(spec=MessageMediaWebPage))) == "web_page"
-    assert TelegramMessageTransformer.media_type_from_message(MagicMock(media=MagicMock(spec=MessageMediaGeo))) == "location"
-    assert TelegramMessageTransformer.media_type_from_message(MagicMock(media=MagicMock(spec=MessageMediaGeoLive))) == "geo_live"
-    assert TelegramMessageTransformer.media_type_from_message(MagicMock(media=MagicMock(spec=MessageMediaContact))) == "contact"
-    assert TelegramMessageTransformer.media_type_from_message(MagicMock(media=MagicMock(spec=MessageMediaPoll))) == "poll"
-    assert TelegramMessageTransformer.media_type_from_message(MagicMock(media=MagicMock(spec=MessageMediaDice))) == "dice"
-    assert TelegramMessageTransformer.media_type_from_message(MagicMock(media=MagicMock(spec=MessageMediaGame))) == "game"
+    mt = TelegramMessageTransformer.media_type_from_message
+    assert mt(MagicMock(media=MagicMock(spec=MessageMediaWebPage))) == "web_page"
+    assert mt(MagicMock(media=MagicMock(spec=MessageMediaGeo))) == "location"
+    assert mt(MagicMock(media=MagicMock(spec=MessageMediaGeoLive))) == "geo_live"
+    assert mt(MagicMock(media=MagicMock(spec=MessageMediaContact))) == "contact"
+    assert mt(MagicMock(media=MagicMock(spec=MessageMediaPoll))) == "poll"
+    assert mt(MagicMock(media=MagicMock(spec=MessageMediaDice))) == "dice"
+    assert mt(MagicMock(media=MagicMock(spec=MessageMediaGame))) == "game"
 
 def test_convert_telethon_message_basic():
     msg = MagicMock()
@@ -76,7 +89,7 @@ def test_convert_telethon_message_basic():
     msg.date = datetime(2025, 1, 1)
     msg.message = "hello"
     msg.media = None
-    
+
     res = TelegramMessageTransformer.convert_telethon_message(msg)
     assert res.channel_id == 456
     assert res.sender_name == "John Doe"
