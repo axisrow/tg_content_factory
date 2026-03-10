@@ -157,6 +157,23 @@ def build_parser() -> argparse.ArgumentParser:
     agent_chat = agent_sub.add_parser("chat", help="Send message to agent")
     agent_chat.add_argument("message", help="Message text")
     agent_chat.add_argument("--thread-id", type=int, default=None, dest="thread_id")
+    agent_chat.add_argument("--model", default=None, help="Model name")
+
+    agent_rename = agent_sub.add_parser("thread-rename", help="Rename thread")
+    agent_rename.add_argument("thread_id", type=int, help="Thread ID")
+    agent_rename.add_argument("title", help="New title")
+
+    agent_msgs = agent_sub.add_parser("messages", help="Show thread messages")
+    agent_msgs.add_argument("thread_id", type=int, help="Thread ID")
+    agent_msgs.add_argument("--limit", type=int, default=None, help="Last N messages")
+
+    agent_ctx = agent_sub.add_parser("context", help="Inject channel context into thread")
+    agent_ctx.add_argument("thread_id", type=int, help="Thread ID")
+    agent_ctx.add_argument("--channel-id", type=int, required=True, dest="channel_id")
+    agent_ctx.add_argument("--limit", type=int, default=100000, help="Max messages")
+    agent_ctx.add_argument("--topic-id", type=int, default=None, dest="topic_id")
+
+    agent_sub.add_parser("test-escaping", help="Test agent with special characters")
 
     test_parser = sub.add_parser("test", help="Run diagnostic tests")
     test_sub = test_parser.add_subparsers(dest="test_action")
