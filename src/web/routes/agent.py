@@ -125,7 +125,7 @@ async def inject_context(request: Request, thread_id: int):
         raise HTTPException(status_code=400, detail="channel_id is required")
     channel_id = int(channel_id_raw)
     raw_limit = int(data.get("limit", 0))
-    limit = raw_limit if raw_limit > 0 else 100000
+    limit = min(raw_limit, 10_000) if raw_limit > 0 else 10_000
     topic_id = data.get("topic_id")
     if topic_id is not None:
         topic_id = int(topic_id) if str(topic_id).strip() else None

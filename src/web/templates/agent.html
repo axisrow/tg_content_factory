@@ -336,7 +336,7 @@
             </select>
         </div>
         <label for="ctx-limit">Сообщений</label>
-        <input type="number" id="ctx-limit" placeholder="все" min="1">
+        <input type="number" id="ctx-limit" placeholder="все" min="1" max="10000">
         <button id="ctx-load-btn" class="outline" {% if not active_thread %}disabled{% endif %}>
             Загрузить
         </button>
