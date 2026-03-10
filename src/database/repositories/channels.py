@@ -179,6 +179,24 @@ class ChannelsRepository:
         )
         await self._db.commit()
 
+    async def get_forum_topics(self, channel_id: int) -> list[dict]:
+        cur = await self._db.execute(
+            "SELECT topic_id, title FROM forum_topics WHERE channel_id = ? ORDER BY topic_id",
+            (channel_id,),
+        )
+        rows = await cur.fetchall()
+        return [{"id": row["topic_id"], "title": row["title"]} for row in rows]
+
+    async def upsert_forum_topics(self, channel_id: int, topics: list[dict]) -> None:
+        await self._db.executemany(
+            "INSERT INTO forum_topics (channel_id, topic_id, title, updated_at)"
+            " VALUES (?, ?, ?, datetime('now'))"
+            " ON CONFLICT(channel_id, topic_id) DO UPDATE SET title=excluded.title,"
+            " updated_at=excluded.updated_at",
+            [(channel_id, t["id"], t["title"]) for t in topics],
+        )
+        await self._db.commit()
+
     async def delete_channel(self, pk: int) -> None:
         cur = await self._db.execute("SELECT channel_id FROM channels WHERE id = ?", (pk,))
         row = await cur.fetchone()
@@ -186,5 +204,6 @@ class ChannelsRepository:
             channel_id = row["channel_id"]
             await self._db.execute("DELETE FROM messages WHERE channel_id = ?", (channel_id,))
             await self._db.execute("DELETE FROM channel_stats WHERE channel_id = ?", (channel_id,))
+            await self._db.execute("DELETE FROM forum_topics WHERE channel_id = ?", (channel_id,))
         await self._db.execute("DELETE FROM channels WHERE id = ?", (pk,))
         await self._db.commit()
