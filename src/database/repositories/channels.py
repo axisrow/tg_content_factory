@@ -188,13 +188,15 @@ class ChannelsRepository:
         return [{"id": row["topic_id"], "title": row["title"]} for row in rows]
 
     async def upsert_forum_topics(self, channel_id: int, topics: list[dict]) -> None:
-        await self._db.executemany(
-            "INSERT INTO forum_topics (channel_id, topic_id, title, updated_at)"
-            " VALUES (?, ?, ?, datetime('now'))"
-            " ON CONFLICT(channel_id, topic_id) DO UPDATE SET title=excluded.title,"
-            " updated_at=excluded.updated_at",
-            [(channel_id, t["id"], t["title"]) for t in topics],
+        await self._db.execute(
+            "DELETE FROM forum_topics WHERE channel_id = ?", (channel_id,)
         )
+        if topics:
+            await self._db.executemany(
+                "INSERT INTO forum_topics (channel_id, topic_id, title, updated_at)"
+                " VALUES (?, ?, ?, datetime('now'))",
+                [(channel_id, t["id"], t["title"]) for t in topics],
+            )
         await self._db.commit()
 
     async def delete_channel(self, pk: int) -> None:
