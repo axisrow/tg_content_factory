@@ -1640,9 +1640,11 @@ class TestWebAgent:
         thread_id = resp_create.headers["location"].split("=")[1]
 
         # Rename
-        resp_rename = await client.post(f"/agent/threads/{thread_id}/rename", json={"title": "Renamed"})
+        resp_rename = await client.post(
+            f"/agent/threads/{thread_id}/rename", json={"title": "Renamed"}
+        )
         assert resp_rename.status_code == 200
-        
+
         db = client._transport.app.state.db
         thread = await db.get_agent_thread(int(thread_id))
         assert thread["title"] == "Renamed"
@@ -1650,7 +1652,7 @@ class TestWebAgent:
         # Delete
         resp_delete = await client.delete(f"/agent/threads/{thread_id}")
         assert resp_delete.status_code == 200
-        
+
         thread_after = await db.get_agent_thread(int(thread_id))
         assert thread_after is None
 
@@ -1659,27 +1661,30 @@ class TestWebAgent:
         from src.models import Channel
         db = client._transport.app.state.db
         pool = client._transport.app.state.pool
-        
+
         await db.add_channel(Channel(channel_id=1, title="Forum", channel_type="forum"))
         pool.get_forum_topics = AsyncMock(return_value=[{"id": 10, "title": "Topic"}])
-        
+
         resp_ch = await client.get("/agent/channels-json")
         assert resp_ch.status_code == 200
         assert len(resp_ch.json()) > 0
-        
+
         resp_topics = await client.get("/agent/forum-topics?channel_id=1")
         assert resp_topics.status_code == 200
         assert resp_topics.json()[0]["title"] == "Topic"
 
     @pytest.mark.asyncio
     async def test_inject_context_success(self, client):
-        from src.models import Channel, Message
         from datetime import datetime
+
+        from src.models import Channel, Message
         db = client._transport.app.state.db
         thread_id = await db.create_agent_thread("Context")
         await db.add_channel(Channel(channel_id=1, title="Context Channel"))
-        await db.insert_message(Message(channel_id=1, message_id=1, text="ctx", date=datetime.now()))
-        
+        await db.insert_message(
+            Message(channel_id=1, message_id=1, text="ctx", date=datetime.now())
+        )
+
         resp = await client.post(f"/agent/threads/{thread_id}/context", json={"channel_id": "1"})
         assert resp.status_code == 200
         assert "Context Channel" in resp.json()["content"]
@@ -1688,7 +1693,7 @@ class TestWebAgent:
     async def test_chat_stream_and_stop(self, client):
         db = client._transport.app.state.db
         thread_id = await db.create_agent_thread("Новый тред")
-        
+
         # Mock AgentManager
         agent_manager = AsyncMock()
         async def mock_stream(*args, **kwargs):
@@ -1697,20 +1702,20 @@ class TestWebAgent:
         agent_manager.estimate_prompt_tokens = AsyncMock(return_value=10)
         agent_manager.cancel_stream = AsyncMock(return_value=True)
         client._transport.app.state.agent_manager = agent_manager
-        
+
         resp = await client.post(
-            f"/agent/threads/{thread_id}/chat", 
+            f"/agent/threads/{thread_id}/chat",
             json={"message": "First message"}
         )
         assert resp.status_code == 200
         assert "Final" in resp.text
-        
+
         # Check thread was renamed and message saved
         thread = await db.get_agent_thread(thread_id)
         assert "First message" in thread["title"]
         messages = await db.get_agent_messages(thread_id)
         assert len(messages) == 2 # User + Assistant
-        
+
         # Test stop
         resp_stop = await client.post(f"/agent/threads/{thread_id}/stop")
         assert resp_stop.status_code == 200

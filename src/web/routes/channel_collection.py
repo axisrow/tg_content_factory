@@ -106,11 +106,12 @@ async def collect_channel(request: Request, pk: int):
             f'<button class="btn btn-outline-primary btn-sm emoji-btn"'
             f' disabled title="{label}">⏳</button>'
         )
-        return HTMLResponse(
-            f'<span id="collect-btn-{pk}">'
-            f'{btn}{filtered_badge}'
-            f'</span>'
+        # Update both desktop and mobile button IDs (only one is visible at a time)
+        fragment = (
+            f'<span id="collect-btn-{pk}">{btn}{filtered_badge}</span>'
+            f'<span id="collect-btn-m-{pk}">{btn}{filtered_badge}</span>'
         )
+        return HTMLResponse(fragment)
 
     if enqueue_status == "not_found":
         return RedirectResponse(url="/channels?msg=channel_not_found", status_code=303)
