@@ -201,8 +201,11 @@ async def test_initialize_fails_without_key_when_encrypted_sessions_exist(tmp_pa
     await encrypted_db.close()
 
     db_without_key = Database(db_path)
-    with pytest.raises(RuntimeError, match="SESSION_ENCRYPTION_KEY"):
-        await db_without_key.initialize()
+    try:
+        with pytest.raises(RuntimeError, match="SESSION_ENCRYPTION_KEY"):
+            await db_without_key.initialize()
+    finally:
+        await db_without_key.close()
 
 
 @pytest.mark.asyncio

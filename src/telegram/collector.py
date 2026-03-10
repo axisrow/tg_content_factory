@@ -532,6 +532,15 @@ class Collector:
         if should_notify and all_messages:
             await self._check_notification_queries(all_messages)
 
+        # Update forum topics in DB if messages with topic_id were collected
+        if all_messages and any(m.topic_id for m in all_messages):
+            try:
+                topics = await self._pool.get_forum_topics(channel_id)
+                if topics:
+                    await self._db.upsert_forum_topics(channel_id, topics)
+            except Exception as e:
+                logger.warning("Failed to update forum topics for %d: %s", channel_id, e)
+
         if is_first_run and not force and len(all_messages) >= 50:
             cur = await self._db.execute(
                 "SELECT COUNT(*) as total, COUNT(DISTINCT substr(text,1,100)) as uniq"

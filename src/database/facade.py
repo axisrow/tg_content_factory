@@ -232,6 +232,14 @@ class Database:
         self._require()
         await self._channels.update_channel_meta(channel_id, username=username, title=title)
 
+    async def get_forum_topics(self, channel_id: int) -> list[dict]:
+        self._require()
+        return await self._channels.get_forum_topics(channel_id)
+
+    async def upsert_forum_topics(self, channel_id: int, topics: list[dict]) -> None:
+        self._require()
+        await self._channels.upsert_forum_topics(channel_id, topics)
+
     async def delete_channel(self, pk: int) -> None:
         self._require()
         await self._channels.delete_channel(pk)
