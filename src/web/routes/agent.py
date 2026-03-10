@@ -172,8 +172,7 @@ async def stop_chat(request: Request, thread_id: int):
     cancelled = False
     if agent_manager is not None:
         cancelled = await agent_manager.cancel_stream(thread_id)
-    if cancelled:
-        await db.delete_last_agent_exchange(thread_id)
+    await db.delete_last_agent_exchange(thread_id)
     return JSONResponse({"ok": True, "cancelled": cancelled})
 
 
