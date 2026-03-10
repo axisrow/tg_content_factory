@@ -4,15 +4,15 @@
 <h1>Поиск по постам</h1>
 
 <form method="get" action="/">
-    <label>
-        Запрос
-        <input type="text" name="q" value="{{ q }}" placeholder="Введите поисковый запрос" autofocus>
-    </label>
+    <div class="mb-3">
+        <label for="q" class="form-label">Запрос</label>
+        <input type="text" class="form-control" id="q" name="q" value="{{ q }}" placeholder="Введите поисковый запрос" autofocus>
+    </div>
 
-    <div class="grid">
-        <label>
-            Канал
-            <select name="channel_id" id="channel-select">
+    <div class="row g-3 mb-3">
+        <div class="col-12 col-sm-6 col-md-3">
+            <label for="channel-select" class="form-label">Канал</label>
+            <select name="channel_id" id="channel-select" class="form-select">
                 <option value="">Все каналы</option>
                 {% for ch in channels %}
                 <option value="{{ ch.channel_id }}" {{ 'selected' if channel_id == ch.channel_id else '' }}>
@@ -20,80 +20,79 @@
                 </option>
                 {% endfor %}
             </select>
-        </label>
-        <label>
-            Дата от
-            <input type="date" name="date_from" id="date-from" value="{{ date_from }}">
-        </label>
-        <label>
-            Дата до
-            <input type="date" name="date_to" id="date-to" value="{{ date_to }}">
-        </label>
-        <label>
-            Длина сообщения
-            <div style="display: flex; gap: 0.5rem;">
-                <select name="msg_length_op" id="msg-length-op" style="width: auto; min-width: 5rem;">
+        </div>
+        <div class="col-6 col-sm-6 col-md-3">
+            <label for="date-from" class="form-label">Дата от</label>
+            <input type="date" class="form-control" name="date_from" id="date-from" value="{{ date_from }}">
+        </div>
+        <div class="col-6 col-sm-6 col-md-3">
+            <label for="date-to" class="form-label">Дата до</label>
+            <input type="date" class="form-control" name="date_to" id="date-to" value="{{ date_to }}">
+        </div>
+        <div class="col-12 col-sm-6 col-md-3">
+            <label class="form-label">Длина сообщения</label>
+            <div class="input-group">
+                <select name="msg_length_op" id="msg-length-op" class="form-select" style="max-width: 5rem;">
                     <option value="">Выкл</option>
                     <option value="gt" {{ 'selected' if msg_length_op == 'gt' else '' }}>&gt;</option>
                     <option value="lt" {{ 'selected' if msg_length_op == 'lt' else '' }}>&lt;</option>
                 </select>
-                <input type="number" name="msg_length_val" id="msg-length-val"
+                <input type="number" class="form-control" name="msg_length_val" id="msg-length-val"
                        min="1" placeholder="символов" value="{{ msg_length_val or '' }}">
             </div>
-        </label>
+        </div>
     </div>
 
-    <fieldset style="display: flex; align-items: center; gap: 1.5rem; flex-wrap: wrap; border: none; padding: 0; margin-bottom: var(--pico-spacing);">
-        <legend class="visually-hidden">Режим поиска</legend>
-        <label style="margin-bottom: 0;" title="Поиск по ранее собранным сообщениям в локальной базе данных">
-            <input type="radio" name="mode" value="local" {{ 'checked' if mode == 'local' else '' }}>
-            Локальная база
-        </label>
-        <label style="margin-bottom: 0;" title="Поиск по всем чатам и каналам подключённого аккаунта через Telegram API">
-            <input type="radio" name="mode" value="my_chats" {{ 'checked' if mode == 'my_chats' else '' }}>
-            Мои чаты
-        </label>
-        <label style="margin-bottom: 0;" title="Поиск внутри выбранного канала через Telegram API">
-            <input type="radio" name="mode" value="channel" {{ 'checked' if mode == 'channel' else '' }}>
-            В канале
-        </label>
-        <label style="margin-bottom: 0;" title="Глобальный поиск по публичным каналам (требуется Telegram Premium)">
-            <input type="radio" name="mode" value="telegram" {{ 'checked' if mode == 'telegram' else '' }}>
-            Публичные (Premium)
-        </label>
+    <div class="d-flex align-items-center gap-3 flex-wrap mb-3">
+        <div class="form-check form-check-inline" title="Поиск по ранее собранным сообщениям в локальной базе данных">
+            <input class="form-check-input" type="radio" name="mode" id="mode-local" value="local" {{ 'checked' if mode == 'local' else '' }}>
+            <label class="form-check-label" for="mode-local">Локальная база</label>
+        </div>
+        <div class="form-check form-check-inline" title="Поиск по всем чатам и каналам подключённого аккаунта через Telegram API">
+            <input class="form-check-input" type="radio" name="mode" id="mode-my-chats" value="my_chats" {{ 'checked' if mode == 'my_chats' else '' }}>
+            <label class="form-check-label" for="mode-my-chats">Мои чаты</label>
+        </div>
+        <div class="form-check form-check-inline" title="Поиск внутри выбранного канала через Telegram API">
+            <input class="form-check-input" type="radio" name="mode" id="mode-channel" value="channel" {{ 'checked' if mode == 'channel' else '' }}>
+            <label class="form-check-label" for="mode-channel">В канале</label>
+        </div>
+        <div class="form-check form-check-inline" title="Глобальный поиск по публичным каналам (требуется Telegram Premium)">
+            <input class="form-check-input" type="radio" name="mode" id="mode-telegram" value="telegram" {{ 'checked' if mode == 'telegram' else '' }}>
+            <label class="form-check-label" for="mode-telegram">Публичные (Premium)</label>
+        </div>
         {% if search_quota and search_quota.remains is not none %}
-        <small id="quota-info" style="color: var(--pico-muted-color);">
+        <small id="quota-info" class="text-muted">
             Premium-поиск: осталось {{ search_quota.remains }}{% if search_quota.total_daily %} из {{ search_quota.total_daily }}{% endif %} сегодня
         </small>
         {% endif %}
         {% if ai_enabled %}
-        <label style="margin-bottom: 0;" title="Семантический поиск с помощью LLM по локальной базе">
-            <input type="radio" name="mode" value="ai" {{ 'checked' if mode == 'ai' else '' }}>
-            AI-поиск
-        </label>
+        <div class="form-check form-check-inline" title="Семантический поиск с помощью LLM по локальной базе">
+            <input class="form-check-input" type="radio" name="mode" id="mode-ai" value="ai" {{ 'checked' if mode == 'ai' else '' }}>
+            <label class="form-check-label" for="mode-ai">AI-поиск</label>
+        </div>
         {% endif %}
-        <label id="fts-label" style="margin-bottom: 0;" title="Полнотекстовый поиск FTS5 (поддерживает операторы AND, OR, NOT, фразы в кавычках)">
-            <input type="checkbox" name="is_fts" value="1" id="fts-checkbox" {{ 'checked' if is_fts else '' }}>
-            FTS5 <span class="hint" data-tooltip="Полнотекстовый поиск с поддержкой операторов: OR, AND, NOT, префикс*, «точная фраза»">?</span>
-        </label>
-        <button type="submit" style="margin-bottom: 0; margin-left: auto;">Найти</button>
-    </fieldset>
+        <div class="form-check form-check-inline" id="fts-label" title="Полнотекстовый поиск FTS5 (поддерживает операторы AND, OR, NOT, фразы в кавычках)">
+            <input class="form-check-input" type="checkbox" name="is_fts" value="1" id="fts-checkbox" {{ 'checked' if is_fts else '' }}>
+            <label class="form-check-label" for="fts-checkbox">FTS5 <span class="hint" data-tooltip="Полнотекстовый поиск с поддержкой операторов: OR, AND, NOT, префикс*, «точная фраза»">?</span></label>
+        </div>
+        <button type="submit" class="btn btn-primary ms-auto">Найти</button>
+    </div>
 </form>
 
 {% if result %}
 <hr>
 
 {% if result.error %}
-<article style="border-left: 4px solid var(--pico-color-red-500, #e53935); padding: 1rem;">
+<div class="alert alert-danger">
     <strong>Ошибка:</strong> {{ result.error }}
-</article>
+</div>
 {% endif %}
 
 {% if result.ai_summary %}
-<article>
-    <header>AI-анализ</header>
-    <p>{{ result.ai_summary }}</p>
-</article>
+<div class="card mb-3">
+    <div class="card-header fw-semibold">AI-анализ</div>
+    <div class="card-body"><p class="mb-0">{{ result.ai_summary }}</p></div>
+</div>
 {% endif %}
 
 {% if not result.error %}
@@ -101,8 +100,9 @@
 {% endif %}
 
 {% if result.messages %}
-<div style="overflow-x:auto">
-<table>
+<!-- Desktop: table -->
+<div class="table-responsive d-none d-md-block">
+<table class="table table-striped table-hover table-sm">
     <thead>
         <tr>
             <th>Дата</th>
@@ -116,7 +116,7 @@
     <tbody>
         {% for msg in result.messages %}
         <tr>
-            <td style="white-space: nowrap;">{{ msg.date.strftime('%Y-%m-%d %H:%M') }}</td>
+            <td class="text-nowrap">{{ msg.date.strftime('%Y-%m-%d %H:%M') }}</td>
             <td>{{ msg.channel_title or msg.channel_username or msg.channel_id }}</td>
             <td>{{ msg.sender_name or "—" }}</td>
             <td>{{ msg.media_type or "—" }}</td>
@@ -128,15 +128,31 @@
 </table>
 </div>
 
+<!-- Mobile: cards -->
+<div class="d-md-none mobile-cards">
+    {% for msg in result.messages %}
+    <div class="card mb-2">
+        <div class="card-body">
+            <div class="d-flex justify-content-between align-items-center mb-1">
+                <strong class="text-truncate">{{ msg.channel_title or msg.channel_username or msg.channel_id }}</strong>
+                {% if msg.channel_username %}<a href="https://t.me/{{ msg.channel_username }}/{{ msg.message_id }}" target="_blank" rel="noopener">&#8599;</a>{% else %}<a href="https://t.me/c/{{ msg.channel_id }}/{{ msg.message_id }}" target="_blank" rel="noopener">&#8599;</a>{% endif %}
+            </div>
+            <small class="text-muted">{{ msg.date.strftime('%Y-%m-%d %H:%M') }}{% if msg.sender_name %} &middot; {{ msg.sender_name }}{% endif %}{% if msg.media_type %} &middot; {{ msg.media_type }}{% endif %}</small>
+            <p class="mb-0 mt-1" style="font-size:0.85rem">{{ msg.text[:200] if msg.text else "—" }}{{ "..." if msg.text and msg.text|length > 200 else "" }}</p>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+
 {% if total_pages > 1 %}
 <nav>
-    <ul>
+    <ul class="pagination justify-content-center">
         {% if page > 1 %}
-        <li><a href="/?q={{ q|urlencode }}&channel_id={{ channel_id or '' }}&date_from={{ date_from }}&date_to={{ date_to }}&mode={{ mode }}&is_fts={{ 1 if is_fts else 0 }}&msg_length_op={{ msg_length_op }}{% if msg_length_val %}&msg_length_val={{ msg_length_val }}{% endif %}&page={{ page - 1 }}">Назад</a></li>
+        <li class="page-item"><a class="page-link" href="/?q={{ q|urlencode }}&channel_id={{ channel_id or '' }}&date_from={{ date_from }}&date_to={{ date_to }}&mode={{ mode }}&is_fts={{ 1 if is_fts else 0 }}&msg_length_op={{ msg_length_op }}{% if msg_length_val %}&msg_length_val={{ msg_length_val }}{% endif %}&page={{ page - 1 }}">Назад</a></li>
         {% endif %}
-        <li>Страница {{ page }} из {{ total_pages }}</li>
+        <li class="page-item disabled"><span class="page-link">Страница {{ page }} из {{ total_pages }}</span></li>
         {% if page < total_pages %}
-        <li><a href="/?q={{ q|urlencode }}&channel_id={{ channel_id or '' }}&date_from={{ date_from }}&date_to={{ date_to }}&mode={{ mode }}&is_fts={{ 1 if is_fts else 0 }}&msg_length_op={{ msg_length_op }}{% if msg_length_val %}&msg_length_val={{ msg_length_val }}{% endif %}&page={{ page + 1 }}">Далее</a></li>
+        <li class="page-item"><a class="page-link" href="/?q={{ q|urlencode }}&channel_id={{ channel_id or '' }}&date_from={{ date_from }}&date_to={{ date_to }}&mode={{ mode }}&is_fts={{ 1 if is_fts else 0 }}&msg_length_op={{ msg_length_op }}{% if msg_length_val %}&msg_length_val={{ msg_length_val }}{% endif %}&page={{ page + 1 }}">Далее</a></li>
         {% endif %}
     </ul>
 </nav>

@@ -3,49 +3,50 @@
 {% block content %}
 <h1>Каналы</h1>
 
-<article>
-    <header>Добавить канал</header>
-    <form method="post" action="/channels/add">
-        <div class="grid">
-            <label>
-                Username или ссылка
-                <input type="text" name="identifier" required placeholder="Введите username или ссылку">
-                <small>Форматы: <code>@username</code>, <code>t.me/username</code>, <code>https://t.me/username</code>, <code>https://t.me/+invite_hash</code>, <code>числовой ID</code></small>
-            </label>
-        </div>
-        <div style="display:flex;gap:0.5rem;flex-wrap:wrap">
-            <button type="submit" style="flex:1">Добавить</button>
-            <button type="button" class="secondary" onclick="openSubscriptions()" style="white-space:nowrap">Мои подписки</button>
-            <a href="/channels/import" role="button" class="secondary outline" style="white-space:nowrap">Импорт</a>
-        </div>
-    </form>
-</article>
+<div class="card mb-4">
+    <div class="card-header fw-semibold">Добавить канал</div>
+    <div class="card-body">
+        <form method="post" action="/channels/add">
+            <div class="mb-3">
+                <label class="form-label">Username или ссылка</label>
+                <input type="text" class="form-control" name="identifier" required placeholder="Введите username или ссылку">
+                <div class="form-text">Форматы: <code>@username</code>, <code>t.me/username</code>, <code>https://t.me/username</code>, <code>https://t.me/+invite_hash</code>, <code>числовой ID</code></div>
+            </div>
+            <div class="d-flex gap-2 flex-wrap">
+                <button type="submit" class="btn btn-primary flex-fill">Добавить</button>
+                <button type="button" class="btn btn-secondary" onclick="openSubscriptions()">Мои подписки</button>
+                <a href="/channels/import" class="btn btn-outline-secondary">Импорт</a>
+            </div>
+        </form>
+    </div>
+</div>
 
 {% if channels or show_all %}
-<div style="margin-bottom: 1rem; display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
-    <a href="/channels" role="button" class="{{ '' if show_all else 'secondary' }} outline" style="padding: 0.25rem 0.75rem;">Активные</a>
-    <a href="/channels?view=all" role="button" class="{{ 'secondary' if show_all else '' }} outline" style="padding: 0.25rem 0.75rem;">Все каналы</a>
-    <span style="flex:1"></span>
-    <form method="post" action="/channels/filter/analyze" style="display:inline">
-        <button type="submit" class="outline" style="padding: 0.25rem 0.75rem;">Обновить фильтры</button>
+<div class="d-flex gap-2 align-items-center flex-wrap mb-3">
+    <a href="/channels" class="btn btn-sm {{ 'btn-primary' if not show_all else 'btn-outline-secondary' }}">Активные</a>
+    <a href="/channels?view=all" class="btn btn-sm {{ 'btn-primary' if show_all else 'btn-outline-secondary' }}">Все каналы</a>
+    <span class="flex-fill"></span>
+    <form method="post" action="/channels/filter/analyze" class="d-inline">
+        <button type="submit" class="btn btn-outline-primary btn-sm">Обновить фильтры</button>
     </form>
-    <form method="post" action="/channels/filter/reset" style="display:inline">
-        <button type="submit" class="secondary outline" style="padding: 0.25rem 0.75rem;">Сброс фильтров</button>
+    <form method="post" action="/channels/filter/reset" class="d-inline">
+        <button type="submit" class="btn btn-outline-secondary btn-sm">Сброс фильтров</button>
     </form>
-    <form method="post" action="/channels/stats/all" style="display:inline">
-        <button type="submit" class="outline" style="padding: 0.25rem 0.75rem;">Обновить статистику</button>
+    <form method="post" action="/channels/stats/all" class="d-inline">
+        <button type="submit" class="btn btn-outline-primary btn-sm">Обновить статистику</button>
     </form>
     <span id="collect-all-btn">
-        <form method="post" action="/channels/collect-all" style="display:inline"
+        <form method="post" action="/channels/collect-all" class="d-inline"
               hx-post="/channels/collect-all"
               hx-target="#collect-all-btn"
               hx-swap="outerHTML">
-            <button type="submit" class="outline" style="padding: 0.25rem 0.75rem;">Загрузить все</button>
+            <button type="submit" class="btn btn-outline-primary btn-sm">Загрузить все</button>
         </form>
     </span>
 </div>
-<div style="overflow-x:auto">
-<table class="channels-table">
+<!-- Desktop: table -->
+<div class="table-responsive d-none d-md-block">
+<table class="table table-striped table-hover table-sm channels-table">
     <thead>
         <tr>
             <th>ID канала</th>
@@ -62,54 +63,54 @@
     <tbody>
         {% for ch in channels %}
         {% set st = latest_stats.get(ch.channel_id) if latest_stats else None %}
-        <tr{% if ch.is_filtered %} style="opacity: 0.6"{% endif %}>
+        <tr{% if ch.is_filtered %} class="opacity-50"{% endif %}>
             <td>{{ ch.channel_id }}</td>
             <td>{{ ch.title or "—" }}</td>
             <td>{% if ch.username %}<a href="https://t.me/{{ ch.username }}" target="_blank" rel="noopener">@{{ ch.username }}</a>{% else %}—{% endif %}</td>
-            <td>{% if ch.channel_type == "channel" %}{% if not ch.username %}Канал <span data-tooltip="Приватный" style="cursor:default">🔒</span>{% else %}Канал{% endif %}{% elif ch.channel_type == "supergroup" %}{% if not ch.username %}Супергруппа <span data-tooltip="Приватная" style="cursor:default">🔒</span>{% else %}Супергруппа{% endif %}{% elif ch.channel_type == "gigagroup" %}{% if not ch.username %}Гигагруппа <span data-tooltip="Приватная" style="cursor:default">🔒</span>{% else %}Гигагруппа{% endif %}{% elif ch.channel_type == "group" %}{% if not ch.username %}Группа <span data-tooltip="Приватная" style="cursor:default">🔒</span>{% else %}Группа{% endif %}{% elif ch.channel_type == "forum" %}{% if not ch.username %}Форум <span data-tooltip="Приватный" style="cursor:default">🔒</span>{% else %}Форум{% endif %}{% elif ch.channel_type == "monoforum" %}Монофорум{% elif ch.channel_type == "restricted" %}<span class="text-danger">Ограничен</span>{% elif ch.channel_type == "scam" %}<span class="text-danger">Скам <span data-tooltip="Скам">⚠️</span></span>{% elif ch.channel_type == "fake" %}<span class="text-danger">Фейк <span data-tooltip="Фейк">⚠️</span></span>{% elif ch.channel_type == "unavailable" %}<span class="text-muted">Недоступен</span>{% else %}<span class="text-muted">Непроверен</span>{% endif %}</td>
+            <td>{% if ch.channel_type == "channel" %}{% if not ch.username %}Канал <span title="Приватный">&#128274;</span>{% else %}Канал{% endif %}{% elif ch.channel_type == "supergroup" %}{% if not ch.username %}Супергруппа <span title="Приватная">&#128274;</span>{% else %}Супергруппа{% endif %}{% elif ch.channel_type == "gigagroup" %}{% if not ch.username %}Гигагруппа <span title="Приватная">&#128274;</span>{% else %}Гигагруппа{% endif %}{% elif ch.channel_type == "group" %}{% if not ch.username %}Группа <span title="Приватная">&#128274;</span>{% else %}Группа{% endif %}{% elif ch.channel_type == "forum" %}{% if not ch.username %}Форум <span title="Приватный">&#128274;</span>{% else %}Форум{% endif %}{% elif ch.channel_type == "monoforum" %}Монофорум{% elif ch.channel_type == "restricted" %}<span class="text-danger">Ограничен</span>{% elif ch.channel_type == "scam" %}<span class="text-danger">Скам &#9888;&#65039;</span>{% elif ch.channel_type == "fake" %}<span class="text-danger">Фейк &#9888;&#65039;</span>{% elif ch.channel_type == "unavailable" %}<span class="text-muted">Недоступен</span>{% else %}<span class="text-muted">Непроверен</span>{% endif %}</td>
             <td>
-              {% if ch.is_filtered %}<span class="badge-filtered" data-tooltip="Отфильтрован">●</span>
-              {% elif ch.is_active %}<span class="badge-active">●</span>
-              {% else %}<span class="badge-inactive">●</span>{% endif %}
+              {% if ch.is_filtered %}<span class="badge-filtered" title="Отфильтрован">&#9679;</span>
+              {% elif ch.is_active %}<span class="badge-active">&#9679;</span>
+              {% else %}<span class="badge-inactive">&#9679;</span>{% endif %}
             </td>
             <td>{{ ch.message_count }}</td>
             <td>{{ st.subscriber_count if st and st.subscriber_count is not none else "—" }}</td>
             <td>
                 {% if ch.is_filtered %}
                     {% set flag_emoji = {
-                        "low_uniqueness": ("🖨️", "Низкая уникальность контента"),
-                        "low_subscriber_ratio": ("📉", "Мало подписчиков"),
-                        "low_subscriber_manual": ("✋", "Мало подписчиков (абс.)"),
-                        "manual": ("🚫", "Ручная фильтрация"),
-                        "cross_channel_spam": ("📢", "Кросс-канальный спам"),
-                        "non_cyrillic": ("🌐", "Не кириллический контент"),
-                        "chat_noise": ("💬", "Шум чата"),
-                        "username_changed": ("🔀", "Сменил юзернейм")
+                        "low_uniqueness": ("&#128424;&#65039;", "Низкая уникальность контента"),
+                        "low_subscriber_ratio": ("&#128201;", "Мало подписчиков"),
+                        "low_subscriber_manual": ("&#9995;", "Мало подписчиков (абс.)"),
+                        "manual": ("&#128683;", "Ручная фильтрация"),
+                        "cross_channel_spam": ("&#128226;", "Кросс-канальный спам"),
+                        "non_cyrillic": ("&#127760;", "Не кириллический контент"),
+                        "chat_noise": ("&#128172;", "Шум чата"),
+                        "username_changed": ("&#128256;", "Сменил юзернейм")
                     } %}
                     {% if ch.filter_flags %}
                         {% for flag in ch.filter_flags.split(',') %}
                             {% set f = flag.strip() %}
                             {% if f in flag_emoji %}
-                                <span data-tooltip="{{ flag_emoji[f][1] }}" style="cursor:default;font-size:1.1em">{{ flag_emoji[f][0] }}</span>
+                                <span title="{{ flag_emoji[f][1] }}" style="cursor:default;font-size:1.1em">{{ flag_emoji[f][0] }}</span>
                             {% else %}
-                                <span data-tooltip="{{ f }}" style="cursor:default">🚫</span>
+                                <span title="{{ f }}" style="cursor:default">&#128683;</span>
                             {% endif %}
                         {% endfor %}
                     {% else %}
-                        <span data-tooltip="Отфильтрован" style="cursor:default">🚫</span>
+                        <span title="Отфильтрован" style="cursor:default">&#128683;</span>
                     {% endif %}
                 {% else %}
                     —
                 {% endif %}
             </td>
-            <td style="white-space:nowrap">
+            <td class="text-nowrap">
                 {% if ch.is_filtered %}
-                <form method="post" action="/channels/{{ ch.id }}/filter-toggle" style="display:inline">
-                    <button type="submit" class="outline emoji-btn" data-tooltip="Вернуть">🔁</button>
+                <form method="post" action="/channels/{{ ch.id }}/filter-toggle" class="d-inline">
+                    <button type="submit" class="btn btn-outline-secondary btn-sm emoji-btn" title="Вернуть">&#128257;</button>
                 </form>
                 {% if ch.message_count > 0 %}
-                <form method="post" action="/channels/{{ ch.channel_id }}/purge-messages" style="display:inline" onsubmit="return confirm('Удалить {{ ch.message_count }} сообщений из этого канала?')">
-                    <button type="submit" class="contrast outline emoji-btn" data-tooltip="Очистить сообщения">🧹</button>
+                <form method="post" action="/channels/{{ ch.channel_id }}/purge-messages" class="d-inline" onsubmit="return confirm('Удалить {{ ch.message_count }} сообщений из этого канала?')">
+                    <button type="submit" class="btn btn-outline-danger btn-sm emoji-btn" title="Очистить сообщения">&#129529;</button>
                 </form>
                 {% endif %}
                 {% endif %}
@@ -118,20 +119,20 @@
                           hx-post="/channels/{{ ch.id }}/collect"
                           hx-target="#collect-btn-{{ ch.id }}"
                           hx-swap="outerHTML"
-                          style="display:inline">
-                        <button type="submit" class="outline emoji-btn" data-tooltip="Загрузить">⬇️</button>
+                          class="d-inline">
+                        <button type="submit" class="btn btn-outline-primary btn-sm emoji-btn" title="Загрузить">&#11015;&#65039;</button>
                     </form>
                 </span>
-                <form method="post" action="/channels/{{ ch.id }}/stats" style="display:inline">
-                    <button type="submit" class="outline emoji-btn" data-tooltip="Обновить статистику">📊</button>
+                <form method="post" action="/channels/{{ ch.id }}/stats" class="d-inline">
+                    <button type="submit" class="btn btn-outline-primary btn-sm emoji-btn" title="Обновить статистику">&#128202;</button>
                 </form>
-                <form method="post" action="/channels/{{ ch.id }}/toggle" style="display:inline">
-                    <button type="submit" class="secondary outline emoji-btn" data-tooltip="{{ 'Отключить' if ch.is_active else 'Включить' }}">
-                        {{ "⏸️" if ch.is_active else "▶️" }}
+                <form method="post" action="/channels/{{ ch.id }}/toggle" class="d-inline">
+                    <button type="submit" class="btn btn-outline-secondary btn-sm emoji-btn" title="{{ 'Отключить' if ch.is_active else 'Включить' }}">
+                        {{ "⏏️" if ch.is_active else "▶️" }}
                     </button>
                 </form>
-                <form method="post" action="/channels/{{ ch.id }}/delete" style="display:inline" onsubmit="return confirm('Вы уверены, что хотите удалить этот канал?')">
-                    <button type="submit" class="contrast outline emoji-btn" data-tooltip="Удалить">🗑️</button>
+                <form method="post" action="/channels/{{ ch.id }}/delete" class="d-inline" onsubmit="return confirm('Вы уверены, что хотите удалить этот канал?')">
+                    <button type="submit" class="btn btn-outline-danger btn-sm emoji-btn" title="Удалить">&#128465;&#65039;</button>
                 </form>
             </td>
         </tr>
@@ -139,30 +140,91 @@
     </tbody>
 </table>
 </div>
+
+<!-- Mobile: cards -->
+<div class="d-md-none mobile-cards">
+    {% for ch in channels %}
+    {% set st = latest_stats.get(ch.channel_id) if latest_stats else None %}
+    <div class="card mb-2{% if ch.is_filtered %} opacity-50{% endif %}">
+        <div class="card-body">
+            <div class="d-flex justify-content-between align-items-start">
+                <div class="min-w-0 flex-fill">
+                    <div class="d-flex align-items-center gap-1 mb-1">
+                        {% if ch.is_filtered %}<span class="badge-filtered">&#9679;</span>
+                        {% elif ch.is_active %}<span class="badge-active">&#9679;</span>
+                        {% else %}<span class="badge-inactive">&#9679;</span>{% endif %}
+                        <strong class="text-truncate">{{ ch.title or "—" }}</strong>
+                    </div>
+                    <small class="text-muted">
+                        {% if ch.username %}<a href="https://t.me/{{ ch.username }}" target="_blank" rel="noopener">@{{ ch.username }}</a> &middot; {% endif %}
+                        ID: {{ ch.channel_id }} &middot; {{ ch.message_count }} сообщ.
+                    </small>
+                </div>
+            </div>
+            <div class="card-actions">
+                {% if ch.is_filtered %}
+                <form method="post" action="/channels/{{ ch.id }}/filter-toggle" class="d-inline">
+                    <button type="submit" class="btn btn-outline-secondary btn-sm emoji-btn" title="Вернуть">&#128257;</button>
+                </form>
+                {% if ch.message_count > 0 %}
+                <form method="post" action="/channels/{{ ch.channel_id }}/purge-messages" class="d-inline" onsubmit="return confirm('Удалить {{ ch.message_count }} сообщений из этого канала?')">
+                    <button type="submit" class="btn btn-outline-danger btn-sm emoji-btn" title="Очистить сообщения">&#129529;</button>
+                </form>
+                {% endif %}
+                {% endif %}
+                <span id="collect-btn-m-{{ ch.id }}">
+                    <form action="/channels/{{ ch.id }}/collect" method="post"
+                          hx-post="/channels/{{ ch.id }}/collect"
+                          hx-target="#collect-btn-m-{{ ch.id }}"
+                          hx-swap="outerHTML"
+                          class="d-inline">
+                        <button type="submit" class="btn btn-outline-primary btn-sm emoji-btn" title="Загрузить">&#11015;&#65039;</button>
+                    </form>
+                </span>
+                <form method="post" action="/channels/{{ ch.id }}/stats" class="d-inline">
+                    <button type="submit" class="btn btn-outline-primary btn-sm emoji-btn" title="Обновить статистику">&#128202;</button>
+                </form>
+                <form method="post" action="/channels/{{ ch.id }}/toggle" class="d-inline">
+                    <button type="submit" class="btn btn-outline-secondary btn-sm emoji-btn" title="{{ 'Отключить' if ch.is_active else 'Включить' }}">
+                        {{ "⏏️" if ch.is_active else "▶️" }}
+                    </button>
+                </form>
+                <form method="post" action="/channels/{{ ch.id }}/delete" class="d-inline" onsubmit="return confirm('Вы уверены, что хотите удалить этот канал?')">
+                    <button type="submit" class="btn btn-outline-danger btn-sm emoji-btn" title="Удалить">&#128465;&#65039;</button>
+                </form>
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+</div>
 {% else %}
 <p>Нет добавленных каналов.</p>
 {% endif %}
 
-<dialog id="subscriptions-modal">
-    <article>
-        <header>
-            <button aria-label="Close" rel="prev" onclick="this.closest('dialog').close()"></button>
-            <h3>Мои подписки</h3>
-        </header>
-        <div id="subscriptions-list" style="overflow-x:auto">Загрузка...</div>
-        <footer>
-            <button class="secondary" onclick="this.closest('dialog').close()">Отмена</button>
-            <button onclick="addSelected()">Добавить выбранные</button>
-        </footer>
-    </article>
-</dialog>
+<div class="modal fade" id="subscriptions-modal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Мои подписки</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div id="subscriptions-list" class="table-responsive">Загрузка...</div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+                <button type="button" class="btn btn-primary" onclick="addSelected()">Добавить выбранные</button>
+            </div>
+        </div>
+    </div>
+</div>
 
 <script>
 function openSubscriptions() {
-    var modal = document.getElementById("subscriptions-modal");
+    var modal = new bootstrap.Modal(document.getElementById("subscriptions-modal"));
     var list = document.getElementById("subscriptions-list");
     list.innerHTML = "Загрузка...";
-    modal.showModal();
+    modal.show();
     fetch("/channels/dialogs")
         .then(function(r) { return r.json(); })
         .then(function(dialogs) {
@@ -170,22 +232,59 @@ function openSubscriptions() {
                 list.innerHTML = "<p>Нет каналов в подписках.</p>";
                 return;
             }
-            var html = '<form id="bulk-form" method="post" action="/channels/add-bulk">';
-            html += '<table><thead><tr><th></th><th>Название</th><th>Username</th><th>ID</th></tr></thead><tbody>';
-            for (var i = 0; i < dialogs.length; i++) {
-                var d = dialogs[i];
-                var disabled = d.already_added ? ' disabled' : '';
-                var checked = d.already_added ? ' checked' : '';
-                var label = d.already_added ? ' (добавлен)' : '';
-                html += '<tr>';
-                html += '<td><input type="checkbox" name="channel_ids" value="' + d.channel_id + '"' + disabled + checked + '></td>';
-                html += '<td>' + (d.title || '—') + label + '</td>';
-                html += '<td>' + (d.username ? '@' + d.username : '—') + '</td>';
-                html += '<td>' + d.channel_id + '</td>';
-                html += '</tr>';
-            }
-            html += '</tbody></table></form>';
-            list.innerHTML = html;
+            var form = document.createElement('form');
+            form.id = 'bulk-form';
+            form.method = 'post';
+            form.action = '/channels/add-bulk';
+
+            var table = document.createElement('table');
+            table.className = 'table table-sm';
+            var thead = document.createElement('thead');
+            var headerRow = document.createElement('tr');
+            ['', 'Название', 'Username', 'ID'].forEach(function(text) {
+                var th = document.createElement('th');
+                th.textContent = text;
+                headerRow.appendChild(th);
+            });
+            thead.appendChild(headerRow);
+            table.appendChild(thead);
+
+            var tbody = document.createElement('tbody');
+            dialogs.forEach(function(d) {
+                var row = document.createElement('tr');
+
+                var cellCheck = document.createElement('td');
+                var checkbox = document.createElement('input');
+                checkbox.type = 'checkbox';
+                checkbox.className = 'form-check-input';
+                checkbox.name = 'channel_ids';
+                checkbox.value = String(d.channel_id);
+                if (d.already_added) {
+                    checkbox.disabled = true;
+                    checkbox.checked = true;
+                }
+                cellCheck.appendChild(checkbox);
+                row.appendChild(cellCheck);
+
+                var cellTitle = document.createElement('td');
+                cellTitle.textContent = (d.title || '—') + (d.already_added ? ' (добавлен)' : '');
+                row.appendChild(cellTitle);
+
+                var cellUsername = document.createElement('td');
+                cellUsername.textContent = d.username ? '@' + d.username : '—';
+                row.appendChild(cellUsername);
+
+                var cellId = document.createElement('td');
+                cellId.textContent = String(d.channel_id);
+                row.appendChild(cellId);
+
+                tbody.appendChild(row);
+            });
+            table.appendChild(tbody);
+            form.appendChild(table);
+
+            list.innerHTML = '';
+            list.appendChild(form);
         })
         .catch(function() {
             list.innerHTML = "<p>Ошибка загрузки подписок.</p>";
