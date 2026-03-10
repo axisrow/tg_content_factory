@@ -233,42 +233,109 @@
     word-break: break-word;
 }
 
-@media (max-width: 768px) {
-    .agent-layout {
-        flex-direction: column;
-        height: auto;
-    }
+@media (max-width: 991.98px) {
     .agent-sidebar {
-        width: 100%;
-        flex-direction: row;
-        flex-wrap: wrap;
-        overflow-x: auto;
-        max-height: none;
-    }
-    .agent-sidebar h3 { display: none; }
-    .agent-sidebar form { margin-top: 0; }
-    .agent-chat {
-        min-height: 50vh;
+        display: none;
     }
     .agent-context {
-        width: 100%;
-        border-left: none;
-        border-top: 1px solid var(--bs-border-color);
-        flex-direction: row;
-        flex-wrap: wrap;
-        align-items: flex-end;
-        gap: 0.5rem;
+        display: none;
     }
-    .agent-context h3 { width: 100%; }
-    .agent-context label { display: none; }
-    .agent-context select,
-    .agent-context input[type=number] { flex: 1; min-width: 100px; }
+    .agent-layout {
+        height: calc(100vh - 180px);
+    }
+    .agent-chat {
+        flex: 1;
+    }
+    .message-bubble {
+        max-width: 95%;
+    }
+    .mobile-agent-toolbar {
+        display: flex !important;
+    }
+}
+@media (min-width: 992px) {
+    .mobile-agent-toolbar {
+        display: none !important;
+    }
+}
+@media (max-width: 767.98px) {
+    .agent-layout {
+        height: calc(100vh - 160px);
+    }
+    .chat-input-area {
+        flex-wrap: wrap;
+    }
+    .chat-input-area textarea {
+        width: 100%;
+        flex: 1 1 100%;
+        min-height: 44px;
+    }
+    .chat-input-area .model-select {
+        flex: 1;
+        min-width: 0;
+    }
+    .chat-send-btn {
+        min-height: 0;
+        padding-top: 0.375rem;
+        padding-bottom: 0.375rem;
+        font-size: 0.875rem;
+    }
 }
 </style>
 {% endblock %}
 
 {% block content %}
 <h1>Агент</h1>
+
+<!-- Mobile toolbar -->
+<div class="mobile-agent-toolbar gap-2 mb-2" style="display:none">
+    <button class="btn btn-outline-secondary btn-sm" type="button" data-bs-toggle="offcanvas" data-bs-target="#sidebar-offcanvas">Треды</button>
+    <button class="btn btn-outline-secondary btn-sm" type="button" data-bs-toggle="offcanvas" data-bs-target="#context-offcanvas">Контекст</button>
+</div>
+
+<!-- Offcanvas: sidebar -->
+<div class="offcanvas offcanvas-start" tabindex="-1" id="sidebar-offcanvas">
+    <div class="offcanvas-header">
+        <h5 class="offcanvas-title">Треды</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="offcanvas"></button>
+    </div>
+    <div class="offcanvas-body d-flex flex-column gap-2">
+        {% for thread in threads %}
+        <a class="thread-item {% if active_thread and active_thread.id == thread.id %}active{% endif %}"
+           href="/agent?thread_id={{ thread.id }}">
+            <span class="thread-title" title="{{ thread.title }}">{{ thread.title }}</span>
+            <button class="thread-delete-btn"
+                    onclick="deleteThread(event, {{ thread.id }})"
+                    title="Удалить тред">&#10005;</button>
+        </a>
+        {% else %}
+        <p class="small text-muted">Тредов пока нет</p>
+        {% endfor %}
+        <form method="post" action="/agent/threads" style="margin-top:auto">
+            <button type="submit" class="btn btn-outline-primary btn-sm w-100">+ Новый тред</button>
+        </form>
+    </div>
+</div>
+
+<!-- Offcanvas: context -->
+<div class="offcanvas offcanvas-end" tabindex="-1" id="context-offcanvas">
+    <div class="offcanvas-header">
+        <h5 class="offcanvas-title">Контекст</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="offcanvas"></button>
+    </div>
+    <div class="offcanvas-body d-flex flex-column gap-2">
+        <label for="ctx-channel-m">Канал</label>
+        <select id="ctx-channel-m" class="form-select form-select-sm">
+            <option value="">— выберите —</option>
+        </select>
+        <label for="ctx-limit-m">Сообщений</label>
+        <input type="number" id="ctx-limit-m" class="form-control form-control-sm" placeholder="все" min="1" max="10000">
+        <button id="ctx-load-btn-m" class="btn btn-outline-primary btn-sm" {% if not active_thread %}disabled{% endif %}>
+            Загрузить
+        </button>
+        <small id="ctx-status-m" class="text-muted"></small>
+    </div>
+</div>
 
 <div class="agent-layout">
     <!-- Sidebar: thread list -->

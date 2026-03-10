@@ -19,7 +19,7 @@
 </div>
 
 <div class="row g-3 mb-4">
-    <div class="col-md-6">
+    <div class="col-12 col-md-6">
         {% if not is_running %}
         <form method="post" action="/scheduler/start">
             <button type="submit" class="btn btn-primary w-100">Запустить планировщик</button>
@@ -30,7 +30,7 @@
         </form>
         {% endif %}
     </div>
-    <div class="col-md-6">
+    <div class="col-12 col-md-6">
         <form method="post" action="/scheduler/trigger">
             <button type="submit" class="btn btn-secondary w-100" {{ 'disabled' if collecting_now else '' }}>
                 Запустить сбор сейчас
@@ -59,7 +59,8 @@
 <div class="card mb-4">
     <div class="card-header fw-semibold">Лог поиска</div>
     <div class="card-body p-0">
-        <div class="table-responsive">
+        <!-- Desktop -->
+        <div class="table-responsive d-none d-md-block">
         <table class="table table-striped table-sm mb-0">
             <thead>
                 <tr>
@@ -81,6 +82,20 @@
             </tbody>
         </table>
         </div>
+        <!-- Mobile -->
+        <div class="d-md-none mobile-cards p-2">
+            {% for entry in search_log %}
+            <div class="card mb-2">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between">
+                        <strong class="text-truncate">{{ entry.query }}</strong>
+                        <span class="badge bg-secondary">{{ entry.results_count }}</span>
+                    </div>
+                    <small class="text-muted">{{ entry.phone }} &middot; {{ entry.created_at }}</small>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
     </div>
 </div>
 {% endif %}
@@ -90,7 +105,8 @@
     <div class="card-header fw-semibold">Задачи сбора</div>
     <div class="card-body p-0">
         <p class="px-3 pt-3"><small class="text-muted">Здесь отображаются и ручные задачи из кнопки «Загрузить все», и одиночные загрузки каналов.</small></p>
-        <div class="table-responsive">
+        <!-- Desktop -->
+        <div class="table-responsive d-none d-md-block">
         <table class="table table-striped table-sm mb-0">
             <thead>
                 <tr>
@@ -149,6 +165,45 @@
                 {% endfor %}
             </tbody>
         </table>
+        </div>
+        <!-- Mobile -->
+        <div class="d-md-none mobile-cards p-2">
+            {% for t in tasks %}
+            <div class="card mb-2">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-start mb-1">
+                        <div>
+                            <strong>{{ t.channel_title or t.channel_id }}</strong>
+                            {% if t.channel_username %}<br><small class="text-muted">@{{ t.channel_username }}</small>{% endif %}
+                        </div>
+                        <span>
+                            {% if t.status == 'running' %}
+                                <span class="spinner-border spinner-border-sm" role="status"></span>
+                            {% elif t.status == 'completed' %}
+                                <span class="badge bg-success">OK</span>
+                            {% elif t.status == 'failed' %}
+                                <span class="badge bg-danger">Ошибка</span>
+                            {% elif t.status == 'cancelled' %}
+                                <span class="badge bg-secondary">Отменена</span>
+                            {% else %}
+                                <span class="badge bg-warning text-dark">Ожидание</span>
+                            {% endif %}
+                        </span>
+                    </div>
+                    <small class="text-muted">
+                        {{ t.messages_collected }} сообщ.
+                        {% if t.created_at %}&middot; {{ t.created_at.strftime('%m-%d %H:%M') }}{% endif %}
+                    </small>
+                    {% if t.status == 'running' or t.status == 'pending' %}
+                    <div class="mt-1">
+                        <form method="post" action="/scheduler/tasks/{{ t.id }}/cancel" class="mb-0">
+                            <button type="submit" class="btn btn-outline-secondary btn-sm">{{ 'Отменить' if t.status == 'running' else 'Удалить' }}</button>
+                        </form>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+            {% endfor %}
         </div>
     </div>
 </div>

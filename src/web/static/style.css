@@ -153,4 +153,50 @@ html { font-size: 14px; }
 label:first-child .hint::after { left: 0; transform: none; }
 label:first-child .hint::before { left: 0.5em; transform: none; }
 
-.d-none { display: none !important; }
+/* Mobile card layout */
+.mobile-cards .card {
+    border-radius: 0.5rem;
+}
+.mobile-cards .card-body {
+    padding: 0.6rem 0.75rem;
+}
+.mobile-cards .card-label {
+    font-size: 0.75rem;
+    color: var(--bs-secondary-color);
+    margin-bottom: 0;
+}
+.mobile-cards .card-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem;
+    margin-top: 0.4rem;
+}
+
+/* ── Responsive: Tablet (<768px) ── */
+@media (max-width: 767.98px) {
+    .channels-table,
+    .sq-table {
+        min-width: 0;
+    }
+
+    .emoji-btn {
+        min-width: 44px;
+        min-height: 44px;
+        font-size: 1.15rem;
+        justify-content: center;
+    }
+}
+
+/* ── Responsive: Phone (<576px) ── */
+@media (max-width: 575.98px) {
+    html { font-size: 13px; }
+
+    .container, .container-fluid {
+        padding-left: 0.75rem;
+        padding-right: 0.75rem;
+    }
+
+    h1 { font-size: 1.4rem; }
+
+    .card-body { padding: 0.75rem; }
+}

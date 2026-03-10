@@ -17,10 +17,15 @@
     <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
         <div class="container">
             <a class="navbar-brand fw-bold" href="/">TG Agent</a>
-            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#mainNav" aria-controls="mainNav" aria-expanded="false" aria-label="Toggle navigation">
+            <button class="navbar-toggler" type="button" data-bs-toggle="offcanvas" data-bs-target="#mainNav" aria-controls="mainNav" aria-label="Toggle navigation">
                 <span class="navbar-toggler-icon"></span>
             </button>
-            <div class="collapse navbar-collapse" id="mainNav">
+            <div class="offcanvas offcanvas-end text-bg-dark" tabindex="-1" id="mainNav">
+                <div class="offcanvas-header">
+                    <h5 class="offcanvas-title">TG Agent</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="offcanvas" aria-label="Close"></button>
+                </div>
+                <div class="offcanvas-body">
                 <ul class="navbar-nav ms-auto">
                     {% if agent_available %}<li class="nav-item"><a class="nav-link" href="/agent">Чат</a></li>{% endif %}
                     <li class="nav-item"><a class="nav-link" href="/">Поиск</a></li>
@@ -32,10 +37,11 @@
                     <li class="nav-item"><a class="nav-link" href="/debug">Дебаг</a></li>
                     <li class="nav-item"><a class="nav-link" href="/settings">Настройки</a></li>
                     <li class="nav-item"><a class="nav-link" href="/logout">Выйти</a></li>
-                    <li class="nav-item ms-lg-2">
+                    <li class="nav-item ms-lg-2 mt-2 mt-lg-0">
                         <button class="btn btn-sm btn-outline-light" id="theme-toggle" type="button" title="Переключить тему"></button>
                     </li>
                 </ul>
+                </div>
             </div>
         </div>
     </nav>
