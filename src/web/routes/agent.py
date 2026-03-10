@@ -141,8 +141,7 @@ async def inject_context(request: Request, thread_id: int):
         limit=limit,
         topic_id=topic_id,
     )
-    channels = await db.get_channels()
-    ch = next((c for c in channels if c.channel_id == channel_id), None)
+    ch = await db.get_channel_by_channel_id(channel_id)
     title = ch.title if ch else str(channel_id)
 
     topics = await db.get_forum_topics(channel_id)
