@@ -43,11 +43,19 @@ class AgentManager:
             os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("CLAUDE_CODE_OAUTH_TOKEN")
         )
 
-    def _build_prompt(self, history: list[dict], message: str) -> str:
+    def _build_prompt(
+        self, history: list[dict], message: str
+    ) -> tuple[str, dict]:
+        """Build prompt from history + message, truncating oldest if over budget.
+
+        Returns (prompt_text, stats) where stats contains:
+          total_msgs, kept_msgs, total_chars, prompt_chars.
+        """
         user_part = f"<user>\n{message}\n</user>"
-        budget = 180_000 * 4  # ~180k tokens in chars, room for system prompt + response
+        budget = 100_000 * 4  # ~100k tokens in chars — safe limit with CLI overhead
         used = len(user_part)
 
+        total_msgs = len(history)
         # Take messages from most recent, drop oldest if over budget
         kept: list[str] = []
         for msg in reversed(history):
@@ -60,12 +68,19 @@ class AgentManager:
 
         kept.reverse()
         kept.append(user_part)
-        return "\n".join(kept)
+        prompt = "\n".join(kept)
+        stats = {
+            "total_msgs": total_msgs,
+            "kept_msgs": len(kept) - 1,  # exclude current user message
+            "total_chars": sum(len(m["content"]) for m in history) + len(message),
+            "prompt_chars": len(prompt),
+        }
+        return prompt, stats
 
     async def estimate_prompt_tokens(self, thread_id: int, message: str) -> int:
         """Estimate prompt token count (~4 chars per token) before saving."""
         history = await self._db.get_agent_messages(thread_id)
-        prompt = self._build_prompt(history, message)
+        prompt, _stats = self._build_prompt(history, message)
         return len(prompt) // 4
 
     async def chat_stream(
@@ -78,18 +93,36 @@ class AgentManager:
         assert not history or history[-1]["role"] == "user", (
             "Expected last DB message to be the user message just saved"
         )
-        prompt = self._build_prompt(history[:-1], message)
+        prompt, stats = self._build_prompt(history[:-1], message)
+        logger.info(
+            "Prompt for thread %d: %d chars (~%dK tokens), %d/%d history msgs kept",
+            thread_id,
+            stats["prompt_chars"],
+            stats["prompt_chars"] // 4000,
+            stats["kept_msgs"],
+            stats["total_msgs"],
+        )
 
         resolved_model = model or os.environ.get("AGENT_MODEL")
         extra: dict = {}
         if resolved_model:
             extra["model"] = resolved_model
+
+        stderr_lines: list[str] = []
+
+        def _on_stderr(line: str) -> None:
+            stderr_lines.append(line)
+            logger.warning("claude-cli stderr: %s", line)
+
+        cli_path = shutil.which("claude")
+        logger.info("claude-cli path: %s", cli_path)
+
         options = ClaudeAgentOptions(
             system_prompt=_SYSTEM_PROMPT,
             mcp_servers={"telegram_db": self._server},
             allowed_tools=_ALLOWED_TOOLS,
-            cli_path=shutil.which("claude") or None,
-            stderr=lambda line: logger.warning("claude-cli stderr: %s", line),
+            cli_path=cli_path or None,
+            stderr=_on_stderr,
             **extra,
         )
 
@@ -133,6 +166,22 @@ class AgentManager:
                     last_err = e
                     break
             if last_err is not None:
+                if stderr_lines:
+                    logger.error(
+                        "claude-cli stderr dump (thread %d):\n%s",
+                        thread_id,
+                        "\n".join(stderr_lines),
+                    )
+                else:
+                    logger.error(
+                        "claude-cli failed with no stderr (thread %d): %s. "
+                        "Prompt was %d chars (~%dK tokens). "
+                        "If prompt > 400K chars, likely 'prompt too long' error.",
+                        thread_id,
+                        last_err,
+                        stats["prompt_chars"],
+                        stats["prompt_chars"] // 4000,
+                    )
                 logger.exception("Agent chat error for thread %d", thread_id)
                 err_payload = json.dumps(
                     {"error": f"Ошибка агента: {last_err}"}, ensure_ascii=False

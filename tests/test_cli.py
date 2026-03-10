@@ -379,3 +379,184 @@ class TestCLITest:
 
         args = parser.parse_args(["test", "telegram"])
         assert args.test_action == "telegram"
+
+
+# ---------------------------------------------------------------------------
+# agent
+# ---------------------------------------------------------------------------
+
+
+def _create_thread(db: Database, title: str = "CLI Thread") -> int:
+    return asyncio.run(db.create_agent_thread(title))
+
+
+def _save_agent_msg(db: Database, thread_id: int, role: str, content: str):
+    asyncio.run(db.save_agent_message(thread_id, role, content))
+
+
+class TestCLIAgent:
+    def test_threads_empty(self, cli_env, capsys):
+        from src.cli.commands.agent import run
+        run(_ns(agent_action="threads"))
+        assert "Нет тредов" in capsys.readouterr().out
+
+    def test_threads_with_data(self, cli_env, capsys):
+        _create_thread(cli_env, "MyThread")
+        from src.cli.commands.agent import run
+        run(_ns(agent_action="threads"))
+        assert "MyThread" in capsys.readouterr().out
+
+    def test_thread_create(self, cli_env, capsys):
+        from src.cli.commands.agent import run
+        run(_ns(agent_action="thread-create", title="New Thread"))
+        assert "Создан тред" in capsys.readouterr().out
+
+    def test_thread_create_default_title(self, cli_env, capsys):
+        from src.cli.commands.agent import run
+        run(_ns(agent_action="thread-create", title=None))
+        out = capsys.readouterr().out
+        assert "Создан тред" in out
+        assert "Новый тред" in out
+
+    def test_thread_delete(self, cli_env, capsys):
+        tid = _create_thread(cli_env)
+        from src.cli.commands.agent import run
+        run(_ns(agent_action="thread-delete", thread_id=tid))
+        assert "удалён" in capsys.readouterr().out
+
+    def test_thread_rename(self, cli_env, capsys):
+        tid = _create_thread(cli_env, "Old Title")
+        from src.cli.commands.agent import run
+        run(_ns(agent_action="thread-rename", thread_id=tid, title="New Title"))
+        out = capsys.readouterr().out
+        assert "переименован" in out
+        assert "New Title" in out
+
+    def test_thread_rename_truncates(self, cli_env, capsys):
+        tid = _create_thread(cli_env)
+        from src.cli.commands.agent import run
+        long_title = "A" * 200
+        run(_ns(agent_action="thread-rename", thread_id=tid, title=long_title))
+        out = capsys.readouterr().out
+        assert "переименован" in out
+        # Title truncated to 100
+        assert "A" * 100 in out
+        assert "A" * 101 not in out
+
+    def test_messages_empty(self, cli_env, capsys):
+        tid = _create_thread(cli_env)
+        from src.cli.commands.agent import run
+        run(_ns(agent_action="messages", thread_id=tid, limit=None))
+        assert "Нет сообщений" in capsys.readouterr().out
+
+    def test_messages_with_data(self, cli_env, capsys):
+        tid = _create_thread(cli_env)
+        _save_agent_msg(cli_env, tid, "user", "Hello agent")
+        _save_agent_msg(cli_env, tid, "assistant", "Hello human")
+        from src.cli.commands.agent import run
+        run(_ns(agent_action="messages", thread_id=tid, limit=None))
+        out = capsys.readouterr().out
+        assert "Hello agent" in out
+        assert "Hello human" in out
+        assert "[user]" in out
+        assert "[assistant]" in out
+
+    def test_messages_with_limit(self, cli_env, capsys):
+        tid = _create_thread(cli_env)
+        _save_agent_msg(cli_env, tid, "user", "First message")
+        _save_agent_msg(cli_env, tid, "assistant", "Second message")
+        _save_agent_msg(cli_env, tid, "user", "Third message")
+        from src.cli.commands.agent import run
+        run(_ns(agent_action="messages", thread_id=tid, limit=1))
+        out = capsys.readouterr().out
+        assert "Third message" in out
+        assert "First message" not in out
+
+    def test_context_thread_not_found(self, cli_env, capsys):
+        from src.cli.commands.agent import run
+        run(_ns(
+            agent_action="context", thread_id=99999,
+            channel_id=100, limit=100000, topic_id=None,
+        ))
+        assert "не найден" in capsys.readouterr().out
+
+    def test_context_injects(self, cli_env, capsys):
+        tid = _create_thread(cli_env)
+        _add_channel(cli_env, channel_id=400, title="CtxChan")
+        _add_message(cli_env, channel_id=400, message_id=1, text="context msg one")
+        _add_message(cli_env, channel_id=400, message_id=2, text="context msg two")
+        from src.cli.commands.agent import run
+        run(_ns(
+            agent_action="context", thread_id=tid,
+            channel_id=400, limit=100000, topic_id=None,
+        ))
+        out = capsys.readouterr().out
+        assert "КОНТЕКСТ: CtxChan" in out
+        assert "2 сообщений" in out
+
+    def test_context_with_topic_id(self, cli_env, capsys):
+        tid = _create_thread(cli_env)
+        _add_channel(cli_env, channel_id=401, title="TopicChan")
+        from src.cli.commands.agent import run
+        run(_ns(
+            agent_action="context", thread_id=tid,
+            channel_id=401, limit=100, topic_id=42,
+        ))
+        out = capsys.readouterr().out
+        assert "тема #42" in out
+
+    def test_chat_with_model(self, cli_env, capsys):
+        from unittest.mock import MagicMock
+        from unittest.mock import patch as _patch
+
+        from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
+
+        from src.cli.commands.agent import run
+
+        text_block = TextBlock(text="model reply")
+        assistant_msg = MagicMock(spec=AssistantMessage)
+        assistant_msg.content = [text_block]
+        result_msg = MagicMock(spec=ResultMessage)
+
+        captured_opts = {}
+
+        async def mock_query(prompt, options):
+            captured_opts["model"] = getattr(options, "model", None)
+            yield assistant_msg
+            yield result_msg
+
+        with _patch("src.agent.manager.query", mock_query):
+            run(_ns(
+                agent_action="chat", message="hello",
+                thread_id=None, model="claude-haiku-4-5",
+            ))
+
+        out = capsys.readouterr().out
+        assert "model reply" in out
+        assert captured_opts.get("model") == "claude-haiku-4-5"
+
+    def test_parser_agent_subcommands(self):
+        from src.cli.parser import build_parser
+        parser = build_parser()
+
+        args = parser.parse_args(["agent", "thread-rename", "5", "New Name"])
+        assert args.agent_action == "thread-rename"
+        assert args.thread_id == 5
+        assert args.title == "New Name"
+
+        args = parser.parse_args(["agent", "messages", "3", "--limit", "10"])
+        assert args.agent_action == "messages"
+        assert args.thread_id == 3
+        assert args.limit == 10
+
+        args = parser.parse_args(
+            ["agent", "context", "7", "--channel-id", "100", "--topic-id", "42"]
+        )
+        assert args.agent_action == "context"
+        assert args.thread_id == 7
+        assert args.channel_id == 100
+        assert args.topic_id == 42
+
+        args = parser.parse_args(["agent", "chat", "hi", "--model", "claude-haiku-4-5"])
+        assert args.agent_action == "chat"
+        assert args.model == "claude-haiku-4-5"

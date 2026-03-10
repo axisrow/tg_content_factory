@@ -158,6 +158,15 @@ async def inject_context(request: Request, thread_id: int):
     content = "\n".join(lines)
 
     await db.save_agent_message(thread_id=thread_id, role="user", content=content)
+    logger.info(
+        "Context loaded for thread %d: %d messages, %d chars",
+        thread_id, len(messages), len(content),
+    )
+    if len(content) > 200_000:
+        logger.warning(
+            "Large context for thread %d: %d chars (>200K) — may cause prompt overflow",
+            thread_id, len(content),
+        )
     return JSONResponse({"content": content})
 
 
@@ -195,7 +204,7 @@ async def chat(request: Request, thread_id: int):
 
     # Check prompt size before saving
     estimated = await agent_manager.estimate_prompt_tokens(thread_id, message)
-    if estimated > 180_000:
+    if estimated > 100_000:
         raise HTTPException(
             status_code=400,
             detail="Контекст слишком длинный. Создайте новый тред.",
