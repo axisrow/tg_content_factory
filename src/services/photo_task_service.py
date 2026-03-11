@@ -85,6 +85,7 @@ class PhotoTaskService:
             message_ids = await self._publish.send_now(
                 phone=phone,
                 target_dialog_id=target.dialog_id,
+                target_type=target.target_type,
                 file_paths=files,
                 send_mode=send_mode,
                 caption=caption,
@@ -161,6 +162,7 @@ class PhotoTaskService:
             message_ids = await self._publish.send_now(
                 phone=phone,
                 target_dialog_id=target.dialog_id,
+                target_type=target.target_type,
                 file_paths=files,
                 send_mode=send_mode,
                 caption=caption,
@@ -253,6 +255,7 @@ class PhotoTaskService:
             message_ids = await self._publish.send_now(
                 phone=item.phone,
                 target_dialog_id=item.target_dialog_id,
+                target_type=item.target_type,
                 file_paths=item.file_paths,
                 send_mode=item.send_mode,
                 caption=item.caption,

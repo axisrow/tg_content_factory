@@ -120,6 +120,49 @@ class ClientPool:
             dialogs=[dict(dialog) for dialog in dialogs],
         )
 
+    async def _get_cached_dialog(self, phone: str, dialog_id: int) -> dict | None:
+        full_entry = self._dialogs_cache.get((phone, "full"))
+        if full_entry is not None:
+            age = time.monotonic() - full_entry.fetched_at_monotonic
+            if age <= self._dialogs_cache_ttl_sec:
+                for dialog in full_entry.dialogs:
+                    if int(dialog.get("channel_id", 0)) == dialog_id:
+                        return dict(dialog)
+            else:
+                self._dialogs_cache.pop((phone, "full"), None)
+        return await self._db.repos.dialog_cache.get_dialog(phone, dialog_id)
+
+    async def resolve_dialog_entity(
+        self,
+        client: TelegramClient,
+        phone: str,
+        dialog_id: int,
+        target_type: str | None = None,
+    ):
+        peer = (
+            PeerUser(dialog_id)
+            if target_type in ("dm", "bot")
+            else PeerChannel(abs(dialog_id))
+        )
+        try:
+            return await asyncio.wait_for(client.get_input_entity(peer), timeout=30.0)
+        except (ValueError, TypeError):
+            pass
+
+        try:
+            await asyncio.wait_for(client.get_dialogs(), timeout=60.0)
+            self.mark_dialogs_fetched(phone)
+            return await asyncio.wait_for(client.get_input_entity(peer), timeout=30.0)
+        except (ValueError, TypeError):
+            pass
+
+        dialog = await self._get_cached_dialog(phone, dialog_id)
+        username = dialog.get("username") if dialog else None
+        if username:
+            return await asyncio.wait_for(client.get_input_entity(username), timeout=30.0)
+
+        return await asyncio.wait_for(client.get_input_entity(peer), timeout=30.0)
+
     async def initialize(self) -> None:
         """Connect all active accounts from DB."""
         accounts = await self._db.get_accounts(active_only=True)
@@ -526,6 +569,7 @@ class ClientPool:
                 self.invalidate_dialogs_cache(phone)
                 self._store_cached_dialogs(phone, cache_mode, items)
                 if cache_mode == "full":
+                    self.mark_dialogs_fetched(phone)
                     await self._db.repos.dialog_cache.replace_dialogs(phone, items)
             return items
         finally:
