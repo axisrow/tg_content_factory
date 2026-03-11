@@ -32,7 +32,6 @@ class DialogFetchStats:
 
 @dataclass
 class DialogCacheEntry:
-    fetched_at_monotonic: float
     dialogs: list[dict]
 
 
@@ -55,7 +54,6 @@ class ClientPool:
         self._in_use: set[str] = set()
         self._dialogs_fetched: set[str] = set()
         self._dialogs_cache: dict[tuple[str, str], DialogCacheEntry] = {}
-        self._dialogs_cache_ttl_sec = 60.0
 
     def is_dialogs_fetched(self, phone: str) -> bool:
         """Return True if get_dialogs() was already called for this phone in this process."""
@@ -80,26 +78,18 @@ class ClientPool:
                 return None
             full_entry = self._dialogs_cache.get((phone, "full"))
             if full_entry is not None:
-                age = time.monotonic() - full_entry.fetched_at_monotonic
-                if age <= self._dialogs_cache_ttl_sec:
-                    filtered = [
-                        dict(dialog)
-                        for dialog in full_entry.dialogs
-                        if dialog.get("channel_type") not in ("dm", "bot")
-                    ]
-                    self._store_cached_dialogs(phone, mode, filtered)
-                    return filtered
-                self._dialogs_cache.pop((phone, "full"), None)
-            return None
-        age = time.monotonic() - entry.fetched_at_monotonic
-        if age > self._dialogs_cache_ttl_sec:
-            self._dialogs_cache.pop((phone, mode), None)
+                filtered = [
+                    dict(dialog)
+                    for dialog in full_entry.dialogs
+                    if dialog.get("channel_type") not in ("dm", "bot")
+                ]
+                self._store_cached_dialogs(phone, mode, filtered)
+                return filtered
             return None
         return [dict(dialog) for dialog in entry.dialogs]
 
     def _store_cached_dialogs(self, phone: str, mode: str, dialogs: list[dict]) -> None:
         self._dialogs_cache[(phone, mode)] = DialogCacheEntry(
-            fetched_at_monotonic=time.monotonic(),
             dialogs=[dict(dialog) for dialog in dialogs],
         )
 
@@ -398,18 +388,32 @@ class ClientPool:
         phone: str,
         include_dm: bool = False,
         mode: str = "channels_only",
+        refresh: bool = False,
     ) -> list[dict]:
         """Get all dialogs for a specific connected account."""
         cache_mode = "full" if include_dm or mode == "full" else "channels_only"
-        cached = self._get_cached_dialogs(phone, cache_mode)
-        if cached is not None:
+        if refresh:
             logger.info(
-                "get_dialogs_for_phone: cache hit for %s mode=%s count=%d",
+                "get_dialogs_for_phone: manual refresh for %s mode=%s",
                 phone,
                 cache_mode,
-                len(cached),
             )
-            return cached
+            self.invalidate_dialogs_cache(phone)
+        else:
+            cached = self._get_cached_dialogs(phone, cache_mode)
+            if cached is not None:
+                logger.info(
+                    "get_dialogs_for_phone: cache hit for %s mode=%s count=%d",
+                    phone,
+                    cache_mode,
+                    len(cached),
+                )
+                return cached
+            logger.info(
+                "get_dialogs_for_phone: cache miss for %s mode=%s",
+                phone,
+                cache_mode,
+            )
 
         result = await self.get_client_by_phone(phone)
         if not result:
