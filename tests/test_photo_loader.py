@@ -4,7 +4,6 @@ import argparse
 import asyncio
 import base64
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -250,8 +249,11 @@ def test_photo_loader_cli_send_command(tmp_path, capsys):
     fake_pool = AsyncMock()
     fake_pool.disconnect_all = AsyncMock()
     fake_pool.release_client = AsyncMock()
+    send_client = SimpleNamespace(
+        send_file=AsyncMock(return_value=SimpleNamespace(id=1))
+    )
     fake_pool.get_client_by_phone = AsyncMock(
-        return_value=(SimpleNamespace(send_file=AsyncMock(return_value=SimpleNamespace(id=1))), "+7000")
+        return_value=(send_client, "+7000")
     )
 
     async def fake_init_pool(config, db):

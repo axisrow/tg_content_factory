@@ -5,7 +5,13 @@ from datetime import datetime, timezone
 
 import aiosqlite
 
-from src.models import PhotoAutoUploadJob, PhotoBatch, PhotoBatchItem, PhotoBatchStatus, PhotoSendMode
+from src.models import (
+    PhotoAutoUploadJob,
+    PhotoBatch,
+    PhotoBatchItem,
+    PhotoBatchStatus,
+    PhotoSendMode,
+)
 
 
 def _dt(value: str | None) -> datetime | None:
@@ -86,7 +92,8 @@ class PhotoLoaderRepository:
         cur = await self._db.execute(
             """
             INSERT INTO photo_batches (
-                phone, target_dialog_id, target_title, target_type, send_mode, caption, status, error
+                phone, target_dialog_id, target_title, target_type,
+                send_mode, caption, status, error
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
@@ -306,7 +313,8 @@ class PhotoLoaderRepository:
             """
             INSERT INTO photo_auto_upload_jobs (
                 phone, target_dialog_id, target_title, target_type, folder_path,
-                send_mode, caption, interval_minutes, is_active, error, last_run_at, last_seen_marker
+                send_mode, caption, interval_minutes, is_active,
+                error, last_run_at, last_seen_marker
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (

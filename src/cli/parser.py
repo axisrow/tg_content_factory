@@ -216,7 +216,12 @@ def build_parser() -> argparse.ArgumentParser:
     photo_auto_create.add_argument("--phone", required=True, help="Account phone")
     photo_auto_create.add_argument("--target", required=True, help="Dialog id")
     photo_auto_create.add_argument("--folder", required=True, help="Folder path")
-    photo_auto_create.add_argument("--interval", type=int, required=True, help="Interval in minutes")
+    photo_auto_create.add_argument(
+        "--interval",
+        type=int,
+        required=True,
+        help="Interval in minutes",
+    )
     photo_auto_create.add_argument("--mode", choices=["album", "separate"], default="album")
     photo_auto_create.add_argument("--caption", default=None, help="Caption")
 

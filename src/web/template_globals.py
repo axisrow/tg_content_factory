@@ -4,7 +4,6 @@ import importlib.metadata
 import logging
 import os
 import tomllib
-from pathlib import Path
 
 from fastapi.templating import Jinja2Templates
 
@@ -32,7 +31,11 @@ def get_app_version() -> str:
     except importlib.metadata.PackageNotFoundError:
         pass
     except Exception:
-        logger.warning("Failed to read package metadata version for %s", PACKAGE_NAME, exc_info=True)
+        logger.warning(
+            "Failed to read package metadata version for %s",
+            PACKAGE_NAME,
+            exc_info=True,
+        )
 
     return "unknown"
 
