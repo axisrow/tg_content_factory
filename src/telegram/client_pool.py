@@ -438,9 +438,7 @@ class ClientPool:
                             "username": getattr(entity, "username", None),
                             "channel_type": channel_type,
                             "deactivate": deactivate,
-                            "is_own": bool(
-                                getattr(entity, "creator", False)
-                            ),
+                            "is_own": getattr(entity, "creator", False),
                         })
                     elif include_dm or mode == "full":
                         is_bot = getattr(entity, "bot", False)
@@ -457,9 +455,11 @@ class ClientPool:
                             "is_own": False,
                         })
 
+            iter_coro = _iter()
             try:
-                await asyncio.wait_for(_iter(), timeout=60.0)
+                await asyncio.wait_for(iter_coro, timeout=60.0)
             except asyncio.TimeoutError:
+                iter_coro.close()
                 stats.partial = True
                 logger.warning(
                     "get_dialogs_for_phone: timed out for %s mode=%s, returning %d partial results",

@@ -17,15 +17,15 @@ async def root_page():
 
 async def _render_search_page(
     request: Request,
-    q: str,
-    channel_id: str,
-    date_from: str,
-    date_to: str,
-    mode: str,
-    is_fts: bool,
-    msg_length_op: str,
-    msg_length_val: int | None,
-    page: int,
+    q: str = "",
+    channel_id: str = "",
+    date_from: str = "",
+    date_to: str = "",
+    mode: str = "local",
+    is_fts: bool = False,
+    msg_length_op: str = "",
+    msg_length_val: int | None = None,
+    page: int = 1,
 ) -> HTMLResponse | RedirectResponse:
     # Onboarding: redirect if no accounts configured
     auth = deps.get_auth(request)
@@ -109,7 +109,6 @@ async def _render_search_page(
             "search_quota": search_quota,
         },
     )
-
 
 @router.get("/search", response_class=HTMLResponse)
 async def search_page(

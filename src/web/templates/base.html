@@ -91,7 +91,15 @@
         sq_toggled: "Статус поискового запроса изменён.",
         sq_run: "Поисковый запрос выполнен.",
         sq_edited: "Поисковый запрос обновлён.",
-        notification_test_sent: "Тестовое уведомление отправлено."
+        notification_test_sent: "Тестовое уведомление отправлено.",
+        photo_sent: "Фото отправлены.",
+        photo_scheduled: "Фото поставлены в отложенную отправку Telegram.",
+        photo_batch_created: "Batch photo tasks созданы.",
+        photo_auto_created: "Авто-загрузка создана.",
+        photo_run_due_ok: "Due photo tasks обработаны.",
+        photo_item_cancelled: "Photo task отменён.",
+        photo_auto_toggled: "Статус auto job изменён.",
+        photo_auto_deleted: "Auto job удалён."
     };
     var errors = {
         resolve: "Не удалось найти канал. Проверьте username или ссылку.",
@@ -107,7 +115,13 @@
         notification_account_unavailable: "Выбранный аккаунт уведомлений недоступен.",
         notification_bot_missing: "Для выбранного аккаунта notification bot не найден.",
         notification_action_failed: "Не удалось выполнить действие с notification bot.",
-        notification_test_failed: "Не удалось отправить тестовое уведомление."
+        notification_test_failed: "Не удалось отправить тестовое уведомление.",
+        photo_send_failed: "Не удалось отправить фото.",
+        photo_schedule_failed: "Не удалось создать отложенную отправку фото.",
+        photo_batch_failed: "Не удалось создать batch photo tasks.",
+        photo_auto_failed: "Не удалось создать или изменить auto job.",
+        photo_run_due_failed: "Не удалось выполнить due photo tasks.",
+        photo_item_cancel_failed: "Не удалось отменить photo task."
     };
     var params = new URLSearchParams(window.location.search);
     var code = params.get("msg");

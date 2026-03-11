@@ -14,6 +14,7 @@ from src.database.bundles import (
     ChannelBundle,
     CollectionBundle,
     NotificationBundle,
+    PhotoLoaderBundle,
     SchedulerBundle,
     SearchBundle,
     SearchQueryBundle,
@@ -26,6 +27,9 @@ from src.services.channel_service import ChannelService
 from src.services.collection_service import CollectionService
 from src.services.notification_service import NotificationService
 from src.services.notification_target_service import NotificationTargetService
+from src.services.photo_auto_upload_service import PhotoAutoUploadService
+from src.services.photo_publish_service import PhotoPublishService
+from src.services.photo_task_service import PhotoTaskService
 from src.services.scheduler_service import SchedulerService
 from src.services.search_query_service import SearchQueryService
 from src.services.search_service import SearchService
@@ -74,11 +78,24 @@ def get_container(request: Request) -> AppContainer:
     search_bundle = SearchBundle.from_database(db)
     scheduler_bundle = SchedulerBundle.from_database(db)
     search_query_bundle = SearchQueryBundle.from_database(db)
+    photo_loader_bundle = PhotoLoaderBundle.from_database(db)
     notification_target_service = getattr(request.app.state, "notification_target_service", None)
     if notification_target_service is None:
         notification_target_service = NotificationTargetService(
             notification_bundle,
             _require_app_state_attr(request, "pool"),
+        )
+    photo_publish_service = getattr(request.app.state, "photo_publish_service", None)
+    if photo_publish_service is None:
+        photo_publish_service = PhotoPublishService(_require_app_state_attr(request, "pool"))
+    photo_task_service = getattr(request.app.state, "photo_task_service", None)
+    if photo_task_service is None:
+        photo_task_service = PhotoTaskService(photo_loader_bundle, photo_publish_service)
+    photo_auto_upload_service = getattr(request.app.state, "photo_auto_upload_service", None)
+    if photo_auto_upload_service is None:
+        photo_auto_upload_service = PhotoAutoUploadService(
+            photo_loader_bundle,
+            photo_publish_service,
         )
     templates = getattr(request.app.state, "templates", None)
     if templates is None:
@@ -91,6 +108,7 @@ def get_container(request: Request) -> AppContainer:
         channel_bundle=channel_bundle,
         collection_bundle=collection_bundle,
         notification_bundle=notification_bundle,
+        photo_loader_bundle=photo_loader_bundle,
         search_bundle=search_bundle,
         scheduler_bundle=scheduler_bundle,
         search_query_bundle=search_query_bundle,
@@ -98,6 +116,9 @@ def get_container(request: Request) -> AppContainer:
         pool=_require_app_state_attr(request, "pool"),
         notification_target_service=notification_target_service,
         notifier=getattr(request.app.state, "notifier", None),
+        photo_publish_service=photo_publish_service,
+        photo_task_service=photo_task_service,
+        photo_auto_upload_service=photo_auto_upload_service,
         collector=_require_app_state_attr(request, "collector"),
         collection_queue=getattr(request.app.state, "collection_queue", None),
         stats_dispatcher=getattr(request.app.state, "stats_dispatcher", None),
@@ -137,6 +158,10 @@ def get_notification_bundle(request: Request) -> NotificationBundle:
 
 def get_search_bundle(request: Request) -> SearchBundle:
     return get_container(request).search_bundle
+
+
+def get_photo_loader_bundle(request: Request) -> PhotoLoaderBundle:
+    return get_container(request).photo_loader_bundle
 
 
 def get_scheduler_bundle(request: Request) -> SchedulerBundle:
@@ -189,6 +214,18 @@ def get_notification_target_service(request: Request) -> NotificationTargetServi
 
 def get_notifier(request: Request) -> Notifier | None:
     return get_container(request).notifier
+
+
+def get_photo_publish_service(request: Request) -> PhotoPublishService:
+    return get_container(request).photo_publish_service
+
+
+def get_photo_task_service(request: Request) -> PhotoTaskService:
+    return get_container(request).photo_task_service
+
+
+def get_photo_auto_upload_service(request: Request) -> PhotoAutoUploadService:
+    return get_container(request).photo_auto_upload_service
 
 
 def get_log_buffer(request: Request) -> LogBuffer | None:

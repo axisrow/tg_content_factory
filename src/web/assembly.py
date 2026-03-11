@@ -28,6 +28,10 @@ def configure_app(app: FastAPI, container: AppContainer | None) -> None:
         app.state.search_engine = container.search_engine
         app.state.ai_search = container.ai_search
         app.state.scheduler = container.scheduler
+        app.state.photo_loader_bundle = container.photo_loader_bundle
+        app.state.photo_publish_service = container.photo_publish_service
+        app.state.photo_task_service = container.photo_task_service
+        app.state.photo_auto_upload_service = container.photo_auto_upload_service
         app.state.session_secret = container.session_secret
     elif not hasattr(app.state, "templates"):
         app.state.templates = configure_template_globals(
@@ -106,6 +110,7 @@ def register_routes(app: FastAPI) -> None:
     from src.web.routes.filter import router as filter_router
     from src.web.routes.import_channels import router as import_router
     from src.web.routes.my_telegram import router as my_telegram_router
+    from src.web.routes.photo_loader import router as photo_loader_router
     from src.web.routes.scheduler import router as scheduler_router
     from src.web.routes.search import router as search_router
     from src.web.routes.search_queries import router as search_queries_router
@@ -123,6 +128,7 @@ def register_routes(app: FastAPI) -> None:
     app.include_router(scheduler_router, prefix="/scheduler")
     app.include_router(settings_router, prefix="/settings")
     app.include_router(my_telegram_router, prefix="/my-telegram")
+    app.include_router(photo_loader_router, prefix="/my-telegram/photos")
     app.include_router(debug_router, prefix="/debug")
 
 

@@ -15,6 +15,7 @@ from src.database.repositories.collection_tasks import CollectionTasksRepository
 from src.database.repositories.filters import FilterRepository
 from src.database.repositories.messages import MessagesRepository
 from src.database.repositories.notification_bots import NotificationBotsRepository
+from src.database.repositories.photo_loader import PhotoLoaderRepository
 from src.database.repositories.search_log import SearchLogRepository
 from src.database.repositories.search_queries import SearchQueriesRepository
 from src.database.repositories.settings import SettingsRepository
@@ -53,6 +54,7 @@ class Database:
         self._filters: FilterRepository | None = None
         self._notification_bots: NotificationBotsRepository | None = None
         self._search_queries: SearchQueriesRepository | None = None
+        self._photo_loader: PhotoLoaderRepository | None = None
         self._repos: DatabaseRepositories | None = None
 
     async def _has_encrypted_sessions(self) -> bool:
@@ -75,6 +77,8 @@ class Database:
         await run_migrations(self._db)
 
         if not self._session_encryption_secret and await self._has_encrypted_sessions():
+            await self._connection.close()
+            self._db = None
             raise RuntimeError(
                 "Encrypted account sessions found in DB but SESSION_ENCRYPTION_KEY is not set. "
                 "Set SESSION_ENCRYPTION_KEY to start the application."
@@ -94,6 +98,7 @@ class Database:
         self._filters = FilterRepository(self._db)
         self._notification_bots = NotificationBotsRepository(self._db)
         self._search_queries = SearchQueriesRepository(self._db)
+        self._photo_loader = PhotoLoaderRepository(self._db)
         self._repos = DatabaseRepositories(
             accounts=self._accounts,
             channels=self._channels,
@@ -105,6 +110,7 @@ class Database:
             filters=self._filters,
             notification_bots=self._notification_bots,
             search_queries=self._search_queries,
+            photo_loader=self._photo_loader,
         )
 
         await self._accounts.migrate_sessions()
@@ -148,6 +154,7 @@ class Database:
                 self._filters,
                 self._notification_bots,
                 self._search_queries,
+                self._photo_loader,
             )
         ):
             raise RuntimeError("Database.initialize() has not been called")
