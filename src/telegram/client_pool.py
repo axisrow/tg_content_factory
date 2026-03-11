@@ -434,8 +434,18 @@ class ClientPool:
                         channel_type, deactivate = self._classify_entity(entity)
                         stats = DialogFetchStats(
                             raw_dialogs=stats.raw_dialogs,
-                            channels=stats.channels + (1 if channel_type in ("channel", "monoforum", "scam", "fake", "restricted") else 0),
-                            groups=stats.groups + (1 if channel_type in ("supergroup", "group", "gigagroup", "forum") else 0),
+                            channels=stats.channels + (
+                                1 if channel_type in (
+                                    "channel", "monoforum", "scam",
+                                    "fake", "restricted",
+                                ) else 0
+                            ),
+                            groups=stats.groups + (
+                                1 if channel_type in (
+                                    "supergroup", "group",
+                                    "gigagroup", "forum",
+                                ) else 0
+                            ),
                             dms=stats.dms,
                             bots=stats.bots,
                             partial=stats.partial,
@@ -488,7 +498,9 @@ class ClientPool:
                 )
             elapsed_ms = int((time.perf_counter() - started_at) * 1000)
             logger.info(
-                "get_dialogs_for_phone: phone=%s mode=%s duration_ms=%d raw=%d channels=%d groups=%d dms=%d bots=%d partial=%s result=%d",
+                "get_dialogs_for_phone: phone=%s mode=%s duration_ms=%d "
+                "raw=%d channels=%d groups=%d dms=%d bots=%d "
+                "partial=%s result=%d",
                 phone,
                 cache_mode,
                 elapsed_ms,

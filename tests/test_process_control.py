@@ -89,7 +89,10 @@ def test_stop_server_stops_process_and_removes_pid(tmp_path):
 
     alive_states = iter([True, False])
 
-    with patch("src.cli.process_control.is_process_alive", side_effect=lambda pid: next(alive_states)):
+    with patch(
+        "src.cli.process_control.is_process_alive",
+        side_effect=lambda pid: next(alive_states),
+    ):
         with patch("src.cli.process_control.is_expected_server_process", return_value=True):
             with patch("src.cli.process_control.os.kill") as mock_kill:
                 stopped, message = stop_server(path, timeout_sec=0.5)
