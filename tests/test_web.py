@@ -1,5 +1,6 @@
 import base64
 import re
+import tomllib
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -18,6 +19,7 @@ from src.telegram.collector import Collector
 from src.web.app import create_app
 from src.web.routes.channel_collection import _COLLECT_ALL_BTN, _COLLECT_ALL_FORM
 from src.web.session import COOKIE_NAME, create_session_token
+from src.web.template_globals import PYPROJECT_PATH, get_app_version
 
 
 @pytest.fixture
@@ -56,7 +58,7 @@ async def client(tmp_path):
             },
         ]
 
-    async def _get_dialogs_for_phone(self, phone, include_dm=False):
+    async def _get_dialogs_for_phone(self, phone, include_dm=False, mode="channels_only"):
         return []
 
     app.state.pool = type(
@@ -113,6 +115,21 @@ async def test_dashboard(client):
     resp = await client.get("/dashboard/")
     assert resp.status_code == 200
     assert "Панель" in resp.text
+
+
+def test_templates_have_actual_app_version():
+    app = create_app(AppConfig())
+    expected_version = tomllib.loads(PYPROJECT_PATH.read_text(encoding="utf-8"))["project"]["version"]
+    assert app.state.templates.env.globals["app_version"] == expected_version
+    assert get_app_version() == expected_version
+
+
+@pytest.mark.asyncio
+async def test_footer_renders_actual_version(client):
+    expected_version = tomllib.loads(PYPROJECT_PATH.read_text(encoding="utf-8"))["project"]["version"]
+    resp = await client.get("/dashboard/")
+    assert resp.status_code == 200
+    assert f"TG Agent v{expected_version}" in resp.text
 
 
 @pytest.mark.asyncio
@@ -203,7 +220,7 @@ async def test_channels_page(client):
 
 @pytest.mark.asyncio
 async def test_search_page(client):
-    resp = await client.get("/")
+    resp = await client.get("/search")
     assert resp.status_code == 200
     assert "Поиск" in resp.text
 
@@ -216,7 +233,7 @@ async def test_scheduler_page(client):
 
 @pytest.mark.asyncio
 async def test_search_with_query(client):
-    resp = await client.get("/?q=test&mode=local")
+    resp = await client.get("/search?q=test&mode=local")
     assert resp.status_code == 200
     assert "test" in resp.text
 

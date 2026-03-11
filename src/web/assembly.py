@@ -12,6 +12,7 @@ from src.web.container import AppContainer
 from src.web.panel_auth import get_cookie_user, sanitize_next, set_session_cookie
 from src.web.paths import STATIC_DIR, TEMPLATES_DIR
 from src.web.session import COOKIE_NAME
+from src.web.template_globals import configure_template_globals
 
 
 def configure_app(app: FastAPI, container: AppContainer | None) -> None:
@@ -29,7 +30,11 @@ def configure_app(app: FastAPI, container: AppContainer | None) -> None:
         app.state.scheduler = container.scheduler
         app.state.session_secret = container.session_secret
     elif not hasattr(app.state, "templates"):
-        app.state.templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+        app.state.templates = configure_template_globals(
+            Jinja2Templates(directory=str(TEMPLATES_DIR))
+        )
+    else:
+        configure_template_globals(app.state.templates)
     if not hasattr(app.state, "session_secret"):
         app.state.session_secret = secrets.token_hex(32)
     if STATIC_DIR.exists():

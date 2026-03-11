@@ -59,7 +59,7 @@ async def app_with_db(tmp_path):
     async def _get_dialogs(self):
         return []
 
-    async def _get_dialogs_for_phone(self, phone, include_dm=False):
+    async def _get_dialogs_for_phone(self, phone, include_dm=False, mode="channels_only"):
         return []
 
     pool = type(
@@ -143,7 +143,7 @@ class TestAuthFlow:
     async def test_with_auth_returns_200(self, auth_client):
         resp = await auth_client.get("/")
         assert resp.status_code == 200
-        assert "Поиск" in resp.text
+        assert resp.url.path == "/agent"
 
     @pytest.mark.asyncio
     async def test_health_no_auth_returns_200(self, noauth_client):
@@ -332,13 +332,13 @@ class TestSearchModes:
         ]
         await test_db.insert_messages_batch(msgs)
 
-        resp = await auth_client.get("/?q=Bitcoin&mode=local")
+        resp = await auth_client.get("/search?q=Bitcoin&mode=local")
         assert resp.status_code == 200
         assert "Bitcoin" in resp.text
 
     @pytest.mark.asyncio
     async def test_search_empty_query_shows_form(self, auth_client):
-        resp = await auth_client.get("/")
+        resp = await auth_client.get("/search")
         assert resp.status_code == 200
         assert "Поиск" in resp.text
 
