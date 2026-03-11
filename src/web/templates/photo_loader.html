@@ -511,13 +511,12 @@
         }));
     }
 
-    function clearSelection() {
+    function resetSelectionUI() {
         options.forEach(function(option) {
             option.classList.remove("active");
         });
         updateForms(null);
         updateSummary(null);
-        saveTarget(null);
     }
 
     function setActiveOption(button) {
@@ -591,7 +590,7 @@
 
     searchInput.addEventListener("input", applyFilters);
 
-    clearSelection();
+    resetSelectionUI();
     if (!restoreTarget()) {
         updateForms(null);
         updateSummary(null);

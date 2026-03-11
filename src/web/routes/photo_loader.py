@@ -80,7 +80,13 @@ async def _validate_target(
         return None, "photo_target_invalid"
 
     dialogs = await deps.channel_service(request).get_my_dialogs(phone)
-    if not any(int(dialog["channel_id"]) == dialog_id for dialog in dialogs):
+    dialog = next(
+        (item for item in dialogs if int(item["channel_id"]) == dialog_id),
+        None,
+    )
+    if dialog is None:
+        return None, "photo_target_invalid"
+    if str(dialog.get("channel_type", "")).strip() == "bot":
         return None, "photo_target_invalid"
     target = _parse_target(
         {
@@ -293,17 +299,19 @@ async def photo_send(
     caption: str = Form(""),
     photos: list[UploadFile] = File(...),
 ):
-    target, target_error = await _validate_target(
-        request,
-        phone=phone,
-        target_dialog_id=target_dialog_id,
-        target_title=target_title,
-        target_type=target_type,
-    )
-    if target_error:
-        return _redirect(phone, target_error, error=True)
-    saved = await _persist_uploads(photos, f"manual_{uuid.uuid4().hex}")
+    target = None
+    saved: list[str] = []
     try:
+        target, target_error = await _validate_target(
+            request,
+            phone=phone,
+            target_dialog_id=target_dialog_id,
+            target_title=target_title,
+            target_type=target_type,
+        )
+        if target_error:
+            return _redirect(phone, target_error, error=True)
+        saved = await _persist_uploads(photos, f"manual_{uuid.uuid4().hex}")
         await deps.get_photo_task_service(request).send_now(
             phone=phone,
             target=target,
@@ -317,8 +325,8 @@ async def photo_send(
             "target_type=%r send_mode=%s files=%d",
             phone,
             target_dialog_id,
-            target.title,
-            target.target_type,
+            getattr(target, "title", None),
+            getattr(target, "target_type", None),
             send_mode,
             len(saved),
         )
@@ -338,17 +346,19 @@ async def photo_schedule(
     schedule_at: str = Form(...),
     photos: list[UploadFile] = File(...),
 ):
-    target, target_error = await _validate_target(
-        request,
-        phone=phone,
-        target_dialog_id=target_dialog_id,
-        target_title=target_title,
-        target_type=target_type,
-    )
-    if target_error:
-        return _redirect(phone, target_error, error=True)
-    saved = await _persist_uploads(photos, f"scheduled_{uuid.uuid4().hex}")
+    target = None
+    saved: list[str] = []
     try:
+        target, target_error = await _validate_target(
+            request,
+            phone=phone,
+            target_dialog_id=target_dialog_id,
+            target_title=target_title,
+            target_type=target_type,
+        )
+        if target_error:
+            return _redirect(phone, target_error, error=True)
+        saved = await _persist_uploads(photos, f"scheduled_{uuid.uuid4().hex}")
         parsed_schedule_at = _parse_schedule_at(schedule_at)
         await deps.get_photo_task_service(request).schedule_send(
             phone=phone,
@@ -364,8 +374,8 @@ async def photo_schedule(
             "target_type=%r send_mode=%s files=%d schedule_at=%r",
             phone,
             target_dialog_id,
-            target.title,
-            target.target_type,
+            getattr(target, "title", None),
+            getattr(target, "target_type", None),
             send_mode,
             len(saved),
             schedule_at,
@@ -384,16 +394,17 @@ async def photo_batch(
     caption: str = Form(""),
     manifest_text: str = Form(""),
 ):
-    target, target_error = await _validate_target(
-        request,
-        phone=phone,
-        target_dialog_id=target_dialog_id,
-        target_title=target_title,
-        target_type=target_type,
-    )
-    if target_error:
-        return _redirect(phone, target_error, error=True)
+    target = None
     try:
+        target, target_error = await _validate_target(
+            request,
+            phone=phone,
+            target_dialog_id=target_dialog_id,
+            target_title=target_title,
+            target_type=target_type,
+        )
+        if target_error:
+            return _redirect(phone, target_error, error=True)
         manifest = json.loads(manifest_text)
         await deps.get_photo_task_service(request).create_batch(
             phone=phone,
@@ -408,8 +419,8 @@ async def photo_batch(
             "target_type=%r manifest_entries=%s",
             phone,
             target_dialog_id,
-            target.title,
-            target.target_type,
+            getattr(target, "title", None),
+            getattr(target, "target_type", None),
             manifest_size,
         )
         return _redirect(phone, "photo_batch_failed", error=True)
@@ -428,16 +439,17 @@ async def photo_auto_create(
     caption: str = Form(""),
     interval_minutes: int = Form(...),
 ):
-    target, target_error = await _validate_target(
-        request,
-        phone=phone,
-        target_dialog_id=target_dialog_id,
-        target_title=target_title,
-        target_type=target_type,
-    )
-    if target_error:
-        return _redirect(phone, target_error, error=True)
+    target = None
     try:
+        target, target_error = await _validate_target(
+            request,
+            phone=phone,
+            target_dialog_id=target_dialog_id,
+            target_title=target_title,
+            target_type=target_type,
+        )
+        if target_error:
+            return _redirect(phone, target_error, error=True)
         await deps.get_photo_auto_upload_service(request).create_job(
             PhotoAutoUploadJob(
                 phone=phone,
@@ -457,8 +469,8 @@ async def photo_auto_create(
             "target_type=%r folder_path=%r send_mode=%s interval_minutes=%s",
             phone,
             target_dialog_id,
-            target.title,
-            target.target_type,
+            getattr(target, "title", None),
+            getattr(target, "target_type", None),
             folder_path,
             send_mode,
             interval_minutes,
