@@ -172,8 +172,16 @@ class PhotoTaskService:
                 telegram_message_ids=message_ids,
             )
         except Exception as exc:
-            await self._bundle.update_item(item_id, status=PhotoBatchStatus.FAILED, error=str(exc))
-            await self._bundle.update_batch(batch_id, status=PhotoBatchStatus.FAILED, error=str(exc))
+            await self._bundle.update_item(
+                item_id,
+                status=PhotoBatchStatus.FAILED,
+                error=str(exc),
+            )
+            await self._bundle.update_batch(
+                batch_id,
+                status=PhotoBatchStatus.FAILED,
+                error=str(exc),
+            )
             raise
         item = await self._bundle.get_item(item_id)
         assert item is not None
@@ -202,7 +210,10 @@ class PhotoTaskService:
         )
         for entry in entries:
             files = self.validate_files([str(path) for path in entry.get("files", [])])
-            send_mode = self.normalize_mode(entry.get("mode", PhotoSendMode.ALBUM.value), len(files))
+            send_mode = self.normalize_mode(
+                entry.get("mode", PhotoSendMode.ALBUM.value),
+                len(files),
+            )
             schedule_at = self._parse_schedule_at(entry.get("at"))
             await self._bundle.create_item(
                 PhotoBatchItem(
@@ -262,7 +273,11 @@ class PhotoTaskService:
                 completed_at=now,
             )
             if item.batch_id:
-                await self._sync_batch_status(item.batch_id, last_run_at=now, fallback_error=str(exc))
+                await self._sync_batch_status(
+                    item.batch_id,
+                    last_run_at=now,
+                    fallback_error=str(exc),
+                )
 
     async def cancel_item(self, item_id: int) -> bool:
         return await self._bundle.cancel_item(item_id)
@@ -286,7 +301,11 @@ class PhotoTaskService:
                 last_run_at=last_run_at,
             )
             return
-        if PhotoBatchStatus.FAILED in statuses and statuses.isdisjoint({PhotoBatchStatus.PENDING, PhotoBatchStatus.RUNNING}):
+        terminal_pending = {
+            PhotoBatchStatus.PENDING,
+            PhotoBatchStatus.RUNNING,
+        }
+        if PhotoBatchStatus.FAILED in statuses and statuses.isdisjoint(terminal_pending):
             await self._bundle.update_batch(
                 batch_id,
                 status=PhotoBatchStatus.FAILED,

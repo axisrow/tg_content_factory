@@ -119,14 +119,18 @@ async def test_dashboard(client):
 
 def test_templates_have_actual_app_version():
     app = create_app(AppConfig())
-    expected_version = tomllib.loads(PYPROJECT_PATH.read_text(encoding="utf-8"))["project"]["version"]
+    expected_version = tomllib.loads(
+        PYPROJECT_PATH.read_text(encoding="utf-8")
+    )["project"]["version"]
     assert app.state.templates.env.globals["app_version"] == expected_version
     assert get_app_version() == expected_version
 
 
 @pytest.mark.asyncio
 async def test_footer_renders_actual_version(client):
-    expected_version = tomllib.loads(PYPROJECT_PATH.read_text(encoding="utf-8"))["project"]["version"]
+    expected_version = tomllib.loads(
+        PYPROJECT_PATH.read_text(encoding="utf-8")
+    )["project"]["version"]
     resp = await client.get("/dashboard/")
     assert resp.status_code == 200
     assert f"TG Agent v{expected_version}" in resp.text

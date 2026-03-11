@@ -227,7 +227,8 @@ async def photo_run_due(request: Request, phone: str = Form("")):
 @router.post("/items/{item_id}/cancel")
 async def photo_cancel_item(request: Request, item_id: int, phone: str = Form("")):
     ok = await deps.get_photo_task_service(request).cancel_item(item_id)
-    return _redirect(phone, "photo_item_cancelled" if ok else "photo_item_cancel_failed", error=not ok)
+    code = "photo_item_cancelled" if ok else "photo_item_cancel_failed"
+    return _redirect(phone, code, error=not ok)
 
 
 @router.post("/auto/{job_id}/toggle")
