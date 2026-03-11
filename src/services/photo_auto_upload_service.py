@@ -79,6 +79,7 @@ class PhotoAutoUploadService:
             await self._publish.send_now(
                 phone=job.phone,
                 target_dialog_id=job.target_dialog_id,
+                target_type=job.target_type,
                 file_paths=files,
                 send_mode=send_mode,
                 caption=job.caption,

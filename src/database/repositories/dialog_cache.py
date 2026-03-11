@@ -13,6 +13,28 @@ class DialogCacheRepository:
     def __init__(self, db: aiosqlite.Connection):
         self._db = db
 
+    async def get_dialog(self, phone: str, dialog_id: int) -> dict | None:
+        cur = await self._db.execute(
+            """
+            SELECT dialog_id, title, username, channel_type, deactivate, is_own
+            FROM dialog_cache
+            WHERE phone = ? AND dialog_id = ?
+            LIMIT 1
+            """,
+            (phone, dialog_id),
+        )
+        row = await cur.fetchone()
+        if not row:
+            return None
+        return {
+            "channel_id": row["dialog_id"],
+            "title": row["title"],
+            "username": row["username"],
+            "channel_type": row["channel_type"],
+            "deactivate": bool(row["deactivate"]),
+            "is_own": bool(row["is_own"]),
+        }
+
     async def list_dialogs(self, phone: str) -> list[dict]:
         cur = await self._db.execute(
             """

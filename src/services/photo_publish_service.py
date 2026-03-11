@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import logging
 from datetime import datetime
 
@@ -20,6 +21,7 @@ class PhotoPublishService:
         *,
         phone: str,
         target_dialog_id: int,
+        target_type: str | None = None,
         file_paths: list[str],
         send_mode: PhotoSendMode,
         caption: str | None = None,
@@ -30,9 +32,19 @@ class PhotoPublishService:
             raise RuntimeError("no_client")
         client, acquired_phone = result
         try:
+            entity = target_dialog_id
+            resolver = getattr(self._pool, "resolve_dialog_entity", None)
+            if callable(resolver):
+                resolved = resolver(
+                    client,
+                    acquired_phone,
+                    target_dialog_id,
+                    target_type,
+                )
+                entity = await resolved if inspect.isawaitable(resolved) else resolved
             if send_mode == PhotoSendMode.ALBUM and len(file_paths) > 1:
                 sent = await client.send_file(
-                    target_dialog_id,
+                    entity,
                     file_paths,
                     caption=caption,
                     schedule=schedule_at,
@@ -42,7 +54,7 @@ class PhotoPublishService:
             message_ids: list[int] = []
             for path in file_paths:
                 sent = await client.send_file(
-                    target_dialog_id,
+                    entity,
                     path,
                     caption=caption,
                     schedule=schedule_at,
