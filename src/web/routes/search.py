@@ -10,18 +10,17 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
-@router.get("/", response_class=HTMLResponse)
-async def search_page(
+async def _render_search_page(
     request: Request,
-    q: str = Query(""),
-    channel_id: str = Query(""),
-    date_from: str = Query(""),
-    date_to: str = Query(""),
-    mode: str = Query("local"),
-    is_fts: bool = Query(False),
-    msg_length_op: str = Query(""),
-    msg_length_val: int | None = Query(None),
-    page: int = Query(1),
+    q: str = "",
+    channel_id: str = "",
+    date_from: str = "",
+    date_to: str = "",
+    mode: str = "local",
+    is_fts: bool = False,
+    msg_length_op: str = "",
+    msg_length_val: int | None = None,
+    page: int = 1,
 ):
     # Onboarding: redirect if no accounts configured
     auth = deps.get_auth(request)
@@ -104,4 +103,38 @@ async def search_page(
             "ai_enabled": ai_enabled,
             "search_quota": search_quota,
         },
+    )
+
+
+@router.get("/", response_class=HTMLResponse)
+async def root_page(
+    request: Request,
+):
+    return RedirectResponse(url="/agent", status_code=303)
+
+
+@router.get("/search", response_class=HTMLResponse)
+async def search_page(
+    request: Request,
+    q: str = Query(""),
+    channel_id: str = Query(""),
+    date_from: str = Query(""),
+    date_to: str = Query(""),
+    mode: str = Query("local"),
+    is_fts: bool = Query(False),
+    msg_length_op: str = Query(""),
+    msg_length_val: int | None = Query(None),
+    page: int = Query(1),
+):
+    return await _render_search_page(
+        request,
+        q=q,
+        channel_id=channel_id,
+        date_from=date_from,
+        date_to=date_to,
+        mode=mode,
+        is_fts=is_fts,
+        msg_length_op=msg_length_op,
+        msg_length_val=msg_length_val,
+        page=page,
     )

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+import time
 from urllib.parse import quote
 
 from fastapi import APIRouter, Request
@@ -8,6 +10,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from src.web import deps
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 @router.get("/", response_class=HTMLResponse)
@@ -17,12 +20,21 @@ async def my_telegram_page(
     left: int = 0,
     failed: int = 0,
 ):
+    started_at = time.perf_counter()
     pool = deps.get_pool(request)
     accounts = sorted(pool.clients.keys())
-    selected_phone = phone or (accounts[0] if accounts else None)
+    selected_phone = phone if phone in pool.clients else None
     dialogs = []
-    if selected_phone and selected_phone in pool.clients:
+    if selected_phone:
         dialogs = await deps.channel_service(request).get_my_dialogs(selected_phone)
+    elapsed_ms = int((time.perf_counter() - started_at) * 1000)
+    logger.info(
+        "my_telegram_page: phone=%s accounts=%d dialogs=%d duration_ms=%d",
+        selected_phone,
+        len(accounts),
+        len(dialogs),
+        elapsed_ms,
+    )
     return deps.get_templates(request).TemplateResponse(
         request, "my_telegram.html", {
             "accounts": accounts,

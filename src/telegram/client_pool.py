@@ -5,6 +5,7 @@ import base64
 import io
 import logging
 import re
+import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
@@ -17,6 +18,22 @@ from src.models import TelegramUserInfo
 from src.telegram.auth import TelegramAuth
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class DialogFetchStats:
+    raw_dialogs: int = 0
+    channels: int = 0
+    groups: int = 0
+    dms: int = 0
+    bots: int = 0
+    partial: bool = False
+
+
+@dataclass
+class DialogCacheEntry:
+    fetched_at_monotonic: float
+    dialogs: list[dict]
 
 
 @dataclass(frozen=True)
@@ -37,6 +54,8 @@ class ClientPool:
         self._lock = asyncio.Lock()
         self._in_use: set[str] = set()
         self._dialogs_fetched: set[str] = set()
+        self._dialogs_cache: dict[tuple[str, str], DialogCacheEntry] = {}
+        self._dialogs_cache_ttl_sec = 60.0
 
     def is_dialogs_fetched(self, phone: str) -> bool:
         """Return True if get_dialogs() was already called for this phone in this process."""
@@ -45,6 +64,42 @@ class ClientPool:
     def mark_dialogs_fetched(self, phone: str) -> None:
         """Mark that get_dialogs() has been called for this phone."""
         self._dialogs_fetched.add(phone)
+
+    def invalidate_dialogs_cache(self, phone: str | None = None) -> None:
+        if phone is None:
+            self._dialogs_cache.clear()
+            return
+        keys = [key for key in self._dialogs_cache if key[0] == phone]
+        for key in keys:
+            del self._dialogs_cache[key]
+
+    def _get_cached_dialogs(self, phone: str, mode: str) -> list[dict] | None:
+        entry = self._dialogs_cache.get((phone, mode))
+        if entry is None:
+            if mode != "channels_only":
+                return None
+            full_entry = self._dialogs_cache.get((phone, "full"))
+            if full_entry is not None:
+                age = time.monotonic() - full_entry.fetched_at_monotonic
+                if age <= self._dialogs_cache_ttl_sec:
+                    return [
+                        dict(dialog)
+                        for dialog in full_entry.dialogs
+                        if dialog.get("channel_type") not in ("dm", "bot")
+                    ]
+                self._dialogs_cache.pop((phone, "full"), None)
+            return None
+        age = time.monotonic() - entry.fetched_at_monotonic
+        if age > self._dialogs_cache_ttl_sec:
+            self._dialogs_cache.pop((phone, mode), None)
+            return None
+        return [dict(dialog) for dialog in entry.dialogs]
+
+    def _store_cached_dialogs(self, phone: str, mode: str, dialogs: list[dict]) -> None:
+        self._dialogs_cache[(phone, mode)] = DialogCacheEntry(
+            fetched_at_monotonic=time.monotonic(),
+            dialogs=[dict(dialog) for dialog in dialogs],
+        )
 
     async def initialize(self) -> None:
         """Connect all active accounts from DB."""
@@ -202,6 +257,7 @@ class ClientPool:
             except Exception:
                 pass
             self._dialogs_fetched.discard(phone)
+            self.invalidate_dialogs_cache(phone)
             del self.clients[phone]
 
     async def disconnect_all(self) -> None:
@@ -335,20 +391,68 @@ class ClientPool:
             channel_type = "group"
         return channel_type, channel_type in ("scam", "fake", "restricted")
 
-    async def get_dialogs_for_phone(self, phone: str, include_dm: bool = False) -> list[dict]:
+    async def get_dialogs_for_phone(
+        self,
+        phone: str,
+        include_dm: bool = False,
+        mode: str = "channels_only",
+    ) -> list[dict]:
         """Get all dialogs for a specific connected account."""
+        cache_mode = "full" if include_dm or mode == "full" else "channels_only"
+        cached = self._get_cached_dialogs(phone, cache_mode)
+        if cached is not None:
+            logger.info(
+                "get_dialogs_for_phone: cache hit for %s mode=%s count=%d",
+                phone,
+                cache_mode,
+                len(cached),
+            )
+            return cached
+
         result = await self.get_client_by_phone(phone)
         if not result:
             return []
         client, phone = result
+        started_at = time.perf_counter()
         try:
             items: list[dict] = []
+            stats = DialogFetchStats()
 
             async def _iter() -> None:
+                nonlocal stats
                 async for dialog in client.iter_dialogs():
+                    stats = DialogFetchStats(
+                        raw_dialogs=stats.raw_dialogs + 1,
+                        channels=stats.channels,
+                        groups=stats.groups,
+                        dms=stats.dms,
+                        bots=stats.bots,
+                        partial=stats.partial,
+                    )
                     entity = dialog.entity
                     if dialog.is_channel or dialog.is_group:
                         channel_type, deactivate = self._classify_entity(entity)
+                        is_channel_kind = channel_type in (
+                            "channel",
+                            "monoforum",
+                            "scam",
+                            "fake",
+                            "restricted",
+                        )
+                        is_group_kind = channel_type in (
+                            "supergroup",
+                            "group",
+                            "gigagroup",
+                            "forum",
+                        )
+                        stats = DialogFetchStats(
+                            raw_dialogs=stats.raw_dialogs,
+                            channels=stats.channels + (1 if is_channel_kind else 0),
+                            groups=stats.groups + (1 if is_group_kind else 0),
+                            dms=stats.dms,
+                            bots=stats.bots,
+                            partial=stats.partial,
+                        )
                         items.append({
                             "channel_id": entity.id,
                             "title": dialog.title,
@@ -357,8 +461,16 @@ class ClientPool:
                             "deactivate": deactivate,
                             "is_own": getattr(entity, "creator", False),
                         })
-                    elif include_dm:
+                    elif include_dm or mode == "full":
                         is_bot = getattr(entity, "bot", False)
+                        stats = DialogFetchStats(
+                            raw_dialogs=stats.raw_dialogs,
+                            channels=stats.channels,
+                            groups=stats.groups,
+                            dms=stats.dms + (0 if is_bot else 1),
+                            bots=stats.bots + (1 if is_bot else 0),
+                            partial=stats.partial,
+                        )
                         items.append({
                             "channel_id": entity.id,
                             "title": dialog.title,
@@ -371,11 +483,37 @@ class ClientPool:
             try:
                 await asyncio.wait_for(_iter(), timeout=60.0)
             except asyncio.TimeoutError:
+                stats = DialogFetchStats(
+                    raw_dialogs=stats.raw_dialogs,
+                    channels=stats.channels,
+                    groups=stats.groups,
+                    dms=stats.dms,
+                    bots=stats.bots,
+                    partial=True,
+                )
                 logger.warning(
-                    "get_dialogs_for_phone: timed out for %s, returning %d partial results",
+                    "get_dialogs_for_phone: timed out for %s mode=%s, returning %d partial results",
                     phone,
+                    cache_mode,
                     len(items),
                 )
+            elapsed_ms = int((time.perf_counter() - started_at) * 1000)
+            logger.info(
+                "get_dialogs_for_phone: phone=%s mode=%s duration_ms=%d "
+                "raw=%d channels=%d groups=%d dms=%d bots=%d partial=%s result=%d",
+                phone,
+                cache_mode,
+                elapsed_ms,
+                stats.raw_dialogs,
+                stats.channels,
+                stats.groups,
+                stats.dms,
+                stats.bots,
+                stats.partial,
+                len(items),
+            )
+            if items and not stats.partial:
+                self._store_cached_dialogs(phone, cache_mode, items)
             return items
         finally:
             await self.release_client(phone)
@@ -414,6 +552,7 @@ class ClientPool:
                     outcomes[cid] = False
         finally:
             await self.release_client(phone)
+        self.invalidate_dialogs_cache(phone)
         return outcomes
 
     async def get_forum_topics(self, channel_id: int) -> list[dict]:
@@ -509,9 +648,11 @@ class ClientPool:
                         })
                 return result
 
+            iter_coro = _iter_dialogs()
             try:
-                dialogs = await asyncio.wait_for(_iter_dialogs(), timeout=60.0)
+                dialogs = await asyncio.wait_for(iter_coro, timeout=60.0)
             except asyncio.TimeoutError:
+                iter_coro.close()
                 logger.warning("get_dialogs: iter_dialogs timed out for %s", phone)
                 dialogs = []
             return dialogs

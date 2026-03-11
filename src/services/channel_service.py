@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+import time
 from typing import TYPE_CHECKING
 
 from src.database import Database
@@ -9,6 +11,8 @@ from src.telegram.client_pool import ClientPool
 
 if TYPE_CHECKING:
     from src.collection_queue import CollectionQueue
+
+logger = logging.getLogger(__name__)
 
 
 class ChannelService:
@@ -74,10 +78,23 @@ class ChannelService:
 
     async def get_my_dialogs(self, phone: str) -> list[dict]:
         """Get all dialogs for a specific account, enriched with already_added flag."""
+        started_at = time.perf_counter()
         existing_ids = {ch.channel_id for ch in await self._channels.list_channels()}
-        dialogs = await self._pool.get_dialogs_for_phone(phone, include_dm=True)
+        db_elapsed_ms = int((time.perf_counter() - started_at) * 1000)
+        dialogs = await self._pool.get_dialogs_for_phone(phone, include_dm=True, mode="full")
+        enrich_started_at = time.perf_counter()
         for d in dialogs:
             d["already_added"] = d["channel_id"] in existing_ids
+        enrich_elapsed_ms = int((time.perf_counter() - enrich_started_at) * 1000)
+        total_elapsed_ms = int((time.perf_counter() - started_at) * 1000)
+        logger.info(
+            "get_my_dialogs: phone=%s duration_ms=%d db_ms=%d enrich_ms=%d dialogs=%d",
+            phone,
+            total_elapsed_ms,
+            db_elapsed_ms,
+            enrich_elapsed_ms,
+            len(dialogs),
+        )
         return dialogs
 
     async def toggle(self, pk: int) -> None:

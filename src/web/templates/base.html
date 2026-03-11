@@ -13,10 +13,10 @@
     </script>
     {% block head_scripts %}{% endblock %}
 </head>
-<body>
+<body class="d-flex flex-column min-vh-100">
     <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
         <div class="container">
-            <a class="navbar-brand fw-bold" href="/">TG Agent</a>
+            <a class="navbar-brand fw-bold" href="/agent">TG Agent</a>
             <button class="navbar-toggler" type="button" data-bs-toggle="offcanvas" data-bs-target="#mainNav" aria-controls="mainNav" aria-label="Toggle navigation">
                 <span class="navbar-toggler-icon"></span>
             </button>
@@ -28,7 +28,7 @@
                 <div class="offcanvas-body">
                 <ul class="navbar-nav ms-auto">
                     {% if agent_available %}<li class="nav-item"><a class="nav-link" href="/agent">Чат</a></li>{% endif %}
-                    <li class="nav-item"><a class="nav-link" href="/">Поиск</a></li>
+                    <li class="nav-item"><a class="nav-link" href="/search">Поиск</a></li>
                     <li class="nav-item"><a class="nav-link" href="/dashboard">Панель</a></li>
                     <li class="nav-item"><a class="nav-link" href="/channels">Каналы</a></li>
                     <li class="nav-item"><a class="nav-link" href="/search-queries">Запросы</a></li>
@@ -46,11 +46,11 @@
         </div>
     </nav>
     <div id="flash-container" class="container mt-3"></div>
-    <main class="container py-3">
+    <main class="container py-3 flex-grow-1">
         {% block content %}{% endblock %}
     </main>
-    <footer class="text-center text-muted py-3">
-        <small>TG Agent v0.1.6</small>
+    <footer class="text-center text-muted py-3 mt-auto">
+        <small>TG Agent v{{ app_version }}</small>
     </footer>
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js" integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz" crossorigin="anonymous"></script>
 <script>
@@ -91,7 +91,15 @@
         sq_toggled: "Статус поискового запроса изменён.",
         sq_run: "Поисковый запрос выполнен.",
         sq_edited: "Поисковый запрос обновлён.",
-        notification_test_sent: "Тестовое уведомление отправлено."
+        notification_test_sent: "Тестовое уведомление отправлено.",
+        photo_sent: "Фото отправлены.",
+        photo_scheduled: "Фото поставлены в отложенную отправку Telegram.",
+        photo_batch_created: "Batch photo tasks созданы.",
+        photo_auto_created: "Авто-загрузка создана.",
+        photo_run_due_ok: "Due photo tasks обработаны.",
+        photo_item_cancelled: "Photo task отменён.",
+        photo_auto_toggled: "Статус auto job изменён.",
+        photo_auto_deleted: "Auto job удалён."
     };
     var errors = {
         resolve: "Не удалось найти канал. Проверьте username или ссылку.",
@@ -107,7 +115,13 @@
         notification_account_unavailable: "Выбранный аккаунт уведомлений недоступен.",
         notification_bot_missing: "Для выбранного аккаунта notification bot не найден.",
         notification_action_failed: "Не удалось выполнить действие с notification bot.",
-        notification_test_failed: "Не удалось отправить тестовое уведомление."
+        notification_test_failed: "Не удалось отправить тестовое уведомление.",
+        photo_send_failed: "Не удалось отправить фото.",
+        photo_schedule_failed: "Не удалось создать отложенную отправку фото.",
+        photo_batch_failed: "Не удалось создать batch photo tasks.",
+        photo_auto_failed: "Не удалось создать или изменить auto job.",
+        photo_run_due_failed: "Не удалось выполнить due photo tasks.",
+        photo_item_cancel_failed: "Не удалось отменить photo task."
     };
     var params = new URLSearchParams(window.location.search);
     var code = params.get("msg");

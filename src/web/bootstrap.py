@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import secrets
 
 from fastapi.templating import Jinja2Templates
@@ -16,6 +15,7 @@ from src.database.bundles import (
     ChannelBundle,
     CollectionBundle,
     NotificationBundle,
+    PhotoLoaderBundle,
     SchedulerBundle,
     SearchBundle,
     SearchQueryBundle,
@@ -24,6 +24,9 @@ from src.scheduler.manager import SchedulerManager
 from src.search.ai_search import AISearchEngine
 from src.search.engine import SearchEngine
 from src.services.notification_target_service import NotificationTargetService
+from src.services.photo_auto_upload_service import PhotoAutoUploadService
+from src.services.photo_publish_service import PhotoPublishService
+from src.services.photo_task_service import PhotoTaskService
 from src.services.stats_task_dispatcher import StatsTaskDispatcher
 from src.settings_utils import parse_int_setting
 from src.telegram.auth import TelegramAuth
@@ -33,6 +36,7 @@ from src.telegram.notifier import Notifier
 from src.web.container import AppContainer
 from src.web.log_handler import LogBuffer
 from src.web.paths import TEMPLATES_DIR
+from src.web.template_globals import configure_template_globals
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +91,7 @@ async def build_container_with_templates(
         repos.settings,
         repos.notification_bots,
     )
+    photo_loader_bundle = PhotoLoaderBundle(repos.photo_loader)
     search_bundle = SearchBundle(repos.messages, repos.search_log, repos.channels)
     scheduler_bundle = SchedulerBundle(
         repos.settings,
@@ -104,6 +109,9 @@ async def build_container_with_templates(
     auth = TelegramAuth(api_id, api_hash)
     pool = ClientPool(auth, db, config.scheduler.max_flood_wait_sec)
     notification_target_service = NotificationTargetService(notification_bundle, pool)
+    photo_publish_service = PhotoPublishService(pool)
+    photo_task_service = PhotoTaskService(photo_loader_bundle, photo_publish_service)
+    photo_auto_upload_service = PhotoAutoUploadService(photo_loader_bundle, photo_publish_service)
     notifier = Notifier(
         notification_target_service, config.notifications.admin_chat_id, notification_bundle
     )
@@ -120,11 +128,12 @@ async def build_container_with_templates(
         scheduler_bundle=scheduler_bundle,
         search_engine=search_engine,
         search_query_bundle=search_query_bundle,
+        photo_task_service=photo_task_service,
+        photo_auto_upload_service=photo_auto_upload_service,
     )
 
-    _templates = templates or Jinja2Templates(directory=str(TEMPLATES_DIR))
-    _templates.env.globals["agent_available"] = bool(
-        os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("CLAUDE_CODE_OAUTH_TOKEN")
+    _templates = configure_template_globals(
+        templates or Jinja2Templates(directory=str(TEMPLATES_DIR))
     )
 
     return AppContainer(
@@ -135,6 +144,7 @@ async def build_container_with_templates(
         channel_bundle=channel_bundle,
         collection_bundle=collection_bundle,
         notification_bundle=notification_bundle,
+        photo_loader_bundle=photo_loader_bundle,
         search_bundle=search_bundle,
         scheduler_bundle=scheduler_bundle,
         search_query_bundle=search_query_bundle,
@@ -142,6 +152,9 @@ async def build_container_with_templates(
         pool=pool,
         notification_target_service=notification_target_service,
         notifier=notifier,
+        photo_publish_service=photo_publish_service,
+        photo_task_service=photo_task_service,
+        photo_auto_upload_service=photo_auto_upload_service,
         collector=collector,
         collection_queue=collection_queue,
         stats_dispatcher=stats_dispatcher,
@@ -161,6 +174,9 @@ async def start_container(container: AppContainer) -> None:
     recovered = await container.channel_bundle.fail_running_collection_tasks_on_startup()
     if recovered:
         logger.warning("Marked %d interrupted collection tasks as failed on startup", recovered)
+    photo_recovered = await container.photo_task_service.recover_running()
+    if photo_recovered:
+        logger.warning("Requeued %d interrupted photo tasks on startup", photo_recovered)
 
     if container.auth.is_configured:
         await container.pool.initialize()

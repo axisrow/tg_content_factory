@@ -27,6 +27,7 @@ from src.web.panel_auth import (
     set_session_cookie,
 )
 from src.web.paths import TEMPLATES_DIR
+from src.web.template_globals import configure_template_globals
 
 logger = logging.getLogger(__name__)
 
@@ -99,7 +100,9 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
     app = FastAPI(title="TG Post Search", lifespan=lifespan)
     app.state.config = config
     app.state.log_buffer = build_log_buffer()
-    app.state.templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+    app.state.templates = configure_template_globals(
+        Jinja2Templates(directory=str(TEMPLATES_DIR))
+    )
     configure_app(app, None)
 
     if config.web.password:
