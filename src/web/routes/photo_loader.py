@@ -63,6 +63,38 @@ def _parse_target(form, dialogs: list[dict]) -> PhotoTarget:
     return PhotoTarget(dialog_id=dialog_id, title=title, target_type=target_type)
 
 
+async def _validate_target(
+    request: Request,
+    *,
+    phone: str,
+    target_dialog_id: str,
+    target_title: str = "",
+    target_type: str = "",
+) -> tuple[PhotoTarget | None, str | None]:
+    raw_id = target_dialog_id.strip()
+    if not raw_id:
+        return None, "photo_target_required"
+    try:
+        dialog_id = int(raw_id)
+    except ValueError:
+        return None, "photo_target_invalid"
+
+    dialogs = await deps.channel_service(request).get_my_dialogs(phone)
+    if not any(int(dialog["channel_id"]) == dialog_id for dialog in dialogs):
+        return None, "photo_target_invalid"
+    target = _parse_target(
+        {
+            "target_dialog_id": str(dialog_id),
+            "target_title": target_title,
+            "target_type": target_type,
+        },
+        dialogs,
+    )
+    if target.title is None or target.target_type is None:
+        return None, "photo_target_invalid"
+    return target, None
+
+
 def _parse_schedule_at(value: str) -> datetime:
     dt = datetime.fromisoformat(value)
     if dt.tzinfo is None:
@@ -158,6 +190,22 @@ def _build_feedback(
             "highlight_kind": "",
         }
 
+    if error == "photo_target_required":
+        return {
+            "variant": "error",
+            "title": "Цель не выбрана",
+            "body": "Сначала выберите канал, чат или личный диалог.",
+            "highlight_kind": "",
+        }
+
+    if error == "photo_target_invalid":
+        return {
+            "variant": "error",
+            "title": "Цель недоступна",
+            "body": "Выбранная цель недоступна. Выберите её заново.",
+            "highlight_kind": "",
+        }
+
     if error == "photo_schedule_failed":
         return {
             "variant": "error",
@@ -238,18 +286,22 @@ async def photo_loader_refresh(request: Request, phone: str = Form(...)):
 async def photo_send(
     request: Request,
     phone: str = Form(...),
-    target_dialog_id: int = Form(...),
+    target_dialog_id: str = Form(""),
     target_title: str = Form(""),
     target_type: str = Form(""),
     send_mode: str = Form(PhotoSendMode.SEPARATE.value),
     caption: str = Form(""),
     photos: list[UploadFile] = File(...),
 ):
-    target = PhotoTarget(
-        dialog_id=target_dialog_id,
-        title=target_title or None,
-        target_type=target_type or None,
+    target, target_error = await _validate_target(
+        request,
+        phone=phone,
+        target_dialog_id=target_dialog_id,
+        target_title=target_title,
+        target_type=target_type,
     )
+    if target_error:
+        return _redirect(phone, target_error, error=True)
     saved = await _persist_uploads(photos, f"manual_{uuid.uuid4().hex}")
     try:
         await deps.get_photo_task_service(request).send_now(
@@ -278,7 +330,7 @@ async def photo_send(
 async def photo_schedule(
     request: Request,
     phone: str = Form(...),
-    target_dialog_id: int = Form(...),
+    target_dialog_id: str = Form(""),
     target_title: str = Form(""),
     target_type: str = Form(""),
     send_mode: str = Form(PhotoSendMode.SEPARATE.value),
@@ -286,11 +338,15 @@ async def photo_schedule(
     schedule_at: str = Form(...),
     photos: list[UploadFile] = File(...),
 ):
-    target = PhotoTarget(
-        dialog_id=target_dialog_id,
-        title=target_title or None,
-        target_type=target_type or None,
+    target, target_error = await _validate_target(
+        request,
+        phone=phone,
+        target_dialog_id=target_dialog_id,
+        target_title=target_title,
+        target_type=target_type,
     )
+    if target_error:
+        return _redirect(phone, target_error, error=True)
     saved = await _persist_uploads(photos, f"scheduled_{uuid.uuid4().hex}")
     try:
         parsed_schedule_at = _parse_schedule_at(schedule_at)
@@ -322,17 +378,21 @@ async def photo_schedule(
 async def photo_batch(
     request: Request,
     phone: str = Form(...),
-    target_dialog_id: int = Form(...),
+    target_dialog_id: str = Form(""),
     target_title: str = Form(""),
     target_type: str = Form(""),
     caption: str = Form(""),
     manifest_text: str = Form(""),
 ):
-    target = PhotoTarget(
-        dialog_id=target_dialog_id,
-        title=target_title or None,
-        target_type=target_type or None,
+    target, target_error = await _validate_target(
+        request,
+        phone=phone,
+        target_dialog_id=target_dialog_id,
+        target_title=target_title,
+        target_type=target_type,
     )
+    if target_error:
+        return _redirect(phone, target_error, error=True)
     try:
         manifest = json.loads(manifest_text)
         await deps.get_photo_task_service(request).create_batch(
@@ -360,7 +420,7 @@ async def photo_batch(
 async def photo_auto_create(
     request: Request,
     phone: str = Form(...),
-    target_dialog_id: int = Form(...),
+    target_dialog_id: str = Form(""),
     target_title: str = Form(""),
     target_type: str = Form(""),
     folder_path: str = Form(...),
@@ -368,13 +428,22 @@ async def photo_auto_create(
     caption: str = Form(""),
     interval_minutes: int = Form(...),
 ):
+    target, target_error = await _validate_target(
+        request,
+        phone=phone,
+        target_dialog_id=target_dialog_id,
+        target_title=target_title,
+        target_type=target_type,
+    )
+    if target_error:
+        return _redirect(phone, target_error, error=True)
     try:
         await deps.get_photo_auto_upload_service(request).create_job(
             PhotoAutoUploadJob(
                 phone=phone,
-                target_dialog_id=target_dialog_id,
-                target_title=target_title or None,
-                target_type=target_type or None,
+                target_dialog_id=target.dialog_id,
+                target_title=target.title,
+                target_type=target.target_type,
                 folder_path=folder_path,
                 send_mode=PhotoSendMode(send_mode),
                 caption=caption or None,
@@ -388,8 +457,8 @@ async def photo_auto_create(
             "target_type=%r folder_path=%r send_mode=%s interval_minutes=%s",
             phone,
             target_dialog_id,
-            target_title or None,
-            target_type or None,
+            target.title,
+            target.target_type,
             folder_path,
             send_mode,
             interval_minutes,

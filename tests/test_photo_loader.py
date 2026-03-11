@@ -291,6 +291,15 @@ async def test_photo_loader_page_renders(tmp_path):
         assert resp.text.count('data-photo-submit-form') >= 4
         assert resp.text.count('data-photo-submit-button') >= 4
         assert resp.text.count('data-photo-submit-status') >= 4
+        assert "Цель не выбрана" in resp.text
+        assert "Выбор сохранится на текущую браузерную сессию." in resp.text
+        assert 'data-target-phone="+7000"' in resp.text
+        assert 'data-initial-target-id=' not in resp.text
+        assert 'name="target_title" value="Target Channel"' not in resp.text
+        assert 'name="target_type" value="channel"' not in resp.text
+        assert "sessionStorage.setItem(storageKey" in resp.text
+        assert "sessionStorage.getItem(storageKey)" in resp.text
+        assert "photo_loader_target:" in resp.text
         assert "Запрос отправлен, ожидаем ответ сервера..." in resp.text
         assert "Target Channel" in resp.text
         assert "Target Group" in resp.text
@@ -503,9 +512,11 @@ async def test_photo_loader_page_without_phone_selects_first_account(tmp_path):
         assert "Photo Loader" in resp.text
         assert 'option value="+7000" selected' in resp.text
         assert "Target +7000" in resp.text
-        assert 'data-initial-target-id="-1001"' in resp.text
-        assert 'name="target_title" value="Target +7000"' in resp.text
-        assert 'name="target_type" value="channel"' in resp.text
+        assert 'data-target-phone="+7000"' in resp.text
+        assert 'data-initial-target-id=' not in resp.text
+        assert 'name="target_title" value="Target +7000"' not in resp.text
+        assert 'name="target_type" value="channel"' not in resp.text
+        assert "Цель не выбрана" in resp.text
 
     assert seen_phones == ["+7000"]
     await db.close()
@@ -773,6 +784,76 @@ async def test_photo_schedule_logs_exception(tmp_path, caplog):
 
 
 @pytest.mark.asyncio
+async def test_photo_schedule_requires_target_selection(tmp_path):
+    app, db = await _build_photo_loader_app(tmp_path)
+    app.state.photo_task_service = SimpleNamespace(
+        schedule_send=AsyncMock(),
+    )
+
+    transport = ASGITransport(app=app)
+    auth_header = base64.b64encode(b":testpass").decode()
+    async with AsyncClient(
+        transport=transport,
+        base_url="http://test",
+        headers={"Authorization": f"Basic {auth_header}"},
+    ) as client:
+        resp = await client.post(
+            "/my-telegram/photos/schedule",
+            data={
+                "phone": "+7000",
+                "target_dialog_id": "",
+                "target_title": "",
+                "target_type": "",
+                "send_mode": "separate",
+                "caption": "caption",
+                "schedule_at": "2026-03-11T18:30:00+00:00",
+            },
+            files={"photos": ("one.jpg", b"x", "image/jpeg")},
+            follow_redirects=False,
+        )
+
+    assert resp.status_code == 303
+    assert "error=photo_target_required" in resp.headers["location"]
+    app.state.photo_task_service.schedule_send.assert_not_awaited()
+    await db.close()
+
+
+@pytest.mark.asyncio
+async def test_photo_schedule_rejects_unknown_target(tmp_path):
+    app, db = await _build_photo_loader_app(tmp_path)
+    app.state.photo_task_service = SimpleNamespace(
+        schedule_send=AsyncMock(),
+    )
+
+    transport = ASGITransport(app=app)
+    auth_header = base64.b64encode(b":testpass").decode()
+    async with AsyncClient(
+        transport=transport,
+        base_url="http://test",
+        headers={"Authorization": f"Basic {auth_header}"},
+    ) as client:
+        resp = await client.post(
+            "/my-telegram/photos/schedule",
+            data={
+                "phone": "+7000",
+                "target_dialog_id": "9999",
+                "target_title": "Ghost",
+                "target_type": "channel",
+                "send_mode": "separate",
+                "caption": "caption",
+                "schedule_at": "2026-03-11T18:30:00+00:00",
+            },
+            files={"photos": ("one.jpg", b"x", "image/jpeg")},
+            follow_redirects=False,
+        )
+
+    assert resp.status_code == 303
+    assert "error=photo_target_invalid" in resp.headers["location"]
+    app.state.photo_task_service.schedule_send.assert_not_awaited()
+    await db.close()
+
+
+@pytest.mark.asyncio
 async def test_photo_send_logs_exception(tmp_path, caplog):
     app, db = await _build_photo_loader_app(tmp_path)
     app.state.photo_task_service = SimpleNamespace(
@@ -804,6 +885,40 @@ async def test_photo_send_logs_exception(tmp_path, caplog):
     assert resp.status_code == 303
     assert "error=photo_send_failed" in resp.headers["location"]
     assert "Photo send failed" in caplog.text
+    await db.close()
+
+
+@pytest.mark.asyncio
+async def test_photo_send_requires_target_selection(tmp_path):
+    app, db = await _build_photo_loader_app(tmp_path)
+    app.state.photo_task_service = SimpleNamespace(
+        send_now=AsyncMock(),
+    )
+
+    transport = ASGITransport(app=app)
+    auth_header = base64.b64encode(b":testpass").decode()
+    async with AsyncClient(
+        transport=transport,
+        base_url="http://test",
+        headers={"Authorization": f"Basic {auth_header}"},
+    ) as client:
+        resp = await client.post(
+            "/my-telegram/photos/send",
+            data={
+                "phone": "+7000",
+                "target_dialog_id": "",
+                "target_title": "",
+                "target_type": "",
+                "send_mode": "separate",
+                "caption": "caption",
+            },
+            files={"photos": ("one.jpg", b"x", "image/jpeg")},
+            follow_redirects=False,
+        )
+
+    assert resp.status_code == 303
+    assert "error=photo_target_required" in resp.headers["location"]
+    app.state.photo_task_service.send_now.assert_not_awaited()
     await db.close()
 
 
@@ -842,6 +957,39 @@ async def test_photo_batch_logs_exception(tmp_path, caplog):
 
 
 @pytest.mark.asyncio
+async def test_photo_batch_rejects_unknown_target(tmp_path):
+    app, db = await _build_photo_loader_app(tmp_path)
+    app.state.photo_task_service = SimpleNamespace(
+        create_batch=AsyncMock(),
+    )
+
+    transport = ASGITransport(app=app)
+    auth_header = base64.b64encode(b":testpass").decode()
+    async with AsyncClient(
+        transport=transport,
+        base_url="http://test",
+        headers={"Authorization": f"Basic {auth_header}"},
+    ) as client:
+        resp = await client.post(
+            "/my-telegram/photos/batch",
+            data={
+                "phone": "+7000",
+                "target_dialog_id": "9999",
+                "target_title": "Ghost",
+                "target_type": "channel",
+                "caption": "caption",
+                "manifest_text": '[{"files":["/tmp/a.jpg"],"at":"2026-03-11T18:30:00+00:00"}]',
+            },
+            follow_redirects=False,
+        )
+
+    assert resp.status_code == 303
+    assert "error=photo_target_invalid" in resp.headers["location"]
+    app.state.photo_task_service.create_batch.assert_not_awaited()
+    await db.close()
+
+
+@pytest.mark.asyncio
 async def test_photo_auto_logs_exception(tmp_path, caplog):
     app, db = await _build_photo_loader_app(tmp_path)
     app.state.photo_auto_upload_service = SimpleNamespace(
@@ -874,6 +1022,41 @@ async def test_photo_auto_logs_exception(tmp_path, caplog):
     assert resp.status_code == 303
     assert "error=photo_auto_failed" in resp.headers["location"]
     assert "Photo auto job creation failed" in caplog.text
+    await db.close()
+
+
+@pytest.mark.asyncio
+async def test_photo_auto_requires_target_selection(tmp_path):
+    app, db = await _build_photo_loader_app(tmp_path)
+    app.state.photo_auto_upload_service = SimpleNamespace(
+        create_job=AsyncMock(),
+    )
+
+    transport = ASGITransport(app=app)
+    auth_header = base64.b64encode(b":testpass").decode()
+    async with AsyncClient(
+        transport=transport,
+        base_url="http://test",
+        headers={"Authorization": f"Basic {auth_header}"},
+    ) as client:
+        resp = await client.post(
+            "/my-telegram/photos/auto",
+            data={
+                "phone": "+7000",
+                "target_dialog_id": "",
+                "target_title": "",
+                "target_type": "",
+                "folder_path": "/tmp/photos",
+                "send_mode": "separate",
+                "caption": "caption",
+                "interval_minutes": "30",
+            },
+            follow_redirects=False,
+        )
+
+    assert resp.status_code == 303
+    assert "error=photo_target_required" in resp.headers["location"]
+    app.state.photo_auto_upload_service.create_job.assert_not_awaited()
     await db.close()
 
 
