@@ -16,7 +16,12 @@ def run_stop(args: argparse.Namespace) -> None:
         print(str(exc))
         sys.exit(1)
     print(message)
-    if not stopped and not message.startswith("Removed stale PID file") and "not running" not in message:
+    can_continue = (
+        stopped
+        or message.startswith("Removed stale PID file")
+        or "not running" in message
+    )
+    if not can_continue:
         sys.exit(1)
 
 
@@ -28,6 +33,11 @@ def run_restart(args: argparse.Namespace) -> None:
         print(str(exc))
         sys.exit(1)
     print(message)
-    if not stopped and not message.startswith("Removed stale PID file") and "not running" not in message:
+    can_continue = (
+        stopped
+        or message.startswith("Removed stale PID file")
+        or "not running" in message
+    )
+    if not can_continue:
         sys.exit(1)
     serve.run(args)

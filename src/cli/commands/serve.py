@@ -6,7 +6,11 @@ import sys
 
 import uvicorn
 
-from src.cli.process_control import pid_file_path, register_current_process, unregister_current_process
+from src.cli.process_control import (
+    pid_file_path,
+    register_current_process,
+    unregister_current_process,
+)
 from src.config import load_config
 from src.web.app import create_app
 

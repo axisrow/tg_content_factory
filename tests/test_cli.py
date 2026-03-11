@@ -349,7 +349,10 @@ class TestCLIServerControl:
     def test_stop_command(self, capsys):
         from src.cli.commands.server_control import run_stop
 
-        with patch("src.cli.commands.server_control.stop_server", return_value=(True, "Server stopped (PID 123).")):
+        with patch(
+            "src.cli.commands.server_control.stop_server",
+            return_value=(True, "Server stopped (PID 123)."),
+        ):
             run_stop(_ns(command="stop"))
 
         out = capsys.readouterr().out
