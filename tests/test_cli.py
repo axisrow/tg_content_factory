@@ -392,6 +392,20 @@ class TestCLIServerControl:
             with pytest.raises(SystemExit, match="1"):
                 run_stop(_ns(command="stop"))
 
+    def test_stop_command_exits_for_timeout(self):
+        from src.cli.commands.server_control import run_stop
+        from src.cli.process_control import StopOutcome, StopResult
+
+        with patch(
+            "src.cli.commands.server_control.stop_server",
+            return_value=StopOutcome(
+                StopResult.TIMEOUT,
+                "Timed out waiting for server PID 321 to stop.",
+            ),
+        ):
+            with pytest.raises(SystemExit, match="1"):
+                run_stop(_ns(command="stop"))
+
     def test_restart_command_starts_serve_after_stop(self, capsys):
         from src.cli.commands.server_control import run_restart
         from src.cli.process_control import StopOutcome, StopResult
@@ -429,6 +443,42 @@ class TestCLIServerControl:
         out = capsys.readouterr().out
         assert "not running" in out
         mock_serve_run.assert_called_once_with(args)
+
+    def test_restart_command_exits_for_timeout(self):
+        from src.cli.commands.server_control import run_restart
+        from src.cli.process_control import StopOutcome, StopResult
+
+        with patch(
+            "src.cli.commands.server_control.stop_server",
+            return_value=StopOutcome(
+                StopResult.TIMEOUT,
+                "Timed out waiting for server PID 321 to stop.",
+            ),
+        ):
+            with pytest.raises(SystemExit, match="1"):
+                run_restart(_ns(command="restart", web_pass=None))
+
+    def test_stop_command_exits_for_process_control_error(self):
+        from src.cli.commands.server_control import run_stop
+        from src.cli.process_control import ProcessControlError
+
+        with patch(
+            "src.cli.commands.server_control.stop_server",
+            side_effect=ProcessControlError("broken pid file"),
+        ):
+            with pytest.raises(SystemExit, match="1"):
+                run_stop(_ns(command="stop"))
+
+    def test_restart_command_exits_for_process_control_error(self):
+        from src.cli.commands.server_control import run_restart
+        from src.cli.process_control import ProcessControlError
+
+        with patch(
+            "src.cli.commands.server_control.stop_server",
+            side_effect=ProcessControlError("broken pid file"),
+        ):
+            with pytest.raises(SystemExit, match="1"):
+                run_restart(_ns(command="restart", web_pass=None))
 
     def test_parser_stop_and_restart(self):
         from src.cli.parser import build_parser
