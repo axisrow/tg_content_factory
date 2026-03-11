@@ -244,7 +244,7 @@ async def test_search_with_query(client):
 
 @pytest.mark.asyncio
 async def test_search_with_invalid_channel_id_returns_error(client):
-    resp = await client.get("/?q=test&mode=channel&channel_id=abc")
+    resp = await client.get("/search?q=test&mode=channel&channel_id=abc")
     assert resp.status_code == 200
     assert "Некорректный ID канала: abc" in resp.text
 
@@ -262,7 +262,7 @@ async def test_search_runtime_error_is_rendered(client, monkeypatch):
 
     monkeypatch.setattr(deps, "search_service", lambda request: BrokenSearchService())
 
-    resp = await client.get("/?q=test&mode=telegram")
+    resp = await client.get("/search?q=test&mode=telegram")
 
     assert resp.status_code == 200
     assert "Ошибка поиска: boom" in resp.text
@@ -319,7 +319,7 @@ async def test_health_no_auth(unauth_client):
 
 @pytest.mark.asyncio
 async def test_basic_auth_sets_cookie(client):
-    resp = await client.get("/", follow_redirects=False)
+    resp = await client.get("/dashboard/", follow_redirects=False)
     assert resp.status_code == 200
     assert COOKIE_NAME in resp.cookies
 
@@ -333,8 +333,15 @@ async def test_cookie_auth_without_basic(client):
         base_url="http://test",
         cookies={COOKIE_NAME: token},
     ) as c:
-        resp = await c.get("/")
+        resp = await c.get("/dashboard/")
         assert resp.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_root_redirects_to_agent(client):
+    resp = await client.get("/", follow_redirects=False)
+    assert resp.status_code == 303
+    assert resp.headers["location"] == "/agent"
 
 
 @pytest.mark.asyncio
@@ -423,7 +430,7 @@ async def test_logout_clears_cookie_and_redirects_to_login(client):
 
 @pytest.mark.asyncio
 async def test_cookie_not_secure_on_http(client):
-    resp = await client.get("/", follow_redirects=False)
+    resp = await client.get("/dashboard/", follow_redirects=False)
     cookie_header = resp.headers.get("set-cookie", "")
     assert "Secure" not in cookie_header
 
@@ -1157,7 +1164,7 @@ async def test_search_results_have_tg_links(client):
     )
     await db.insert_message(msg)
 
-    resp = await client.get("/?q=Hello&mode=local")
+    resp = await client.get("/search?q=Hello&mode=local")
     assert resp.status_code == 200
     assert "t.me/testchan/42" in resp.text
     assert "&#8599;" in resp.text
@@ -1179,7 +1186,7 @@ async def test_search_results_private_channel_link(client):
     )
     await db.insert_message(msg)
 
-    resp = await client.get("/?q=Secret&mode=local")
+    resp = await client.get("/search?q=Secret&mode=local")
     assert resp.status_code == 200
     assert "t.me/c/-100999/7" in resp.text
 

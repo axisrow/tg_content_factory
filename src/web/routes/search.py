@@ -10,6 +10,11 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
+@router.get("/", response_class=HTMLResponse)
+async def root_page():
+    return RedirectResponse(url="/agent", status_code=303)
+
+
 async def _render_search_page(
     request: Request,
     q: str,
@@ -106,7 +111,6 @@ async def _render_search_page(
     )
 
 
-@router.get("/", response_class=HTMLResponse)
 @router.get("/search", response_class=HTMLResponse)
 async def search_page(
     request: Request,

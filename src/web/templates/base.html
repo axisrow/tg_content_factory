@@ -144,11 +144,18 @@
     // Active nav highlight
     var path = window.location.pathname;
     var links = document.querySelectorAll("#mainNav .nav-link");
+    function isActiveLink(path, href) {
+        if (href === "/") {
+            return path === "/";
+        }
+        if (path === href) {
+            return true;
+        }
+        return path.startsWith(href + "/");
+    }
     links.forEach(function(a) {
         var href = a.getAttribute("href");
-        if (href === "/" && path === "/") {
-            a.classList.add("active");
-        } else if (href !== "/" && path.startsWith(href)) {
+        if (isActiveLink(path, href)) {
             a.classList.add("active");
         }
     });
