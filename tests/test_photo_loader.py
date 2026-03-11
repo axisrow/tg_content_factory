@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import base64
+import logging
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -28,6 +29,52 @@ from src.services.photo_publish_service import PhotoPublishService
 from src.services.photo_task_service import PhotoTarget, PhotoTaskService
 from src.telegram.collector import Collector
 from src.web.app import create_app
+
+
+async def _build_photo_loader_app(tmp_path):
+    config = AppConfig()
+    config.database.path = str(tmp_path / "test.db")
+    config.telegram.api_id = 12345
+    config.telegram.api_hash = "hash"
+    config.web.password = "testpass"
+    app = create_app(config)
+
+    db = Database(config.database.path)
+    await db.initialize()
+    app.state.db = db
+
+    mock_client = MagicMock()
+
+    async def _get_dialogs_for_phone(self, phone, include_dm=False, mode="full", refresh=False):
+        return [{"channel_id": -1001, "title": "Target Channel", "channel_type": "channel"}]
+
+    async def _get_client_by_phone(self, phone):
+        return mock_client, phone
+
+    async def _release_client(self, phone):
+        return None
+
+    app.state.pool = type(
+        "Pool",
+        (),
+        {
+            "clients": {"+7000": mock_client},
+            "get_dialogs_for_phone": _get_dialogs_for_phone,
+            "get_client_by_phone": _get_client_by_phone,
+            "release_client": _release_client,
+        },
+    )()
+    from src.telegram.auth import TelegramAuth
+
+    app.state.auth = TelegramAuth(12345, "hash")
+    app.state.collector = Collector(app.state.pool, db, config.scheduler)
+    app.state.search_engine = MagicMock()
+    app.state.ai_search = MagicMock()
+    app.state.scheduler = SchedulerManager(app.state.collector, config.scheduler)
+    app.state.session_secret = "secret"
+    await db.add_account(Account(phone="+7000", session_string="s"))
+
+    return app, db
 
 
 @pytest.mark.asyncio
@@ -687,3 +734,174 @@ def test_photo_loader_cli_send_command(tmp_path, capsys):
         )
     assert "Sent photo item" in capsys.readouterr().out
     asyncio.run(db.close())
+
+
+@pytest.mark.asyncio
+async def test_photo_schedule_logs_exception(tmp_path, caplog):
+    app, db = await _build_photo_loader_app(tmp_path)
+    app.state.photo_task_service = SimpleNamespace(
+        schedule_send=AsyncMock(side_effect=RuntimeError("boom")),
+    )
+
+    transport = ASGITransport(app=app)
+    auth_header = base64.b64encode(b":testpass").decode()
+    async with AsyncClient(
+        transport=transport,
+        base_url="http://test",
+        headers={"Authorization": f"Basic {auth_header}"},
+    ) as client:
+        with caplog.at_level(logging.ERROR, logger="src.web.routes.photo_loader"):
+            resp = await client.post(
+                "/my-telegram/photos/schedule",
+                data={
+                    "phone": "+7000",
+                    "target_dialog_id": "-1001",
+                    "target_title": "Target Channel",
+                    "target_type": "channel",
+                    "send_mode": "separate",
+                    "caption": "caption",
+                    "schedule_at": "2026-03-11T18:30:00+00:00",
+                },
+                files={"photos": ("one.jpg", b"x", "image/jpeg")},
+                follow_redirects=False,
+            )
+
+    assert resp.status_code == 303
+    assert "error=photo_schedule_failed" in resp.headers["location"]
+    assert "Photo schedule failed" in caplog.text
+    await db.close()
+
+
+@pytest.mark.asyncio
+async def test_photo_send_logs_exception(tmp_path, caplog):
+    app, db = await _build_photo_loader_app(tmp_path)
+    app.state.photo_task_service = SimpleNamespace(
+        send_now=AsyncMock(side_effect=RuntimeError("boom")),
+    )
+
+    transport = ASGITransport(app=app)
+    auth_header = base64.b64encode(b":testpass").decode()
+    async with AsyncClient(
+        transport=transport,
+        base_url="http://test",
+        headers={"Authorization": f"Basic {auth_header}"},
+    ) as client:
+        with caplog.at_level(logging.ERROR, logger="src.web.routes.photo_loader"):
+            resp = await client.post(
+                "/my-telegram/photos/send",
+                data={
+                    "phone": "+7000",
+                    "target_dialog_id": "-1001",
+                    "target_title": "Target Channel",
+                    "target_type": "channel",
+                    "send_mode": "separate",
+                    "caption": "caption",
+                },
+                files={"photos": ("one.jpg", b"x", "image/jpeg")},
+                follow_redirects=False,
+            )
+
+    assert resp.status_code == 303
+    assert "error=photo_send_failed" in resp.headers["location"]
+    assert "Photo send failed" in caplog.text
+    await db.close()
+
+
+@pytest.mark.asyncio
+async def test_photo_batch_logs_exception(tmp_path, caplog):
+    app, db = await _build_photo_loader_app(tmp_path)
+    app.state.photo_task_service = SimpleNamespace(
+        create_batch=AsyncMock(side_effect=RuntimeError("boom")),
+    )
+
+    transport = ASGITransport(app=app)
+    auth_header = base64.b64encode(b":testpass").decode()
+    async with AsyncClient(
+        transport=transport,
+        base_url="http://test",
+        headers={"Authorization": f"Basic {auth_header}"},
+    ) as client:
+        with caplog.at_level(logging.ERROR, logger="src.web.routes.photo_loader"):
+            resp = await client.post(
+                "/my-telegram/photos/batch",
+                data={
+                    "phone": "+7000",
+                    "target_dialog_id": "-1001",
+                    "target_title": "Target Channel",
+                    "target_type": "channel",
+                    "caption": "caption",
+                    "manifest_text": '[{"files":["/tmp/a.jpg"],"at":"2026-03-11T18:30:00+00:00"}]',
+                },
+                follow_redirects=False,
+            )
+
+    assert resp.status_code == 303
+    assert "error=photo_batch_failed" in resp.headers["location"]
+    assert "Photo batch creation failed" in caplog.text
+    await db.close()
+
+
+@pytest.mark.asyncio
+async def test_photo_auto_logs_exception(tmp_path, caplog):
+    app, db = await _build_photo_loader_app(tmp_path)
+    app.state.photo_auto_upload_service = SimpleNamespace(
+        create_job=AsyncMock(side_effect=RuntimeError("boom")),
+    )
+
+    transport = ASGITransport(app=app)
+    auth_header = base64.b64encode(b":testpass").decode()
+    async with AsyncClient(
+        transport=transport,
+        base_url="http://test",
+        headers={"Authorization": f"Basic {auth_header}"},
+    ) as client:
+        with caplog.at_level(logging.ERROR, logger="src.web.routes.photo_loader"):
+            resp = await client.post(
+                "/my-telegram/photos/auto",
+                data={
+                    "phone": "+7000",
+                    "target_dialog_id": "-1001",
+                    "target_title": "Target Channel",
+                    "target_type": "channel",
+                    "folder_path": "/tmp/photos",
+                    "send_mode": "separate",
+                    "caption": "caption",
+                    "interval_minutes": "30",
+                },
+                follow_redirects=False,
+            )
+
+    assert resp.status_code == 303
+    assert "error=photo_auto_failed" in resp.headers["location"]
+    assert "Photo auto job creation failed" in caplog.text
+    await db.close()
+
+
+@pytest.mark.asyncio
+async def test_photo_run_due_logs_exception(tmp_path, caplog):
+    app, db = await _build_photo_loader_app(tmp_path)
+    app.state.photo_task_service = SimpleNamespace(
+        run_due=AsyncMock(side_effect=RuntimeError("boom")),
+    )
+    app.state.photo_auto_upload_service = SimpleNamespace(
+        run_due=AsyncMock(return_value=0),
+    )
+
+    transport = ASGITransport(app=app)
+    auth_header = base64.b64encode(b":testpass").decode()
+    async with AsyncClient(
+        transport=transport,
+        base_url="http://test",
+        headers={"Authorization": f"Basic {auth_header}"},
+    ) as client:
+        with caplog.at_level(logging.ERROR, logger="src.web.routes.photo_loader"):
+            resp = await client.post(
+                "/my-telegram/photos/run-due",
+                data={"phone": "+7000"},
+                follow_redirects=False,
+            )
+
+    assert resp.status_code == 303
+    assert "error=photo_run_due_failed" in resp.headers["location"]
+    assert "Photo run_due failed" in caplog.text
+    await db.close()

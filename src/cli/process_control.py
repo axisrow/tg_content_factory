@@ -129,6 +129,7 @@ def unregister_current_process(path: Path) -> None:
         if pid == os.getpid():
             remove_pid_file(path)
     except Exception:
+        # PID cleanup must never block shutdown; stale/unreadable files are safe to ignore.
         pass
 
 

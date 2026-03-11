@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -14,6 +15,7 @@ from src.services.photo_task_service import PhotoTarget
 from src.web import deps
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 UPLOAD_ROOT = Path("data/photo_uploads")
 
@@ -258,6 +260,16 @@ async def photo_send(
             caption=caption or None,
         )
     except Exception:
+        logger.exception(
+            "Photo send failed: phone=%s target_dialog_id=%s target_title=%r "
+            "target_type=%r send_mode=%s files=%d",
+            phone,
+            target_dialog_id,
+            target.title,
+            target.target_type,
+            send_mode,
+            len(saved),
+        )
         return _redirect(phone, "photo_send_failed", error=True)
     return _redirect(phone, "photo_sent")
 
@@ -281,15 +293,27 @@ async def photo_schedule(
     )
     saved = await _persist_uploads(photos, f"scheduled_{uuid.uuid4().hex}")
     try:
+        parsed_schedule_at = _parse_schedule_at(schedule_at)
         await deps.get_photo_task_service(request).schedule_send(
             phone=phone,
             target=target,
             file_paths=saved,
             mode=send_mode,
-            schedule_at=_parse_schedule_at(schedule_at),
+            schedule_at=parsed_schedule_at,
             caption=caption or None,
         )
     except Exception:
+        logger.exception(
+            "Photo schedule failed: phone=%s target_dialog_id=%s target_title=%r "
+            "target_type=%r send_mode=%s files=%d schedule_at=%r",
+            phone,
+            target_dialog_id,
+            target.title,
+            target.target_type,
+            send_mode,
+            len(saved),
+            schedule_at,
+        )
         return _redirect(phone, "photo_schedule_failed", error=True)
     return _redirect(phone, "photo_scheduled")
 
@@ -318,6 +342,16 @@ async def photo_batch(
             caption=caption or None,
         )
     except Exception:
+        manifest_size = len(manifest) if isinstance(locals().get("manifest"), list) else None
+        logger.exception(
+            "Photo batch creation failed: phone=%s target_dialog_id=%s target_title=%r "
+            "target_type=%r manifest_entries=%s",
+            phone,
+            target_dialog_id,
+            target.title,
+            target.target_type,
+            manifest_size,
+        )
         return _redirect(phone, "photo_batch_failed", error=True)
     return _redirect(phone, "photo_batch_created")
 
@@ -349,6 +383,17 @@ async def photo_auto_create(
             )
         )
     except Exception:
+        logger.exception(
+            "Photo auto job creation failed: phone=%s target_dialog_id=%s target_title=%r "
+            "target_type=%r folder_path=%r send_mode=%s interval_minutes=%s",
+            phone,
+            target_dialog_id,
+            target_title or None,
+            target_type or None,
+            folder_path,
+            send_mode,
+            interval_minutes,
+        )
         return _redirect(phone, "photo_auto_failed", error=True)
     return _redirect(phone, "photo_auto_created")
 
@@ -359,6 +404,7 @@ async def photo_run_due(request: Request, phone: str = Form("")):
         await deps.get_photo_task_service(request).run_due()
         await deps.get_photo_auto_upload_service(request).run_due()
     except Exception:
+        logger.exception("Photo run_due failed: phone=%s", phone)
         return _redirect(phone, "photo_run_due_failed", error=True)
     return _redirect(phone, "photo_run_due_ok")
 

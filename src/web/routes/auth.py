@@ -78,6 +78,7 @@ async def send_code(request: Request, phone: str = Form(...)):
             },
         )
     except Exception as e:
+        logger.exception("Failed to send auth code for phone=%s", phone)
         return _render(
             request,
             "login.html",
@@ -109,6 +110,7 @@ async def resend_code(
             },
         )
     except Exception as e:
+        logger.exception("Failed to resend auth code for phone=%s", phone)
         return _render(
             request,
             "login.html",
@@ -196,6 +198,7 @@ async def verify_code(
             },
         )
     except Exception as e:
+        logger.exception("Failed to verify auth code for phone=%s", phone)
         return _render(
             request,
             "login.html",
