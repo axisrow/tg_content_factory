@@ -14,6 +14,8 @@ from src.web.paths import STATIC_DIR, TEMPLATES_DIR
 from src.web.session import COOKIE_NAME
 from src.web.template_globals import configure_template_globals
 
+logger = logging.getLogger(__name__)
+
 
 def configure_app(app: FastAPI, container: AppContainer | None) -> None:
     if container is not None:
@@ -60,6 +62,7 @@ def register_builtin_endpoints(app: FastAPI) -> None:
             await container.db.execute("SELECT 1")
             db_ok = True
         except Exception:
+            logger.warning("Health check DB probe failed", exc_info=True)
             pass
         accounts_connected = len(container.pool.clients)
         status = "healthy" if db_ok else "degraded"

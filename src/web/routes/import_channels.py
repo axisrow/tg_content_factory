@@ -59,6 +59,10 @@ async def import_channels(
             info = await pool.resolve_channel(ident.strip())
         except RuntimeError as exc:
             if str(exc) == "no_client":
+                logger.warning(
+                    "Bulk import stopped: no Telegram client available at identifier=%r",
+                    ident,
+                )
                 no_client = True
                 for remaining in identifiers[identifiers.index(ident):]:
                     details.append({
@@ -71,7 +75,7 @@ async def import_channels(
             logger.warning("Failed to resolve '%s': %s", ident, exc)
             info = None
         except Exception as exc:
-            logger.warning("Failed to resolve '%s': %s", ident, exc)
+            logger.exception("Unexpected error resolving %r during bulk import", ident)
             info = None
 
         if no_client:

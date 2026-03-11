@@ -1,4 +1,5 @@
 import base64
+import logging
 import re
 import tomllib
 from pathlib import Path
@@ -114,6 +115,21 @@ async def test_health_endpoint(client):
     assert data["status"] in ("healthy", "degraded")
     assert "db" in data
     assert "accounts_connected" in data
+
+
+@pytest.mark.asyncio
+async def test_health_endpoint_logs_db_probe_failure(client, monkeypatch, caplog):
+    async def _broken_execute(query):
+        raise RuntimeError("db unavailable")
+
+    monkeypatch.setattr(client._transport.app.state.db, "execute", _broken_execute)
+
+    with caplog.at_level(logging.WARNING, logger="src.web.assembly"):
+        resp = await client.get("/health")
+
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "degraded"
+    assert "Health check DB probe failed" in caplog.text
 
 
 @pytest.mark.asyncio
@@ -552,6 +568,57 @@ async def test_resolve_channel_success(client):
     resp = await client.post("/channels/add", data={"identifier": "@testchan"})
     assert resp.status_code == 200
     assert "Resolved Channel" in resp.text
+
+
+@pytest.mark.asyncio
+async def test_channels_add_logs_unexpected_error(client, monkeypatch, caplog):
+    monkeypatch.setattr(
+        client._transport.app.state.pool,
+        "resolve_channel",
+        AsyncMock(side_effect=RuntimeError("boom")),
+    )
+
+    with caplog.at_level(logging.ERROR, logger="src.web.routes.channels"):
+        resp = await client.post(
+            "/channels/add",
+            data={"identifier": "@broken"},
+            follow_redirects=False,
+        )
+
+    assert resp.status_code == 303
+    assert resp.headers["location"] == "/channels?error=resolve"
+    assert "Channel add runtime failure" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_auth_send_code_logs_exception(client, monkeypatch, caplog):
+    monkeypatch.setattr(
+        client._transport.app.state.auth,
+        "send_code",
+        AsyncMock(side_effect=RuntimeError("boom")),
+    )
+
+    with caplog.at_level(logging.ERROR, logger="src.web.routes.auth"):
+        resp = await client.post("/auth/send-code", data={"phone": "+7000"})
+
+    assert resp.status_code == 200
+    assert "boom" in resp.text
+    assert "Failed to send auth code for phone=+7000" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_notification_setup_logs_exception(client, monkeypatch, caplog):
+    from src.web.routes import settings as settings_routes
+
+    fake_service = SimpleNamespace(setup_bot=AsyncMock(side_effect=ValueError("boom")))
+    monkeypatch.setattr(settings_routes, "_notification_service", lambda request: fake_service)
+
+    with caplog.at_level(logging.ERROR, logger="src.web.routes.settings"):
+        resp = await client.post("/settings/notifications/setup", follow_redirects=False)
+
+    assert resp.status_code == 303
+    assert resp.headers["location"] == "/settings?error=notification_action_failed"
+    assert "Notification setup failed" in caplog.text
 
 
 @pytest.mark.asyncio

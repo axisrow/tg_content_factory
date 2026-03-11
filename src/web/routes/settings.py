@@ -67,6 +67,7 @@ async def settings_page(request: Request):
             notification_bot = await _notification_service(request).get_status()
         except RuntimeError as exc:
             notification_bot_error = str(exc)
+            logger.warning("Failed to load notification bot status: %s", exc)
     return deps.get_templates(request).TemplateResponse(
         request,
         "settings.html",
@@ -184,6 +185,7 @@ async def setup_notification_bot(request: Request):
             status_code=303,
         )
     except Exception as exc:
+        logger.exception("Notification setup failed")
         if _wants_json(request):
             return JSONResponse({"error": str(exc)}, status_code=500)
         return RedirectResponse(url="/settings?error=notification_action_failed", status_code=303)
@@ -224,6 +226,7 @@ async def delete_notification_bot(request: Request):
             error_code = "notification_account_unavailable"
         return RedirectResponse(url=f"/settings?error={error_code}", status_code=303)
     except Exception as exc:
+        logger.exception("Notification bot deletion failed")
         if _wants_json(request):
             return JSONResponse({"error": str(exc)}, status_code=500)
         return RedirectResponse(url="/settings?error=notification_action_failed", status_code=303)

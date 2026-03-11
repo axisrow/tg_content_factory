@@ -61,6 +61,11 @@ class MessagesRepository:
             await self._db.commit()
             return cur.rowcount > 0
         except Exception:
+            logger.exception(
+                "Failed to insert message channel_id=%s message_id=%s",
+                msg.channel_id,
+                msg.message_id,
+            )
             return False
 
     async def insert_messages_batch(self, messages: list[Message]) -> int:

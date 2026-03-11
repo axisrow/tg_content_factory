@@ -49,6 +49,7 @@ class BasicAuthMiddleware(BaseHTTPMiddleware):
             try:
                 decoded = base64.b64decode(auth[6:]).decode()
             except Exception:
+                # Invalid Basic auth should degrade to anonymous flow, not fail the request.
                 decoded = ""
             _, _, pwd = decoded.partition(":")
             if secrets.compare_digest(pwd, self.password):

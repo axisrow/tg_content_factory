@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -7,6 +8,8 @@ from src.database.bundles import PhotoLoaderBundle
 from src.models import PhotoAutoUploadJob, PhotoSendMode
 from src.services.photo_publish_service import PhotoPublishService
 from src.services.photo_task_service import IMAGE_EXTENSIONS
+
+logger = logging.getLogger(__name__)
 
 
 class PhotoAutoUploadService:
@@ -90,6 +93,15 @@ class PhotoAutoUploadService:
             )
             return len(files)
         except Exception as exc:
+            logger.exception(
+                "Photo auto upload run failed: job_id=%s phone=%s target_dialog_id=%s "
+                "folder_path=%r files=%d",
+                job.id,
+                job.phone,
+                job.target_dialog_id,
+                job.folder_path,
+                len(files),
+            )
             await self._bundle.update_auto_job(job.id or 0, error=str(exc), last_run_at=now)
             raise
 

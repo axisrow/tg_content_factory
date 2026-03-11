@@ -39,9 +39,12 @@ async def add_channel(request: Request, identifier: str = Form(...)):
         ok = await service.add_by_identifier(identifier)
     except RuntimeError as exc:
         if str(exc) == "no_client":
+            logger.warning("Channel add failed: no client for identifier=%r", identifier)
             return RedirectResponse(url="/channels?error=no_client", status_code=303)
+        logger.exception("Channel add runtime failure: identifier=%r", identifier)
         ok = False
     except Exception:
+        logger.exception("Channel add failed: identifier=%r", identifier)
         ok = False
 
     if not ok:
