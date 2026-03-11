@@ -347,6 +347,28 @@ async def run_migrations(db: aiosqlite.Connection) -> None:
         )
         """
     )
+    await db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS dialog_cache (
+            id INTEGER PRIMARY KEY,
+            phone TEXT NOT NULL,
+            dialog_id INTEGER NOT NULL,
+            title TEXT,
+            username TEXT,
+            channel_type TEXT NOT NULL,
+            deactivate INTEGER NOT NULL DEFAULT 0,
+            is_own INTEGER NOT NULL DEFAULT 0,
+            cached_at TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(phone, dialog_id)
+        )
+        """
+    )
+    await db.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_dialog_cache_phone
+        ON dialog_cache(phone)
+        """
+    )
     await db.commit()
 
     cur = await db.execute("SELECT value FROM settings WHERE key = 'fts5_initialized'")

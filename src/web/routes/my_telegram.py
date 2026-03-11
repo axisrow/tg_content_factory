@@ -25,8 +25,12 @@ async def my_telegram_page(
     accounts = sorted(pool.clients.keys())
     selected_phone = phone if phone in pool.clients else None
     dialogs = []
+    dialogs_cached_at = None
     if selected_phone:
         dialogs = await deps.channel_service(request).get_my_dialogs(selected_phone)
+        dialogs_cached_at = await deps.get_db(request).repos.dialog_cache.get_cached_at(
+            selected_phone
+        )
     elapsed_ms = int((time.perf_counter() - started_at) * 1000)
     logger.info(
         "my_telegram_page: phone=%s accounts=%d dialogs=%d duration_ms=%d",
@@ -40,6 +44,7 @@ async def my_telegram_page(
             "accounts": accounts,
             "selected_phone": selected_phone,
             "dialogs": dialogs,
+            "dialogs_cached_at": dialogs_cached_at,
             "left": left,
             "failed": failed,
         }

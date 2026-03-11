@@ -191,8 +191,12 @@ async def photo_loader_page(request: Request, phone: str | None = None):
     msg = request.query_params.get("msg")
     error = request.query_params.get("error")
     dialogs = []
+    dialogs_cached_at = None
     if selected_phone:
         dialogs = await deps.channel_service(request).get_my_dialogs(selected_phone)
+        dialogs_cached_at = await deps.get_db(request).repos.dialog_cache.get_cached_at(
+            selected_phone
+        )
     batches = await deps.get_photo_task_service(request).list_batches(limit=20)
     items = await deps.get_photo_task_service(request).list_items(limit=20)
     auto_jobs = await deps.get_photo_auto_upload_service(request).list_jobs()
@@ -210,6 +214,7 @@ async def photo_loader_page(request: Request, phone: str | None = None):
             "accounts": accounts,
             "selected_phone": selected_phone,
             "dialogs": dialogs,
+            "dialogs_cached_at": dialogs_cached_at,
             "batches": batches,
             "items": items,
             "auto_jobs": auto_jobs,

@@ -232,6 +232,7 @@ async def test_photo_loader_page_renders(tmp_path):
         assert "Автозагрузка из папки" in resp.text
         assert 'action="/my-telegram/photos/refresh"' in resp.text
         assert "Обновить диалоги" in resp.text
+        assert "Используется сохранённый список диалогов" in resp.text
         assert resp.text.count('option value="separate" selected') >= 3
         assert 'data-target-picker' in resp.text
         assert 'data-target-search' in resp.text
