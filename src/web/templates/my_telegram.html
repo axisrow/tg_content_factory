@@ -2,47 +2,28 @@
 {% block title %}Мой Телеграм — TG Agent{% endblock %}
 {% block content %}
 <h1>Мой Телеграм</h1>
-
-<div class="d-flex flex-column flex-md-row align-items-md-start gap-3 mb-4">
-    {% if accounts %}
-    <div class="d-flex flex-column gap-1">
-        <a class="btn btn-outline-primary btn-sm align-self-start" href="/my-telegram/photos{% if selected_phone %}?phone={{ selected_phone|urlencode }}{% endif %}">Открыть Photo Loader</a>
-        <small class="text-muted">Если аккаунт не выбран, откроется первый доступный профиль.</small>
-    </div>
-    {% else %}
-    <div class="d-flex flex-column gap-1">
-        <span class="btn btn-outline-secondary btn-sm disabled" aria-disabled="true">Открыть Photo Loader</span>
-        <small class="text-muted">Сначала добавьте Telegram-аккаунт в настройках.</small>
-    </div>
-    {% endif %}
-
-    {% if accounts %}
-    <div class="mb-0" style="max-width:400px">
-        <label class="form-label">Аккаунт</label>
-        <select name="phone" class="form-select"
-                hx-get="/my-telegram/"
-                hx-include="this"
-                hx-target="body"
-                hx-push-url="true"
-                hx-trigger="change"
-                hx-indicator="#dialogs-loading">
-            <option value="" {% if not selected_phone %}selected{% endif %}>Выберите аккаунт</option>
-            {% for acc in accounts %}
-            <option value="{{ acc }}" {% if acc == selected_phone %}selected{% endif %}>{{ acc }}</option>
-            {% endfor %}
-        </select>
-        <span id="dialogs-loading" class="htmx-indicator d-inline-block mt-2">&#9203; Загрузка диалогов…</span>
-        <form method="post" action="/my-telegram/refresh" class="mt-2">
-            <input type="hidden" name="phone" value="{{ selected_phone or '' }}">
-            <button class="btn btn-outline-secondary btn-sm" type="submit" {% if not selected_phone %}disabled{% endif %}>Обновить диалоги</button>
-        </form>
-    </div>
-    {% endif %}
-</div>
+<p><a class="btn btn-outline-primary btn-sm" href="/my-telegram/photos{% if selected_phone %}?phone={{ selected_phone|urlencode }}{% endif %}">Открыть Photo Loader</a></p>
 
 {% if not accounts %}
 <p>Нет подключённых аккаунтов. Добавьте аккаунт в <a href="/settings">Настройках</a>.</p>
 {% else %}
+
+<div class="mb-4" style="max-width:400px">
+    <label class="form-label">Аккаунт</label>
+    <select name="phone" class="form-select"
+            hx-get="/my-telegram/"
+            hx-include="this"
+            hx-target="body"
+            hx-push-url="true"
+            hx-trigger="change"
+            hx-indicator="#dialogs-loading">
+        <option value="" {% if not selected_phone %}selected{% endif %}>Выберите аккаунт</option>
+        {% for acc in accounts %}
+        <option value="{{ acc }}" {% if acc == selected_phone %}selected{% endif %}>{{ acc }}</option>
+        {% endfor %}
+    </select>
+</div>
+<span id="dialogs-loading" class="htmx-indicator">&#9203; Загрузка диалогов…</span>
 
 {% if left or failed %}
 <p class="mb-3">
