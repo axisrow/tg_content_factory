@@ -111,7 +111,7 @@ def test_stop_server_timeout(tmp_path):
     with patch("src.cli.process_control.is_process_alive", return_value=True):
         with patch("src.cli.process_control.is_expected_server_process", return_value=True):
             with patch("src.cli.process_control.os.kill"):
-                outcome = stop_server(path, timeout_sec=0.0)
+                outcome = stop_server(path, timeout_sec=0.0, kill_timeout_sec=0.0)
 
     assert outcome.result is StopResult.TIMEOUT
     assert "Timed out" in outcome.message
@@ -122,7 +122,7 @@ def test_stop_server_force_kill_removes_pid(tmp_path):
     path = tmp_path / "app.pid"
     path.write_text("123\n", encoding="utf-8")
 
-    alive_states = iter([True, True, False])
+    alive_states = iter([True, False])
 
     with patch(
         "src.cli.process_control.is_process_alive",
@@ -130,7 +130,7 @@ def test_stop_server_force_kill_removes_pid(tmp_path):
     ):
         with patch("src.cli.process_control.is_expected_server_process", return_value=True):
             with patch("src.cli.process_control.os.kill") as mock_kill:
-                outcome = stop_server(path, timeout_sec=0.0)
+                outcome = stop_server(path, timeout_sec=0.0, kill_timeout_sec=0.0)
 
     assert outcome.result is StopResult.STOPPED
     assert "force kill" in outcome.message
