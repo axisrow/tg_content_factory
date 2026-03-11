@@ -237,6 +237,8 @@ async def test_photo_loader_page_renders(tmp_path):
         assert "Target Group" in resp.text
         assert "Target DM" in resp.text
         assert "Target Bot" not in resp.text
+        assert "summary.innerHTML" not in resp.text
+        assert "summary.replaceChildren()" in resp.text
 
     await db.close()
 
