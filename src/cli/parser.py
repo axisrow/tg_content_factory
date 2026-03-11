@@ -180,6 +180,65 @@ def build_parser() -> argparse.ArgumentParser:
 
     agent_sub.add_parser("test-escaping", help="Test agent with special characters")
 
+    photo_parser = sub.add_parser("photo-loader", help="Photo upload automation")
+    photo_sub = photo_parser.add_subparsers(dest="photo_loader_action")
+
+    photo_dialogs = photo_sub.add_parser("dialogs", help="List dialogs for an account")
+    photo_dialogs.add_argument("--phone", required=True, help="Account phone")
+
+    photo_send = photo_sub.add_parser("send", help="Send photos now")
+    photo_send.add_argument("--phone", required=True, help="Account phone")
+    photo_send.add_argument("--target", required=True, help="Dialog id")
+    photo_send.add_argument("--files", nargs="+", required=True, help="Photo file paths")
+    photo_send.add_argument("--mode", choices=["album", "separate"], default="album")
+    photo_send.add_argument("--caption", default=None, help="Caption")
+
+    photo_schedule = photo_sub.add_parser("schedule-send", help="Schedule photo send via Telegram")
+    photo_schedule.add_argument("--phone", required=True, help="Account phone")
+    photo_schedule.add_argument("--target", required=True, help="Dialog id")
+    photo_schedule.add_argument("--files", nargs="+", required=True, help="Photo file paths")
+    photo_schedule.add_argument("--mode", choices=["album", "separate"], default="album")
+    photo_schedule.add_argument("--at", required=True, help="ISO datetime")
+    photo_schedule.add_argument("--caption", default=None, help="Caption")
+
+    photo_batch = photo_sub.add_parser("batch-create", help="Create delayed batch from manifest")
+    photo_batch.add_argument("--phone", required=True, help="Account phone")
+    photo_batch.add_argument("--target", required=True, help="Dialog id")
+    photo_batch.add_argument("--manifest", required=True, help="JSON/YAML manifest path")
+    photo_batch.add_argument("--caption", default=None, help="Default caption")
+
+    photo_sub.add_parser("batch-list", help="List photo batches")
+
+    photo_cancel = photo_sub.add_parser("batch-cancel", help="Cancel a photo batch item")
+    photo_cancel.add_argument("id", type=int, help="Photo item id")
+
+    photo_auto_create = photo_sub.add_parser("auto-create", help="Create auto-upload job")
+    photo_auto_create.add_argument("--phone", required=True, help="Account phone")
+    photo_auto_create.add_argument("--target", required=True, help="Dialog id")
+    photo_auto_create.add_argument("--folder", required=True, help="Folder path")
+    photo_auto_create.add_argument("--interval", type=int, required=True, help="Interval in minutes")
+    photo_auto_create.add_argument("--mode", choices=["album", "separate"], default="album")
+    photo_auto_create.add_argument("--caption", default=None, help="Caption")
+
+    photo_sub.add_parser("auto-list", help="List auto-upload jobs")
+
+    photo_auto_update = photo_sub.add_parser("auto-update", help="Update auto-upload job")
+    photo_auto_update.add_argument("id", type=int, help="Job id")
+    photo_auto_update.add_argument("--folder", default=None, help="Folder path")
+    photo_auto_update.add_argument("--interval", type=int, default=None, help="Interval in minutes")
+    photo_auto_update.add_argument("--mode", choices=["album", "separate"], default=None)
+    photo_auto_update.add_argument("--caption", default=None, help="Caption")
+    photo_auto_update.add_argument("--active", action="store_true", help="Enable job")
+    photo_auto_update.add_argument("--paused", action="store_true", help="Pause job")
+
+    photo_auto_toggle = photo_sub.add_parser("auto-toggle", help="Toggle auto-upload job")
+    photo_auto_toggle.add_argument("id", type=int, help="Job id")
+
+    photo_auto_delete = photo_sub.add_parser("auto-delete", help="Delete auto-upload job")
+    photo_auto_delete.add_argument("id", type=int, help="Job id")
+
+    photo_sub.add_parser("run-due", help="Run due photo items and auto jobs now")
+
     test_parser = sub.add_parser("test", help="Run diagnostic tests")
     test_sub = test_parser.add_subparsers(dest="test_action")
     test_sub.add_parser("all", help="Run all test sections (read + write + telegram)")

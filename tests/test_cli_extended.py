@@ -41,13 +41,21 @@ def cli_db(tmp_path):
 @pytest.fixture
 def cli_env(cli_db):
     config = AppConfig()
+
     async def fake_init_db(config_path: str):
-        # Patch close to do nothing so we can reuse the connection in tests
-        cli_db.close = AsyncMock()
-        return config, cli_db
-    with patch(
-        "src.cli.commands.channel.runtime.init_db",
-        side_effect=fake_init_db,
+        cmd_db = Database(cli_db._db_path)
+        await cmd_db.initialize()
+        return config, cmd_db
+
+    with (
+        patch(
+            "src.cli.commands.channel.runtime.init_db",
+            side_effect=fake_init_db,
+        ),
+        patch(
+            "src.cli.commands.test.runtime.init_db",
+            side_effect=fake_init_db,
+        ),
     ):
         yield cli_db
 
@@ -401,7 +409,14 @@ class TestCLITestExtended:
         )
 
         from src.cli.commands.test import run
-        with pytest.raises(SystemExit):
+        init_db_mock = AsyncMock(return_value=(AppConfig(), cli_env))
+        with (
+            patch(
+                "src.cli.commands.test.runtime.init_db",
+                side_effect=init_db_mock,
+            ),
+            pytest.raises(SystemExit),
+        ):
             run(_ns(command="test", test_action="read"))
         out = capsys.readouterr().out
         assert "stats fail" in out

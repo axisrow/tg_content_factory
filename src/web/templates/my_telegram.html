@@ -2,6 +2,7 @@
 {% block title %}Мой Телеграм — TG Agent{% endblock %}
 {% block content %}
 <h1>Мой Телеграм</h1>
+<p><a class="btn btn-outline-primary btn-sm" href="/my-telegram/photos{% if selected_phone %}?phone={{ selected_phone|urlencode }}{% endif %}">Открыть Photo Loader</a></p>
 
 {% if not accounts %}
 <p>Нет подключённых аккаунтов. Добавьте аккаунт в <a href="/settings">Настройках</a>.</p>

@@ -16,6 +16,8 @@ from src.telegram.collector import Collector
 
 if TYPE_CHECKING:
     from src.search.engine import SearchEngine
+    from src.services.photo_auto_upload_service import PhotoAutoUploadService
+    from src.services.photo_task_service import PhotoTaskService
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +41,8 @@ class SchedulerManager:
         scheduler_bundle: SchedulerBundle | Database | None = None,
         search_engine: SearchEngine | None = None,
         search_query_bundle: SearchQueryBundle | None = None,
+        photo_task_service: PhotoTaskService | None = None,
+        photo_auto_upload_service: PhotoAutoUploadService | None = None,
     ):
         self._collector = collector
         self._config = config
@@ -51,9 +55,13 @@ class SchedulerManager:
         self._scheduler_bundle = scheduler_bundle
         self._search_engine = search_engine
         self._sq_bundle = search_query_bundle
+        self._photo_task_service = photo_task_service
+        self._photo_auto_upload_service = photo_auto_upload_service
         self._scheduler: AsyncIOScheduler | None = None
         self._job_id = "collect_all"
         self._search_job_id = "notification_search"
+        self._photo_due_job_id = "photo_due"
+        self._photo_auto_job_id = "photo_auto"
         self._last_run: datetime | None = None
         self._last_stats: dict | None = None
         self._last_search_run: datetime | None = None
@@ -130,6 +138,20 @@ class SchedulerManager:
 
         if self._sq_bundle:
             await self.sync_search_query_jobs()
+        if self._photo_task_service:
+            self._scheduler.add_job(
+                self._run_photo_due,
+                IntervalTrigger(minutes=1),
+                id=self._photo_due_job_id,
+                replace_existing=True,
+            )
+        if self._photo_auto_upload_service:
+            self._scheduler.add_job(
+                self._run_photo_auto,
+                IntervalTrigger(minutes=1),
+                id=self._photo_auto_job_id,
+                replace_existing=True,
+            )
 
         self._scheduler.start()
         logger.info(
@@ -184,6 +206,12 @@ class SchedulerManager:
         if self._search_bg_task and not self._search_bg_task.done():
             return
         self._search_bg_task = asyncio.create_task(self._run_keyword_search())
+
+    async def trigger_photo_due_now(self) -> dict:
+        return await self._run_photo_due()
+
+    async def trigger_photo_auto_now(self) -> dict:
+        return await self._run_photo_auto()
 
     async def _run_collection(self) -> dict:
         logger.info("Starting scheduled collection")
@@ -286,3 +314,15 @@ class SchedulerManager:
             )
         except Exception:
             logger.exception("Error running search query id=%d", sq_id)
+
+    async def _run_photo_due(self) -> dict:
+        if not self._photo_task_service:
+            return {"processed": 0}
+        processed = await self._photo_task_service.run_due()
+        return {"processed": processed}
+
+    async def _run_photo_auto(self) -> dict:
+        if not self._photo_auto_upload_service:
+            return {"jobs": 0}
+        jobs = await self._photo_auto_upload_service.run_due()
+        return {"jobs": jobs}

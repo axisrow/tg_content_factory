@@ -638,9 +638,11 @@ class ClientPool:
                         })
                 return result
 
+            iter_coro = _iter_dialogs()
             try:
-                dialogs = await asyncio.wait_for(_iter_dialogs(), timeout=60.0)
+                dialogs = await asyncio.wait_for(iter_coro, timeout=60.0)
             except asyncio.TimeoutError:
+                iter_coro.close()
                 logger.warning("get_dialogs: iter_dialogs timed out for %s", phone)
                 dialogs = []
             return dialogs
