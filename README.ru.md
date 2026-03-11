@@ -93,6 +93,8 @@ docker-compose up -d
 ```bash
 # Веб-сервер
 python -m src.main [--config CONFIG] serve [--web-pass PASS]
+python -m src.main [--config CONFIG] stop
+python -m src.main [--config CONFIG] restart [--web-pass PASS]
 
 # Разовый сбор
 python -m src.main [--config CONFIG] collect [--channel-id ID]
