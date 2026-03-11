@@ -12,8 +12,8 @@ from src.cli.commands import (
     scheduler,
     search,
     search_query,
-    server_control,
     serve,
+    server_control,
 )
 from src.cli.commands import agent as agent_cmd
 from src.cli.commands import filter as filter_cmd
