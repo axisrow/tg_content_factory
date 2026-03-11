@@ -1,0 +1,265 @@
+{% extends "base.html" %}
+{% block title %}Photo Loader — TG Agent{% endblock %}
+{% block content %}
+<h1>Photo Loader</h1>
+
+{% if not accounts %}
+<p>Нет подключённых аккаунтов. Добавьте аккаунт в <a href="/settings">Настройках</a>.</p>
+{% else %}
+<div class="row g-4">
+    <div class="col-12">
+        <form method="get" action="/my-telegram/photos" class="row g-2 align-items-end">
+            <div class="col-md-4">
+                <label class="form-label">Аккаунт</label>
+                <select name="phone" class="form-select" onchange="this.form.submit()">
+                    {% for acc in accounts %}
+                    <option value="{{ acc }}" {% if acc == selected_phone %}selected{% endif %}>{{ acc }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+        </form>
+    </div>
+
+    <div class="col-lg-6">
+        <div class="card">
+            <div class="card-body">
+                <h2 class="h5">Обычная загрузка</h2>
+                <form method="post" action="/my-telegram/photos/send" enctype="multipart/form-data" class="row g-3">
+                    <input type="hidden" name="phone" value="{{ selected_phone }}">
+                    <div class="col-12">
+                        <label class="form-label">Канал / чат</label>
+                        <select name="target_dialog_id" class="form-select" required>
+                            {% for dialog in dialogs %}
+                            {% if dialog.channel_type != "bot" %}
+                            <option value="{{ dialog.channel_id }}" data-title="{{ dialog.title }}" data-type="{{ dialog.channel_type }}">
+                                {{ dialog.title }} ({{ dialog.channel_type }})
+                            </option>
+                            {% endif %}
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">Режим</label>
+                        <select name="send_mode" class="form-select">
+                            <option value="album">Альбом</option>
+                            <option value="separate">Отдельные посты</option>
+                        </select>
+                    </div>
+                    <div class="col-12">
+                        <label class="form-label">Фото</label>
+                        <input type="file" name="photos" class="form-control" accept=".jpg,.jpeg,.png,.webp" multiple required>
+                    </div>
+                    <div class="col-12">
+                        <label class="form-label">Подпись</label>
+                        <textarea name="caption" class="form-control" rows="2"></textarea>
+                    </div>
+                    <div class="col-12">
+                        <button class="btn btn-primary" type="submit">Отправить</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-lg-6">
+        <div class="card">
+            <div class="card-body">
+                <h2 class="h5">Отложенная загрузка</h2>
+                <form method="post" action="/my-telegram/photos/schedule" enctype="multipart/form-data" class="row g-3">
+                    <input type="hidden" name="phone" value="{{ selected_phone }}">
+                    <div class="col-12">
+                        <label class="form-label">Канал / чат</label>
+                        <select name="target_dialog_id" class="form-select" required>
+                            {% for dialog in dialogs %}
+                            {% if dialog.channel_type != "bot" %}
+                            <option value="{{ dialog.channel_id }}">{{ dialog.title }} ({{ dialog.channel_type }})</option>
+                            {% endif %}
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">Режим</label>
+                        <select name="send_mode" class="form-select">
+                            <option value="album">Альбом</option>
+                            <option value="separate">Отдельные посты</option>
+                        </select>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">Время</label>
+                        <input type="datetime-local" name="schedule_at" class="form-control" required>
+                    </div>
+                    <div class="col-12">
+                        <label class="form-label">Фото</label>
+                        <input type="file" name="photos" class="form-control" accept=".jpg,.jpeg,.png,.webp" multiple required>
+                    </div>
+                    <div class="col-12">
+                        <label class="form-label">Подпись</label>
+                        <textarea name="caption" class="form-control" rows="2"></textarea>
+                    </div>
+                    <div class="col-12">
+                        <button class="btn btn-outline-primary" type="submit">Поставить в отложку</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-lg-6">
+        <div class="card">
+            <div class="card-body">
+                <h2 class="h5">Batch delayed</h2>
+                <p class="text-muted small">JSON-массив объектов вида <code>{"at":"2026-03-11T18:30","files":["/abs/1.jpg"],"mode":"album"}</code></p>
+                <form method="post" action="/my-telegram/photos/batch" class="row g-3">
+                    <input type="hidden" name="phone" value="{{ selected_phone }}">
+                    <div class="col-12">
+                        <label class="form-label">Канал / чат</label>
+                        <select name="target_dialog_id" class="form-select" required>
+                            {% for dialog in dialogs %}
+                            {% if dialog.channel_type != "bot" %}
+                            <option value="{{ dialog.channel_id }}">{{ dialog.title }} ({{ dialog.channel_type }})</option>
+                            {% endif %}
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-12">
+                        <label class="form-label">Общая подпись</label>
+                        <textarea name="caption" class="form-control" rows="2"></textarea>
+                    </div>
+                    <div class="col-12">
+                        <label class="form-label">Manifest</label>
+                        <textarea name="manifest_text" class="form-control font-monospace" rows="8" required>[
+  {"at": "2026-03-11T18:30", "files": ["/abs/photo1.jpg", "/abs/photo2.jpg"], "mode": "album"}
+]</textarea>
+                    </div>
+                    <div class="col-12">
+                        <button class="btn btn-outline-secondary" type="submit">Создать batch</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-lg-6">
+        <div class="card">
+            <div class="card-body">
+                <h2 class="h5">Автозагрузка из папки</h2>
+                <form method="post" action="/my-telegram/photos/auto" class="row g-3">
+                    <input type="hidden" name="phone" value="{{ selected_phone }}">
+                    <div class="col-12">
+                        <label class="form-label">Канал / чат</label>
+                        <select name="target_dialog_id" class="form-select" required>
+                            {% for dialog in dialogs %}
+                            {% if dialog.channel_type != "bot" %}
+                            <option value="{{ dialog.channel_id }}">{{ dialog.title }} ({{ dialog.channel_type }})</option>
+                            {% endif %}
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-md-7">
+                        <label class="form-label">Папка</label>
+                        <input type="text" name="folder_path" class="form-control" placeholder="/absolute/path/to/folder" required>
+                    </div>
+                    <div class="col-md-5">
+                        <label class="form-label">Интервал (мин.)</label>
+                        <input type="number" name="interval_minutes" class="form-control" value="60" min="1" required>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">Режим</label>
+                        <select name="send_mode" class="form-select">
+                            <option value="album">Альбом</option>
+                            <option value="separate">Отдельные посты</option>
+                        </select>
+                    </div>
+                    <div class="col-12">
+                        <label class="form-label">Подпись</label>
+                        <textarea name="caption" class="form-control" rows="2"></textarea>
+                    </div>
+                    <div class="col-12">
+                        <button class="btn btn-outline-dark" type="submit">Создать авто-джоб</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-12">
+        <form method="post" action="/my-telegram/photos/run-due">
+            <input type="hidden" name="phone" value="{{ selected_phone }}">
+            <button class="btn btn-sm btn-secondary" type="submit">Запустить due photo tasks сейчас</button>
+        </form>
+    </div>
+
+    <div class="col-12">
+        <div class="card">
+            <div class="card-body">
+                <h2 class="h5">Auto Jobs</h2>
+                {% if auto_jobs %}
+                <div class="table-responsive">
+                    <table class="table table-sm">
+                        <thead><tr><th>ID</th><th>Папка</th><th>Интервал</th><th>Статус</th><th>Последний запуск</th><th></th></tr></thead>
+                        <tbody>
+                        {% for job in auto_jobs %}
+                        <tr>
+                            <td>{{ job.id }}</td>
+                            <td class="font-monospace">{{ job.folder_path }}</td>
+                            <td>{{ job.interval_minutes }} мин.</td>
+                            <td>{{ "active" if job.is_active else "paused" }}</td>
+                            <td>{{ job.last_run_at or "—" }}</td>
+                            <td class="d-flex gap-2">
+                                <form method="post" action="/my-telegram/photos/auto/{{ job.id }}/toggle">
+                                    <input type="hidden" name="phone" value="{{ selected_phone }}">
+                                    <button class="btn btn-sm btn-outline-primary" type="submit">Toggle</button>
+                                </form>
+                                <form method="post" action="/my-telegram/photos/auto/{{ job.id }}/delete">
+                                    <input type="hidden" name="phone" value="{{ selected_phone }}">
+                                    <button class="btn btn-sm btn-outline-danger" type="submit">Delete</button>
+                                </form>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <p class="mb-0 text-muted">Auto jobs пока нет.</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <div class="col-12">
+        <div class="card">
+            <div class="card-body">
+                <h2 class="h5">Последние photo items</h2>
+                {% if items %}
+                <div class="table-responsive">
+                    <table class="table table-sm">
+                        <thead><tr><th>ID</th><th>Target</th><th>Файлы</th><th>Время</th><th>Статус</th><th></th></tr></thead>
+                        <tbody>
+                        {% for item in items %}
+                        <tr>
+                            <td>{{ item.id }}</td>
+                            <td>{{ item.target_title or item.target_dialog_id }}</td>
+                            <td>{{ item.file_paths|length }}</td>
+                            <td>{{ item.schedule_at or item.created_at }}</td>
+                            <td>{{ item.status }}</td>
+                            <td>
+                                <form method="post" action="/my-telegram/photos/items/{{ item.id }}/cancel">
+                                    <input type="hidden" name="phone" value="{{ selected_phone }}">
+                                    <button class="btn btn-sm btn-outline-danger" type="submit">Cancel</button>
+                                </form>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <p class="mb-0 text-muted">Photo items пока нет.</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+{% endblock %}

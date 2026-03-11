@@ -2,6 +2,7 @@
 {% block title %}Мой Телеграм — TG Agent{% endblock %}
 {% block content %}
 <h1>Мой Телеграм</h1>
+<p><a class="btn btn-outline-primary btn-sm" href="/my-telegram/photos{% if selected_phone %}?phone={{ selected_phone|urlencode }}{% endif %}">Открыть Photo Loader</a></p>
 
 {% if not accounts %}
 <p>Нет подключённых аккаунтов. Добавьте аккаунт в <a href="/settings">Настройках</a>.</p>
@@ -16,6 +17,7 @@
             hx-push-url="true"
             hx-trigger="change"
             hx-indicator="#dialogs-loading">
+        <option value="" {% if not selected_phone %}selected{% endif %}>Выберите аккаунт</option>
         {% for acc in accounts %}
         <option value="{{ acc }}" {% if acc == selected_phone %}selected{% endif %}>{{ acc }}</option>
         {% endfor %}
@@ -303,8 +305,10 @@ function clearSelection() {
 }
 </script>
 
-{% else %}
+{% elif selected_phone %}
 <p>Нет диалогов.</p>
+{% else %}
+<p class="text-muted">Выберите аккаунт, чтобы загрузить список диалогов.</p>
 {% endif %}
 
 {% endif %}

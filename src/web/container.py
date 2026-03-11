@@ -15,6 +15,7 @@ from src.database.bundles import (
     CollectionBundle,
     DatabaseRepositories,
     NotificationBundle,
+    PhotoLoaderBundle,
     SchedulerBundle,
     SearchBundle,
     SearchQueryBundle,
@@ -23,6 +24,9 @@ from src.scheduler.manager import SchedulerManager
 from src.search.ai_search import AISearchEngine
 from src.search.engine import SearchEngine
 from src.services.notification_target_service import NotificationTargetService
+from src.services.photo_auto_upload_service import PhotoAutoUploadService
+from src.services.photo_publish_service import PhotoPublishService
+from src.services.photo_task_service import PhotoTaskService
 from src.services.stats_task_dispatcher import StatsTaskDispatcher
 from src.telegram.auth import TelegramAuth
 from src.telegram.client_pool import ClientPool
@@ -40,6 +44,7 @@ class AppContainer:
     channel_bundle: ChannelBundle
     collection_bundle: CollectionBundle
     notification_bundle: NotificationBundle
+    photo_loader_bundle: PhotoLoaderBundle
     search_bundle: SearchBundle
     scheduler_bundle: SchedulerBundle
     search_query_bundle: SearchQueryBundle
@@ -47,6 +52,9 @@ class AppContainer:
     pool: ClientPool
     notification_target_service: NotificationTargetService
     notifier: Notifier | None
+    photo_publish_service: PhotoPublishService
+    photo_task_service: PhotoTaskService
+    photo_auto_upload_service: PhotoAutoUploadService
     collector: Collector
     collection_queue: CollectionQueue | None
     stats_dispatcher: StatsTaskDispatcher | None

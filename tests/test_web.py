@@ -1,5 +1,6 @@
 import base64
 import re
+import tomllib
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -18,6 +19,7 @@ from src.telegram.collector import Collector
 from src.web.app import create_app
 from src.web.routes.channel_collection import _COLLECT_ALL_BTN, _COLLECT_ALL_FORM
 from src.web.session import COOKIE_NAME, create_session_token
+from src.web.template_globals import PYPROJECT_PATH, get_app_version
 
 
 @pytest.fixture
@@ -56,7 +58,7 @@ async def client(tmp_path):
             },
         ]
 
-    async def _get_dialogs_for_phone(self, phone, include_dm=False):
+    async def _get_dialogs_for_phone(self, phone, include_dm=False, mode="channels_only"):
         return []
 
     app.state.pool = type(
@@ -113,6 +115,25 @@ async def test_dashboard(client):
     resp = await client.get("/dashboard/")
     assert resp.status_code == 200
     assert "Панель" in resp.text
+
+
+def test_templates_have_actual_app_version():
+    app = create_app(AppConfig())
+    expected_version = tomllib.loads(
+        PYPROJECT_PATH.read_text(encoding="utf-8")
+    )["project"]["version"]
+    assert app.state.templates.env.globals["app_version"] == expected_version
+    assert get_app_version() == expected_version
+
+
+@pytest.mark.asyncio
+async def test_footer_renders_actual_version(client):
+    expected_version = tomllib.loads(
+        PYPROJECT_PATH.read_text(encoding="utf-8")
+    )["project"]["version"]
+    resp = await client.get("/dashboard/")
+    assert resp.status_code == 200
+    assert f"TG Agent v{expected_version}" in resp.text
 
 
 @pytest.mark.asyncio
@@ -203,7 +224,7 @@ async def test_channels_page(client):
 
 @pytest.mark.asyncio
 async def test_search_page(client):
-    resp = await client.get("/")
+    resp = await client.get("/search")
     assert resp.status_code == 200
     assert "Поиск" in resp.text
 
@@ -216,14 +237,14 @@ async def test_scheduler_page(client):
 
 @pytest.mark.asyncio
 async def test_search_with_query(client):
-    resp = await client.get("/?q=test&mode=local")
+    resp = await client.get("/search?q=test&mode=local")
     assert resp.status_code == 200
     assert "test" in resp.text
 
 
 @pytest.mark.asyncio
 async def test_search_with_invalid_channel_id_returns_error(client):
-    resp = await client.get("/?q=test&mode=channel&channel_id=abc")
+    resp = await client.get("/search?q=test&mode=channel&channel_id=abc")
     assert resp.status_code == 200
     assert "Некорректный ID канала: abc" in resp.text
 
@@ -241,7 +262,7 @@ async def test_search_runtime_error_is_rendered(client, monkeypatch):
 
     monkeypatch.setattr(deps, "search_service", lambda request: BrokenSearchService())
 
-    resp = await client.get("/?q=test&mode=telegram")
+    resp = await client.get("/search?q=test&mode=telegram")
 
     assert resp.status_code == 200
     assert "Ошибка поиска: boom" in resp.text
@@ -299,7 +320,8 @@ async def test_health_no_auth(unauth_client):
 @pytest.mark.asyncio
 async def test_basic_auth_sets_cookie(client):
     resp = await client.get("/", follow_redirects=False)
-    assert resp.status_code == 200
+    assert resp.status_code == 303
+    assert resp.headers["location"] == "/agent"
     assert COOKIE_NAME in resp.cookies
 
 
@@ -313,7 +335,8 @@ async def test_cookie_auth_without_basic(client):
         cookies={COOKIE_NAME: token},
     ) as c:
         resp = await c.get("/")
-        assert resp.status_code == 200
+        assert resp.status_code == 303
+        assert resp.headers["location"] == "/agent"
 
 
 @pytest.mark.asyncio
@@ -1136,7 +1159,7 @@ async def test_search_results_have_tg_links(client):
     )
     await db.insert_message(msg)
 
-    resp = await client.get("/?q=Hello&mode=local")
+    resp = await client.get("/search?q=Hello&mode=local")
     assert resp.status_code == 200
     assert "t.me/testchan/42" in resp.text
     assert "&#8599;" in resp.text
@@ -1158,7 +1181,7 @@ async def test_search_results_private_channel_link(client):
     )
     await db.insert_message(msg)
 
-    resp = await client.get("/?q=Secret&mode=local")
+    resp = await client.get("/search?q=Secret&mode=local")
     assert resp.status_code == 200
     assert "t.me/c/-100999/7" in resp.text
 
