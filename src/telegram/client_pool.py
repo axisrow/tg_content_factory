@@ -598,11 +598,12 @@ class ClientPool:
 
     async def get_dialogs(self) -> list[dict]:
         """Get list of subscribed channels and groups."""
-        result = await self.get_available_client()
-        if not result:
-            return []
-        _, phone = result
-        try:
-            return await self.get_dialogs_for_phone(phone, mode="channels_only")
-        finally:
-            await self.release_client(phone)
+        accounts = await self._db.get_accounts(active_only=True)
+        now = datetime.now(timezone.utc)
+        for acc in accounts:
+            flood_until = self._normalize_utc(acc.flood_wait_until)
+            if flood_until and flood_until > now:
+                continue
+            if acc.phone in self.clients:
+                return await self.get_dialogs_for_phone(acc.phone, mode="channels_only")
+        return []
