@@ -145,19 +145,6 @@ label:first-child .hint::before { left: 0.5em; transform: none; }
     margin-top: 0.4rem;
 }
 
-.photo-target-summary {
-    min-height: 2.5rem;
-}
-
-.photo-target-list {
-    max-height: 20rem;
-    overflow-y: auto;
-}
-
-.photo-target-list .list-group-item {
-    text-align: left;
-}
-
 /* ── Responsive: Tablet (<768px) ── */
 @media (max-width: 767.98px) {
     .channels-table,
