@@ -29,6 +29,20 @@
 <p>Нет подключённых аккаунтов. Добавьте аккаунт в <a href="/settings">Настройках</a>.</p>
 {% else %}
 <div class="row g-4">
+    {% if photo_feedback %}
+    <div class="col-12">
+        <div class="alert {% if photo_feedback.variant == 'success' %}alert-success{% else %}alert-danger{% endif %} photo-feedback-panel mb-0"
+             role="alert"
+             data-photo-feedback
+             data-highlight-kind="{{ photo_feedback.highlight_kind }}">
+            <div class="d-flex flex-column gap-1">
+                <strong data-photo-feedback-title>{{ photo_feedback.title }}</strong>
+                <span data-photo-feedback-body>{{ photo_feedback.body }}</span>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
     <div class="col-12">
         <div class="row g-2 align-items-end">
         <form method="get" action="/my-telegram/photos" class="col-md-4">
@@ -121,7 +135,7 @@
         <div class="card">
             <div class="card-body">
                 <h2 class="h5">Обычная загрузка</h2>
-                <form method="post" action="/my-telegram/photos/send" enctype="multipart/form-data" class="row g-3" data-photo-target-form>
+                <form method="post" action="/my-telegram/photos/send" enctype="multipart/form-data" class="row g-3" data-photo-target-form data-photo-submit-form>
                     <input type="hidden" name="phone" value="{{ selected_phone }}">
                     {{ render_target_hidden_inputs(initial_target) }}
                     <div class="col-12">
@@ -146,7 +160,8 @@
                         <textarea name="caption" class="form-control" rows="2"></textarea>
                     </div>
                     <div class="col-12">
-                        <button class="btn btn-primary" type="submit" {% if not target_available %}disabled{% endif %}>Отправить</button>
+                        <button class="btn btn-primary" type="submit" data-photo-submit-button data-busy-label="Отправка..." {% if not target_available %}disabled{% endif %}>Отправить</button>
+                        <div class="photo-submit-status d-none" data-photo-submit-status aria-live="polite"></div>
                     </div>
                 </form>
             </div>
@@ -157,7 +172,7 @@
         <div class="card">
             <div class="card-body">
                 <h2 class="h5">Отложенная загрузка</h2>
-                <form method="post" action="/my-telegram/photos/schedule" enctype="multipart/form-data" class="row g-3" data-photo-target-form>
+                <form method="post" action="/my-telegram/photos/schedule" enctype="multipart/form-data" class="row g-3" data-photo-target-form data-photo-submit-form>
                     <input type="hidden" name="phone" value="{{ selected_phone }}">
                     {{ render_target_hidden_inputs(initial_target) }}
                     <div class="col-12">
@@ -186,7 +201,8 @@
                         <textarea name="caption" class="form-control" rows="2"></textarea>
                     </div>
                     <div class="col-12">
-                        <button class="btn btn-outline-primary" type="submit" {% if not target_available %}disabled{% endif %}>Поставить в отложку</button>
+                        <button class="btn btn-outline-primary" type="submit" data-photo-submit-button data-busy-label="Создаём отложку..." {% if not target_available %}disabled{% endif %}>Поставить в отложку</button>
+                        <div class="photo-submit-status d-none" data-photo-submit-status aria-live="polite"></div>
                     </div>
                 </form>
             </div>
@@ -198,7 +214,7 @@
             <div class="card-body">
                 <h2 class="h5">Batch delayed</h2>
                 <p class="text-muted small">JSON-массив объектов вида <code>{"at":"2026-03-11T18:30","files":["/abs/1.jpg"],"mode":"album"}</code></p>
-                <form method="post" action="/my-telegram/photos/batch" class="row g-3" data-photo-target-form>
+                <form method="post" action="/my-telegram/photos/batch" class="row g-3" data-photo-target-form data-photo-submit-form>
                     <input type="hidden" name="phone" value="{{ selected_phone }}">
                     {{ render_target_hidden_inputs(initial_target) }}
                     <div class="col-12">
@@ -218,7 +234,8 @@
 ]</textarea>
                     </div>
                     <div class="col-12">
-                        <button class="btn btn-outline-secondary" type="submit" {% if not target_available %}disabled{% endif %}>Создать batch</button>
+                        <button class="btn btn-outline-secondary" type="submit" data-photo-submit-button data-busy-label="Создаём batch..." {% if not target_available %}disabled{% endif %}>Создать batch</button>
+                        <div class="photo-submit-status d-none" data-photo-submit-status aria-live="polite"></div>
                     </div>
                 </form>
             </div>
@@ -229,7 +246,7 @@
         <div class="card">
             <div class="card-body">
                 <h2 class="h5">Автозагрузка из папки</h2>
-                <form method="post" action="/my-telegram/photos/auto" class="row g-3" data-photo-target-form>
+                <form method="post" action="/my-telegram/photos/auto" class="row g-3" data-photo-target-form data-photo-submit-form>
                     <input type="hidden" name="phone" value="{{ selected_phone }}">
                     {{ render_target_hidden_inputs(initial_target) }}
                     <div class="col-12">
@@ -258,7 +275,8 @@
                         <textarea name="caption" class="form-control" rows="2"></textarea>
                     </div>
                     <div class="col-12">
-                        <button class="btn btn-outline-dark" type="submit" {% if not target_available %}disabled{% endif %}>Создать авто-джоб</button>
+                        <button class="btn btn-outline-dark" type="submit" data-photo-submit-button data-busy-label="Создаём авто-джоб..." {% if not target_available %}disabled{% endif %}>Создать авто-джоб</button>
+                        <div class="photo-submit-status d-none" data-photo-submit-status aria-live="polite"></div>
                     </div>
                 </form>
             </div>
@@ -275,6 +293,35 @@
     <div class="col-12">
         <div class="card">
             <div class="card-body">
+                <h2 class="h5">Последние batches</h2>
+                {% if batches %}
+                <div class="table-responsive">
+                    <table class="table table-sm">
+                        <thead><tr><th>ID</th><th>Target</th><th>Режим</th><th>Статус</th><th>Создан</th></tr></thead>
+                        <tbody>
+                        {% for batch in batches %}
+                        <tr data-photo-result-row="batch"
+                            data-photo-result-target="{{ batch.target_title or batch.target_dialog_id }}">
+                            <td>{{ batch.id }}</td>
+                            <td>{{ batch.target_title or batch.target_dialog_id }}</td>
+                            <td>{{ batch.send_mode }}</td>
+                            <td>{{ batch.status }}</td>
+                            <td>{{ batch.created_at or "—" }}</td>
+                        </tr>
+                        {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <p class="mb-0 text-muted">Batch tasks пока нет.</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <div class="col-12">
+        <div class="card">
+            <div class="card-body">
                 <h2 class="h5">Auto Jobs</h2>
                 {% if auto_jobs %}
                 <div class="table-responsive">
@@ -282,7 +329,8 @@
                         <thead><tr><th>ID</th><th>Папка</th><th>Интервал</th><th>Статус</th><th>Последний запуск</th><th></th></tr></thead>
                         <tbody>
                         {% for job in auto_jobs %}
-                        <tr>
+                        <tr data-photo-result-row="auto"
+                            data-photo-result-target="{{ job.target_title or job.target_dialog_id }}">
                             <td>{{ job.id }}</td>
                             <td class="font-monospace">{{ job.folder_path }}</td>
                             <td>{{ job.interval_minutes }} мин.</td>
@@ -320,7 +368,8 @@
                         <thead><tr><th>ID</th><th>Target</th><th>Файлы</th><th>Время</th><th>Статус</th><th></th></tr></thead>
                         <tbody>
                         {% for item in items %}
-                        <tr>
+                        <tr data-photo-result-row="item"
+                            data-photo-result-target="{{ item.target_title or item.target_dialog_id }}">
                             <td>{{ item.id }}</td>
                             <td>{{ item.target_title or item.target_dialog_id }}</td>
                             <td>{{ item.file_paths|length }}</td>
@@ -347,6 +396,47 @@
 
 <script>
 (function() {
+    var submitForms = Array.from(document.querySelectorAll("[data-photo-submit-form]"));
+    var feedback = document.querySelector("[data-photo-feedback]");
+
+    submitForms.forEach(function(form) {
+        form.addEventListener("submit", function(event) {
+            if (form.dataset.submitting === "true") {
+                event.preventDefault();
+                return;
+            }
+
+            var submitter = event.submitter || form.querySelector("[data-photo-submit-button]");
+            if (!submitter) return;
+
+            form.dataset.submitting = "true";
+            submitter.disabled = true;
+            submitter.classList.add("is-busy");
+            submitter.innerHTML =
+                '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>' +
+                "<span>" + (submitter.dataset.busyLabel || "Выполняется...") + "</span>";
+
+            var status = form.querySelector("[data-photo-submit-status]");
+            if (status) {
+                status.textContent = "Запрос отправлен, ожидаем ответ сервера...";
+                status.classList.remove("d-none");
+            }
+        });
+    });
+
+    if (feedback) {
+        var highlightKind = feedback.dataset.highlightKind;
+        if (highlightKind) {
+            var row = document.querySelector('[data-photo-result-row="' + highlightKind + '"]');
+            if (row) {
+                row.classList.add("photo-result-highlight");
+                row.setAttribute("tabindex", "-1");
+                row.focus({preventScroll: true});
+                row.scrollIntoView({behavior: "smooth", block: "center"});
+            }
+        }
+    }
+
     var picker = document.querySelector("[data-target-picker]");
     if (!picker) return;
 
