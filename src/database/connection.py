@@ -21,7 +21,9 @@ class DBConnection:
 
     async def close(self) -> None:
         if self.db:
-            await self.db.close()
+            db = self.db
+            self.db = None
+            await db.close()
 
     async def execute(self, sql: str, params: tuple = ()) -> aiosqlite.Cursor:
         assert self.db is not None

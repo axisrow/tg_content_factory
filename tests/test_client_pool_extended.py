@@ -212,3 +212,64 @@ async def test_get_dialogs_timeout(mock_db, mock_auth):
     with patch("asyncio.wait_for", side_effect=asyncio.TimeoutError):
         res = await pool.get_dialogs()
         assert res == []
+
+
+@pytest.mark.asyncio
+async def test_get_dialogs_for_phone_sets_is_own(mock_db, mock_auth):
+    acc = Account(phone="+7001", is_active=True, session_string="s1")
+    mock_db.get_accounts.return_value = [acc]
+
+    own_entity = MagicMock(
+        id=101,
+        username="ownchan",
+        creator=True,
+        megagroup=False,
+        broadcast=True,
+        gigagroup=False,
+        forum=False,
+        monoforum=False,
+        scam=False,
+        fake=False,
+        restricted=False,
+    )
+    other_entity = MagicMock(
+        id=202,
+        username="otherchan",
+        creator=False,
+        megagroup=False,
+        broadcast=True,
+        gigagroup=False,
+        forum=False,
+        monoforum=False,
+        scam=False,
+        fake=False,
+        restricted=False,
+    )
+
+    own_dialog = MagicMock(
+        entity=own_entity,
+        title="Own",
+        is_channel=True,
+        is_group=False,
+    )
+    other_dialog = MagicMock(
+        entity=other_entity,
+        title="Other",
+        is_channel=True,
+        is_group=False,
+    )
+
+    async def iter_dialogs():
+        yield own_dialog
+        yield other_dialog
+
+    client = MagicMock()
+    client.iter_dialogs.return_value = iter_dialogs()
+
+    pool = ClientPool(mock_auth, mock_db)
+    pool.clients = {"+7001": client}
+
+    dialogs = await pool.get_dialogs_for_phone("+7001")
+
+    assert dialogs[0]["is_own"] is True
+    assert dialogs[1]["is_own"] is False

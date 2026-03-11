@@ -348,10 +348,14 @@ class TestCLIScheduler:
 class TestCLIServerControl:
     def test_stop_command(self, capsys):
         from src.cli.commands.server_control import run_stop
+        from src.cli.process_control import StopOutcome, StopResult
 
         with patch(
             "src.cli.commands.server_control.stop_server",
-            return_value=(True, "Server stopped (PID 123)."),
+            return_value=StopOutcome(
+                StopResult.STOPPED,
+                "Server stopped (PID 123).",
+            ),
         ):
             run_stop(_ns(command="stop"))
 
@@ -360,10 +364,14 @@ class TestCLIServerControl:
 
     def test_stop_command_not_running_is_not_error(self, capsys):
         from src.cli.commands.server_control import run_stop
+        from src.cli.process_control import StopOutcome, StopResult
 
         with patch(
             "src.cli.commands.server_control.stop_server",
-            return_value=(False, "Server is not running (no PID file: data/tg_search.pid)."),
+            return_value=StopOutcome(
+                StopResult.NOT_RUNNING,
+                "Server is not running (no PID file: data/tg_search.pid).",
+            ),
         ):
             run_stop(_ns(command="stop"))
 
@@ -372,20 +380,42 @@ class TestCLIServerControl:
 
     def test_stop_command_exits_for_unmanaged_process(self):
         from src.cli.commands.server_control import run_stop
+        from src.cli.process_control import StopOutcome, StopResult
 
         with patch(
             "src.cli.commands.server_control.stop_server",
-            return_value=(False, "PID 321 is not a managed src.main serve process."),
+            return_value=StopOutcome(
+                StopResult.UNMANAGED,
+                "PID 321 is not a managed src.main serve process.",
+            ),
+        ):
+            with pytest.raises(SystemExit, match="1"):
+                run_stop(_ns(command="stop"))
+
+    def test_stop_command_exits_for_timeout(self):
+        from src.cli.commands.server_control import run_stop
+        from src.cli.process_control import StopOutcome, StopResult
+
+        with patch(
+            "src.cli.commands.server_control.stop_server",
+            return_value=StopOutcome(
+                StopResult.TIMEOUT,
+                "Timed out waiting for server PID 321 to stop.",
+            ),
         ):
             with pytest.raises(SystemExit, match="1"):
                 run_stop(_ns(command="stop"))
 
     def test_restart_command_starts_serve_after_stop(self, capsys):
         from src.cli.commands.server_control import run_restart
+        from src.cli.process_control import StopOutcome, StopResult
 
         with patch(
             "src.cli.commands.server_control.stop_server",
-            return_value=(True, "Server stopped (PID 123)."),
+            return_value=StopOutcome(
+                StopResult.STOPPED,
+                "Server stopped (PID 123).",
+            ),
         ):
             with patch("src.cli.commands.server_control.serve.run") as mock_serve_run:
                 args = _ns(command="restart", web_pass="secret")
@@ -397,10 +427,14 @@ class TestCLIServerControl:
 
     def test_restart_command_starts_serve_when_not_running(self, capsys):
         from src.cli.commands.server_control import run_restart
+        from src.cli.process_control import StopOutcome, StopResult
 
         with patch(
             "src.cli.commands.server_control.stop_server",
-            return_value=(False, "Server is not running (no PID file: data/tg_search.pid)."),
+            return_value=StopOutcome(
+                StopResult.NOT_RUNNING,
+                "Server is not running (no PID file: data/tg_search.pid).",
+            ),
         ):
             with patch("src.cli.commands.server_control.serve.run") as mock_serve_run:
                 args = _ns(command="restart", web_pass=None)
@@ -409,6 +443,42 @@ class TestCLIServerControl:
         out = capsys.readouterr().out
         assert "not running" in out
         mock_serve_run.assert_called_once_with(args)
+
+    def test_restart_command_exits_for_timeout(self):
+        from src.cli.commands.server_control import run_restart
+        from src.cli.process_control import StopOutcome, StopResult
+
+        with patch(
+            "src.cli.commands.server_control.stop_server",
+            return_value=StopOutcome(
+                StopResult.TIMEOUT,
+                "Timed out waiting for server PID 321 to stop.",
+            ),
+        ):
+            with pytest.raises(SystemExit, match="1"):
+                run_restart(_ns(command="restart", web_pass=None))
+
+    def test_stop_command_exits_for_process_control_error(self):
+        from src.cli.commands.server_control import run_stop
+        from src.cli.process_control import ProcessControlError
+
+        with patch(
+            "src.cli.commands.server_control.stop_server",
+            side_effect=ProcessControlError("broken pid file"),
+        ):
+            with pytest.raises(SystemExit, match="1"):
+                run_stop(_ns(command="stop"))
+
+    def test_restart_command_exits_for_process_control_error(self):
+        from src.cli.commands.server_control import run_restart
+        from src.cli.process_control import ProcessControlError
+
+        with patch(
+            "src.cli.commands.server_control.stop_server",
+            side_effect=ProcessControlError("broken pid file"),
+        ):
+            with pytest.raises(SystemExit, match="1"):
+                run_restart(_ns(command="restart", web_pass=None))
 
     def test_parser_stop_and_restart(self):
         from src.cli.parser import build_parser

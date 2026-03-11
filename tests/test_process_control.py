@@ -8,6 +8,7 @@ import pytest
 
 from src.cli.process_control import (
     ProcessControlError,
+    StopResult,
     ensure_server_not_running,
     pid_file_path,
     register_current_process,
@@ -53,9 +54,9 @@ def test_ensure_server_not_running_cleans_stale_pid(tmp_path):
 
 
 def test_stop_server_without_pid_file(tmp_path):
-    stopped, message = stop_server(tmp_path / "missing.pid")
-    assert stopped is False
-    assert "not running" in message
+    outcome = stop_server(tmp_path / "missing.pid")
+    assert outcome.result is StopResult.NOT_RUNNING
+    assert "not running" in outcome.message
 
 
 def test_stop_server_cleans_stale_pid(tmp_path):
@@ -63,10 +64,10 @@ def test_stop_server_cleans_stale_pid(tmp_path):
     path.write_text("123\n", encoding="utf-8")
 
     with patch("src.cli.process_control.is_process_alive", return_value=False):
-        stopped, message = stop_server(path)
+        outcome = stop_server(path)
 
-    assert stopped is False
-    assert "stale PID file" in message
+    assert outcome.result is StopResult.STALE_PID
+    assert "stale PID file" in outcome.message
     assert not path.exists()
 
 
@@ -76,10 +77,10 @@ def test_stop_server_rejects_unmanaged_pid(tmp_path):
 
     with patch("src.cli.process_control.is_process_alive", return_value=True):
         with patch("src.cli.process_control.is_expected_server_process", return_value=False):
-            stopped, message = stop_server(path)
+            outcome = stop_server(path)
 
-    assert stopped is False
-    assert "not a managed" in message
+    assert outcome.result is StopResult.UNMANAGED
+    assert "not a managed" in outcome.message
     assert path.exists()
 
 
@@ -95,9 +96,87 @@ def test_stop_server_stops_process_and_removes_pid(tmp_path):
     ):
         with patch("src.cli.process_control.is_expected_server_process", return_value=True):
             with patch("src.cli.process_control.os.kill") as mock_kill:
-                stopped, message = stop_server(path, timeout_sec=0.5)
+                outcome = stop_server(path, timeout_sec=0.5)
 
-    assert stopped is True
-    assert "Server stopped" in message
+    assert outcome.result is StopResult.STOPPED
+    assert "Server stopped" in outcome.message
     mock_kill.assert_called_once()
     assert not path.exists()
+
+
+def test_stop_server_timeout(tmp_path):
+    path = tmp_path / "app.pid"
+    path.write_text("123\n", encoding="utf-8")
+
+    with patch("src.cli.process_control.is_process_alive", return_value=True):
+        with patch("src.cli.process_control.is_expected_server_process", return_value=True):
+            with patch("src.cli.process_control.os.kill"):
+                outcome = stop_server(path, timeout_sec=0.0, kill_timeout_sec=0.0)
+
+    assert outcome.result is StopResult.TIMEOUT
+    assert "Timed out" in outcome.message
+    assert path.exists()
+
+
+def test_stop_server_force_kill_removes_pid(tmp_path):
+    path = tmp_path / "app.pid"
+    path.write_text("123\n", encoding="utf-8")
+
+    alive_states = iter([True, False])
+
+    with patch(
+        "src.cli.process_control.is_process_alive",
+        side_effect=lambda pid: next(alive_states),
+    ):
+        with patch("src.cli.process_control.is_expected_server_process", return_value=True):
+            with patch("src.cli.process_control.os.kill") as mock_kill:
+                outcome = stop_server(path, timeout_sec=0.0, kill_timeout_sec=0.0)
+
+    assert outcome.result is StopResult.STOPPED
+    assert "force kill" in outcome.message
+    assert mock_kill.call_count == 2
+    assert not path.exists()
+
+
+def test_stop_server_handles_pid_disappearing_before_sigterm(tmp_path):
+    path = tmp_path / "app.pid"
+    path.write_text("123\n", encoding="utf-8")
+
+    def raise_lookup(pid, sig):
+        raise ProcessLookupError
+
+    with patch("src.cli.process_control.is_process_alive", return_value=True):
+        with patch("src.cli.process_control.is_expected_server_process", return_value=True):
+            with patch("src.cli.process_control.os.kill", side_effect=raise_lookup):
+                outcome = stop_server(path)
+
+    assert outcome.result is StopResult.STALE_PID
+    assert "stale PID file" in outcome.message
+    assert not path.exists()
+
+
+def test_stop_server_permission_denied_on_sigterm(tmp_path):
+    path = tmp_path / "app.pid"
+    path.write_text("123\n", encoding="utf-8")
+
+    with patch("src.cli.process_control.is_process_alive", return_value=True):
+        with patch("src.cli.process_control.is_expected_server_process", return_value=True):
+            with patch("src.cli.process_control.os.kill", side_effect=PermissionError):
+                with pytest.raises(ProcessControlError, match="Permission denied"):
+                    stop_server(path)
+
+
+def test_stop_server_permission_denied_on_sigkill(tmp_path):
+    path = tmp_path / "app.pid"
+    path.write_text("123\n", encoding="utf-8")
+
+    def kill_side_effect(pid, sig):
+        if sig == 15:
+            return None
+        raise PermissionError
+
+    with patch("src.cli.process_control.is_process_alive", return_value=True):
+        with patch("src.cli.process_control.is_expected_server_process", return_value=True):
+            with patch("src.cli.process_control.os.kill", side_effect=kill_side_effect):
+                with pytest.raises(ProcessControlError, match="Permission denied"):
+                    stop_server(path, timeout_sec=0.0, kill_timeout_sec=0.0)
