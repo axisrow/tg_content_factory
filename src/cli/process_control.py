@@ -124,9 +124,12 @@ def register_current_process(path: Path) -> None:
 
 
 def unregister_current_process(path: Path) -> None:
-    pid = read_pid(path)
-    if pid == os.getpid():
-        remove_pid_file(path)
+    try:
+        pid = read_pid(path)
+        if pid == os.getpid():
+            remove_pid_file(path)
+    except Exception:
+        pass
 
 
 def stop_server(
