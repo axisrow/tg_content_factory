@@ -10,6 +10,11 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
+@router.get("/", response_class=HTMLResponse)
+async def root_page():
+    return RedirectResponse(url="/agent", status_code=303)
+
+
 async def _render_search_page(
     request: Request,
     q: str = "",
@@ -21,7 +26,7 @@ async def _render_search_page(
     msg_length_op: str = "",
     msg_length_val: int | None = None,
     page: int = 1,
-):
+) -> HTMLResponse | RedirectResponse:
     # Onboarding: redirect if no accounts configured
     auth = deps.get_auth(request)
     if not auth.is_configured:
@@ -105,14 +110,6 @@ async def _render_search_page(
         },
     )
 
-
-@router.get("/", response_class=HTMLResponse)
-async def root_page(
-    request: Request,
-):
-    return RedirectResponse(url="/agent", status_code=303)
-
-
 @router.get("/search", response_class=HTMLResponse)
 async def search_page(
     request: Request,
@@ -127,7 +124,7 @@ async def search_page(
     page: int = Query(1),
 ):
     return await _render_search_page(
-        request,
+        request=request,
         q=q,
         channel_id=channel_id,
         date_from=date_from,
