@@ -25,5 +25,10 @@ llm:
   model: "gpt-4o-mini"
   api_key: ${LLM_API_KEY}
 
+agent:
+  model: ${AGENT_MODEL}
+  fallback_model: ${AGENT_FALLBACK_MODEL}
+  fallback_api_key: ${AGENT_FALLBACK_API_KEY}
+
 security:
   session_encryption_key: ${SESSION_ENCRYPTION_KEY}

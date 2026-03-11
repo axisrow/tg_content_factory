@@ -152,6 +152,40 @@
 </div>
 
 <div class="card mb-4">
+    <div class="card-header fw-semibold">AI Agent</div>
+    <div class="card-body">
+        <form method="post" action="/settings/save-agent">
+            <div class="form-check form-switch mb-3">
+                <input class="form-check-input" type="checkbox" id="agent_dev_mode_enabled"
+                       name="agent_dev_mode_enabled" value="1"
+                       {% if agent_dev_mode_enabled %}checked{% endif %}>
+                <label class="form-check-label" for="agent_dev_mode_enabled">Режим разработчика</label>
+            </div>
+            <div class="mb-3">
+                <label for="agent_backend_override" class="form-label">Backend override</label>
+                <select id="agent_backend_override" name="agent_backend_override" class="form-select">
+                    <option value="auto" {{ 'selected' if agent_backend_override == 'auto' else '' }}>Авто</option>
+                    <option value="claude" {{ 'selected' if agent_backend_override == 'claude' else '' }}>claude-agent-sdk</option>
+                    <option value="deepagents" {{ 'selected' if agent_backend_override == 'deepagents' else '' }}>deepagents</option>
+                </select>
+                <div class="form-text">
+                    Override применяется только при включённом режиме разработчика. В обычном режиме используется Claude, а при его отсутствии — deepagents fallback.
+                </div>
+            </div>
+            <p class="mb-3">
+                Fallback model из env/config:
+                {% if agent_fallback_model %}
+                <code>{{ agent_fallback_model }}</code>
+                {% else %}
+                <span class="text-muted">не задан</span>
+                {% endif %}
+            </p>
+            <button type="submit" class="btn btn-primary">Сохранить настройки агента</button>
+        </form>
+    </div>
+</div>
+
+<div class="card mb-4">
     <div class="card-header fw-semibold">Фильтры каналов</div>
     <div class="card-body">
         <form method="post" action="/settings/save-filters">

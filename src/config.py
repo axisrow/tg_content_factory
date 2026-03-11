@@ -47,6 +47,12 @@ class LLMConfig(BaseModel):
     api_key: str = ""
 
 
+class AgentConfig(BaseModel):
+    model: str = ""
+    fallback_model: str = ""
+    fallback_api_key: str = ""
+
+
 class SecurityConfig(BaseModel):
     session_encryption_key: str = ""
 
@@ -58,6 +64,7 @@ class AppConfig(BaseModel):
     notifications: NotificationsConfig = NotificationsConfig()
     database: DatabaseConfig = DatabaseConfig()
     llm: LLMConfig = LLMConfig()
+    agent: AgentConfig = AgentConfig()
     security: SecurityConfig = SecurityConfig()
 
 
@@ -111,6 +118,12 @@ def load_config(path: str | Path = "config.yaml") -> AppConfig:
             config.telegram.api_id = int(env_api_id)
     if not config.telegram.api_hash:
         config.telegram.api_hash = os.environ.get("TG_API_HASH", "").strip()
+    if not config.agent.model:
+        config.agent.model = os.environ.get("AGENT_MODEL", "").strip()
+    if not config.agent.fallback_model:
+        config.agent.fallback_model = os.environ.get("AGENT_FALLBACK_MODEL", "").strip()
+    if not config.agent.fallback_api_key:
+        config.agent.fallback_api_key = os.environ.get("AGENT_FALLBACK_API_KEY", "").strip()
 
     return config
 

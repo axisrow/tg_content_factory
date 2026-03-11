@@ -42,6 +42,9 @@ TG_API_HASH=ваш_api_hash
 WEB_PASS=ваш_пароль
 SESSION_ENCRYPTION_KEY=    # шифрование session string аккаунтов в БД
 LLM_API_KEY=               # опционально, для AI-поиска
+AGENT_MODEL=               # опционально, override модели Claude SDK
+AGENT_FALLBACK_MODEL=      # опционально, provider:model для deepagents fallback
+AGENT_FALLBACK_API_KEY=    # опционально, явный API key для fallback-провайдера
 ```
 
 Запустите сервер:
@@ -71,6 +74,11 @@ docker-compose up -d
 | `WEB_PASS` | Да | Пароль веб-панели |
 | `SESSION_ENCRYPTION_KEY` | Нет* | Ключ шифрования Telegram session string в БД |
 | `LLM_API_KEY` | Нет | API-ключ для AI-поиска |
+| `ANTHROPIC_API_KEY` | Нет | API-ключ только для `claude-agent-sdk` |
+| `CLAUDE_CODE_OAUTH_TOKEN` | Нет | OAuth токен только для `claude-agent-sdk` |
+| `AGENT_MODEL` | Нет | Override модели Claude SDK для `/agent` |
+| `AGENT_FALLBACK_MODEL` | Нет | `provider:model` для `deepagents` fallback в `/agent` |
+| `AGENT_FALLBACK_API_KEY` | Нет | Явный API key для LangChain fallback |
 
 \* Если не задан, сессии хранятся в plaintext. Если в БД уже есть зашифрованные сессии (`enc:v*`), приложение не запустится пока ключ не будет указан.
 

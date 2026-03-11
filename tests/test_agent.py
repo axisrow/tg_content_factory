@@ -1,15 +1,22 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+from src.config import AppConfig
 from src.agent.context import format_context
 from src.agent.manager import AgentManager
 from src.agent.tools import make_mcp_server
 from src.models import Message
+
+
+@pytest.fixture(autouse=True)
+def _default_agent_env(monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-claude-key")
 
 
 @pytest.mark.asyncio
@@ -22,7 +29,7 @@ async def test_make_mcp_server_returns_server(db):
 async def test_agent_manager_initialize(db):
     mgr = AgentManager(db)
     mgr.initialize()
-    assert mgr._server is not None
+    assert mgr._claude_backend._server is not None
 
 
 @pytest.mark.asyncio
@@ -54,6 +61,71 @@ async def test_agent_chat_stream_mocked(db):
     assert all(c.startswith("data: ") for c in chunks)
     last_chunk = chunks[-1]
     assert "done" in last_chunk or "full_text" in last_chunk or "hello" in last_chunk
+
+
+@pytest.mark.asyncio
+async def test_runtime_status_prefers_claude_when_available(db, monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "claude-key")
+    monkeypatch.setenv("AGENT_FALLBACK_MODEL", "openai:gpt-4.1-mini")
+
+    mgr = AgentManager(db)
+    status = await mgr.get_runtime_status()
+
+    assert status.selected_backend == "claude"
+    assert status.claude_available is True
+    assert status.deepagents_available is True
+
+
+@pytest.mark.asyncio
+async def test_runtime_status_falls_back_to_deepagents_when_claude_missing(db, monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
+    monkeypatch.setenv("AGENT_FALLBACK_MODEL", "openai:gpt-4.1-mini")
+
+    mgr = AgentManager(db)
+    status = await mgr.get_runtime_status()
+
+    assert status.selected_backend == "deepagents"
+    assert status.error is None
+
+
+@pytest.mark.asyncio
+async def test_runtime_status_respects_dev_override(db, monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "claude-key")
+    monkeypatch.setenv("AGENT_FALLBACK_MODEL", "openai:gpt-4.1-mini")
+    await db.set_setting("agent_dev_mode_enabled", "1")
+    await db.set_setting("agent_backend_override", "deepagents")
+
+    mgr = AgentManager(db)
+    status = await mgr.get_runtime_status()
+
+    assert status.selected_backend == "deepagents"
+    assert status.using_override is True
+
+
+def test_deepagents_backend_strips_claude_tokens_from_env(db, monkeypatch):
+    config = AppConfig()
+    config.agent.fallback_model = "anthropic:claude-sonnet-4-5-20250929"
+    config.agent.fallback_api_key = "fallback-key"
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sdk-key")
+    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "oauth-token")
+
+    create_agent = MagicMock(return_value=MagicMock(run=MagicMock(return_value="ok")))
+
+    def fake_init_chat_model(model, **kwargs):
+        assert os.environ.get("ANTHROPIC_API_KEY") is None
+        assert os.environ.get("CLAUDE_CODE_OAUTH_TOKEN") is None
+        assert kwargs["api_key"] == "fallback-key"
+        return MagicMock()
+
+    mgr = AgentManager(db, config)
+    with patch("deepagents.create_deep_agent", create_agent), patch(
+        "langchain.chat_models.init_chat_model", fake_init_chat_model
+    ):
+        mgr._deepagents_backend.initialize()
+
+    assert os.environ.get("ANTHROPIC_API_KEY") == "sdk-key"
+    assert os.environ.get("CLAUDE_CODE_OAUTH_TOKEN") == "oauth-token"
 
 
 # ── DB round-trip tests ───────────────────────────────────────────────────────
