@@ -74,7 +74,7 @@ async def import_channels(
                 break
             logger.warning("Failed to resolve '%s': %s", ident, exc)
             info = None
-        except Exception as exc:
+        except Exception:
             logger.exception("Unexpected error resolving %r during bulk import", ident)
             info = None
 
