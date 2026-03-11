@@ -44,6 +44,10 @@ async def settings_page(request: Request):
         logger=logger,
     )
     saved_interval = await db.get_setting("collect_interval_minutes")
+    agent_dev_mode_enabled = (await db.get_setting("agent_dev_mode_enabled") or "0") == "1"
+    agent_backend_override = await db.get_setting("agent_backend_override") or "auto"
+    if agent_backend_override not in {"auto", "claude", "deepagents"}:
+        agent_backend_override = "auto"
     config = request.app.state.config
     telegram_credentials_from_env = bool(
         os.environ.get("TG_API_ID", "").strip().isdigit()
@@ -85,6 +89,11 @@ async def settings_page(request: Request):
             "notification_bot": notification_bot,
             "notification_bot_error": notification_bot_error,
             "collect_interval_minutes": collect_interval_minutes,
+            "agent_dev_mode_enabled": agent_dev_mode_enabled,
+            "agent_backend_override": agent_backend_override,
+            "agent_fallback_model": config.agent.fallback_model or os.environ.get(
+                "AGENT_FALLBACK_MODEL", ""
+            ).strip(),
         },
     )
 
@@ -103,6 +112,21 @@ async def save_scheduler_settings(request: Request):
     if scheduler:
         scheduler.update_interval(interval)
     return RedirectResponse(url="/settings?msg=scheduler_saved", status_code=303)
+
+
+@router.post("/save-agent")
+async def save_agent_settings(request: Request):
+    form = await request.form()
+    db = deps.get_db(request)
+
+    dev_mode_enabled = str(form.get("agent_dev_mode_enabled", "")).strip() == "1"
+    backend_override = str(form.get("agent_backend_override", "auto")).strip()
+    if backend_override not in {"auto", "claude", "deepagents"}:
+        backend_override = "auto"
+
+    await db.set_setting("agent_dev_mode_enabled", "1" if dev_mode_enabled else "0")
+    await db.set_setting("agent_backend_override", backend_override)
+    return RedirectResponse(url="/settings?msg=agent_saved", status_code=303)
 
 
 @router.post("/save-filters")

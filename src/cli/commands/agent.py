@@ -28,7 +28,7 @@ async def _test_escaping(db) -> None:
 
     mgr = AgentManager(db)
     if not mgr.available:
-        print("ANTHROPIC_API_KEY / CLAUDE_CODE_OAUTH_TOKEN не задан — пропуск.")
+        print("Ни claude-agent-sdk, ни deepagents fallback не настроены — пропуск.")
         return
     mgr.initialize()
 
@@ -105,7 +105,7 @@ def run(args: argparse.Namespace) -> None:
 
                 await db.save_agent_message(thread_id, "user", args.message)
 
-                mgr = AgentManager(db)
+                mgr = AgentManager(db, config)
                 mgr.initialize()
 
                 model = getattr(args, "model", None)

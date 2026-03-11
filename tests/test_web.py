@@ -188,6 +188,7 @@ async def test_settings_page(client):
     resp = await client.get("/settings/")
     assert resp.status_code == 200
     assert "Аккаунт для уведомлений" in resp.text
+    assert "Режим разработчика" in resp.text
 
 
 @pytest.mark.asyncio
@@ -236,6 +237,24 @@ async def test_settings_page_ignores_invalid_persisted_numeric_settings(client):
     assert 'value="0"' in resp.text
     assert 'name="collect_interval_minutes"' in resp.text
     assert 'value="60"' in resp.text
+
+
+@pytest.mark.asyncio
+async def test_settings_save_agent_persists_dev_mode_and_override(client):
+    db = client._transport.app.state.db
+
+    resp = await client.post(
+        "/settings/save-agent",
+        data={
+            "agent_dev_mode_enabled": "1",
+            "agent_backend_override": "deepagents",
+        },
+        follow_redirects=False,
+    )
+
+    assert resp.status_code == 303
+    assert await db.get_setting("agent_dev_mode_enabled") == "1"
+    assert await db.get_setting("agent_backend_override") == "deepagents"
 
 
 @pytest.mark.asyncio
@@ -1717,6 +1736,19 @@ async def test_edit_search_query_route(client):
 class TestWebAgent:
     @pytest.mark.asyncio
     async def test_agent_page_auto_creates_thread(self, client):
+        client._transport.app.state.agent_manager = AsyncMock()
+        client._transport.app.state.agent_manager.get_runtime_status = AsyncMock(
+            return_value=SimpleNamespace(
+                claude_available=True,
+                deepagents_available=False,
+                dev_mode_enabled=False,
+                backend_override="auto",
+                selected_backend="claude",
+                fallback_model="",
+                using_override=False,
+                error=None,
+            )
+        )
         resp = await client.get("/agent")
         assert resp.status_code == 200
         assert "Новый тред" in resp.text
@@ -1726,12 +1758,51 @@ class TestWebAgent:
     @pytest.mark.asyncio
     async def test_agent_page_redirects_to_first_thread(self, client):
         db = client._transport.app.state.db
+        client._transport.app.state.agent_manager = AsyncMock()
+        client._transport.app.state.agent_manager.get_runtime_status = AsyncMock(
+            return_value=SimpleNamespace(
+                claude_available=False,
+                deepagents_available=True,
+                dev_mode_enabled=True,
+                backend_override="deepagents",
+                selected_backend="deepagents",
+                fallback_model="openai:gpt-4.1-mini",
+                using_override=True,
+                error=None,
+            )
+        )
         await db.create_agent_thread("First")
         await db.create_agent_thread("Second")
 
         resp = await client.get("/agent")
         assert resp.status_code == 200
         assert str(resp.url).endswith("?thread_id=1")
+
+    @pytest.mark.asyncio
+    async def test_agent_page_shows_deepagents_status_and_hides_claude_model_select(self, client):
+        db = client._transport.app.state.db
+        await db.create_agent_thread("First")
+        client._transport.app.state.agent_manager = AsyncMock()
+        client._transport.app.state.agent_manager.get_runtime_status = AsyncMock(
+            return_value=SimpleNamespace(
+                claude_available=False,
+                deepagents_available=True,
+                dev_mode_enabled=True,
+                backend_override="deepagents",
+                selected_backend="deepagents",
+                fallback_model="openai:gpt-4.1-mini",
+                using_override=True,
+                error=None,
+            )
+        )
+
+        resp = await client.get("/agent?thread_id=1")
+
+        assert resp.status_code == 200
+        assert "deepagents" in resp.text
+        assert "dev override" in resp.text
+        assert "openai:gpt-4.1-mini" in resp.text
+        assert 'id="model-select"' not in resp.text
 
     @pytest.mark.asyncio
     async def test_agent_thread_creation_and_deletion(self, client):

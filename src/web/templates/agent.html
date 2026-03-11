@@ -363,7 +363,28 @@
     <!-- Main chat area -->
     <div class="agent-chat">
         {% if active_thread %}
-        <div class="chat-header">{{ active_thread.title }}</div>
+        <div class="chat-header">
+            {{ active_thread.title }}
+            {% if agent_status and agent_status.selected_backend %}
+            <span class="badge text-bg-secondary ms-2">{{ agent_status.selected_backend }}</span>
+            {% endif %}
+            {% if agent_status and agent_status.using_override %}
+            <span class="badge text-bg-warning ms-2">dev override</span>
+            {% endif %}
+        </div>
+
+        {% if agent_status %}
+        <div class="mb-2 small text-muted">
+            Claude: {{ "on" if agent_status.claude_available else "off" }} |
+            deepagents: {{ "on" if agent_status.deepagents_available else "off" }}
+            {% if agent_status.selected_backend == "deepagents" and agent_status.fallback_model %}
+            | model: <code>{{ agent_status.fallback_model }}</code>
+            {% endif %}
+        </div>
+        {% if agent_status.error %}
+        <div class="alert alert-warning py-2">{{ agent_status.error }}</div>
+        {% endif %}
+        {% endif %}
 
         <div class="chat-messages" id="chat-messages">
             {% for msg in messages %}
@@ -384,12 +405,19 @@
             <textarea id="chat-input" class="form-control"
                       placeholder="Введите сообщение… (Enter — отправить, Shift+Enter — перенос строки)"
                       ></textarea>
+            {% if not agent_status or agent_status.selected_backend != "deepagents" %}
             <select id="model-select" class="form-select model-select">
                 <option value="">Авто</option>
                 <option value="claude-sonnet-4-5">Sonnet 4.5</option>
                 <option value="claude-opus-4-6">Opus 4.6</option>
                 <option value="claude-haiku-4-5-20251001">Haiku 4.5</option>
             </select>
+            {% else %}
+            <div class="form-text model-select">
+                deepagents использует модель из env/config:
+                <code>{{ agent_status.fallback_model or "AGENT_FALLBACK_MODEL" }}</code>
+            </div>
+            {% endif %}
             <button class="btn btn-primary chat-send-btn" id="send-btn"
                     onclick="sendMessage()">Отправить</button>
         </div>

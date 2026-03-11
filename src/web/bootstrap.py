@@ -120,7 +120,7 @@ async def build_container_with_templates(
     stats_dispatcher = StatsTaskDispatcher(collector, channel_bundle, default_batch_size=20)
     search_engine = SearchEngine(search_bundle, pool)
     ai_search = AISearchEngine(config.llm, search_bundle)
-    agent_manager = AgentManager(db)
+    agent_manager = AgentManager(db, config)
     search_query_bundle = SearchQueryBundle(repos.search_queries, repos.messages)
     scheduler = SchedulerManager(
         collector,
@@ -133,7 +133,8 @@ async def build_container_with_templates(
     )
 
     _templates = configure_template_globals(
-        templates or Jinja2Templates(directory=str(TEMPLATES_DIR))
+        templates or Jinja2Templates(directory=str(TEMPLATES_DIR)),
+        config,
     )
 
     return AppContainer(

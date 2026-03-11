@@ -11,7 +11,7 @@ A personal Telegram monitoring toolkit — collect messages, search across chann
 - **All chat types** — channels, supergroups, gigagroups, forums, public and private
 - **Multi-account** with automatic flood-wait rotation
 - **3 search modes** — local DB (FTS5), direct Telegram API, AI/LLM-powered
-- **AI Agent** — interactive chat powered by `claude-agent-sdk` (Anthropic) with MCP tools for database search and channel lookup; optional `deepagents` fallback for AI search (experimental, not tested)
+- **AI Agent** — interactive chat powered by `claude-agent-sdk` with automatic `deepagents` fallback when Claude SDK is not configured; developer override is available in Settings
 - All search results are cached in a local SQLite database
 - **Scheduled collection** — incremental message fetching on a timer
 - **Keyword monitoring** — plain text and regex, with Telegram bot notifications
@@ -43,6 +43,9 @@ TG_API_HASH=your_api_hash
 WEB_PASS=your_password
 SESSION_ENCRYPTION_KEY=    # encrypts account session strings in DB
 LLM_API_KEY=               # optional, for AI search
+AGENT_MODEL=               # optional, Claude SDK model override
+AGENT_FALLBACK_MODEL=      # optional, provider:model for deepagents fallback
+AGENT_FALLBACK_API_KEY=    # optional, explicit API key for deepagents fallback provider
 ```
 
 Start the server:
@@ -72,8 +75,11 @@ docker-compose up -d
 | `WEB_PASS` | Yes | Web panel password |
 | `SESSION_ENCRYPTION_KEY` | No* | Key for encrypting Telegram session strings in DB |
 | `LLM_API_KEY` | No | API key for AI-powered search (deepagents) |
-| `ANTHROPIC_API_KEY` | No | Anthropic API key for AI Agent chat (`claude-agent-sdk`) |
-| `AGENT_MODEL` | No | Override agent model (default: SDK default) |
+| `ANTHROPIC_API_KEY` | No | Anthropic API key for `claude-agent-sdk` only |
+| `CLAUDE_CODE_OAUTH_TOKEN` | No | Claude Code auth token for `claude-agent-sdk` only |
+| `AGENT_MODEL` | No | Override Claude SDK model for `/agent` |
+| `AGENT_FALLBACK_MODEL` | No | `provider:model` for `deepagents` fallback in `/agent` |
+| `AGENT_FALLBACK_API_KEY` | No | Explicit API key passed to LangChain `init_chat_model(...)` for fallback |
 
 \* If not set, sessions are stored in plaintext. If the DB already contains encrypted sessions (`enc:v*`), startup fails until this key is provided.
 
@@ -89,7 +95,15 @@ Supports `${ENV_VAR}` substitution. Empty env vars are dropped (defaults apply).
 | `notifications` | `admin_chat_id` for keyword match alerts |
 | `database` | SQLite path (default: `data/tg_search.db`) |
 | `llm` | LLM provider, model, API key for AI search (deepagents) |
+| `agent` | Claude model override and `deepagents` fallback settings for `/agent` |
 | `security` | Session encryption settings |
+
+### Agent backend rules
+
+- `/agent` uses `claude-agent-sdk` when `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN` is configured.
+- If Claude SDK is not configured, `/agent` falls back to `deepagents` when `AGENT_FALLBACK_MODEL` is set.
+- `ANTHROPIC_API_KEY` and `CLAUDE_CODE_OAUTH_TOKEN` are never reused by `deepagents`.
+- Developer override for forcing `claude-agent-sdk` or `deepagents` lives on the Settings page and applies only when developer mode is enabled.
 
 ## CLI
 

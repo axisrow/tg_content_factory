@@ -28,7 +28,21 @@ class ChatRequest(BaseModel):
 @router.get("", response_class=HTMLResponse)
 async def agent_page(request: Request, thread_id: int | None = None):
     db = deps.get_db(request)
+    agent_manager = deps.get_agent_manager(request)
     threads = await db.get_agent_threads()
+    agent_status = None
+    if agent_manager is not None:
+        runtime_status = await agent_manager.get_runtime_status()
+        agent_status = {
+            "claude_available": runtime_status.claude_available,
+            "deepagents_available": runtime_status.deepagents_available,
+            "dev_mode_enabled": runtime_status.dev_mode_enabled,
+            "backend_override": runtime_status.backend_override,
+            "selected_backend": runtime_status.selected_backend,
+            "fallback_model": runtime_status.fallback_model,
+            "using_override": runtime_status.using_override,
+            "error": runtime_status.error,
+        }
 
     messages = []
     active_thread = None
@@ -54,6 +68,7 @@ async def agent_page(request: Request, thread_id: int | None = None):
             "threads": threads,
             "active_thread": active_thread,
             "messages": messages,
+            "agent_status": agent_status,
         },
     )
 
