@@ -409,6 +409,7 @@ async def test_get_my_dialogs_bot_type():
     pool.get_client_by_phone = AsyncMock(return_value=(mock_client, "+1234567890"))
     pool.release_client = AsyncMock()
     pool._dialogs_cache = {}
+    pool._dialogs_cache_ttl_sec = 60.0
     pool._get_cached_dialogs = ClientPool._get_cached_dialogs.__get__(pool, ClientPool)
     pool._store_cached_dialogs = ClientPool._store_cached_dialogs.__get__(pool, ClientPool)
 
@@ -461,6 +462,7 @@ async def test_get_dialogs_for_phone_partial_on_timeout():
     pool.release_client = AsyncMock()
     pool._classify_entity = MagicMock(return_value=("channel", False))
     pool._dialogs_cache = {}
+    pool._dialogs_cache_ttl_sec = 60.0
     pool._get_cached_dialogs = ClientPool._get_cached_dialogs.__get__(pool, ClientPool)
     pool._store_cached_dialogs = ClientPool._store_cached_dialogs.__get__(pool, ClientPool)
 
@@ -601,6 +603,7 @@ async def test_get_dialogs_for_phone_uses_manual_cache():
     pool.release_client = AsyncMock()
     pool._classify_entity = MagicMock(return_value=("channel", False))
     pool._dialogs_cache = {}
+    pool._dialogs_cache_ttl_sec = 60.0
     pool._get_cached_dialogs = ClientPool._get_cached_dialogs.__get__(pool, ClientPool)
     pool._store_cached_dialogs = ClientPool._store_cached_dialogs.__get__(pool, ClientPool)
     pool.invalidate_dialogs_cache = ClientPool.invalidate_dialogs_cache.__get__(pool, ClientPool)
@@ -638,11 +641,48 @@ async def test_get_dialogs_for_phone_refresh_bypasses_cache():
     pool.release_client = AsyncMock()
     pool._classify_entity = MagicMock(return_value=("channel", False))
     pool._dialogs_cache = {}
+    pool._dialogs_cache_ttl_sec = 60.0
     pool._get_cached_dialogs = ClientPool._get_cached_dialogs.__get__(pool, ClientPool)
     pool._store_cached_dialogs = ClientPool._store_cached_dialogs.__get__(pool, ClientPool)
     pool.invalidate_dialogs_cache = ClientPool.invalidate_dialogs_cache.__get__(pool, ClientPool)
 
     await ClientPool.get_dialogs_for_phone(pool, "+1234567890")
     await ClientPool.get_dialogs_for_phone(pool, "+1234567890", refresh=True)
+
+    assert mock_client.iter_dialogs.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_get_dialogs_for_phone_refetches_after_ttl_expiry():
+    from src.telegram.client_pool import ClientPool
+
+    pool = MagicMock(spec=ClientPool)
+    mock_client = MagicMock()
+
+    channel_entity = MagicMock()
+    channel_entity.id = -100123
+    channel_entity.username = "cachedchan"
+    channel_entity.creator = False
+
+    dialog = MagicMock()
+    dialog.entity = channel_entity
+    dialog.title = "Cached Channel"
+    dialog.is_channel = True
+    dialog.is_group = False
+
+    async def _fake_iter_dialogs():
+        yield dialog
+
+    mock_client.iter_dialogs.side_effect = [_fake_iter_dialogs(), _fake_iter_dialogs()]
+    pool.get_client_by_phone = AsyncMock(return_value=(mock_client, "+1234567890"))
+    pool.release_client = AsyncMock()
+    pool._classify_entity = MagicMock(return_value=("channel", False))
+    pool._dialogs_cache = {}
+    pool._dialogs_cache_ttl_sec = -1.0
+    pool._get_cached_dialogs = ClientPool._get_cached_dialogs.__get__(pool, ClientPool)
+    pool._store_cached_dialogs = ClientPool._store_cached_dialogs.__get__(pool, ClientPool)
+
+    await ClientPool.get_dialogs_for_phone(pool, "+1234567890")
+    await ClientPool.get_dialogs_for_phone(pool, "+1234567890")
 
     assert mock_client.iter_dialogs.call_count == 2

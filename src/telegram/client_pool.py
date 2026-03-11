@@ -32,6 +32,7 @@ class DialogFetchStats:
 
 @dataclass
 class DialogCacheEntry:
+    fetched_at_monotonic: float
     dialogs: list[dict]
 
 
@@ -54,6 +55,7 @@ class ClientPool:
         self._in_use: set[str] = set()
         self._dialogs_fetched: set[str] = set()
         self._dialogs_cache: dict[tuple[str, str], DialogCacheEntry] = {}
+        self._dialogs_cache_ttl_sec = 60.0
 
     def is_dialogs_fetched(self, phone: str) -> bool:
         """Return True if get_dialogs() was already called for this phone in this process."""
@@ -73,11 +75,19 @@ class ClientPool:
 
     def _get_cached_dialogs(self, phone: str, mode: str) -> list[dict] | None:
         entry = self._dialogs_cache.get((phone, mode))
-        if entry is None:
-            if mode != "channels_only":
-                return None
+        if entry is not None:
+            age = time.monotonic() - entry.fetched_at_monotonic
+            if age <= self._dialogs_cache_ttl_sec:
+                return [dict(dialog) for dialog in entry.dialogs]
+            self._dialogs_cache.pop((phone, mode), None)
+
+        if mode == "channels_only":
             full_entry = self._dialogs_cache.get((phone, "full"))
             if full_entry is not None:
+                age = time.monotonic() - full_entry.fetched_at_monotonic
+                if age > self._dialogs_cache_ttl_sec:
+                    self._dialogs_cache.pop((phone, "full"), None)
+                    return None
                 filtered = [
                     dict(dialog)
                     for dialog in full_entry.dialogs
@@ -86,10 +96,11 @@ class ClientPool:
                 self._store_cached_dialogs(phone, mode, filtered)
                 return filtered
             return None
-        return [dict(dialog) for dialog in entry.dialogs]
+        return None
 
     def _store_cached_dialogs(self, phone: str, mode: str, dialogs: list[dict]) -> None:
         self._dialogs_cache[(phone, mode)] = DialogCacheEntry(
+            fetched_at_monotonic=time.monotonic(),
             dialogs=[dict(dialog) for dialog in dialogs],
         )
 
