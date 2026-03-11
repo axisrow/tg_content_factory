@@ -93,6 +93,15 @@ async def photo_loader_page(request: Request, phone: str | None = None):
     )
 
 
+@router.post("/refresh")
+async def photo_loader_refresh(request: Request, phone: str = Form(...)):
+    await deps.channel_service(request).get_my_dialogs(phone, refresh=True)
+    return RedirectResponse(
+        url=f"/my-telegram/photos?phone={quote(phone, safe='')}",
+        status_code=303,
+    )
+
+
 @router.post("/send")
 async def photo_send(
     request: Request,
@@ -100,7 +109,7 @@ async def photo_send(
     target_dialog_id: int = Form(...),
     target_title: str = Form(""),
     target_type: str = Form(""),
-    send_mode: str = Form(PhotoSendMode.ALBUM.value),
+    send_mode: str = Form(PhotoSendMode.SEPARATE.value),
     caption: str = Form(""),
     photos: list[UploadFile] = File(...),
 ):
@@ -130,7 +139,7 @@ async def photo_schedule(
     target_dialog_id: int = Form(...),
     target_title: str = Form(""),
     target_type: str = Form(""),
-    send_mode: str = Form(PhotoSendMode.ALBUM.value),
+    send_mode: str = Form(PhotoSendMode.SEPARATE.value),
     caption: str = Form(""),
     schedule_at: str = Form(...),
     photos: list[UploadFile] = File(...),
@@ -191,7 +200,7 @@ async def photo_auto_create(
     target_title: str = Form(""),
     target_type: str = Form(""),
     folder_path: str = Form(...),
-    send_mode: str = Form(PhotoSendMode.ALBUM.value),
+    send_mode: str = Form(PhotoSendMode.SEPARATE.value),
     caption: str = Form(""),
     interval_minutes: int = Form(...),
 ):
