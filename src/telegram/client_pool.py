@@ -73,29 +73,46 @@ class ClientPool:
         for key in keys:
             del self._dialogs_cache[key]
 
+    async def _get_db_cached_dialogs(self, phone: str, mode: str) -> list[dict] | None:
+        full_dialogs = await self._db.repos.dialog_cache.list_dialogs(phone)
+        if not full_dialogs:
+            return None
+        if mode == "channels_only":
+            filtered = [
+                dict(dialog)
+                for dialog in full_dialogs
+                if dialog.get("channel_type") not in ("dm", "bot")
+            ]
+            self._store_cached_dialogs(phone, mode, filtered)
+            self._store_cached_dialogs(phone, "full", full_dialogs)
+            return filtered
+        self._store_cached_dialogs(phone, "full", full_dialogs)
+        return [dict(dialog) for dialog in full_dialogs]
+
     def _get_cached_dialogs(self, phone: str, mode: str) -> list[dict] | None:
         entry = self._dialogs_cache.get((phone, mode))
-        if entry is None:
-            if mode != "channels_only":
-                return None
+        if entry is not None:
+            age = time.monotonic() - entry.fetched_at_monotonic
+            if age <= self._dialogs_cache_ttl_sec:
+                return [dict(dialog) for dialog in entry.dialogs]
+            self._dialogs_cache.pop((phone, mode), None)
+
+        if mode == "channels_only":
             full_entry = self._dialogs_cache.get((phone, "full"))
             if full_entry is not None:
                 age = time.monotonic() - full_entry.fetched_at_monotonic
-                if age <= self._dialogs_cache_ttl_sec:
-                    filtered = [
-                        dict(dialog)
-                        for dialog in full_entry.dialogs
-                        if dialog.get("channel_type") not in ("dm", "bot")
-                    ]
-                    self._store_cached_dialogs(phone, mode, filtered)
-                    return filtered
-                self._dialogs_cache.pop((phone, "full"), None)
+                if age > self._dialogs_cache_ttl_sec:
+                    self._dialogs_cache.pop((phone, "full"), None)
+                    return None
+                filtered = [
+                    dict(dialog)
+                    for dialog in full_entry.dialogs
+                    if dialog.get("channel_type") not in ("dm", "bot")
+                ]
+                self._store_cached_dialogs(phone, mode, filtered)
+                return filtered
             return None
-        age = time.monotonic() - entry.fetched_at_monotonic
-        if age > self._dialogs_cache_ttl_sec:
-            self._dialogs_cache.pop((phone, mode), None)
-            return None
-        return [dict(dialog) for dialog in entry.dialogs]
+        return None
 
     def _store_cached_dialogs(self, phone: str, mode: str, dialogs: list[dict]) -> None:
         self._dialogs_cache[(phone, mode)] = DialogCacheEntry(
@@ -398,18 +415,40 @@ class ClientPool:
         phone: str,
         include_dm: bool = False,
         mode: str = "channels_only",
+        refresh: bool = False,
     ) -> list[dict]:
         """Get all dialogs for a specific connected account."""
         cache_mode = "full" if include_dm or mode == "full" else "channels_only"
-        cached = self._get_cached_dialogs(phone, cache_mode)
-        if cached is not None:
+        if refresh:
             logger.info(
-                "get_dialogs_for_phone: cache hit for %s mode=%s count=%d",
+                "get_dialogs_for_phone: manual refresh for %s mode=%s",
                 phone,
                 cache_mode,
-                len(cached),
             )
-            return cached
+        else:
+            cached = self._get_cached_dialogs(phone, cache_mode)
+            if cached is not None:
+                logger.info(
+                    "get_dialogs_for_phone: cache hit for %s mode=%s count=%d",
+                    phone,
+                    cache_mode,
+                    len(cached),
+                )
+                return cached
+            db_cached = await self._get_db_cached_dialogs(phone, cache_mode)
+            if db_cached is not None:
+                logger.info(
+                    "get_dialogs_for_phone: db cache hit for %s mode=%s count=%d",
+                    phone,
+                    cache_mode,
+                    len(db_cached),
+                )
+                return db_cached
+            logger.info(
+                "get_dialogs_for_phone: cache miss for %s mode=%s source=telegram",
+                phone,
+                cache_mode,
+            )
 
         result = await self.get_client_by_phone(phone)
         if not result:
@@ -483,8 +522,11 @@ class ClientPool:
                 stats.partial,
                 len(items),
             )
-            if items and not stats.partial:
+            if not stats.partial:
+                self.invalidate_dialogs_cache(phone)
                 self._store_cached_dialogs(phone, cache_mode, items)
+                if cache_mode == "full":
+                    await self._db.repos.dialog_cache.replace_dialogs(phone, items)
             return items
         finally:
             await self.release_client(phone)
@@ -524,6 +566,7 @@ class ClientPool:
         finally:
             await self.release_client(phone)
         self.invalidate_dialogs_cache(phone)
+        await self._db.repos.dialog_cache.clear_dialogs(phone)
         return outcomes
 
     async def get_forum_topics(self, channel_id: int) -> list[dict]:
