@@ -96,6 +96,8 @@ Supports `${ENV_VAR}` substitution. Empty env vars are dropped (defaults apply).
 ```bash
 # Web server
 python -m src.main [--config CONFIG] serve [--web-pass PASS]
+python -m src.main [--config CONFIG] stop
+python -m src.main [--config CONFIG] restart [--web-pass PASS]
 
 # One-shot collection
 python -m src.main [--config CONFIG] collect [--channel-id ID]

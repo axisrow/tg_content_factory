@@ -11,6 +11,11 @@ def build_parser() -> argparse.ArgumentParser:
     serve_parser = sub.add_parser("serve", help="Start web server")
     serve_parser.add_argument("--web-pass", help="Web panel password (overrides config)")
 
+    sub.add_parser("stop", help="Stop web server started by this app")
+
+    restart_parser = sub.add_parser("restart", help="Restart web server")
+    restart_parser.add_argument("--web-pass", help="Web panel password (overrides config)")
+
     collect_parser = sub.add_parser("collect", help="Run one-shot collection")
     collect_parser.add_argument(
         "--channel-id", type=int, default=None,

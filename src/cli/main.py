@@ -12,6 +12,7 @@ from src.cli.commands import (
     scheduler,
     search,
     search_query,
+    server_control,
     serve,
 )
 from src.cli.commands import agent as agent_cmd
@@ -33,6 +34,8 @@ def main() -> None:
 
     commands = {
         "serve": serve.run,
+        "stop": server_control.run_stop,
+        "restart": server_control.run_restart,
         "collect": collect.run,
         "search": search.run,
         "channel": channel.run,

@@ -341,6 +341,86 @@ class TestCLIScheduler:
 
 
 # ---------------------------------------------------------------------------
+# server control
+# ---------------------------------------------------------------------------
+
+
+class TestCLIServerControl:
+    def test_stop_command(self, capsys):
+        from src.cli.commands.server_control import run_stop
+
+        with patch("src.cli.commands.server_control.stop_server", return_value=(True, "Server stopped (PID 123).")):
+            run_stop(_ns(command="stop"))
+
+        out = capsys.readouterr().out
+        assert "Server stopped" in out
+
+    def test_stop_command_not_running_is_not_error(self, capsys):
+        from src.cli.commands.server_control import run_stop
+
+        with patch(
+            "src.cli.commands.server_control.stop_server",
+            return_value=(False, "Server is not running (no PID file: data/tg_search.pid)."),
+        ):
+            run_stop(_ns(command="stop"))
+
+        out = capsys.readouterr().out
+        assert "not running" in out
+
+    def test_stop_command_exits_for_unmanaged_process(self):
+        from src.cli.commands.server_control import run_stop
+
+        with patch(
+            "src.cli.commands.server_control.stop_server",
+            return_value=(False, "PID 321 is not a managed src.main serve process."),
+        ):
+            with pytest.raises(SystemExit, match="1"):
+                run_stop(_ns(command="stop"))
+
+    def test_restart_command_starts_serve_after_stop(self, capsys):
+        from src.cli.commands.server_control import run_restart
+
+        with patch(
+            "src.cli.commands.server_control.stop_server",
+            return_value=(True, "Server stopped (PID 123)."),
+        ):
+            with patch("src.cli.commands.server_control.serve.run") as mock_serve_run:
+                args = _ns(command="restart", web_pass="secret")
+                run_restart(args)
+
+        out = capsys.readouterr().out
+        assert "Server stopped" in out
+        mock_serve_run.assert_called_once_with(args)
+
+    def test_restart_command_starts_serve_when_not_running(self, capsys):
+        from src.cli.commands.server_control import run_restart
+
+        with patch(
+            "src.cli.commands.server_control.stop_server",
+            return_value=(False, "Server is not running (no PID file: data/tg_search.pid)."),
+        ):
+            with patch("src.cli.commands.server_control.serve.run") as mock_serve_run:
+                args = _ns(command="restart", web_pass=None)
+                run_restart(args)
+
+        out = capsys.readouterr().out
+        assert "not running" in out
+        mock_serve_run.assert_called_once_with(args)
+
+    def test_parser_stop_and_restart(self):
+        from src.cli.parser import build_parser
+
+        parser = build_parser()
+
+        args = parser.parse_args(["stop"])
+        assert args.command == "stop"
+
+        args = parser.parse_args(["restart", "--web-pass", "secret"])
+        assert args.command == "restart"
+        assert args.web_pass == "secret"
+
+
+# ---------------------------------------------------------------------------
 # test command
 # ---------------------------------------------------------------------------
 
