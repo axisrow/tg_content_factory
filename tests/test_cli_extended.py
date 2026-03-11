@@ -41,13 +41,21 @@ def cli_db(tmp_path):
 @pytest.fixture
 def cli_env(cli_db):
     config = AppConfig()
+
     async def fake_init_db(config_path: str):
-        # Patch close to do nothing so we can reuse the connection in tests
-        cli_db.close = AsyncMock()
-        return config, cli_db
-    with patch(
-        "src.cli.commands.channel.runtime.init_db",
-        side_effect=fake_init_db,
+        cmd_db = Database(cli_db._db_path)
+        await cmd_db.initialize()
+        return config, cmd_db
+
+    with (
+        patch(
+            "src.cli.commands.channel.runtime.init_db",
+            side_effect=fake_init_db,
+        ),
+        patch(
+            "src.cli.commands.test.runtime.init_db",
+            side_effect=fake_init_db,
+        ),
     ):
         yield cli_db
 
@@ -401,7 +409,14 @@ class TestCLITestExtended:
         )
 
         from src.cli.commands.test import run
-        with pytest.raises(SystemExit):
+        init_db_mock = AsyncMock(return_value=(AppConfig(), cli_env))
+        with (
+            patch(
+                "src.cli.commands.test.runtime.init_db",
+                side_effect=init_db_mock,
+            ),
+            pytest.raises(SystemExit),
+        ):
             run(_ns(command="test", test_action="read"))
         out = capsys.readouterr().out
         assert "stats fail" in out
@@ -498,19 +513,19 @@ class TestCLITestExtended:
             with patch(
                 "src.search.engine.SearchEngine",
             ) as mock_engine:
-                ei = mock_engine.return_value
-                ei.search_my_chats = AsyncMock(
+                engine_inst = mock_engine.return_value
+                engine_inst.search_my_chats = AsyncMock(
                     return_value=MagicMock(total=5),
                 )
-                ei.search_in_channel = AsyncMock(
+                engine_inst.search_in_channel = AsyncMock(
                     return_value=MagicMock(total=3),
                 )
-                ei.search_telegram = AsyncMock(
+                engine_inst.search_telegram = AsyncMock(
                     return_value=MagicMock(
                         total=0, error="Premium needed",
                     ),
                 )
-                ei.check_search_quota = AsyncMock(
+                engine_inst.check_search_quota = AsyncMock(
                     return_value={"left": 10},
                 )
 

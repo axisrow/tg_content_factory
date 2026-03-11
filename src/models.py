@@ -153,3 +153,67 @@ class SearchResult(BaseModel):
     query: str
     ai_summary: str | None = None
     error: str | None = None
+
+
+class PhotoSendMode(StrEnum):
+    ALBUM = "album"
+    SEPARATE = "separate"
+
+
+class PhotoBatchStatus(StrEnum):
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+    SCHEDULED = "scheduled"
+
+
+class PhotoBatch(BaseModel):
+    id: int | None = None
+    phone: str
+    target_dialog_id: int
+    target_title: str | None = None
+    target_type: str | None = None
+    send_mode: PhotoSendMode = PhotoSendMode.ALBUM
+    caption: str | None = None
+    status: PhotoBatchStatus = PhotoBatchStatus.PENDING
+    error: str | None = None
+    created_at: datetime | None = None
+    last_run_at: datetime | None = None
+
+
+class PhotoBatchItem(BaseModel):
+    id: int | None = None
+    batch_id: int | None = None
+    phone: str
+    target_dialog_id: int
+    target_title: str | None = None
+    target_type: str | None = None
+    file_paths: list[str]
+    send_mode: PhotoSendMode = PhotoSendMode.ALBUM
+    caption: str | None = None
+    schedule_at: datetime | None = None
+    status: PhotoBatchStatus = PhotoBatchStatus.PENDING
+    error: str | None = None
+    telegram_message_ids: list[int] = Field(default_factory=list)
+    created_at: datetime | None = None
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+
+
+class PhotoAutoUploadJob(BaseModel):
+    id: int | None = None
+    phone: str
+    target_dialog_id: int
+    target_title: str | None = None
+    target_type: str | None = None
+    folder_path: str
+    send_mode: PhotoSendMode = PhotoSendMode.ALBUM
+    caption: str | None = None
+    interval_minutes: int = Field(60, ge=1)
+    is_active: bool = True
+    error: str | None = None
+    last_run_at: datetime | None = None
+    last_seen_marker: str | None = None
+    created_at: datetime | None = None

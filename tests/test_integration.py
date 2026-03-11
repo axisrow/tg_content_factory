@@ -311,7 +311,7 @@ class TestSearchModes:
 
     @pytest.mark.asyncio
     async def test_search_local_no_results(self, auth_client):
-        resp = await auth_client.get("/?q=nonexistent&mode=local")
+        resp = await auth_client.get("/search?q=nonexistent&mode=local")
         assert resp.status_code == 200
 
     @pytest.mark.asyncio
@@ -567,12 +567,12 @@ class TestSearchPagination:
         await test_db.insert_messages_batch(msgs)
 
         # Page 1 (limit=50 by default)
-        resp1 = await auth_client.get("/?q=Crypto&mode=local&page=1")
+        resp1 = await auth_client.get("/search?q=Crypto&mode=local&page=1")
         assert resp1.status_code == 200
         assert "Crypto" in resp1.text
 
         # Page 2
-        resp2 = await auth_client.get("/?q=Crypto&mode=local&page=2")
+        resp2 = await auth_client.get("/search?q=Crypto&mode=local&page=2")
         assert resp2.status_code == 200
 
     @pytest.mark.asyncio

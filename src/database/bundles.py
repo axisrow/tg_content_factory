@@ -11,6 +11,7 @@ from src.database.repositories.collection_tasks import CollectionTasksRepository
 from src.database.repositories.filters import FilterRepository
 from src.database.repositories.messages import MessagesRepository
 from src.database.repositories.notification_bots import NotificationBotsRepository
+from src.database.repositories.photo_loader import PhotoLoaderRepository
 from src.database.repositories.search_log import SearchLogRepository
 from src.database.repositories.search_queries import SearchQueriesRepository
 from src.database.repositories.settings import SettingsRepository
@@ -22,6 +23,11 @@ from src.models import (
     CollectionTaskStatus,
     Message,
     NotificationBot,
+    PhotoAutoUploadJob,
+    PhotoBatch,
+    PhotoBatchItem,
+    PhotoBatchStatus,
+    PhotoSendMode,
     SearchQuery,
     SearchQueryDailyStat,
     StatsAllTaskPayload,
@@ -43,6 +49,7 @@ class DatabaseRepositories:
     filters: FilterRepository
     notification_bots: NotificationBotsRepository
     search_queries: SearchQueriesRepository
+    photo_loader: PhotoLoaderRepository
 
 
 @dataclass(frozen=True)
@@ -415,6 +422,122 @@ class NotificationBundle:
 
     async def delete_bot(self, tg_user_id: int) -> None:
         await self.notification_bots.delete_bot(tg_user_id)
+
+
+@dataclass(frozen=True)
+class PhotoLoaderBundle:
+    photo_loader: PhotoLoaderRepository
+
+    @classmethod
+    def from_database(cls, db: "Database") -> "PhotoLoaderBundle":
+        return cls(db.repos.photo_loader)
+
+    async def create_batch(self, batch: PhotoBatch) -> int:
+        return await self.photo_loader.create_batch(batch)
+
+    async def update_batch(
+        self,
+        batch_id: int,
+        *,
+        status: PhotoBatchStatus | None = None,
+        error: str | None = None,
+        last_run_at: datetime | None = None,
+    ) -> None:
+        await self.photo_loader.update_batch(
+            batch_id,
+            status=status,
+            error=error,
+            last_run_at=last_run_at,
+        )
+
+    async def get_batch(self, batch_id: int) -> PhotoBatch | None:
+        return await self.photo_loader.get_batch(batch_id)
+
+    async def list_batches(self, limit: int = 50) -> list[PhotoBatch]:
+        return await self.photo_loader.list_batches(limit)
+
+    async def create_item(self, item: PhotoBatchItem) -> int:
+        return await self.photo_loader.create_item(item)
+
+    async def get_item(self, item_id: int) -> PhotoBatchItem | None:
+        return await self.photo_loader.get_item(item_id)
+
+    async def list_items(self, limit: int = 100) -> list[PhotoBatchItem]:
+        return await self.photo_loader.list_items(limit)
+
+    async def list_items_for_batch(self, batch_id: int) -> list[PhotoBatchItem]:
+        return await self.photo_loader.list_items_for_batch(batch_id)
+
+    async def update_item(
+        self,
+        item_id: int,
+        *,
+        status: PhotoBatchStatus | None = None,
+        error: str | None = None,
+        telegram_message_ids: list[int] | None = None,
+        started_at: datetime | None = None,
+        completed_at: datetime | None = None,
+    ) -> None:
+        await self.photo_loader.update_item(
+            item_id,
+            status=status,
+            error=error,
+            telegram_message_ids=telegram_message_ids,
+            started_at=started_at,
+            completed_at=completed_at,
+        )
+
+    async def cancel_item(self, item_id: int) -> bool:
+        return await self.photo_loader.cancel_item(item_id)
+
+    async def claim_next_due_item(self, now: datetime) -> PhotoBatchItem | None:
+        return await self.photo_loader.claim_next_due_item(now)
+
+    async def requeue_running_items_on_startup(self, now: datetime) -> int:
+        return await self.photo_loader.requeue_running_items_on_startup(now)
+
+    async def create_auto_job(self, job: PhotoAutoUploadJob) -> int:
+        return await self.photo_loader.create_auto_job(job)
+
+    async def update_auto_job(
+        self,
+        job_id: int,
+        *,
+        folder_path: str | None = None,
+        send_mode: PhotoSendMode | None = None,
+        caption: str | None = None,
+        interval_minutes: int | None = None,
+        is_active: bool | None = None,
+        error: str | None = None,
+        last_run_at: datetime | None = None,
+        last_seen_marker: str | None = None,
+    ) -> None:
+        await self.photo_loader.update_auto_job(
+            job_id,
+            folder_path=folder_path,
+            send_mode=send_mode,
+            caption=caption,
+            interval_minutes=interval_minutes,
+            is_active=is_active,
+            error=error,
+            last_run_at=last_run_at,
+            last_seen_marker=last_seen_marker,
+        )
+
+    async def get_auto_job(self, job_id: int) -> PhotoAutoUploadJob | None:
+        return await self.photo_loader.get_auto_job(job_id)
+
+    async def list_auto_jobs(self, active_only: bool = False) -> list[PhotoAutoUploadJob]:
+        return await self.photo_loader.list_auto_jobs(active_only)
+
+    async def delete_auto_job(self, job_id: int) -> None:
+        await self.photo_loader.delete_auto_job(job_id)
+
+    async def has_sent_auto_file(self, job_id: int, file_path: str) -> bool:
+        return await self.photo_loader.has_sent_auto_file(job_id, file_path)
+
+    async def mark_auto_file_sent(self, job_id: int, file_path: str) -> None:
+        await self.photo_loader.mark_auto_file_sent(job_id, file_path)
 
 
 @dataclass(frozen=True)
