@@ -16,6 +16,9 @@ def mock_db():
     db.update_account_flood = AsyncMock()
     db.update_account_premium = AsyncMock()
     db.get_channel_by_channel_id = AsyncMock()
+    db.repos.dialog_cache.list_dialogs = AsyncMock(return_value=[])
+    db.repos.dialog_cache.replace_dialogs = AsyncMock()
+    db.repos.dialog_cache.clear_dialogs = AsyncMock()
     return db
 
 @pytest.fixture

@@ -145,6 +145,53 @@ label:first-child .hint::before { left: 0.5em; transform: none; }
     margin-top: 0.4rem;
 }
 
+.photo-target-summary {
+    min-height: 2.5rem;
+}
+
+.photo-target-list {
+    max-height: 20rem;
+    overflow-y: auto;
+}
+
+.photo-target-list .list-group-item {
+    text-align: left;
+}
+
+.photo-feedback-panel {
+    border: 1px solid color-mix(in srgb, currentColor 22%, transparent);
+    box-shadow: 0 0.75rem 1.5rem rgba(15, 23, 42, 0.08);
+}
+
+.photo-submit-status {
+    min-height: 1.25rem;
+    margin-top: 0.65rem;
+    color: var(--bs-secondary-color);
+    font-size: 0.85rem;
+}
+
+[data-photo-submit-button].is-busy {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    opacity: 1;
+}
+
+.photo-result-highlight {
+    animation: photo-result-pulse 2.4s ease;
+    outline: 2px solid rgba(13, 110, 253, 0.3);
+    outline-offset: -2px;
+}
+
+@keyframes photo-result-pulse {
+    0% {
+        background-color: rgba(13, 110, 253, 0.18);
+    }
+    100% {
+        background-color: transparent;
+    }
+}
+
 /* ── Responsive: Tablet (<768px) ── */
 @media (max-width: 767.98px) {
     .channels-table,

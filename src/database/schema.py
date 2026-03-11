@@ -196,4 +196,20 @@ CREATE TABLE IF NOT EXISTS photo_auto_upload_files (
     UNIQUE(job_id, file_path),
     FOREIGN KEY (job_id) REFERENCES photo_auto_upload_jobs(id)
 );
+
+CREATE TABLE IF NOT EXISTS dialog_cache (
+    id INTEGER PRIMARY KEY,
+    phone TEXT NOT NULL,
+    dialog_id INTEGER NOT NULL,
+    title TEXT,
+    username TEXT,
+    channel_type TEXT NOT NULL,
+    deactivate INTEGER NOT NULL DEFAULT 0,
+    is_own INTEGER NOT NULL DEFAULT 0,
+    cached_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(phone, dialog_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_dialog_cache_phone
+    ON dialog_cache(phone);
 """

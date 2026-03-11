@@ -14,7 +14,14 @@ from src.cli.parser import build_parser
 from src.config import AppConfig
 from src.database import Database
 from src.database.bundles import PhotoLoaderBundle
-from src.models import Account, PhotoAutoUploadJob, PhotoBatchStatus, PhotoSendMode
+from src.models import (
+    Account,
+    PhotoAutoUploadJob,
+    PhotoBatch,
+    PhotoBatchItem,
+    PhotoBatchStatus,
+    PhotoSendMode,
+)
 from src.scheduler.manager import SchedulerManager
 from src.services.photo_auto_upload_service import PhotoAutoUploadService
 from src.services.photo_publish_service import PhotoPublishService
@@ -177,8 +184,13 @@ async def test_photo_loader_page_renders(tmp_path):
     mock_client = MagicMock()
     mock_client.send_file = AsyncMock(return_value=SimpleNamespace(id=1))
 
-    async def _get_dialogs_for_phone(self, phone, include_dm=False, mode="full"):
-        return [{"channel_id": -1001, "title": "Target", "channel_type": "channel"}]
+    async def _get_dialogs_for_phone(self, phone, include_dm=False, mode="full", refresh=False):
+        return [
+            {"channel_id": -1001, "title": "Target Channel", "channel_type": "channel"},
+            {"channel_id": -1002, "title": "Target Group", "channel_type": "supergroup"},
+            {"channel_id": 42, "title": "Target DM", "channel_type": "dm"},
+            {"channel_id": 99, "title": "Target Bot", "channel_type": "bot"},
+        ]
 
     async def _get_client_by_phone(self, phone):
         return mock_client, phone
@@ -218,7 +230,400 @@ async def test_photo_loader_page_renders(tmp_path):
         assert resp.status_code == 200
         assert "Photo Loader" in resp.text
         assert "Автозагрузка из папки" in resp.text
+        assert 'action="/my-telegram/photos/refresh"' in resp.text
+        assert "Обновить диалоги" in resp.text
+        assert "Используется сохранённый список диалогов" in resp.text
+        assert resp.text.count('option value="separate" selected') >= 3
+        assert 'data-target-picker' in resp.text
+        assert 'data-target-search' in resp.text
+        assert 'data-target-filter="channel"' in resp.text
+        assert 'data-target-filter="group"' in resp.text
+        assert 'data-target-filter="dm"' in resp.text
+        assert resp.text.count('name="target_dialog_id"') == 4
+        assert 'select name="target_dialog_id"' not in resp.text
+        assert resp.text.count('data-photo-submit-form') >= 4
+        assert resp.text.count('data-photo-submit-button') >= 4
+        assert resp.text.count('data-photo-submit-status') >= 4
+        assert "Запрос отправлен, ожидаем ответ сервера..." in resp.text
+        assert "Target Channel" in resp.text
+        assert "Target Group" in resp.text
+        assert "Target DM" in resp.text
+        assert "Target Bot" not in resp.text
+        assert "summary.innerHTML" not in resp.text
+        assert "summary.replaceChildren()" in resp.text
+        assert "Последние batches" in resp.text
+        assert 'role="alert"\n             data-photo-feedback' not in resp.text
 
+    await db.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("query", "expected_title", "expected_text", "highlight_kind"),
+    [
+        (
+            "msg=photo_sent",
+            "Отправка завершена",
+            "Фото успешно отправлены в Target Channel.",
+            "item",
+        ),
+        (
+            "msg=photo_scheduled",
+            "Отложка создана",
+            "Отложенная отправка создана для Target Channel.",
+            "item",
+        ),
+        (
+            "msg=photo_batch_created",
+            "Batch создан",
+            "Batch photo tasks создан для Target Channel.",
+            "batch",
+        ),
+        (
+            "msg=photo_auto_created",
+            "Авто-загрузка настроена",
+            "Авто-джоб создан для Target Channel.",
+            "auto",
+        ),
+        ("error=photo_send_failed", "Отправка не выполнена", "Не удалось отправить фото.", ""),
+    ],
+)
+async def test_photo_loader_page_feedback_panel_and_highlight_hooks(
+    tmp_path,
+    query,
+    expected_title,
+    expected_text,
+    highlight_kind,
+):
+    config = AppConfig()
+    config.database.path = str(tmp_path / "test.db")
+    config.telegram.api_id = 12345
+    config.telegram.api_hash = "hash"
+    config.web.password = "testpass"
+    app = create_app(config)
+
+    db = Database(config.database.path)
+    await db.initialize()
+    app.state.db = db
+
+    mock_client = MagicMock()
+
+    async def _get_dialogs_for_phone(self, phone, include_dm=False, mode="full", refresh=False):
+        return [{"channel_id": -1001, "title": "Target Channel", "channel_type": "channel"}]
+
+    async def _get_client_by_phone(self, phone):
+        return mock_client, phone
+
+    async def _release_client(self, phone):
+        return None
+
+    app.state.pool = type(
+        "Pool",
+        (),
+        {
+            "clients": {"+7000": mock_client},
+            "get_dialogs_for_phone": _get_dialogs_for_phone,
+            "get_client_by_phone": _get_client_by_phone,
+            "release_client": _release_client,
+        },
+    )()
+    from src.telegram.auth import TelegramAuth
+
+    app.state.auth = TelegramAuth(12345, "hash")
+    app.state.collector = Collector(app.state.pool, db, config.scheduler)
+    app.state.search_engine = MagicMock()
+    app.state.ai_search = MagicMock()
+    app.state.scheduler = SchedulerManager(app.state.collector, config.scheduler)
+    app.state.session_secret = "secret"
+    await db.add_account(Account(phone="+7000", session_string="s"))
+
+    bundle = PhotoLoaderBundle.from_database(db)
+    batch_id = await bundle.create_batch(
+        PhotoBatch(
+            phone="+7000",
+            target_dialog_id=-1001,
+            target_title="Target Channel",
+            target_type="channel",
+            send_mode=PhotoSendMode.SEPARATE,
+            status=PhotoBatchStatus.COMPLETED,
+        )
+    )
+    await bundle.create_item(
+        PhotoBatchItem(
+            batch_id=batch_id,
+            phone="+7000",
+            target_dialog_id=-1001,
+            target_title="Target Channel",
+            target_type="channel",
+            file_paths=["/tmp/a.jpg"],
+            send_mode=PhotoSendMode.SEPARATE,
+            status=PhotoBatchStatus.COMPLETED,
+        )
+    )
+    await bundle.create_auto_job(
+        PhotoAutoUploadJob(
+            phone="+7000",
+            target_dialog_id=-1001,
+            target_title="Target Channel",
+            target_type="channel",
+            folder_path="/tmp/photos",
+            send_mode=PhotoSendMode.SEPARATE,
+            interval_minutes=60,
+            is_active=True,
+        )
+    )
+
+    transport = ASGITransport(app=app)
+    auth_header = base64.b64encode(b":testpass").decode()
+    async with AsyncClient(
+        transport=transport,
+        base_url="http://test",
+        follow_redirects=True,
+        headers={"Authorization": f"Basic {auth_header}"},
+    ) as client:
+        resp = await client.get(f"/my-telegram/photos?phone=%2B7000&{query}")
+
+    assert resp.status_code == 200
+    assert expected_title in resp.text
+    assert expected_text in resp.text
+    assert 'data-photo-feedback' in resp.text
+    assert f'data-highlight-kind="{highlight_kind}"' in resp.text
+    assert 'data-photo-result-row="item"' in resp.text
+    assert 'data-photo-result-row="batch"' in resp.text
+    assert 'data-photo-result-row="auto"' in resp.text
+
+    await db.close()
+
+
+@pytest.mark.asyncio
+async def test_photo_loader_page_without_phone_selects_first_account(tmp_path):
+    config = AppConfig()
+    config.database.path = str(tmp_path / "test.db")
+    config.telegram.api_id = 12345
+    config.telegram.api_hash = "hash"
+    config.web.password = "testpass"
+    app = create_app(config)
+
+    db = Database(config.database.path)
+    await db.initialize()
+    app.state.db = db
+
+    mock_client_a = MagicMock()
+    mock_client_b = MagicMock()
+    seen_phones: list[str] = []
+
+    async def _get_dialogs_for_phone(self, phone, include_dm=False, mode="full", refresh=False):
+        seen_phones.append(phone)
+        return [{"channel_id": -1001, "title": f"Target {phone}", "channel_type": "channel"}]
+
+    async def _get_client_by_phone(self, phone):
+        return mock_client_a, phone
+
+    async def _release_client(self, phone):
+        return None
+
+    app.state.pool = type(
+        "Pool",
+        (),
+        {
+            "clients": {"+7999": mock_client_b, "+7000": mock_client_a},
+            "get_dialogs_for_phone": _get_dialogs_for_phone,
+            "get_client_by_phone": _get_client_by_phone,
+            "release_client": _release_client,
+        },
+    )()
+    from src.telegram.auth import TelegramAuth
+
+    app.state.auth = TelegramAuth(12345, "hash")
+    app.state.collector = Collector(app.state.pool, db, config.scheduler)
+    app.state.search_engine = MagicMock()
+    app.state.ai_search = MagicMock()
+    app.state.scheduler = SchedulerManager(app.state.collector, config.scheduler)
+    app.state.session_secret = "secret"
+    await db.add_account(Account(phone="+7000", session_string="a"))
+    await db.add_account(Account(phone="+7999", session_string="b"))
+
+    transport = ASGITransport(app=app)
+    auth_header = base64.b64encode(b":testpass").decode()
+    async with AsyncClient(
+        transport=transport,
+        base_url="http://test",
+        follow_redirects=True,
+        headers={"Authorization": f"Basic {auth_header}"},
+    ) as client:
+        resp = await client.get("/my-telegram/photos")
+        assert resp.status_code == 200
+        assert "Photo Loader" in resp.text
+        assert 'option value="+7000" selected' in resp.text
+        assert "Target +7000" in resp.text
+        assert 'data-initial-target-id="-1001"' in resp.text
+        assert 'name="target_title" value="Target +7000"' in resp.text
+        assert 'name="target_type" value="channel"' in resp.text
+
+    assert seen_phones == ["+7000"]
+    await db.close()
+
+
+@pytest.mark.asyncio
+async def test_photo_loader_page_without_selectable_targets_disables_forms(tmp_path):
+    config = AppConfig()
+    config.database.path = str(tmp_path / "test.db")
+    config.telegram.api_id = 12345
+    config.telegram.api_hash = "hash"
+    config.web.password = "testpass"
+    app = create_app(config)
+
+    db = Database(config.database.path)
+    await db.initialize()
+    app.state.db = db
+
+    mock_client = MagicMock()
+
+    async def _get_dialogs_for_phone(self, phone, include_dm=False, mode="full", refresh=False):
+        return [{"channel_id": 77, "title": "Only Bot", "channel_type": "bot"}]
+
+    async def _get_client_by_phone(self, phone):
+        return mock_client, phone
+
+    async def _release_client(self, phone):
+        return None
+
+    app.state.pool = type(
+        "Pool",
+        (),
+        {
+            "clients": {"+7000": mock_client},
+            "get_dialogs_for_phone": _get_dialogs_for_phone,
+            "get_client_by_phone": _get_client_by_phone,
+            "release_client": _release_client,
+        },
+    )()
+    from src.telegram.auth import TelegramAuth
+
+    app.state.auth = TelegramAuth(12345, "hash")
+    app.state.collector = Collector(app.state.pool, db, config.scheduler)
+    app.state.search_engine = MagicMock()
+    app.state.ai_search = MagicMock()
+    app.state.scheduler = SchedulerManager(app.state.collector, config.scheduler)
+    app.state.session_secret = "secret"
+    await db.add_account(Account(phone="+7000", session_string="s"))
+
+    transport = ASGITransport(app=app)
+    auth_header = base64.b64encode(b":testpass").decode()
+    async with AsyncClient(
+        transport=transport,
+        base_url="http://test",
+        follow_redirects=True,
+        headers={"Authorization": f"Basic {auth_header}"},
+    ) as client:
+        resp = await client.get("/my-telegram/photos?phone=%2B7000")
+        assert resp.status_code == 200
+        assert "нет доступных целей отправки" in resp.text.lower()
+        assert 'id="photo-target-picker"' not in resp.text
+        assert resp.text.count("disabled") >= 4
+
+    await db.close()
+
+
+@pytest.mark.asyncio
+async def test_photo_loader_page_without_accounts_renders_empty_state(tmp_path):
+    config = AppConfig()
+    config.database.path = str(tmp_path / "test.db")
+    config.telegram.api_id = 12345
+    config.telegram.api_hash = "hash"
+    config.web.password = "testpass"
+    app = create_app(config)
+
+    db = Database(config.database.path)
+    await db.initialize()
+    app.state.db = db
+    app.state.pool = type("Pool", (), {"clients": {}})()
+    from src.telegram.auth import TelegramAuth
+
+    app.state.auth = TelegramAuth(12345, "hash")
+    app.state.collector = Collector(app.state.pool, db, config.scheduler)
+    app.state.search_engine = MagicMock()
+    app.state.ai_search = MagicMock()
+    app.state.scheduler = SchedulerManager(app.state.collector, config.scheduler)
+    app.state.session_secret = "secret"
+
+    transport = ASGITransport(app=app)
+    auth_header = base64.b64encode(b":testpass").decode()
+    async with AsyncClient(
+        transport=transport,
+        base_url="http://test",
+        follow_redirects=True,
+        headers={"Authorization": f"Basic {auth_header}"},
+    ) as client:
+        resp = await client.get("/my-telegram/photos")
+        assert resp.status_code == 200
+        assert "Нет подключённых аккаунтов." in resp.text
+        assert "Добавьте аккаунт" in resp.text
+
+    await db.close()
+
+
+@pytest.mark.asyncio
+async def test_photo_loader_refresh_warms_dialog_cache(tmp_path):
+    config = AppConfig()
+    config.database.path = str(tmp_path / "test.db")
+    config.telegram.api_id = 12345
+    config.telegram.api_hash = "hash"
+    config.web.password = "testpass"
+    app = create_app(config)
+
+    db = Database(config.database.path)
+    await db.initialize()
+    app.state.db = db
+
+    mock_client = MagicMock()
+
+    seen_refresh_values: list[bool] = []
+
+    async def _get_dialogs_for_phone(self, phone, include_dm=False, mode="full", refresh=False):
+        seen_refresh_values.append(refresh)
+        return [{"channel_id": -1001, "title": "Target Channel", "channel_type": "channel"}]
+
+    async def _get_client_by_phone(self, phone):
+        return mock_client, phone
+
+    async def _release_client(self, phone):
+        return None
+
+    app.state.pool = type(
+        "Pool",
+        (),
+        {
+            "clients": {"+7000": mock_client},
+            "get_dialogs_for_phone": _get_dialogs_for_phone,
+            "get_client_by_phone": _get_client_by_phone,
+            "release_client": _release_client,
+        },
+    )()
+    from src.telegram.auth import TelegramAuth
+
+    app.state.auth = TelegramAuth(12345, "hash")
+    app.state.collector = Collector(app.state.pool, db, config.scheduler)
+    app.state.search_engine = MagicMock()
+    app.state.ai_search = MagicMock()
+    app.state.scheduler = SchedulerManager(app.state.collector, config.scheduler)
+    app.state.session_secret = "secret"
+    await db.add_account(Account(phone="+7000", session_string="s"))
+
+    transport = ASGITransport(app=app)
+    auth_header = base64.b64encode(b":testpass").decode()
+    async with AsyncClient(
+        transport=transport,
+        base_url="http://test",
+        follow_redirects=True,
+        headers={"Authorization": f"Basic {auth_header}"},
+    ) as client:
+        resp = await client.post("/my-telegram/photos/refresh", data={"phone": "+7000"})
+        assert resp.status_code == 200
+        assert "Photo Loader" in resp.text
+        assert "Target Channel" in resp.text
+
+    assert seen_refresh_values == [True, False]
     await db.close()
 
 

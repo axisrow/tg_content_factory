@@ -20,14 +20,50 @@ from src.web.app import create_app
 
 _FAKE_DIALOGS = [
     {"channel_id": -100111, "title": "My Channel", "username": "mychan",
-     "channel_type": "channel", "deactivate": False},
+     "channel_type": "channel", "deactivate": False, "is_own": False},
     {"channel_id": -100222, "title": "My Group", "username": None,
-     "channel_type": "supergroup", "deactivate": False},
+     "channel_type": "supergroup", "deactivate": False, "is_own": False},
     {"channel_id": 999, "title": "Some User", "username": "someuser",
-     "channel_type": "dm", "deactivate": False},
+     "channel_type": "dm", "deactivate": False, "is_own": False},
     {"channel_id": 888, "title": "My Bot", "username": "mybot",
-     "channel_type": "bot", "deactivate": False},
+     "channel_type": "bot", "deactivate": False, "is_own": False},
 ]
+
+
+def _bind_dialog_cache_methods(pool):
+    from src.telegram.client_pool import ClientPool
+
+    pool._dialogs_cache = {}
+    pool._dialogs_cache_ttl_sec = 60.0
+    pool.invalidate_dialogs_cache = ClientPool.invalidate_dialogs_cache.__get__(pool, ClientPool)
+    pool._get_cached_dialogs = ClientPool._get_cached_dialogs.__get__(pool, ClientPool)
+    pool._get_db_cached_dialogs = ClientPool._get_db_cached_dialogs.__get__(pool, ClientPool)
+    pool._store_cached_dialogs = ClientPool._store_cached_dialogs.__get__(pool, ClientPool)
+
+
+def _make_channel_dialog(
+    channel_id: int,
+    title: str = "Cached Channel",
+    username: str = "cachedchan",
+):
+    channel_entity = MagicMock()
+    channel_entity.id = channel_id
+    channel_entity.username = username
+    channel_entity.creator = False
+
+    dialog = MagicMock()
+    dialog.entity = channel_entity
+    dialog.title = title
+    dialog.is_channel = True
+    dialog.is_group = False
+    return dialog
+
+
+def _strip_extra_dialog_fields(dialogs: list[dict]) -> list[dict]:
+    return [
+        {key: value for key, value in dialog.items() if key != "already_added"}
+        for dialog in dialogs
+    ]
 
 
 @pytest.fixture
@@ -43,7 +79,13 @@ async def client(tmp_path):
     await db.initialize()
     app.state.db = db
 
-    async def _get_dialogs_for_phone(self, phone, include_dm=False, mode="channels_only"):
+    async def _get_dialogs_for_phone(
+        self,
+        phone,
+        include_dm=False,
+        mode="channels_only",
+        refresh=False,
+    ):
         return _FAKE_DIALOGS
 
     async def _get_dialogs(self):
@@ -100,6 +142,8 @@ async def test_my_telegram_page_renders(client):
     resp = await client.get("/my-telegram/")
     assert resp.status_code == 200
     assert "Мой Телеграм" in resp.text
+    assert 'href="/my-telegram/photos"' in resp.text
+    assert "Если аккаунт не выбран, откроется первый доступный профиль." in resp.text
     assert "Выберите аккаунт" in resp.text
     assert "загрузить список диалогов" in resp.text
 
@@ -117,6 +161,9 @@ async def test_my_telegram_page_shows_dialogs(client):
     assert "tab-groups" in resp.text
     assert "tab-dms" in resp.text
     assert "tab-bots" in resp.text
+    assert 'action="/my-telegram/refresh"' in resp.text
+    assert "Обновить диалоги" in resp.text
+    assert "Показан сохранённый список диалогов" in resp.text
 
 
 @pytest.mark.asyncio
@@ -163,6 +210,9 @@ async def test_leave_channels_success():
 
     pool.get_client_by_phone = AsyncMock(return_value=(mock_client, "+1234567890"))
     pool.release_client = AsyncMock()
+    pool._db = MagicMock()
+    pool._db.repos.dialog_cache.clear_dialogs = AsyncMock()
+    pool.invalidate_dialogs_cache = MagicMock()
 
     dialogs = [(-100111, "channel"), (999, "dm")]
     with patch("src.telegram.client_pool.asyncio.sleep", AsyncMock()):
@@ -174,6 +224,8 @@ async def test_leave_channels_success():
     assert received_peers[0].channel_id == 100111
     assert isinstance(received_peers[1], PeerUser)
     assert received_peers[1].user_id == 999
+    pool.invalidate_dialogs_cache.assert_called_once_with("+1234567890")
+    pool._db.repos.dialog_cache.clear_dialogs.assert_awaited_once_with("+1234567890")
 
 
 @pytest.mark.asyncio
@@ -200,6 +252,9 @@ async def test_leave_channels_partial_failure():
 
     pool.get_client_by_phone = AsyncMock(return_value=(mock_client, "+1234567890"))
     pool.release_client = AsyncMock()
+    pool._db = MagicMock()
+    pool._db.repos.dialog_cache.clear_dialogs = AsyncMock()
+    pool.invalidate_dialogs_cache = MagicMock()
 
     dialogs = [(-100111, "channel"), (-100222, "supergroup")]
     with patch("src.telegram.client_pool.asyncio.sleep", AsyncMock()):
@@ -207,6 +262,7 @@ async def test_leave_channels_partial_failure():
 
     assert result[-100111] is False
     assert result[-100222] is True
+    pool._db.repos.dialog_cache.clear_dialogs.assert_awaited_once_with("+1234567890")
 
 
 @pytest.mark.asyncio
@@ -233,6 +289,9 @@ async def test_leave_channels_flood_breaks_loop():
     pool.get_client_by_phone = AsyncMock(return_value=(mock_client, "+1234567890"))
     pool.release_client = AsyncMock()
     pool.report_flood = AsyncMock()
+    pool._db = MagicMock()
+    pool._db.repos.dialog_cache.clear_dialogs = AsyncMock()
+    pool.invalidate_dialogs_cache = MagicMock()
 
     dialogs = [(-100111, "channel"), (-100222, "supergroup")]
     with patch("src.telegram.client_pool.asyncio.sleep", AsyncMock()):
@@ -241,6 +300,7 @@ async def test_leave_channels_flood_breaks_loop():
     assert result[-100111] is False
     assert result[-100222] is False
     pool.report_flood.assert_awaited_once_with("+1234567890", 60)
+    pool._db.repos.dialog_cache.clear_dialogs.assert_awaited_once_with("+1234567890")
 
 
 @pytest.mark.asyncio
@@ -252,6 +312,65 @@ async def test_leave_dialogs_post(client):
     )
     assert resp.status_code == 200  # follow_redirects=True → final GET
     assert "left=2" in str(resp.url) or "Отписались" in resp.text
+
+
+@pytest.mark.asyncio
+async def test_refresh_dialogs_post_warms_cache(tmp_path):
+    config = AppConfig()
+    config.database.path = str(tmp_path / "test.db")
+    config.telegram.api_id = 12345
+    config.telegram.api_hash = "test_hash"
+    config.web.password = "testpass"
+    app = create_app(config)
+
+    db = Database(config.database.path)
+    await db.initialize()
+    app.state.db = db
+
+    pool = MagicMock()
+    pool.clients = {"+1234567890": MagicMock()}
+    pool.get_users_info = AsyncMock(return_value=[])
+    pool.get_dialogs = AsyncMock(return_value=[])
+    pool.get_dialogs_for_phone = AsyncMock(return_value=list(_FAKE_DIALOGS))
+    pool.leave_channels = AsyncMock(return_value={})
+    app.state.pool = pool
+
+    from src.telegram.auth import TelegramAuth
+
+    app.state.auth = TelegramAuth(12345, "test_hash")
+    app.state.notifier = None
+    collector = Collector(app.state.pool, db, config.scheduler)
+    app.state.collector = collector
+    app.state.collection_queue = CollectionQueue(collector, db)
+    app.state.search_engine = SearchEngine(db)
+    app.state.ai_search = AISearchEngine(config.llm, db)
+    app.state.scheduler = SchedulerManager(collector, config.scheduler)
+    app.state.session_secret = "test_secret_key"
+
+    await db.add_account(Account(phone="+1234567890", session_string="test_session"))
+
+    transport = ASGITransport(app=app)
+    auth_header = base64.b64encode(b":testpass").decode()
+    async with AsyncClient(
+        transport=transport,
+        base_url="http://test",
+        follow_redirects=True,
+        headers={"Authorization": f"Basic {auth_header}"},
+    ) as c:
+        resp = await c.post("/my-telegram/refresh", data={"phone": "+1234567890"})
+
+    assert resp.status_code == 200
+    assert "My Channel" in resp.text
+    assert pool.get_dialogs_for_phone.await_count == 2
+    first_call = pool.get_dialogs_for_phone.await_args_list[0]
+    second_call = pool.get_dialogs_for_phone.await_args_list[1]
+    assert first_call.args == ("+1234567890",)
+    assert first_call.kwargs == {"include_dm": True, "mode": "full", "refresh": True}
+    assert second_call.args == ("+1234567890",)
+    assert second_call.kwargs == {"include_dm": True, "mode": "full", "refresh": False}
+
+    await app.state.collection_queue.shutdown()
+    await db.close()
 
 
 @pytest.mark.asyncio
@@ -287,12 +406,30 @@ async def test_get_my_dialogs_enriches_already_added(db):
         "+1234567890",
         include_dm=True,
         mode="full",
+        refresh=False,
     )
     by_id = {d["channel_id"]: d for d in dialogs}
     assert by_id[-100111]["already_added"] is True
     assert by_id[-100222]["already_added"] is False
     assert by_id[999]["already_added"] is False
     assert by_id[888]["already_added"] is False
+
+
+@pytest.mark.asyncio
+async def test_get_my_dialogs_passes_refresh_flag(db):
+    pool = MagicMock()
+    pool.get_dialogs_for_phone = AsyncMock(return_value=list(_FAKE_DIALOGS))
+    queue = MagicMock()
+
+    service = ChannelService(db, pool, queue)
+    await service.get_my_dialogs("+1234567890", refresh=True)
+
+    pool.get_dialogs_for_phone.assert_awaited_once_with(
+        "+1234567890",
+        include_dm=True,
+        mode="full",
+        refresh=True,
+    )
 
 
 @pytest.mark.asyncio
@@ -321,10 +458,10 @@ async def test_get_my_dialogs_bot_type():
 
     pool.get_client_by_phone = AsyncMock(return_value=(mock_client, "+1234567890"))
     pool.release_client = AsyncMock()
-    pool._dialogs_cache = {}
-    pool._dialogs_cache_ttl_sec = 60.0
-    pool._get_cached_dialogs = ClientPool._get_cached_dialogs.__get__(pool, ClientPool)
-    pool._store_cached_dialogs = ClientPool._store_cached_dialogs.__get__(pool, ClientPool)
+    pool._db = MagicMock()
+    pool._db.repos.dialog_cache.list_dialogs = AsyncMock(return_value=[])
+    pool._db.repos.dialog_cache.replace_dialogs = AsyncMock()
+    _bind_dialog_cache_methods(pool)
 
     # Call the real method
     result = await ClientPool.get_dialogs_for_phone(
@@ -374,10 +511,10 @@ async def test_get_dialogs_for_phone_partial_on_timeout():
     pool.get_client_by_phone = AsyncMock(return_value=(mock_client, "+1234567890"))
     pool.release_client = AsyncMock()
     pool._classify_entity = MagicMock(return_value=("channel", False))
-    pool._dialogs_cache = {}
-    pool._dialogs_cache_ttl_sec = 60.0
-    pool._get_cached_dialogs = ClientPool._get_cached_dialogs.__get__(pool, ClientPool)
-    pool._store_cached_dialogs = ClientPool._store_cached_dialogs.__get__(pool, ClientPool)
+    pool._db = MagicMock()
+    pool._db.repos.dialog_cache.list_dialogs = AsyncMock(return_value=[])
+    pool._db.repos.dialog_cache.replace_dialogs = AsyncMock()
+    _bind_dialog_cache_methods(pool)
 
     # Patch wait_for to use a tiny timeout so we don't wait 60 s in tests
     original_wait_for = asyncio.wait_for
@@ -439,6 +576,7 @@ async def test_my_telegram_page_without_phone_does_not_fetch_dialogs(tmp_path):
 
     assert resp.status_code == 200
     assert "Выберите аккаунт" in resp.text
+    assert 'href="/my-telegram/photos"' in resp.text
     pool.get_dialogs_for_phone.assert_not_awaited()
 
     await app.state.collection_queue.shutdown()
@@ -446,22 +584,56 @@ async def test_my_telegram_page_without_phone_does_not_fetch_dialogs(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_get_dialogs_for_phone_uses_ttl_cache():
+async def test_my_telegram_page_without_accounts_shows_disabled_photo_loader(tmp_path):
+    config = AppConfig()
+    config.database.path = str(tmp_path / "test.db")
+    config.telegram.api_id = 12345
+    config.telegram.api_hash = "test_hash"
+    config.web.password = "testpass"
+    app = create_app(config)
+
+    db = Database(config.database.path)
+    await db.initialize()
+    app.state.db = db
+    app.state.pool = type("Pool", (), {"clients": {}})()
+    from src.telegram.auth import TelegramAuth
+
+    app.state.auth = TelegramAuth(12345, "test_hash")
+    app.state.notifier = None
+    collector = Collector(app.state.pool, db, config.scheduler)
+    app.state.collector = collector
+    app.state.collection_queue = CollectionQueue(collector, db)
+    app.state.search_engine = SearchEngine(db)
+    app.state.ai_search = AISearchEngine(config.llm, db)
+    app.state.scheduler = SchedulerManager(collector, config.scheduler)
+    app.state.session_secret = "test_secret_key"
+
+    transport = ASGITransport(app=app)
+    auth_header = base64.b64encode(b":testpass").decode()
+    async with AsyncClient(
+        transport=transport,
+        base_url="http://test",
+        follow_redirects=True,
+        headers={"Authorization": f"Basic {auth_header}"},
+    ) as c:
+        resp = await c.get("/my-telegram/")
+
+    assert resp.status_code == 200
+    assert "Сначала добавьте Telegram-аккаунт в настройках." in resp.text
+    assert 'href="/my-telegram/photos"' not in resp.text
+    assert 'aria-disabled="true"' in resp.text
+
+    await app.state.collection_queue.shutdown()
+    await db.close()
+
+
+@pytest.mark.asyncio
+async def test_get_dialogs_for_phone_uses_manual_cache():
     from src.telegram.client_pool import ClientPool
 
     pool = MagicMock(spec=ClientPool)
     mock_client = MagicMock()
-
-    channel_entity = MagicMock()
-    channel_entity.id = -100123
-    channel_entity.username = "cachedchan"
-    channel_entity.creator = False
-
-    dialog = MagicMock()
-    dialog.entity = channel_entity
-    dialog.title = "Cached Channel"
-    dialog.is_channel = True
-    dialog.is_group = False
+    dialog = _make_channel_dialog(-100123)
 
     async def _fake_iter_dialogs():
         yield dialog
@@ -470,13 +642,191 @@ async def test_get_dialogs_for_phone_uses_ttl_cache():
     pool.get_client_by_phone = AsyncMock(return_value=(mock_client, "+1234567890"))
     pool.release_client = AsyncMock()
     pool._classify_entity = MagicMock(return_value=("channel", False))
-    pool._dialogs_cache = {}
-    pool._dialogs_cache_ttl_sec = 60.0
-    pool._get_cached_dialogs = ClientPool._get_cached_dialogs.__get__(pool, ClientPool)
-    pool._store_cached_dialogs = ClientPool._store_cached_dialogs.__get__(pool, ClientPool)
+    pool._db = MagicMock()
+    pool._db.repos.dialog_cache.list_dialogs = AsyncMock(return_value=[])
+    pool._db.repos.dialog_cache.replace_dialogs = AsyncMock()
+    _bind_dialog_cache_methods(pool)
 
     result1 = await ClientPool.get_dialogs_for_phone(pool, "+1234567890")
     result2 = await ClientPool.get_dialogs_for_phone(pool, "+1234567890")
 
     assert result1 == result2
     assert mock_client.iter_dialogs.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_get_dialogs_for_phone_refresh_bypasses_cache():
+    from src.telegram.client_pool import ClientPool
+
+    pool = MagicMock(spec=ClientPool)
+    mock_client = MagicMock()
+    dialog = _make_channel_dialog(-100123)
+
+    async def _fake_iter_dialogs():
+        yield dialog
+
+    mock_client.iter_dialogs.side_effect = [_fake_iter_dialogs(), _fake_iter_dialogs()]
+    pool.get_client_by_phone = AsyncMock(return_value=(mock_client, "+1234567890"))
+    pool.release_client = AsyncMock()
+    pool._classify_entity = MagicMock(return_value=("channel", False))
+    pool._db = MagicMock()
+    pool._db.repos.dialog_cache.list_dialogs = AsyncMock(return_value=[])
+    pool._db.repos.dialog_cache.replace_dialogs = AsyncMock()
+    _bind_dialog_cache_methods(pool)
+
+    await ClientPool.get_dialogs_for_phone(pool, "+1234567890")
+    await ClientPool.get_dialogs_for_phone(pool, "+1234567890", refresh=True)
+
+    assert mock_client.iter_dialogs.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_get_dialogs_for_phone_refetches_after_ttl_expiry():
+    from src.telegram.client_pool import ClientPool
+
+    pool = MagicMock(spec=ClientPool)
+    mock_client = MagicMock()
+    dialog = _make_channel_dialog(-100123)
+
+    async def _fake_iter_dialogs():
+        yield dialog
+
+    mock_client.iter_dialogs.side_effect = [_fake_iter_dialogs(), _fake_iter_dialogs()]
+    pool.get_client_by_phone = AsyncMock(return_value=(mock_client, "+1234567890"))
+    pool.release_client = AsyncMock()
+    pool._classify_entity = MagicMock(return_value=("channel", False))
+    pool._db = MagicMock()
+    pool._db.repos.dialog_cache.list_dialogs = AsyncMock(return_value=[])
+    pool._db.repos.dialog_cache.replace_dialogs = AsyncMock()
+    _bind_dialog_cache_methods(pool)
+    pool._dialogs_cache_ttl_sec = -1.0
+
+    await ClientPool.get_dialogs_for_phone(pool, "+1234567890")
+    await ClientPool.get_dialogs_for_phone(pool, "+1234567890")
+
+    assert mock_client.iter_dialogs.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_get_dialogs_for_phone_uses_db_cache_across_pool_instances(db):
+    from src.telegram.client_pool import ClientPool
+
+    await db.repos.dialog_cache.replace_dialogs("+1234567890", list(_FAKE_DIALOGS))
+
+    pool = MagicMock(spec=ClientPool)
+    pool._db = db
+    pool.get_client_by_phone = AsyncMock()
+    pool.release_client = AsyncMock()
+    _bind_dialog_cache_methods(pool)
+
+    dialogs = await ClientPool.get_dialogs_for_phone(
+        pool,
+        "+1234567890",
+        include_dm=True,
+        mode="full",
+    )
+
+    assert _strip_extra_dialog_fields(dialogs) == _strip_extra_dialog_fields(_FAKE_DIALOGS)
+    pool.get_client_by_phone.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_get_dialogs_for_phone_refresh_replaces_db_cache(db):
+    from src.telegram.client_pool import ClientPool
+
+    await db.repos.dialog_cache.replace_dialogs(
+        "+1234567890",
+        [dict(_FAKE_DIALOGS[0], title="Stale Title")],
+    )
+
+    pool = MagicMock(spec=ClientPool)
+    mock_client = MagicMock()
+    dialog = _make_channel_dialog(-100111, title="Fresh Title", username="freshchan")
+
+    async def _fake_iter_dialogs():
+        yield dialog
+
+    mock_client.iter_dialogs.return_value = _fake_iter_dialogs()
+    pool._db = db
+    pool.get_client_by_phone = AsyncMock(return_value=(mock_client, "+1234567890"))
+    pool.release_client = AsyncMock()
+    pool._classify_entity = MagicMock(return_value=("channel", False))
+    _bind_dialog_cache_methods(pool)
+
+    dialogs = await ClientPool.get_dialogs_for_phone(
+        pool,
+        "+1234567890",
+        include_dm=True,
+        mode="full",
+        refresh=True,
+    )
+
+    assert dialogs[0]["title"] == "Fresh Title"
+    cached = await db.repos.dialog_cache.list_dialogs("+1234567890")
+    assert cached[0]["title"] == "Fresh Title"
+
+
+@pytest.mark.asyncio
+async def test_get_dialogs_for_phone_failed_refresh_keeps_existing_db_cache(db):
+    from src.telegram.client_pool import ClientPool
+
+    await db.repos.dialog_cache.replace_dialogs("+1234567890", list(_FAKE_DIALOGS))
+
+    pool = MagicMock(spec=ClientPool)
+    pool._db = db
+    pool.get_client_by_phone = AsyncMock(return_value=None)
+    pool.release_client = AsyncMock()
+    _bind_dialog_cache_methods(pool)
+
+    dialogs = await ClientPool.get_dialogs_for_phone(
+        pool,
+        "+1234567890",
+        include_dm=True,
+        mode="full",
+        refresh=True,
+    )
+
+    assert dialogs == []
+    cached = await db.repos.dialog_cache.list_dialogs("+1234567890")
+    assert _strip_extra_dialog_fields(cached) == _strip_extra_dialog_fields(_FAKE_DIALOGS)
+
+
+@pytest.mark.asyncio
+async def test_get_dialogs_for_phone_partial_timeout_keeps_existing_db_cache(db):
+    from src.telegram.client_pool import ClientPool
+
+    await db.repos.dialog_cache.replace_dialogs("+1234567890", list(_FAKE_DIALOGS))
+
+    pool = MagicMock(spec=ClientPool)
+
+    mock_client = MagicMock()
+    partial_dialog = _make_channel_dialog(-100999, title="Partial Channel", username="partial")
+
+    async def _iter():
+        yield partial_dialog
+        await asyncio.sleep(120)
+
+    mock_client.iter_dialogs.return_value = _iter()
+    pool._db = db
+    pool.get_client_by_phone = AsyncMock(return_value=(mock_client, "+1234567890"))
+    pool.release_client = AsyncMock()
+    pool._classify_entity = MagicMock(return_value=("channel", False))
+    _bind_dialog_cache_methods(pool)
+
+    original_wait_for = asyncio.wait_for
+
+    async def fast_wait_for(coro, timeout):
+        return await original_wait_for(coro, timeout=min(timeout, 0.05))
+
+    with patch("src.telegram.client_pool.asyncio.wait_for", fast_wait_for):
+        result = await ClientPool.get_dialogs_for_phone(
+            pool,
+            "+1234567890",
+            include_dm=True,
+            mode="full",
+            refresh=True,
+        )
+
+    assert result[0]["title"] == "Partial Channel"
+    cached = await db.repos.dialog_cache.list_dialogs("+1234567890")
+    assert _strip_extra_dialog_fields(cached) == _strip_extra_dialog_fields(_FAKE_DIALOGS)
