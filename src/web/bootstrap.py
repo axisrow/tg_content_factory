@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import secrets
 
 from fastapi.templating import Jinja2Templates
@@ -33,6 +32,7 @@ from src.telegram.notifier import Notifier
 from src.web.container import AppContainer
 from src.web.log_handler import LogBuffer
 from src.web.paths import TEMPLATES_DIR
+from src.web.template_globals import configure_template_globals
 
 logger = logging.getLogger(__name__)
 
@@ -122,9 +122,8 @@ async def build_container_with_templates(
         search_query_bundle=search_query_bundle,
     )
 
-    _templates = templates or Jinja2Templates(directory=str(TEMPLATES_DIR))
-    _templates.env.globals["agent_available"] = bool(
-        os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("CLAUDE_CODE_OAUTH_TOKEN")
+    _templates = configure_template_globals(
+        templates or Jinja2Templates(directory=str(TEMPLATES_DIR))
     )
 
     return AppContainer(
