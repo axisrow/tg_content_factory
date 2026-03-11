@@ -48,7 +48,9 @@ async def _build_photo_loader_app(tmp_path, dialogs=None, dialogs_error=None):
     async def _get_dialogs_for_phone(self, phone, include_dm=False, mode="full", refresh=False):
         if dialogs_error is not None:
             raise dialogs_error
-        return dialogs or [{"channel_id": -1001, "title": "Target Channel", "channel_type": "channel"}]
+        return dialogs or [
+            {"channel_id": -1001, "title": "Target Channel", "channel_type": "channel"}
+        ]
 
     async def _get_client_by_phone(self, phone):
         return mock_client, phone
