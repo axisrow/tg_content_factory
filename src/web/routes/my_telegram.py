@@ -4,7 +4,7 @@ import logging
 import time
 from urllib.parse import quote
 
-from fastapi import APIRouter, Form, Request
+from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from src.web import deps
@@ -43,15 +43,6 @@ async def my_telegram_page(
             "left": left,
             "failed": failed,
         }
-    )
-
-
-@router.post("/refresh")
-async def refresh_dialogs(request: Request, phone: str = Form(...)):
-    await deps.channel_service(request).get_my_dialogs(phone, refresh=True)
-    return RedirectResponse(
-        url=f"/my-telegram/?phone={quote(phone, safe='')}",
-        status_code=303,
     )
 
 

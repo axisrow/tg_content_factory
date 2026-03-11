@@ -58,13 +58,7 @@ async def client(tmp_path):
             },
         ]
 
-    async def _get_dialogs_for_phone(
-        self,
-        phone,
-        include_dm=False,
-        mode="channels_only",
-        refresh=False,
-    ):
+    async def _get_dialogs_for_phone(self, phone, include_dm=False, mode="channels_only"):
         return []
 
     app.state.pool = type(

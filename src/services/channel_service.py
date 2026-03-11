@@ -76,17 +76,12 @@ class ChannelService:
                 )
             )
 
-    async def get_my_dialogs(self, phone: str, refresh: bool = False) -> list[dict]:
+    async def get_my_dialogs(self, phone: str) -> list[dict]:
         """Get all dialogs for a specific account, enriched with already_added flag."""
         started_at = time.perf_counter()
         existing_ids = {ch.channel_id for ch in await self._channels.list_channels()}
         db_elapsed_ms = int((time.perf_counter() - started_at) * 1000)
-        dialogs = await self._pool.get_dialogs_for_phone(
-            phone,
-            include_dm=True,
-            mode="full",
-            refresh=refresh,
-        )
+        dialogs = await self._pool.get_dialogs_for_phone(phone, include_dm=True, mode="full")
         enrich_started_at = time.perf_counter()
         for d in dialogs:
             d["already_added"] = d["channel_id"] in existing_ids
