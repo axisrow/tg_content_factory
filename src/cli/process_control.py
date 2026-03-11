@@ -5,6 +5,8 @@ import signal
 import subprocess
 import sys
 import time
+from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
 
 from src.config import AppConfig
@@ -12,6 +14,20 @@ from src.config import AppConfig
 
 class ProcessControlError(RuntimeError):
     """Raised when server process control cannot proceed safely."""
+
+
+class StopResult(Enum):
+    STOPPED = "stopped"
+    NOT_RUNNING = "not_running"
+    STALE_PID = "stale_pid"
+    UNMANAGED = "unmanaged"
+    TIMEOUT = "timeout"
+
+
+@dataclass(frozen=True)
+class StopOutcome:
+    result: StopResult
+    message: str
 
 
 def pid_file_path(config: AppConfig) -> Path:
@@ -76,7 +92,11 @@ def is_expected_server_process(pid: int) -> bool:
     if not command:
         return False
 
-    return "src.main" in command and "serve" in command
+    tokens = command.split()
+    for index, token in enumerate(tokens[:-2]):
+        if token == "-m" and tokens[index + 1] == "src.main" and tokens[index + 2] == "serve":
+            return True
+    return False
 
 
 def remove_pid_file(path: Path) -> None:
@@ -104,30 +124,93 @@ def register_current_process(path: Path) -> None:
 
 
 def unregister_current_process(path: Path) -> None:
-    pid = read_pid(path)
-    if pid == os.getpid():
-        remove_pid_file(path)
+    try:
+        pid = read_pid(path)
+        if pid == os.getpid():
+            remove_pid_file(path)
+    except Exception:
+        pass
 
 
-def stop_server(path: Path, timeout_sec: float = 10.0) -> tuple[bool, str]:
+def stop_server(
+    path: Path,
+    timeout_sec: float = 10.0,
+    kill_timeout_sec: float = 1.0,
+) -> StopOutcome:
     pid = read_pid(path)
     if pid is None:
-        return False, f"Server is not running (no PID file: {path})."
+        return StopOutcome(
+            StopResult.NOT_RUNNING,
+            f"Server is not running (no PID file: {path}).",
+        )
 
     if not is_process_alive(pid):
         remove_pid_file(path)
-        return False, f"Removed stale PID file: {path}."
+        return StopOutcome(
+            StopResult.STALE_PID,
+            f"Removed stale PID file: {path}.",
+        )
 
     if not is_expected_server_process(pid):
-        return False, f"PID {pid} is not a managed src.main serve process."
+        return StopOutcome(
+            StopResult.UNMANAGED,
+            f"PID {pid} is not a managed src.main serve process.",
+        )
 
-    os.kill(pid, signal.SIGTERM)
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        remove_pid_file(path)
+        return StopOutcome(
+            StopResult.STALE_PID,
+            f"Removed stale PID file: {path}.",
+        )
+    except PermissionError as exc:
+        raise ProcessControlError(
+            f"Permission denied sending signal to PID {pid}"
+        ) from exc
 
     deadline = time.monotonic() + timeout_sec
     while time.monotonic() < deadline:
         if not is_process_alive(pid):
             remove_pid_file(path)
-            return True, f"Server stopped (PID {pid})."
+            return StopOutcome(
+                StopResult.STOPPED,
+                f"Server stopped (PID {pid}).",
+            )
         time.sleep(0.1)
 
-    return False, f"Timed out waiting for server PID {pid} to stop."
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except ProcessLookupError:
+        remove_pid_file(path)
+        return StopOutcome(
+            StopResult.STOPPED,
+            f"Server stopped (PID {pid}).",
+        )
+    except PermissionError as exc:
+        raise ProcessControlError(
+            f"Permission denied sending signal to PID {pid}"
+        ) from exc
+
+    if not is_process_alive(pid):
+        remove_pid_file(path)
+        return StopOutcome(
+            StopResult.STOPPED,
+            f"Server stopped after force kill (PID {pid}).",
+        )
+
+    kill_deadline = time.monotonic() + kill_timeout_sec
+    while time.monotonic() < kill_deadline:
+        if not is_process_alive(pid):
+            remove_pid_file(path)
+            return StopOutcome(
+                StopResult.STOPPED,
+                f"Server stopped after force kill (PID {pid}).",
+            )
+        time.sleep(0.05)
+
+    return StopOutcome(
+        StopResult.TIMEOUT,
+        f"Timed out waiting for server PID {pid} to stop.",
+    )

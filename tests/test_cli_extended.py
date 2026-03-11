@@ -513,19 +513,19 @@ class TestCLITestExtended:
             with patch(
                 "src.search.engine.SearchEngine",
             ) as mock_engine:
-                ei = mock_engine.return_value
-                ei.search_my_chats = AsyncMock(
+                engine_inst = mock_engine.return_value
+                engine_inst.search_my_chats = AsyncMock(
                     return_value=MagicMock(total=5),
                 )
-                ei.search_in_channel = AsyncMock(
+                engine_inst.search_in_channel = AsyncMock(
                     return_value=MagicMock(total=3),
                 )
-                ei.search_telegram = AsyncMock(
+                engine_inst.search_telegram = AsyncMock(
                     return_value=MagicMock(
                         total=0, error="Premium needed",
                     ),
                 )
-                ei.check_search_quota = AsyncMock(
+                engine_inst.check_search_quota = AsyncMock(
                     return_value={"left": 10},
                 )
 
