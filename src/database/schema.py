@@ -131,4 +131,69 @@ CREATE TABLE IF NOT EXISTS forum_topics (
     updated_at TEXT DEFAULT (datetime('now')),
     UNIQUE(channel_id, topic_id)
 );
+
+CREATE TABLE IF NOT EXISTS photo_batches (
+    id INTEGER PRIMARY KEY,
+    phone TEXT NOT NULL,
+    target_dialog_id INTEGER NOT NULL,
+    target_title TEXT,
+    target_type TEXT,
+    send_mode TEXT NOT NULL DEFAULT 'album',
+    caption TEXT,
+    status TEXT NOT NULL DEFAULT 'pending',
+    error TEXT,
+    created_at TEXT DEFAULT (datetime('now')),
+    last_run_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS photo_batch_items (
+    id INTEGER PRIMARY KEY,
+    batch_id INTEGER,
+    phone TEXT NOT NULL,
+    target_dialog_id INTEGER NOT NULL,
+    target_title TEXT,
+    target_type TEXT,
+    file_paths TEXT NOT NULL,
+    send_mode TEXT NOT NULL DEFAULT 'album',
+    caption TEXT,
+    schedule_at TEXT,
+    status TEXT NOT NULL DEFAULT 'pending',
+    error TEXT,
+    telegram_message_ids TEXT,
+    created_at TEXT DEFAULT (datetime('now')),
+    started_at TEXT,
+    completed_at TEXT,
+    FOREIGN KEY (batch_id) REFERENCES photo_batches(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_photo_batch_items_status_schedule
+    ON photo_batch_items(status, schedule_at);
+CREATE INDEX IF NOT EXISTS idx_photo_batch_items_batch_id
+    ON photo_batch_items(batch_id);
+
+CREATE TABLE IF NOT EXISTS photo_auto_upload_jobs (
+    id INTEGER PRIMARY KEY,
+    phone TEXT NOT NULL,
+    target_dialog_id INTEGER NOT NULL,
+    target_title TEXT,
+    target_type TEXT,
+    folder_path TEXT NOT NULL,
+    send_mode TEXT NOT NULL DEFAULT 'album',
+    caption TEXT,
+    interval_minutes INTEGER NOT NULL DEFAULT 60,
+    is_active INTEGER NOT NULL DEFAULT 1,
+    error TEXT,
+    last_run_at TEXT,
+    last_seen_marker TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS photo_auto_upload_files (
+    id INTEGER PRIMARY KEY,
+    job_id INTEGER NOT NULL,
+    file_path TEXT NOT NULL,
+    sent_at TEXT DEFAULT (datetime('now')),
+    UNIQUE(job_id, file_path),
+    FOREIGN KEY (job_id) REFERENCES photo_auto_upload_jobs(id)
+);
 """
