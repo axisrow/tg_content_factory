@@ -153,3 +153,30 @@ def test_stop_server_handles_pid_disappearing_before_sigterm(tmp_path):
     assert outcome.result is StopResult.STALE_PID
     assert "stale PID file" in outcome.message
     assert not path.exists()
+
+
+def test_stop_server_permission_denied_on_sigterm(tmp_path):
+    path = tmp_path / "app.pid"
+    path.write_text("123\n", encoding="utf-8")
+
+    with patch("src.cli.process_control.is_process_alive", return_value=True):
+        with patch("src.cli.process_control.is_expected_server_process", return_value=True):
+            with patch("src.cli.process_control.os.kill", side_effect=PermissionError):
+                with pytest.raises(ProcessControlError, match="Permission denied"):
+                    stop_server(path)
+
+
+def test_stop_server_permission_denied_on_sigkill(tmp_path):
+    path = tmp_path / "app.pid"
+    path.write_text("123\n", encoding="utf-8")
+
+    def kill_side_effect(pid, sig):
+        if sig == 15:
+            return None
+        raise PermissionError
+
+    with patch("src.cli.process_control.is_process_alive", return_value=True):
+        with patch("src.cli.process_control.is_expected_server_process", return_value=True):
+            with patch("src.cli.process_control.os.kill", side_effect=kill_side_effect):
+                with pytest.raises(ProcessControlError, match="Permission denied"):
+                    stop_server(path, timeout_sec=0.0, kill_timeout_sec=0.0)
