@@ -12,6 +12,7 @@ from src.database.repositories.accounts import AccountsRepository
 from src.database.repositories.channel_stats import ChannelStatsRepository
 from src.database.repositories.channels import ChannelsRepository
 from src.database.repositories.collection_tasks import CollectionTasksRepository
+from src.database.repositories.dialog_cache import DialogCacheRepository
 from src.database.repositories.filters import FilterRepository
 from src.database.repositories.messages import MessagesRepository
 from src.database.repositories.notification_bots import NotificationBotsRepository
@@ -55,6 +56,7 @@ class Database:
         self._notification_bots: NotificationBotsRepository | None = None
         self._search_queries: SearchQueriesRepository | None = None
         self._photo_loader: PhotoLoaderRepository | None = None
+        self._dialog_cache: DialogCacheRepository | None = None
         self._repos: DatabaseRepositories | None = None
 
     async def _has_encrypted_sessions(self) -> bool:
@@ -99,6 +101,7 @@ class Database:
         self._notification_bots = NotificationBotsRepository(self._db)
         self._search_queries = SearchQueriesRepository(self._db)
         self._photo_loader = PhotoLoaderRepository(self._db)
+        self._dialog_cache = DialogCacheRepository(self._db)
         self._repos = DatabaseRepositories(
             accounts=self._accounts,
             channels=self._channels,
@@ -111,6 +114,7 @@ class Database:
             notification_bots=self._notification_bots,
             search_queries=self._search_queries,
             photo_loader=self._photo_loader,
+            dialog_cache=self._dialog_cache,
         )
 
         await self._accounts.migrate_sessions()
@@ -155,6 +159,7 @@ class Database:
                 self._notification_bots,
                 self._search_queries,
                 self._photo_loader,
+                self._dialog_cache,
             )
         ):
             raise RuntimeError("Database.initialize() has not been called")

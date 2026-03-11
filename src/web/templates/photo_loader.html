@@ -57,6 +57,11 @@
             <input type="hidden" name="phone" value="{{ selected_phone or '' }}">
             <button class="btn btn-outline-secondary" type="submit" {% if not selected_phone %}disabled{% endif %}>Обновить диалоги</button>
         </form>
+        <div class="col-12">
+            <small class="text-muted">
+                Используется сохранённый список диалогов{% if dialogs_cached_at %} от {{ dialogs_cached_at.strftime("%Y-%m-%d %H:%M") }}{% endif %}. Кнопка обновления заново загружает данные из Telegram.
+            </small>
+        </div>
         </div>
     </div>
 

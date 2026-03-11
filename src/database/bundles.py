@@ -8,6 +8,7 @@ from src.database.repositories.accounts import AccountsRepository
 from src.database.repositories.channel_stats import ChannelStatsRepository
 from src.database.repositories.channels import ChannelsRepository
 from src.database.repositories.collection_tasks import CollectionTasksRepository
+from src.database.repositories.dialog_cache import DialogCacheRepository
 from src.database.repositories.filters import FilterRepository
 from src.database.repositories.messages import MessagesRepository
 from src.database.repositories.notification_bots import NotificationBotsRepository
@@ -50,6 +51,7 @@ class DatabaseRepositories:
     notification_bots: NotificationBotsRepository
     search_queries: SearchQueriesRepository
     photo_loader: PhotoLoaderRepository
+    dialog_cache: DialogCacheRepository
 
 
 @dataclass(frozen=True)
