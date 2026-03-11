@@ -120,7 +120,7 @@ async def test_dashboard(client):
 def test_templates_have_actual_app_version():
     app = create_app(AppConfig())
     expected_version = tomllib.loads(
-        PYPROJECT_PATH.read_text(encoding="utf-8")
+        PYPROJECT_PATH.read_text(encoding="utf-8"),
     )["project"]["version"]
     assert app.state.templates.env.globals["app_version"] == expected_version
     assert get_app_version() == expected_version
@@ -129,7 +129,7 @@ def test_templates_have_actual_app_version():
 @pytest.mark.asyncio
 async def test_footer_renders_actual_version(client):
     expected_version = tomllib.loads(
-        PYPROJECT_PATH.read_text(encoding="utf-8")
+        PYPROJECT_PATH.read_text(encoding="utf-8"),
     )["project"]["version"]
     resp = await client.get("/dashboard/")
     assert resp.status_code == 200
@@ -319,9 +319,8 @@ async def test_health_no_auth(unauth_client):
 
 @pytest.mark.asyncio
 async def test_basic_auth_sets_cookie(client):
-    resp = await client.get("/", follow_redirects=False)
-    assert resp.status_code == 303
-    assert resp.headers["location"] == "/agent"
+    resp = await client.get("/dashboard/", follow_redirects=False)
+    assert resp.status_code == 200
     assert COOKIE_NAME in resp.cookies
 
 
@@ -334,9 +333,15 @@ async def test_cookie_auth_without_basic(client):
         base_url="http://test",
         cookies={COOKIE_NAME: token},
     ) as c:
-        resp = await c.get("/")
-        assert resp.status_code == 303
-        assert resp.headers["location"] == "/agent"
+        resp = await c.get("/dashboard/")
+        assert resp.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_root_redirects_to_agent(client):
+    resp = await client.get("/", follow_redirects=False)
+    assert resp.status_code == 303
+    assert resp.headers["location"] == "/agent"
 
 
 @pytest.mark.asyncio
@@ -425,7 +430,7 @@ async def test_logout_clears_cookie_and_redirects_to_login(client):
 
 @pytest.mark.asyncio
 async def test_cookie_not_secure_on_http(client):
-    resp = await client.get("/", follow_redirects=False)
+    resp = await client.get("/dashboard/", follow_redirects=False)
     cookie_header = resp.headers.get("set-cookie", "")
     assert "Secure" not in cookie_header
 
