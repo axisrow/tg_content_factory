@@ -129,7 +129,11 @@ def unregister_current_process(path: Path) -> None:
         remove_pid_file(path)
 
 
-def stop_server(path: Path, timeout_sec: float = 10.0) -> StopOutcome:
+def stop_server(
+    path: Path,
+    timeout_sec: float = 10.0,
+    kill_timeout_sec: float = 1.0,
+) -> StopOutcome:
     pid = read_pid(path)
     if pid is None:
         return StopOutcome(
@@ -178,7 +182,14 @@ def stop_server(path: Path, timeout_sec: float = 10.0) -> StopOutcome:
             f"Server stopped (PID {pid}).",
         )
 
-    kill_deadline = time.monotonic() + 1.0
+    if not is_process_alive(pid):
+        remove_pid_file(path)
+        return StopOutcome(
+            StopResult.STOPPED,
+            f"Server stopped after force kill (PID {pid}).",
+        )
+
+    kill_deadline = time.monotonic() + kill_timeout_sec
     while time.monotonic() < kill_deadline:
         if not is_process_alive(pid):
             remove_pid_file(path)
