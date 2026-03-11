@@ -13,6 +13,7 @@ from src.cli.commands import (
     search,
     search_query,
     serve,
+    server_control,
 )
 from src.cli.commands import agent as agent_cmd
 from src.cli.commands import filter as filter_cmd
@@ -33,6 +34,8 @@ def main() -> None:
 
     commands = {
         "serve": serve.run,
+        "stop": server_control.run_stop,
+        "restart": server_control.run_restart,
         "collect": collect.run,
         "search": search.run,
         "channel": channel.run,
