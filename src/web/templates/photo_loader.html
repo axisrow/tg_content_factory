@@ -1,27 +1,5 @@
 {% extends "base.html" %}
 {% block title %}Photo Loader — TG Agent{% endblock %}
-{% set selectable_dialogs = dialogs | rejectattr("channel_type", "equalto", "bot") | list %}
-{% set initial_target = selectable_dialogs[0] if selectable_dialogs else none %}
-{% set target_available = initial_target is not none %}
-{% macro target_group(dialog) -%}
-    {%- if dialog.channel_type in ["channel", "monoforum", "scam", "fake", "restricted"] -%}channel
-    {%- elif dialog.channel_type in ["supergroup", "group", "gigagroup", "forum"] -%}group
-    {%- elif dialog.channel_type == "dm" -%}dm
-    {%- else -%}other
-    {%- endif -%}
-{%- endmacro %}
-{% macro target_group_label(group) -%}
-    {%- if group == "channel" -%}Каналы
-    {%- elif group == "group" -%}Группы и чаты
-    {%- elif group == "dm" -%}Личные диалоги
-    {%- else -%}Прочее
-    {%- endif -%}
-{%- endmacro %}
-{% macro render_target_hidden_inputs(initial_target) -%}
-<input type="hidden" name="target_dialog_id" value="{{ initial_target.channel_id if initial_target else '' }}" data-target-field="id">
-<input type="hidden" name="target_title" value="{{ initial_target.title if initial_target else '' }}" data-target-field="title">
-<input type="hidden" name="target_type" value="{{ initial_target.channel_type if initial_target else '' }}" data-target-field="type">
-{%- endmacro %}
 {% block content %}
 <h1>Photo Loader</h1>
 
@@ -30,111 +8,41 @@
 {% else %}
 <div class="row g-4">
     <div class="col-12">
-        <div class="row g-2 align-items-end">
-        <form method="get" action="/my-telegram/photos" class="col-md-4">
-            <label class="form-label">Аккаунт</label>
-            <select name="phone" class="form-select" onchange="this.form.submit()">
-                {% for acc in accounts %}
-                <option value="{{ acc }}" {% if acc == selected_phone %}selected{% endif %}>{{ acc }}</option>
-                {% endfor %}
-            </select>
-        </form>
-        <form method="post" action="/my-telegram/photos/refresh" class="col-md-auto">
-            <input type="hidden" name="phone" value="{{ selected_phone or '' }}">
-            <button class="btn btn-outline-secondary" type="submit" {% if not selected_phone %}disabled{% endif %}>Обновить диалоги</button>
-        </form>
-        </div>
-    </div>
-
-    <div class="col-12">
-        <div class="card">
-            <div class="card-body">
-                <div class="d-flex flex-column flex-lg-row justify-content-between gap-3 align-items-lg-start">
-                    <div>
-                        <h2 class="h5 mb-1">Цель отправки</h2>
-                        <p class="text-muted mb-0">Один выбор цели используется во всех формах ниже.</p>
-                    </div>
-                    <div class="photo-target-summary" data-target-summary>
-                        {% if target_available %}
-                        <strong>{{ initial_target.title }}</strong>
-                        <span class="badge text-bg-light">{{ target_group_label(target_group(initial_target)) }}</span>
-                        <span class="text-muted small">{{ initial_target.channel_type }}</span>
-                        {% else %}
-                        <span class="text-muted">Нет доступных каналов, чатов или личных диалогов для отправки.</span>
-                        {% endif %}
-                    </div>
-                </div>
-
-                {% if target_available %}
-                <div id="photo-target-picker"
-                     class="mt-4"
-                     data-target-picker
-                     data-initial-target-id="{{ initial_target.channel_id }}">
-                    <div class="row g-3">
-                        <div class="col-lg-5">
-                            <label class="form-label" for="target-search">Поиск</label>
-                            <input id="target-search" type="search" class="form-control" placeholder="Название канала, чата или контакта" data-target-search>
-                        </div>
-                        <div class="col-lg-7">
-                            <label class="form-label d-block">Тип</label>
-                            <div class="btn-group flex-wrap" role="group" aria-label="Фильтр по типу">
-                                <button type="button" class="btn btn-outline-secondary active" data-target-filter="all">Все</button>
-                                <button type="button" class="btn btn-outline-secondary" data-target-filter="channel">Каналы</button>
-                                <button type="button" class="btn btn-outline-secondary" data-target-filter="group">Группы и чаты</button>
-                                <button type="button" class="btn btn-outline-secondary" data-target-filter="dm">Личные диалоги</button>
-                            </div>
-                        </div>
-                        <div class="col-12">
-                            <div class="list-group photo-target-list" data-target-list>
-                                {% for dialog in selectable_dialogs %}
-                                {% set group = target_group(dialog) %}
-                                <button type="button"
-                                        class="list-group-item list-group-item-action d-flex justify-content-between align-items-start{% if initial_target and dialog.channel_id == initial_target.channel_id %} active{% endif %}"
-                                        data-target-option
-                                        data-target-id="{{ dialog.channel_id }}"
-                                        data-target-title="{{ dialog.title }}"
-                                        data-target-type="{{ dialog.channel_type }}"
-                                        data-target-group="{{ group }}"
-                                        data-target-search-text="{{ (dialog.title ~ ' ' ~ dialog.channel_type)|lower }}">
-                                    <span class="me-3 text-start">
-                                        <strong class="d-block">{{ dialog.title }}</strong>
-                                        <span class="text-muted small">{{ dialog.channel_type }}</span>
-                                    </span>
-                                    <span class="badge rounded-pill text-bg-light">{{ target_group_label(group) }}</span>
-                                </button>
-                                {% endfor %}
-                            </div>
-                            <p class="text-muted small mt-2 mb-0 d-none" data-target-empty>Ничего не найдено.</p>
-                        </div>
-                    </div>
-                </div>
-                {% else %}
-                <div class="alert alert-secondary mt-4 mb-0" role="alert">
-                    Для выбранного аккаунта нет доступных целей отправки. Проверьте список диалогов в разделе <a href="/my-telegram">Мой Телеграм</a>.
-                </div>
-                {% endif %}
+        <form method="get" action="/my-telegram/photos" class="row g-2 align-items-end">
+            <div class="col-md-4">
+                <label class="form-label">Аккаунт</label>
+                <select name="phone" class="form-select" onchange="this.form.submit()">
+                    {% for acc in accounts %}
+                    <option value="{{ acc }}" {% if acc == selected_phone %}selected{% endif %}>{{ acc }}</option>
+                    {% endfor %}
+                </select>
             </div>
-        </div>
+        </form>
     </div>
 
     <div class="col-lg-6">
         <div class="card">
             <div class="card-body">
                 <h2 class="h5">Обычная загрузка</h2>
-                <form method="post" action="/my-telegram/photos/send" enctype="multipart/form-data" class="row g-3" data-photo-target-form>
+                <form method="post" action="/my-telegram/photos/send" enctype="multipart/form-data" class="row g-3">
                     <input type="hidden" name="phone" value="{{ selected_phone }}">
-                    {{ render_target_hidden_inputs(initial_target) }}
                     <div class="col-12">
                         <label class="form-label">Канал / чат</label>
-                        <div class="form-control bg-body-tertiary" data-target-display>
-                            {% if target_available %}{{ initial_target.title }}{% else %}Цель недоступна{% endif %}
-                        </div>
+                        <select name="target_dialog_id" class="form-select" required>
+                            {% for dialog in dialogs %}
+                            {% if dialog.channel_type != "bot" %}
+                            <option value="{{ dialog.channel_id }}" data-title="{{ dialog.title }}" data-type="{{ dialog.channel_type }}">
+                                {{ dialog.title }} ({{ dialog.channel_type }})
+                            </option>
+                            {% endif %}
+                            {% endfor %}
+                        </select>
                     </div>
                     <div class="col-md-6">
                         <label class="form-label">Режим</label>
                         <select name="send_mode" class="form-select">
-                            <option value="separate" selected>Отдельные посты</option>
                             <option value="album">Альбом</option>
+                            <option value="separate">Отдельные посты</option>
                         </select>
                     </div>
                     <div class="col-12">
@@ -146,7 +54,7 @@
                         <textarea name="caption" class="form-control" rows="2"></textarea>
                     </div>
                     <div class="col-12">
-                        <button class="btn btn-primary" type="submit" {% if not target_available %}disabled{% endif %}>Отправить</button>
+                        <button class="btn btn-primary" type="submit">Отправить</button>
                     </div>
                 </form>
             </div>
@@ -157,20 +65,23 @@
         <div class="card">
             <div class="card-body">
                 <h2 class="h5">Отложенная загрузка</h2>
-                <form method="post" action="/my-telegram/photos/schedule" enctype="multipart/form-data" class="row g-3" data-photo-target-form>
+                <form method="post" action="/my-telegram/photos/schedule" enctype="multipart/form-data" class="row g-3">
                     <input type="hidden" name="phone" value="{{ selected_phone }}">
-                    {{ render_target_hidden_inputs(initial_target) }}
                     <div class="col-12">
                         <label class="form-label">Канал / чат</label>
-                        <div class="form-control bg-body-tertiary" data-target-display>
-                            {% if target_available %}{{ initial_target.title }}{% else %}Цель недоступна{% endif %}
-                        </div>
+                        <select name="target_dialog_id" class="form-select" required>
+                            {% for dialog in dialogs %}
+                            {% if dialog.channel_type != "bot" %}
+                            <option value="{{ dialog.channel_id }}">{{ dialog.title }} ({{ dialog.channel_type }})</option>
+                            {% endif %}
+                            {% endfor %}
+                        </select>
                     </div>
                     <div class="col-md-6">
                         <label class="form-label">Режим</label>
                         <select name="send_mode" class="form-select">
-                            <option value="separate" selected>Отдельные посты</option>
                             <option value="album">Альбом</option>
+                            <option value="separate">Отдельные посты</option>
                         </select>
                     </div>
                     <div class="col-md-6">
@@ -186,7 +97,7 @@
                         <textarea name="caption" class="form-control" rows="2"></textarea>
                     </div>
                     <div class="col-12">
-                        <button class="btn btn-outline-primary" type="submit" {% if not target_available %}disabled{% endif %}>Поставить в отложку</button>
+                        <button class="btn btn-outline-primary" type="submit">Поставить в отложку</button>
                     </div>
                 </form>
             </div>
@@ -198,14 +109,17 @@
             <div class="card-body">
                 <h2 class="h5">Batch delayed</h2>
                 <p class="text-muted small">JSON-массив объектов вида <code>{"at":"2026-03-11T18:30","files":["/abs/1.jpg"],"mode":"album"}</code></p>
-                <form method="post" action="/my-telegram/photos/batch" class="row g-3" data-photo-target-form>
+                <form method="post" action="/my-telegram/photos/batch" class="row g-3">
                     <input type="hidden" name="phone" value="{{ selected_phone }}">
-                    {{ render_target_hidden_inputs(initial_target) }}
                     <div class="col-12">
                         <label class="form-label">Канал / чат</label>
-                        <div class="form-control bg-body-tertiary" data-target-display>
-                            {% if target_available %}{{ initial_target.title }}{% else %}Цель недоступна{% endif %}
-                        </div>
+                        <select name="target_dialog_id" class="form-select" required>
+                            {% for dialog in dialogs %}
+                            {% if dialog.channel_type != "bot" %}
+                            <option value="{{ dialog.channel_id }}">{{ dialog.title }} ({{ dialog.channel_type }})</option>
+                            {% endif %}
+                            {% endfor %}
+                        </select>
                     </div>
                     <div class="col-12">
                         <label class="form-label">Общая подпись</label>
@@ -218,7 +132,7 @@
 ]</textarea>
                     </div>
                     <div class="col-12">
-                        <button class="btn btn-outline-secondary" type="submit" {% if not target_available %}disabled{% endif %}>Создать batch</button>
+                        <button class="btn btn-outline-secondary" type="submit">Создать batch</button>
                     </div>
                 </form>
             </div>
@@ -229,14 +143,17 @@
         <div class="card">
             <div class="card-body">
                 <h2 class="h5">Автозагрузка из папки</h2>
-                <form method="post" action="/my-telegram/photos/auto" class="row g-3" data-photo-target-form>
+                <form method="post" action="/my-telegram/photos/auto" class="row g-3">
                     <input type="hidden" name="phone" value="{{ selected_phone }}">
-                    {{ render_target_hidden_inputs(initial_target) }}
                     <div class="col-12">
                         <label class="form-label">Канал / чат</label>
-                        <div class="form-control bg-body-tertiary" data-target-display>
-                            {% if target_available %}{{ initial_target.title }}{% else %}Цель недоступна{% endif %}
-                        </div>
+                        <select name="target_dialog_id" class="form-select" required>
+                            {% for dialog in dialogs %}
+                            {% if dialog.channel_type != "bot" %}
+                            <option value="{{ dialog.channel_id }}">{{ dialog.title }} ({{ dialog.channel_type }})</option>
+                            {% endif %}
+                            {% endfor %}
+                        </select>
                     </div>
                     <div class="col-md-7">
                         <label class="form-label">Папка</label>
@@ -249,8 +166,8 @@
                     <div class="col-md-6">
                         <label class="form-label">Режим</label>
                         <select name="send_mode" class="form-select">
-                            <option value="separate" selected>Отдельные посты</option>
                             <option value="album">Альбом</option>
+                            <option value="separate">Отдельные посты</option>
                         </select>
                     </div>
                     <div class="col-12">
@@ -258,7 +175,7 @@
                         <textarea name="caption" class="form-control" rows="2"></textarea>
                     </div>
                     <div class="col-12">
-                        <button class="btn btn-outline-dark" type="submit" {% if not target_available %}disabled{% endif %}>Создать авто-джоб</button>
+                        <button class="btn btn-outline-dark" type="submit">Создать авто-джоб</button>
                     </div>
                 </form>
             </div>
@@ -344,108 +261,5 @@
         </div>
     </div>
 </div>
-
-<script>
-(function() {
-    var picker = document.querySelector("[data-target-picker]");
-    if (!picker) return;
-
-    var searchInput = picker.querySelector("[data-target-search]");
-    var options = Array.from(picker.querySelectorAll("[data-target-option]"));
-    var filterButtons = Array.from(picker.querySelectorAll("[data-target-filter]"));
-    var emptyState = picker.querySelector("[data-target-empty]");
-    var summary = document.querySelector("[data-target-summary]");
-    var forms = Array.from(document.querySelectorAll("[data-photo-target-form]"));
-    var activeFilter = "all";
-
-    function updateForms(target) {
-        forms.forEach(function(form) {
-            var idField = form.querySelector('[data-target-field="id"]');
-            var titleField = form.querySelector('[data-target-field="title"]');
-            var typeField = form.querySelector('[data-target-field="type"]');
-            var display = form.querySelector("[data-target-display]");
-            if (idField) idField.value = target.id;
-            if (titleField) titleField.value = target.title;
-            if (typeField) typeField.value = target.type;
-            if (display) display.textContent = target.title;
-        });
-    }
-
-    function updateSummary(target) {
-        if (!summary) return;
-        summary.replaceChildren();
-
-        var title = document.createElement("strong");
-        title.textContent = target.title;
-
-        var spacerAfterTitle = document.createTextNode(" ");
-
-        var badge = document.createElement("span");
-        badge.className = "badge text-bg-light";
-        badge.textContent = target.groupLabel;
-
-        var spacerAfterBadge = document.createTextNode(" ");
-
-        var type = document.createElement("span");
-        type.className = "text-muted small";
-        type.textContent = target.type;
-
-        summary.append(title, spacerAfterTitle, badge, spacerAfterBadge, type);
-    }
-
-    function setActiveOption(button) {
-        options.forEach(function(option) {
-            option.classList.toggle("active", option === button);
-        });
-        var target = {
-            id: button.dataset.targetId,
-            title: button.dataset.targetTitle,
-            type: button.dataset.targetType,
-            groupLabel: button.querySelector(".badge").textContent
-        };
-        updateForms(target);
-        updateSummary(target);
-    }
-
-    function applyFilters() {
-        var query = (searchInput.value || "").trim().toLowerCase();
-        var visibleCount = 0;
-        options.forEach(function(option) {
-            var matchesType = activeFilter === "all" || option.dataset.targetGroup === activeFilter;
-            var matchesText = !query || option.dataset.targetSearchText.indexOf(query) !== -1;
-            var visible = matchesType && matchesText;
-            option.classList.toggle("d-none", !visible);
-            if (visible) visibleCount += 1;
-        });
-        emptyState.classList.toggle("d-none", visibleCount !== 0);
-    }
-
-    options.forEach(function(option) {
-        option.addEventListener("click", function() {
-            setActiveOption(option);
-        });
-    });
-
-    filterButtons.forEach(function(button) {
-        button.addEventListener("click", function() {
-            activeFilter = button.dataset.targetFilter;
-            filterButtons.forEach(function(item) {
-                item.classList.toggle("active", item === button);
-            });
-            applyFilters();
-        });
-    });
-
-    searchInput.addEventListener("input", applyFilters);
-
-    var initial = options.find(function(option) {
-        return option.dataset.targetId === picker.dataset.initialTargetId;
-    }) || options[0];
-    if (initial) {
-        setActiveOption(initial);
-    }
-    applyFilters();
-})();
-</script>
 {% endif %}
 {% endblock %}
