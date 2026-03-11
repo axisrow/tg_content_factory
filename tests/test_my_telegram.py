@@ -43,7 +43,13 @@ async def client(tmp_path):
     await db.initialize()
     app.state.db = db
 
-    async def _get_dialogs_for_phone(self, phone, include_dm=False, mode="channels_only", refresh=False):
+    async def _get_dialogs_for_phone(
+        self,
+        phone,
+        include_dm=False,
+        mode="channels_only",
+        refresh=False,
+    ):
         return _FAKE_DIALOGS
 
     async def _get_dialogs(self):

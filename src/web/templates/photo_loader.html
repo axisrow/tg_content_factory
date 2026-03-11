@@ -373,9 +373,24 @@
 
     function updateSummary(target) {
         if (!summary) return;
-        summary.innerHTML = "<strong>" + target.title + "</strong> " +
-            '<span class="badge text-bg-light">' + target.groupLabel + "</span> " +
-            '<span class="text-muted small">' + target.type + "</span>";
+        summary.replaceChildren();
+
+        var title = document.createElement("strong");
+        title.textContent = target.title;
+
+        var spacerAfterTitle = document.createTextNode(" ");
+
+        var badge = document.createElement("span");
+        badge.className = "badge text-bg-light";
+        badge.textContent = target.groupLabel;
+
+        var spacerAfterBadge = document.createTextNode(" ");
+
+        var type = document.createElement("span");
+        type.className = "text-muted small";
+        type.textContent = target.type;
+
+        summary.append(title, spacerAfterTitle, badge, spacerAfterBadge, type);
     }
 
     function setActiveOption(button) {
