@@ -102,9 +102,7 @@ def _replace_bulk_test_status(request: Request, status: dict[str, object]) -> No
 
 def _bulk_test_recent_event(status: dict[str, object], message: str) -> None:
     events = list(status.get("recent_events", []))
-    events.append(
-        f"{datetime.now(UTC).astimezone().strftime('%H:%M:%S')} {message}"
-    )
+    events.append(f"{datetime.now(UTC).astimezone().strftime('%H:%M:%S')} {message}")
     status["recent_events"] = events[-12:]
 
 
@@ -189,7 +187,10 @@ async def _run_bulk_test_job(
                 validation_error = service.validate_provider_config(model_cfg)
                 if validation_error:
                     logger.info(
-                        "Bulk compatibility probe blocked: provider=%s model=%s status=unsupported reason=%s",
+                        (
+                            "Bulk compatibility probe blocked: provider=%s "
+                            "model=%s status=unsupported reason=%s"
+                        ),
                         cfg.provider,
                         model,
                         validation_error,
@@ -215,7 +216,10 @@ async def _run_bulk_test_job(
                         force=True,
                     )
                     logger.info(
-                        "Bulk compatibility probe finished: provider=%s model=%s status=%s reason=%s",
+                        (
+                            "Bulk compatibility probe finished: provider=%s "
+                            "model=%s status=%s reason=%s"
+                        ),
                         cfg.provider,
                         record.model or model,
                         record.status,
@@ -233,7 +237,10 @@ async def _run_bulk_test_job(
                     }
                 )
             logger.info(
-                "Bulk compatibility provider summary: provider=%s supported=%d unsupported=%d unknown=%d",
+                (
+                    "Bulk compatibility provider summary: provider=%s "
+                    "supported=%d unsupported=%d unknown=%d"
+                ),
                 cfg.provider,
                 provider_summary["supported"],
                 provider_summary["unsupported"],
@@ -370,9 +377,8 @@ async def settings_page(request: Request):
             "collect_interval_minutes": collect_interval_minutes,
             "agent_dev_mode_enabled": agent_dev_mode_enabled,
             "agent_backend_override": agent_backend_override,
-            "agent_fallback_model": config.agent.fallback_model or os.environ.get(
-                "AGENT_FALLBACK_MODEL", ""
-            ).strip(),
+            "agent_fallback_model": config.agent.fallback_model
+            or os.environ.get("AGENT_FALLBACK_MODEL", "").strip(),
             "agent_provider_writes_enabled": provider_service.writes_enabled,
             "agent_provider_views": provider_views,
             "agent_provider_options": available_provider_options,
@@ -437,7 +443,9 @@ async def save_agent_settings(request: Request):
 async def add_agent_provider(request: Request):
     service = _agent_provider_service(request)
     if not service.writes_enabled:
-        return RedirectResponse(url="/settings?error=agent_provider_secret_required", status_code=303)
+        return RedirectResponse(
+            url="/settings?error=agent_provider_secret_required", status_code=303
+        )
     dev_mode_required = await _require_agent_dev_mode(request)
     if dev_mode_required is not None:
         return dev_mode_required
@@ -461,7 +469,9 @@ async def add_agent_provider(request: Request):
 async def save_agent_providers(request: Request):
     service = _agent_provider_service(request)
     if not service.writes_enabled:
-        return RedirectResponse(url="/settings?error=agent_provider_secret_required", status_code=303)
+        return RedirectResponse(
+            url="/settings?error=agent_provider_secret_required", status_code=303
+        )
     dev_mode_required = await _require_agent_dev_mode(request)
     if dev_mode_required is not None:
         return dev_mode_required
@@ -502,7 +512,9 @@ async def save_agent_providers(request: Request):
 async def delete_agent_provider(request: Request, provider_name: str):
     service = _agent_provider_service(request)
     if not service.writes_enabled:
-        return RedirectResponse(url="/settings?error=agent_provider_secret_required", status_code=303)
+        return RedirectResponse(
+            url="/settings?error=agent_provider_secret_required", status_code=303
+        )
     dev_mode_required = await _require_agent_dev_mode(request)
     if dev_mode_required is not None:
         return dev_mode_required
@@ -521,7 +533,9 @@ async def delete_agent_provider(request: Request, provider_name: str):
 async def refresh_agent_provider_models(request: Request, provider_name: str):
     service = _agent_provider_service(request)
     if not service.writes_enabled:
-        return JSONResponse({"ok": False, "error": "SESSION_ENCRYPTION_KEY is required."}, status_code=409)
+        return JSONResponse(
+            {"ok": False, "error": "SESSION_ENCRYPTION_KEY is required."}, status_code=409
+        )
     dev_mode_required = await _require_agent_dev_mode(request, json_mode=True)
     if dev_mode_required is not None:
         return dev_mode_required
@@ -540,9 +554,7 @@ async def refresh_agent_provider_models(request: Request, provider_name: str):
             "error": entry.error,
             "fetched_at": entry.fetched_at,
             "compatibility": (
-                service.build_compatibility_payload(cfg, entry)
-                if cfg is not None
-                else {}
+                service.build_compatibility_payload(cfg, entry) if cfg is not None else {}
             ),
         }
     )
@@ -552,7 +564,9 @@ async def refresh_agent_provider_models(request: Request, provider_name: str):
 async def refresh_all_agent_provider_models(request: Request):
     service = _agent_provider_service(request)
     if not service.writes_enabled:
-        return JSONResponse({"ok": False, "error": "SESSION_ENCRYPTION_KEY is required."}, status_code=409)
+        return JSONResponse(
+            {"ok": False, "error": "SESSION_ENCRYPTION_KEY is required."}, status_code=409
+        )
     dev_mode_required = await _require_agent_dev_mode(request, json_mode=True)
     if dev_mode_required is not None:
         return dev_mode_required
@@ -584,7 +598,9 @@ async def refresh_all_agent_provider_models(request: Request):
 async def probe_agent_provider_model(request: Request, provider_name: str):
     service = _agent_provider_service(request)
     if not service.writes_enabled:
-        return JSONResponse({"ok": False, "error": "SESSION_ENCRYPTION_KEY is required."}, status_code=409)
+        return JSONResponse(
+            {"ok": False, "error": "SESSION_ENCRYPTION_KEY is required."}, status_code=409
+        )
     dev_mode_required = await _require_agent_dev_mode(request, json_mode=True)
     if dev_mode_required is not None:
         return dev_mode_required
@@ -652,7 +668,9 @@ async def probe_agent_provider_model(request: Request, provider_name: str):
 async def test_all_agent_provider_models(request: Request):
     service = _agent_provider_service(request)
     if not service.writes_enabled:
-        return JSONResponse({"ok": False, "error": "SESSION_ENCRYPTION_KEY is required."}, status_code=409)
+        return JSONResponse(
+            {"ok": False, "error": "SESSION_ENCRYPTION_KEY is required."}, status_code=409
+        )
     if not await _dev_mode_enabled(request):
         return JSONResponse({"ok": False, "error": "Developer mode is required."}, status_code=403)
     configs = await _provider_configs_from_bulk_form(request, service)
@@ -692,7 +710,9 @@ async def test_all_agent_provider_models(request: Request):
 async def test_all_agent_provider_models_status(request: Request):
     service = _agent_provider_service(request)
     if not service.writes_enabled:
-        return JSONResponse({"ok": False, "error": "SESSION_ENCRYPTION_KEY is required."}, status_code=409)
+        return JSONResponse(
+            {"ok": False, "error": "SESSION_ENCRYPTION_KEY is required."}, status_code=409
+        )
     if not await _dev_mode_enabled(request):
         return JSONResponse({"ok": False, "error": "Developer mode is required."}, status_code=403)
     return JSONResponse({"ok": True, **_bulk_test_status_payload(request)})
@@ -784,10 +804,12 @@ async def setup_notification_bot(request: Request):
         return RedirectResponse(url="/settings?error=notification_action_failed", status_code=303)
 
     if _wants_json(request):
-        return JSONResponse({
-            "bot_username": bot.bot_username,
-            "bot_id": bot.bot_id,
-        })
+        return JSONResponse(
+            {
+                "bot_username": bot.bot_username,
+                "bot_id": bot.bot_id,
+            }
+        )
     return RedirectResponse(url="/settings?msg=notification_bot_created", status_code=303)
 
 
@@ -799,12 +821,14 @@ async def notification_bot_status(request: Request):
         return JSONResponse({"configured": False, "error": str(exc)}, status_code=409)
     if bot is None:
         return JSONResponse({"configured": False})
-    return JSONResponse({
-        "configured": True,
-        "bot_username": bot.bot_username,
-        "bot_id": bot.bot_id,
-        "created_at": bot.created_at.isoformat() if bot.created_at else None,
-    })
+    return JSONResponse(
+        {
+            "configured": True,
+            "bot_username": bot.bot_username,
+            "bot_id": bot.bot_id,
+            "created_at": bot.created_at.isoformat() if bot.created_at else None,
+        }
+    )
 
 
 @router.post("/notifications/delete")
@@ -856,9 +880,9 @@ async def test_notification(request: Request):
             logger.warning("Could not send /start to @%s: %s", bot.bot_username, exc)
 
     msg = "✅ Тест уведомлений: соединение установлено"
-    ok = await Notifier(
-        target_svc, admin_chat_id, deps.get_notification_bundle(request)
-    ).notify(msg)
+    ok = await Notifier(target_svc, admin_chat_id, deps.get_notification_bundle(request)).notify(
+        msg
+    )
     if ok:
         return RedirectResponse(url="/settings?msg=notification_test_sent", status_code=303)
     return RedirectResponse(url="/settings?error=notification_test_failed", status_code=303)

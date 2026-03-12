@@ -38,7 +38,8 @@ _CLAUDE_MODELS = {
     "claude-haiku-4-5-20251001",
 }
 _DEEPAGENTS_PROBE_PROMPT = (
-    "Compatibility probe. You must use the tool that lists active Telegram channels before answering. "
+    "Compatibility probe. You must use the tool that lists active Telegram "
+    "channels before answering. "
     "Do not answer from memory. After completing the tool call, reply with exactly PROBE_OK."
 )
 _DEEPAGENTS_PROBE_TIMEOUT_SECONDS = 45.0
@@ -143,10 +144,17 @@ class ClaudeSdkBackend:
                 break
 
         if stderr_lines:
-            logger.error("claude-cli stderr dump (thread %d):\n%s", thread_id, "\n".join(stderr_lines))
+            logger.error(
+                "claude-cli stderr dump (thread %d):\n%s",
+                thread_id,
+                "\n".join(stderr_lines),
+            )
         elif last_err is not None:
             logger.error(
-                "claude-cli failed with no stderr (thread %d): %s. Prompt was %d chars (~%dK tokens).",
+                (
+                    "claude-cli failed with no stderr (thread %d): %s. "
+                    "Prompt was %d chars (~%dK tokens)."
+                ),
                 thread_id,
                 last_err,
                 stats["prompt_chars"],
@@ -171,9 +179,10 @@ class DeepagentsBackend:
 
     @property
     def legacy_fallback_model(self) -> str:
-        return self._config.agent.fallback_model.strip() or os.environ.get(
-            "AGENT_FALLBACK_MODEL", ""
-        ).strip()
+        return (
+            self._config.agent.fallback_model.strip()
+            or os.environ.get("AGENT_FALLBACK_MODEL", "").strip()
+        )
 
     @property
     def fallback_model(self) -> str:
@@ -195,7 +204,9 @@ class DeepagentsBackend:
 
     @property
     def configured(self) -> bool:
-        return bool(self._enabled_db_configs(include_invalid=True)) or bool(self.legacy_fallback_model)
+        return bool(self._enabled_db_configs(include_invalid=True)) or bool(
+            self.legacy_fallback_model
+        )
 
     @property
     def available(self) -> bool:
@@ -224,9 +235,10 @@ class DeepagentsBackend:
         return self._preflight_available
 
     def _fallback_api_key(self) -> str:
-        return self._config.agent.fallback_api_key.strip() or os.environ.get(
-            "AGENT_FALLBACK_API_KEY", ""
-        ).strip()
+        return (
+            self._config.agent.fallback_api_key.strip()
+            or os.environ.get("AGENT_FALLBACK_API_KEY", "").strip()
+        )
 
     def _provider_from_model(self, model_name: str) -> str | None:
         if ":" not in model_name:
@@ -253,11 +265,7 @@ class DeepagentsBackend:
         configs = [cfg for cfg in self._cached_db_configs if cfg.enabled]
         if include_invalid:
             return configs
-        return [
-            cfg
-            for cfg in configs
-            if not self._provider_service.validate_provider_config(cfg)
-        ]
+        return [cfg for cfg in configs if not self._provider_service.validate_provider_config(cfg)]
 
     def _legacy_fallback_config(self) -> ProviderRuntimeConfig | None:
         model_name = self.legacy_fallback_model
@@ -309,7 +317,9 @@ class DeepagentsBackend:
     def _validation_error(self, cfg: ProviderRuntimeConfig) -> str:
         if self._is_legacy_candidate(cfg):
             return self._legacy_validation_error(cfg)
-        validation_error = cfg.last_validation_error or self._provider_service.validate_provider_config(cfg)
+        validation_error = (
+            cfg.last_validation_error or self._provider_service.validate_provider_config(cfg)
+        )
         if validation_error:
             return validation_error
         cache_entry = self._cached_model_cache.get(cfg.provider)
@@ -336,7 +346,10 @@ class DeepagentsBackend:
         for message in messages:
             preview = (message.text or "").replace("\n", " ")[:200]
             lines.append(
-                f"- [{message.date}] channel_id={message.channel_id} message_id={message.message_id}: {preview}"
+                (
+                    f"- [{message.date}] channel_id={message.channel_id} "
+                    f"message_id={message.message_id}: {preview}"
+                )
             )
         return "\n".join(lines)
 
@@ -365,7 +378,9 @@ class DeepagentsBackend:
             raise RuntimeError("Deepagents provider model is not configured.")
         provider = cfg.provider
         resolved_model_name = configured_model_name
-        configured_provider, has_provider_prefix, bare_model_name = configured_model_name.partition(":")
+        configured_provider, has_provider_prefix, bare_model_name = configured_model_name.partition(
+            ":"
+        )
         if has_provider_prefix and configured_provider == provider and bare_model_name:
             resolved_model_name = bare_model_name
         if provider == "anthropic" and not cfg.secret_fields.get("api_key", "").strip():
@@ -385,9 +400,7 @@ class DeepagentsBackend:
             )
             extra["base_url"] = normalized_base_url
             if api_key:
-                extra["client_kwargs"] = {
-                    "headers": {"Authorization": f"Bearer {api_key}"}
-                }
+                extra["client_kwargs"] = {"headers": {"Authorization": f"Bearer {api_key}"}}
         else:
             extra.update({key: value for key, value in cfg.secret_fields.items() if value.strip()})
         self._init_attempted_model = cfg.model_name
@@ -410,9 +423,12 @@ class DeepagentsBackend:
             if "deepagents" in str(exc):
                 self._init_error = "deepagents не установлен."
                 raise RuntimeError(self._init_error) from exc
-            package = f"langchain-{provider.replace('_', '-')}" if provider else "langchain provider"
+            package = (
+                f"langchain-{provider.replace('_', '-')}" if provider else "langchain provider"
+            )
             self._init_error = (
-                f"Не установлена интеграция для provider '{provider}'. Установите пакет вроде '{package}'."
+                f"Не установлена интеграция для provider '{provider}'. "
+                f"Установите пакет вроде '{package}'."
             )
             raise RuntimeError(self._init_error) from exc
         except ValueError as exc:
@@ -440,7 +456,9 @@ class DeepagentsBackend:
                 if validation_error:
                     errors.append(f"{cfg.provider}: {validation_error}")
             self._preflight_available = False
-            self._init_error = "; ".join(errors) if errors else "Deepagents providers are not configured."
+            self._init_error = (
+                "; ".join(errors) if errors else "Deepagents providers are not configured."
+            )
             raise RuntimeError(self._init_error)
 
         # If the only candidates are legacy fallback configs, avoid trying to build an agent
@@ -486,7 +504,9 @@ class DeepagentsBackend:
                 errors.append(f"{cfg.provider}: {exc}")
                 logger.warning("Deepagents provider preflight failed (%s): %s", cfg.provider, exc)
         self._preflight_available = False
-        self._init_error = "; ".join(errors) if errors else "Deepagents providers are not configured."
+        self._init_error = (
+            "; ".join(errors) if errors else "Deepagents providers are not configured."
+        )
         raise RuntimeError(self._init_error)
 
     def _extract_result_text(self, result: object) -> str:
@@ -541,7 +561,9 @@ class DeepagentsBackend:
             if hasattr(agent, "run"):
                 result = agent.run(_DEEPAGENTS_PROBE_PROMPT)
             else:
-                result = agent.invoke({"messages": [{"role": "user", "content": _DEEPAGENTS_PROBE_PROMPT}]})
+                result = agent.invoke(
+                    {"messages": [{"role": "user", "content": _DEEPAGENTS_PROBE_PROMPT}]}
+                )
             _ = self._extract_result_text(result)
             if calls["get_channels"] < 1:
                 raise RuntimeError(
@@ -627,7 +649,10 @@ class DeepagentsBackend:
                 probe_kind=probe_kind,
             )
             logger.info(
-                "Deepagents compatibility probe finished: provider=%s model=%s status=%s kind=%s reason=%s",
+                (
+                    "Deepagents compatibility probe finished: provider=%s "
+                    "model=%s status=%s kind=%s reason=%s"
+                ),
                 cfg.provider,
                 cfg.selected_model or "<empty>",
                 result.status,
@@ -646,7 +671,10 @@ class DeepagentsBackend:
                 probe_kind=probe_kind,
             )
             logger.info(
-                "Deepagents compatibility probe finished: provider=%s model=%s status=%s kind=%s reason=%s",
+                (
+                    "Deepagents compatibility probe finished: provider=%s "
+                    "model=%s status=%s kind=%s reason=%s"
+                ),
                 cfg.provider,
                 cfg.selected_model or "<empty>",
                 result.status,
@@ -692,7 +720,9 @@ class DeepagentsBackend:
             except Exception as exc:
                 errors.append(f"{cfg.provider}: {exc}")
                 logger.warning("Deepagents provider failed (%s): %s", cfg.provider, exc)
-        self._init_error = "; ".join(errors) if errors else "Deepagents providers are not configured."
+        self._init_error = (
+            "; ".join(errors) if errors else "Deepagents providers are not configured."
+        )
         raise RuntimeError(self._init_error)
 
 
@@ -706,7 +736,11 @@ class AgentManager:
 
     async def refresh_settings_cache(self, *, preflight: bool = False) -> None:
         await self._deepagents_backend.refresh_settings_cache()
-        if preflight and self._deepagents_backend.configured and self._deepagents_backend.preflight_available is None:
+        if (
+            preflight
+            and self._deepagents_backend.configured
+            and self._deepagents_backend.preflight_available is None
+        ):
             try:
                 self._deepagents_backend.initialize()
             except Exception:
@@ -714,7 +748,10 @@ class AgentManager:
 
     def initialize(self) -> None:
         self._claude_backend.initialize()
-        if self._deepagents_backend.configured and self._deepagents_backend.preflight_available is None:
+        if (
+            self._deepagents_backend.configured
+            and self._deepagents_backend.preflight_available is None
+        ):
             try:
                 self._deepagents_backend.initialize()
             except Exception:
@@ -784,7 +821,9 @@ class AgentManager:
                 selected_backend = "deepagents"
             else:
                 selected_backend = None
-                error = deepagents_error or "Не настроен ни claude-agent-sdk, ни deepagents fallback."
+                error = (
+                    deepagents_error or "Не настроен ни claude-agent-sdk, ни deepagents fallback."
+                )
 
         return AgentRuntimeStatus(
             claude_available=claude_available,
@@ -831,7 +870,9 @@ class AgentManager:
         status = await self.get_runtime_status()
         backend_name = status.selected_backend
         if status.error and (backend_name is None or status.using_override):
-            err_payload = json.dumps({"error": f"Ошибка агента: {status.error}"}, ensure_ascii=False)
+            err_payload = json.dumps(
+                {"error": f"Ошибка агента: {status.error}"}, ensure_ascii=False
+            )
             yield f"data: {err_payload}\n\n"
             return
         if backend_name == "claude":
@@ -866,15 +907,17 @@ class AgentManager:
             except Exception as exc:
                 logger.exception("Agent chat error for thread %d", thread_id)
                 error_text = str(exc)
-                if "Internal Server Error" in error_text and "500" in error_text and "ollama" in error_text.lower():
+                if (
+                    "Internal Server Error" in error_text
+                    and "500" in error_text
+                    and "ollama" in error_text.lower()
+                ):
                     error_text = (
                         "Внутренняя ошибка сервиса Ollama (500). "
                         "Возможно, модель не загрузилась или не хватает ресурсов (VRAM/RAM)."
                     )
                 elif "connection refused" in error_text.lower() and "ollama" in error_text.lower():
-                    error_text = (
-                        "Не удалось подключиться к Ollama. Проверьте, что сервис запущен."
-                    )
+                    error_text = "Не удалось подключиться к Ollama. Проверьте, что сервис запущен."
 
                 err_payload = json.dumps(
                     {"error": failure_prefix(error_text)},

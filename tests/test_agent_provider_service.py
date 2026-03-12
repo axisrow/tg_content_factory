@@ -132,7 +132,9 @@ async def test_refresh_all_models_only_refreshes_configured_providers(db, monkey
 
     async def _fake_refresh(provider_name: str, cfg: ProviderRuntimeConfig | None = None):
         calls.append(provider_name)
-        return ProviderModelCacheEntry(provider=provider_name, models=["gpt-4.1-mini"], source="live")
+        return ProviderModelCacheEntry(
+            provider=provider_name, models=["gpt-4.1-mini"], source="live"
+        )
 
     monkeypatch.setattr(service, "refresh_models_for_provider", _fake_refresh)
 
@@ -411,8 +413,9 @@ async def test_agent_manager_prefers_db_provider_configs_over_legacy_env(db, mon
 
     create_agent = MagicMock(return_value=MagicMock(run=MagicMock(return_value="ok-db")))
 
-    with patch("langchain.chat_models.init_chat_model", fake_init_chat_model), patch(
-        "deepagents.create_deep_agent", create_agent
+    with (
+        patch("langchain.chat_models.init_chat_model", fake_init_chat_model),
+        patch("deepagents.create_deep_agent", create_agent),
     ):
         chunks = [chunk async for chunk in mgr.chat_stream(thread_id, "hello")]
 
@@ -478,8 +481,9 @@ async def test_agent_manager_falls_back_to_legacy_env_when_db_provider_is_unsupp
         del tools, system_prompt
         return MagicMock(run=MagicMock(return_value=f"ok-{model.model_provider}"))
 
-    with patch("langchain.chat_models.init_chat_model", fake_init_chat_model), patch(
-        "deepagents.create_deep_agent", fake_create_agent
+    with (
+        patch("langchain.chat_models.init_chat_model", fake_init_chat_model),
+        patch("deepagents.create_deep_agent", fake_create_agent),
     ):
         status = await mgr.get_runtime_status()
         chunks = [chunk async for chunk in mgr.chat_stream(thread_id, "hello")]
@@ -532,8 +536,9 @@ async def test_agent_manager_fails_over_to_next_provider_on_init_error(db, monke
     def fake_create_agent(model, tools, system_prompt):
         return MagicMock(run=MagicMock(return_value=f"ok-{model.model_provider}"))
 
-    with patch("langchain.chat_models.init_chat_model", fake_init_chat_model), patch(
-        "deepagents.create_deep_agent", fake_create_agent
+    with (
+        patch("langchain.chat_models.init_chat_model", fake_init_chat_model),
+        patch("deepagents.create_deep_agent", fake_create_agent),
     ):
         chunks = [chunk async for chunk in mgr.chat_stream(thread_id, "hello")]
 
@@ -580,8 +585,9 @@ async def test_agent_manager_fails_over_to_next_provider_on_run_error(db, monkey
             return MagicMock(run=MagicMock(side_effect=RuntimeError("run failed")))
         return MagicMock(run=MagicMock(return_value="ok-groq"))
 
-    with patch("langchain.chat_models.init_chat_model", fake_init_chat_model), patch(
-        "deepagents.create_deep_agent", fake_create_agent
+    with (
+        patch("langchain.chat_models.init_chat_model", fake_init_chat_model),
+        patch("deepagents.create_deep_agent", fake_create_agent),
     ):
         chunks = [chunk async for chunk in mgr.chat_stream(thread_id, "hello")]
 
@@ -617,15 +623,14 @@ async def test_ollama_cloud_provider_uses_bearer_headers(db, monkeypatch):
         assert model_provider == "ollama"
         assert model == "gpt-oss:120b"
         assert kwargs["base_url"] == "https://ollama.com"
-        assert kwargs["client_kwargs"] == {
-            "headers": {"Authorization": "Bearer ollama-key"}
-        }
+        assert kwargs["client_kwargs"] == {"headers": {"Authorization": "Bearer ollama-key"}}
         return SimpleNamespace(model_provider=model_provider)
 
     create_agent = MagicMock(return_value=MagicMock(run=MagicMock(return_value="ok-ollama-cloud")))
 
-    with patch("langchain.chat_models.init_chat_model", fake_init_chat_model), patch(
-        "deepagents.create_deep_agent", create_agent
+    with (
+        patch("langchain.chat_models.init_chat_model", fake_init_chat_model),
+        patch("deepagents.create_deep_agent", create_agent),
     ):
         chunks = [chunk async for chunk in mgr.chat_stream(thread_id, "hello")]
 
@@ -662,15 +667,14 @@ async def test_ollama_provider_normalizes_api_suffix_for_runtime(db, monkeypatch
         assert model_provider == "ollama"
         assert model == "gpt-oss:120b"
         assert kwargs["base_url"] == "https://ollama.com"
-        assert kwargs["client_kwargs"] == {
-            "headers": {"Authorization": "Bearer ollama-key"}
-        }
+        assert kwargs["client_kwargs"] == {"headers": {"Authorization": "Bearer ollama-key"}}
         return SimpleNamespace(model_provider=model_provider)
 
     create_agent = MagicMock(return_value=MagicMock(run=MagicMock(return_value="ok-ollama-cloud")))
 
-    with patch("langchain.chat_models.init_chat_model", fake_init_chat_model), patch(
-        "deepagents.create_deep_agent", create_agent
+    with (
+        patch("langchain.chat_models.init_chat_model", fake_init_chat_model),
+        patch("deepagents.create_deep_agent", create_agent),
     ):
         chunks = [chunk async for chunk in mgr.chat_stream(thread_id, "hello")]
 
@@ -770,8 +774,9 @@ async def test_agent_manager_skips_cached_unsupported_provider_and_fails_over(db
         del tools, system_prompt
         return MagicMock(run=MagicMock(return_value=f"ok-{model.model_provider}"))
 
-    with patch("langchain.chat_models.init_chat_model", fake_init_chat_model), patch(
-        "deepagents.create_deep_agent", fake_create_agent
+    with (
+        patch("langchain.chat_models.init_chat_model", fake_init_chat_model),
+        patch("deepagents.create_deep_agent", fake_create_agent),
     ):
         chunks = [chunk async for chunk in mgr.chat_stream(thread_id, "hello")]
 
