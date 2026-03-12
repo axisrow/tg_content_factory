@@ -1,0 +1,14 @@
+{
+  "tag": "v0.1.10",
+  "title": "Photo Target Validation & Agent Fallback",
+  "highlights": [
+    {
+      "title": "Explicit Photo Targets",
+      "description": "Require an explicit Telegram target for Photo Loader actions, restore the last selected target per account, and surface clear validation errors for missing or invalid destinations."
+    },
+    {
+      "title": "Agent Fallback Availability",
+      "description": "Keep the /agent flow available when DeepAgents runs through the legacy fallback path and optional provider libraries are not installed."
+    }
+  ]
+}
