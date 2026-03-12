@@ -273,8 +273,12 @@ class AgentProviderService:
         await self.save_model_cache(cache)
         return entry
 
-    async def refresh_all_models(self) -> dict[str, ProviderModelCacheEntry]:
-        configs = await self.load_provider_configs()
+    async def refresh_all_models(
+        self,
+        configs: list[ProviderRuntimeConfig] | None = None,
+    ) -> dict[str, ProviderModelCacheEntry]:
+        if configs is None:
+            configs = await self.load_provider_configs()
         results: dict[str, ProviderModelCacheEntry] = {}
         for cfg in configs:
             results[cfg.provider] = await self.refresh_models_for_provider(cfg.provider, cfg)

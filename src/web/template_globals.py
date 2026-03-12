@@ -54,8 +54,18 @@ def _agent_available(config: AppConfig | None = None) -> bool:
     return claude_available or bool(fallback_model)
 
 
-def _agent_available_for_request(request: Request) -> bool:
+def _request_agent_manager(request: Request):
     manager = getattr(request.app.state, "agent_manager", None)
+    if manager is not None:
+        return manager
+    container = getattr(request.app.state, "container", None)
+    if container is None:
+        return None
+    return getattr(container, "agent_manager", None)
+
+
+def _agent_available_for_request(request: Request) -> bool:
+    manager = _request_agent_manager(request)
     if manager is not None:
         return bool(manager.available)
     return _agent_available(getattr(request.app.state, "config", None))
