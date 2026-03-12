@@ -232,7 +232,9 @@ class AgentProviderService:
             }
             for provider, entry in cache.items()
         }
-        await self._db.set_setting(MODEL_CACHE_SETTINGS_KEY, json.dumps(payload, ensure_ascii=False))
+        await self._db.set_setting(
+            MODEL_CACHE_SETTINGS_KEY, json.dumps(payload, ensure_ascii=False)
+        )
 
     async def refresh_models_for_provider(
         self, provider_name: str, cfg: ProviderRuntimeConfig | None = None
@@ -296,10 +298,7 @@ class AgentProviderService:
             models = list(cache_entry.models or list(spec.static_models))
             if cfg.selected_model and cfg.selected_model not in models:
                 models.insert(0, cfg.selected_model)
-            model_options = [
-                self._build_model_option(model, cfg, cache_entry)
-                for model in models
-            ]
+            model_options = [self._build_model_option(model, cfg, cache_entry) for model in models]
             selected_compatibility = self._compatibility_view(
                 self.get_compatibility_record(cache_entry, cfg, fresh_only=False)
             )
@@ -403,7 +402,9 @@ class AgentProviderService:
         provider_name: str,
     ) -> ProviderRuntimeConfig:
         existing_map = {cfg.provider: cfg for cfg in existing_configs}
-        cfg = self._parse_provider_form_item(form, existing_map, provider_name, require_present=False)
+        cfg = self._parse_provider_form_item(
+            form, existing_map, provider_name, require_present=False
+        )
         if cfg is None:
             raise RuntimeError(f"Unknown provider: {provider_name}")
         return cfg
@@ -425,12 +426,12 @@ class AgentProviderService:
     def validate_provider_config(self, cfg: ProviderRuntimeConfig) -> str:
         spec = provider_spec(cfg.provider)
         assert spec is not None
-        for field in spec.plain_fields:
-            if field.required and not cfg.plain_fields.get(field.name, "").strip():
-                return f"Missing required field: {field.label}"
-        for field in spec.secret_fields:
-            if field.required and not cfg.secret_fields.get(field.name, "").strip():
-                return f"Missing required secret: {field.label}"
+        for spec_field in spec.plain_fields:
+            if spec_field.required and not cfg.plain_fields.get(spec_field.name, "").strip():
+                return f"Missing required field: {spec_field.label}"
+        for spec_field in spec.secret_fields:
+            if spec_field.required and not cfg.secret_fields.get(spec_field.name, "").strip():
+                return f"Missing required secret: {spec_field.label}"
         if not cfg.selected_model:
             return "Model is required."
         return ""
@@ -444,7 +445,9 @@ class AgentProviderService:
         selected_model = (model or cfg.selected_model).strip()
         spec = provider_spec(cfg.provider)
         assert spec is not None
-        normalized_plain = self._normalize_plain_fields(cfg.provider, cfg.plain_fields, cfg.secret_fields)
+        normalized_plain = self._normalize_plain_fields(
+            cfg.provider, cfg.plain_fields, cfg.secret_fields
+        )
         secret_payload = {
             field.name: cfg.secret_fields.get(field.name, "").strip()
             for field in spec.secret_fields
@@ -482,7 +485,9 @@ class AgentProviderService:
         record = cache_entry.compatibility.get(fingerprint)
         if record is None:
             return None
-        if fresh_only and not self.is_compatibility_record_fresh(record, max_age_hours=max_age_hours):
+        if fresh_only and not self.is_compatibility_record_fresh(
+            record, max_age_hours=max_age_hours
+        ):
             return None
         return record
 
@@ -507,7 +512,9 @@ class AgentProviderService:
         if record.status == "unknown":
             return record.reason or "Совместимость модели с deepagents не подтверждена."
         if not self.is_compatibility_record_fresh(record):
-            return "Результат проверки совместимости устарел и будет обновлён при следующей проверке."
+            return (
+                "Результат проверки совместимости устарел и будет обновлён при следующей проверке."
+            )
         return ""
 
     def is_compatibility_record_fresh(
@@ -685,9 +692,10 @@ class AgentProviderService:
         provider = spec.name
         if provider in _OPENAI_STYLE_DEFAULT_BASE_URLS:
             assert cfg is not None
-            base_url = cfg.plain_fields.get("base_url", "").strip() or _OPENAI_STYLE_DEFAULT_BASE_URLS[
-                provider
-            ]
+            base_url = (
+                cfg.plain_fields.get("base_url", "").strip()
+                or _OPENAI_STYLE_DEFAULT_BASE_URLS[provider]
+            )
             return await self._fetch_openai_models(base_url, cfg.secret_fields.get("api_key", ""))
         if provider == "anthropic":
             assert cfg is not None
@@ -719,7 +727,9 @@ class AgentProviderService:
     async def _fetch_openai_models(self, base_url: str, api_key: str) -> list[str]:
         headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
         payload = await self._fetch_json(base_url.rstrip("/") + "/models", headers=headers)
-        return [str(item.get("id", "")).strip() for item in payload.get("data", []) if item.get("id")]
+        return [
+            str(item.get("id", "")).strip() for item in payload.get("data", []) if item.get("id")
+        ]
 
     async def _fetch_anthropic_models(self, api_key: str) -> list[str]:
         headers = {
@@ -727,7 +737,9 @@ class AgentProviderService:
             "anthropic-version": "2023-06-01",
         }
         payload = await self._fetch_json("https://api.anthropic.com/v1/models", headers=headers)
-        return [str(item.get("id", "")).strip() for item in payload.get("data", []) if item.get("id")]
+        return [
+            str(item.get("id", "")).strip() for item in payload.get("data", []) if item.get("id")
+        ]
 
     async def _fetch_google_genai_models(self, api_key: str) -> list[str]:
         payload = await self._fetch_json(
@@ -745,13 +757,23 @@ class AgentProviderService:
     async def _fetch_cohere_models(self, api_key: str) -> list[str]:
         headers = {"Authorization": f"Bearer {api_key}"}
         payload = await self._fetch_json("https://api.cohere.com/v1/models", headers=headers)
-        return [str(item.get("name", "")).strip() for item in payload.get("models", []) if item.get("name")]
+        return [
+            str(item.get("name", "")).strip()
+            for item in payload.get("models", [])
+            if item.get("name")
+        ]
 
     async def _fetch_ollama_models(self, base_url: str, api_key: str) -> list[str]:
         resolved_base_url = self.normalize_ollama_base_url(base_url, api_key)
         headers = {"Authorization": f"Bearer {api_key}"} if api_key.strip() else None
-        payload = await self._fetch_json(resolved_base_url.rstrip("/") + "/api/tags", headers=headers)
-        return [str(item.get("name", "")).strip() for item in payload.get("models", []) if item.get("name")]
+        payload = await self._fetch_json(
+            resolved_base_url.rstrip("/") + "/api/tags", headers=headers
+        )
+        return [
+            str(item.get("name", "")).strip()
+            for item in payload.get("models", [])
+            if item.get("name")
+        ]
 
     async def _fetch_huggingface_models(self, api_key: str) -> list[str]:
         headers = {"Authorization": f"Bearer {api_key}"} if api_key else None
@@ -826,8 +848,8 @@ class AgentProviderService:
         spec = provider_spec(provider_name)
         if spec is None:
             return normalized
-        for field in spec.plain_fields:
-            key = field.name
+        for spec_field in spec.plain_fields:
+            key = spec_field.name
             value = plain_fields.get(key, "").strip()
             if key == "base_url" and provider_name == "ollama":
                 normalized[key] = self.normalize_ollama_base_url(
@@ -856,7 +878,9 @@ class AgentProviderService:
         parsed = urlsplit(value)
         if not parsed.scheme or not parsed.netloc:
             return value.rstrip("/")
-        return urlunsplit((parsed.scheme, parsed.netloc, parsed.path.rstrip("/"), "", "")).rstrip("/")
+        return urlunsplit((parsed.scheme, parsed.netloc, parsed.path.rstrip("/"), "", "")).rstrip(
+            "/"
+        )
 
     def _parse_provider_form_item(
         self,
@@ -869,7 +893,10 @@ class AgentProviderService:
         spec = provider_spec(provider_name)
         if spec is None:
             return None
-        if require_present and str(form.get(f"provider_present__{provider_name}", "")).strip() != "1":
+        if (
+            require_present
+            and str(form.get(f"provider_present__{provider_name}", "")).strip() != "1"
+        ):
             return None
         current = existing_map.get(provider_name)
         priority_raw = str(form.get(f"provider_priority__{provider_name}", "")).strip() or "0"
@@ -883,24 +910,34 @@ class AgentProviderService:
         secret_fields: dict[str, str] = {}
         if current is not None:
             secret_fields.update(current.secret_fields)
-        for field in spec.secret_fields:
-            submitted = str(form.get(f"provider_secret__{provider_name}__{field.name}", "")).strip()
+        for spec_field in spec.secret_fields:
+            submitted = str(
+                form.get(f"provider_secret__{provider_name}__{spec_field.name}", "")
+            ).strip()
             if submitted:
-                secret_fields[field.name] = submitted
+                secret_fields[spec_field.name] = submitted
         plain_fields = {}
-        for field in spec.plain_fields:
-            key = f"provider_field__{provider_name}__{field.name}"
+        for spec_field in spec.plain_fields:
+            key = f"provider_field__{provider_name}__{spec_field.name}"
             if key in form:
-                plain_fields[field.name] = str(form.get(key, "")).strip()
+                plain_fields[spec_field.name] = str(form.get(key, "")).strip()
             elif not require_present and current is not None:
-                plain_fields[field.name] = current.plain_fields.get(field.name, "")
+                plain_fields[spec_field.name] = current.plain_fields.get(spec_field.name, "")
             else:
-                plain_fields[field.name] = ""
+                plain_fields[spec_field.name] = ""
         enabled = str(form.get(f"provider_enabled__{provider_name}", "")).strip() == "1"
-        if not require_present and current is not None and f"provider_enabled__{provider_name}" not in form:
+        if (
+            not require_present
+            and current is not None
+            and f"provider_enabled__{provider_name}" not in form
+        ):
             enabled = current.enabled
         selected_model = str(form.get(f"provider_model__{provider_name}", "")).strip()
-        if not require_present and current is not None and f"provider_model__{provider_name}" not in form:
+        if (
+            not require_present
+            and current is not None
+            and f"provider_model__{provider_name}" not in form
+        ):
             selected_model = current.selected_model
         return ProviderRuntimeConfig(
             provider=provider_name,
@@ -925,14 +962,18 @@ class AgentProviderService:
         spec: ProviderSpec,
     ) -> dict[str, str]:
         values: dict[str, str] = {}
-        for field in spec.secret_fields:
-            raw = str(payload.get(field.name, "")).strip() if isinstance(payload, dict) else ""
+        for spec_field in spec.secret_fields:
+            raw = (
+                str(payload.get(spec_field.name, "")).strip()
+                if isinstance(payload, dict)
+                else ""
+            )
             if not raw:
                 continue
             if self._cipher is None:
-                values[field.name] = ""
+                values[spec_field.name] = ""
                 continue
-            values[field.name] = self._cipher.decrypt(raw)
+            values[spec_field.name] = self._cipher.decrypt(raw)
         return values
 
     def _app_version(self) -> str:

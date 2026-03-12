@@ -18,9 +18,7 @@ def test_load_config_with_env_substitution(tmp_path, monkeypatch):
     monkeypatch.setenv("TG_API_ID", "12345")
     monkeypatch.setenv("TG_API_HASH", "abcdef")
     config_file = tmp_path / "test_config.yaml"
-    config_file.write_text(
-        "telegram:\n  api_id: ${TG_API_ID}\n  api_hash: ${TG_API_HASH}\n"
-    )
+    config_file.write_text("telegram:\n  api_id: ${TG_API_ID}\n  api_hash: ${TG_API_HASH}\n")
     config = load_config(config_file)
     assert config.telegram.api_id == 12345
     assert config.telegram.api_hash == "abcdef"
@@ -69,7 +67,9 @@ def test_load_config_reads_telegram_credentials_from_env_when_config_missing(mon
     assert config.telegram.api_hash == "missing-file-hash"
 
 
-def test_load_config_reads_agent_fallback_directly_from_env_without_placeholders(monkeypatch, tmp_path):
+def test_load_config_reads_agent_fallback_directly_from_env_without_placeholders(
+    monkeypatch, tmp_path
+):
     monkeypatch.setenv("AGENT_MODEL", "claude-sonnet-4-5")
     monkeypatch.setenv("AGENT_FALLBACK_MODEL", "openai:gpt-4.1-mini")
     monkeypatch.setenv("AGENT_FALLBACK_API_KEY", "fallback-key")
