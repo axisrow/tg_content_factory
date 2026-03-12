@@ -201,6 +201,18 @@ class DeepagentsBackend:
     def available(self) -> bool:
         if self._preflight_available is not None:
             return self._preflight_available
+        # If a legacy fallback model is configured via ENV or config and no DB provider configs
+        # are present, treat deepagents as available when it doesn't require extra credentials
+        # (e.g., non-anthropic providers) or when an explicit fallback API key is provided.
+        try:
+            legacy_model = self.legacy_fallback_model
+            if legacy_model:
+                legacy_provider = self._provider_from_model(legacy_model)
+                if legacy_provider == "anthropic":
+                    return bool(self._fallback_api_key())
+                return True
+        except Exception:
+            pass
         return any(not self._validation_error(cfg) for cfg in self._candidate_configs_from_cache())
 
     @property
