@@ -118,6 +118,28 @@ def test_deepagents_tools_can_be_converted_to_structured_tools(db):
     assert "List active Telegram channels" in channels_tool.description
 
 
+@pytest.mark.asyncio
+async def test_deepagents_search_tool_returns_friendly_error_inside_running_loop(db):
+    mgr = AgentManager(db)
+
+    result = mgr._deepagents_backend._search_messages_tool("test")
+
+    assert "временно недоступен" in result
+
+
+def test_deepagents_get_channels_tool_returns_friendly_error_on_db_failure(db, monkeypatch):
+    mgr = AgentManager(db)
+
+    async def _broken_get_channels(*args, **kwargs):
+        raise RuntimeError("db is unavailable")
+
+    monkeypatch.setattr(db, "get_channels", _broken_get_channels)
+
+    result = mgr._deepagents_backend._get_channels_tool()
+
+    assert "временно недоступен" in result
+
+
 def test_deepagents_backend_uses_bare_model_for_legacy_fallback(db, monkeypatch):
     config = AppConfig()
     config.agent.fallback_model = "anthropic:claude-sonnet-4-5-20250929"
@@ -189,6 +211,23 @@ async def test_runtime_status_treats_valid_legacy_fallback_as_available(db, monk
     assert status.selected_backend == "deepagents"
     assert status.deepagents_available is True
     assert status.error is None
+
+
+@pytest.mark.asyncio
+async def test_runtime_status_treats_invalid_legacy_fallback_as_unavailable(
+    db, monkeypatch
+):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
+    config = AppConfig()
+    config.agent.fallback_model = "llama3"
+
+    mgr = AgentManager(db, config)
+    status = await mgr.get_runtime_status()
+
+    assert status.deepagents_available is False
+    assert status.error is not None
+    assert "provider:model" in status.error
 
 
 @pytest.mark.asyncio

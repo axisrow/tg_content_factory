@@ -138,9 +138,9 @@ async def _run_bulk_test_job(
         "error": "",
         "recent_events": [],
     }
-    _replace_bulk_test_status(request, status)
-    logger.info("Bulk compatibility test started: providers=%d", len(configs))
     try:
+        _replace_bulk_test_status(request, status)
+        logger.info("Bulk compatibility test started: providers=%d", len(configs))
         total_probes = 0
         entries_by_provider: dict[str, ProviderModelCacheEntry] = {}
         for cfg in configs:
