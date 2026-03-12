@@ -129,6 +129,24 @@ python -m src.main scheduler start|trigger|search
 python -m src.main notification setup|status|delete
 ```
 
+### `telethon-cli`
+
+`telethon-cli` устанавливается вместе с проектом и использует те же
+`TG_API_ID` и `TG_API_HASH` из `.env`.
+
+Опциональные переменные только для CLI:
+
+- `TG_SESSION` задаёт кастомный путь или имя Telethon-сессии.
+- `TG_PASSWORD` передаёт пароль 2FA для неинтерактивных запусков.
+
+Legacy-переменные `TELETHON_*` `telethon-cli` по-прежнему понимает для
+совместимости, но в этом проекте стандартом считаются `TG_*`.
+
+```bash
+telethon-cli login
+telethon-cli users get-me --output json
+```
+
 ## Веб-интерфейс
 
 | Страница | Путь | Описание |

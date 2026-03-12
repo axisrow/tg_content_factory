@@ -138,6 +138,24 @@ python -m src.main scheduler start|trigger|search
 python -m src.main notification setup|status|delete
 ```
 
+### `telethon-cli`
+
+`telethon-cli` is installed with the project and reuses the same `TG_API_ID`
+and `TG_API_HASH` values from `.env`.
+
+Optional CLI-only overrides:
+
+- `TG_SESSION` sets a custom Telethon session path or name.
+- `TG_PASSWORD` supplies the Telegram 2FA password for non-interactive runs.
+
+Legacy `TELETHON_*` environment variable names are still accepted by
+`telethon-cli` for compatibility, but this project standardizes on `TG_*`.
+
+```bash
+telethon-cli login
+telethon-cli users get-me --output json
+```
+
 ## Web Interface
 
 | Page | Path | Description |

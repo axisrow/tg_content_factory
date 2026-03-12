@@ -9,6 +9,7 @@ description = "Telegram Post Search & Monitoring"
 requires-python = ">=3.11"
 dependencies = [
     "telethon==1.42.0",
+    "telethon-cli==0.1.1",
     "fastapi==0.128.0",
     "uvicorn[standard]==0.40.0",
     "jinja2==3.1.6",
