@@ -81,6 +81,16 @@ def test_load_config_reads_agent_fallback_directly_from_env_without_placeholders
     assert config.agent.fallback_api_key == "fallback-key"
 
 
+def test_load_config_warns_on_invalid_agent_fallback_model(monkeypatch, tmp_path, caplog):
+    monkeypatch.setenv("AGENT_FALLBACK_MODEL", "llama3")
+    caplog.set_level("WARNING")
+
+    config = load_config(tmp_path / "missing.yaml")
+
+    assert config.agent.fallback_model == "llama3"
+    assert "Invalid AGENT_FALLBACK_MODEL" in caplog.text
+
+
 def test_resolve_session_encryption_secret_prefers_explicit_key():
     config = AppConfig()
     config.security.session_encryption_key = "explicit-session-key"

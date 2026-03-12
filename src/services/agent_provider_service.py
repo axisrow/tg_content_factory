@@ -425,7 +425,8 @@ class AgentProviderService:
 
     def validate_provider_config(self, cfg: ProviderRuntimeConfig) -> str:
         spec = provider_spec(cfg.provider)
-        assert spec is not None
+        if spec is None:
+            return f"Unknown provider: {cfg.provider}"
         for spec_field in spec.plain_fields:
             if spec_field.required and not cfg.plain_fields.get(spec_field.name, "").strip():
                 return f"Missing required field: {spec_field.label}"
@@ -444,7 +445,8 @@ class AgentProviderService:
     ) -> str:
         selected_model = (model or cfg.selected_model).strip()
         spec = provider_spec(cfg.provider)
-        assert spec is not None
+        if spec is None:
+            raise RuntimeError(f"Unknown provider: {cfg.provider}")
         normalized_plain = self._normalize_plain_fields(
             cfg.provider, cfg.plain_fields, cfg.secret_fields
         )
@@ -742,8 +744,10 @@ class AgentProviderService:
         ]
 
     async def _fetch_google_genai_models(self, api_key: str) -> list[str]:
+        headers = {"x-goog-api-key": api_key} if api_key else None
         payload = await self._fetch_json(
-            f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
+            "https://generativelanguage.googleapis.com/v1beta/models",
+            headers=headers,
         )
         models = []
         for item in payload.get("models", []):
@@ -827,11 +831,16 @@ class AgentProviderService:
         }
 
     def _config_sort_key(self, cfg: ProviderRuntimeConfig) -> tuple[int, int]:
-        return (cfg.priority, PROVIDER_ORDER.index(cfg.provider))
+        try:
+            provider_index = PROVIDER_ORDER.index(cfg.provider)
+        except ValueError:
+            provider_index = len(PROVIDER_ORDER)
+        return (cfg.priority, provider_index)
 
     def _empty_model_cache_entry(self, provider_name: str) -> ProviderModelCacheEntry:
         spec = provider_spec(provider_name)
-        assert spec is not None
+        if spec is None:
+            raise RuntimeError(f"Unknown provider: {provider_name}")
         return ProviderModelCacheEntry(
             provider=provider_name,
             models=list(spec.static_models),

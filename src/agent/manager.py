@@ -5,10 +5,11 @@ import json
 import logging
 import os
 import shutil
-from collections.abc import AsyncGenerator, Callable
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import TypeVar
 
 from claude_agent_sdk import AssistantMessage, ClaudeAgentOptions, ResultMessage, TextBlock, query
 
@@ -43,6 +44,7 @@ _DEEPAGENTS_PROBE_PROMPT = (
     "Do not answer from memory. After completing the tool call, reply with exactly PROBE_OK."
 )
 _DEEPAGENTS_PROBE_TIMEOUT_SECONDS = 45.0
+_ToolResult = TypeVar("_ToolResult")
 
 
 @dataclass(slots=True)
@@ -219,6 +221,8 @@ class DeepagentsBackend:
             legacy_model = self.legacy_fallback_model
             if legacy_model:
                 legacy_provider = self._provider_from_model(legacy_model)
+                if legacy_provider is None:
+                    return False
                 if legacy_provider == "anthropic":
                     return bool(self._fallback_api_key())
                 return True
@@ -329,15 +333,29 @@ class DeepagentsBackend:
         await self.refresh_settings_cache()
         return self._candidate_configs_from_cache()
 
+    def _run_db_tool_sync(
+        self,
+        tool_name: str,
+        operation: Callable[[], Awaitable[_ToolResult]],
+    ) -> _ToolResult:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(operation())
+        raise RuntimeError(
+            f"Deepagents tool '{tool_name}' cannot run inside an active event loop: {loop}"
+        )
+
     def _search_messages_tool(self, query_text: str) -> str:
         """Search recent Telegram messages by free-text query and return short previews."""
         try:
-            messages, total = asyncio.run(self._db.search_messages(query_text, limit=20))
-        except RuntimeError:
-            with suppress(RuntimeError):
-                loop = asyncio.get_running_loop()
-                raise RuntimeError(f"Unexpected running loop in deepagents worker: {loop}")
-            messages, total = asyncio.run(self._db.search_messages(query_text, limit=20))
+            messages, total = self._run_db_tool_sync(
+                "search_messages",
+                lambda: self._db.search_messages(query_text, limit=20),
+            )
+        except Exception as exc:
+            logger.warning("Deepagents search_messages tool failed: %s", exc)
+            return "Поиск сообщений временно недоступен из-за внутренней ошибки."
 
         if not messages:
             return f"Ничего не найдено по запросу: {query_text}"
@@ -355,7 +373,14 @@ class DeepagentsBackend:
 
     def _get_channels_tool(self) -> str:
         """List active Telegram channels that are available to the agent."""
-        channels = asyncio.run(self._db.get_channels(active_only=True, include_filtered=False))
+        try:
+            channels = self._run_db_tool_sync(
+                "get_channels",
+                lambda: self._db.get_channels(active_only=True, include_filtered=False),
+            )
+        except Exception as exc:
+            logger.warning("Deepagents get_channels tool failed: %s", exc)
+            return "Список активных каналов временно недоступен из-за внутренней ошибки."
         if not channels:
             return "Активные каналы не найдены."
         lines = ["Активные каналы:"]
@@ -918,16 +943,19 @@ class AgentManager:
             except Exception as exc:
                 logger.exception("Agent chat error for thread %d", thread_id)
                 error_text = str(exc)
-                if (
-                    "Internal Server Error" in error_text
-                    and "500" in error_text
-                    and "ollama" in error_text.lower()
+                lowered_error = error_text.lower()
+                if "ollama" in lowered_error and "500" in lowered_error and any(
+                    marker in lowered_error
+                    for marker in ("internal server error", "server error", "status code")
                 ):
                     error_text = (
                         "Внутренняя ошибка сервиса Ollama (500). "
                         "Возможно, модель не загрузилась или не хватает ресурсов (VRAM/RAM)."
                     )
-                elif "connection refused" in error_text.lower() and "ollama" in error_text.lower():
+                elif "ollama" in lowered_error and any(
+                    marker in lowered_error
+                    for marker in ("connection refused", "failed to connect", "connecterror")
+                ):
                     error_text = "Не удалось подключиться к Ollama. Проверьте, что сервис запущен."
 
                 err_payload = json.dumps(

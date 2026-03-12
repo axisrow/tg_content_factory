@@ -112,6 +112,25 @@ async def test_refresh_models_uses_live_source_on_success(db, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_fetch_google_genai_models_uses_api_key_header(db, monkeypatch):
+    service = AgentProviderService(db, AppConfig())
+    captured: dict[str, object] = {}
+
+    async def _fake_fetch_json(url: str, headers: dict[str, str] | None = None):
+        captured["url"] = url
+        captured["headers"] = headers
+        return {"models": [{"name": "models/gemini-2.5-pro"}]}
+
+    monkeypatch.setattr(service, "_fetch_json", _fake_fetch_json)
+
+    models = await service._fetch_google_genai_models("google-api-key")
+
+    assert models == ["gemini-2.5-pro"]
+    assert captured["url"] == "https://generativelanguage.googleapis.com/v1beta/models"
+    assert captured["headers"] == {"x-goog-api-key": "google-api-key"}
+
+
+@pytest.mark.asyncio
 async def test_refresh_all_models_only_refreshes_configured_providers(db, monkeypatch):
     config = AppConfig()
     config.security.session_encryption_key = "provider-secret"
@@ -142,6 +161,18 @@ async def test_refresh_all_models_only_refreshes_configured_providers(db, monkey
 
     assert calls == ["openai"]
     assert set(results) == {"openai"}
+
+
+def test_validate_provider_config_returns_error_for_unknown_provider(db):
+    service = AgentProviderService(db, AppConfig())
+    cfg = ProviderRuntimeConfig(
+        provider="unknown",
+        enabled=True,
+        priority=0,
+        selected_model="unknown:model",
+    )
+
+    assert service.validate_provider_config(cfg) == "Unknown provider: unknown"
 
 
 @pytest.mark.asyncio

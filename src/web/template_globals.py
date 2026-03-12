@@ -8,7 +8,7 @@ import tomllib
 from fastapi import Request
 from fastapi.templating import Jinja2Templates
 
-from src.config import AppConfig
+from src.config import AppConfig, is_provider_model_ref
 from src.web.paths import TEMPLATES_DIR
 
 logger = logging.getLogger(__name__)
@@ -51,7 +51,7 @@ def _agent_available(config: AppConfig | None = None) -> bool:
         fallback_model = config.agent.fallback_model
     if not fallback_model:
         fallback_model = os.environ.get("AGENT_FALLBACK_MODEL", "").strip()
-    return claude_available or bool(fallback_model)
+    return claude_available or is_provider_model_ref(fallback_model)
 
 
 def _request_agent_manager(request: Request):

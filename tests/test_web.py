@@ -178,6 +178,16 @@ def test_agent_available_uses_container_manager(monkeypatch):
     assert _agent_available_for_request(request) is True
 
 
+def test_agent_available_ignores_invalid_fallback_model(monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
+    monkeypatch.setenv("AGENT_FALLBACK_MODEL", "llama3")
+
+    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(config=AppConfig())))
+
+    assert _agent_available_for_request(request) is False
+
+
 @pytest.mark.asyncio
 async def test_footer_renders_actual_version(client):
     expected_version = tomllib.loads(
@@ -900,6 +910,26 @@ async def test_settings_bulk_test_uses_unsaved_form_values(client, monkeypatch):
     assert captured_configs
     assert captured_configs[0].plain_fields["base_url"] == "https://unsaved.example/v1"
     assert captured_configs[0].secret_fields["api_key"] == "unsaved-openai-key"
+
+
+@pytest.mark.asyncio
+async def test_settings_bulk_test_clears_running_status_when_startup_raises(client, monkeypatch):
+    db = client._transport.app.state.db
+    await db.set_setting("agent_dev_mode_enabled", "1")
+    from src.web.routes import settings as settings_routes
+
+    request = SimpleNamespace(app=client._transport.app, state=SimpleNamespace())
+
+    def _broken_logger_info(*args, **kwargs):
+        raise RuntimeError("log sink unavailable")
+
+    monkeypatch.setattr(settings_routes.logger, "info", _broken_logger_info)
+
+    await settings_routes._run_bulk_test_job(request, configs=[])
+
+    status = settings_routes._bulk_test_status_payload(request)
+    assert status["running"] is False
+    assert status["error"] == "log sink unavailable"
 
 
 @pytest.mark.asyncio

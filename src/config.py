@@ -71,6 +71,11 @@ class AppConfig(BaseModel):
 _ENV_PATTERN = re.compile(r"\$\{(\w+)\}")
 
 
+def is_provider_model_ref(value: str) -> bool:
+    provider, separator, model = value.partition(":")
+    return bool(separator and provider.strip() and model.strip())
+
+
 def _substitute_env(value: str) -> str:
     """Replace ${VAR} placeholders with environment variable values."""
 
@@ -124,6 +129,12 @@ def load_config(path: str | Path = "config.yaml") -> AppConfig:
         config.agent.fallback_model = os.environ.get("AGENT_FALLBACK_MODEL", "").strip()
     if not config.agent.fallback_api_key:
         config.agent.fallback_api_key = os.environ.get("AGENT_FALLBACK_API_KEY", "").strip()
+    if config.agent.fallback_model and not is_provider_model_ref(config.agent.fallback_model):
+        logger.warning(
+            "Invalid AGENT_FALLBACK_MODEL %r. Expected provider:model; deepagents fallback "
+            "will stay disabled until it is corrected.",
+            config.agent.fallback_model,
+        )
 
     return config
 
