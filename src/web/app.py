@@ -102,7 +102,8 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
     app.state.config = config
     app.state.log_buffer = build_log_buffer()
     app.state.templates = configure_template_globals(
-        Jinja2Templates(directory=str(TEMPLATES_DIR))
+        Jinja2Templates(directory=str(TEMPLATES_DIR)),
+        config,
     )
     configure_app(app, None)
 

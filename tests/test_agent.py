@@ -5,11 +5,18 @@ from datetime import datetime
 from unittest.mock import MagicMock, patch
 
 import pytest
+from langchain_core.tools import StructuredTool
 
 from src.agent.context import format_context
 from src.agent.manager import AgentManager
 from src.agent.tools import make_mcp_server
+from src.config import AppConfig
 from src.models import Message
+
+
+@pytest.fixture(autouse=True)
+def _default_agent_env(monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-claude-key")
 
 
 @pytest.mark.asyncio
@@ -22,7 +29,7 @@ async def test_make_mcp_server_returns_server(db):
 async def test_agent_manager_initialize(db):
     mgr = AgentManager(db)
     mgr.initialize()
-    assert mgr._server is not None
+    assert mgr._claude_backend._server is not None
 
 
 @pytest.mark.asyncio
@@ -54,6 +61,201 @@ async def test_agent_chat_stream_mocked(db):
     assert all(c.startswith("data: ") for c in chunks)
     last_chunk = chunks[-1]
     assert "done" in last_chunk or "full_text" in last_chunk or "hello" in last_chunk
+
+
+@pytest.mark.asyncio
+async def test_runtime_status_prefers_claude_when_available(db, monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "claude-key")
+    monkeypatch.setenv("AGENT_FALLBACK_MODEL", "openai:gpt-4.1-mini")
+    monkeypatch.setenv("AGENT_FALLBACK_API_KEY", "fallback-key")
+
+    mgr = AgentManager(db)
+    status = await mgr.get_runtime_status()
+
+    assert status.selected_backend == "claude"
+    assert status.claude_available is True
+    assert status.deepagents_available is True
+
+
+@pytest.mark.asyncio
+async def test_runtime_status_falls_back_to_deepagents_when_claude_missing(db, monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
+    monkeypatch.setenv("AGENT_FALLBACK_MODEL", "openai:gpt-4.1-mini")
+    monkeypatch.setenv("AGENT_FALLBACK_API_KEY", "fallback-key")
+
+    mgr = AgentManager(db)
+    with patch.object(mgr._deepagents_backend, "_build_agent", return_value=None):
+        mgr.initialize()
+    status = await mgr.get_runtime_status()
+
+    assert status.selected_backend == "deepagents"
+    assert status.error is None
+
+
+@pytest.mark.asyncio
+async def test_runtime_status_respects_dev_override(db, monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "claude-key")
+    monkeypatch.setenv("AGENT_FALLBACK_MODEL", "openai:gpt-4.1-mini")
+    monkeypatch.setenv("AGENT_FALLBACK_API_KEY", "fallback-key")
+    await db.set_setting("agent_dev_mode_enabled", "1")
+    await db.set_setting("agent_backend_override", "deepagents")
+
+    mgr = AgentManager(db)
+    status = await mgr.get_runtime_status()
+
+    assert status.selected_backend == "deepagents"
+    assert status.using_override is True
+
+
+def test_deepagents_tools_can_be_converted_to_structured_tools(db):
+    mgr = AgentManager(db)
+
+    search_tool = StructuredTool.from_function(mgr._deepagents_backend._search_messages_tool)
+    channels_tool = StructuredTool.from_function(mgr._deepagents_backend._get_channels_tool)
+
+    assert "Search recent Telegram messages" in search_tool.description
+    assert "List active Telegram channels" in channels_tool.description
+
+
+@pytest.mark.asyncio
+async def test_deepagents_search_tool_returns_friendly_error_inside_running_loop(db):
+    mgr = AgentManager(db)
+
+    result = mgr._deepagents_backend._search_messages_tool("test")
+
+    assert "временно недоступен" in result
+
+
+def test_deepagents_get_channels_tool_returns_friendly_error_on_db_failure(db, monkeypatch):
+    mgr = AgentManager(db)
+
+    async def _broken_get_channels(*args, **kwargs):
+        raise RuntimeError("db is unavailable")
+
+    monkeypatch.setattr(db, "get_channels", _broken_get_channels)
+
+    result = mgr._deepagents_backend._get_channels_tool()
+
+    assert "временно недоступен" in result
+
+
+def test_deepagents_backend_uses_bare_model_for_legacy_fallback(db, monkeypatch):
+    config = AppConfig()
+    config.agent.fallback_model = "anthropic:claude-sonnet-4-5-20250929"
+    config.agent.fallback_api_key = "fallback-key"
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sdk-key")
+    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "oauth-token")
+
+    create_agent = MagicMock(return_value=MagicMock(run=MagicMock(return_value="ok")))
+
+    def fake_init_chat_model(*, model, model_provider, **kwargs):
+        assert model == "claude-sonnet-4-5-20250929"
+        assert model_provider == "anthropic"
+        assert kwargs["api_key"] == "fallback-key"
+        return MagicMock()
+
+    mgr = AgentManager(db, config)
+    with patch("deepagents.create_deep_agent", create_agent), patch(
+        "langchain.chat_models.init_chat_model", fake_init_chat_model
+    ):
+        mgr._deepagents_backend.initialize()
+
+
+def test_deepagents_backend_requires_explicit_key_for_anthropic_fallback(db):
+    config = AppConfig()
+    config.agent.fallback_model = "anthropic:claude-sonnet-4-5-20250929"
+
+    mgr = AgentManager(db, config)
+
+    with pytest.raises(RuntimeError, match="AGENT_FALLBACK_API_KEY"):
+        mgr._deepagents_backend.initialize()
+
+    assert mgr._deepagents_backend.available is False
+    assert mgr._deepagents_backend.init_error is not None
+
+
+@pytest.mark.asyncio
+async def test_runtime_status_reports_failed_deepagents_initialization(db, monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
+    monkeypatch.setenv("AGENT_FALLBACK_MODEL", "anthropic:claude-sonnet-4-5-20250929")
+
+    mgr = AgentManager(db)
+    mgr.initialize()
+
+    status = await mgr.get_runtime_status()
+
+    assert status.selected_backend is None
+    assert status.deepagents_available is False
+    assert status.error is not None
+
+
+@pytest.mark.asyncio
+async def test_runtime_status_treats_valid_legacy_fallback_as_available(db, monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
+
+    config = AppConfig()
+    config.agent.fallback_model = "openai:gpt-4.1-mini"
+    config.agent.fallback_api_key = "fallback-key"
+
+    mgr = AgentManager(db, config)
+    with patch.object(
+        mgr._deepagents_backend,
+        "_build_agent",
+        side_effect=RuntimeError("provider init failed"),
+    ):
+        status = await mgr.get_runtime_status()
+
+    assert status.selected_backend == "deepagents"
+    assert status.deepagents_available is True
+    assert status.error is None
+
+
+@pytest.mark.asyncio
+async def test_runtime_status_treats_invalid_legacy_fallback_as_unavailable(
+    db, monkeypatch
+):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
+    config = AppConfig()
+    config.agent.fallback_model = "llama3"
+
+    mgr = AgentManager(db, config)
+    status = await mgr.get_runtime_status()
+
+    assert status.deepagents_available is False
+    assert status.error is not None
+    assert "provider:model" in status.error
+
+
+@pytest.mark.asyncio
+async def test_claude_backend_uses_model_from_config(db):
+    thread_id = await db.create_agent_thread("test thread")
+    await db.save_agent_message(thread_id, "user", "test")
+
+    config = AppConfig()
+    config.agent.model = "claude-opus-4-6"
+    mgr = AgentManager(db, config)
+    mgr.initialize()
+
+    from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
+
+    text_block = TextBlock(text="hello")
+    assistant_msg = MagicMock(spec=AssistantMessage)
+    assistant_msg.content = [text_block]
+    result_msg = MagicMock(spec=ResultMessage)
+
+    async def mock_query(prompt, options):
+        assert options.model == "claude-opus-4-6"
+        yield assistant_msg
+        yield result_msg
+
+    with patch("src.agent.manager.query", mock_query):
+        chunks = [chunk async for chunk in mgr.chat_stream(thread_id, "test")]
+
+    assert chunks
 
 
 # ── DB round-trip tests ───────────────────────────────────────────────────────

@@ -4,7 +4,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -232,6 +232,50 @@ class TestCLISearch:
         out = capsys.readouterr().out
         assert "Found" in out
         assert "important" in out
+
+
+class TestCLIAgentDbProviders:
+    def test_chat_refreshes_db_backed_provider_cache_before_initialize(self, cli_env, capsys):
+        from src.agent.provider_registry import ProviderRuntimeConfig
+        from src.cli.commands.agent import run
+        from src.services.agent_provider_service import AgentProviderService
+
+        config = AppConfig()
+        config.security.session_encryption_key = "provider-secret"
+        service = AgentProviderService(cli_env, config)
+        asyncio.run(
+            service.save_provider_configs(
+                [
+                    ProviderRuntimeConfig(
+                        provider="openai",
+                        enabled=True,
+                        priority=0,
+                        selected_model="gpt-4.1-mini",
+                        secret_fields={"api_key": "db-key"},
+                    )
+                ]
+            )
+        )
+
+        thread_id = asyncio.run(cli_env.create_agent_thread("cli chat"))
+
+        async def fake_init_db(_config_path: str):
+            return config, cli_env
+
+        def fake_init_chat_model(*, model, model_provider, **kwargs):
+            assert model_provider == "openai"
+            assert model == "gpt-4.1-mini"
+            assert kwargs["api_key"] == "db-key"
+            return MagicMock(model_provider=model_provider)
+
+        fake_agent = MagicMock(run=MagicMock(return_value="ok-from-db-provider"))
+
+        with patch("src.cli.runtime.init_db", side_effect=fake_init_db), patch(
+            "langchain.chat_models.init_chat_model", side_effect=fake_init_chat_model
+        ), patch("deepagents.create_deep_agent", return_value=fake_agent):
+            run(_ns(agent_action="chat", thread_id=thread_id, message="hello", model=None))
+
+        assert "ok-from-db-provider" in capsys.readouterr().out
 
 
 # ---------------------------------------------------------------------------
@@ -673,13 +717,15 @@ class TestCLIAgent:
         out = capsys.readouterr().out
         assert "тема #99" in out
 
-    def test_chat_with_model(self, cli_env, capsys):
+    def test_chat_with_model(self, cli_env, capsys, monkeypatch):
         from unittest.mock import MagicMock
         from unittest.mock import patch as _patch
 
         from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
 
         from src.cli.commands.agent import run
+
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "test-claude-key")
 
         text_block = TextBlock(text="model reply")
         assistant_msg = MagicMock(spec=AssistantMessage)
@@ -702,6 +748,41 @@ class TestCLIAgent:
         out = capsys.readouterr().out
         assert "model reply" in out
         assert captured_opts.get("model") == "claude-haiku-4-5"
+
+    def test_test_escaping_uses_runtime_config_for_db_providers(self, cli_db, capsys):
+        from src.agent.provider_registry import ProviderRuntimeConfig
+        from src.cli.commands.agent import run
+        from src.services.agent_provider_service import AgentProviderService
+
+        config = AppConfig()
+        config.security.session_encryption_key = "provider-secret"
+        service = AgentProviderService(cli_db, config)
+        asyncio.run(
+            service.save_provider_configs(
+                [
+                    ProviderRuntimeConfig(
+                        provider="openai",
+                        enabled=True,
+                        priority=0,
+                        selected_model="gpt-4.1-mini",
+                        secret_fields={"api_key": "openai-key"},
+                    )
+                ]
+            )
+        )
+
+        async def fake_init_db(config_path: str):
+            return config, cli_db
+
+        with patch("src.cli.runtime.init_db", side_effect=fake_init_db), patch(
+            "src.agent.manager.DeepagentsBackend._build_agent",
+            return_value=MagicMock(run=MagicMock(return_value="ok")),
+        ):
+            run(_ns(agent_action="test-escaping"))
+
+        out = capsys.readouterr().out
+        assert "пропуск" not in out
+        assert "Итого: 10 passed, 0 failed" in out
 
     def test_parser_agent_subcommands(self):
         from src.cli.parser import build_parser

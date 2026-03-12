@@ -27,7 +27,7 @@
                 </div>
                 <div class="offcanvas-body">
                 <ul class="navbar-nav ms-auto">
-                    {% if agent_available %}<li class="nav-item"><a class="nav-link" href="/agent">Чат</a></li>{% endif %}
+                    {% if agent_available(request) %}<li class="nav-item"><a class="nav-link" href="/agent">Чат</a></li>{% endif %}
                     <li class="nav-item"><a class="nav-link" href="/search">Поиск</a></li>
                     <li class="nav-item"><a class="nav-link" href="/dashboard">Панель</a></li>
                     <li class="nav-item"><a class="nav-link" href="/channels">Каналы</a></li>
@@ -68,6 +68,7 @@
         notification_account_saved: "Аккаунт для уведомлений сохранён.",
         notification_bot_created: "Notification bot создан.",
         notification_bot_deleted: "Notification bot удалён.",
+        agent_saved: "Настройки AI Agent сохранены.",
         scheduler_started: "Планировщик запущен.",
         scheduler_stopped: "Планировщик остановлен.",
         collect_started: "Сбор сообщений запущен в фоне.",
@@ -111,7 +112,10 @@
         filter_snapshot_required: "Сначала выполните анализ фильтров и примените его из отчёта.",
         invalid_value: "Указано некорректное значение.",
         invalid_api_id: "API ID должен состоять только из цифр.",
+        agent_dev_mode_required: "Для управления deepagents providers включите режим разработчика.",
         notification_account_invalid: "Выбран неизвестный аккаунт уведомлений.",
+        agent_provider_secret_required: "Для управления deepagents providers требуется SESSION_ENCRYPTION_KEY.",
+        agent_provider_invalid: "Выбран неизвестный провайдер deepagents.",
         notification_account_unavailable: "Выбранный аккаунт уведомлений недоступен.",
         notification_bot_missing: "Для выбранного аккаунта notification bot не найден.",
         notification_action_failed: "Не удалось выполнить действие с notification bot.",

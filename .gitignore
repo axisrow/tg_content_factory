@@ -11,6 +11,9 @@ __pypackages__/
 
 # Data & secrets
 data/
+!data/
+data/*
+!data/deepagents_model_compatibility_catalog.json
 *.db
 *.session
 .env

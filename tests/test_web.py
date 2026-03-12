@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import logging
 import re
@@ -9,6 +10,7 @@ from unittest.mock import AsyncMock
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from src.agent.provider_registry import ProviderRuntimeConfig
 from src.collection_queue import CollectionQueue
 from src.config import AppConfig
 from src.database import Database
@@ -16,11 +18,16 @@ from src.models import Account, CollectionTaskStatus, CollectionTaskType, StatsA
 from src.scheduler.manager import SchedulerManager
 from src.search.ai_search import AISearchEngine
 from src.search.engine import SearchEngine
+from src.services.agent_provider_service import (
+    AgentProviderService,
+    ProviderModelCacheEntry,
+    ProviderModelCompatibilityRecord,
+)
 from src.telegram.collector import Collector
 from src.web.app import create_app
 from src.web.routes.channel_collection import _COLLECT_ALL_BTN, _COLLECT_ALL_FORM
 from src.web.session import COOKIE_NAME, create_session_token
-from src.web.template_globals import PYPROJECT_PATH, get_app_version
+from src.web.template_globals import PYPROJECT_PATH, _agent_available_for_request, get_app_version
 
 
 @pytest.fixture
@@ -30,12 +37,14 @@ async def client(tmp_path):
     config.telegram.api_id = 12345
     config.telegram.api_hash = "test_hash"
     config.web.password = "testpass"
+    config.security.session_encryption_key = "test-encryption-key"
     app = create_app(config)
 
     # Manually initialize state (lifespan doesn't run with ASGITransport)
     db = Database(config.database.path)
     await db.initialize()
     app.state.db = db
+
     async def _no_users(self):
         return []
 
@@ -50,12 +59,16 @@ async def client(tmp_path):
     async def _get_dialogs(self):
         return [
             {
-                "channel_id": -100111, "title": "Dialog Chan 1",
-                "username": "chan1", "channel_type": "channel",
+                "channel_id": -100111,
+                "title": "Dialog Chan 1",
+                "username": "chan1",
+                "channel_type": "channel",
             },
             {
-                "channel_id": -100222, "title": "Dialog Chan 2",
-                "username": None, "channel_type": "group",
+                "channel_id": -100222,
+                "title": "Dialog Chan 2",
+                "username": None,
+                "channel_type": "group",
             },
         ]
 
@@ -148,6 +161,33 @@ def test_templates_have_actual_app_version():
     assert get_app_version() == expected_version
 
 
+def test_agent_available_uses_container_manager(monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
+    monkeypatch.delenv("AGENT_FALLBACK_MODEL", raising=False)
+
+    request = SimpleNamespace(
+        app=SimpleNamespace(
+            state=SimpleNamespace(
+                config=AppConfig(),
+                container=SimpleNamespace(agent_manager=SimpleNamespace(available=True)),
+            )
+        )
+    )
+
+    assert _agent_available_for_request(request) is True
+
+
+def test_agent_available_ignores_invalid_fallback_model(monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
+    monkeypatch.setenv("AGENT_FALLBACK_MODEL", "llama3")
+
+    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(config=AppConfig())))
+
+    assert _agent_available_for_request(request) is False
+
+
 @pytest.mark.asyncio
 async def test_footer_renders_actual_version(client):
     expected_version = tomllib.loads(
@@ -188,6 +228,9 @@ async def test_settings_page(client):
     resp = await client.get("/settings/")
     assert resp.status_code == 200
     assert "Аккаунт для уведомлений" in resp.text
+    assert "Режим разработчика" in resp.text
+    assert "Я понимаю, что включаю потенциально опасные изменения" in resp.text
+    assert '<div class="card-header fw-semibold">AI Agent</div>' not in resp.text
 
 
 @pytest.mark.asyncio
@@ -236,6 +279,864 @@ async def test_settings_page_ignores_invalid_persisted_numeric_settings(client):
     assert 'value="0"' in resp.text
     assert 'name="collect_interval_minutes"' in resp.text
     assert 'value="60"' in resp.text
+
+
+@pytest.mark.asyncio
+async def test_settings_save_agent_persists_dev_mode_and_override(client):
+    db = client._transport.app.state.db
+
+    resp = await client.post(
+        "/settings/save-agent",
+        data={
+            "agent_form_scope": "dev_mode",
+            "agent_dev_mode_enabled": "1",
+            "agent_dev_mode_disclaimer": "1",
+            "agent_backend_override": "deepagents",
+        },
+        follow_redirects=False,
+    )
+
+    assert resp.status_code == 303
+    assert await db.get_setting("agent_dev_mode_enabled") == "1"
+    assert await db.get_setting("agent_backend_override") == "deepagents"
+
+
+@pytest.mark.asyncio
+async def test_settings_page_shows_ai_agent_block_only_in_dev_mode(client):
+    db = client._transport.app.state.db
+    await db.set_setting("agent_dev_mode_enabled", "1")
+    await db.set_setting("agent_backend_override", "deepagents")
+
+    resp = await client.get("/settings/")
+
+    assert resp.status_code == 200
+    assert '<div class="card-header fw-semibold">Режим разработчика</div>' in resp.text
+    assert '<div class="card-header fw-semibold">AI Agent</div>' in resp.text
+    assert "Deepagents Providers" in resp.text
+    assert "Тестировать все модели" in resp.text
+    assert 'id="bulk-test-agent-providers-btn"' in resp.text
+    assert 'id="agent-provider-actions-status"' in resp.text
+    assert 'name="agent_backend_override"' in resp.text
+    assert 'name="agent_form_scope" value="dev_mode"' in resp.text
+    assert 'name="agent_form_scope" value="backend_override"' in resp.text
+
+
+@pytest.mark.asyncio
+async def test_settings_save_agent_preserves_override_when_toggling_dev_mode_only(client):
+    db = client._transport.app.state.db
+    await db.set_setting("agent_backend_override", "deepagents")
+
+    resp = await client.post(
+        "/settings/save-agent",
+        data={
+            "agent_form_scope": "dev_mode",
+            "agent_dev_mode_enabled": "1",
+            "agent_dev_mode_disclaimer": "1",
+        },
+        follow_redirects=False,
+    )
+
+    assert resp.status_code == 303
+    assert await db.get_setting("agent_dev_mode_enabled") == "1"
+    assert await db.get_setting("agent_backend_override") == "deepagents"
+
+
+@pytest.mark.asyncio
+async def test_settings_save_agent_requires_disclaimer_to_enable_dev_mode(client):
+    db = client._transport.app.state.db
+
+    resp = await client.post(
+        "/settings/save-agent",
+        data={"agent_form_scope": "dev_mode", "agent_dev_mode_enabled": "1"},
+        follow_redirects=False,
+    )
+
+    assert resp.status_code == 303
+    assert await db.get_setting("agent_dev_mode_enabled") == "0"
+
+
+@pytest.mark.asyncio
+async def test_settings_save_agent_backend_override_keeps_dev_mode_enabled(client):
+    db = client._transport.app.state.db
+    await db.set_setting("agent_dev_mode_enabled", "1")
+    await db.set_setting("agent_backend_override", "auto")
+
+    resp = await client.post(
+        "/settings/save-agent",
+        data={
+            "agent_form_scope": "backend_override",
+            "agent_backend_override": "deepagents",
+        },
+        follow_redirects=False,
+    )
+
+    assert resp.status_code == 303
+    assert await db.get_setting("agent_dev_mode_enabled") == "1"
+    assert await db.get_setting("agent_backend_override") == "deepagents"
+
+
+@pytest.mark.asyncio
+async def test_settings_save_agent_backend_override_does_not_enable_dev_mode(client):
+    db = client._transport.app.state.db
+    await db.set_setting("agent_dev_mode_enabled", "0")
+    await db.set_setting("agent_backend_override", "auto")
+
+    resp = await client.post(
+        "/settings/save-agent",
+        data={
+            "agent_form_scope": "backend_override",
+            "agent_backend_override": "deepagents",
+        },
+        follow_redirects=False,
+    )
+
+    assert resp.status_code == 303
+    assert await db.get_setting("agent_dev_mode_enabled") == "0"
+    assert await db.get_setting("agent_backend_override") == "deepagents"
+
+
+@pytest.mark.asyncio
+async def test_settings_save_agent_can_disable_dev_mode_without_disclaimer(client):
+    db = client._transport.app.state.db
+    await db.set_setting("agent_dev_mode_enabled", "1")
+    await db.set_setting("agent_backend_override", "deepagents")
+
+    resp = await client.post(
+        "/settings/save-agent",
+        data={"agent_form_scope": "dev_mode"},
+        follow_redirects=False,
+    )
+
+    assert resp.status_code == 303
+    assert await db.get_setting("agent_dev_mode_enabled") == "0"
+    assert await db.get_setting("agent_backend_override") == "deepagents"
+
+
+@pytest.mark.asyncio
+async def test_settings_backend_override_submit_keeps_ai_agent_block_visible(client):
+    db = client._transport.app.state.db
+    await db.set_setting("agent_dev_mode_enabled", "1")
+    await db.set_setting("agent_backend_override", "auto")
+
+    resp = await client.post(
+        "/settings/save-agent",
+        data={
+            "agent_form_scope": "backend_override",
+            "agent_backend_override": "deepagents",
+        },
+        follow_redirects=False,
+    )
+
+    assert resp.status_code == 303
+
+    page = await client.get("/settings/")
+    assert page.status_code == 200
+    assert '<div class="card-header fw-semibold">AI Agent</div>' in page.text
+
+
+@pytest.mark.asyncio
+async def test_settings_add_agent_provider_requires_dev_mode(client):
+    db = client._transport.app.state.db
+
+    resp = await client.post(
+        "/settings/agent-providers/add",
+        data={"provider": "openai"},
+        follow_redirects=False,
+    )
+
+    assert resp.status_code == 303
+    assert "agent_dev_mode_required" in resp.headers["location"]
+    assert await db.get_setting("agent_deepagents_providers_v1") is None
+
+
+@pytest.mark.asyncio
+async def test_settings_add_agent_provider_persists_provider_in_db(client):
+    db = client._transport.app.state.db
+    await db.set_setting("agent_dev_mode_enabled", "1")
+
+    resp = await client.post(
+        "/settings/agent-providers/add",
+        data={"provider": "openai"},
+        follow_redirects=False,
+    )
+
+    assert resp.status_code == 303
+    raw = await db.get_setting("agent_deepagents_providers_v1")
+    assert raw is not None
+    assert "openai" in raw
+
+
+@pytest.mark.asyncio
+async def test_settings_save_agent_providers_preserves_priority_order(client):
+    db = client._transport.app.state.db
+    await db.set_setting("agent_dev_mode_enabled", "1")
+
+    await client.post(
+        "/settings/agent-providers/add", data={"provider": "openai"}, follow_redirects=False
+    )
+    await client.post(
+        "/settings/agent-providers/add", data={"provider": "anthropic"}, follow_redirects=False
+    )
+
+    resp = await client.post(
+        "/settings/agent-providers/save",
+        data={
+            "provider_present__openai": "1",
+            "provider_priority__openai": "1",
+            "provider_enabled__openai": "1",
+            "provider_model__openai": "gpt-4.1-mini",
+            "provider_secret__openai__api_key": "openai-key",
+            "provider_present__anthropic": "1",
+            "provider_priority__anthropic": "0",
+            "provider_enabled__anthropic": "1",
+            "provider_model__anthropic": "claude-sonnet-4-5-20250929",
+            "provider_secret__anthropic__api_key": "anthropic-key",
+        },
+        follow_redirects=False,
+    )
+
+    assert resp.status_code == 303
+    raw = await db.get_setting("agent_deepagents_providers_v1")
+    assert raw is not None
+    assert raw.index('"provider": "anthropic"') < raw.index('"provider": "openai"')
+
+
+@pytest.mark.asyncio
+async def test_settings_save_agent_providers_skips_probe_for_disabled_provider(client, monkeypatch):
+    db = client._transport.app.state.db
+    await db.set_setting("agent_dev_mode_enabled", "1")
+    await client.post(
+        "/settings/agent-providers/add", data={"provider": "openai"}, follow_redirects=False
+    )
+    from src.web.routes import settings as settings_routes
+
+    probe_mock = AsyncMock()
+    fake_manager = SimpleNamespace(refresh_settings_cache=AsyncMock())
+    monkeypatch.setattr(settings_routes, "_probe_provider_config", probe_mock)
+    monkeypatch.setattr(
+        settings_routes, "_settings_agent_manager", lambda request: (fake_manager, False)
+    )
+
+    resp = await client.post(
+        "/settings/agent-providers/save",
+        data={
+            "provider_present__openai": "1",
+            "provider_priority__openai": "0",
+            "provider_enabled__openai": "",
+            "provider_model__openai": "gpt-4.1-mini",
+            "provider_secret__openai__api_key": "openai-key",
+        },
+        follow_redirects=False,
+    )
+
+    assert resp.status_code == 303
+    probe_mock.assert_not_awaited()
+    service = AgentProviderService(db, client._transport.app.state.config)
+    configs = await service.load_provider_configs()
+    assert configs[0].enabled is False
+    assert configs[0].last_validation_error == ""
+
+
+@pytest.mark.asyncio
+async def test_settings_refresh_agent_provider_models_returns_json(client, monkeypatch):
+    db = client._transport.app.state.db
+    await db.set_setting("agent_dev_mode_enabled", "1")
+    await client.post(
+        "/settings/agent-providers/add", data={"provider": "openai"}, follow_redirects=False
+    )
+
+    async def _live_fetch(self, spec, cfg):
+        return ["gpt-4.1", "gpt-4.1-mini"]
+
+    monkeypatch.setattr(
+        "src.services.agent_provider_service.AgentProviderService._fetch_live_models",
+        _live_fetch,
+    )
+
+    resp = await client.post("/settings/agent-providers/openai/refresh")
+
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["ok"] is True
+    assert payload["source"] == "live"
+    assert "gpt-4.1-mini" in payload["models"]
+    assert "compatibility" in payload
+
+
+@pytest.mark.asyncio
+async def test_settings_refresh_agent_provider_models_uses_unsaved_form_values(client, monkeypatch):
+    db = client._transport.app.state.db
+    await db.set_setting("agent_dev_mode_enabled", "1")
+    await client.post(
+        "/settings/agent-providers/add", data={"provider": "openai"}, follow_redirects=False
+    )
+
+    seen_cfg = None
+
+    async def _live_fetch(self, spec, cfg):
+        nonlocal seen_cfg
+        seen_cfg = cfg
+        return ["gpt-4.1-mini"]
+
+    monkeypatch.setattr(
+        "src.services.agent_provider_service.AgentProviderService._fetch_live_models",
+        _live_fetch,
+    )
+
+    resp = await client.post(
+        "/settings/agent-providers/openai/refresh",
+        data={
+            "provider_present__openai": "1",
+            "provider_priority__openai": "0",
+            "provider_enabled__openai": "1",
+            "provider_model__openai": "gpt-4.1-mini",
+            "provider_field__openai__base_url": "https://example.invalid/v1",
+            "provider_secret__openai__api_key": "unsaved-openai-key",
+        },
+    )
+
+    assert resp.status_code == 200
+    assert seen_cfg is not None
+    assert seen_cfg.plain_fields["base_url"] == "https://example.invalid/v1"
+    assert seen_cfg.secret_fields["api_key"] == "unsaved-openai-key"
+
+
+@pytest.mark.asyncio
+async def test_settings_page_refresh_provider_posts_unsaved_form_data(client):
+    db = client._transport.app.state.db
+    await db.set_setting("agent_dev_mode_enabled", "1")
+    await client.post(
+        "/settings/agent-providers/add", data={"provider": "openai"}, follow_redirects=False
+    )
+
+    resp = await client.get("/settings/")
+
+    assert resp.status_code == 200
+    assert "body: buildProviderFormData(provider)" in resp.text
+    assert "body: buildAllProviderFormData()" in resp.text
+    assert "applyRefreshedProviderState(provider, payload);" in resp.text
+    assert "window.location.reload()" not in resp.text
+
+
+@pytest.mark.asyncio
+async def test_settings_refresh_agent_provider_models_preserves_saved_values_when_form_empty(
+    client, monkeypatch
+):
+    db = client._transport.app.state.db
+    await db.set_setting("agent_dev_mode_enabled", "1")
+    service = AgentProviderService(db, client._transport.app.state.config)
+    await service.save_provider_configs(
+        [
+            ProviderRuntimeConfig(
+                provider="openai",
+                enabled=True,
+                priority=3,
+                selected_model="gpt-4.1-mini",
+                plain_fields={"base_url": "https://saved.example/v1"},
+                secret_fields={"api_key": "saved-openai-key"},
+            )
+        ]
+    )
+
+    seen_cfg = None
+
+    async def _live_fetch(self, spec, cfg):
+        nonlocal seen_cfg
+        seen_cfg = cfg
+        return ["gpt-4.1-mini"]
+
+    monkeypatch.setattr(
+        "src.services.agent_provider_service.AgentProviderService._fetch_live_models",
+        _live_fetch,
+    )
+
+    resp = await client.post("/settings/agent-providers/openai/refresh")
+
+    assert resp.status_code == 200
+    assert seen_cfg is not None
+    assert seen_cfg.priority == 3
+    assert seen_cfg.enabled is True
+    assert seen_cfg.selected_model == "gpt-4.1-mini"
+    assert seen_cfg.plain_fields["base_url"] == "https://saved.example/v1"
+    assert seen_cfg.secret_fields["api_key"] == "saved-openai-key"
+
+
+@pytest.mark.asyncio
+async def test_settings_refresh_all_agent_provider_models_requires_dev_mode(client):
+    resp = await client.post("/settings/agent-providers/refresh-all")
+
+    assert resp.status_code == 403
+    assert resp.json()["ok"] is False
+    assert resp.json()["error"] == "Developer mode is required."
+
+
+@pytest.mark.asyncio
+async def test_settings_refresh_all_agent_provider_models_uses_unsaved_form_values(
+    client, monkeypatch
+):
+    db = client._transport.app.state.db
+    await db.set_setting("agent_dev_mode_enabled", "1")
+    service = AgentProviderService(db, client._transport.app.state.config)
+    await service.save_provider_configs(
+        [
+            ProviderRuntimeConfig(
+                provider="openai",
+                enabled=True,
+                priority=0,
+                selected_model="gpt-4.1-mini",
+                plain_fields={"base_url": "https://saved.example/v1"},
+                secret_fields={"api_key": "saved-openai-key"},
+            )
+        ]
+    )
+
+    seen_cfg = None
+
+    async def _fake_refresh(self, provider_name, cfg=None):
+        nonlocal seen_cfg
+        assert provider_name == "openai"
+        seen_cfg = cfg
+        return ProviderModelCacheEntry(
+            provider=provider_name,
+            models=["gpt-4.1-mini"],
+            source="live",
+            fetched_at="2026-03-12T00:00:00+00:00",
+        )
+
+    monkeypatch.setattr(AgentProviderService, "refresh_models_for_provider", _fake_refresh)
+
+    resp = await client.post(
+        "/settings/agent-providers/refresh-all",
+        data={
+            "provider_present__openai": "1",
+            "provider_priority__openai": "0",
+            "provider_enabled__openai": "1",
+            "provider_model__openai": "gpt-4.1-mini",
+            "provider_field__openai__base_url": "https://unsaved.example/v1",
+            "provider_secret__openai__api_key": "unsaved-openai-key",
+        },
+    )
+
+    assert resp.status_code == 200
+    assert seen_cfg is not None
+    assert seen_cfg.plain_fields["base_url"] == "https://unsaved.example/v1"
+    assert seen_cfg.secret_fields["api_key"] == "unsaved-openai-key"
+
+
+@pytest.mark.asyncio
+async def test_settings_page_renders_selected_model_compatibility(client):
+    db = client._transport.app.state.db
+    await db.set_setting("agent_dev_mode_enabled", "1")
+    service = AgentProviderService(db, client._transport.app.state.config)
+    cfg = ProviderRuntimeConfig(
+        provider="openai",
+        enabled=True,
+        priority=0,
+        selected_model="gpt-4.1-mini",
+        secret_fields={"api_key": "openai-key"},
+    )
+    await service.save_provider_configs([cfg])
+    fingerprint = service.config_fingerprint(cfg)
+    await service.save_model_cache(
+        {
+            "openai": ProviderModelCacheEntry(
+                provider="openai",
+                models=["gpt-4.1-mini"],
+                source="live",
+                compatibility={
+                    fingerprint: ProviderModelCompatibilityRecord(
+                        model="gpt-4.1-mini",
+                        status="supported",
+                        tested_at="2026-03-12T00:00:00+00:00",
+                        config_fingerprint=fingerprint,
+                        probe_kind="auto-select",
+                    )
+                },
+            )
+        }
+    )
+
+    resp = await client.get("/settings/")
+
+    assert resp.status_code == 200
+    assert "compatibility:" in resp.text
+    assert "gpt-4.1-mini [supported]" in resp.text
+
+
+@pytest.mark.asyncio
+async def test_settings_probe_agent_provider_model_returns_cached_json(client, monkeypatch):
+    db = client._transport.app.state.db
+    await db.set_setting("agent_dev_mode_enabled", "1")
+    await client.post(
+        "/settings/agent-providers/add", data={"provider": "openai"}, follow_redirects=False
+    )
+    from src.web.routes import settings as settings_routes
+
+    fake_manager = SimpleNamespace(
+        probe_provider_config=AsyncMock(
+            return_value=ProviderModelCompatibilityRecord(
+                model="gpt-4.1-mini",
+                status="supported",
+                tested_at="2026-03-12T00:00:00+00:00",
+                config_fingerprint="probe-fingerprint",
+                probe_kind="auto-select",
+            )
+        )
+    )
+    monkeypatch.setattr(
+        settings_routes, "_settings_agent_manager", lambda request: (fake_manager, False)
+    )
+
+    resp = await client.post(
+        "/settings/agent-providers/openai/probe",
+        data={
+            "provider_present__openai": "1",
+            "provider_priority__openai": "0",
+            "provider_enabled__openai": "1",
+            "provider_model__openai": "gpt-4.1-mini",
+            "provider_secret__openai__api_key": "openai-key",
+        },
+    )
+
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["ok"] is True
+    assert payload["status"] == "supported"
+    service = AgentProviderService(db, client._transport.app.state.config)
+    cache = await service.load_model_cache()
+    assert any(record.status == "supported" for record in cache["openai"].compatibility.values())
+
+
+@pytest.mark.asyncio
+async def test_settings_save_agent_providers_keeps_unsupported_probe_in_cache_only(
+    client, monkeypatch
+):
+    db = client._transport.app.state.db
+    await db.set_setting("agent_dev_mode_enabled", "1")
+    await client.post(
+        "/settings/agent-providers/add", data={"provider": "openai"}, follow_redirects=False
+    )
+    from src.web.routes import settings as settings_routes
+
+    fake_manager = SimpleNamespace(
+        probe_provider_config=AsyncMock(
+            return_value=ProviderModelCompatibilityRecord(
+                model="gpt-4.1-mini",
+                status="unsupported",
+                reason="tool-calling is broken",
+                tested_at="2026-03-12T00:00:00+00:00",
+                config_fingerprint="probe-fingerprint",
+                probe_kind="save-time",
+            )
+        ),
+        refresh_settings_cache=AsyncMock(),
+    )
+    monkeypatch.setattr(
+        settings_routes, "_settings_agent_manager", lambda request: (fake_manager, False)
+    )
+
+    resp = await client.post(
+        "/settings/agent-providers/save",
+        data={
+            "provider_present__openai": "1",
+            "provider_priority__openai": "0",
+            "provider_enabled__openai": "1",
+            "provider_model__openai": "gpt-4.1-mini",
+            "provider_secret__openai__api_key": "openai-key",
+        },
+        follow_redirects=False,
+    )
+
+    assert resp.status_code == 303
+    service = AgentProviderService(db, client._transport.app.state.config)
+    configs = await service.load_provider_configs()
+    assert configs[0].last_validation_error == ""
+    cache = await service.load_model_cache()
+    assert any(record.status == "unsupported" for record in cache["openai"].compatibility.values())
+
+
+@pytest.mark.asyncio
+async def test_settings_bulk_test_requires_dev_mode(client):
+    resp = await client.post("/settings/agent-providers/test-all")
+
+    assert resp.status_code == 403
+    assert resp.json()["ok"] is False
+
+
+@pytest.mark.asyncio
+async def test_settings_bulk_test_uses_unsaved_form_values(client, monkeypatch):
+    db = client._transport.app.state.db
+    await db.set_setting("agent_dev_mode_enabled", "1")
+    service = AgentProviderService(db, client._transport.app.state.config)
+    await service.save_provider_configs(
+        [
+            ProviderRuntimeConfig(
+                provider="openai",
+                enabled=True,
+                priority=0,
+                selected_model="gpt-4.1-mini",
+                plain_fields={"base_url": "https://saved.example/v1"},
+                secret_fields={"api_key": "saved-openai-key"},
+            )
+        ]
+    )
+    from src.web.routes import settings as settings_routes
+
+    captured_configs: list[ProviderRuntimeConfig] = []
+    started = asyncio.Event()
+
+    async def _fake_run_bulk_test_job(request, configs=None):
+        del request
+        if configs is not None:
+            captured_configs.extend(configs)
+        started.set()
+
+    monkeypatch.setattr(settings_routes, "_run_bulk_test_job", _fake_run_bulk_test_job)
+
+    resp = await client.post(
+        "/settings/agent-providers/test-all",
+        data={
+            "provider_present__openai": "1",
+            "provider_priority__openai": "0",
+            "provider_enabled__openai": "1",
+            "provider_model__openai": "gpt-4.1-mini",
+            "provider_field__openai__base_url": "https://unsaved.example/v1",
+            "provider_secret__openai__api_key": "unsaved-openai-key",
+        },
+    )
+
+    assert resp.status_code == 200
+    await asyncio.wait_for(started.wait(), timeout=1)
+    assert captured_configs
+    assert captured_configs[0].plain_fields["base_url"] == "https://unsaved.example/v1"
+    assert captured_configs[0].secret_fields["api_key"] == "unsaved-openai-key"
+
+
+@pytest.mark.asyncio
+async def test_settings_bulk_test_clears_running_status_when_startup_raises(client, monkeypatch):
+    db = client._transport.app.state.db
+    await db.set_setting("agent_dev_mode_enabled", "1")
+    from src.web.routes import settings as settings_routes
+
+    request = SimpleNamespace(app=client._transport.app, state=SimpleNamespace())
+
+    def _broken_logger_info(*args, **kwargs):
+        raise RuntimeError("log sink unavailable")
+
+    monkeypatch.setattr(settings_routes.logger, "info", _broken_logger_info)
+
+    await settings_routes._run_bulk_test_job(request, configs=[])
+
+    status = settings_routes._bulk_test_status_payload(request)
+    assert status["running"] is False
+    assert status["error"] == "log sink unavailable"
+
+
+@pytest.mark.asyncio
+async def test_settings_bulk_test_refreshes_each_provider_once(client, monkeypatch, tmp_path):
+    db = client._transport.app.state.db
+    await db.set_setting("agent_dev_mode_enabled", "1")
+    service = AgentProviderService(db, client._transport.app.state.config)
+    await service.save_provider_configs(
+        [
+            ProviderRuntimeConfig(
+                provider="openai",
+                enabled=True,
+                priority=0,
+                selected_model="gpt-4.1-mini",
+                secret_fields={"api_key": "openai-key"},
+            )
+        ]
+    )
+    from src.web.routes import settings as settings_routes
+
+    refresh_calls: list[str] = []
+    request = SimpleNamespace(app=client._transport.app, state=SimpleNamespace())
+    probe_mock = AsyncMock(
+        return_value=ProviderModelCompatibilityRecord(
+            model="gpt-4.1-mini",
+            status="supported",
+            tested_at="2026-03-12T00:00:01+00:00",
+            config_fingerprint="probe-fingerprint",
+            probe_kind="dev-bulk",
+        )
+    )
+    export_path = tmp_path / "compat_catalog.json"
+
+    async def _fake_refresh_models_for_provider(self, provider_name, cfg=None):
+        del cfg
+        refresh_calls.append(provider_name)
+        return ProviderModelCacheEntry(
+            provider=provider_name,
+            models=["gpt-4.1-mini"],
+            source="live",
+            fetched_at="2026-03-12T00:00:00+00:00",
+        )
+
+    async def _fake_export_catalog(self, configs, cache=None, *, path=None):
+        del configs, cache, path
+        export_path.write_text('{"providers": []}', encoding="utf-8")
+        return export_path
+
+    monkeypatch.setattr(
+        AgentProviderService,
+        "refresh_models_for_provider",
+        _fake_refresh_models_for_provider,
+    )
+    monkeypatch.setattr(settings_routes, "_probe_provider_config", probe_mock)
+    monkeypatch.setattr(
+        AgentProviderService,
+        "export_compatibility_catalog",
+        _fake_export_catalog,
+    )
+    monkeypatch.setattr(
+        settings_routes,
+        "_settings_agent_manager",
+        lambda request: (SimpleNamespace(refresh_settings_cache=AsyncMock()), False),
+    )
+
+    await settings_routes._run_bulk_test_job(request)
+
+    assert refresh_calls == ["openai"]
+    probe_mock.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_settings_bulk_test_exports_catalog(client, monkeypatch, tmp_path):
+    db = client._transport.app.state.db
+    await db.set_setting("agent_dev_mode_enabled", "1")
+    service = AgentProviderService(db, client._transport.app.state.config)
+    await service.save_provider_configs(
+        [
+            ProviderRuntimeConfig(
+                provider="openai",
+                enabled=True,
+                priority=0,
+                selected_model="gpt-4.1-mini",
+                secret_fields={"api_key": "openai-key"},
+            )
+        ]
+    )
+    from src.web.routes import settings as settings_routes
+
+    export_path = tmp_path / "compat_catalog.json"
+
+    async def _fake_run_bulk_test_job(request, configs=None):
+        del configs
+        status = settings_routes._bulk_test_status_payload(request)
+        status.update(
+            {
+                "running": False,
+                "started_at": "2026-03-12T00:00:00+00:00",
+                "finished_at": "2026-03-12T00:00:05+00:00",
+                "current_provider": "",
+                "current_model": "",
+                "completed_probes": 2,
+                "total_probes": 2,
+                "summary": {"supported": 2, "unsupported": 0, "unknown": 0},
+                "providers": {
+                    "openai": {
+                        "models": [
+                            {
+                                "model": "gpt-4.1",
+                                "status": "supported",
+                                "reason": "",
+                                "tested_at": "2026-03-12T00:00:01+00:00",
+                            },
+                            {
+                                "model": "gpt-4.1-mini",
+                                "status": "supported",
+                                "reason": "",
+                                "tested_at": "2026-03-12T00:00:02+00:00",
+                            },
+                        ],
+                        "source": "live",
+                        "summary": {"supported": 2, "unsupported": 0, "unknown": 0},
+                    }
+                },
+                "catalog_path": str(export_path),
+                "error": "",
+                "recent_events": ["00:00:05 Тестирование завершено."],
+            }
+        )
+        export_path.write_text('{"providers": []}', encoding="utf-8")
+
+    monkeypatch.setattr(settings_routes, "_run_bulk_test_job", _fake_run_bulk_test_job)
+
+    resp = await client.post("/settings/agent-providers/test-all")
+
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["ok"] is True
+    assert payload["started"] is True
+    await asyncio.sleep(0)
+
+    status_resp = await client.get("/settings/agent-providers/test-all/status")
+
+    assert status_resp.status_code == 200
+    status_payload = status_resp.json()
+    assert status_payload["summary"]["supported"] == 2
+    assert status_payload["providers"]["openai"]["summary"]["supported"] == 2
+    assert status_payload["catalog_path"] == str(export_path)
+    assert export_path.exists()
+
+
+@pytest.mark.asyncio
+async def test_settings_page_blocks_agent_provider_writes_without_encryption_secret(tmp_path):
+    config = AppConfig()
+    config.database.path = str(tmp_path / "test_no_secret.db")
+    config.telegram.api_id = 12345
+    config.telegram.api_hash = "test_hash"
+    config.web.password = "testpass"
+    app = create_app(config)
+
+    db = Database(config.database.path)
+    await db.initialize()
+    app.state.db = db
+    app.state.pool = type(
+        "Pool",
+        (),
+        {
+            "clients": {},
+            "get_users_info": AsyncMock(return_value=[]),
+            "get_dialogs": AsyncMock(return_value=[]),
+            "get_dialogs_for_phone": AsyncMock(return_value=[]),
+            "resolve_channel": AsyncMock(),
+        },
+    )()
+    from src.telegram.auth import TelegramAuth
+
+    app.state.auth = TelegramAuth(12345, "test_hash")
+    app.state.notifier = None
+    collector = Collector(app.state.pool, db, config.scheduler)
+    app.state.collector = collector
+    app.state.collection_queue = CollectionQueue(collector, db)
+    app.state.search_engine = SearchEngine(db)
+    app.state.ai_search = AISearchEngine(config.llm, db)
+    app.state.scheduler = SchedulerManager(collector, config.scheduler)
+    app.state.session_secret = "test_secret_key"
+    await db.add_account(Account(phone="+1234567890", session_string="test_session"))
+    await db.set_setting("agent_dev_mode_enabled", "1")
+
+    transport = ASGITransport(app=app)
+    auth_header = base64.b64encode(b":testpass").decode()
+    async with AsyncClient(
+        transport=transport,
+        base_url="http://test",
+        follow_redirects=True,
+        headers={"Authorization": f"Basic {auth_header}"},
+    ) as client:
+        page = await client.get("/settings/")
+        assert "SESSION_ENCRYPTION_KEY" in page.text
+
+        resp = await client.post(
+            "/settings/agent-providers/add", data={"provider": "openai"}, follow_redirects=False
+        )
+        assert resp.status_code == 303
+        assert "agent_provider_secret_required" in resp.headers["location"]
+
+    await app.state.collection_queue.shutdown()
+    await db.close()
 
 
 @pytest.mark.asyncio
@@ -294,9 +1195,7 @@ async def test_search_runtime_error_is_rendered(client, monkeypatch):
 async def unauth_client(client):
     """Client without auth headers, reusing the same app from client fixture."""
     transport = client._transport
-    async with AsyncClient(
-        transport=transport, base_url="http://test", follow_redirects=True
-    ) as c:
+    async with AsyncClient(transport=transport, base_url="http://test", follow_redirects=True) as c:
         yield c
 
 
@@ -447,7 +1346,7 @@ async def test_logout_clears_cookie_and_redirects_to_login(client):
     assert resp.headers["location"] == "/login"
     assert COOKIE_NAME in resp.headers.get("set-cookie", "")
     cookie_header = resp.headers.get("set-cookie", "")
-    assert 'Max-Age=0' in cookie_header or 'max-age=0' in cookie_header
+    assert "Max-Age=0" in cookie_header or "max-age=0" in cookie_header
 
 
 @pytest.mark.asyncio
@@ -789,9 +1688,7 @@ async def test_save_notification_account_round_trip(client):
     from src.models import Account
 
     db = client._transport.app.state.db
-    await db.add_account(
-        Account(phone="+79990000001", session_string="session", is_primary=True)
-    )
+    await db.add_account(Account(phone="+79990000001", session_string="session", is_primary=True))
 
     resp = await client.post(
         "/settings/save-notification-account",
@@ -803,7 +1700,7 @@ async def test_save_notification_account_round_trip(client):
     assert await db.get_setting("notification_account_phone") == "+79990000001"
 
     resp = await client.get("/settings/")
-    assert '+79990000001' in resp.text
+    assert "+79990000001" in resp.text
 
 
 @pytest.mark.asyncio
@@ -821,9 +1718,7 @@ async def test_notification_status_returns_error_for_unavailable_selected_accoun
     from src.models import Account
 
     db = client._transport.app.state.db
-    await db.add_account(
-        Account(phone="+79990000002", session_string="session", is_primary=True)
-    )
+    await db.add_account(Account(phone="+79990000002", session_string="session", is_primary=True))
     await db.set_setting("notification_account_phone", "+79990000002")
 
     resp = await client.get(
@@ -1205,9 +2100,7 @@ async def test_stats_all_prioritizes_channels_without_stats(client):
     await db.add_channel(Channel(channel_id=-100902, title="No stats 1"))
     await db.add_channel(Channel(channel_id=-100903, title="No stats 2"))
 
-    await db.save_channel_stats(
-        ChannelStats(channel_id=-100901, subscriber_count=1)
-    )
+    await db.save_channel_stats(ChannelStats(channel_id=-100901, subscriber_count=1))
 
     resp = await client.post("/channels/stats/all", follow_redirects=False)
     assert resp.status_code == 303
@@ -1232,8 +2125,10 @@ async def test_search_results_have_tg_links(client):
     ch = Channel(channel_id=-100123, title="Test", username="testchan", channel_type="channel")
     await db.add_channel(ch)
     msg = Message(
-        channel_id=-100123, message_id=42,
-        text="Hello world", date=datetime.now(timezone.utc),
+        channel_id=-100123,
+        message_id=42,
+        text="Hello world",
+        date=datetime.now(timezone.utc),
     )
     await db.insert_message(msg)
 
@@ -1254,8 +2149,10 @@ async def test_search_results_private_channel_link(client):
     ch = Channel(channel_id=-100999, title="Private", username=None, channel_type="group")
     await db.add_channel(ch)
     msg = Message(
-        channel_id=-100999, message_id=7,
-        text="Secret message", date=datetime.now(timezone.utc),
+        channel_id=-100999,
+        message_id=7,
+        text="Secret message",
+        date=datetime.now(timezone.utc),
     )
     await db.insert_message(msg)
 
@@ -1286,7 +2183,7 @@ async def test_collect_all_htmx_returns_scheduler_link_and_creates_tasks(client,
     assert resp.status_code == 200
     assert "Добавлено задач: 2." in resp.text
     assert 'href="/scheduler"' in resp.text
-    assert 'Загрузить все' in resp.text
+    assert "Загрузить все" in resp.text
 
     tasks = await db.get_collection_tasks()
     assert len(tasks) == 2
@@ -1445,8 +2342,8 @@ async def test_channels_page_collect_all_button_matches_htmx_fragment(client):
         'hx-post="/channels/collect-all"',
         'hx-target="#collect-all-btn"',
         'hx-swap="outerHTML"',
-        'btn-outline-primary',
-        'Загрузить все',
+        "btn-outline-primary",
+        "Загрузить все",
     ):
         assert expected in template_fragment
         assert expected in _COLLECT_ALL_BTN
@@ -1717,6 +2614,20 @@ async def test_edit_search_query_route(client):
 class TestWebAgent:
     @pytest.mark.asyncio
     async def test_agent_page_auto_creates_thread(self, client):
+        client._transport.app.state.agent_manager = AsyncMock()
+        client._transport.app.state.agent_manager.get_runtime_status = AsyncMock(
+            return_value=SimpleNamespace(
+                claude_available=True,
+                deepagents_available=False,
+                dev_mode_enabled=False,
+                backend_override="auto",
+                selected_backend="claude",
+                fallback_model="",
+                fallback_provider="",
+                using_override=False,
+                error=None,
+            )
+        )
         resp = await client.get("/agent")
         assert resp.status_code == 200
         assert "Новый тред" in resp.text
@@ -1726,12 +2637,53 @@ class TestWebAgent:
     @pytest.mark.asyncio
     async def test_agent_page_redirects_to_first_thread(self, client):
         db = client._transport.app.state.db
+        client._transport.app.state.agent_manager = AsyncMock()
+        client._transport.app.state.agent_manager.get_runtime_status = AsyncMock(
+            return_value=SimpleNamespace(
+                claude_available=False,
+                deepagents_available=True,
+                dev_mode_enabled=True,
+                backend_override="deepagents",
+                selected_backend="deepagents",
+                fallback_model="openai:gpt-4.1-mini",
+                fallback_provider="openai",
+                using_override=True,
+                error=None,
+            )
+        )
         await db.create_agent_thread("First")
         await db.create_agent_thread("Second")
 
         resp = await client.get("/agent")
         assert resp.status_code == 200
         assert str(resp.url).endswith("?thread_id=1")
+
+    @pytest.mark.asyncio
+    async def test_agent_page_shows_deepagents_status_and_hides_claude_model_select(self, client):
+        db = client._transport.app.state.db
+        await db.create_agent_thread("First")
+        client._transport.app.state.agent_manager = AsyncMock()
+        client._transport.app.state.agent_manager.get_runtime_status = AsyncMock(
+            return_value=SimpleNamespace(
+                claude_available=False,
+                deepagents_available=True,
+                dev_mode_enabled=True,
+                backend_override="deepagents",
+                selected_backend="deepagents",
+                fallback_model="openai:gpt-4.1-mini",
+                fallback_provider="openai",
+                using_override=True,
+                error=None,
+            )
+        )
+
+        resp = await client.get("/agent?thread_id=1")
+
+        assert resp.status_code == 200
+        assert "deepagents" in resp.text
+        assert "dev override" in resp.text
+        assert "openai:gpt-4.1-mini" in resp.text
+        assert 'id="model-select"' not in resp.text
 
     @pytest.mark.asyncio
     async def test_agent_thread_creation_and_deletion(self, client):
@@ -1760,6 +2712,7 @@ class TestWebAgent:
     @pytest.mark.asyncio
     async def test_get_channels_and_topics(self, client):
         from src.models import Channel
+
         db = client._transport.app.state.db
         pool = client._transport.app.state.pool
 
@@ -1779,6 +2732,7 @@ class TestWebAgent:
         from datetime import datetime
 
         from src.models import Channel, Message
+
         db = client._transport.app.state.db
         thread_id = await db.create_agent_thread("Context")
         await db.add_channel(Channel(channel_id=1, title="Context Channel"))
@@ -1797,16 +2751,30 @@ class TestWebAgent:
 
         # Mock AgentManager
         agent_manager = AsyncMock()
+
         async def mock_stream(*args, **kwargs):
             yield 'data: {"done": true, "full_text": "Final"}\n\n'
+
         agent_manager.chat_stream = mock_stream
         agent_manager.estimate_prompt_tokens = AsyncMock(return_value=10)
         agent_manager.cancel_stream = AsyncMock(return_value=True)
+        agent_manager.get_runtime_status = AsyncMock(
+            return_value=SimpleNamespace(
+                claude_available=True,
+                deepagents_available=False,
+                dev_mode_enabled=False,
+                backend_override="auto",
+                selected_backend="claude",
+                fallback_model="",
+                fallback_provider="",
+                using_override=False,
+                error=None,
+            )
+        )
         client._transport.app.state.agent_manager = agent_manager
 
         resp = await client.post(
-            f"/agent/threads/{thread_id}/chat",
-            json={"message": "First message"}
+            f"/agent/threads/{thread_id}/chat", json={"message": "First message"}
         )
         assert resp.status_code == 200
         assert "Final" in resp.text
@@ -1815,7 +2783,7 @@ class TestWebAgent:
         thread = await db.get_agent_thread(thread_id)
         assert "First message" in thread["title"]
         messages = await db.get_agent_messages(thread_id)
-        assert len(messages) == 2 # User + Assistant
+        assert len(messages) == 2  # User + Assistant
 
         # Test stop
         resp_stop = await client.post(f"/agent/threads/{thread_id}/stop")

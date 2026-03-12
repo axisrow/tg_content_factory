@@ -23,12 +23,13 @@ _ESCAPING_CASES = [
 ]
 
 
-async def _test_escaping(db) -> None:
+async def _test_escaping(db, config) -> None:
     from src.agent.manager import AgentManager
 
-    mgr = AgentManager(db)
+    mgr = AgentManager(db, config)
+    await mgr.refresh_settings_cache(preflight=True)
     if not mgr.available:
-        print("ANTHROPIC_API_KEY / CLAUDE_CODE_OAUTH_TOKEN не задан — пропуск.")
+        print("Ни claude-agent-sdk, ни deepagents fallback не настроены — пропуск.")
         return
     mgr.initialize()
 
@@ -105,7 +106,8 @@ def run(args: argparse.Namespace) -> None:
 
                 await db.save_agent_message(thread_id, "user", args.message)
 
-                mgr = AgentManager(db)
+                mgr = AgentManager(db, config)
+                await mgr.refresh_settings_cache(preflight=True)
                 mgr.initialize()
 
                 model = getattr(args, "model", None)
@@ -187,7 +189,7 @@ def run(args: argparse.Namespace) -> None:
                     print(f"... ({len(content)} символов всего)")
 
             elif action == "test-escaping":
-                await _test_escaping(db)
+                await _test_escaping(db, config)
         finally:
             await db.close()
 

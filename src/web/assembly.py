@@ -30,6 +30,7 @@ def configure_app(app: FastAPI, container: AppContainer | None) -> None:
         app.state.search_engine = container.search_engine
         app.state.ai_search = container.ai_search
         app.state.scheduler = container.scheduler
+        app.state.agent_manager = container.agent_manager
         app.state.photo_loader_bundle = container.photo_loader_bundle
         app.state.photo_publish_service = container.photo_publish_service
         app.state.photo_task_service = container.photo_task_service
@@ -37,10 +38,11 @@ def configure_app(app: FastAPI, container: AppContainer | None) -> None:
         app.state.session_secret = container.session_secret
     elif not hasattr(app.state, "templates"):
         app.state.templates = configure_template_globals(
-            Jinja2Templates(directory=str(TEMPLATES_DIR))
+            Jinja2Templates(directory=str(TEMPLATES_DIR)),
+            getattr(app.state, "config", None),
         )
     else:
-        configure_template_globals(app.state.templates)
+        configure_template_globals(app.state.templates, getattr(app.state, "config", None))
     if not hasattr(app.state, "session_secret"):
         app.state.session_secret = secrets.token_hex(32)
     if STATIC_DIR.exists():
