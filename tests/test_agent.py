@@ -7,10 +7,10 @@ from unittest.mock import MagicMock, patch
 import pytest
 from langchain_core.tools import StructuredTool
 
-from src.config import AppConfig
 from src.agent.context import format_context
 from src.agent.manager import AgentManager
 from src.agent.tools import make_mcp_server
+from src.config import AppConfig
 from src.models import Message
 
 
@@ -170,7 +170,7 @@ async def test_runtime_status_reports_failed_deepagents_initialization(db, monke
 
 
 @pytest.mark.asyncio
-async def test_runtime_status_preflights_valid_legacy_fallback(db, monkeypatch):
+async def test_runtime_status_treats_valid_legacy_fallback_as_available(db, monkeypatch):
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
 
@@ -186,9 +186,9 @@ async def test_runtime_status_preflights_valid_legacy_fallback(db, monkeypatch):
     ):
         status = await mgr.get_runtime_status()
 
-    assert status.selected_backend is None
-    assert status.deepagents_available is False
-    assert "provider init failed" in (status.error or "")
+    assert status.selected_backend == "deepagents"
+    assert status.deepagents_available is True
+    assert status.error is None
 
 
 @pytest.mark.asyncio

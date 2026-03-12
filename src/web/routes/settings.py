@@ -7,9 +7,8 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from src.agent.manager import AgentManager
-from src.agent.provider_registry import PROVIDER_ORDER
+from src.agent.provider_registry import PROVIDER_ORDER, ProviderRuntimeConfig
 from src.agent.provider_registry import provider_spec as deepagents_provider_spec
-from src.agent.provider_registry import ProviderRuntimeConfig
 from src.services.agent_provider_service import (
     AgentProviderService,
     ProviderModelCacheEntry,
