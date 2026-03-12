@@ -28,7 +28,22 @@ class ChatRequest(BaseModel):
 @router.get("", response_class=HTMLResponse)
 async def agent_page(request: Request, thread_id: int | None = None):
     db = deps.get_db(request)
+    agent_manager = deps.get_agent_manager(request)
     threads = await db.get_agent_threads()
+    agent_status = None
+    if agent_manager is not None:
+        runtime_status = await agent_manager.get_runtime_status()
+        agent_status = {
+            "claude_available": runtime_status.claude_available,
+            "deepagents_available": runtime_status.deepagents_available,
+            "dev_mode_enabled": runtime_status.dev_mode_enabled,
+            "backend_override": runtime_status.backend_override,
+            "selected_backend": runtime_status.selected_backend,
+            "fallback_model": runtime_status.fallback_model,
+            "fallback_provider": runtime_status.fallback_provider,
+            "using_override": runtime_status.using_override,
+            "error": runtime_status.error,
+        }
 
     messages = []
     active_thread = None
@@ -54,6 +69,7 @@ async def agent_page(request: Request, thread_id: int | None = None):
             "threads": threads,
             "active_thread": active_thread,
             "messages": messages,
+            "agent_status": agent_status,
         },
     )
 
@@ -87,14 +103,16 @@ async def rename_thread(request: Request, thread_id: int):
 async def get_channels_json(request: Request):
     db = deps.get_db(request)
     channels = await db.get_channels(active_only=True, include_filtered=False)
-    return JSONResponse([
-        {
-            "id": ch.channel_id,
-            "title": ch.title or str(ch.channel_id),
-            "channel_type": ch.channel_type,
-        }
-        for ch in channels
-    ])
+    return JSONResponse(
+        [
+            {
+                "id": ch.channel_id,
+                "title": ch.title or str(ch.channel_id),
+                "channel_type": ch.channel_type,
+            }
+            for ch in channels
+        ]
+    )
 
 
 @router.get("/forum-topics")
@@ -154,12 +172,15 @@ async def inject_context(request: Request, thread_id: int):
     await db.save_agent_message(thread_id=thread_id, role="user", content=content)
     logger.info(
         "Context loaded for thread %d: %d messages, %d chars",
-        thread_id, len(messages), len(content),
+        thread_id,
+        len(messages),
+        len(content),
     )
     if len(content) > 200_000:
         logger.warning(
             "Large context for thread %d: %d chars (>200K) — may cause prompt overflow",
-            thread_id, len(content),
+            thread_id,
+            len(content),
         )
     return JSONResponse({"content": content})
 
@@ -189,6 +210,13 @@ async def chat(request: Request, thread_id: int):
     agent_manager = deps.get_agent_manager(request)
     if agent_manager is None:
         raise HTTPException(status_code=503, detail="AgentManager not initialized")
+    runtime_status = await agent_manager.get_runtime_status()
+    if runtime_status.selected_backend is None:
+        raise HTTPException(
+            status_code=503, detail=runtime_status.error or "Agent backend unavailable"
+        )
+    if runtime_status.using_override and runtime_status.error:
+        raise HTTPException(status_code=503, detail=runtime_status.error)
 
     # Verify thread exists
     thread = await db.get_agent_thread(thread_id)
