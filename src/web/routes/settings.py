@@ -1,10 +1,20 @@
 import asyncio
 import logging
 import os
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
+from src.agent.manager import AgentManager
+from src.agent.provider_registry import PROVIDER_ORDER
+from src.agent.provider_registry import provider_spec as deepagents_provider_spec
+from src.agent.provider_registry import ProviderRuntimeConfig
+from src.services.agent_provider_service import (
+    AgentProviderService,
+    ProviderModelCacheEntry,
+    ProviderModelCompatibilityRecord,
+)
 from src.services.notification_service import NotificationService
 from src.settings_utils import parse_int_setting
 from src.telegram.notifier import Notifier
@@ -30,6 +40,250 @@ def _wants_json(request: Request) -> bool:
     return "application/json" in request.headers.get("accept", "")
 
 
+def _agent_provider_service(request: Request) -> AgentProviderService:
+    return AgentProviderService(deps.get_db(request), request.app.state.config)
+
+
+def _settings_agent_manager(request: Request) -> tuple[AgentManager, bool]:
+    manager = deps.get_agent_manager(request)
+    if manager is not None:
+        return manager, True
+    return AgentManager(deps.get_db(request), request.app.state.config), False
+
+
+async def _dev_mode_enabled(request: Request) -> bool:
+    return (await deps.get_db(request).get_setting("agent_dev_mode_enabled") or "0") == "1"
+
+
+async def _require_agent_dev_mode(
+    request: Request,
+    *,
+    json_mode: bool = False,
+):
+    if await _dev_mode_enabled(request):
+        return None
+    if json_mode:
+        return JSONResponse({"ok": False, "error": "Developer mode is required."}, status_code=403)
+    return RedirectResponse(url="/settings?error=agent_dev_mode_required", status_code=303)
+
+
+def _bulk_test_lock(request: Request) -> asyncio.Lock:
+    lock = getattr(request.app.state, "agent_provider_bulk_test_lock", None)
+    if lock is None:
+        lock = asyncio.Lock()
+        request.app.state.agent_provider_bulk_test_lock = lock
+    return lock
+
+
+def _bulk_test_status_payload(request: Request) -> dict[str, object]:
+    status = getattr(request.app.state, "agent_provider_bulk_test_status", None)
+    if status is None:
+        status = {
+            "running": False,
+            "started_at": "",
+            "finished_at": "",
+            "current_provider": "",
+            "current_model": "",
+            "completed_probes": 0,
+            "total_probes": 0,
+            "summary": {"supported": 0, "unsupported": 0, "unknown": 0},
+            "providers": {},
+            "catalog_path": "",
+            "error": "",
+            "recent_events": [],
+        }
+        request.app.state.agent_provider_bulk_test_status = status
+    return status
+
+
+def _replace_bulk_test_status(request: Request, status: dict[str, object]) -> None:
+    request.app.state.agent_provider_bulk_test_status = status
+
+
+def _bulk_test_recent_event(status: dict[str, object], message: str) -> None:
+    events = list(status.get("recent_events", []))
+    events.append(
+        f"{datetime.now(UTC).astimezone().strftime('%H:%M:%S')} {message}"
+    )
+    status["recent_events"] = events[-12:]
+
+
+async def _run_bulk_test_job(request: Request) -> None:
+    service = _agent_provider_service(request)
+    manager, is_persistent_manager = _settings_agent_manager(request)
+    configs = await service.load_provider_configs()
+    status = {
+        "running": True,
+        "started_at": datetime.now(UTC).isoformat(),
+        "finished_at": "",
+        "current_provider": "",
+        "current_model": "",
+        "completed_probes": 0,
+        "total_probes": 0,
+        "summary": {"supported": 0, "unsupported": 0, "unknown": 0},
+        "providers": {},
+        "catalog_path": "",
+        "error": "",
+        "recent_events": [],
+    }
+    _replace_bulk_test_status(request, status)
+    logger.info("Bulk compatibility test started: providers=%d", len(configs))
+    try:
+        total_probes = 0
+        entries_by_provider: dict[str, ProviderModelCacheEntry] = {}
+        for cfg in configs:
+            entry = await service.refresh_models_for_provider(cfg.provider, cfg)
+            entries_by_provider[cfg.provider] = entry
+            total_probes += len(entry.models)
+        status["total_probes"] = total_probes
+        _bulk_test_recent_event(status, f"Запущено тестирование {total_probes} моделей.")
+
+        for cfg in configs:
+            status["current_provider"] = cfg.provider
+            entry = entries_by_provider[cfg.provider]
+            logger.info(
+                "Bulk compatibility refresh: provider=%s selected_model=%s",
+                cfg.provider,
+                cfg.selected_model or "<empty>",
+            )
+            logger.info(
+                "Bulk compatibility models loaded: provider=%s source=%s count=%d error=%s",
+                cfg.provider,
+                entry.source,
+                len(entry.models),
+                entry.error or "",
+            )
+            provider_results: list[dict[str, str]] = []
+            provider_summary = {"supported": 0, "unsupported": 0, "unknown": 0}
+            status["providers"][cfg.provider] = {
+                "models": provider_results,
+                "source": entry.source,
+                "summary": provider_summary,
+            }
+            for model in entry.models:
+                status["current_model"] = model
+                _bulk_test_recent_event(status, f"Тестируется {cfg.provider} / {model}")
+                model_cfg = ProviderRuntimeConfig(
+                    provider=cfg.provider,
+                    enabled=cfg.enabled,
+                    priority=cfg.priority,
+                    selected_model=model,
+                    plain_fields=dict(cfg.plain_fields),
+                    secret_fields=dict(cfg.secret_fields),
+                )
+                validation_error = service.validate_provider_config(model_cfg)
+                if validation_error:
+                    logger.info(
+                        "Bulk compatibility probe blocked: provider=%s model=%s status=unsupported reason=%s",
+                        cfg.provider,
+                        model,
+                        validation_error,
+                    )
+                    record = ProviderModelCompatibilityRecord(
+                        model=model,
+                        status="unsupported",
+                        reason=validation_error,
+                        config_fingerprint=service.config_fingerprint(model_cfg),
+                        probe_kind="dev-bulk",
+                    )
+                else:
+                    logger.info(
+                        "Bulk compatibility probe started: provider=%s model=%s",
+                        cfg.provider,
+                        model,
+                    )
+                    record = await _probe_provider_config(
+                        service,
+                        manager,
+                        model_cfg,
+                        probe_kind="dev-bulk",
+                        force=True,
+                    )
+                    logger.info(
+                        "Bulk compatibility probe finished: provider=%s model=%s status=%s reason=%s",
+                        cfg.provider,
+                        record.model or model,
+                        record.status,
+                        record.reason or "",
+                    )
+                status["summary"][record.status] = status["summary"].get(record.status, 0) + 1
+                provider_summary[record.status] = provider_summary.get(record.status, 0) + 1
+                status["completed_probes"] = int(status["completed_probes"]) + 1
+                provider_results.append(
+                    {
+                        "model": record.model,
+                        "status": record.status,
+                        "reason": record.reason,
+                        "tested_at": record.tested_at,
+                    }
+                )
+            logger.info(
+                "Bulk compatibility provider summary: provider=%s supported=%d unsupported=%d unknown=%d",
+                cfg.provider,
+                provider_summary["supported"],
+                provider_summary["unsupported"],
+                provider_summary["unknown"],
+            )
+            _bulk_test_recent_event(
+                status,
+                (
+                    f"Провайдер {cfg.provider} завершён: "
+                    f"supported={provider_summary['supported']}, "
+                    f"unsupported={provider_summary['unsupported']}, "
+                    f"unknown={provider_summary['unknown']}"
+                ),
+            )
+
+        cache = await service.load_model_cache()
+        catalog_path = await service.export_compatibility_catalog(configs, cache)
+        status["catalog_path"] = str(catalog_path)
+        if is_persistent_manager:
+            await manager.refresh_settings_cache(preflight=True)
+        logger.info(
+            "Bulk compatibility test finished: supported=%d unsupported=%d unknown=%d catalog=%s",
+            status["summary"]["supported"],
+            status["summary"]["unsupported"],
+            status["summary"]["unknown"],
+            catalog_path,
+        )
+        _bulk_test_recent_event(
+            status,
+            (
+                f"Тестирование завершено. supported={status['summary']['supported']}, "
+                f"unsupported={status['summary']['unsupported']}, "
+                f"unknown={status['summary']['unknown']}"
+            ),
+        )
+    except Exception as exc:
+        status["error"] = str(exc)
+        logger.exception("Bulk compatibility test failed")
+        _bulk_test_recent_event(status, f"Ошибка: {exc}")
+    finally:
+        status["running"] = False
+        status["finished_at"] = datetime.now(UTC).isoformat()
+        status["current_provider"] = ""
+        status["current_model"] = ""
+
+
+async def _probe_provider_config(
+    service: AgentProviderService,
+    manager: AgentManager,
+    cfg: ProviderRuntimeConfig,
+    *,
+    probe_kind: str,
+    force: bool = False,
+) -> ProviderModelCompatibilityRecord:
+    return await service.ensure_model_compatibility(
+        cfg,
+        probe_runner=lambda current_cfg, current_probe_kind: manager.probe_provider_config(
+            current_cfg,
+            probe_kind=current_probe_kind,
+        ),
+        probe_kind=probe_kind,
+        force=force,
+    )
+
+
 @router.get("/", response_class=HTMLResponse)
 async def settings_page(request: Request):
     auth = deps.get_auth(request)
@@ -49,6 +303,7 @@ async def settings_page(request: Request):
     if agent_backend_override not in {"auto", "claude", "deepagents"}:
         agent_backend_override = "auto"
     config = request.app.state.config
+    provider_service = _agent_provider_service(request)
     telegram_credentials_from_env = bool(
         os.environ.get("TG_API_ID", "").strip().isdigit()
         and os.environ.get("TG_API_HASH", "").strip()
@@ -72,6 +327,15 @@ async def settings_page(request: Request):
         except RuntimeError as exc:
             notification_bot_error = str(exc)
             logger.warning("Failed to load notification bot status: %s", exc)
+    provider_configs = await provider_service.load_provider_configs()
+    provider_cache = await provider_service.load_model_cache()
+    provider_views = provider_service.build_provider_views(provider_configs, provider_cache)
+    configured_names = {cfg.provider for cfg in provider_configs}
+    available_provider_options = [
+        provider_service.provider_specs[name]
+        for name in PROVIDER_ORDER
+        if name not in configured_names
+    ]
     return deps.get_templates(request).TemplateResponse(
         request,
         "settings.html",
@@ -94,6 +358,9 @@ async def settings_page(request: Request):
             "agent_fallback_model": config.agent.fallback_model or os.environ.get(
                 "AGENT_FALLBACK_MODEL", ""
             ).strip(),
+            "agent_provider_writes_enabled": provider_service.writes_enabled,
+            "agent_provider_views": provider_views,
+            "agent_provider_options": available_provider_options,
         },
     )
 
@@ -119,14 +386,300 @@ async def save_agent_settings(request: Request):
     form = await request.form()
     db = deps.get_db(request)
 
-    dev_mode_enabled = str(form.get("agent_dev_mode_enabled", "")).strip() == "1"
-    backend_override = str(form.get("agent_backend_override", "auto")).strip()
+    form_scope = str(form.get("agent_form_scope", "dev_mode")).strip()
+    current_dev_mode = (await db.get_setting("agent_dev_mode_enabled") or "0") == "1"
+    current_backend_override = await db.get_setting("agent_backend_override") or "auto"
+
+    wants_dev_mode = str(form.get("agent_dev_mode_enabled", "")).strip() == "1"
+    disclaimer_accepted = str(form.get("agent_dev_mode_disclaimer", "")).strip() == "1"
+    backend_override_raw = form.get("agent_backend_override")
+    if backend_override_raw is None:
+        backend_override = current_backend_override
+    else:
+        backend_override = str(backend_override_raw).strip()
     if backend_override not in {"auto", "claude", "deepagents"}:
         backend_override = "auto"
 
+    if form_scope == "backend_override":
+        dev_mode_enabled = current_dev_mode
+    else:
+        if not wants_dev_mode:
+            dev_mode_enabled = False
+        elif disclaimer_accepted:
+            dev_mode_enabled = True
+        else:
+            dev_mode_enabled = current_dev_mode
+
     await db.set_setting("agent_dev_mode_enabled", "1" if dev_mode_enabled else "0")
     await db.set_setting("agent_backend_override", backend_override)
+    agent_manager = deps.get_agent_manager(request)
+    if agent_manager is not None:
+        await agent_manager.refresh_settings_cache(preflight=True)
     return RedirectResponse(url="/settings?msg=agent_saved", status_code=303)
+
+
+@router.post("/agent-providers/add")
+async def add_agent_provider(request: Request):
+    service = _agent_provider_service(request)
+    if not service.writes_enabled:
+        return RedirectResponse(url="/settings?error=agent_provider_secret_required", status_code=303)
+    dev_mode_required = await _require_agent_dev_mode(request)
+    if dev_mode_required is not None:
+        return dev_mode_required
+    form = await request.form()
+    provider_name = str(form.get("provider", "")).strip()
+    if deepagents_provider_spec(provider_name) is None:
+        return RedirectResponse(url="/settings?error=agent_provider_invalid", status_code=303)
+    configs = await service.load_provider_configs()
+    if any(cfg.provider == provider_name for cfg in configs):
+        return RedirectResponse(url="/settings?msg=agent_saved", status_code=303)
+    priority = max((cfg.priority for cfg in configs), default=-1) + 1
+    configs.append(service.create_empty_config(provider_name, priority))
+    await service.save_provider_configs(configs)
+    agent_manager = deps.get_agent_manager(request)
+    if agent_manager is not None:
+        await agent_manager.refresh_settings_cache(preflight=True)
+    return RedirectResponse(url="/settings?msg=agent_saved", status_code=303)
+
+
+@router.post("/agent-providers/save")
+async def save_agent_providers(request: Request):
+    service = _agent_provider_service(request)
+    if not service.writes_enabled:
+        return RedirectResponse(url="/settings?error=agent_provider_secret_required", status_code=303)
+    dev_mode_required = await _require_agent_dev_mode(request)
+    if dev_mode_required is not None:
+        return dev_mode_required
+    form = await request.form()
+    existing = await service.load_provider_configs()
+    configs = service.parse_provider_form(form, existing)
+    manager, is_persistent_manager = _settings_agent_manager(request)
+    validated: list[ProviderRuntimeConfig] = []
+    for cfg in configs:
+        validation_error = ""
+        if cfg.enabled:
+            validation_error = service.validate_provider_config(cfg)
+        if cfg.enabled and not validation_error:
+            await _probe_provider_config(
+                service,
+                manager,
+                cfg,
+                probe_kind="save-time",
+            )
+        validated.append(
+            ProviderRuntimeConfig(
+                provider=cfg.provider,
+                enabled=cfg.enabled,
+                priority=cfg.priority,
+                selected_model=cfg.selected_model,
+                plain_fields=cfg.plain_fields,
+                secret_fields=cfg.secret_fields,
+                last_validation_error=validation_error,
+            )
+        )
+    await service.save_provider_configs(validated)
+    if is_persistent_manager:
+        await manager.refresh_settings_cache(preflight=True)
+    return RedirectResponse(url="/settings?msg=agent_saved", status_code=303)
+
+
+@router.post("/agent-providers/{provider_name}/delete")
+async def delete_agent_provider(request: Request, provider_name: str):
+    service = _agent_provider_service(request)
+    if not service.writes_enabled:
+        return RedirectResponse(url="/settings?error=agent_provider_secret_required", status_code=303)
+    dev_mode_required = await _require_agent_dev_mode(request)
+    if dev_mode_required is not None:
+        return dev_mode_required
+    configs = await service.load_provider_configs()
+    configs = [cfg for cfg in configs if cfg.provider != provider_name]
+    for index, cfg in enumerate(configs):
+        cfg.priority = index
+    await service.save_provider_configs(configs)
+    agent_manager = deps.get_agent_manager(request)
+    if agent_manager is not None:
+        await agent_manager.refresh_settings_cache(preflight=True)
+    return RedirectResponse(url="/settings?msg=agent_saved", status_code=303)
+
+
+@router.post("/agent-providers/{provider_name}/refresh")
+async def refresh_agent_provider_models(request: Request, provider_name: str):
+    service = _agent_provider_service(request)
+    if not service.writes_enabled:
+        return JSONResponse({"ok": False, "error": "SESSION_ENCRYPTION_KEY is required."}, status_code=409)
+    dev_mode_required = await _require_agent_dev_mode(request, json_mode=True)
+    if dev_mode_required is not None:
+        return dev_mode_required
+    if deepagents_provider_spec(provider_name) is None:
+        return JSONResponse({"ok": False, "error": "Unknown provider."}, status_code=404)
+    form = await request.form()
+    configs = await service.load_provider_configs()
+    cfg = service.parse_single_provider_form(form, configs, provider_name)
+    entry = await service.refresh_models_for_provider(provider_name, cfg)
+    return JSONResponse(
+        {
+            "ok": True,
+            "provider": provider_name,
+            "models": entry.models,
+            "source": entry.source,
+            "error": entry.error,
+            "fetched_at": entry.fetched_at,
+            "compatibility": (
+                service.build_compatibility_payload(cfg, entry)
+                if cfg is not None
+                else {}
+            ),
+        }
+    )
+
+
+@router.post("/agent-providers/refresh-all")
+async def refresh_all_agent_provider_models(request: Request):
+    service = _agent_provider_service(request)
+    if not service.writes_enabled:
+        return JSONResponse({"ok": False, "error": "SESSION_ENCRYPTION_KEY is required."}, status_code=409)
+    dev_mode_required = await _require_agent_dev_mode(request, json_mode=True)
+    if dev_mode_required is not None:
+        return dev_mode_required
+    configs = await service.load_provider_configs()
+    config_map = {cfg.provider: cfg for cfg in configs}
+    results = await service.refresh_all_models()
+    return JSONResponse(
+        {
+            "ok": True,
+            "providers": {
+                provider: {
+                    "models": entry.models,
+                    "source": entry.source,
+                    "error": entry.error,
+                    "fetched_at": entry.fetched_at,
+                    "compatibility": (
+                        service.build_compatibility_payload(config_map[provider], entry)
+                        if provider in config_map
+                        else {}
+                    ),
+                }
+                for provider, entry in results.items()
+            },
+        }
+    )
+
+
+@router.post("/agent-providers/{provider_name}/probe")
+async def probe_agent_provider_model(request: Request, provider_name: str):
+    service = _agent_provider_service(request)
+    if not service.writes_enabled:
+        return JSONResponse({"ok": False, "error": "SESSION_ENCRYPTION_KEY is required."}, status_code=409)
+    dev_mode_required = await _require_agent_dev_mode(request, json_mode=True)
+    if dev_mode_required is not None:
+        return dev_mode_required
+    if deepagents_provider_spec(provider_name) is None:
+        return JSONResponse({"ok": False, "error": "Unknown provider."}, status_code=404)
+
+    form = await request.form()
+    existing = await service.load_provider_configs()
+    cfg = service.parse_single_provider_form(form, existing, provider_name)
+    validation_error = service.validate_provider_config(cfg)
+    if validation_error:
+        logger.info(
+            "Compatibility probe skipped: provider=%s model=%s status=unsupported reason=%s",
+            provider_name,
+            cfg.selected_model or "<empty>",
+            validation_error,
+        )
+        return JSONResponse(
+            {
+                "ok": True,
+                "provider": provider_name,
+                "model": cfg.selected_model,
+                "status": "unsupported",
+                "reason": validation_error,
+                "tested_at": "",
+                "config_fingerprint": service.config_fingerprint(cfg),
+            }
+        )
+
+    manager, _ = _settings_agent_manager(request)
+    logger.info(
+        "Compatibility probe requested: provider=%s model=%s kind=auto-select",
+        provider_name,
+        cfg.selected_model or "<empty>",
+    )
+    record = await _probe_provider_config(
+        service,
+        manager,
+        cfg,
+        probe_kind="auto-select",
+    )
+    logger.info(
+        "Compatibility probe finished: provider=%s model=%s status=%s kind=%s reason=%s",
+        provider_name,
+        record.model or "<empty>",
+        record.status,
+        record.probe_kind,
+        record.reason or "",
+    )
+    return JSONResponse(
+        {
+            "ok": True,
+            "provider": provider_name,
+            "model": record.model,
+            "status": record.status,
+            "reason": record.reason,
+            "tested_at": record.tested_at,
+            "config_fingerprint": record.config_fingerprint,
+            "probe_kind": record.probe_kind,
+        }
+    )
+
+
+@router.post("/agent-providers/test-all")
+async def test_all_agent_provider_models(request: Request):
+    service = _agent_provider_service(request)
+    if not service.writes_enabled:
+        return JSONResponse({"ok": False, "error": "SESSION_ENCRYPTION_KEY is required."}, status_code=409)
+    if not await _dev_mode_enabled(request):
+        return JSONResponse({"ok": False, "error": "Developer mode is required."}, status_code=403)
+    async with _bulk_test_lock(request):
+        status = _bulk_test_status_payload(request)
+        if status.get("running"):
+            return JSONResponse(
+                {
+                    "ok": False,
+                    "error": "Bulk compatibility test is already running.",
+                    **status,
+                },
+                status_code=409,
+            )
+        initial_status = {
+            "running": True,
+            "started_at": datetime.now(UTC).isoformat(),
+            "finished_at": "",
+            "current_provider": "",
+            "current_model": "",
+            "completed_probes": 0,
+            "total_probes": 0,
+            "summary": {"supported": 0, "unsupported": 0, "unknown": 0},
+            "providers": {},
+            "catalog_path": "",
+            "error": "",
+            "recent_events": ["Запуск массового тестирования..."],
+        }
+        _replace_bulk_test_status(request, initial_status)
+        request.app.state.agent_provider_bulk_test_task = asyncio.create_task(
+            _run_bulk_test_job(request)
+        )
+    return JSONResponse({"ok": True, "started": True, **_bulk_test_status_payload(request)})
+
+
+@router.get("/agent-providers/test-all/status")
+async def test_all_agent_provider_models_status(request: Request):
+    service = _agent_provider_service(request)
+    if not service.writes_enabled:
+        return JSONResponse({"ok": False, "error": "SESSION_ENCRYPTION_KEY is required."}, status_code=409)
+    if not await _dev_mode_enabled(request):
+        return JSONResponse({"ok": False, "error": "Developer mode is required."}, status_code=403)
+    return JSONResponse({"ok": True, **_bulk_test_status_payload(request)})
 
 
 @router.post("/save-filters")

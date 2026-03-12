@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import json
-import os
 from datetime import datetime
 from unittest.mock import MagicMock, patch
 
 import pytest
+from langchain_core.tools import StructuredTool
 
 from src.config import AppConfig
 from src.agent.context import format_context
@@ -67,6 +67,7 @@ async def test_agent_chat_stream_mocked(db):
 async def test_runtime_status_prefers_claude_when_available(db, monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "claude-key")
     monkeypatch.setenv("AGENT_FALLBACK_MODEL", "openai:gpt-4.1-mini")
+    monkeypatch.setenv("AGENT_FALLBACK_API_KEY", "fallback-key")
 
     mgr = AgentManager(db)
     status = await mgr.get_runtime_status()
@@ -81,8 +82,11 @@ async def test_runtime_status_falls_back_to_deepagents_when_claude_missing(db, m
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
     monkeypatch.setenv("AGENT_FALLBACK_MODEL", "openai:gpt-4.1-mini")
+    monkeypatch.setenv("AGENT_FALLBACK_API_KEY", "fallback-key")
 
     mgr = AgentManager(db)
+    with patch.object(mgr._deepagents_backend, "_build_agent", return_value=None):
+        mgr.initialize()
     status = await mgr.get_runtime_status()
 
     assert status.selected_backend == "deepagents"
@@ -93,6 +97,7 @@ async def test_runtime_status_falls_back_to_deepagents_when_claude_missing(db, m
 async def test_runtime_status_respects_dev_override(db, monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "claude-key")
     monkeypatch.setenv("AGENT_FALLBACK_MODEL", "openai:gpt-4.1-mini")
+    monkeypatch.setenv("AGENT_FALLBACK_API_KEY", "fallback-key")
     await db.set_setting("agent_dev_mode_enabled", "1")
     await db.set_setting("agent_backend_override", "deepagents")
 
@@ -103,7 +108,17 @@ async def test_runtime_status_respects_dev_override(db, monkeypatch):
     assert status.using_override is True
 
 
-def test_deepagents_backend_strips_claude_tokens_from_env(db, monkeypatch):
+def test_deepagents_tools_can_be_converted_to_structured_tools(db):
+    mgr = AgentManager(db)
+
+    search_tool = StructuredTool.from_function(mgr._deepagents_backend._search_messages_tool)
+    channels_tool = StructuredTool.from_function(mgr._deepagents_backend._get_channels_tool)
+
+    assert "Search recent Telegram messages" in search_tool.description
+    assert "List active Telegram channels" in channels_tool.description
+
+
+def test_deepagents_backend_uses_bare_model_for_legacy_fallback(db, monkeypatch):
     config = AppConfig()
     config.agent.fallback_model = "anthropic:claude-sonnet-4-5-20250929"
     config.agent.fallback_api_key = "fallback-key"
@@ -112,9 +127,9 @@ def test_deepagents_backend_strips_claude_tokens_from_env(db, monkeypatch):
 
     create_agent = MagicMock(return_value=MagicMock(run=MagicMock(return_value="ok")))
 
-    def fake_init_chat_model(model, **kwargs):
-        assert os.environ.get("ANTHROPIC_API_KEY") is None
-        assert os.environ.get("CLAUDE_CODE_OAUTH_TOKEN") is None
+    def fake_init_chat_model(*, model, model_provider, **kwargs):
+        assert model == "claude-sonnet-4-5-20250929"
+        assert model_provider == "anthropic"
         assert kwargs["api_key"] == "fallback-key"
         return MagicMock()
 
@@ -124,8 +139,84 @@ def test_deepagents_backend_strips_claude_tokens_from_env(db, monkeypatch):
     ):
         mgr._deepagents_backend.initialize()
 
-    assert os.environ.get("ANTHROPIC_API_KEY") == "sdk-key"
-    assert os.environ.get("CLAUDE_CODE_OAUTH_TOKEN") == "oauth-token"
+
+def test_deepagents_backend_requires_explicit_key_for_anthropic_fallback(db):
+    config = AppConfig()
+    config.agent.fallback_model = "anthropic:claude-sonnet-4-5-20250929"
+
+    mgr = AgentManager(db, config)
+
+    with pytest.raises(RuntimeError, match="AGENT_FALLBACK_API_KEY"):
+        mgr._deepagents_backend.initialize()
+
+    assert mgr._deepagents_backend.available is False
+    assert mgr._deepagents_backend.init_error is not None
+
+
+@pytest.mark.asyncio
+async def test_runtime_status_reports_failed_deepagents_initialization(db, monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
+    monkeypatch.setenv("AGENT_FALLBACK_MODEL", "anthropic:claude-sonnet-4-5-20250929")
+
+    mgr = AgentManager(db)
+    mgr.initialize()
+
+    status = await mgr.get_runtime_status()
+
+    assert status.selected_backend is None
+    assert status.deepagents_available is False
+    assert status.error is not None
+
+
+@pytest.mark.asyncio
+async def test_runtime_status_preflights_valid_legacy_fallback(db, monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
+
+    config = AppConfig()
+    config.agent.fallback_model = "openai:gpt-4.1-mini"
+    config.agent.fallback_api_key = "fallback-key"
+
+    mgr = AgentManager(db, config)
+    with patch.object(
+        mgr._deepagents_backend,
+        "_build_agent",
+        side_effect=RuntimeError("provider init failed"),
+    ):
+        status = await mgr.get_runtime_status()
+
+    assert status.selected_backend is None
+    assert status.deepagents_available is False
+    assert "provider init failed" in (status.error or "")
+
+
+@pytest.mark.asyncio
+async def test_claude_backend_uses_model_from_config(db):
+    thread_id = await db.create_agent_thread("test thread")
+    await db.save_agent_message(thread_id, "user", "test")
+
+    config = AppConfig()
+    config.agent.model = "claude-opus-4-6"
+    mgr = AgentManager(db, config)
+    mgr.initialize()
+
+    from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
+
+    text_block = TextBlock(text="hello")
+    assistant_msg = MagicMock(spec=AssistantMessage)
+    assistant_msg.content = [text_block]
+    result_msg = MagicMock(spec=ResultMessage)
+
+    async def mock_query(prompt, options):
+        assert options.model == "claude-opus-4-6"
+        yield assistant_msg
+        yield result_msg
+
+    with patch("src.agent.manager.query", mock_query):
+        chunks = [chunk async for chunk in mgr.chat_stream(thread_id, "test")]
+
+    assert chunks
 
 
 # ── DB round-trip tests ───────────────────────────────────────────────────────

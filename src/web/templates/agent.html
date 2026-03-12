@@ -17,6 +17,11 @@
     flex-direction: column;
     gap: 0.5rem;
     overflow-y: auto;
+    padding: 0.85rem;
+    border: 1px solid var(--bs-border-color);
+    border-radius: 18px;
+    background: var(--bs-body-bg);
+    box-shadow: 0 14px 36px rgba(15, 23, 42, 0.04);
 }
 .thread-item {
     display: flex;
@@ -64,14 +69,87 @@
     display: flex;
     flex-direction: column;
     min-width: 0;
+    min-height: 0;
+    gap: 0.9rem;
+}
+.chat-status-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 0.7rem;
+    padding: 1rem 1.1rem;
+    border: 1px solid var(--bs-border-color);
+    border-radius: 18px;
+    background:
+        linear-gradient(135deg, var(--bs-primary-bg-subtle), transparent 55%),
+        var(--bs-body-bg);
+    box-shadow: 0 16px 32px rgba(15, 23, 42, 0.05);
 }
 .chat-header {
-    font-size: 1rem;
-    font-weight: 600;
-    padding-bottom: 0.5rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 1rem;
+    padding-bottom: 0.7rem;
     border-bottom: 1px solid var(--bs-border-color);
-    margin-bottom: 0.75rem;
+}
+.chat-header-title {
+    font-size: 1.45rem;
+    font-weight: 600;
+    line-height: 1.2;
+    margin: 0;
+}
+.chat-header-badges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    justify-content: flex-end;
+}
+.chat-runtime {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    align-items: center;
+    font-size: 0.82rem;
+}
+.runtime-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.28rem 0.55rem;
+    border-radius: 999px;
+    border: 1px solid var(--bs-border-color);
+    background: var(--bs-body-bg);
     color: var(--bs-secondary-color);
+    line-height: 1.1;
+}
+.runtime-chip code {
+    font-size: 0.78rem;
+    color: inherit;
+}
+.runtime-chip-on {
+    border-color: var(--bs-success-border-subtle);
+    background: var(--bs-success-bg-subtle);
+    color: var(--bs-success-text-emphasis);
+}
+.runtime-chip-off {
+    border-color: var(--bs-secondary-border-subtle);
+    background: var(--bs-secondary-bg);
+}
+.runtime-chip-accent {
+    border-color: var(--bs-warning-border-subtle);
+    background: var(--bs-warning-bg-subtle);
+    color: var(--bs-warning-text-emphasis);
+}
+.chat-stage {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    border: 1px solid var(--bs-border-color);
+    border-radius: 22px;
+    background: var(--bs-body-bg);
+    box-shadow: 0 20px 40px rgba(15, 23, 42, 0.05);
+    overflow: hidden;
 }
 .chat-messages {
     flex: 1;
@@ -79,7 +157,11 @@
     display: flex;
     flex-direction: column;
     gap: 0.75rem;
-    padding-right: 0.5rem;
+    padding: 1.1rem 1rem 0.9rem 1rem;
+    background:
+        radial-gradient(circle at top right, rgba(13, 110, 253, 0.05), transparent 28%),
+        linear-gradient(180deg, rgba(248, 249, 250, 0.9), rgba(248, 249, 250, 0.35)),
+        var(--bs-body-bg);
 }
 .message-bubble {
     max-width: 85%;
@@ -153,6 +235,20 @@
     font-size: 0.9rem;
     max-width: 85%;
 }
+.retry-btn {
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 1.2rem;
+    margin-left: 10px;
+    vertical-align: middle;
+    padding: 0;
+    line-height: 1;
+    transition: transform 0.3s;
+}
+.retry-btn:hover {
+    transform: rotate(180deg);
+}
 .typing-indicator {
     display: inline-block;
     color: var(--bs-secondary-color);
@@ -168,26 +264,77 @@
     60%, 100% { content: "..."; }
 }
 
+.chat-composer {
+    padding: 0.95rem 1rem 1rem 1rem;
+    border-top: 1px solid var(--bs-border-color);
+    display: flex;
+    flex-direction: column;
+    gap: 0.7rem;
+    background: linear-gradient(180deg, rgba(248, 249, 250, 0.82), var(--bs-body-bg));
+}
+.chat-composer-meta {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+    min-height: 1.4rem;
+}
+.composer-caption {
+    font-size: 0.78rem;
+    color: var(--bs-secondary-color);
+}
+.composer-subtle {
+    font-size: 0.78rem;
+    color: var(--bs-secondary-color);
+    text-align: right;
+}
 .chat-input-area {
     display: flex;
-    gap: 0.5rem;
-    padding-top: 0.75rem;
-    border-top: 1px solid var(--bs-border-color);
-    margin-top: 0.75rem;
+    gap: 0.75rem;
+    align-items: stretch;
 }
 .chat-input-area textarea {
     flex: 1;
     resize: none;
-    min-height: 60px;
-    max-height: 140px;
+    min-height: 110px;
+    max-height: 180px;
+    font-size: 0.9rem;
+    padding: 0.9rem 1rem;
+    border-radius: 16px;
+}
+.composer-actions {
+    width: 230px;
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.55rem;
+    justify-content: flex-end;
+}
+.chat-send-btn,
+.model-select {
+    width: 100%;
+    min-width: 0;
     font-size: 0.9rem;
 }
-.chat-send-btn { align-self: flex-end; white-space: nowrap; }
-.model-select {
-    align-self: flex-end;
-    width: auto;
-    min-width: 120px;
+.chat-send-btn {
+    min-height: 46px;
+    border-radius: 14px;
+    font-weight: 600;
+}
+.composer-hint {
+    padding: 0.5rem 0.65rem;
+    border-radius: 14px;
+    border: 1px solid var(--bs-border-color);
+    background: var(--bs-tertiary-bg);
+    color: var(--bs-secondary-color);
     font-size: 0.8rem;
+    line-height: 1.35;
+}
+.composer-hint strong {
+    display: block;
+    margin-bottom: 0.2rem;
+    color: var(--bs-body-color);
 }
 
 .empty-state {
@@ -207,9 +354,12 @@
     display: flex;
     flex-direction: column;
     gap: 0.6rem;
-    padding: 0.75rem;
-    border-left: 1px solid var(--bs-border-color);
+    padding: 0.85rem;
     font-size: 0.8rem;
+    border: 1px solid var(--bs-border-color);
+    border-radius: 18px;
+    background: var(--bs-body-bg);
+    box-shadow: 0 14px 36px rgba(15, 23, 42, 0.04);
 }
 .agent-context h3 {
     margin: 0 0 0.25rem 0;
@@ -262,23 +412,38 @@
     .agent-layout {
         height: calc(100vh - 160px);
     }
+    .chat-header {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+    .chat-header-badges {
+        justify-content: flex-start;
+    }
+    .chat-status-panel {
+        padding: 0.9rem;
+        border-radius: 16px;
+    }
+    .chat-stage {
+        border-radius: 18px;
+    }
     .chat-input-area {
         flex-wrap: wrap;
+        align-items: stretch;
     }
     .chat-input-area textarea {
         width: 100%;
         flex: 1 1 100%;
-        min-height: 44px;
+        min-height: 72px;
     }
-    .chat-input-area .model-select {
-        flex: 1;
-        min-width: 0;
+    .composer-actions {
+        width: 100%;
     }
-    .chat-send-btn {
-        min-height: 0;
-        padding-top: 0.375rem;
-        padding-bottom: 0.375rem;
-        font-size: 0.875rem;
+    .chat-composer-meta {
+        align-items: flex-start;
+    }
+    .composer-subtle {
+        width: 100%;
+        text-align: left;
     }
 }
 </style>
@@ -363,63 +528,95 @@
     <!-- Main chat area -->
     <div class="agent-chat">
         {% if active_thread %}
-        <div class="chat-header">
-            {{ active_thread.title }}
-            {% if agent_status and agent_status.selected_backend %}
-            <span class="badge text-bg-secondary ms-2">{{ agent_status.selected_backend }}</span>
-            {% endif %}
-            {% if agent_status and agent_status.using_override %}
-            <span class="badge text-bg-warning ms-2">dev override</span>
-            {% endif %}
-        </div>
-
-        {% if agent_status %}
-        <div class="mb-2 small text-muted">
-            Claude: {{ "on" if agent_status.claude_available else "off" }} |
-            deepagents: {{ "on" if agent_status.deepagents_available else "off" }}
-            {% if agent_status.selected_backend == "deepagents" and agent_status.fallback_model %}
-            | model: <code>{{ agent_status.fallback_model }}</code>
-            {% endif %}
-        </div>
-        {% if agent_status.error %}
-        <div class="alert alert-warning py-2">{{ agent_status.error }}</div>
-        {% endif %}
-        {% endif %}
-
-        <div class="chat-messages" id="chat-messages">
-            {% for msg in messages %}
-            {% if msg.role == 'assistant' %}
-            <div class="message-bubble message-{{ msg.role }}" data-md>{{ msg.content }}</div>
-            {% else %}
-            <div class="message-bubble message-{{ msg.role }}">{{ msg.content }}</div>
-            {% endif %}
-            {% else %}
-            <div class="empty-state">
-                <span style="font-size:2rem">&#129302;</span>
-                <p>Напишите первое сообщение</p>
+        <div class="chat-status-panel">
+            <div class="chat-header">
+                <div class="chat-header-title">{{ active_thread.title }}</div>
+                <div class="chat-header-badges">
+                    {% if agent_status and agent_status.selected_backend %}
+                    <span class="badge text-bg-secondary">{{ agent_status.selected_backend }}</span>
+                    {% endif %}
+                    {% if agent_status and agent_status.using_override %}
+                    <span class="badge text-bg-warning">dev override</span>
+                    {% endif %}
+                </div>
             </div>
-            {% endfor %}
+
+            {% if agent_status %}
+            <div class="chat-runtime">
+                <span class="runtime-chip {{ 'runtime-chip-on' if agent_status.claude_available else 'runtime-chip-off' }}">
+                    Claude
+                    <strong>{{ "on" if agent_status.claude_available else "off" }}</strong>
+                </span>
+                <span class="runtime-chip {{ 'runtime-chip-on' if agent_status.deepagents_available else 'runtime-chip-off' }}">
+                    deepagents
+                    <strong>{{ "on" if agent_status.deepagents_available else "off" }}</strong>
+                </span>
+                {% if agent_status.selected_backend == "deepagents" and agent_status.fallback_model %}
+                <span class="runtime-chip runtime-chip-accent">
+                    provider
+                    <code>{{ agent_status.fallback_provider or "unknown" }}</code>
+                </span>
+                <span class="runtime-chip runtime-chip-accent">
+                    model
+                    <code>{{ agent_status.fallback_model }}</code>
+                </span>
+                {% endif %}
+            </div>
+            {% if agent_status.error %}
+            <div class="alert alert-warning py-2 mb-0">{{ agent_status.error }}</div>
+            {% endif %}
+            {% endif %}
         </div>
 
-        <div class="chat-input-area">
-            <textarea id="chat-input" class="form-control"
-                      placeholder="Введите сообщение… (Enter — отправить, Shift+Enter — перенос строки)"
-                      ></textarea>
-            {% if not agent_status or agent_status.selected_backend != "deepagents" %}
-            <select id="model-select" class="form-select model-select">
-                <option value="">Авто</option>
-                <option value="claude-sonnet-4-5">Sonnet 4.5</option>
-                <option value="claude-opus-4-6">Opus 4.6</option>
-                <option value="claude-haiku-4-5-20251001">Haiku 4.5</option>
-            </select>
-            {% else %}
-            <div class="form-text model-select">
-                deepagents использует модель из env/config:
-                <code>{{ agent_status.fallback_model or "AGENT_FALLBACK_MODEL" }}</code>
+        <div class="chat-stage">
+            <div class="chat-messages" id="chat-messages">
+                {% for msg in messages %}
+                {% if msg.role == 'assistant' %}
+                <div class="message-bubble message-{{ msg.role }}" data-md>{{ msg.content }}</div>
+                {% else %}
+                <div class="message-bubble message-{{ msg.role }}">{{ msg.content }}</div>
+                {% endif %}
+                {% else %}
+                <div class="empty-state">
+                    <span style="font-size:2rem">&#129302;</span>
+                    <p>Напишите первое сообщение</p>
+                </div>
+                {% endfor %}
             </div>
-            {% endif %}
-            <button class="btn btn-primary chat-send-btn" id="send-btn"
-                    onclick="sendMessage()">Отправить</button>
+
+            <div class="chat-composer">
+                <div class="chat-composer-meta">
+                    <span class="composer-caption">Сообщение отправится в текущий тред.</span>
+                    {% if agent_status and agent_status.selected_backend == "deepagents" %}
+                    <span class="composer-subtle">Runtime управляется настройками deepagents.</span>
+                    {% else %}
+                    <span class="composer-subtle">Модель Claude можно переключить прямо здесь.</span>
+                    {% endif %}
+                </div>
+                <div class="chat-input-area">
+                    <textarea id="chat-input" class="form-control"
+                              placeholder="Введите сообщение… (Enter — отправить, Shift+Enter — перенос строки)"
+                              ></textarea>
+                    <div class="composer-actions">
+                        {% if not agent_status or agent_status.selected_backend != "deepagents" %}
+                        <div class="composer-caption">Модель Claude</div>
+                        <select id="model-select" class="form-select model-select">
+                            <option value="">Авто</option>
+                            <option value="claude-sonnet-4-5">Sonnet 4.5</option>
+                            <option value="claude-opus-4-6">Opus 4.6</option>
+                            <option value="claude-haiku-4-5-20251001">Haiku 4.5</option>
+                        </select>
+                        {% else %}
+                        <div class="composer-hint">
+                            <strong>Deepagents runtime</strong>
+                            Модель и provider берутся из сохраненных настроек и показываются в статусе выше.
+                        </div>
+                        {% endif %}
+                        <button class="btn btn-primary chat-send-btn" id="send-btn"
+                                onclick="sendMessage()">Отправить</button>
+                    </div>
+                </div>
+            </div>
         </div>
         {% endif %}
     </div>
@@ -542,14 +739,34 @@
         document.getElementById('chat-input').focus();
     };
 
-    window.sendMessage = async function() {
+    function addRegenerateButton(bubble, text, removeUserBubble) {
+        var btn = document.createElement('button');
+        btn.className = 'retry-btn';
+        btn.innerHTML = '&#128260;'; // 🔄
+        btn.title = 'Повторить';
+        btn.onclick = function() {
+            if (removeUserBubble) {
+                var prev = bubble.previousElementSibling;
+                if (prev && prev.classList.contains('message-user') && prev.textContent === text) {
+                    prev.remove();
+                }
+            }
+            bubble.remove();
+            sendMessage(text);
+        };
+        bubble.appendChild(btn);
+    }
+
+    window.sendMessage = async function(textToRetry) {
         if (sending || !threadId) return;
         var inputEl = document.getElementById('chat-input');
-        var text = (inputEl.value || '').trim();
+        var text = textToRetry || (inputEl.value || '').trim();
         if (!text) return;
 
         sending = true;
-        inputEl.value = '';
+        if (!textToRetry) {
+            inputEl.value = '';
+        }
         setStopMode(true);
 
         abortController = new AbortController();
@@ -609,6 +826,7 @@
                             aiBubble.className = 'message-error';
                             aiBubble.textContent = data.error;
                             fullText = data.error;
+                            addRegenerateButton(aiBubble, text, true);
                         } else if (data.text !== undefined) {
                             fullText += data.text;
                             aiBubble.innerHTML = renderMd(fullText);
