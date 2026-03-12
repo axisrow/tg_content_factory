@@ -13,6 +13,11 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - name: Create GitHub release if missing
         env:
           GH_REPO: ${{ github.repository }}
@@ -27,4 +32,17 @@ jobs:
             exit 0
           fi
 
-          gh release create "$TAG" --repo "$GH_REPO" --generate-notes --verify-tag
+          TITLE_FILE="$RUNNER_TEMP/release-title.txt"
+          NOTES_FILE="$RUNNER_TEMP/release-notes.md"
+
+          python3 .github/scripts/render_release.py \
+            --repo "$GH_REPO" \
+            --tag "$TAG" \
+            --title-file "$TITLE_FILE" \
+            --notes-file "$NOTES_FILE"
+
+          gh release create "$TAG" \
+            --repo "$GH_REPO" \
+            --title "$(cat "$TITLE_FILE")" \
+            --notes-file "$NOTES_FILE" \
+            --verify-tag
