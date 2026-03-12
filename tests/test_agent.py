@@ -7,10 +7,10 @@ from unittest.mock import MagicMock, patch
 import pytest
 from langchain_core.tools import StructuredTool
 
-from src.config import AppConfig
 from src.agent.context import format_context
 from src.agent.manager import AgentManager
 from src.agent.tools import make_mcp_server
+from src.config import AppConfig
 from src.models import Message
 
 
