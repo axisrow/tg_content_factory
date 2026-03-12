@@ -191,6 +191,7 @@ async def start_container(container: AppContainer) -> None:
         await container.stats_dispatcher.start()
     container.ai_search.initialize()
     if container.agent_manager is not None:
+        await container.agent_manager.refresh_settings_cache(preflight=True)
         container.agent_manager.initialize()
 
 

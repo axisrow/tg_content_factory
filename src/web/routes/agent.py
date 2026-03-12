@@ -40,6 +40,7 @@ async def agent_page(request: Request, thread_id: int | None = None):
             "backend_override": runtime_status.backend_override,
             "selected_backend": runtime_status.selected_backend,
             "fallback_model": runtime_status.fallback_model,
+            "fallback_provider": runtime_status.fallback_provider,
             "using_override": runtime_status.using_override,
             "error": runtime_status.error,
         }
@@ -204,6 +205,11 @@ async def chat(request: Request, thread_id: int):
     agent_manager = deps.get_agent_manager(request)
     if agent_manager is None:
         raise HTTPException(status_code=503, detail="AgentManager not initialized")
+    runtime_status = await agent_manager.get_runtime_status()
+    if runtime_status.selected_backend is None:
+        raise HTTPException(status_code=503, detail=runtime_status.error or "Agent backend unavailable")
+    if runtime_status.using_override and runtime_status.error:
+        raise HTTPException(status_code=503, detail=runtime_status.error)
 
     # Verify thread exists
     thread = await db.get_agent_thread(thread_id)

@@ -5,6 +5,7 @@ import logging
 import os
 import tomllib
 
+from fastapi import Request
 from fastapi.templating import Jinja2Templates
 
 from src.config import AppConfig
@@ -53,10 +54,17 @@ def _agent_available(config: AppConfig | None = None) -> bool:
     return claude_available or bool(fallback_model)
 
 
+def _agent_available_for_request(request: Request) -> bool:
+    manager = getattr(request.app.state, "agent_manager", None)
+    if manager is not None:
+        return bool(manager.available)
+    return _agent_available(getattr(request.app.state, "config", None))
+
+
 def configure_template_globals(
     templates: Jinja2Templates,
     config: AppConfig | None = None,
 ) -> Jinja2Templates:
-    templates.env.globals["agent_available"] = _agent_available(config)
+    templates.env.globals["agent_available"] = _agent_available_for_request
     templates.env.globals["app_version"] = get_app_version()
     return templates

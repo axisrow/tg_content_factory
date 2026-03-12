@@ -1,0 +1,210 @@
+{
+  "generated_at": "2026-03-11T20:52:02.016932+00:00",
+  "generated_by": "tg-user-search 0.1.8",
+  "providers": [
+    {
+      "provider": "ollama",
+      "endpoint_fingerprint": "ollama://cloud",
+      "models": [
+        {
+          "model": "cogito-2.1:671b",
+          "status": "supported",
+          "reason": "",
+          "tested_at": "2026-03-11T20:48:18.351852+00:00"
+        },
+        {
+          "model": "deepseek-v3.1:671b",
+          "status": "supported",
+          "reason": "",
+          "tested_at": "2026-03-11T20:48:21.735908+00:00"
+        },
+        {
+          "model": "deepseek-v3.2",
+          "status": "unsupported",
+          "reason": "Compatibility probe finished without a required get_channels tool call.",
+          "tested_at": "2026-03-11T20:48:24.528775+00:00"
+        },
+        {
+          "model": "devstral-2:123b",
+          "status": "supported",
+          "reason": "",
+          "tested_at": "2026-03-11T20:48:27.268256+00:00"
+        },
+        {
+          "model": "devstral-small-2:24b",
+          "status": "supported",
+          "reason": "",
+          "tested_at": "2026-03-11T20:48:31.120819+00:00"
+        },
+        {
+          "model": "gemini-3-flash-preview",
+          "status": "unsupported",
+          "reason": "Function call is missing a thought_signature in functionCall parts. (status code: 400)",
+          "tested_at": "2026-03-11T20:48:34.339743+00:00"
+        },
+        {
+          "model": "gemma3:12b",
+          "status": "unsupported",
+          "reason": "Compatibility probe finished without a required get_channels tool call.",
+          "tested_at": "2026-03-11T20:48:37.875734+00:00"
+        },
+        {
+          "model": "gemma3:27b",
+          "status": "unsupported",
+          "reason": "Compatibility probe finished without a required get_channels tool call.",
+          "tested_at": "2026-03-11T20:48:40.572238+00:00"
+        },
+        {
+          "model": "gemma3:4b",
+          "status": "unsupported",
+          "reason": "Compatibility probe finished without a required get_channels tool call.",
+          "tested_at": "2026-03-11T20:48:44.872083+00:00"
+        },
+        {
+          "model": "glm-4.6",
+          "status": "supported",
+          "reason": "",
+          "tested_at": "2026-03-11T20:48:49.399780+00:00"
+        },
+        {
+          "model": "glm-4.7",
+          "status": "supported",
+          "reason": "",
+          "tested_at": "2026-03-11T20:48:56.094604+00:00"
+        },
+        {
+          "model": "glm-5",
+          "status": "supported",
+          "reason": "",
+          "tested_at": "2026-03-11T20:49:13.547341+00:00"
+        },
+        {
+          "model": "gpt-oss:120b",
+          "status": "supported",
+          "reason": "",
+          "tested_at": "2026-03-11T20:49:21.899542+00:00"
+        },
+        {
+          "model": "gpt-oss:20b",
+          "status": "supported",
+          "reason": "",
+          "tested_at": "2026-03-11T20:49:26.681653+00:00"
+        },
+        {
+          "model": "kimi-k2-thinking",
+          "status": "supported",
+          "reason": "",
+          "tested_at": "2026-03-11T20:49:30.868298+00:00"
+        },
+        {
+          "model": "kimi-k2.5",
+          "status": "supported",
+          "reason": "",
+          "tested_at": "2026-03-11T20:49:36.821115+00:00"
+        },
+        {
+          "model": "kimi-k2:1t",
+          "status": "supported",
+          "reason": "",
+          "tested_at": "2026-03-11T20:49:41.905646+00:00"
+        },
+        {
+          "model": "minimax-m2",
+          "status": "supported",
+          "reason": "",
+          "tested_at": "2026-03-11T20:49:47.162224+00:00"
+        },
+        {
+          "model": "minimax-m2.1",
+          "status": "supported",
+          "reason": "",
+          "tested_at": "2026-03-11T20:49:58.954845+00:00"
+        },
+        {
+          "model": "minimax-m2.5",
+          "status": "supported",
+          "reason": "",
+          "tested_at": "2026-03-11T20:50:03.508319+00:00"
+        },
+        {
+          "model": "ministral-3:14b",
+          "status": "supported",
+          "reason": "",
+          "tested_at": "2026-03-11T20:50:09.605264+00:00"
+        },
+        {
+          "model": "ministral-3:3b",
+          "status": "supported",
+          "reason": "",
+          "tested_at": "2026-03-11T20:50:12.796561+00:00"
+        },
+        {
+          "model": "ministral-3:8b",
+          "status": "supported",
+          "reason": "",
+          "tested_at": "2026-03-11T20:50:18.616212+00:00"
+        },
+        {
+          "model": "mistral-large-3:675b",
+          "status": "supported",
+          "reason": "",
+          "tested_at": "2026-03-11T20:50:22.908759+00:00"
+        },
+        {
+          "model": "nemotron-3-nano:30b",
+          "status": "supported",
+          "reason": "",
+          "tested_at": "2026-03-11T20:50:28.173968+00:00"
+        },
+        {
+          "model": "nemotron-3-super",
+          "status": "supported",
+          "reason": "",
+          "tested_at": "2026-03-11T20:50:30.769395+00:00"
+        },
+        {
+          "model": "qwen3-coder-next",
+          "status": "supported",
+          "reason": "",
+          "tested_at": "2026-03-11T20:50:48.705854+00:00"
+        },
+        {
+          "model": "qwen3-coder:480b",
+          "status": "supported",
+          "reason": "",
+          "tested_at": "2026-03-11T20:50:53.648839+00:00"
+        },
+        {
+          "model": "qwen3-next:80b",
+          "status": "unknown",
+          "reason": "Service Temporarily Unavailable (status code: 503)",
+          "tested_at": "2026-03-11T20:51:02.806909+00:00"
+        },
+        {
+          "model": "qwen3-vl:235b",
+          "status": "unknown",
+          "reason": "Compatibility probe timed out before the tool loop completed.",
+          "tested_at": "2026-03-11T20:51:03.663022+00:00"
+        },
+        {
+          "model": "qwen3-vl:235b-instruct",
+          "status": "supported",
+          "reason": "",
+          "tested_at": "2026-03-11T20:51:48.668298+00:00"
+        },
+        {
+          "model": "qwen3.5:397b",
+          "status": "supported",
+          "reason": "",
+          "tested_at": "2026-03-11T20:51:53.779140+00:00"
+        },
+        {
+          "model": "rnj-1:8b",
+          "status": "unsupported",
+          "reason": "Internal Server Error (status code: -1)",
+          "tested_at": "2026-03-11T20:51:58.820972+00:00"
+        }
+      ]
+    }
+  ]
+}
