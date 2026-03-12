@@ -27,7 +27,7 @@ from src.telegram.collector import Collector
 from src.web.app import create_app
 from src.web.routes.channel_collection import _COLLECT_ALL_BTN, _COLLECT_ALL_FORM
 from src.web.session import COOKIE_NAME, create_session_token
-from src.web.template_globals import PYPROJECT_PATH, get_app_version
+from src.web.template_globals import PYPROJECT_PATH, _agent_available_for_request, get_app_version
 
 
 @pytest.fixture
@@ -154,6 +154,23 @@ def test_templates_have_actual_app_version():
     )["project"]["version"]
     assert app.state.templates.env.globals["app_version"] == expected_version
     assert get_app_version() == expected_version
+
+
+def test_agent_available_uses_container_manager(monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
+    monkeypatch.delenv("AGENT_FALLBACK_MODEL", raising=False)
+
+    request = SimpleNamespace(
+        app=SimpleNamespace(
+            state=SimpleNamespace(
+                config=AppConfig(),
+                container=SimpleNamespace(agent_manager=SimpleNamespace(available=True)),
+            )
+        )
+    )
+
+    assert _agent_available_for_request(request) is True
 
 
 @pytest.mark.asyncio
@@ -567,8 +584,9 @@ async def test_settings_page_refresh_provider_posts_unsaved_form_data(client):
 
     assert resp.status_code == 200
     assert "body: buildProviderFormData(provider)" in resp.text
+    assert "body: buildAllProviderFormData()" in resp.text
     assert "applyRefreshedProviderState(provider, payload);" in resp.text
-    assert resp.text.count("window.location.reload()") == 1
+    assert "window.location.reload()" not in resp.text
 
 
 @pytest.mark.asyncio
@@ -621,6 +639,57 @@ async def test_settings_refresh_all_agent_provider_models_requires_dev_mode(clie
     assert resp.status_code == 403
     assert resp.json()["ok"] is False
     assert resp.json()["error"] == "Developer mode is required."
+
+
+@pytest.mark.asyncio
+async def test_settings_refresh_all_agent_provider_models_uses_unsaved_form_values(client, monkeypatch):
+    db = client._transport.app.state.db
+    await db.set_setting("agent_dev_mode_enabled", "1")
+    service = AgentProviderService(db, client._transport.app.state.config)
+    await service.save_provider_configs(
+        [
+            ProviderRuntimeConfig(
+                provider="openai",
+                enabled=True,
+                priority=0,
+                selected_model="gpt-4.1-mini",
+                plain_fields={"base_url": "https://saved.example/v1"},
+                secret_fields={"api_key": "saved-openai-key"},
+            )
+        ]
+    )
+
+    seen_cfg = None
+
+    async def _fake_refresh(self, provider_name, cfg=None):
+        nonlocal seen_cfg
+        assert provider_name == "openai"
+        seen_cfg = cfg
+        return ProviderModelCacheEntry(
+            provider=provider_name,
+            models=["gpt-4.1-mini"],
+            source="live",
+            fetched_at="2026-03-12T00:00:00+00:00",
+        )
+
+    monkeypatch.setattr(AgentProviderService, "refresh_models_for_provider", _fake_refresh)
+
+    resp = await client.post(
+        "/settings/agent-providers/refresh-all",
+        data={
+            "provider_present__openai": "1",
+            "provider_priority__openai": "0",
+            "provider_enabled__openai": "1",
+            "provider_model__openai": "gpt-4.1-mini",
+            "provider_field__openai__base_url": "https://unsaved.example/v1",
+            "provider_secret__openai__api_key": "unsaved-openai-key",
+        },
+    )
+
+    assert resp.status_code == 200
+    assert seen_cfg is not None
+    assert seen_cfg.plain_fields["base_url"] == "https://unsaved.example/v1"
+    assert seen_cfg.secret_fields["api_key"] == "unsaved-openai-key"
 
 
 @pytest.mark.asyncio
@@ -754,6 +823,55 @@ async def test_settings_bulk_test_requires_dev_mode(client):
 
 
 @pytest.mark.asyncio
+async def test_settings_bulk_test_uses_unsaved_form_values(client, monkeypatch):
+    db = client._transport.app.state.db
+    await db.set_setting("agent_dev_mode_enabled", "1")
+    service = AgentProviderService(db, client._transport.app.state.config)
+    await service.save_provider_configs(
+        [
+            ProviderRuntimeConfig(
+                provider="openai",
+                enabled=True,
+                priority=0,
+                selected_model="gpt-4.1-mini",
+                plain_fields={"base_url": "https://saved.example/v1"},
+                secret_fields={"api_key": "saved-openai-key"},
+            )
+        ]
+    )
+    from src.web.routes import settings as settings_routes
+
+    captured_configs: list[ProviderRuntimeConfig] = []
+    started = asyncio.Event()
+
+    async def _fake_run_bulk_test_job(request, configs=None):
+        del request
+        if configs is not None:
+            captured_configs.extend(configs)
+        started.set()
+
+    monkeypatch.setattr(settings_routes, "_run_bulk_test_job", _fake_run_bulk_test_job)
+
+    resp = await client.post(
+        "/settings/agent-providers/test-all",
+        data={
+            "provider_present__openai": "1",
+            "provider_priority__openai": "0",
+            "provider_enabled__openai": "1",
+            "provider_model__openai": "gpt-4.1-mini",
+            "provider_field__openai__base_url": "https://unsaved.example/v1",
+            "provider_secret__openai__api_key": "unsaved-openai-key",
+        },
+    )
+
+    assert resp.status_code == 200
+    await asyncio.wait_for(started.wait(), timeout=1)
+    assert captured_configs
+    assert captured_configs[0].plain_fields["base_url"] == "https://unsaved.example/v1"
+    assert captured_configs[0].secret_fields["api_key"] == "unsaved-openai-key"
+
+
+@pytest.mark.asyncio
 async def test_settings_bulk_test_refreshes_each_provider_once(client, monkeypatch, tmp_path):
     db = client._transport.app.state.db
     await db.set_setting("agent_dev_mode_enabled", "1")
@@ -842,7 +960,8 @@ async def test_settings_bulk_test_exports_catalog(client, monkeypatch, tmp_path)
 
     export_path = tmp_path / "compat_catalog.json"
 
-    async def _fake_run_bulk_test_job(request):
+    async def _fake_run_bulk_test_job(request, configs=None):
+        del configs
         status = settings_routes._bulk_test_status_payload(request)
         status.update(
             {

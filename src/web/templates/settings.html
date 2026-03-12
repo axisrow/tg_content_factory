@@ -672,13 +672,11 @@ function startBulkTestPolling() {
     bulkTestPollTimer = setInterval(pollBulkTestStatus, 1500);
 }
 
-function buildProviderFormData(provider) {
-    const card = document.querySelector('[data-provider-card="' + provider + '"]');
-    const data = new FormData();
-    if (!card) {
+function appendProviderFields(data, root) {
+    if (!root) {
         return data;
     }
-    card.querySelectorAll('input, select, textarea').forEach((field) => {
+    root.querySelectorAll('input, select, textarea').forEach((field) => {
         if (!field.name || field.disabled) {
             return;
         }
@@ -686,6 +684,19 @@ function buildProviderFormData(provider) {
             return;
         }
         data.append(field.name, field.value);
+    });
+    return data;
+}
+
+function buildProviderFormData(provider) {
+    const card = document.querySelector('[data-provider-card="' + provider + '"]');
+    return appendProviderFields(new FormData(), card);
+}
+
+function buildAllProviderFormData() {
+    const data = new FormData();
+    document.querySelectorAll('[data-provider-card]').forEach((card) => {
+        appendProviderFields(data, card);
     });
     return data;
 }
@@ -742,14 +753,19 @@ async function refreshAllAgentProviders() {
     setAsyncButtonBusy(button, true, 'Обновляю...');
     setAgentProviderActionsStatus('secondary', 'Обновляю списки моделей у всех провайдеров...');
     try {
-        const resp = await fetch('/settings/agent-providers/refresh-all', {method: 'POST'});
+        const resp = await fetch('/settings/agent-providers/refresh-all', {
+            method: 'POST',
+            body: buildAllProviderFormData(),
+        });
         const payload = await resp.json().catch(() => ({}));
         if (!resp.ok || payload.ok === false) {
             setAgentProviderActionsStatus('danger', payload.error || 'Не удалось обновить списки моделей');
             return;
         }
-        setAgentProviderActionsStatus('success', 'Списки моделей обновлены. Перезагружаю страницу...');
-        window.location.reload();
+        Object.entries(payload.providers || {}).forEach(([provider, providerPayload]) => {
+            applyRefreshedProviderState(provider, providerPayload);
+        });
+        setAgentProviderActionsStatus('success', 'Списки моделей обновлены без сброса введённых полей.');
     } catch (err) {
         setAgentProviderActionsStatus('danger', 'Ошибка обновления списков моделей: ' + err.message);
     } finally {
@@ -765,7 +781,10 @@ async function bulkTestAgentProviders() {
         'Запущен массовый compat-probe по всем моделям. Это может занять заметное время, особенно для cloud API.'
     );
     try {
-        const resp = await fetch('/settings/agent-providers/test-all', {method: 'POST'});
+        const resp = await fetch('/settings/agent-providers/test-all', {
+            method: 'POST',
+            body: buildAllProviderFormData(),
+        });
         const payload = await resp.json().catch(() => ({}));
         if (!resp.ok || !payload.ok) {
             setAgentProviderActionsStatus('danger', payload.error || 'Не удалось протестировать модели');

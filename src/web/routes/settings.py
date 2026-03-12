@@ -108,10 +108,25 @@ def _bulk_test_recent_event(status: dict[str, object], message: str) -> None:
     status["recent_events"] = events[-12:]
 
 
-async def _run_bulk_test_job(request: Request) -> None:
+async def _provider_configs_from_bulk_form(
+    request: Request,
+    service: AgentProviderService,
+) -> list[ProviderRuntimeConfig]:
+    form = await request.form()
+    existing = await service.load_provider_configs()
+    if any(str(key).startswith("provider_present__") for key in form.keys()):
+        return service.parse_provider_form(form, existing)
+    return existing
+
+
+async def _run_bulk_test_job(
+    request: Request,
+    configs: list[ProviderRuntimeConfig] | None = None,
+) -> None:
     service = _agent_provider_service(request)
     manager, is_persistent_manager = _settings_agent_manager(request)
-    configs = await service.load_provider_configs()
+    if configs is None:
+        configs = await service.load_provider_configs()
     status = {
         "running": True,
         "started_at": datetime.now(UTC).isoformat(),
@@ -541,9 +556,9 @@ async def refresh_all_agent_provider_models(request: Request):
     dev_mode_required = await _require_agent_dev_mode(request, json_mode=True)
     if dev_mode_required is not None:
         return dev_mode_required
-    configs = await service.load_provider_configs()
+    configs = await _provider_configs_from_bulk_form(request, service)
     config_map = {cfg.provider: cfg for cfg in configs}
-    results = await service.refresh_all_models()
+    results = await service.refresh_all_models(configs)
     return JSONResponse(
         {
             "ok": True,
@@ -640,6 +655,7 @@ async def test_all_agent_provider_models(request: Request):
         return JSONResponse({"ok": False, "error": "SESSION_ENCRYPTION_KEY is required."}, status_code=409)
     if not await _dev_mode_enabled(request):
         return JSONResponse({"ok": False, "error": "Developer mode is required."}, status_code=403)
+    configs = await _provider_configs_from_bulk_form(request, service)
     async with _bulk_test_lock(request):
         status = _bulk_test_status_payload(request)
         if status.get("running"):
@@ -667,7 +683,7 @@ async def test_all_agent_provider_models(request: Request):
         }
         _replace_bulk_test_status(request, initial_status)
         request.app.state.agent_provider_bulk_test_task = asyncio.create_task(
-            _run_bulk_test_job(request)
+            _run_bulk_test_job(request, configs=configs)
         )
     return JSONResponse({"ok": True, "started": True, **_bulk_test_status_payload(request)})
 

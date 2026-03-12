@@ -30,6 +30,7 @@ def configure_app(app: FastAPI, container: AppContainer | None) -> None:
         app.state.search_engine = container.search_engine
         app.state.ai_search = container.ai_search
         app.state.scheduler = container.scheduler
+        app.state.agent_manager = container.agent_manager
         app.state.photo_loader_bundle = container.photo_loader_bundle
         app.state.photo_publish_service = container.photo_publish_service
         app.state.photo_task_service = container.photo_task_service
