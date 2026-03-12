@@ -468,20 +468,31 @@ class DeepagentsBackend:
         if all(self._is_legacy_candidate(cfg) for cfg in candidates):
             errors: list[str] = []
             for cfg in candidates:
-                validation_error = self._legacy_validation_error(cfg) if self._is_legacy_candidate(cfg) else self._validation_error(cfg)
+                validation_error = (
+                    self._legacy_validation_error(cfg)
+                    if self._is_legacy_candidate(cfg)
+                    else self._validation_error(cfg)
+                )
                 if validation_error:
                     errors.append(f"{cfg.provider}: {validation_error}")
                     continue
                 self._preflight_available = True
                 self._init_error = None
                 logger.info(
-                    "Deepagents backend preflight: legacy fallback configured for provider %s and model %s",
+                    (
+                        "Deepagents backend preflight: legacy fallback configured "
+                        "for provider %s and model %s"
+                    ),
                     cfg.provider,
                     cfg.selected_model,
                 )
                 return
             self._preflight_available = False
-            self._init_error = "; ".join(errors) if errors else "Deepagents providers are not configured."
+            self._init_error = (
+                "; ".join(errors)
+                if errors
+                else "Deepagents providers are not configured."
+            )
             raise RuntimeError(self._init_error)
 
         errors: list[str] = []
