@@ -39,8 +39,9 @@ def _file_requires_aiosqlite_serial(path_str: str) -> bool:
 
 def pytest_collection_modifyitems(items) -> None:
     for item in items:
-        if _AIOSQLITE_SERIAL_FIXTURES.intersection(item.fixturenames):
+        needs_serial = _AIOSQLITE_SERIAL_FIXTURES.intersection(
+            item.fixturenames
+        ) or _file_requires_aiosqlite_serial(str(item.path))
+        if needs_serial:
             item.add_marker(pytest.mark.aiosqlite_serial)
-            continue
-        if _file_requires_aiosqlite_serial(str(item.path)):
-            item.add_marker(pytest.mark.aiosqlite_serial)
+            item.add_marker(pytest.mark.xdist_group(name="aiosqlite_serial"))
