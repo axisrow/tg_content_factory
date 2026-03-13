@@ -7,6 +7,7 @@ from datetime import datetime
 from telethon.errors import FloodWaitError
 
 from src.models import PhotoSendMode
+from src.telegram.backends import adapt_transport_session
 from src.telegram.client_pool import ClientPool
 
 logger = logging.getLogger(__name__)
@@ -30,20 +31,21 @@ class PhotoPublishService:
         result = await self._pool.get_client_by_phone(phone)
         if result is None:
             raise RuntimeError("no_client")
-        client, acquired_phone = result
+        session, acquired_phone = result
+        session = adapt_transport_session(session, disconnect_on_close=False)
         try:
             entity = target_dialog_id
             resolver = getattr(self._pool, "resolve_dialog_entity", None)
             if callable(resolver):
                 resolved = resolver(
-                    client,
+                    session,
                     acquired_phone,
                     target_dialog_id,
                     target_type,
                 )
                 entity = await resolved if inspect.isawaitable(resolved) else resolved
             if send_mode == PhotoSendMode.ALBUM and len(file_paths) > 1:
-                sent = await client.send_file(
+                sent = await session.publish_files(
                     entity,
                     file_paths,
                     caption=caption,
@@ -53,7 +55,7 @@ class PhotoPublishService:
 
             message_ids: list[int] = []
             for path in file_paths:
-                sent = await client.send_file(
+                sent = await session.publish_files(
                     entity,
                     path,
                     caption=caption,

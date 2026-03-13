@@ -1,22 +1,21 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.models import Account, NotificationBot
+from src.models import NotificationBot
 from src.services.notification_service import NotificationService
 from src.services.notification_target_service import NotificationTargetService
 from src.telegram import botfather
 from src.telegram.notifier import Notifier
+from tests.helpers import FakeCliTelethonClient
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
+pytestmark = pytest.mark.native_backend_allowed
 
 
 def _make_message(button_rows: list[list[str]], text: str = "") -> MagicMock:
-    """Build a Message-like mock with an inline keyboard."""
     msg = MagicMock()
     msg.text = text
     msg.reply_markup = MagicMock()
@@ -36,52 +35,44 @@ def _make_message(button_rows: list[list[str]], text: str = "") -> MagicMock:
     return msg
 
 
-def _make_pool(
-    me_id: int = 111,
-    me_username: str = "alice",
-    phone: str = "+70001111111",
-) -> tuple:
-    """Return (mock_pool, mock_client) with get_me pre-configured."""
-    me = MagicMock()
-    me.id = me_id
-    me.username = me_username
-
-    entity = MagicMock()
-    entity.id = 987654321
-
-    mock_client = AsyncMock()
-    mock_client.get_me = AsyncMock(return_value=me)
-    mock_client.send_message = AsyncMock()
-    mock_client.get_entity = AsyncMock(return_value=entity)
-
-    pool = AsyncMock()
-    pool.clients = {phone: mock_client}
-    pool.get_available_client = AsyncMock(return_value=(mock_client, phone))
-    pool.get_client_by_phone = AsyncMock(return_value=(mock_client, phone))
-    pool.release_client = AsyncMock()
-    return pool, mock_client
+_VALID_TOKEN = "123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi"
 
 
-async def _add_account(
-    db,
-    phone: str = "+70001111111",
+def _make_conv(*get_response_values, get_edit_value=None) -> AsyncMock:
+    mock_conv = AsyncMock()
+    mock_conv.__aenter__ = AsyncMock(return_value=mock_conv)
+    mock_conv.__aexit__ = AsyncMock(return_value=None)
+    mock_conv.get_response = AsyncMock(side_effect=list(get_response_values))
+    if get_edit_value is not None:
+        mock_conv.get_edit = AsyncMock(return_value=get_edit_value)
+    return mock_conv
+
+
+async def _connect_notification_account(
+    harness,
     *,
-    is_primary: bool = True,
-    is_active: bool = True,
-) -> None:
-    await db.add_account(
-        Account(
-            phone=phone,
-            session_string=f"session-{phone}",
-            is_primary=is_primary,
-            is_active=is_active,
-        )
+    phone: str,
+    session_string: str,
+    me_id: int,
+    me_username: str | None,
+    entity_id: int = 987654321,
+    is_primary: bool = False,
+):
+    harness.queue_cli_client(phone=phone, client=FakeCliTelethonClient())
+    native_client = harness.queue_native_client(
+        session_string=session_string,
+        client=FakeCliTelethonClient(
+            me=SimpleNamespace(id=me_id, username=me_username),
+            entity_resolver=lambda _peer: SimpleNamespace(id=entity_id),
+        ),
     )
-
-
-# ---------------------------------------------------------------------------
-# botfather._is_error
-# ---------------------------------------------------------------------------
+    await harness.add_account(
+        phone=phone,
+        session_string=session_string,
+        is_primary=is_primary,
+    )
+    await harness.initialize_connected_accounts()
+    return native_client
 
 
 def test_is_error_matches_sorry():
@@ -98,11 +89,6 @@ def test_is_error_matches_invalid():
 
 def test_is_error_ok():
     assert botfather._is_error("Done! Congratulations on your new bot.") is False
-
-
-# ---------------------------------------------------------------------------
-# botfather._click_inline
-# ---------------------------------------------------------------------------
 
 
 async def test_click_inline_finds_button():
@@ -129,24 +115,6 @@ async def test_click_inline_button_not_found():
     msg = _make_message([["Cancel", "Back"]])
     with pytest.raises(RuntimeError, match="not found"):
         await botfather._click_inline(msg, "delete")
-
-
-# ---------------------------------------------------------------------------
-# botfather.create_bot
-# ---------------------------------------------------------------------------
-
-_VALID_TOKEN = "123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi"
-
-
-def _make_conv(*get_response_values, get_edit_value=None) -> AsyncMock:
-    """Build an AsyncMock that works as an async context manager (conv = mock_conv)."""
-    mock_conv = AsyncMock()
-    mock_conv.__aenter__ = AsyncMock(return_value=mock_conv)
-    mock_conv.__aexit__ = AsyncMock(return_value=None)
-    mock_conv.get_response = AsyncMock(side_effect=list(get_response_values))
-    if get_edit_value is not None:
-        mock_conv.get_edit = AsyncMock(return_value=get_edit_value)
-    return mock_conv
 
 
 async def test_create_bot_success():
@@ -184,11 +152,6 @@ async def test_create_bot_no_token_in_response():
         await botfather.create_bot(mock_client, "MyBot", "mybot_bot")
 
 
-# ---------------------------------------------------------------------------
-# botfather.delete_bot
-# ---------------------------------------------------------------------------
-
-
 async def test_delete_bot_success():
     bot_msg = _make_message([["@mybot_bot"]])
     options_msg = _make_message([["Bot Info", "Delete Bot"]])
@@ -209,15 +172,18 @@ async def test_delete_bot_success():
     confirm_msg.click.assert_awaited_once()
 
 
-# ---------------------------------------------------------------------------
-# NotificationService.setup_bot
-# ---------------------------------------------------------------------------
-
-
-async def test_setup_bot_success(db):
-    pool, _ = _make_pool(me_id=111, me_username="alice")
-    await _add_account(db)
-    svc = NotificationService(db, NotificationTargetService(db, pool))
+@pytest.mark.asyncio
+async def test_setup_bot_success(db, real_pool_harness_factory):
+    harness = real_pool_harness_factory()
+    native_client = await _connect_notification_account(
+        harness,
+        phone="+70001111111",
+        session_string="session-1",
+        me_id=111,
+        me_username="alice",
+        is_primary=True,
+    )
+    svc = NotificationService(db, NotificationTargetService(db, harness.pool))
 
     with patch(
         "src.services.notification_service.botfather.create_bot",
@@ -229,19 +195,27 @@ async def test_setup_bot_success(db):
     assert bot.tg_user_id == 111
     assert bot.bot_username == "leadhunter_alice_bot"
     assert bot.bot_id == 987654321
-    pool.release_client.assert_awaited_once_with("+70001111111")
+    native_client.disconnect.assert_awaited_once()
 
     saved = await db.get_notification_bot(111)
     assert saved is not None
     assert saved.bot_username == "leadhunter_alice_bot"
 
 
-async def test_setup_bot_custom_prefix(db):
-    pool, mock_client = _make_pool(me_id=222, me_username="bob")
-    await _add_account(db)
+@pytest.mark.asyncio
+async def test_setup_bot_custom_prefix(db, real_pool_harness_factory):
+    harness = real_pool_harness_factory()
+    native_client = await _connect_notification_account(
+        harness,
+        phone="+70001111111",
+        session_string="session-1",
+        me_id=222,
+        me_username="bob",
+        is_primary=True,
+    )
     svc = NotificationService(
         db,
-        NotificationTargetService(db, pool),
+        NotificationTargetService(db, harness.pool),
         bot_name_prefix="Acme",
         bot_username_prefix="acme_",
     )
@@ -254,14 +228,22 @@ async def test_setup_bot_custom_prefix(db):
         bot = await svc.setup_bot()
 
     assert bot.bot_username == "acme_bob_bot"
-    mock_create.assert_awaited_once_with(mock_client, "Acme (bob)", "acme_bob_bot")
+    mock_create.assert_awaited_once_with(native_client, "Acme (bob)", "acme_bob_bot")
 
 
-async def test_setup_bot_slug_truncated(db):
+@pytest.mark.asyncio
+async def test_setup_bot_slug_truncated(db, real_pool_harness_factory):
     long_username = "averylongusernamethatexceeds17"
-    pool, _ = _make_pool(me_id=333, me_username=long_username)
-    await _add_account(db)
-    svc = NotificationService(db, NotificationTargetService(db, pool))
+    harness = real_pool_harness_factory()
+    await _connect_notification_account(
+        harness,
+        phone="+70001111111",
+        session_string="session-1",
+        me_id=333,
+        me_username=long_username,
+        is_primary=True,
+    )
+    svc = NotificationService(db, NotificationTargetService(db, harness.pool))
 
     with patch(
         "src.services.notification_service.botfather.create_bot",
@@ -275,33 +257,34 @@ async def test_setup_bot_slug_truncated(db):
     assert len(bot.bot_username) <= 32
 
 
-async def test_setup_bot_no_client(db):
-    pool = AsyncMock()
-    pool.clients = {}
-    pool.get_client_by_phone = AsyncMock(return_value=None)
-    svc = NotificationService(db, NotificationTargetService(db, pool))
+@pytest.mark.asyncio
+async def test_setup_bot_no_client(db, real_pool_harness_factory):
+    harness = real_pool_harness_factory()
+    svc = NotificationService(db, NotificationTargetService(db, harness.pool))
 
     with pytest.raises(RuntimeError, match="Primary-аккаунт"):
         await svc.setup_bot()
 
 
-async def test_setup_bot_bot_id_none_if_entity_fails(db):
-    me = MagicMock()
-    me.id = 444
-    me.username = "carol"
+@pytest.mark.asyncio
+async def test_setup_bot_bot_id_none_if_entity_fails(db, real_pool_harness_factory):
+    harness = real_pool_harness_factory()
+    harness.queue_cli_client(phone="+70001111111", client=FakeCliTelethonClient())
+    native_client = harness.queue_native_client(
+        session_string="session-1",
+        client=FakeCliTelethonClient(
+            me=SimpleNamespace(id=444, username="carol"),
+            entity_resolver=lambda _peer: Exception("peer not found"),
+        ),
+    )
+    await harness.add_account(
+        phone="+70001111111",
+        session_string="session-1",
+        is_primary=True,
+    )
+    await harness.initialize_connected_accounts()
 
-    mock_client = AsyncMock()
-    mock_client.get_me = AsyncMock(return_value=me)
-    mock_client.send_message = AsyncMock()
-    mock_client.get_entity = AsyncMock(side_effect=Exception("peer not found"))
-
-    pool = AsyncMock()
-    pool.clients = {"+70001111111": mock_client}
-    pool.get_client_by_phone = AsyncMock(return_value=(mock_client, "+70001111111"))
-    pool.release_client = AsyncMock()
-
-    await _add_account(db)
-    svc = NotificationService(db, NotificationTargetService(db, pool))
+    svc = NotificationService(db, NotificationTargetService(db, harness.pool))
     with patch(
         "src.services.notification_service.botfather.create_bot",
         new_callable=AsyncMock,
@@ -310,22 +293,27 @@ async def test_setup_bot_bot_id_none_if_entity_fails(db):
         bot = await svc.setup_bot()
 
     assert bot.bot_id is None
+    native_client.disconnect.assert_awaited_once()
 
 
-# ---------------------------------------------------------------------------
-# NotificationService.get_status
-# ---------------------------------------------------------------------------
-
-
-async def test_get_status_no_bot(db):
-    pool, _ = _make_pool(me_id=555)
-    await _add_account(db)
-    svc = NotificationService(db, NotificationTargetService(db, pool))
+@pytest.mark.asyncio
+async def test_get_status_no_bot(db, real_pool_harness_factory):
+    harness = real_pool_harness_factory()
+    await _connect_notification_account(
+        harness,
+        phone="+70001111111",
+        session_string="session-1",
+        me_id=555,
+        me_username="alice",
+        is_primary=True,
+    )
+    svc = NotificationService(db, NotificationTargetService(db, harness.pool))
     result = await svc.get_status()
     assert result is None
 
 
-async def test_get_status_returns_bot(db):
+@pytest.mark.asyncio
+async def test_get_status_returns_bot(db, real_pool_harness_factory):
     saved = NotificationBot(
         tg_user_id=666,
         tg_username="dave",
@@ -335,9 +323,16 @@ async def test_get_status_returns_bot(db):
     )
     await db.save_notification_bot(saved)
 
-    pool, _ = _make_pool(me_id=666, me_username="dave")
-    await _add_account(db)
-    svc = NotificationService(db, NotificationTargetService(db, pool))
+    harness = real_pool_harness_factory()
+    await _connect_notification_account(
+        harness,
+        phone="+70001111111",
+        session_string="session-1",
+        me_id=666,
+        me_username="dave",
+        is_primary=True,
+    )
+    svc = NotificationService(db, NotificationTargetService(db, harness.pool))
     result = await svc.get_status()
 
     assert result is not None
@@ -345,12 +340,8 @@ async def test_get_status_returns_bot(db):
     assert result.bot_username == "leadhunter_dave_bot"
 
 
-# ---------------------------------------------------------------------------
-# NotificationService.teardown_bot
-# ---------------------------------------------------------------------------
-
-
-async def test_teardown_bot_success(db):
+@pytest.mark.asyncio
+async def test_teardown_bot_success(db, real_pool_harness_factory):
     saved = NotificationBot(
         tg_user_id=777,
         tg_username="eve",
@@ -360,9 +351,16 @@ async def test_teardown_bot_success(db):
     )
     await db.save_notification_bot(saved)
 
-    pool, _ = _make_pool(me_id=777, me_username="eve")
-    await _add_account(db)
-    svc = NotificationService(db, NotificationTargetService(db, pool))
+    harness = real_pool_harness_factory()
+    native_client = await _connect_notification_account(
+        harness,
+        phone="+70001111111",
+        session_string="session-1",
+        me_id=777,
+        me_username="eve",
+        is_primary=True,
+    )
+    svc = NotificationService(db, NotificationTargetService(db, harness.pool))
 
     with patch(
         "src.services.notification_service.botfather.delete_bot",
@@ -371,86 +369,109 @@ async def test_teardown_bot_success(db):
         await svc.teardown_bot()
 
     assert await db.get_notification_bot(777) is None
-    pool.release_client.assert_awaited_once_with("+70001111111")
+    native_client.disconnect.assert_awaited_once()
 
 
-async def test_teardown_bot_no_bot_raises(db):
-    pool, _ = _make_pool(me_id=888)
-    await _add_account(db)
-    svc = NotificationService(db, NotificationTargetService(db, pool))
+@pytest.mark.asyncio
+async def test_teardown_bot_no_bot_raises(db, real_pool_harness_factory):
+    harness = real_pool_harness_factory()
+    native_client = await _connect_notification_account(
+        harness,
+        phone="+70001111111",
+        session_string="session-1",
+        me_id=888,
+        me_username="alice",
+        is_primary=True,
+    )
+    svc = NotificationService(db, NotificationTargetService(db, harness.pool))
 
     with pytest.raises(RuntimeError, match="No notification bot"):
         await svc.teardown_bot()
 
-    pool.release_client.assert_awaited_once_with("+70001111111")
+    native_client.disconnect.assert_awaited_once()
 
 
-async def test_notifier_uses_primary_account_by_default(db):
-    pool, mock_client = _make_pool()
-    await _add_account(db)
+@pytest.mark.asyncio
+async def test_notifier_uses_primary_account_by_default(db, real_pool_harness_factory):
+    harness = real_pool_harness_factory()
+    native_client = await _connect_notification_account(
+        harness,
+        phone="+70001111111",
+        session_string="session-1",
+        me_id=111,
+        me_username="alice",
+        is_primary=True,
+    )
 
-    notifier = Notifier(NotificationTargetService(db, pool), admin_chat_id=123456)
+    notifier = Notifier(NotificationTargetService(db, harness.pool), admin_chat_id=123456)
     sent = await notifier.notify("hello")
 
     assert sent is True
-    pool.get_client_by_phone.assert_awaited_once_with("+70001111111")
-    mock_client.send_message.assert_awaited_once_with(123456, "hello")
-    pool.release_client.assert_awaited_once_with("+70001111111")
+    native_client.send_message.assert_awaited_once_with(123456, "hello")
+    native_client.disconnect.assert_awaited_once()
 
 
-async def test_notifier_does_not_fallback_from_selected_account(db):
-    _, primary_client = _make_pool(phone="+70001111111")
-
-    pool = AsyncMock()
-    pool.clients = {"+70001111111": primary_client}
-    pool.get_client_by_phone = AsyncMock(return_value=None)
-    pool.release_client = AsyncMock()
-
-    await _add_account(db, phone="+70001111111", is_primary=True)
-    await _add_account(db, phone="+70002222222", is_primary=False)
+@pytest.mark.asyncio
+async def test_notifier_does_not_fallback_from_selected_account(db, real_pool_harness_factory):
+    harness = real_pool_harness_factory()
+    primary_client = await _connect_notification_account(
+        harness,
+        phone="+70001111111",
+        session_string="session-primary",
+        me_id=111,
+        me_username="primary",
+        is_primary=True,
+    )
+    await _connect_notification_account(
+        harness,
+        phone="+70002222222",
+        session_string="session-selected",
+        me_id=222,
+        me_username="selected",
+        is_primary=False,
+    )
     await db.set_setting("notification_account_phone", "+70002222222")
+    harness.native_auth_spy.by_session.pop("session-selected", None)
 
-    notifier = Notifier(NotificationTargetService(db, pool), admin_chat_id=123456)
+    def _raise_native(session_string: str):
+        if session_string == "session-selected":
+            raise ConnectionError("selected account unavailable")
+        return FakeCliTelethonClient(
+            me=SimpleNamespace(id=111, username="primary"),
+        )
+
+    harness.native_auth_spy.factory = _raise_native
+
+    notifier = Notifier(NotificationTargetService(db, harness.pool), admin_chat_id=123456)
     sent = await notifier.notify("hello")
 
     assert sent is False
     primary_client.send_message.assert_not_awaited()
-    pool.get_client_by_phone.assert_not_awaited()
 
 
-async def test_notification_service_uses_selected_account(db):
-    _, primary_client = _make_pool(
+@pytest.mark.asyncio
+async def test_notification_service_uses_selected_account(db, real_pool_harness_factory):
+    harness = real_pool_harness_factory()
+    await _connect_notification_account(
+        harness,
+        phone="+70001111111",
+        session_string="session-primary",
         me_id=111,
         me_username="primary",
-        phone="+70001111111",
+        is_primary=True,
     )
-    selected_me = MagicMock()
-    selected_me.id = 222
-    selected_me.username = "selected"
-    selected_entity = MagicMock()
-    selected_entity.id = 222333444
-    selected_client = AsyncMock()
-    selected_client.get_me = AsyncMock(return_value=selected_me)
-    selected_client.send_message = AsyncMock()
-    selected_client.get_entity = AsyncMock(return_value=selected_entity)
-
-    pool = AsyncMock()
-    pool.clients = {
-        "+70001111111": primary_client,
-        "+70002222222": selected_client,
-    }
-    pool.get_client_by_phone = AsyncMock(
-        side_effect=lambda phone: (
-            (selected_client, phone) if phone == "+70002222222" else (primary_client, phone)
-        )
+    selected_client = await _connect_notification_account(
+        harness,
+        phone="+70002222222",
+        session_string="session-selected",
+        me_id=222,
+        me_username="selected",
+        entity_id=222333444,
+        is_primary=False,
     )
-    pool.release_client = AsyncMock()
-
-    await _add_account(db, phone="+70001111111", is_primary=True)
-    await _add_account(db, phone="+70002222222", is_primary=False)
     await db.set_setting("notification_account_phone", "+70002222222")
 
-    svc = NotificationService(db, NotificationTargetService(db, pool))
+    svc = NotificationService(db, NotificationTargetService(db, harness.pool))
     with patch(
         "src.services.notification_service.botfather.create_bot",
         new_callable=AsyncMock,
@@ -459,4 +480,4 @@ async def test_notification_service_uses_selected_account(db):
         bot = await svc.setup_bot()
 
     assert bot.tg_user_id == 222
-    pool.get_client_by_phone.assert_awaited_once_with("+70002222222")
+    assert selected_client.disconnect.await_count == 1

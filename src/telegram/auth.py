@@ -72,6 +72,14 @@ class TelegramAuth:
         self._pending: dict[str, tuple[TelegramClient, str]] = {}
 
     @property
+    def api_id(self) -> int:
+        return self._api_id
+
+    @property
+    def api_hash(self) -> str:
+        return self._api_hash
+
+    @property
     def is_configured(self) -> bool:
         return self._api_id != 0 and self._api_hash != ""
 

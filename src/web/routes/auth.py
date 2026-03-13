@@ -150,13 +150,16 @@ async def verify_code(
         await pool.add_client(phone, session_string)
 
         is_premium = False
-        client = pool.clients.get(phone)
-        if client:
+        acquired = await pool.get_client_by_phone(phone)
+        if acquired:
+            session, acquired_phone = acquired
             try:
-                me = await client.get_me()
+                me = await session.fetch_me()
                 is_premium = bool(getattr(me, "premium", False))
             except Exception as e:
                 logger.warning("Failed to get premium status during auth for %s: %s", phone, e)
+            finally:
+                await pool.release_client(acquired_phone)
 
         account = Account(
             phone=phone,
