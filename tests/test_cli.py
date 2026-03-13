@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import subprocess
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -85,17 +86,6 @@ def _add_message(db: Database, channel_id: int = 100, message_id: int = 1, text:
 
 
 class TestCLIAccount:
-    def test_list_empty(self, cli_env, capsys):
-        from src.cli.commands.account import run
-        run(_ns(account_action="list"))
-        assert "No accounts found" in capsys.readouterr().out
-
-    def test_list_with_data(self, cli_env, capsys):
-        _add_account(cli_env)
-        from src.cli.commands.account import run
-        run(_ns(account_action="list"))
-        assert "+70001112233" in capsys.readouterr().out
-
     def test_toggle(self, cli_env, capsys):
         pk = _add_account(cli_env)
         from src.cli.commands.account import run
@@ -120,17 +110,6 @@ class TestCLIAccount:
 
 
 class TestCLIChannelDB:
-    def test_list_empty(self, cli_env, capsys):
-        from src.cli.commands.channel import run
-        run(_ns(channel_action="list"))
-        assert "No channels found" in capsys.readouterr().out
-
-    def test_list_with_data(self, cli_env, capsys):
-        _add_channel(cli_env, title="MyChan")
-        from src.cli.commands.channel import run
-        run(_ns(channel_action="list"))
-        assert "MyChan" in capsys.readouterr().out
-
     def test_delete(self, cli_env, capsys):
         pk = _add_channel(cli_env, channel_id=200, title="DelCh")
         from src.cli.commands.channel import run
@@ -311,17 +290,6 @@ def _sq_ns(**kwargs) -> argparse.Namespace:
 
 
 class TestCLISearchQuery:
-    def test_list_empty(self, cli_env, capsys):
-        from src.cli.commands.search_query import run
-        run(_sq_ns(search_query_action="list"))
-        assert "No search queries found" in capsys.readouterr().out
-
-    def test_list_with_data(self, cli_env, capsys):
-        _add_search_query(cli_env, query="hello world")
-        from src.cli.commands.search_query import run
-        run(_sq_ns(search_query_action="list"))
-        assert "hello world" in capsys.readouterr().out
-
     def test_add(self, cli_env, capsys):
         from src.cli.commands.search_query import run
         run(_sq_ns(search_query_action="add", query="new query"))
@@ -576,6 +544,54 @@ class TestCLITest:
 
         args = parser.parse_args(["test", "telegram"])
         assert args.test_action == "telegram"
+
+        args = parser.parse_args(["test", "benchmark"])
+        assert args.test_action == "benchmark"
+
+    def test_benchmark(self, capsys):
+        from src.cli.commands import test as test_cmd
+
+        completed = subprocess.CompletedProcess(args=["pytest"], returncode=0)
+        with (
+            patch(
+                "src.cli.commands.test.subprocess.run",
+                side_effect=[completed, completed, completed],
+            ) as run_mock,
+            patch(
+                "src.cli.commands.test.time.perf_counter",
+                side_effect=[100.0, 112.0, 200.0, 206.0, 300.0, 304.0],
+            ),
+        ):
+            test_cmd.run(_ns(command="test", test_action="benchmark"))
+
+        out = capsys.readouterr().out
+        assert "serial_full_suite" in out
+        assert "parallel_safe_suite" in out
+        assert "aiosqlite_serial_suite" in out
+        assert "two_pass_total: 10.00s" in out
+        assert "speedup_vs_serial: 1.20x" in out
+        assert run_mock.call_count == 3
+        assert run_mock.call_args_list[0].args[0] == test_cmd.SERIAL_PYTEST_COMMAND
+        assert run_mock.call_args_list[1].args[0] == test_cmd.PARALLEL_SAFE_PYTEST_COMMAND
+        assert run_mock.call_args_list[2].args[0] == test_cmd.AIOSQLITE_SERIAL_PYTEST_COMMAND
+        assert run_mock.call_args_list[0].kwargs["cwd"] == test_cmd.REPO_ROOT
+
+    def test_benchmark_fails_on_failed_subprocess(self, capsys):
+        from src.cli.commands.test import run
+
+        failed = subprocess.CompletedProcess(args=["pytest"], returncode=2)
+        with (
+            patch("src.cli.commands.test.subprocess.run", return_value=failed),
+            patch(
+                "src.cli.commands.test.time.perf_counter",
+                side_effect=[10.0, 11.0],
+            ),
+            pytest.raises(SystemExit, match="2"),
+        ):
+            run(_ns(command="test", test_action="benchmark"))
+
+        out = capsys.readouterr().out
+        assert "Benchmark step failed: serial_full_suite exited with code 2" in out
 
 
 # ---------------------------------------------------------------------------

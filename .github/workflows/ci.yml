@@ -25,7 +25,7 @@ jobs:
         run: pip install -e ".[dev]"
 
       - name: Ruff
-        run: ruff check src tests
+        run: ruff check src tests conftest.py
 
       - name: Pytest
-        run: pytest tests -q
+        run: pytest tests -q -m "not aiosqlite_serial" -n auto && pytest tests -q -m aiosqlite_serial

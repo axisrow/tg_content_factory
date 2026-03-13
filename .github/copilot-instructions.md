@@ -3,9 +3,11 @@
 ## Build, test, and lint commands
 
 - Install dev dependencies: `pip install -e ".[dev]"`
-- Lint: `ruff check src/ tests/`
-- Run the full test suite: `pytest tests/ -v`
+- Lint: `ruff check src/ tests/ conftest.py`
+- Run parallel-safe tests: `pytest tests/ -v -m "not aiosqlite_serial" -n auto`
+- Run `aiosqlite`-backed tests serially: `pytest tests/ -v -m aiosqlite_serial`
 - Run a single test: `pytest tests/test_web.py::test_health_endpoint -v`
+- Benchmark serial vs safe mixed-mode suite execution: `python -m src.main test benchmark`
 - Run the web app locally: `python -m src.main serve [--web-pass PASS]`
 
 ## High-level architecture
@@ -36,3 +38,4 @@ This project has three main layers: CLI/Web entry points, Telegram/search/schedu
 - Web routes use HTMX progressive enhancement patterns. When a route already branches on `HX-Request`, preserve fragment-vs-redirect behavior.
 - Identifier import flows accept `t.me` links, `@usernames`, negative IDs, and text/file parsing through existing parser helpers; reuse those helpers instead of duplicating parsing logic.
 - Real Telegram tests are opt-in only. Default tests should stay fake/harness-based. Any live pytest must use `real_telegram_sandbox` plus `@pytest.mark.real_tg_safe` or `@pytest.mark.real_tg_manual`.
+- Parallel pytest runs use `pytest-xdist`, and the repository-level worker hook uses `joblib.cpu_count()` to pick `max(1, cpu_count - 1)`. Tests marked `aiosqlite_serial` must stay out of xdist and run in a separate serial pass; live Telegram runs are also forced back to a single worker.
