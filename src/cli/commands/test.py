@@ -4,12 +4,16 @@ import argparse
 import asyncio
 import logging
 import os
+import shlex
 import shutil
+import subprocess
 import sys
 import tempfile
+import time
 from dataclasses import dataclass
 from datetime import timezone
 from enum import Enum
+from pathlib import Path
 
 from src.cli import runtime
 from src.database import Database
@@ -20,6 +24,28 @@ from src.telegram.backends import adapt_transport_session
 logger = logging.getLogger(__name__)
 
 TELEGRAM_TIMEOUT = 30
+REPO_ROOT = Path(__file__).resolve().parents[3]
+SERIAL_PYTEST_COMMAND = (sys.executable, "-m", "pytest", "tests", "-q")
+PARALLEL_SAFE_PYTEST_COMMAND = (
+    sys.executable,
+    "-m",
+    "pytest",
+    "tests",
+    "-q",
+    "-m",
+    "not aiosqlite_serial",
+    "-n",
+    "auto",
+)
+AIOSQLITE_SERIAL_PYTEST_COMMAND = (
+    sys.executable,
+    "-m",
+    "pytest",
+    "tests",
+    "-q",
+    "-m",
+    "aiosqlite_serial",
+)
 
 
 class Status(Enum):
@@ -35,6 +61,12 @@ class CheckResult:
     detail: str
 
 
+@dataclass(frozen=True)
+class BenchmarkStep:
+    name: str
+    command: tuple[str, ...]
+
+
 def _print_result(r: CheckResult) -> None:
     tag = {
         Status.PASS: "\033[32m[PASS]\033[0m",
@@ -42,6 +74,41 @@ def _print_result(r: CheckResult) -> None:
         Status.SKIP: "\033[33m[SKIP]\033[0m",
     }[r.status]
     print(f"{tag} {r.name:<22} {r.detail}")
+
+
+def _run_benchmark_step(step: BenchmarkStep) -> float:
+    print(f"\n=== {step.name} ===")
+    print(f"$ {shlex.join(step.command)}")
+    started = time.perf_counter()
+    completed = subprocess.run(step.command, cwd=REPO_ROOT, check=False)
+    elapsed = time.perf_counter() - started
+    if completed.returncode != 0:
+        print(f"\nBenchmark step failed: {step.name} exited with code {completed.returncode}")
+        raise SystemExit(completed.returncode)
+    print(f"Completed in {elapsed:.2f}s")
+    return elapsed
+
+
+def _run_pytest_benchmark() -> None:
+    serial_elapsed = _run_benchmark_step(
+        BenchmarkStep("serial_full_suite", SERIAL_PYTEST_COMMAND),
+    )
+    parallel_safe_elapsed = _run_benchmark_step(
+        BenchmarkStep("parallel_safe_suite", PARALLEL_SAFE_PYTEST_COMMAND),
+    )
+    aiosqlite_serial_elapsed = _run_benchmark_step(
+        BenchmarkStep("aiosqlite_serial_suite", AIOSQLITE_SERIAL_PYTEST_COMMAND),
+    )
+
+    mixed_parallel_total = parallel_safe_elapsed + aiosqlite_serial_elapsed
+    speedup = serial_elapsed / mixed_parallel_total if mixed_parallel_total else float("inf")
+
+    print("\n--- Benchmark Summary ---")
+    print(f"serial_full_suite: {serial_elapsed:.2f}s")
+    print(f"parallel_safe_suite: {parallel_safe_elapsed:.2f}s")
+    print(f"aiosqlite_serial_suite: {aiosqlite_serial_elapsed:.2f}s")
+    print(f"mixed_parallel_total: {mixed_parallel_total:.2f}s")
+    print(f"speedup_vs_serial: {speedup:.2f}x")
 
 
 # ---------------------------------------------------------------------------
@@ -544,6 +611,10 @@ async def _cleanup_telegram(pool, copy_db, tmp_path, results) -> None:
 # ---------------------------------------------------------------------------
 
 def run(args: argparse.Namespace) -> None:
+    if args.test_action == "benchmark":
+        _run_pytest_benchmark()
+        return
+
     async def _run() -> None:
         results: list[CheckResult] = []
 
