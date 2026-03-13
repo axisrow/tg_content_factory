@@ -1,10 +1,14 @@
+from __future__ import annotations
+
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock
+from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 
 from src.models import Message
 from src.search.engine import SearchEngine
+from tests.helpers import AsyncIterMessages, FakeCliTelethonClient
 
 
 @pytest.mark.asyncio
@@ -81,10 +85,7 @@ async def test_search_local_maps_channel_title(db):
     assert result.messages[0].channel_username == "crypto_news"
 
 
-def _make_mock_api_message(
-    channel_id=100123, msg_id=42, text="Test message about AI",
-):
-    """Create a mock raw API message for SearchPostsRequest response."""
+def _make_mock_api_message(channel_id=100123, msg_id=42, text="Test message about AI"):
     from telethon.tl.types import PeerChannel
 
     msg = MagicMock()
@@ -98,131 +99,13 @@ def _make_mock_api_message(
 
 
 def _make_search_response(messages, chats=None, users=None):
-    """Create a mock SearchPostsRequest response."""
-    r = MagicMock()
-    r.messages = messages
-    r.chats = chats or []
-    r.users = users or []
-    r.next_rate = None
-    return r
+    response = MagicMock()
+    response.messages = messages
+    response.chats = chats or []
+    response.users = users or []
+    response.next_rate = None
+    return response
 
-
-def _make_premium_client(call_return):
-    """Create a mock client with Premium and __call__ returning search results."""
-    me = MagicMock()
-    me.premium = True
-
-    client = MagicMock()
-    client.get_me = AsyncMock(return_value=me)
-    client.__call__ = AsyncMock(return_value=call_return)
-    # MagicMock needs __call__ to be async for `await client(...)`
-    client.side_effect = client.__call__.side_effect
-    return client
-
-
-@pytest.mark.asyncio
-async def test_search_telegram_returns_results(db):
-    mock_msg = _make_mock_api_message()
-    mock_chat = MagicMock()
-    mock_chat.id = 100123
-    mock_chat.title = "Test Channel"
-    mock_chat.username = "test_channel"
-
-    response = _make_search_response([mock_msg], chats=[mock_chat])
-
-    mock_client = AsyncMock()
-    mock_client.return_value = response
-
-    pool = MagicMock()
-    pool.get_premium_client = AsyncMock(return_value=(mock_client, "+1234567890"))
-    pool.release_client = AsyncMock()
-
-    engine = SearchEngine(db, pool=pool)
-    result = await engine.search_telegram("AI", limit=10)
-
-    assert result.total == 1
-    assert result.query == "AI"
-    assert result.messages[0].message_id == 42
-    assert result.messages[0].text == "Test message about AI"
-    assert result.messages[0].channel_title == "Test Channel"
-    pool.release_client.assert_called_with("+1234567890")
-
-
-@pytest.mark.asyncio
-async def test_search_telegram_caches_to_db(db):
-    mock_msg = _make_mock_api_message(channel_id=100456, msg_id=7, text="cached search result")
-    mock_chat = MagicMock()
-    mock_chat.id = 100456
-    mock_chat.title = "Cache Channel"
-    mock_chat.username = None
-
-    response = _make_search_response([mock_msg], chats=[mock_chat])
-
-    mock_client = AsyncMock()
-    mock_client.return_value = response
-
-    pool = MagicMock()
-    pool.get_premium_client = AsyncMock(return_value=(mock_client, "+1234567890"))
-    pool.release_client = AsyncMock()
-
-    engine = SearchEngine(db, pool=pool)
-    await engine.search_telegram("cached", limit=5)
-
-    messages, total = await db.search_messages(query="cached", limit=10, offset=0)
-    assert total == 1
-    assert messages[0].text == "cached search result"
-    pool.release_client.assert_called_with("+1234567890")
-
-
-@pytest.mark.asyncio
-async def test_search_telegram_no_pool(db):
-    engine = SearchEngine(db, pool=None)
-    result = await engine.search_telegram("anything")
-
-    assert result.total == 0
-    assert result.messages == []
-    assert result.query == "anything"
-    assert result.error == "Нет подключённых Telegram-аккаунтов."
-
-
-@pytest.mark.asyncio
-async def test_search_telegram_no_premium(db):
-    # get_premium_client returns None when no premium accounts are available
-    pool = MagicMock()
-    pool.get_premium_client = AsyncMock(return_value=None)
-
-    engine = SearchEngine(db, pool=pool)
-    result = await engine.search_telegram("query")
-
-    assert result.total == 0
-    assert result.messages == []
-    assert "Premium" in result.error
-
-
-@pytest.mark.asyncio
-async def test_search_my_chats_runtime_error_returns_search_result(db):
-    client = AsyncMock()
-    client.get_dialogs = AsyncMock(return_value=[])
-
-    async def _broken_iter(*args, **kwargs):
-        raise RuntimeError("telegram api failure")
-        yield
-
-    client.iter_messages = _broken_iter
-
-    pool = MagicMock()
-    pool.get_available_client = AsyncMock(return_value=(client, "+1234567890"))
-    pool.release_client = AsyncMock()
-
-    engine = SearchEngine(db, pool=pool)
-    result = await engine.search_my_chats("query")
-
-    assert result.total == 0
-    assert "telegram api failure" in result.error
-    pool.release_client.assert_called_once_with("+1234567890")
-
-
-# ---- Helpers for resolved Telethon messages (iter_messages) ----
 
 def _make_resolved_message(
     chat_id=100123,
@@ -234,7 +117,6 @@ def _make_resolved_message(
     sender_first="John",
     sender_last="Doe",
 ):
-    """Create a mock resolved Telethon message (with .chat, .sender, .text)."""
     chat = MagicMock()
     chat.id = chat_id
     chat.title = chat_title
@@ -257,38 +139,154 @@ def _make_resolved_message(
     return msg
 
 
-def _make_iter_messages_client(messages_list):
-    """Create a mock client whose iter_messages yields the given messages."""
-    client = AsyncMock()
-    client.get_dialogs = AsyncMock(return_value=[])
+async def _connect_search_account(
+    harness,
+    *,
+    phone: str,
+    session_string: str,
+    client: FakeCliTelethonClient,
+    is_premium: bool = False,
+):
+    harness.queue_cli_client(phone=phone, client=client)
+    await harness.add_account(
+        phone=phone,
+        session_string=session_string,
+        is_primary=True,
+        is_premium=is_premium,
+    )
+    await harness.initialize_connected_accounts()
 
-    async def _iter(*args, **kwargs):
-        for m in messages_list:
-            yield m
-
-    client.iter_messages = _iter
-    return client
-
-
-# ---- search_my_chats tests ----
 
 @pytest.mark.asyncio
-async def test_search_my_chats_returns_results(db):
+async def test_search_telegram_returns_results(db, real_pool_harness_factory):
+    mock_msg = _make_mock_api_message()
+    mock_chat = MagicMock()
+    mock_chat.id = 100123
+    mock_chat.title = "Test Channel"
+    mock_chat.username = "test_channel"
+
+    response = _make_search_response([mock_msg], chats=[mock_chat])
+    harness = real_pool_harness_factory()
+    await _connect_search_account(
+        harness,
+        phone="+1234567890",
+        session_string="premium-session",
+        is_premium=True,
+        client=FakeCliTelethonClient(
+            me=SimpleNamespace(premium=True),
+            invoke_side_effect=lambda request: response,
+        ),
+    )
+
+    engine = SearchEngine(db, pool=harness.pool)
+    result = await engine.search_telegram("AI", limit=10)
+
+    assert result.total == 1
+    assert result.query == "AI"
+    assert result.messages[0].message_id == 42
+    assert result.messages[0].text == "Test message about AI"
+    assert result.messages[0].channel_title == "Test Channel"
+
+
+@pytest.mark.asyncio
+async def test_search_telegram_caches_to_db(db, real_pool_harness_factory):
+    mock_msg = _make_mock_api_message(channel_id=100456, msg_id=7, text="cached search result")
+    mock_chat = MagicMock()
+    mock_chat.id = 100456
+    mock_chat.title = "Cache Channel"
+    mock_chat.username = None
+
+    response = _make_search_response([mock_msg], chats=[mock_chat])
+    harness = real_pool_harness_factory()
+    await _connect_search_account(
+        harness,
+        phone="+1234567890",
+        session_string="premium-session",
+        is_premium=True,
+        client=FakeCliTelethonClient(
+            me=SimpleNamespace(premium=True),
+            invoke_side_effect=lambda request: response,
+        ),
+    )
+
+    engine = SearchEngine(db, pool=harness.pool)
+    await engine.search_telegram("cached", limit=5)
+
+    messages, total = await db.search_messages(query="cached", limit=10, offset=0)
+    assert total == 1
+    assert messages[0].text == "cached search result"
+
+
+@pytest.mark.asyncio
+async def test_search_telegram_no_pool(db):
+    engine = SearchEngine(db, pool=None)
+    result = await engine.search_telegram("anything")
+
+    assert result.total == 0
+    assert result.messages == []
+    assert result.query == "anything"
+    assert result.error == "Нет подключённых Telegram-аккаунтов."
+
+
+@pytest.mark.asyncio
+async def test_search_telegram_no_premium(db, real_pool_harness_factory):
+    harness = real_pool_harness_factory()
+    engine = SearchEngine(db, pool=harness.pool)
+    result = await engine.search_telegram("query")
+
+    assert result.total == 0
+    assert result.messages == []
+    assert "Premium" in result.error
+
+
+@pytest.mark.asyncio
+async def test_search_my_chats_runtime_error_returns_search_result(
+    db,
+    real_pool_harness_factory,
+):
+    async def _broken_iter(*args, **kwargs):
+        raise RuntimeError("telegram api failure")
+        yield
+
+    harness = real_pool_harness_factory()
+    await _connect_search_account(
+        harness,
+        phone="+1234567890",
+        session_string="session-1",
+        client=FakeCliTelethonClient(
+            dialogs=[],
+            iter_messages_factory=_broken_iter,
+        ),
+    )
+
+    engine = SearchEngine(db, pool=harness.pool)
+    result = await engine.search_my_chats("query")
+
+    assert result.total == 0
+    assert "telegram api failure" in result.error
+
+
+@pytest.mark.asyncio
+async def test_search_my_chats_returns_results(db, real_pool_harness_factory):
     mock_msg = _make_resolved_message()
-    client = _make_iter_messages_client([mock_msg])
+    harness = real_pool_harness_factory()
+    await _connect_search_account(
+        harness,
+        phone="+1234567890",
+        session_string="session-1",
+        client=FakeCliTelethonClient(
+            dialogs=[],
+            iter_messages_factory=lambda *args, **kwargs: AsyncIterMessages([mock_msg]),
+        ),
+    )
 
-    pool = MagicMock()
-    pool.get_available_client = AsyncMock(return_value=(client, "+1234567890"))
-    pool.release_client = AsyncMock()
-
-    engine = SearchEngine(db, pool=pool)
+    engine = SearchEngine(db, pool=harness.pool)
     result = await engine.search_my_chats("resolved", limit=10)
 
     assert result.total == 1
     assert result.messages[0].message_id == 42
     assert result.messages[0].text == "resolved message"
     assert result.messages[0].channel_title == "My Chat"
-    pool.release_client.assert_called_once_with("+1234567890")
 
 
 @pytest.mark.asyncio
@@ -301,93 +299,103 @@ async def test_search_my_chats_no_pool(db):
 
 
 @pytest.mark.asyncio
-async def test_search_my_chats_no_clients(db):
-    pool = MagicMock()
-    pool.get_available_client = AsyncMock(return_value=None)
-
-    engine = SearchEngine(db, pool=pool)
+async def test_search_my_chats_no_clients(db, real_pool_harness_factory):
+    harness = real_pool_harness_factory()
+    engine = SearchEngine(db, pool=harness.pool)
     result = await engine.search_my_chats("query")
 
     assert result.total == 0
     assert result.error == "Нет доступных Telegram-аккаунтов. Проверьте подключение."
 
 
-# ---- search_in_channel tests ----
-
 @pytest.mark.asyncio
-async def test_search_in_channel_returns_results(db):
+async def test_search_in_channel_returns_results(db, real_pool_harness_factory):
     mock_msg = _make_resolved_message(chat_id=200456, chat_title="Target Channel")
-    client = _make_iter_messages_client([mock_msg])
-    client.get_entity = AsyncMock(return_value=MagicMock())
+    harness = real_pool_harness_factory()
+    await _connect_search_account(
+        harness,
+        phone="+1234567890",
+        session_string="session-1",
+        client=FakeCliTelethonClient(
+            dialogs=[],
+            entity_resolver=lambda _peer: MagicMock(),
+            iter_messages_factory=lambda *args, **kwargs: AsyncIterMessages([mock_msg]),
+        ),
+    )
 
-    pool = MagicMock()
-    pool.get_available_client = AsyncMock(return_value=(client, "+1234567890"))
-    pool.release_client = AsyncMock()
-
-    engine = SearchEngine(db, pool=pool)
+    engine = SearchEngine(db, pool=harness.pool)
     result = await engine.search_in_channel(200456, "resolved", limit=10)
 
     assert result.total == 1
     assert result.messages[0].channel_id == 200456
     assert result.messages[0].channel_title == "Target Channel"
-    pool.release_client.assert_called_once_with("+1234567890")
 
 
 @pytest.mark.asyncio
-async def test_search_in_channel_all_channels(db):
-    """When channel_id is None, search across all user's chats."""
+async def test_search_in_channel_all_channels(db, real_pool_harness_factory):
     mock_msg = _make_resolved_message(chat_id=300789, chat_title="All Chats Result")
-    client = _make_iter_messages_client([mock_msg])
-    client.get_dialogs = AsyncMock(return_value=[])
+    harness = real_pool_harness_factory()
+    await _connect_search_account(
+        harness,
+        phone="+1234567890",
+        session_string="session-1",
+        client=FakeCliTelethonClient(
+            dialogs=[],
+            iter_messages_factory=lambda *args, **kwargs: AsyncIterMessages([mock_msg]),
+        ),
+    )
 
-    pool = MagicMock()
-    pool.get_available_client = AsyncMock(return_value=(client, "+1234567890"))
-    pool.release_client = AsyncMock()
-
-    engine = SearchEngine(db, pool=pool)
+    engine = SearchEngine(db, pool=harness.pool)
     result = await engine.search_in_channel(None, "query", limit=10)
 
     assert result.total == 1
     assert result.error is None
     assert result.messages[0].channel_title == "All Chats Result"
-    pool.release_client.assert_called_once_with("+1234567890")
 
 
 @pytest.mark.asyncio
-async def test_search_in_channel_entity_not_found(db):
-    client = AsyncMock()
-    client.get_entity = AsyncMock(side_effect=ValueError("entity not found"))
+async def test_search_in_channel_entity_not_found(db, real_pool_harness_factory):
+    harness = real_pool_harness_factory()
+    await _connect_search_account(
+        harness,
+        phone="+1234567890",
+        session_string="session-1",
+        client=FakeCliTelethonClient(
+            dialogs=[],
+            entity_resolver=lambda _peer: ValueError("entity not found"),
+        ),
+    )
 
-    pool = MagicMock()
-    pool.get_available_client = AsyncMock(return_value=(client, "+1234567890"))
-    pool.release_client = AsyncMock()
-
-    engine = SearchEngine(db, pool=pool)
+    engine = SearchEngine(db, pool=harness.pool)
     result = await engine.search_in_channel(999999, "query")
 
     assert result.total == 0
     assert "Не удалось найти канал" in result.error
-    pool.release_client.assert_called_once_with("+1234567890")
 
 
 @pytest.mark.asyncio
-async def test_search_in_channel_runtime_error_returns_search_result(db):
-    client = AsyncMock()
-    client.get_entity = AsyncMock(return_value=MagicMock())
-
+async def test_search_in_channel_runtime_error_returns_search_result(
+    db,
+    real_pool_harness_factory,
+):
     async def _broken_iter(*args, **kwargs):
         raise RuntimeError("channel search failure")
         yield
 
-    client.iter_messages = _broken_iter
+    harness = real_pool_harness_factory()
+    await _connect_search_account(
+        harness,
+        phone="+1234567890",
+        session_string="session-1",
+        client=FakeCliTelethonClient(
+            dialogs=[],
+            entity_resolver=lambda _peer: MagicMock(),
+            iter_messages_factory=_broken_iter,
+        ),
+    )
 
-    pool = MagicMock()
-    pool.get_available_client = AsyncMock(return_value=(client, "+1234567890"))
-    pool.release_client = AsyncMock()
-
-    engine = SearchEngine(db, pool=pool)
+    engine = SearchEngine(db, pool=harness.pool)
     result = await engine.search_in_channel(999999, "query")
 
     assert result.total == 0
     assert "channel search failure" in result.error
-    pool.release_client.assert_called_once_with("+1234567890")

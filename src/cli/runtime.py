@@ -43,6 +43,11 @@ async def init_pool(config, db: Database):
             api_hash = stored_hash
 
     auth = TelegramAuth(api_id, api_hash)
-    pool = ClientPool(auth, db, config.scheduler.max_flood_wait_sec)
+    pool = ClientPool(
+        auth,
+        db,
+        config.scheduler.max_flood_wait_sec,
+        runtime_config=config.telegram_runtime,
+    )
     await pool.initialize()
     return auth, pool

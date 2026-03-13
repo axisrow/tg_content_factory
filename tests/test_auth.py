@@ -7,6 +7,8 @@ import pytest
 
 from src.telegram.auth import TelegramAuth, _describe_code_type, _describe_next_type
 
+pytestmark = pytest.mark.native_backend_allowed
+
 
 class FakeSentCodeTypeApp:
     pass

@@ -57,8 +57,15 @@ class SecurityConfig(BaseModel):
     session_encryption_key: str = ""
 
 
+class TelegramRuntimeConfig(BaseModel):
+    backend_mode: str = "auto"
+    cli_transport: str = "hybrid"
+    session_cache_dir: str = "data/telegram_sessions"
+
+
 class AppConfig(BaseModel):
     telegram: TelegramConfig = TelegramConfig()
+    telegram_runtime: TelegramRuntimeConfig = TelegramRuntimeConfig()
     web: WebConfig = WebConfig()
     scheduler: SchedulerConfig = SchedulerConfig()
     notifications: NotificationsConfig = NotificationsConfig()
@@ -123,6 +130,15 @@ def load_config(path: str | Path = "config.yaml") -> AppConfig:
             config.telegram.api_id = int(env_api_id)
     if not config.telegram.api_hash:
         config.telegram.api_hash = os.environ.get("TG_API_HASH", "").strip()
+    env_backend_mode = os.environ.get("TG_BACKEND_MODE", "").strip()
+    if env_backend_mode:
+        config.telegram_runtime.backend_mode = env_backend_mode
+    env_cli_transport = os.environ.get("TG_CLI_TRANSPORT", "").strip()
+    if env_cli_transport:
+        config.telegram_runtime.cli_transport = env_cli_transport
+    env_session_cache_dir = os.environ.get("TG_SESSION_CACHE_DIR", "").strip()
+    if env_session_cache_dir:
+        config.telegram_runtime.session_cache_dir = env_session_cache_dir
     if not config.agent.model:
         config.agent.model = os.environ.get("AGENT_MODEL", "").strip()
     if not config.agent.fallback_model:

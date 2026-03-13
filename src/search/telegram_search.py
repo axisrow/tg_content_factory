@@ -8,6 +8,7 @@ from datetime import timezone
 from src.models import Channel, Message, SearchResult
 from src.search.persistence import SearchPersistence
 from src.search.transformers import TelegramMessageTransformer
+from src.telegram.backends import adapt_transport_session
 from src.telegram.client_pool import ClientPool
 
 try:
@@ -31,20 +32,19 @@ class TelegramSearch:
         if result is None:
             return None
 
-        client, phone = result
+        session, phone = result
+        session = adapt_transport_session(session, disconnect_on_close=False)
         try:
-            return await self._check_search_quota_with_client(client, query)
+            return await self._check_search_quota_with_client(session, query)
         except Exception as exc:
             logger.debug("checkSearchPostsFlood unavailable: %s", exc)
             return None
         finally:
             await self._pool.release_client(phone)
 
-    async def _check_search_quota_with_client(self, client, query: str = "") -> dict | None:
+    async def _check_search_quota_with_client(self, session, query: str = "") -> dict | None:
         try:
-            from telethon.tl.functions.channels import CheckSearchPostsFloodRequest
-
-            r = await client(CheckSearchPostsFloodRequest(query=query))
+            r = await session.lookup_search_posts_flood(query)
             return {
                 "total_daily": getattr(r, "total_daily", None),
                 "remains": getattr(r, "remains", None),
@@ -89,9 +89,10 @@ class TelegramSearch:
             logger.warning("search_telegram: no premium client for query=%r: %s", query, reason)
             return SearchResult(messages=[], total=0, query=query, error=reason)
 
-        client, phone = result
+        session, phone = result
+        session = adapt_transport_session(session, disconnect_on_close=False)
         try:
-            quota = await self._check_search_quota_with_client(client, query)
+            quota = await self._check_search_quota_with_client(session, query)
             if quota and quota.get("remains") == 0 and not quota.get("query_is_free"):
                 return SearchResult(
                     messages=[],
@@ -103,7 +104,7 @@ class TelegramSearch:
                     ),
                 )
 
-            messages, seen_channels = await self._search_posts_global(client, query, limit)
+            messages, seen_channels = await self._search_posts_global(session, query, limit)
             await self._persistence.cache_search_results(seen_channels, messages, phone, query)
             return SearchResult(messages=messages, total=len(messages), query=query)
         except Exception as exc:
@@ -118,9 +119,8 @@ class TelegramSearch:
             await self._pool.release_client(phone)
 
     async def _search_posts_global(
-        self, client, query: str, limit: int,
+        self, session, query: str, limit: int,
     ) -> tuple[list[Message], dict[int, Channel]]:
-        from telethon.tl.functions.channels import SearchPostsRequest
         from telethon.tl.types import InputPeerEmpty, PeerChannel
         from telethon.utils import get_input_peer
 
@@ -133,14 +133,12 @@ class TelegramSearch:
 
         while len(messages) < limit:
             batch_limit = min(limit - len(messages), 100)
-            r = await client(
-                SearchPostsRequest(
-                    query=query,
-                    offset_rate=offset_rate,
-                    offset_peer=offset_peer,
-                    offset_id=offset_id,
-                    limit=batch_limit,
-                )
+            r = await session.search_posts_batch(
+                query,
+                offset_rate=offset_rate,
+                offset_peer=offset_peer,
+                offset_id=offset_id,
+                limit=batch_limit,
             )
 
             if not r.messages:
@@ -219,14 +217,15 @@ class TelegramSearch:
                 error="Нет доступных Telegram-аккаунтов. Проверьте подключение.",
             )
 
-        client, phone = result
+        session, phone = result
+        session = adapt_transport_session(session, disconnect_on_close=False)
         try:
-            await asyncio.wait_for(client.get_dialogs(), timeout=30.0)
+            await asyncio.wait_for(session.warm_dialog_cache(), timeout=30.0)
 
             async def _collect_my_chats() -> tuple[list[Message], dict[int, Channel]]:
                 collected: list[Message] = []
                 seen: dict[int, Channel] = {}
-                async for msg in client.iter_messages(None, search=query, limit=limit):
+                async for msg in session.stream_messages(None, search=query, limit=limit):
                     converted = TelegramMessageTransformer.convert_telethon_message(msg)
                     if converted is None:
                         logger.debug(
@@ -276,15 +275,17 @@ class TelegramSearch:
                 error="Нет доступных Telegram-аккаунтов. Проверьте подключение.",
             )
 
-        client, phone = result
+        session, phone = result
+        session = adapt_transport_session(session, disconnect_on_close=False)
         try:
-            await asyncio.wait_for(client.get_dialogs(), timeout=30.0)
+            await asyncio.wait_for(session.warm_dialog_cache(), timeout=30.0)
 
             entity = None
             if channel_id:
                 try:
                     entity = await asyncio.wait_for(
-                        client.get_entity(PeerChannel(channel_id)), timeout=30.0,
+                        session.resolve_entity(PeerChannel(channel_id)),
+                        timeout=30.0,
                     )
                 except Exception:
                     logger.debug(
@@ -297,7 +298,8 @@ class TelegramSearch:
                     if username:
                         try:
                             entity = await asyncio.wait_for(
-                                client.get_entity(username), timeout=30.0,
+                                session.resolve_entity(username),
+                                timeout=30.0,
                             )
                         except Exception as exc2:
                             logger.warning(
@@ -320,7 +322,7 @@ class TelegramSearch:
             async def _collect_in_channel() -> tuple[list[Message], dict[int, Channel]]:
                 collected: list[Message] = []
                 seen: dict[int, Channel] = {}
-                async for msg in client.iter_messages(entity, search=query, limit=limit):
+                async for msg in session.stream_messages(entity, search=query, limit=limit):
                     converted = TelegramMessageTransformer.convert_telethon_message(msg)
                     if converted is None:
                         logger.debug(

@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import base64
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
 import pytest
@@ -17,15 +18,40 @@ from httpx import ASGITransport, AsyncClient
 from src.cli.runtime import init_pool
 from src.config import AppConfig, SchedulerConfig, load_config
 from src.database import Database
-from src.models import Account, Channel, Message, SearchQuery
+from src.models import Channel, Message, SearchQuery
 from src.scheduler.manager import SchedulerManager
 from src.search.ai_search import AISearchEngine
 from src.search.engine import SearchEngine
-from src.telegram.auth import TelegramAuth
 from src.telegram.client_pool import ClientPool
 from src.telegram.collector import Collector
 from src.web.app import create_app
-from tests.helpers import make_mock_pool as _make_pool
+from tests.helpers import (
+    FakeCliTelethonClient,
+)
+from tests.helpers import (
+    make_mock_pool as _make_pool,
+)
+
+
+def _resolved_channel_entity(identifier: object) -> SimpleNamespace:
+    if not isinstance(identifier, str):
+        ident = str(identifier)
+    else:
+        ident = identifier.strip().lower().lstrip("@")
+    username = ident if not ident.lstrip("-").isdigit() else None
+    return SimpleNamespace(
+        id=-1001234567890,
+        title="Resolved Channel",
+        username=username,
+        broadcast=True,
+        megagroup=False,
+        gigagroup=False,
+        forum=False,
+        monoforum=False,
+        scam=False,
+        fake=False,
+        restricted=False,
+    )
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -33,54 +59,24 @@ from tests.helpers import make_mock_pool as _make_pool
 
 
 @pytest.fixture
-async def app_with_db(tmp_path):
+async def app_with_db(db, real_pool_harness_factory):
     """Create a full app with initialized DB, yielding (app, db)."""
     config = AppConfig()
-    config.database.path = str(tmp_path / "test.db")
     config.telegram.api_id = 12345
     config.telegram.api_hash = "test_hash"
     config.web.password = "testpass"
 
     app = create_app(config)
 
-    db = Database(config.database.path)
-    await db.initialize()
     app.state.db = db
-    async def _no_users(self):
-        return []
-
-    async def _resolve_channel(self, identifier):
-        return {
-            "channel_id": -1001234567890,
-            "title": "Resolved Channel",
-            "username": identifier.lstrip("@"),
-        }
-
-    async def _get_dialogs(self):
-        return []
-
-    async def _get_dialogs_for_phone(
-        self,
-        phone,
-        include_dm=False,
-        mode="channels_only",
-        refresh=False,
-    ):
-        return []
-
-    pool = type(
-        "Pool",
-        (),
-        {
-            "clients": {},
-            "get_users_info": _no_users,
-            "resolve_channel": _resolve_channel,
-            "get_dialogs": _get_dialogs,
-            "get_dialogs_for_phone": _get_dialogs_for_phone,
-        },
-    )()
-    app.state.pool = pool
-    app.state.auth = TelegramAuth(12345, "test_hash")
+    harness = real_pool_harness_factory()
+    harness.queue_cli_client(
+        phone="+1234567890",
+        client=FakeCliTelethonClient(entity_resolver=_resolved_channel_entity),
+    )
+    await harness.connect_account("+1234567890", session_string="test_session", is_primary=True)
+    app.state.auth = harness.auth
+    app.state.pool = harness.pool
     app.state.notifier = None
 
     collector = Collector(app.state.pool, db, config.scheduler)
@@ -88,12 +84,7 @@ async def app_with_db(tmp_path):
     app.state.search_engine = SearchEngine(db)
     app.state.ai_search = AISearchEngine(config.llm, db)
     app.state.scheduler = SchedulerManager(collector, config.scheduler)
-
-    await db.add_account(Account(phone="+1234567890", session_string="test_session"))
-
     yield app, db
-
-    await db.close()
 
 
 @pytest.fixture

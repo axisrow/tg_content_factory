@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -222,7 +223,7 @@ async def test_ensure_model_compatibility_reuses_fresh_cached_result(db):
                     fingerprint: ProviderModelCompatibilityRecord(
                         model="gpt-4.1-mini",
                         status="supported",
-                        tested_at="2026-03-12T00:00:00+00:00",
+                        tested_at=datetime.now(UTC).isoformat(),
                         config_fingerprint=fingerprint,
                         probe_kind="auto-select",
                     )
@@ -263,7 +264,7 @@ async def test_ensure_model_compatibility_force_bypasses_cached_result(db):
                     fingerprint: ProviderModelCompatibilityRecord(
                         model="gpt-4.1-mini",
                         status="supported",
-                        tested_at="2026-03-12T00:00:00+00:00",
+                        tested_at=datetime.now(UTC).isoformat(),
                         config_fingerprint=fingerprint,
                         probe_kind="auto-select",
                     )
@@ -279,7 +280,7 @@ async def test_ensure_model_compatibility_force_bypasses_cached_result(db):
             model="gpt-4.1-mini",
             status="unsupported",
             reason="forced reprobe",
-            tested_at="2026-03-12T01:00:00+00:00",
+            tested_at=datetime.now(UTC).isoformat(),
             config_fingerprint=fingerprint,
             probe_kind="dev-bulk",
         )
@@ -483,7 +484,7 @@ async def test_agent_manager_falls_back_to_legacy_env_when_db_provider_is_unsupp
                         model="gpt-4.1-mini",
                         status="unsupported",
                         reason="tool-calling is broken",
-                        tested_at="2026-03-12T00:00:00+00:00",
+                        tested_at=datetime.now(UTC).isoformat(),
                         config_fingerprint=openai_fingerprint,
                         probe_kind="save-time",
                     )
@@ -777,7 +778,7 @@ async def test_agent_manager_skips_cached_unsupported_provider_and_fails_over(db
                         model="gpt-4.1-mini",
                         status="unsupported",
                         reason="tool-calling is broken",
-                        tested_at="2026-03-12T00:00:00+00:00",
+                        tested_at=datetime.now(UTC).isoformat(),
                         config_fingerprint=openai_fingerprint,
                         probe_kind="save-time",
                     )

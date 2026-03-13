@@ -7,7 +7,6 @@ from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 
 from telethon.errors import FloodWaitError, UsernameInvalidError, UsernameNotOccupiedError
-from telethon.tl.functions.channels import GetFullChannelRequest
 from telethon.tl.types import (
     DocumentAttributeAnimated,
     DocumentAttributeAudio,
@@ -37,6 +36,7 @@ from src.filters.criteria import (
 )
 from src.models import Channel, ChannelStats, Message
 from src.settings_utils import parse_int_setting
+from src.telegram.backends import adapt_transport_session
 from src.telegram.client_pool import ClientPool
 from src.telegram.notifier import Notifier
 
@@ -237,12 +237,13 @@ class Collector:
             logger.error("No available clients for collection")
             return 0
 
-        client, phone = result
+        session, phone = result
+        session = adapt_transport_session(session, disconnect_on_close=False)
         # Populate entity cache when using PeerChannel (StringSession loses cache between restarts).
         # Only needed once per process lifetime per phone — the in-memory cache persists.
         if not channel.username and not self._pool.is_dialogs_fetched(phone):
             try:
-                await asyncio.wait_for(client.get_dialogs(), timeout=30)
+                await asyncio.wait_for(session.warm_dialog_cache(), timeout=30)
                 self._pool.mark_dialogs_fetched(phone)
             except Exception as e:
                 logger.warning("Failed to prefetch dialogs for %s: %s", phone, e)
@@ -303,7 +304,7 @@ class Collector:
             if channel.username:
                 try:
                     entity = await asyncio.wait_for(
-                        client.get_entity(channel.username), timeout=30.0
+                        session.resolve_entity(channel.username), timeout=30.0
                     )
                 except asyncio.TimeoutError:
                     logger.warning("get_entity timed out for channel %d, skipping", channel_id)
@@ -315,7 +316,8 @@ class Collector:
                     )
                     try:
                         fallback_entity = await asyncio.wait_for(
-                            client.get_entity(PeerChannel(channel_id)), timeout=30.0
+                            session.resolve_entity(PeerChannel(channel_id)),
+                            timeout=30.0,
                         )
                     except Exception:
                         logger.warning(
@@ -345,7 +347,8 @@ class Collector:
             else:
                 try:
                     entity = await asyncio.wait_for(
-                        client.get_entity(PeerChannel(channel_id)), timeout=30.0
+                        session.resolve_entity(PeerChannel(channel_id)),
+                        timeout=30.0,
                     )
                 except asyncio.TimeoutError:
                     logger.warning("get_entity timed out for channel %d, skipping", channel_id)
@@ -394,7 +397,7 @@ class Collector:
             if is_first_run and not force:
                 try:
                     sample_prefixes = await asyncio.wait_for(
-                        self._precheck_sample(client, entity, PRECHECK_CROSS_DUPE_SAMPLE),
+                        self._precheck_sample(session, entity, PRECHECK_CROSS_DUPE_SAMPLE),
                         timeout=60.0,
                     )
                 except asyncio.TimeoutError:
@@ -417,7 +420,7 @@ class Collector:
                         )
                         return 0
 
-            async for msg in client.iter_messages(
+            async for msg in session.stream_messages(
                 entity,
                 min_id=min_id,
                 limit=limit,
@@ -562,10 +565,10 @@ class Collector:
 
         return len(all_messages)
 
-    async def _precheck_sample(self, client, entity, limit: int) -> list[str]:
+    async def _precheck_sample(self, session, entity, limit: int) -> list[str]:
         """Sample up to `limit` messages for cross-channel precheck."""
         prefixes: list[str] = []
-        async for msg in client.iter_messages(
+        async for msg in session.stream_messages(
             entity,
             limit=limit,
             wait_time=self._config.delay_between_requests_sec,
@@ -686,26 +689,29 @@ class Collector:
                     )
                 raise NoActiveStatsClientsError("No active connected clients")
 
-            client, phone = result
+            session, phone = result
+            session = adapt_transport_session(session, disconnect_on_close=False)
             try:
                 if channel.username:
                     entity = await asyncio.wait_for(
-                        client.get_entity(channel.username), timeout=30.0
+                        session.resolve_entity(channel.username), timeout=30.0
                     )
                 else:
                     entity = await asyncio.wait_for(
-                        client.get_entity(PeerChannel(channel.channel_id)), timeout=30.0
+                        session.resolve_entity(PeerChannel(channel.channel_id)),
+                        timeout=30.0,
                     )
 
                 full = await asyncio.wait_for(
-                    client(GetFullChannelRequest(entity)), timeout=30.0
+                    session.fetch_full_channel(entity),
+                    timeout=30.0,
                 )
                 subscriber_count = getattr(full.full_chat, "participants_count", None)
 
                 views_list, reactions_list, forwards_list = [], [], []
 
                 async def _collect_stats_messages() -> None:
-                    async for msg in client.iter_messages(
+                    async for msg in session.stream_messages(
                         entity,
                         limit=50,
                         wait_time=self._config.delay_between_requests_sec,

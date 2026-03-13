@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -9,14 +10,13 @@ from httpx import ASGITransport, AsyncClient
 
 from src.collection_queue import CollectionQueue
 from src.config import AppConfig
-from src.database import Database
-from src.models import Account
 from src.scheduler.manager import SchedulerManager
 from src.search.ai_search import AISearchEngine
 from src.search.engine import SearchEngine
 from src.services.channel_service import ChannelService
 from src.telegram.collector import Collector
 from src.web.app import create_app
+from tests.helpers import AsyncIterMessages, FakeCliTelethonClient
 
 _FAKE_DIALOGS = [
     {"channel_id": -100111, "title": "My Channel", "username": "mychan",
@@ -28,6 +28,37 @@ _FAKE_DIALOGS = [
     {"channel_id": 888, "title": "My Bot", "username": "mybot",
      "channel_type": "bot", "deactivate": False, "is_own": False},
 ]
+
+
+def _dialog_from_spec(spec: dict) -> MagicMock:
+    entity = SimpleNamespace(
+        id=spec["channel_id"],
+        username=spec.get("username"),
+        creator=spec.get("is_own", False),
+        bot=spec.get("channel_type") == "bot",
+        broadcast=spec.get("channel_type") == "channel",
+        megagroup=spec.get("channel_type") == "supergroup",
+        gigagroup=spec.get("channel_type") == "gigagroup",
+        forum=spec.get("channel_type") == "forum",
+        monoforum=spec.get("channel_type") == "monoforum",
+        scam=spec.get("channel_type") == "scam",
+        fake=spec.get("channel_type") == "fake",
+        restricted=spec.get("channel_type") == "restricted",
+    )
+    dialog = MagicMock()
+    dialog.entity = entity
+    dialog.title = spec["title"]
+    dialog.is_channel = spec.get("channel_type") not in ("dm", "bot")
+    dialog.is_group = spec.get("channel_type") in ("group", "supergroup", "gigagroup", "forum")
+    return dialog
+
+
+def _make_dialog_client(dialogs: list[dict]) -> FakeCliTelethonClient:
+    prepared = [_dialog_from_spec(dialog) for dialog in dialogs]
+    return FakeCliTelethonClient(
+        iter_dialogs_factory=lambda: AsyncIterMessages(prepared),
+        entity_resolver=lambda _peer: MagicMock(),
+    )
 
 
 def _bind_dialog_cache_methods(pool):
@@ -67,51 +98,23 @@ def _strip_extra_dialog_fields(dialogs: list[dict]) -> list[dict]:
 
 
 @pytest.fixture
-async def client(tmp_path):
+async def client(db, real_pool_harness_factory):
     config = AppConfig()
-    config.database.path = str(tmp_path / "test.db")
     config.telegram.api_id = 12345
     config.telegram.api_hash = "test_hash"
     config.web.password = "testpass"
     app = create_app(config)
 
-    db = Database(config.database.path)
-    await db.initialize()
     app.state.db = db
 
-    async def _get_dialogs_for_phone(
-        self,
-        phone,
-        include_dm=False,
-        mode="channels_only",
-        refresh=False,
-    ):
-        return _FAKE_DIALOGS
-
-    async def _get_dialogs(self):
-        return []
-
-    async def _no_users(self):
-        return []
-
-    async def _leave_channels(self, phone, dialogs):
-        return {cid: True for cid, _ in dialogs}
-
-    app.state.pool = type(
-        "Pool",
-        (),
-        {
-            "clients": {"+1234567890": MagicMock()},
-            "get_users_info": _no_users,
-            "get_dialogs": _get_dialogs,
-            "get_dialogs_for_phone": _get_dialogs_for_phone,
-            "leave_channels": _leave_channels,
-        },
-    )()
-
-    from src.telegram.auth import TelegramAuth
-
-    app.state.auth = TelegramAuth(12345, "test_hash")
+    harness = real_pool_harness_factory()
+    harness.queue_cli_client(
+        phone="+1234567890",
+        client=_make_dialog_client(_FAKE_DIALOGS),
+    )
+    await harness.connect_account("+1234567890", session_string="test_session", is_primary=True)
+    app.state.auth = harness.auth
+    app.state.pool = harness.pool
     app.state.notifier = None
     collector = Collector(app.state.pool, db, config.scheduler)
     app.state.collector = collector
@@ -120,9 +123,6 @@ async def client(tmp_path):
     app.state.ai_search = AISearchEngine(config.llm, db)
     app.state.scheduler = SchedulerManager(collector, config.scheduler)
     app.state.session_secret = "test_secret_key"
-
-    await db.add_account(Account(phone="+1234567890", session_string="test_session"))
-
     transport = ASGITransport(app=app)
     auth_header = base64.b64encode(b":testpass").decode()
     async with AsyncClient(
@@ -134,7 +134,6 @@ async def client(tmp_path):
         yield c
 
     await app.state.collection_queue.shutdown()
-    await db.close()
 
 
 @pytest.mark.asyncio
@@ -167,18 +166,17 @@ async def test_my_telegram_page_shows_dialogs(client):
 
 
 @pytest.mark.asyncio
-async def test_my_telegram_page_requires_auth(tmp_path):
+async def test_my_telegram_page_requires_auth(db, real_pool_harness_factory):
     config = AppConfig()
-    config.database.path = str(tmp_path / "test.db")
     config.telegram.api_id = 12345
     config.telegram.api_hash = "test_hash"
     config.web.password = "testpass"
     app = create_app(config)
 
-    db = Database(config.database.path)
-    await db.initialize()
     app.state.db = db
-    app.state.pool = type("Pool", (), {"clients": {}})()
+    harness = real_pool_harness_factory()
+    app.state.auth = harness.auth
+    app.state.pool = harness.pool
     app.state.session_secret = "test_secret_key"
 
     transport = ASGITransport(app=app)
@@ -187,7 +185,6 @@ async def test_my_telegram_page_requires_auth(tmp_path):
     ) as c:
         resp = await c.get("/my-telegram/")
     assert resp.status_code == 401
-    await db.close()
 
 
 @pytest.mark.asyncio
@@ -315,29 +312,23 @@ async def test_leave_dialogs_post(client):
 
 
 @pytest.mark.asyncio
-async def test_refresh_dialogs_post_warms_cache(tmp_path):
+async def test_refresh_dialogs_post_warms_cache(db, real_pool_harness_factory):
     config = AppConfig()
-    config.database.path = str(tmp_path / "test.db")
     config.telegram.api_id = 12345
     config.telegram.api_hash = "test_hash"
     config.web.password = "testpass"
     app = create_app(config)
 
-    db = Database(config.database.path)
-    await db.initialize()
     app.state.db = db
 
-    pool = MagicMock()
-    pool.clients = {"+1234567890": MagicMock()}
-    pool.get_users_info = AsyncMock(return_value=[])
-    pool.get_dialogs = AsyncMock(return_value=[])
-    pool.get_dialogs_for_phone = AsyncMock(return_value=list(_FAKE_DIALOGS))
-    pool.leave_channels = AsyncMock(return_value={})
-    app.state.pool = pool
-
-    from src.telegram.auth import TelegramAuth
-
-    app.state.auth = TelegramAuth(12345, "test_hash")
+    harness = real_pool_harness_factory()
+    harness.queue_cli_client(
+        phone="+1234567890",
+        client=_make_dialog_client(_FAKE_DIALOGS),
+    )
+    await harness.connect_account("+1234567890", session_string="test_session", is_primary=True)
+    app.state.auth = harness.auth
+    app.state.pool = harness.pool
     app.state.notifier = None
     collector = Collector(app.state.pool, db, config.scheduler)
     app.state.collector = collector
@@ -346,9 +337,6 @@ async def test_refresh_dialogs_post_warms_cache(tmp_path):
     app.state.ai_search = AISearchEngine(config.llm, db)
     app.state.scheduler = SchedulerManager(collector, config.scheduler)
     app.state.session_secret = "test_secret_key"
-
-    await db.add_account(Account(phone="+1234567890", session_string="test_session"))
-
     transport = ASGITransport(app=app)
     auth_header = base64.b64encode(b":testpass").decode()
     async with AsyncClient(
@@ -361,13 +349,10 @@ async def test_refresh_dialogs_post_warms_cache(tmp_path):
 
     assert resp.status_code == 200
     assert "My Channel" in resp.text
-    assert pool.get_dialogs_for_phone.await_count == 2
-    first_call = pool.get_dialogs_for_phone.await_args_list[0]
-    second_call = pool.get_dialogs_for_phone.await_args_list[1]
-    assert first_call.args == ("+1234567890",)
-    assert first_call.kwargs == {"include_dm": True, "mode": "full", "refresh": True}
-    assert second_call.args == ("+1234567890",)
-    assert second_call.kwargs == {"include_dm": True, "mode": "full", "refresh": False}
+    cached = await db.repos.dialog_cache.list_dialogs("+1234567890")
+    assert _strip_extra_dialog_fields(cached) == _strip_extra_dialog_fields(_FAKE_DIALOGS)
+    # With persistent sessions, the same connection is reused for the refresh request
+    assert len(harness.telethon_cli_spy.created) == 1
 
     await app.state.collection_queue.shutdown()
     await db.close()
@@ -530,29 +515,26 @@ async def test_get_dialogs_for_phone_partial_on_timeout():
 
 
 @pytest.mark.asyncio
-async def test_my_telegram_page_without_phone_does_not_fetch_dialogs(tmp_path):
+async def test_my_telegram_page_without_phone_does_not_fetch_dialogs(
+    db,
+    real_pool_harness_factory,
+):
     config = AppConfig()
-    config.database.path = str(tmp_path / "test.db")
     config.telegram.api_id = 12345
     config.telegram.api_hash = "test_hash"
     config.web.password = "testpass"
     app = create_app(config)
 
-    db = Database(config.database.path)
-    await db.initialize()
     app.state.db = db
 
-    pool = MagicMock()
-    pool.clients = {"+1234567890": MagicMock()}
-    pool.get_users_info = AsyncMock(return_value=[])
-    pool.get_dialogs = AsyncMock(return_value=[])
-    pool.get_dialogs_for_phone = AsyncMock(return_value=list(_FAKE_DIALOGS))
-    pool.leave_channels = AsyncMock(return_value={})
-    app.state.pool = pool
-
-    from src.telegram.auth import TelegramAuth
-
-    app.state.auth = TelegramAuth(12345, "test_hash")
+    harness = real_pool_harness_factory()
+    harness.queue_cli_client(
+        phone="+1234567890",
+        client=_make_dialog_client(_FAKE_DIALOGS),
+    )
+    await harness.connect_account("+1234567890", session_string="test_session", is_primary=True)
+    app.state.auth = harness.auth
+    app.state.pool = harness.pool
     app.state.notifier = None
     collector = Collector(app.state.pool, db, config.scheduler)
     app.state.collector = collector
@@ -561,9 +543,6 @@ async def test_my_telegram_page_without_phone_does_not_fetch_dialogs(tmp_path):
     app.state.ai_search = AISearchEngine(config.llm, db)
     app.state.scheduler = SchedulerManager(collector, config.scheduler)
     app.state.session_secret = "test_secret_key"
-
-    await db.add_account(Account(phone="+1234567890", session_string="test_session"))
-
     transport = ASGITransport(app=app)
     auth_header = base64.b64encode(b":testpass").decode()
     async with AsyncClient(
@@ -577,28 +556,26 @@ async def test_my_telegram_page_without_phone_does_not_fetch_dialogs(tmp_path):
     assert resp.status_code == 200
     assert "Выберите аккаунт" in resp.text
     assert 'href="/my-telegram/photos"' in resp.text
-    pool.get_dialogs_for_phone.assert_not_awaited()
+    assert len(harness.telethon_cli_spy.created) == 1
 
     await app.state.collection_queue.shutdown()
-    await db.close()
 
 
 @pytest.mark.asyncio
-async def test_my_telegram_page_without_accounts_shows_disabled_photo_loader(tmp_path):
+async def test_my_telegram_page_without_accounts_shows_disabled_photo_loader(
+    db,
+    real_pool_harness_factory,
+):
     config = AppConfig()
-    config.database.path = str(tmp_path / "test.db")
     config.telegram.api_id = 12345
     config.telegram.api_hash = "test_hash"
     config.web.password = "testpass"
     app = create_app(config)
 
-    db = Database(config.database.path)
-    await db.initialize()
     app.state.db = db
-    app.state.pool = type("Pool", (), {"clients": {}})()
-    from src.telegram.auth import TelegramAuth
-
-    app.state.auth = TelegramAuth(12345, "test_hash")
+    harness = real_pool_harness_factory()
+    app.state.auth = harness.auth
+    app.state.pool = harness.pool
     app.state.notifier = None
     collector = Collector(app.state.pool, db, config.scheduler)
     app.state.collector = collector
@@ -624,7 +601,6 @@ async def test_my_telegram_page_without_accounts_shows_disabled_photo_loader(tmp
     assert 'aria-disabled="true"' in resp.text
 
     await app.state.collection_queue.shutdown()
-    await db.close()
 
 
 @pytest.mark.asyncio
