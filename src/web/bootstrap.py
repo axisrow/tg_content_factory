@@ -107,7 +107,12 @@ async def build_container_with_templates(
 
     api_id, api_hash = await load_telegram_credentials(db, config)
     auth = TelegramAuth(api_id, api_hash)
-    pool = ClientPool(auth, db, config.scheduler.max_flood_wait_sec)
+    pool = ClientPool(
+        auth,
+        db,
+        config.scheduler.max_flood_wait_sec,
+        runtime_config=config.telegram_runtime,
+    )
     notification_target_service = NotificationTargetService(notification_bundle, pool)
     photo_publish_service = PhotoPublishService(pool)
     photo_task_service = PhotoTaskService(photo_loader_bundle, photo_publish_service)

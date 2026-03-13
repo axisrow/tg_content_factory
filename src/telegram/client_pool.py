@@ -6,18 +6,30 @@ import io
 import logging
 import re
 import time
+from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
-from telethon import TelegramClient
 from telethon.errors import FloodWaitError, UsernameInvalidError, UsernameNotOccupiedError
 from telethon.tl.types import ChannelForbidden, PeerChannel, PeerUser
 
+from src.config import TelegramRuntimeConfig
 from src.database import Database
-from src.models import TelegramUserInfo
+from src.models import Account, TelegramUserInfo
+from src.telegram.account_lease_pool import AccountLease, AccountLeasePool
 from src.telegram.auth import TelegramAuth
+from src.telegram.backends import (
+    BackendClientLease,
+    BackendRouter,
+    NativeTelethonBackend,
+    TelegramTransportSession,
+    TelethonCliBackend,
+    adapt_transport_session,
+)
+from src.telegram.session_materializer import SessionMaterializer
 
 logger = logging.getLogger(__name__)
+_CONNECTED_ACCOUNT_MARKER = object()
 
 
 @dataclass
@@ -46,13 +58,35 @@ class StatsClientAvailability:
 class ClientPool:
     """Pool of Telegram clients with fallback rotation on flood waits."""
 
-    def __init__(self, auth: TelegramAuth, db: Database, max_flood_wait_sec: int = 300):
+    def __init__(
+        self,
+        auth: TelegramAuth,
+        db: Database,
+        max_flood_wait_sec: int = 300,
+        runtime_config: TelegramRuntimeConfig | None = None,
+    ):
         self._auth = auth
         self._db = db
         self._max_flood_wait_sec = max_flood_wait_sec
-        self.clients: dict[str, TelegramClient] = {}
+        self._runtime_config = self._normalize_runtime_config(runtime_config)
+        self.clients: dict[str, object] = {}
         self._lock = asyncio.Lock()
         self._in_use: set[str] = set()
+        self._lease_pool = AccountLeasePool(db, self._in_use)
+        self._session_overrides: dict[str, str] = {}
+        self._active_leases: dict[str, list[BackendClientLease]] = defaultdict(list)
+        self._materializer = SessionMaterializer(self._runtime_config.session_cache_dir)
+        self._native_backend = NativeTelethonBackend(auth)
+        self._primary_backend = TelethonCliBackend(
+            auth,
+            self._materializer,
+            transport=self._runtime_config.cli_transport,
+        )
+        self._backend_router = BackendRouter(
+            mode=self._runtime_config.backend_mode,
+            primary=self._primary_backend,
+            native=self._native_backend,
+        )
         self._dialogs_fetched: set[str] = set()
         self._dialogs_cache: dict[tuple[str, str], DialogCacheEntry] = {}
         self._dialogs_cache_ttl_sec = 60.0
@@ -134,126 +168,106 @@ class ClientPool:
 
     async def resolve_dialog_entity(
         self,
-        client: TelegramClient,
+        session: TelegramTransportSession | object,
         phone: str,
         dialog_id: int,
         target_type: str | None = None,
     ):
+        session = adapt_transport_session(session, disconnect_on_close=False)
         peer = (
             PeerUser(dialog_id)
             if target_type in ("dm", "bot")
             else PeerChannel(abs(dialog_id))
         )
         try:
-            return await asyncio.wait_for(client.get_input_entity(peer), timeout=30.0)
+            return await asyncio.wait_for(session.resolve_input_entity(peer), timeout=30.0)
         except (ValueError, TypeError):
             pass
 
         try:
-            await asyncio.wait_for(client.get_dialogs(), timeout=60.0)
+            await asyncio.wait_for(session.warm_dialog_cache(), timeout=60.0)
             self.mark_dialogs_fetched(phone)
-            return await asyncio.wait_for(client.get_input_entity(peer), timeout=30.0)
+            return await asyncio.wait_for(session.resolve_input_entity(peer), timeout=30.0)
         except (ValueError, TypeError):
             pass
 
         dialog = await self._get_cached_dialog(phone, dialog_id)
         username = dialog.get("username") if dialog else None
         if username:
-            return await asyncio.wait_for(client.get_input_entity(username), timeout=30.0)
+            return await asyncio.wait_for(session.resolve_input_entity(username), timeout=30.0)
 
-        return await asyncio.wait_for(client.get_input_entity(peer), timeout=30.0)
+        return await asyncio.wait_for(session.resolve_input_entity(peer), timeout=30.0)
 
     async def initialize(self) -> None:
-        """Connect all active accounts from DB."""
+        """Load active accounts and validate that their sessions are usable."""
         accounts = await self._db.get_accounts(active_only=True)
         for acc in accounts:
+            lease: BackendClientLease | None = None
             try:
-                client = await self._auth.create_client_from_session(acc.session_string)
-                client.flood_sleep_threshold = 60
-                self.clients[acc.phone] = client
+                lease = await self._connect_account(acc)
+                session = lease.session
                 logger.info("Connected account: %s (primary=%s)", acc.phone, acc.is_primary)
                 try:
-                    me = await asyncio.wait_for(client.get_me(), timeout=15.0)
+                    me = await asyncio.wait_for(session.fetch_me(), timeout=15.0)
                     is_premium = bool(getattr(me, "premium", False))
                     if is_premium != acc.is_premium:
                         await self._db.update_account_premium(acc.phone, is_premium)
                 except Exception as e:
                     logger.warning("Failed to fetch premium status for %s: %s", acc.phone, e)
+                finally:
+                    if lease is not None:
+                        await self._backend_router.release(lease)
             except Exception as e:
                 logger.error("Failed to connect %s: %s", acc.phone, e)
 
-    async def get_available_client(self) -> tuple[TelegramClient, str] | None:
+    async def get_available_client(self) -> tuple[TelegramTransportSession, str] | None:
         """Get first available client not in flood wait. Returns (client, phone) or None."""
-        async with self._lock:
-            now = datetime.now(timezone.utc)
-            accounts = await self._db.get_accounts(active_only=True)
+        for _ in range(max(1, len(self.clients))):
+            lease = await self._lease_pool.acquire_available(self._connected_phones())
+            if lease is None:
+                return None
+            result = await self._acquire_from_lease(lease)
+            if result is not None:
+                return result
+        return None
 
-            for acc in accounts:
-                if acc.phone in self._in_use:
-                    continue
-                flood_until = self._normalize_utc(acc.flood_wait_until)
-                if flood_until and flood_until > now:
-                    continue
-                if acc.phone in self.clients:
-                    self._in_use.add(acc.phone)
-                    return self.clients[acc.phone], acc.phone
-
-            # Fallback: if all clients are in use, return any non-flood-waited client
-            # (allows the same client to be shared when there's only one account)
-            for acc in accounts:
-                flood_until = self._normalize_utc(acc.flood_wait_until)
-                if flood_until and flood_until > now:
-                    continue
-                if acc.phone in self.clients:
-                    return self.clients[acc.phone], acc.phone
-
-            return None
-
-    async def get_client_by_phone(self, phone: str) -> tuple[TelegramClient, str] | None:
+    async def get_client_by_phone(
+        self,
+        phone: str,
+    ) -> tuple[TelegramTransportSession, str] | None:
         """Get a specific active connected client when it is not flood-waited."""
-        async with self._lock:
-            now = datetime.now(timezone.utc)
-            accounts = await self._db.get_accounts(active_only=True)
-            account = next((acc for acc in accounts if acc.phone == phone), None)
-            if account is None:
-                return None
+        lease = await self._acquire_phone_lease(phone)
+        if lease is None:
+            return None
+        return await self._acquire_from_lease(lease)
 
-            flood_until = self._normalize_utc(account.flood_wait_until)
-            if flood_until and flood_until > now:
-                return None
+    async def get_native_client_by_phone(
+        self,
+        phone: str,
+    ) -> tuple[object, str] | None:
+        """Get a specific client through the native backend for stateful flows."""
+        lease = await self._acquire_phone_lease(phone)
+        if lease is None:
+            return None
+        result = await self._acquire_from_lease(lease, force_native=True)
+        if result is None:
+            return None
+        session, acquired_phone = result
+        return session.raw_client, acquired_phone
 
-            client = self.clients.get(phone)
-            if client is None:
-                return None
-
-            if phone not in self._in_use:
-                self._in_use.add(phone)
-            return client, phone
-
-    async def get_premium_client(self) -> tuple[TelegramClient, str] | None:
+    async def get_premium_client(self) -> tuple[TelegramTransportSession, str] | None:
         """Get first available premium client.
 
         Flood wait is ignored because premium search uses a different API method.
         """
-        async with self._lock:
-            accounts = await self._db.get_accounts(active_only=True)
-            for acc in accounts:
-                if not acc.is_premium:
-                    continue
-                if acc.phone in self._in_use:
-                    continue
-                if acc.phone in self.clients:
-                    self._in_use.add(acc.phone)
-                    return self.clients[acc.phone], acc.phone
-
-            # Fallback: share client if all in use
-            for acc in accounts:
-                if not acc.is_premium:
-                    continue
-                if acc.phone in self.clients:
-                    return self.clients[acc.phone], acc.phone
-
-            return None
+        for _ in range(max(1, len(self.clients))):
+            lease = await self._lease_pool.acquire_premium(self._connected_phones())
+            if lease is None:
+                return None
+            result = await self._acquire_from_lease(lease)
+            if result is not None:
+                return result
+        return None
 
     async def get_premium_unavailability_reason(self) -> str:
         accounts = await self._db.get_accounts(active_only=True)
@@ -267,35 +281,29 @@ class ClientPool:
 
     async def get_stats_availability(self) -> StatsClientAvailability:
         """Describe stats client availability for batch scheduling decisions."""
-        async with self._lock:
-            now = datetime.now(timezone.utc)
-            accounts = await self._db.get_accounts(active_only=True)
-            connected = [acc for acc in accounts if acc.phone in self.clients]
-            if not connected:
-                return StatsClientAvailability(state="no_connected_active")
-
-            earliest: datetime | None = None
-            for acc in connected:
-                flood_until = self._normalize_utc(acc.flood_wait_until)
-                if flood_until is None or flood_until <= now:
-                    return StatsClientAvailability(state="available")
-                if earliest is None or flood_until < earliest:
-                    earliest = flood_until
-
-            if earliest is None:
-                return StatsClientAvailability(state="no_connected_active")
-
-            retry_after_sec = max(1, int((earliest - now).total_seconds()))
-            return StatsClientAvailability(
-                state="all_flooded",
-                retry_after_sec=retry_after_sec,
-                next_available_at_utc=earliest,
-            )
+        state, retry_after_sec, next_available_at_utc = (
+            await self._lease_pool.snapshot_stats_availability(self._connected_phones())
+        )
+        return StatsClientAvailability(
+            state=state,
+            retry_after_sec=retry_after_sec,
+            next_available_at_utc=next_available_at_utc,
+        )
 
     async def release_client(self, phone: str) -> None:
         """Mark client as no longer in active use."""
         async with self._lock:
-            self._in_use.discard(phone)
+            lease = None
+            stack = self._active_leases.get(phone)
+            if stack:
+                lease = stack.pop()
+                if not stack:
+                    self._active_leases.pop(phone, None)
+            should_release = not self._active_leases.get(phone)
+        if should_release:
+            await self._lease_pool.release(phone)
+        if lease is not None and lease.disconnect_on_release:
+            await self._backend_router.release(lease)
 
     async def report_flood(self, phone: str, wait_seconds: int) -> None:
         """Mark account as flood-waited."""
@@ -307,24 +315,145 @@ class ClientPool:
         await self._db.update_account_flood(phone, None)
 
     async def add_client(self, phone: str, session_string: str) -> None:
-        """Add and connect a new client."""
-        client = await self._auth.create_client_from_session(session_string)
-        client.flood_sleep_threshold = 60
-        self.clients[phone] = client
+        """Register a new account as connected and validate its stored session."""
+        self._session_overrides[phone] = session_string
+        account = Account(phone=phone, session_string=session_string, is_active=True)
+        lease = await self._connect_account(account)
+        await self._backend_router.release(lease)
 
     async def remove_client(self, phone: str) -> None:
-        if phone in self.clients:
+        self._session_overrides.pop(phone, None)
+        async with self._lock:
+            leases = list(self._active_leases.pop(phone, []))
+        for lease in reversed(leases):
+            if lease.disconnect_on_release:
+                try:
+                    await self._backend_router.release(lease)
+                except Exception:
+                    logger.debug("Failed to release live lease for %s", phone, exc_info=True)
+        client = self.clients.pop(phone, None)
+        if self._is_live_client(client):
             try:
-                await self.clients[phone].disconnect()
+                await client.disconnect()
             except Exception:
-                pass
-            self._dialogs_fetched.discard(phone)
-            self.invalidate_dialogs_cache(phone)
-            del self.clients[phone]
+                logger.debug("Failed to disconnect client for %s", phone, exc_info=True)
+        self._in_use.discard(phone)
+        self._dialogs_fetched.discard(phone)
+        self.invalidate_dialogs_cache(phone)
 
     async def disconnect_all(self) -> None:
         for phone in list(self.clients):
             await self.remove_client(phone)
+
+    @staticmethod
+    def _normalize_runtime_config(
+        runtime_config: TelegramRuntimeConfig | None,
+    ) -> TelegramRuntimeConfig:
+        if runtime_config is None:
+            return TelegramRuntimeConfig(
+                backend_mode="auto",
+                cli_transport="hybrid",
+            )
+        if runtime_config.backend_mode not in {"auto", "telethon_cli", "native"}:
+            runtime_config.backend_mode = "auto"
+        if runtime_config.cli_transport not in {"in_process", "subprocess", "hybrid"}:
+            runtime_config.cli_transport = "hybrid"
+        return runtime_config
+
+    def _connected_phones(self) -> set[str]:
+        return set(self.clients.keys())
+
+    @staticmethod
+    def _is_live_client(candidate: object) -> bool:
+        return callable(getattr(candidate, "disconnect", None)) and callable(
+            getattr(candidate, "get_me", None)
+        )
+
+    def _direct_session(self, phone: str) -> TelegramTransportSession | None:
+        candidate = self.clients.get(phone)
+        if self._is_live_client(candidate):
+            return adapt_transport_session(candidate, disconnect_on_close=False)
+        if isinstance(candidate, TelegramTransportSession):
+            return candidate
+        return None
+
+    async def _get_account_for_phone(
+        self,
+        phone: str,
+        *,
+        active_only: bool = True,
+    ) -> Account | None:
+        account = await self._lease_pool.get_account(phone, active_only=active_only)
+        if account is not None:
+            return account
+        session_string = self._session_overrides.get(phone)
+        if session_string is None:
+            return None
+        return Account(phone=phone, session_string=session_string, is_active=True)
+
+    async def _acquire_phone_lease(self, phone: str) -> AccountLease | None:
+        lease = await self._lease_pool.acquire_by_phone(phone, self._connected_phones())
+        if lease is not None:
+            return lease
+
+        if phone not in self.clients:
+            return None
+        account = await self._get_account_for_phone(phone)
+        if account is None:
+            return None
+        flood_until = self._normalize_utc(account.flood_wait_until)
+        if flood_until and flood_until > datetime.now(timezone.utc):
+            return None
+        async with self._lock:
+            if phone not in self._in_use:
+                self._in_use.add(phone)
+                return AccountLease(account=account, shared=False)
+        return AccountLease(account=account, shared=True)
+
+    async def _acquire_from_lease(
+        self,
+        account_lease: AccountLease,
+        *,
+        force_native: bool = False,
+    ) -> tuple[TelegramTransportSession, str] | None:
+        phone = account_lease.account.phone
+        direct_session = self._direct_session(phone)
+        lease: BackendClientLease | None = None
+        try:
+            if direct_session is not None:
+                lease = BackendClientLease(
+                    phone=phone,
+                    session=direct_session,
+                    backend_name="direct",
+                    disconnect_on_release=False,
+                )
+            else:
+                lease = await self._backend_router.acquire_client(
+                    account_lease.account,
+                    force_native=force_native,
+                )
+                self.clients[phone] = _CONNECTED_ACCOUNT_MARKER
+
+            async with self._lock:
+                self._active_leases[phone].append(lease)
+            return lease.session, phone
+        except Exception as exc:
+            logger.error("Failed to acquire client for %s: %s", phone, exc)
+            if not account_lease.shared:
+                await self._lease_pool.release(phone)
+            if lease is not None and lease.disconnect_on_release:
+                try:
+                    await self._backend_router.release(lease)
+                except Exception:
+                    logger.debug("Failed to release broken lease for %s", phone, exc_info=True)
+            if direct_session is None:
+                self.clients.pop(phone, None)
+            return None
+
+    async def _connect_account(self, account: Account) -> BackendClientLease:
+        lease = await self._backend_router.acquire_client(account)
+        self.clients[account.phone] = _CONNECTED_ACCOUNT_MARKER
+        return lease
 
     @staticmethod
     def _normalize_utc(value: datetime | None) -> datetime | None:
@@ -340,14 +469,24 @@ class ClientPool:
         primary_phones = {a.phone for a in accounts if a.is_primary}
         result: list[TelegramUserInfo] = []
 
-        for phone, client in self.clients.items():
+        for phone in sorted(self.clients):
+            session = self._direct_session(phone)
+            lease: BackendClientLease | None = None
             try:
-                me = await asyncio.wait_for(client.get_me(), timeout=15.0)
+                if session is None:
+                    account = await self._get_account_for_phone(phone, active_only=False)
+                    if account is None:
+                        continue
+                    lease = await self._backend_router.acquire_client(account)
+                    session = lease.session
+
+                me = await asyncio.wait_for(session.fetch_me(), timeout=15.0)
                 avatar_base64 = None
                 try:
                     buf = io.BytesIO()
                     downloaded = await asyncio.wait_for(
-                        client.download_profile_photo("me", file=buf), timeout=15.0
+                        session.fetch_profile_photo("me", file=buf),
+                        timeout=15.0,
                     )
                     if downloaded:
                         buf.seek(0)
@@ -366,6 +505,9 @@ class ClientPool:
                 ))
             except Exception as e:
                 logger.error("Failed to get info for %s: %s", phone, e)
+            finally:
+                if lease is not None:
+                    await self._backend_router.release(lease)
 
         result.sort(key=lambda u: (not u.is_primary, u.phone))
         return result
@@ -390,9 +532,11 @@ class ClientPool:
             if not result:
                 logger.warning("resolve_channel: no available client for '%s'", identifier)
                 raise RuntimeError("no_client")
-            client, phone = result
+            session, phone = result
+            session = adapt_transport_session(session, disconnect_on_close=False)
+            released = False
             try:
-                entity = await asyncio.wait_for(client.get_entity(peer), timeout=30.0)
+                entity = await asyncio.wait_for(session.resolve_entity(peer), timeout=30.0)
                 if not hasattr(entity, "title"):
                     logger.info(
                         "resolve_channel: '%s' is a user, not a channel/group", identifier
@@ -413,6 +557,7 @@ class ClientPool:
                 return None
             except FloodWaitError as e:
                 await self.release_client(phone)
+                released = True
                 await self.report_flood(phone, e.seconds)
                 logger.warning(
                     "resolve_channel: flood wait %ds for '%s', rotating client",
@@ -426,7 +571,8 @@ class ClientPool:
                 logger.warning("resolve_channel: failed to resolve '%s': %s", identifier, e)
                 return None
             finally:
-                await self.release_client(phone)
+                if not released:
+                    await self.release_client(phone)
         logger.warning("resolve_channel: all clients flood-waited for '%s'", identifier)
         return None
 
@@ -496,14 +642,15 @@ class ClientPool:
         result = await self.get_client_by_phone(phone)
         if not result:
             return []
-        client, phone = result
+        session, phone = result
+        session = adapt_transport_session(session, disconnect_on_close=False)
         started_at = time.perf_counter()
         try:
             items: list[dict] = []
             stats = DialogFetchStats()
 
             async def _iter() -> None:
-                async for dialog in client.iter_dialogs():
+                async for dialog in session.stream_dialogs():
                     stats.raw_dialogs += 1
                     entity = dialog.entity
                     if dialog.is_channel or dialog.is_group:
@@ -586,14 +733,15 @@ class ClientPool:
         result = await self.get_client_by_phone(phone)
         if not result:
             return {cid: False for cid, _ in dialogs}
-        client, phone = result
+        session, phone = result
+        session = adapt_transport_session(session, disconnect_on_close=False)
         outcomes: dict[int, bool] = {}
         try:
             for cid, ctype in dialogs:
                 try:
                     peer = PeerUser(cid) if ctype in ("dm", "bot") else PeerChannel(abs(cid))
-                    entity = await client.get_entity(peer)
-                    await client.delete_dialog(entity)
+                    entity = await session.resolve_entity(peer)
+                    await session.remove_dialog(entity)
                     outcomes[cid] = True
                     await asyncio.sleep(0.3)
                 except FloodWaitError as e:
@@ -619,27 +767,26 @@ class ClientPool:
         Uses entity-first approach: tries get_entity(PeerChannel) directly (fast, 10s timeout).
         Falls back to get_dialogs() only if entity lookup fails with ValueError (cache miss).
         """
-        from telethon.tl.functions.messages import GetForumTopicsRequest
-
         result = await self.get_available_client()
         if result is None:
             logger.warning("get_forum_topics: no available client for channel %d", channel_id)
             return []
-        client, phone = result
+        session, phone = result
+        session = adapt_transport_session(session, disconnect_on_close=False)
         try:
             # Try direct entity lookup first (works when entity is already cached)
             try:
                 entity = await asyncio.wait_for(
-                    client.get_entity(PeerChannel(channel_id)), timeout=10.0
+                    session.resolve_entity(PeerChannel(channel_id)), timeout=10.0
                 )
             except (ValueError, asyncio.TimeoutError):
                 # Cache miss — populate cache via get_dialogs and retry
                 if not self.is_dialogs_fetched(phone):
-                    await asyncio.wait_for(client.get_dialogs(), timeout=60.0)
+                    await asyncio.wait_for(session.warm_dialog_cache(), timeout=60.0)
                     self.mark_dialogs_fetched(phone)
                     try:
                         entity = await asyncio.wait_for(
-                            client.get_entity(PeerChannel(channel_id)), timeout=10.0
+                            session.resolve_entity(PeerChannel(channel_id)), timeout=10.0
                         )
                     except (ValueError, asyncio.TimeoutError):
                         entity = None
@@ -651,7 +798,7 @@ class ClientPool:
                     channel = await self._db.get_channel_by_channel_id(channel_id)
                     if channel and channel.username:
                         entity = await asyncio.wait_for(
-                            client.get_entity(channel.username), timeout=10.0
+                            session.resolve_entity(channel.username), timeout=10.0
                         )
                     else:
                         raise LookupError(
@@ -659,15 +806,7 @@ class ClientPool:
                             "not in cache and no username in DB"
                         )
             response = await asyncio.wait_for(
-                client(
-                    GetForumTopicsRequest(
-                        peer=entity,
-                        offset_date=None,
-                        offset_id=0,
-                        offset_topic=0,
-                        limit=100,
-                    )
-                ),
+                session.fetch_forum_topics(entity, limit=100),
                 timeout=30.0,
             )
             return [

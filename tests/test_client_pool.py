@@ -1,53 +1,70 @@
+from __future__ import annotations
+
 from datetime import datetime, timedelta, timezone
-from unittest.mock import AsyncMock, MagicMock
+from types import SimpleNamespace
 
 import pytest
 from telethon.errors import FloodWaitError
 
-from src.models import Account
-from src.telegram.client_pool import ClientPool
+from tests.helpers import FakeCliTelethonClient
+
+
+def _channel_entity(
+    channel_id: int,
+    *,
+    title: str = "Test Channel",
+    username: str | None = "test_chan",
+):
+    return SimpleNamespace(
+        id=channel_id,
+        title=title,
+        username=username,
+        broadcast=True,
+        megagroup=False,
+        gigagroup=False,
+        forum=False,
+        monoforum=False,
+        scam=False,
+        fake=False,
+        restricted=False,
+    )
 
 
 @pytest.mark.asyncio
-async def test_pool_initialize_no_accounts(db):
-    auth = MagicMock()
-    pool = ClientPool(auth, db)
-    await pool.initialize()
-    assert len(pool.clients) == 0
+async def test_pool_initialize_no_accounts(real_pool_harness_factory):
+    harness = real_pool_harness_factory()
+    await harness.initialize_connected_accounts()
+    assert len(harness.pool.clients) == 0
 
 
 @pytest.mark.asyncio
-async def test_pool_get_available_no_clients(db):
-    auth = MagicMock()
-    pool = ClientPool(auth, db)
-    result = await pool.get_available_client()
+async def test_pool_get_available_no_clients(real_pool_harness_factory):
+    harness = real_pool_harness_factory()
+    result = await harness.pool.get_available_client()
     assert result is None
 
 
 @pytest.mark.asyncio
-async def test_stats_availability_no_connected_active(db):
-    await db.add_account(Account(phone="+70000000001", session_string="s1", is_primary=True))
-    auth = MagicMock()
-    pool = ClientPool(auth, db)
+async def test_stats_availability_no_connected_active(real_pool_harness_factory):
+    harness = real_pool_harness_factory()
+    await harness.add_account("+70000000001", session_string="s1", is_primary=True)
 
-    availability = await pool.get_stats_availability()
+    availability = await harness.pool.get_stats_availability()
     assert availability.state == "no_connected_active"
     assert availability.retry_after_sec is None
 
 
 @pytest.mark.asyncio
-async def test_stats_availability_all_flooded(db):
-    acc = Account(phone="+70000000002", session_string="s2", is_primary=True)
-    await db.add_account(acc)
-
-    auth = MagicMock()
-    pool = ClientPool(auth, db)
-    pool.clients["+70000000002"] = AsyncMock()
+async def test_stats_availability_all_flooded(real_pool_harness_factory):
+    harness = real_pool_harness_factory()
+    harness.queue_cli_client(phone="+70000000002", client=FakeCliTelethonClient())
+    await harness.add_account("+70000000002", session_string="s2", is_primary=True)
+    await harness.initialize_connected_accounts()
 
     until = datetime.now(timezone.utc) + timedelta(seconds=120)
-    await db.update_account_flood("+70000000002", until)
+    await harness.db.update_account_flood("+70000000002", until)
 
-    availability = await pool.get_stats_availability()
+    availability = await harness.pool.get_stats_availability()
     assert availability.state == "all_flooded"
     assert availability.retry_after_sec is not None
     assert availability.retry_after_sec >= 1
@@ -55,197 +72,181 @@ async def test_stats_availability_all_flooded(db):
 
 
 @pytest.mark.asyncio
-async def test_pool_report_flood(db):
-    acc = Account(phone="+71234567890", session_string="session1", is_primary=True)
-    await db.add_account(acc)
+async def test_pool_report_flood(real_pool_harness_factory):
+    harness = real_pool_harness_factory()
+    await harness.add_account("+71234567890", session_string="session1", is_primary=True)
 
-    auth = MagicMock()
-    pool = ClientPool(auth, db)
-    await pool.report_flood("+71234567890", 120)
+    await harness.pool.report_flood("+71234567890", 120)
 
-    accounts = await db.get_accounts()
+    accounts = await harness.db.get_accounts()
     assert accounts[0].flood_wait_until is not None
 
 
 @pytest.mark.asyncio
-async def test_pool_disconnect_all(db):
-    auth = MagicMock()
-    pool = ClientPool(auth, db)
+async def test_pool_disconnect_all_releases_active_leases(real_pool_harness_factory):
+    harness = real_pool_harness_factory()
+    cli_client = harness.queue_cli_client(
+        phone="+71234567890",
+        client=FakeCliTelethonClient(),
+    )
+    await harness.add_account("+71234567890", session_string="session1", is_primary=True)
+    await harness.initialize_connected_accounts()
 
-    mock_client = AsyncMock()
-    pool.clients["+71234567890"] = mock_client
+    acquired = await harness.pool.get_client_by_phone("+71234567890")
+    assert acquired is not None
 
-    await pool.disconnect_all()
-    assert len(pool.clients) == 0
-    mock_client.disconnect.assert_awaited_once()
+    await harness.pool.disconnect_all()
+
+    assert len(harness.pool.clients) == 0
+    assert cli_client.disconnect.await_count == 2
 
 
 @pytest.mark.asyncio
-async def test_pool_skips_flooded_returns_next(db):
-    acc1 = Account(phone="+70001111111", session_string="s1", is_primary=True)
-    acc2 = Account(phone="+70002222222", session_string="s2")
-    await db.add_account(acc1)
-    await db.add_account(acc2)
+async def test_pool_skips_flooded_returns_next(real_pool_harness_factory):
+    harness = real_pool_harness_factory()
+    harness.queue_cli_client(phone="+70001111111", client=FakeCliTelethonClient())
+    harness.queue_cli_client(phone="+70002222222", client=FakeCliTelethonClient())
+    await harness.add_account("+70001111111", session_string="s1", is_primary=True)
+    await harness.add_account("+70002222222", session_string="s2")
+    await harness.initialize_connected_accounts()
 
-    auth = MagicMock()
-    pool = ClientPool(auth, db)
-    pool.clients["+70001111111"] = AsyncMock()
-    pool.clients["+70002222222"] = AsyncMock()
+    await harness.pool.report_flood("+70001111111", 120)
 
-    await pool.report_flood("+70001111111", 120)
-
-    result = await pool.get_available_client()
+    result = await harness.pool.get_available_client()
     assert result is not None
-    client, phone = result
-    assert phone == "+70002222222"
+    assert result[1] == "+70002222222"
 
 
 @pytest.mark.asyncio
-async def test_resolve_channel_returns_raw_id(db):
-    """resolve_channel returns entity.id as-is (raw positive int)."""
-    acc = Account(phone="+71234567890", session_string="session1", is_primary=True)
-    await db.add_account(acc)
+async def test_resolve_channel_returns_raw_id(real_pool_harness_factory):
+    harness = real_pool_harness_factory()
+    client = harness.queue_cli_client(
+        phone="+71234567890",
+        client=FakeCliTelethonClient(
+            entity_resolver=lambda _peer: _channel_entity(1970788983),
+        ),
+    )
+    await harness.add_account("+71234567890", session_string="session1", is_primary=True)
+    await harness.initialize_connected_accounts()
 
-    mock_entity = MagicMock()
-    mock_entity.id = 1970788983
-    mock_entity.title = "Test Channel"
-    mock_entity.username = "test_chan"
+    result = await harness.pool.resolve_channel("@test_chan")
 
-    mock_client = AsyncMock()
-    mock_client.get_entity = AsyncMock(return_value=mock_entity)
-
-    auth = MagicMock()
-    pool = ClientPool(auth, db)
-    pool.clients["+71234567890"] = mock_client
-
-    result = await pool.resolve_channel("@test_chan")
     assert result is not None
     assert result["channel_id"] == 1970788983
     assert result["title"] == "Test Channel"
     assert result["username"] == "test_chan"
+    client.get_entity.assert_awaited_with("@test_chan")
 
 
 @pytest.mark.asyncio
-async def test_resolve_channel_no_client_raises(db):
-    """resolve_channel raises RuntimeError('no_client') when pool is empty."""
-    auth = MagicMock()
-    pool = ClientPool(auth, db)
+async def test_resolve_channel_no_client_raises(real_pool_harness_factory):
+    harness = real_pool_harness_factory()
 
     with pytest.raises(RuntimeError, match="no_client"):
-        await pool.resolve_channel("@test_chan")
+        await harness.pool.resolve_channel("@test_chan")
 
 
 @pytest.mark.asyncio
-async def test_resolve_channel_entity_not_found_returns_none(db):
-    """resolve_channel returns None when get_entity raises ValueError."""
-    acc = Account(phone="+71234567890", session_string="session1", is_primary=True)
-    await db.add_account(acc)
+async def test_resolve_channel_entity_not_found_returns_none(real_pool_harness_factory):
+    harness = real_pool_harness_factory()
+    harness.queue_cli_client(
+        phone="+71234567890",
+        client=FakeCliTelethonClient(
+            entity_resolver=lambda _peer: ValueError("No user has ..."),
+        ),
+    )
+    await harness.add_account("+71234567890", session_string="session1", is_primary=True)
+    await harness.initialize_connected_accounts()
 
-    mock_client = AsyncMock()
-    mock_client.get_entity = AsyncMock(side_effect=ValueError("No user has ..."))
-
-    auth = MagicMock()
-    pool = ClientPool(auth, db)
-    pool.clients["+71234567890"] = mock_client
-
-    result = await pool.resolve_channel("@nonexistent")
+    result = await harness.pool.resolve_channel("@nonexistent")
     assert result is None
 
 
 @pytest.mark.asyncio
-async def test_resolve_channel_flood_rotates(db):
-    """resolve_channel rotates to another client on FloodWaitError."""
-    acc1 = Account(phone="+70001111111", session_string="s1", is_primary=True)
-    acc2 = Account(phone="+70002222222", session_string="s2")
-    await db.add_account(acc1)
-    await db.add_account(acc2)
-
-    mock_entity = MagicMock()
-    mock_entity.id = 123456
-    mock_entity.title = "Test"
-    mock_entity.username = "test"
-    mock_entity.broadcast = True
-    mock_entity.megagroup = False
-
+async def test_resolve_channel_flood_rotates(real_pool_harness_factory):
+    harness = real_pool_harness_factory()
     flood_err = FloodWaitError(request=None, capture=0)
     flood_err.seconds = 60
+    harness.queue_cli_client(
+        phone="+70001111111",
+        client=FakeCliTelethonClient(
+            entity_resolver=lambda _peer: flood_err,
+        ),
+    )
+    harness.queue_cli_client(
+        phone="+70002222222",
+        client=FakeCliTelethonClient(
+            entity_resolver=lambda _peer: _channel_entity(123456, title="Test", username="test"),
+        ),
+    )
+    await harness.add_account("+70001111111", session_string="s1", is_primary=True)
+    await harness.add_account("+70002222222", session_string="s2")
+    await harness.initialize_connected_accounts()
 
-    mock_client1 = AsyncMock()
-    mock_client1.get_entity = AsyncMock(side_effect=flood_err)
+    result = await harness.pool.resolve_channel("@test")
 
-    mock_client2 = AsyncMock()
-    mock_client2.get_entity = AsyncMock(return_value=mock_entity)
-
-    auth = MagicMock()
-    pool = ClientPool(auth, db)
-    pool.clients["+70001111111"] = mock_client1
-    pool.clients["+70002222222"] = mock_client2
-
-    result = await pool.resolve_channel("@test")
     assert result is not None
     assert result["channel_id"] == 123456
 
 
 @pytest.mark.asyncio
-async def test_resolve_channel_user_returns_none(db):
-    """resolve_channel returns None when get_entity returns a User (no title attr)."""
-    acc = Account(phone="+71234567890", session_string="session1", is_primary=True)
-    await db.add_account(acc)
+async def test_resolve_channel_user_returns_none(real_pool_harness_factory):
+    harness = real_pool_harness_factory()
+    harness.queue_cli_client(
+        phone="+71234567890",
+        client=FakeCliTelethonClient(
+            entity_resolver=lambda _peer: SimpleNamespace(id=999, first_name="Alex"),
+        ),
+    )
+    await harness.add_account("+71234567890", session_string="session1", is_primary=True)
+    await harness.initialize_connected_accounts()
 
-    mock_user = MagicMock(spec=[])  # no attributes by default
-    mock_user.id = 999
-    mock_user.first_name = "Alex"
-    # User objects have no 'title' attribute
-
-    mock_client = AsyncMock()
-    mock_client.get_entity = AsyncMock(return_value=mock_user)
-
-    auth = MagicMock()
-    pool = ClientPool(auth, db)
-    pool.clients["+71234567890"] = mock_client
-
-    result = await pool.resolve_channel("@AlexP87")
+    result = await harness.pool.resolve_channel("@AlexP87")
     assert result is None
 
-@pytest.mark.asyncio
-async def test_get_premium_client_fallback_when_in_use(db):
-    """get_premium_client() may reuse an in-use premium client as a single-account fallback."""
-    acc = Account(phone="+70001111111", session_string="s1", is_primary=True, is_premium=True)
-    await db.add_account(acc)
-
-    auth = MagicMock()
-    pool = ClientPool(auth, db)
-    pool.clients["+70001111111"] = AsyncMock()
-    pool._in_use.add("+70001111111")  # Simulate concurrent usage
-
-    result = await pool.get_premium_client()
-    assert result is not None
-    client, phone = result
-    assert phone == "+70001111111"
-
 
 @pytest.mark.asyncio
-async def test_resolve_channel_strips_post_id_from_url(db):
-    """resolve_channel normalizes t.me URLs by stripping post IDs."""
-    acc = Account(phone="+71234567890", session_string="session1", is_primary=True)
-    await db.add_account(acc)
+async def test_get_premium_client_fallback_when_in_use(real_pool_harness_factory):
+    harness = real_pool_harness_factory()
+    harness.queue_cli_client(
+        phone="+70001111111",
+        client=FakeCliTelethonClient(me=SimpleNamespace(premium=True)),
+    )
+    await harness.add_account(
+        "+70001111111",
+        session_string="s1",
+        is_primary=True,
+        is_premium=True,
+    )
+    await harness.initialize_connected_accounts()
 
-    mock_entity = MagicMock()
-    mock_entity.id = 555
-    mock_entity.title = "Arms Channel"
-    mock_entity.username = "ruarms_com"
-    mock_entity.broadcast = True
-    mock_entity.megagroup = False
+    first = await harness.pool.get_premium_client()
+    second = await harness.pool.get_premium_client()
 
-    mock_client = AsyncMock()
-    mock_client.get_entity = AsyncMock(return_value=mock_entity)
+    assert first is not None
+    assert second is not None
+    assert first[1] == "+70001111111"
+    assert second[1] == "+70001111111"
 
-    auth = MagicMock()
-    pool = ClientPool(auth, db)
-    pool.clients["+71234567890"] = mock_client
 
-    result = await pool.resolve_channel("https://t.me/ruarms_com/24")
+@pytest.mark.asyncio
+async def test_resolve_channel_strips_post_id_from_url(real_pool_harness_factory):
+    harness = real_pool_harness_factory()
+    client = harness.queue_cli_client(
+        phone="+71234567890",
+        client=FakeCliTelethonClient(
+            entity_resolver=lambda _peer: _channel_entity(
+                555,
+                title="Arms Channel",
+                username="ruarms_com",
+            ),
+        ),
+    )
+    await harness.add_account("+71234567890", session_string="session1", is_primary=True)
+    await harness.initialize_connected_accounts()
+
+    result = await harness.pool.resolve_channel("https://t.me/ruarms_com/24")
+
     assert result is not None
     assert result["channel_id"] == 555
-    # Verify get_entity was called with the normalized URL (without /24)
-    mock_client.get_entity.assert_awaited_with("https://t.me/ruarms_com")
+    client.get_entity.assert_awaited_with("https://t.me/ruarms_com")

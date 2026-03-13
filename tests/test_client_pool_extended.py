@@ -24,11 +24,13 @@ def mock_db():
 @pytest.fixture
 def mock_auth():
     auth = MagicMock()
+    auth.api_id = 12345
+    auth.api_hash = "hash"
     auth.create_client_from_session = AsyncMock()
     return auth
 
 @pytest.mark.asyncio
-async def test_client_pool_initialize_success(mock_db, mock_auth):
+async def test_client_pool_initialize_success(mock_db, mock_auth, telethon_cli_spy):
     acc = Account(
         phone="+7999", session_string="sess",
         is_active=True, is_primary=True, is_premium=False,
@@ -36,8 +38,9 @@ async def test_client_pool_initialize_success(mock_db, mock_auth):
     mock_db.get_accounts.return_value = [acc]
 
     mock_client = AsyncMock()
-    mock_client.get_me.return_value = MagicMock(premium=True)
-    mock_auth.create_client_from_session.return_value = mock_client
+    mock_client.is_user_authorized = AsyncMock(return_value=True)
+    mock_client.get_me = AsyncMock(return_value=MagicMock(premium=True))
+    telethon_cli_spy.default_client = mock_client
 
     pool = ClientPool(mock_auth, mock_db)
     await pool.initialize()

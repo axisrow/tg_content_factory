@@ -15,6 +15,7 @@ from src.cli import runtime
 from src.database import Database
 from src.filters.analyzer import ChannelAnalyzer
 from src.models import Message, SearchQuery
+from src.telegram.backends import adapt_transport_session
 
 logger = logging.getLogger(__name__)
 
@@ -384,9 +385,10 @@ async def _run_telegram_live_checks(config_path: str) -> list[CheckResult]:
     try:
         client_tuple = await pool.get_available_client()
         if client_tuple:
-            client, phone = client_tuple
+            session, phone = client_tuple
+            session = adapt_transport_session(session, disconnect_on_close=False)
             try:
-                await _tg_call(client.get_dialogs())
+                await _tg_call(session.warm_dialog_cache())
             finally:
                 await pool.release_client(phone)
     except Exception:
@@ -407,11 +409,12 @@ async def _run_telegram_live_checks(config_path: str) -> list[CheckResult]:
                     CheckResult("tg_iter_messages", Status.SKIP, "No available client"),
                 )
             else:
-                client, phone = client_tuple
+                session, phone = client_tuple
+                session = adapt_transport_session(session, disconnect_on_close=False)
                 try:
-                    entity = await _tg_call(client.get_entity(ch.channel_id))
+                    entity = await _tg_call(session.resolve_entity(ch.channel_id))
                     msg_count = 0
-                    async for msg in client.iter_messages(entity, limit=10):
+                    async for msg in session.stream_messages(entity, limit=10):
                         if msg.text or msg.media:
                             message = Message(
                                 channel_id=ch.channel_id,

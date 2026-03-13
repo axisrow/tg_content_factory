@@ -80,3 +80,10 @@ Three layers: **CLI/Web** → **Telegram + Search + Scheduler** → **SQLite**
 - ruff for linting: line-length=100, target py311, rules E/F/I/N/W
 - Tests: pytest-asyncio with `asyncio_mode="auto"`
 - Session strings stored as `enc:v2:*` when `SESSION_ENCRYPTION_KEY` is set; legacy `enc:v1:*` auto-migrated; startup fails fast if encrypted rows exist without key
+
+## Real Telegram Testing
+
+- Default rule: tests stay fake/harness-first; real Telegram is never the default path
+- Policy document: `docs/testing/real-telegram.md`
+- Any live Telegram pytest must use `real_telegram_sandbox` plus `@pytest.mark.real_tg_safe` or `@pytest.mark.real_tg_manual`
+- Mutating flows such as BotFather, photo send, auth, and `leave_channels` must not be converted to generic live pytest cases
