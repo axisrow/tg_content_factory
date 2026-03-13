@@ -568,7 +568,7 @@ class TestCLITest:
         assert "serial_full_suite" in out
         assert "parallel_safe_suite" in out
         assert "aiosqlite_serial_suite" in out
-        assert "mixed_parallel_total: 10.00s" in out
+        assert "two_pass_total: 10.00s" in out
         assert "speedup_vs_serial: 1.20x" in out
         assert run_mock.call_count == 3
         assert run_mock.call_args_list[0].args[0] == test_cmd.SERIAL_PYTEST_COMMAND

@@ -24,6 +24,7 @@ from src.telegram.backends import adapt_transport_session
 logger = logging.getLogger(__name__)
 
 TELEGRAM_TIMEOUT = 30
+# src/cli/commands/test.py → src/cli/commands → src/cli → src → repo root
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SERIAL_PYTEST_COMMAND = (sys.executable, "-m", "pytest", "tests", "-q")
 PARALLEL_SAFE_PYTEST_COMMAND = (
@@ -100,14 +101,15 @@ def _run_pytest_benchmark() -> None:
         BenchmarkStep("aiosqlite_serial_suite", AIOSQLITE_SERIAL_PYTEST_COMMAND),
     )
 
-    mixed_parallel_total = parallel_safe_elapsed + aiosqlite_serial_elapsed
-    speedup = serial_elapsed / mixed_parallel_total if mixed_parallel_total else float("inf")
+    # Both passes run sequentially; speedup comes from xdist within the first pass.
+    two_pass_total = parallel_safe_elapsed + aiosqlite_serial_elapsed
+    speedup = serial_elapsed / two_pass_total if two_pass_total else float("inf")
 
     print("\n--- Benchmark Summary ---")
     print(f"serial_full_suite: {serial_elapsed:.2f}s")
     print(f"parallel_safe_suite: {parallel_safe_elapsed:.2f}s")
     print(f"aiosqlite_serial_suite: {aiosqlite_serial_elapsed:.2f}s")
-    print(f"mixed_parallel_total: {mixed_parallel_total:.2f}s")
+    print(f"two_pass_total: {two_pass_total:.2f}s")
     print(f"speedup_vs_serial: {speedup:.2f}x")
 
 
