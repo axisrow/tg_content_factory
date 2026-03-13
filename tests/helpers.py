@@ -432,22 +432,6 @@ def build_real_pool_harness(
     )
 
 
-def make_cli_pool(auth, db, **kwargs) -> ClientPool:
-    """Create a real CLI-backed ClientPool test double with injectable methods."""
-    pool = ClientPool(
-        auth,
-        db,
-        runtime_config=TelegramRuntimeConfig(
-            backend_mode="auto",
-            cli_transport="hybrid",
-            session_cache_dir="data/test_telegram_sessions",
-        ),
-    )
-    pool.clients = kwargs.pop("clients", {})
-    for key, value in kwargs.items():
-        setattr(pool, key, value)
-    return pool
-
 
 async def _maybe_await(value):
     if hasattr(value, "__await__"):
