@@ -11,14 +11,20 @@ pip install -e ".[dev]"
 # Run the web server
 python -m src.main serve [--web-pass PASS]
 
-# Lint
-ruff check src/ tests/
+ # Lint
+ ruff check src/ tests/ conftest.py
+ 
+# Run parallel-safe tests (all available CPUs minus one worker)
+pytest tests/ -v -m "not aiosqlite_serial" -n auto
 
-# Run all tests
-pytest tests/ -v
+# Run aiosqlite-backed tests serially
+pytest tests/ -v -m aiosqlite_serial
 
 # Run a single test
 pytest tests/test_web.py::test_health_endpoint -v
+
+# Benchmark serial vs safe mixed-mode suite execution
+python -m src.main test benchmark
 ```
 
 Full CLI reference:
@@ -34,6 +40,7 @@ python -m src.main keyword list|add|delete|toggle
 python -m src.main account list|toggle|delete
 python -m src.main scheduler start|trigger|search
 python -m src.main notification setup|status|delete
+python -m src.main test all|read|write|telegram|benchmark
 ```
 
 ## Architecture
@@ -69,6 +76,8 @@ Three layers: **CLI/Web** → **Telegram + Search + Scheduler** → **SQLite**
 - **aiosqlite connection cleanup**: in tests using raw `aiosqlite.connect()`, always wrap in `try/finally` with `await conn.close()` — an unclosed worker-thread blocks pytest process exit
 - **SQL in triple-quoted strings**: Python does NOT concatenate adjacent string literals inside `"""..."""`; for values with quotes use parameterized `execute()` with `?`-placeholders, not inline values in `executescript()`
 - **pytest-timeout**: global 30s timeout configured in `pyproject.toml` (`timeout = 30`), dependency `pytest-timeout` in `[dev]`
+- **Test parallelism split**: root `conftest.py` auto-marks tests as `aiosqlite_serial` if they use the `cli_db` fixture or contain `import aiosqlite` (raw aiosqlite calls); everything else runs with `-n auto`. Currently ~724 parallel / ~111 serial.
+- **`db` fixture is `:memory:`**: `tests/conftest.py` provides `db` as `Database(":memory:")`. The `real_pool_harness_factory` fixture depends on `db` and passes it to the harness. Any fixture/test that creates a web app and calls `real_pool_harness_factory()` **must** accept `db` as a parameter and use it for `app.state.db` — creating a separate `Database(tmp_path / "test.db")` would give the app and the harness different DB instances, breaking account lookups.
 
 ## Conventions
 

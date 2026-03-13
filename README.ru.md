@@ -127,6 +127,9 @@ python -m src.main scheduler start|trigger|search
 
 # Бот уведомлений
 python -m src.main notification setup|status|delete
+
+# Диагностика и benchmark
+python -m src.main test all|read|write|telegram|benchmark
 ```
 
 ### `telethon-cli`
@@ -170,16 +173,25 @@ telethon-cli users get-me --output json
 
 ## Разработка
 
-```bash
-# Установка dev-зависимостей
-pip install -e ".[dev]"
+ ```bash
+ # Установка dev-зависимостей
+ pip install -e ".[dev]"
+ 
+ # Параллельно запускаем только safe-подмножество
+ pytest tests/ -v -m "not aiosqlite_serial" -n auto
 
-# Тесты
-pytest tests/ -v
+ # Тесты с aiosqlite выполняем последовательно
+ pytest tests/ -v -m aiosqlite_serial
 
-# Линтер
-ruff check src/ tests/
-```
+ # Один тест
+ pytest tests/test_web.py::test_health_endpoint -v
+
+ # Сравнить serial и safe mixed-mode прогон всего suite
+ python -m src.main test benchmark
+
+ # Линтер
+ ruff check src/ tests/ conftest.py
+ ```
 
 ### Политика real Telegram testing
 
