@@ -9,6 +9,7 @@ from src.cli import runtime
 from src.cli.commands.common import resolve_channel
 from src.models import Channel, CollectionTaskStatus
 from src.parsers import deduplicate_identifiers, parse_file, parse_identifiers
+from src.telegram.backends import adapt_transport_session
 from src.telegram.collector import Collector
 
 
@@ -212,10 +213,11 @@ def run(args: argparse.Namespace) -> None:
                 # Pre-fetch dialogs to populate entity cache for channels without username
                 prefetch = await pool.get_available_client()
                 if prefetch:
-                    client, phone = prefetch
+                    session, phone = prefetch
+                    session = adapt_transport_session(session, disconnect_on_close=False)
                     try:
                         print("Pre-fetching dialogs to populate entity cache...")
-                        await asyncio.wait_for(client.get_dialogs(), timeout=30)
+                        await asyncio.wait_for(session.warm_dialog_cache(), timeout=30)
                     except Exception as e:
                         logging.warning("Failed to pre-fetch dialogs: %s", e)
                     finally:

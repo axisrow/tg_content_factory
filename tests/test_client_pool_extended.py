@@ -6,6 +6,7 @@ import pytest
 from telethon.errors import FloodWaitError, UsernameInvalidError
 
 from src.models import Account, Channel
+from src.telegram.backends import TelegramTransportSession
 from src.telegram.client_pool import ClientPool
 
 
@@ -24,11 +25,13 @@ def mock_db():
 @pytest.fixture
 def mock_auth():
     auth = MagicMock()
+    auth.api_id = 12345
+    auth.api_hash = "hash"
     auth.create_client_from_session = AsyncMock()
     return auth
 
 @pytest.mark.asyncio
-async def test_client_pool_initialize_success(mock_db, mock_auth):
+async def test_client_pool_initialize_success(mock_db, mock_auth, telethon_cli_spy):
     acc = Account(
         phone="+7999", session_string="sess",
         is_active=True, is_primary=True, is_premium=False,
@@ -36,8 +39,9 @@ async def test_client_pool_initialize_success(mock_db, mock_auth):
     mock_db.get_accounts.return_value = [acc]
 
     mock_client = AsyncMock()
-    mock_client.get_me.return_value = MagicMock(premium=True)
-    mock_auth.create_client_from_session.return_value = mock_client
+    mock_client.is_user_authorized = AsyncMock(return_value=True)
+    mock_client.get_me = AsyncMock(return_value=MagicMock(premium=True))
+    telethon_cli_spy.default_client = mock_client
 
     pool = ClientPool(mock_auth, mock_db)
     await pool.initialize()
@@ -131,7 +135,7 @@ async def test_resolve_channel_errors(mock_db, mock_auth):
     mock_db.get_accounts.return_value = [acc]
     client = AsyncMock()
     pool = ClientPool(mock_auth, mock_db)
-    pool.clients = {"+7001": client}
+    pool.clients = {"+7001": TelegramTransportSession(client, disconnect_on_close=False)}
 
     # Timeout
     client.get_entity.side_effect = asyncio.TimeoutError()
@@ -155,7 +159,7 @@ async def test_get_users_info_with_avatar(mock_db, mock_auth):
     client.download_profile_photo.return_value = True
 
     pool = ClientPool(mock_auth, mock_db)
-    pool.clients = {"+7001": client}
+    pool.clients = {"+7001": TelegramTransportSession(client, disconnect_on_close=False)}
 
     with patch("io.BytesIO", return_value=MagicMock(read=lambda: b"imgdata")):
         info = await pool.get_users_info()
@@ -171,7 +175,7 @@ async def test_leave_channels_flood(mock_db, mock_auth):
     client.delete_dialog.side_effect = FloodWaitError(5)
 
     pool = ClientPool(mock_auth, mock_db)
-    pool.clients = {"+7001": client}
+    pool.clients = {"+7001": TelegramTransportSession(client, disconnect_on_close=False)}
 
     res = await pool.leave_channels("+7001", [(123, "channel"), (456, "channel")])
     assert res[123] is False
@@ -184,7 +188,7 @@ async def test_get_forum_topics_cache_hit_and_miss(mock_db, mock_auth):
     mock_db.get_accounts.return_value = [acc]
     client = AsyncMock()
     pool = ClientPool(mock_auth, mock_db)
-    pool.clients = {"+7001": client}
+    pool.clients = {"+7001": TelegramTransportSession(client, disconnect_on_close=False)}
 
     # Cache hit
     client.get_entity.return_value = MagicMock(id=1)
@@ -270,7 +274,7 @@ async def test_get_dialogs_for_phone_sets_is_own(mock_db, mock_auth):
     client.iter_dialogs.return_value = iter_dialogs()
 
     pool = ClientPool(mock_auth, mock_db)
-    pool.clients = {"+7001": client}
+    pool.clients = {"+7001": TelegramTransportSession(client, disconnect_on_close=False)}
 
     dialogs = await pool.get_dialogs_for_phone("+7001")
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+from types import SimpleNamespace
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -12,10 +13,32 @@ from src.search.ai_search import AISearchEngine
 from src.search.engine import SearchEngine
 from src.telegram.collector import Collector
 from src.web.app import create_app
+from tests.helpers import FakeCliTelethonClient
+
+
+def _resolved_channel_entity(identifier: object) -> SimpleNamespace:
+    if not isinstance(identifier, str):
+        return SimpleNamespace(id=abs(hash(str(identifier))) % 10**10, title="Channel peer")
+    ident = identifier.strip().lower().lstrip("@")
+    channel_id = abs(hash(ident)) % 10**10
+    username = ident if not ident.lstrip("-").isdigit() else None
+    return SimpleNamespace(
+        id=channel_id,
+        title=f"Channel {ident}",
+        username=username,
+        broadcast=True,
+        megagroup=False,
+        gigagroup=False,
+        forum=False,
+        monoforum=False,
+        scam=False,
+        fake=False,
+        restricted=False,
+    )
 
 
 @pytest.fixture
-async def client(tmp_path):
+async def client(tmp_path, real_pool_harness_factory):
     config = AppConfig()
     config.database.path = str(tmp_path / "test.db")
     config.telegram.api_id = 12345
@@ -27,37 +50,14 @@ async def client(tmp_path):
     await db.initialize()
     app.state.db = db
 
-    async def _no_users(self):
-        return []
-
-    async def _resolve_channel(self, identifier):
-        # Return different channel_ids for different identifiers
-        ident = identifier.strip().lower().lstrip("@")
-        channel_id = hash(ident) % 10**10 * -1
-        return {
-            "channel_id": channel_id,
-            "title": f"Channel {ident}",
-            "username": ident if not ident.lstrip("-").isdigit() else None,
-            "channel_type": "channel",
-        }
-
-    async def _get_dialogs(self):
-        return []
-
-    app.state.pool = type(
-        "Pool",
-        (),
-        {
-            "clients": {},
-            "get_users_info": _no_users,
-            "resolve_channel": _resolve_channel,
-            "get_dialogs": _get_dialogs,
-        },
-    )()
-
-    from src.telegram.auth import TelegramAuth
-
-    app.state.auth = TelegramAuth(12345, "test_hash")
+    harness = real_pool_harness_factory()
+    harness.queue_cli_client(
+        phone="+7000",
+        client=FakeCliTelethonClient(entity_resolver=_resolved_channel_entity),
+    )
+    await harness.connect_account("+7000", session_string="session", is_primary=True)
+    app.state.auth = harness.auth
+    app.state.pool = harness.pool
     app.state.notifier = None
     collector = Collector(app.state.pool, db, config.scheduler)
     app.state.collector = collector
@@ -65,7 +65,6 @@ async def client(tmp_path):
     app.state.ai_search = AISearchEngine(config.llm, db)
     app.state.scheduler = SchedulerManager(collector, config.scheduler)
     app.state.session_secret = "test_secret_key"
-
     transport = ASGITransport(app=app)
     auth_header = base64.b64encode(b":testpass").decode()
     async with AsyncClient(
@@ -135,8 +134,8 @@ async def test_import_button_on_channels_page(client):
 
 
 @pytest.fixture
-async def client_no_accounts(tmp_path):
-    """Client fixture where resolve_channel raises no_client."""
+async def client_no_accounts(tmp_path, real_pool_harness_factory):
+    """Client fixture with no connected Telegram accounts."""
     config = AppConfig()
     config.database.path = str(tmp_path / "test_no_acc.db")
     config.telegram.api_id = 12345
@@ -148,29 +147,9 @@ async def client_no_accounts(tmp_path):
     await db.initialize()
     app.state.db = db
 
-    async def _no_users(self):
-        return []
-
-    async def _resolve_channel(self, identifier):
-        raise RuntimeError("no_client")
-
-    async def _get_dialogs(self):
-        return []
-
-    app.state.pool = type(
-        "Pool",
-        (),
-        {
-            "clients": {},
-            "get_users_info": _no_users,
-            "resolve_channel": _resolve_channel,
-            "get_dialogs": _get_dialogs,
-        },
-    )()
-
-    from src.telegram.auth import TelegramAuth
-
-    app.state.auth = TelegramAuth(12345, "test_hash")
+    harness = real_pool_harness_factory()
+    app.state.auth = harness.auth
+    app.state.pool = harness.pool
     app.state.notifier = None
     collector = Collector(app.state.pool, db, config.scheduler)
     app.state.collector = collector
@@ -219,7 +198,7 @@ async def test_import_file_upload(client):
 
 
 @pytest.fixture
-async def client_scam(tmp_path):
+async def client_scam(tmp_path, real_pool_harness_factory):
     """Client fixture where resolve_channel returns a scam channel."""
     config = AppConfig()
     config.database.path = str(tmp_path / "test_scam.db")
@@ -247,20 +226,12 @@ async def client_scam(tmp_path):
     async def _get_dialogs(self):
         return []
 
-    app.state.pool = type(
-        "Pool",
-        (),
-        {
-            "clients": {},
-            "get_users_info": _no_users,
-            "resolve_channel": _resolve_scam,
-            "get_dialogs": _get_dialogs,
-        },
-    )()
-
-    from src.telegram.auth import TelegramAuth
-
-    app.state.auth = TelegramAuth(12345, "test_hash")
+    harness = real_pool_harness_factory()
+    app.state.auth = harness.auth
+    app.state.pool = harness.pool
+    app.state.pool.get_users_info = _no_users.__get__(app.state.pool, type(app.state.pool))
+    app.state.pool.resolve_channel = _resolve_scam.__get__(app.state.pool, type(app.state.pool))
+    app.state.pool.get_dialogs = _get_dialogs.__get__(app.state.pool, type(app.state.pool))
     app.state.notifier = None
     collector = Collector(app.state.pool, db, config.scheduler)
     app.state.collector = collector

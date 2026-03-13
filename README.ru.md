@@ -180,3 +180,13 @@ pytest tests/ -v
 # Линтер
 ruff check src/ tests/
 ```
+
+### Политика real Telegram testing
+
+Правила для безопасных automated/live/manual прогонов против настоящего Telegram API описаны в [docs/testing/real-telegram.md](docs/testing/real-telegram.md).
+
+Коротко:
+
+- обычный `pytest` остаётся fake/harness-first;
+- real Telegram допускается только через opt-in policy markers и sandbox-аккаунт;
+- mutating сценарии вроде BotFather, photo send и `leave_channels` не переводятся на generic live pytest.

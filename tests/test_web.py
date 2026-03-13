@@ -4,7 +4,7 @@ import logging
 import re
 import tomllib
 from pathlib import Path
-from types import SimpleNamespace
+from types import MethodType, SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -31,7 +31,7 @@ from src.web.template_globals import PYPROJECT_PATH, _agent_available_for_reques
 
 
 @pytest.fixture
-async def client(tmp_path):
+async def client(tmp_path, real_pool_harness_factory):
     config = AppConfig()
     config.database.path = str(tmp_path / "test.db")
     config.telegram.api_id = 12345
@@ -81,20 +81,14 @@ async def client(tmp_path):
     ):
         return []
 
-    app.state.pool = type(
-        "Pool",
-        (),
-        {
-            "clients": {},
-            "get_users_info": _no_users,
-            "resolve_channel": _resolve_channel,
-            "get_dialogs": _get_dialogs,
-            "get_dialogs_for_phone": _get_dialogs_for_phone,
-        },
-    )()
-    from src.telegram.auth import TelegramAuth
-
-    app.state.auth = TelegramAuth(12345, "test_hash")
+    harness = real_pool_harness_factory()
+    app.state.auth = harness.auth
+    pool = harness.pool
+    pool.get_users_info = MethodType(_no_users, pool)
+    pool.resolve_channel = MethodType(_resolve_channel, pool)
+    pool.get_dialogs = MethodType(_get_dialogs, pool)
+    pool.get_dialogs_for_phone = MethodType(_get_dialogs_for_phone, pool)
+    app.state.pool = pool
     app.state.notifier = None
     collector = Collector(app.state.pool, db, config.scheduler)
     app.state.collector = collector
@@ -2477,6 +2471,8 @@ async def test_notification_setup_and_delete_json(client, monkeypatch):
     pool = client._transport.app.state.pool
     await db.add_account(Account(phone="+79990000003", session_string="session", is_primary=True))
     await db.set_setting("notification_account_phone", "+79990000003")
+    # Mark the phone as connected without a real backend connection; get_native_client_by_phone
+    # is mocked immediately below, so we only need the phone key in pool.clients.
     pool.clients["+79990000003"] = object()
 
     fake_client = SimpleNamespace(
@@ -2484,7 +2480,7 @@ async def test_notification_setup_and_delete_json(client, monkeypatch):
         send_message=AsyncMock(),
         get_entity=AsyncMock(return_value=SimpleNamespace(id=777)),
     )
-    pool.get_client_by_phone = AsyncMock(return_value=(fake_client, "+79990000003"))
+    pool.get_native_client_by_phone = AsyncMock(return_value=(fake_client, "+79990000003"))
     pool.release_client = AsyncMock()
 
     async def _create_bot(_client, _name, _username):
