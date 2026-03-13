@@ -244,7 +244,10 @@ class BackendRouter:
                 )
                 return await self._native.acquire_client(account)
 
-        return await self._primary.acquire_client(account)
+        if self._mode == "telethon_cli":
+            return await self._primary.acquire_client(account)
+
+        raise ValueError(f"Unknown backend mode: {self._mode!r}")
 
     async def release(self, lease: BackendClientLease) -> None:
         backend = self._native if lease.backend_name == self._native.name else self._primary
