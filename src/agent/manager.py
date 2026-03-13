@@ -231,6 +231,13 @@ class DeepagentsBackend:
         return any(not self._validation_error(cfg) for cfg in self._candidate_configs_from_cache())
 
     @property
+    def has_usable_db_provider_configs(self) -> bool:
+        return any(
+            not self._is_legacy_candidate(cfg) and not self._validation_error(cfg)
+            for cfg in self._candidate_configs_from_cache()
+        )
+
+    @property
     def init_error(self) -> str | None:
         return self._init_error
 
@@ -851,7 +858,12 @@ class AgentManager:
             elif selected_backend == "deepagents" and not deepagents_available:
                 error = deepagents_error or "deepagents fallback не сконфигурирован."
         else:
-            if claude_available:
+            if (
+                deepagents_available
+                and self._deepagents_backend.has_usable_db_provider_configs
+            ):
+                selected_backend = "deepagents"
+            elif claude_available:
                 selected_backend = "claude"
             elif deepagents_available:
                 selected_backend = "deepagents"
