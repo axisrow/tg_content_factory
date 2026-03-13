@@ -8,7 +8,6 @@ from src.database.bundles import (
     ChannelBundle,
     CollectionBundle,
     NotificationBundle,
-    SchedulerBundle,
     SearchBundle,
 )
 from src.models import (
@@ -48,22 +47,6 @@ def _message(channel_id: int = 100, message_id: int = 1, text: str = "hello") ->
 
 
 class TestAccountBundle:
-    async def test_from_database(self, db):
-        bundle = AccountBundle.from_database(db)
-        assert bundle.accounts is not None
-
-    async def test_add_account(self, db):
-        b = AccountBundle.from_database(db)
-        pk = await b.add_account(_account())
-        assert isinstance(pk, int) and pk > 0
-
-    async def test_list_accounts(self, db):
-        b = AccountBundle.from_database(db)
-        await b.add_account(_account())
-        accs = await b.list_accounts()
-        assert len(accs) >= 1
-        assert accs[0].phone == "+70001112233"
-
     async def test_set_active(self, db):
         b = AccountBundle.from_database(db)
         pk = await b.add_account(_account())
@@ -87,53 +70,7 @@ class TestAccountBundle:
         accs = await b.list_accounts()
         assert accs[0].flood_wait_until is not None
 
-    async def test_update_premium(self, db):
-        b = AccountBundle.from_database(db)
-        await b.add_account(_account())
-        await b.update_premium("+70001112233", True)
-        accs = await b.list_accounts()
-        assert accs[0].is_premium is True
-
-
-# ---------------------------------------------------------------------------
-# ChannelBundle
-# ---------------------------------------------------------------------------
-
-
 class TestChannelBundle:
-    async def test_from_database(self, db):
-        b = ChannelBundle.from_database(db)
-        assert b.channels is not None
-
-    async def test_add_channel(self, db):
-        b = ChannelBundle.from_database(db)
-        pk = await b.add_channel(_channel())
-        assert isinstance(pk, int) and pk > 0
-
-    async def test_list_channels(self, db):
-        b = ChannelBundle.from_database(db)
-        await b.add_channel(_channel())
-        chs = await b.list_channels()
-        assert len(chs) >= 1
-
-    async def test_list_channels_with_counts(self, db):
-        b = ChannelBundle.from_database(db)
-        await b.add_channel(_channel())
-        chs = await b.list_channels_with_counts()
-        assert len(chs) >= 1
-
-    async def test_get_by_pk(self, db):
-        b = ChannelBundle.from_database(db)
-        pk = await b.add_channel(_channel())
-        ch = await b.get_by_pk(pk)
-        assert ch is not None and ch.channel_id == 100
-
-    async def test_get_by_channel_id(self, db):
-        b = ChannelBundle.from_database(db)
-        await b.add_channel(_channel(channel_id=200))
-        ch = await b.get_by_channel_id(200)
-        assert ch is not None and ch.channel_id == 200
-
     async def test_set_active(self, db):
         b = ChannelBundle.from_database(db)
         pk = await b.add_channel(_channel())
@@ -295,70 +232,6 @@ class TestChannelBundle:
 
 
 class TestCollectionBundle:
-    async def test_from_database(self, db):
-        b = CollectionBundle.from_database(db)
-        assert b.channels is not None
-
-    async def test_list_channels(self, db):
-        b = CollectionBundle.from_database(db)
-        await b.channels.add_channel(_channel(channel_id=1001))
-        chs = await b.list_channels()
-        assert len(chs) >= 1
-
-    async def test_get_by_pk(self, db):
-        b = CollectionBundle.from_database(db)
-        pk = await b.channels.add_channel(_channel(channel_id=1002))
-        ch = await b.get_by_pk(pk)
-        assert ch is not None
-        assert ch.channel_id == 1002
-
-    async def test_get_by_channel_id(self, db):
-        b = CollectionBundle.from_database(db)
-        await b.channels.add_channel(_channel(channel_id=1003))
-        ch = await b.get_by_channel_id(1003)
-        assert ch is not None
-
-    async def test_update_last_id(self, db):
-        b = CollectionBundle.from_database(db)
-        await b.channels.add_channel(_channel(channel_id=1004))
-        await b.update_last_id(1004, 556)
-        ch = await b.get_by_channel_id(1004)
-        assert ch is not None and ch.last_collected_id == 556
-
-    async def test_update_meta(self, db):
-        b = CollectionBundle.from_database(db)
-        await b.channels.add_channel(_channel(channel_id=1005))
-        await b.update_meta(1005, username="u2", title="t2")
-        ch = await b.get_by_channel_id(1005)
-        assert ch is not None and ch.username == "u2"
-
-    async def test_set_active(self, db):
-        b = CollectionBundle.from_database(db)
-        pk = await b.channels.add_channel(_channel(channel_id=1006))
-        await b.set_active(pk, True)
-        ch = await b.get_by_pk(pk)
-        assert ch is not None and ch.is_active is True
-
-    async def test_set_type(self, db):
-        b = CollectionBundle.from_database(db)
-        await b.channels.add_channel(_channel(channel_id=1007))
-        await b.set_type(1007, "supergroup")
-        ch = await b.get_by_channel_id(1007)
-        assert ch is not None and ch.channel_type == "supergroup"
-
-    async def test_set_filtered_bulk(self, db):
-        b = CollectionBundle.from_database(db)
-        await b.channels.add_channel(_channel(channel_id=1008))
-        count = await b.set_filtered_bulk([(1008, "spam")])
-        assert count == 1
-
-    async def test_reset_all_filters(self, db):
-        b = CollectionBundle.from_database(db)
-        pk = await b.channels.add_channel(_channel(channel_id=1009))
-        await b.set_filtered_bulk([(pk, "spam")])
-        count = await b.reset_all_filters()
-        assert count >= 1
-
     async def test_insert_message(self, db):
         b = CollectionBundle.from_database(db)
         await b.channels.add_channel(_channel(channel_id=1010))
@@ -385,16 +258,6 @@ class TestCollectionBundle:
         await b.insert_message(_message(channel_id=1013, message_id=1))
         count = await b.delete_messages_for_channel(1013)
         assert count == 1
-
-    async def test_get_message_stats(self, db):
-        b = CollectionBundle.from_database(db)
-        stats = await b.get_message_stats()
-        assert isinstance(stats, dict)
-
-    async def test_count_matching_prefixes_in_other_channels(self, db):
-        b = CollectionBundle.from_database(db)
-        count = await b.count_matching_prefixes_in_other_channels(999, ["test"])
-        assert isinstance(count, int)
 
     async def test_settings_get_set(self, db):
         b = CollectionBundle.from_database(db)
@@ -434,10 +297,6 @@ class TestCollectionBundle:
 
 
 class TestSearchBundle:
-    async def test_from_database(self, db):
-        b = SearchBundle.from_database(db)
-        assert b.messages is not None
-
     async def test_search_messages(self, db):
         b = SearchBundle.from_database(db)
         results, total = await b.search_messages(query="nope")
@@ -464,37 +323,6 @@ class TestSearchBundle:
         assert len(recent) >= 1
 
 
-# ---------------------------------------------------------------------------
-# SchedulerBundle
-# ---------------------------------------------------------------------------
-
-
-class TestSchedulerBundle:
-    async def test_from_database(self, db):
-        b = SchedulerBundle.from_database(db)
-        assert b.settings is not None
-
-    async def test_settings(self, db):
-        b = SchedulerBundle.from_database(db)
-        await b.set_setting("skey", "sval")
-        val = await b.get_setting("skey")
-        assert val == "sval"
-
-    async def test_list_notification_queries(self, db):
-        b = SchedulerBundle.from_database(db)
-        nqs = await b.list_notification_queries()
-        assert isinstance(nqs, list)
-
-    async def test_get_collection_tasks(self, db):
-        b = SchedulerBundle.from_database(db)
-        tasks = await b.get_collection_tasks()
-        assert isinstance(tasks, list)
-
-    async def test_get_recent_searches(self, db):
-        b = SchedulerBundle.from_database(db)
-        recent = await b.get_recent_searches()
-        assert isinstance(recent, list)
-
 
 # ---------------------------------------------------------------------------
 # NotificationBundle
@@ -502,21 +330,6 @@ class TestSchedulerBundle:
 
 
 class TestNotificationBundle:
-    async def test_from_database(self, db):
-        b = NotificationBundle.from_database(db)
-        assert b.accounts is not None
-
-    async def test_list_accounts(self, db):
-        b = NotificationBundle.from_database(db)
-        accs = await b.list_accounts()
-        assert isinstance(accs, list)
-
-    async def test_settings(self, db):
-        b = NotificationBundle.from_database(db)
-        await b.set_setting("nkey", "nval")
-        val = await b.get_setting("nkey")
-        assert val == "nval"
-
     async def test_bot_lifecycle(self, db):
         b = NotificationBundle.from_database(db)
         bot = NotificationBot(

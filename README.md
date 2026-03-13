@@ -136,6 +136,9 @@ python -m src.main scheduler start|trigger|search
 
 # Notification bot
 python -m src.main notification setup|status|delete
+
+# Diagnostics and benchmarks
+python -m src.main test all|read|write|telegram|benchmark
 ```
 
 ### `telethon-cli`
@@ -180,13 +183,22 @@ telethon-cli users get-me --output json
 
 ## Development
 
-```bash
-# Install dev dependencies
-pip install -e ".[dev]"
+ ```bash
+ # Install dev dependencies
+ pip install -e ".[dev]"
+ 
+ # Run parallel-safe tests (all available CPUs minus one worker)
+ pytest tests/ -v -m "not aiosqlite_serial" -n auto
 
-# Run tests
-pytest tests/ -v
+ # Run aiosqlite-backed tests serially
+ pytest tests/ -v -m aiosqlite_serial
 
-# Lint
-ruff check src/ tests/
-```
+ # Run a single test
+ pytest tests/test_web.py::test_health_endpoint -v
+
+ # Benchmark serial vs safe mixed-mode suite execution
+ python -m src.main test benchmark
+
+ # Lint
+ ruff check src/ tests/ conftest.py
+ ```
