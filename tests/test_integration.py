@@ -18,11 +18,10 @@ from httpx import ASGITransport, AsyncClient
 from src.cli.runtime import init_pool
 from src.config import AppConfig, SchedulerConfig, load_config
 from src.database import Database
-from src.models import Account, Channel, Message, SearchQuery
+from src.models import Channel, Message, SearchQuery
 from src.scheduler.manager import SchedulerManager
 from src.search.ai_search import AISearchEngine
 from src.search.engine import SearchEngine
-from src.telegram.auth import TelegramAuth
 from src.telegram.client_pool import ClientPool
 from src.telegram.collector import Collector
 from src.web.app import create_app
