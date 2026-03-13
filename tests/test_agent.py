@@ -9,9 +9,11 @@ from langchain_core.tools import StructuredTool
 
 from src.agent.context import format_context
 from src.agent.manager import AgentManager
+from src.agent.provider_registry import ProviderRuntimeConfig
 from src.agent.tools import make_mcp_server
 from src.config import AppConfig
 from src.models import Message
+from src.services.agent_provider_service import AgentProviderService
 
 
 @pytest.fixture(autouse=True)
@@ -73,6 +75,34 @@ async def test_runtime_status_prefers_claude_when_available(db, monkeypatch):
     status = await mgr.get_runtime_status()
 
     assert status.selected_backend == "claude"
+    assert status.claude_available is True
+    assert status.deepagents_available is True
+
+
+@pytest.mark.asyncio
+async def test_runtime_status_prefers_db_backed_deepagents_over_claude(db, monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "claude-key")
+    config = AppConfig()
+    config.security.session_encryption_key = "provider-secret"
+    service = AgentProviderService(db, config)
+    await service.save_provider_configs(
+        [
+            ProviderRuntimeConfig(
+                provider="openai",
+                enabled=True,
+                priority=0,
+                selected_model="gpt-4.1-mini",
+                secret_fields={"api_key": "openai-key"},
+            )
+        ]
+    )
+
+    mgr = AgentManager(db, config)
+    with patch.object(mgr._deepagents_backend, "_build_agent", return_value=None):
+        mgr.initialize()
+        status = await mgr.get_runtime_status()
+
+    assert status.selected_backend == "deepagents"
     assert status.claude_available is True
     assert status.deepagents_available is True
 
