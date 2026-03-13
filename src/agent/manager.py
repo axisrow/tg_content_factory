@@ -232,6 +232,10 @@ class DeepagentsBackend:
 
     @property
     def has_usable_db_provider_configs(self) -> bool:
+        """True if at least one non-legacy, validation-passing provider config exists in the DB.
+
+        Requires refresh_settings_cache() to have been called first.
+        """
         return any(
             not self._is_legacy_candidate(cfg) and not self._validation_error(cfg)
             for cfg in self._candidate_configs_from_cache()
