@@ -16,7 +16,6 @@ from src.config import AppConfig
 from src.database import Database
 from src.database.bundles import PhotoLoaderBundle
 from src.models import (
-    Account,
     PhotoAutoUploadJob,
     PhotoBatch,
     PhotoBatchItem,
@@ -29,7 +28,7 @@ from src.services.photo_publish_service import PhotoPublishService
 from src.services.photo_task_service import PhotoTarget, PhotoTaskService
 from src.telegram.collector import Collector
 from src.web.app import create_app
-from tests.helpers import AsyncIterMessages, FakeCliTelethonClient, make_cli_pool
+from tests.helpers import AsyncIterMessages, FakeCliTelethonClient, RealPoolHarness
 
 
 def _photo_dialog_from_spec(spec: dict) -> MagicMock:
@@ -80,7 +79,9 @@ def _make_photo_dialog_client(
     return FakeCliTelethonClient(iter_dialogs_factory=_iter_dialogs)
 
 
-async def _build_photo_loader_app(tmp_path, telethon_cli_spy, dialogs=None, dialogs_error=None):
+async def _build_photo_loader_app(
+    tmp_path, telethon_cli_spy, native_auth_spy, dialogs=None, dialogs_error=None,
+):
     config = AppConfig()
     config.database.path = str(tmp_path / "test.db")
     config.telegram.api_id = 12345
@@ -91,35 +92,48 @@ async def _build_photo_loader_app(tmp_path, telethon_cli_spy, dialogs=None, dial
     db = Database(config.database.path)
     await db.initialize()
     app.state.db = db
-    from src.telegram.auth import TelegramAuth
 
-    app.state.auth = TelegramAuth(12345, "hash")
     telethon_cli_spy.default_client = _make_photo_dialog_client(
         dialogs,
         dialogs_error=dialogs_error,
     )
-    app.state.pool = make_cli_pool(app.state.auth, db, clients={"+7000": object()})
+    harness = RealPoolHarness.build(
+        db=db,
+        telethon_cli_spy=telethon_cli_spy,
+        native_auth_spy=native_auth_spy,
+        session_cache_dir=str(tmp_path / "sessions"),
+    )
+    await harness.connect_account("+7000", session_string="s", is_primary=True)
+    app.state.auth = harness.auth
+    app.state.pool = harness.pool
     app.state.collector = Collector(app.state.pool, db, config.scheduler)
     app.state.search_engine = MagicMock()
     app.state.ai_search = MagicMock()
     app.state.scheduler = SchedulerManager(app.state.collector, config.scheduler)
     app.state.session_secret = "secret"
-    await db.add_account(Account(phone="+7000", session_string="s"))
 
     return app, db
 
 
 @pytest.mark.asyncio
-async def test_photo_task_send_now_uses_send_file(db, tmp_path):
+async def test_photo_task_send_now_uses_send_file(db, tmp_path, real_pool_harness_factory):
     image = tmp_path / "one.jpg"
     image.write_bytes(b"x")
-    client = MagicMock()
-    client.send_file = AsyncMock(return_value=SimpleNamespace(id=101))
-    pool = MagicMock()
-    pool.get_client_by_phone = AsyncMock(return_value=(client, "+7000"))
-    pool.release_client = AsyncMock()
+    harness = real_pool_harness_factory()
+    client = harness.queue_cli_client(
+        phone="+7000",
+        client=FakeCliTelethonClient(
+            input_entity_resolver=lambda peer: SimpleNamespace(
+                id=getattr(peer, "channel_id", getattr(peer, "user_id", peer))
+            ),
+            send_file_side_effect=lambda *args, **kwargs: SimpleNamespace(id=101),
+        ),
+    )
+    await harness.connect_account("+7000", session_string="s", is_primary=True)
 
-    service = PhotoTaskService(PhotoLoaderBundle.from_database(db), PhotoPublishService(pool))
+    service = PhotoTaskService(
+        PhotoLoaderBundle.from_database(db), PhotoPublishService(harness.pool)
+    )
     item = await service.send_now(
         phone="+7000",
         target=PhotoTarget(dialog_id=-1001),
@@ -133,16 +147,24 @@ async def test_photo_task_send_now_uses_send_file(db, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_photo_task_schedule_send_passes_schedule(db, tmp_path):
+async def test_photo_task_schedule_send_passes_schedule(db, tmp_path, real_pool_harness_factory):
     image = tmp_path / "one.jpg"
     image.write_bytes(b"x")
-    client = MagicMock()
-    client.send_file = AsyncMock(return_value=SimpleNamespace(id=202))
-    pool = MagicMock()
-    pool.get_client_by_phone = AsyncMock(return_value=(client, "+7000"))
-    pool.release_client = AsyncMock()
+    harness = real_pool_harness_factory()
+    client = harness.queue_cli_client(
+        phone="+7000",
+        client=FakeCliTelethonClient(
+            input_entity_resolver=lambda peer: SimpleNamespace(
+                id=getattr(peer, "channel_id", getattr(peer, "user_id", peer))
+            ),
+            send_file_side_effect=lambda *args, **kwargs: SimpleNamespace(id=202),
+        ),
+    )
+    await harness.connect_account("+7000", session_string="s", is_primary=True)
 
-    service = PhotoTaskService(PhotoLoaderBundle.from_database(db), PhotoPublishService(pool))
+    service = PhotoTaskService(
+        PhotoLoaderBundle.from_database(db), PhotoPublishService(harness.pool)
+    )
     schedule_at = datetime.now(timezone.utc) + timedelta(hours=1)
     item = await service.schedule_send(
         phone="+7000",
@@ -157,16 +179,24 @@ async def test_photo_task_schedule_send_passes_schedule(db, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_photo_task_run_due_processes_pending_items(db, tmp_path):
+async def test_photo_task_run_due_processes_pending_items(db, tmp_path, real_pool_harness_factory):
     image = tmp_path / "one.jpg"
     image.write_bytes(b"x")
-    client = MagicMock()
-    client.send_file = AsyncMock(return_value=SimpleNamespace(id=303))
-    pool = MagicMock()
-    pool.get_client_by_phone = AsyncMock(return_value=(client, "+7000"))
-    pool.release_client = AsyncMock()
+    harness = real_pool_harness_factory()
+    harness.queue_cli_client(
+        phone="+7000",
+        client=FakeCliTelethonClient(
+            input_entity_resolver=lambda peer: SimpleNamespace(
+                id=getattr(peer, "channel_id", getattr(peer, "user_id", peer))
+            ),
+            send_file_side_effect=lambda *args, **kwargs: SimpleNamespace(id=303),
+        ),
+    )
+    await harness.connect_account("+7000", session_string="s", is_primary=True)
 
-    service = PhotoTaskService(PhotoLoaderBundle.from_database(db), PhotoPublishService(pool))
+    service = PhotoTaskService(
+        PhotoLoaderBundle.from_database(db), PhotoPublishService(harness.pool)
+    )
     batch_id = await service.create_batch(
         phone="+7000",
         target=PhotoTarget(dialog_id=-1001),
@@ -185,7 +215,7 @@ async def test_photo_task_run_due_processes_pending_items(db, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_photo_auto_upload_sends_only_new_files(db, tmp_path):
+async def test_photo_auto_upload_sends_only_new_files(db, tmp_path, real_pool_harness_factory):
     folder = tmp_path / "photos"
     folder.mkdir()
     first = folder / "1.jpg"
@@ -193,13 +223,23 @@ async def test_photo_auto_upload_sends_only_new_files(db, tmp_path):
     first.write_bytes(b"1")
     second.write_bytes(b"2")
 
-    client = MagicMock()
-    client.send_file = AsyncMock(return_value=[SimpleNamespace(id=1), SimpleNamespace(id=2)])
-    pool = MagicMock()
-    pool.get_client_by_phone = AsyncMock(return_value=(client, "+7000"))
-    pool.release_client = AsyncMock()
+    harness = real_pool_harness_factory()
+    client = harness.queue_cli_client(
+        phone="+7000",
+        client=FakeCliTelethonClient(
+            input_entity_resolver=lambda peer: SimpleNamespace(
+                id=getattr(peer, "channel_id", getattr(peer, "user_id", peer))
+            ),
+            send_file_side_effect=lambda *args, **kwargs: [
+                SimpleNamespace(id=1), SimpleNamespace(id=2),
+            ],
+        ),
+    )
+    await harness.connect_account("+7000", session_string="s", is_primary=True)
 
-    service = PhotoAutoUploadService(PhotoLoaderBundle.from_database(db), PhotoPublishService(pool))
+    service = PhotoAutoUploadService(
+        PhotoLoaderBundle.from_database(db), PhotoPublishService(harness.pool)
+    )
     job_id = await service.create_job(
         PhotoAutoUploadJob(
             phone="+7000",
@@ -248,7 +288,7 @@ async def test_scheduler_registers_photo_jobs():
 
 
 @pytest.mark.asyncio
-async def test_photo_loader_page_renders(tmp_path, telethon_cli_spy):
+async def test_photo_loader_page_renders(tmp_path, telethon_cli_spy, native_auth_spy):
     config = AppConfig()
     config.database.path = str(tmp_path / "test.db")
     config.telegram.api_id = 12345
@@ -259,22 +299,27 @@ async def test_photo_loader_page_renders(tmp_path, telethon_cli_spy):
     db = Database(config.database.path)
     await db.initialize()
     app.state.db = db
-    from src.telegram.auth import TelegramAuth
 
-    app.state.auth = TelegramAuth(12345, "hash")
     telethon_cli_spy.default_client = _make_photo_dialog_client([
         {"channel_id": -1001, "title": "Target Channel", "channel_type": "channel"},
         {"channel_id": -1002, "title": "Target Group", "channel_type": "supergroup"},
         {"channel_id": 42, "title": "Target DM", "channel_type": "dm"},
         {"channel_id": 99, "title": "Target Bot", "channel_type": "bot"},
     ])
-    app.state.pool = make_cli_pool(app.state.auth, db, clients={"+7000": object()})
+    harness = RealPoolHarness.build(
+        db=db,
+        telethon_cli_spy=telethon_cli_spy,
+        native_auth_spy=native_auth_spy,
+        session_cache_dir=str(tmp_path / "sessions"),
+    )
+    await harness.connect_account("+7000", session_string="s", is_primary=True)
+    app.state.auth = harness.auth
+    app.state.pool = harness.pool
     app.state.collector = Collector(app.state.pool, db, config.scheduler)
     app.state.search_engine = MagicMock()
     app.state.ai_search = MagicMock()
     app.state.scheduler = SchedulerManager(app.state.collector, config.scheduler)
     app.state.session_secret = "secret"
-    await db.add_account(Account(phone="+7000", session_string="s"))
 
     transport = ASGITransport(app=app)
     auth_header = base64.b64encode(b":testpass").decode()
@@ -364,6 +409,7 @@ async def test_photo_loader_page_feedback_panel_and_highlight_hooks(
     expected_text,
     highlight_kind,
     telethon_cli_spy,
+    native_auth_spy,
 ):
     config = AppConfig()
     config.database.path = str(tmp_path / "test.db")
@@ -375,19 +421,24 @@ async def test_photo_loader_page_feedback_panel_and_highlight_hooks(
     db = Database(config.database.path)
     await db.initialize()
     app.state.db = db
-    from src.telegram.auth import TelegramAuth
 
-    app.state.auth = TelegramAuth(12345, "hash")
     telethon_cli_spy.default_client = _make_photo_dialog_client(
         [{"channel_id": -1001, "title": "Target Channel", "channel_type": "channel"}]
     )
-    app.state.pool = make_cli_pool(app.state.auth, db, clients={"+7000": object()})
+    harness = RealPoolHarness.build(
+        db=db,
+        telethon_cli_spy=telethon_cli_spy,
+        native_auth_spy=native_auth_spy,
+        session_cache_dir=str(tmp_path / "sessions"),
+    )
+    await harness.connect_account("+7000", session_string="s", is_primary=True)
+    app.state.auth = harness.auth
+    app.state.pool = harness.pool
     app.state.collector = Collector(app.state.pool, db, config.scheduler)
     app.state.search_engine = MagicMock()
     app.state.ai_search = MagicMock()
     app.state.scheduler = SchedulerManager(app.state.collector, config.scheduler)
     app.state.session_secret = "secret"
-    await db.add_account(Account(phone="+7000", session_string="s"))
 
     bundle = PhotoLoaderBundle.from_database(db)
     batch_id = await bundle.create_batch(
@@ -448,7 +499,9 @@ async def test_photo_loader_page_feedback_panel_and_highlight_hooks(
 
 
 @pytest.mark.asyncio
-async def test_photo_loader_page_without_phone_selects_first_account(tmp_path, telethon_cli_spy):
+async def test_photo_loader_page_without_phone_selects_first_account(
+    tmp_path, telethon_cli_spy, native_auth_spy,
+):
     config = AppConfig()
     config.database.path = str(tmp_path / "test.db")
     config.telegram.api_id = 12345
@@ -459,25 +512,27 @@ async def test_photo_loader_page_without_phone_selects_first_account(tmp_path, t
     db = Database(config.database.path)
     await db.initialize()
     app.state.db = db
-    from src.telegram.auth import TelegramAuth
 
-    app.state.auth = TelegramAuth(12345, "hash")
     telethon_cli_spy.default_client = _make_photo_dialog_client(
         [{"channel_id": -1001, "title": "Target +7000", "channel_type": "channel"}]
     )
-    app.state.pool = make_cli_pool(
-        app.state.auth,
-        db,
-        clients={"+7999": object(), "+7000": object()},
+    harness = RealPoolHarness.build(
+        db=db,
+        telethon_cli_spy=telethon_cli_spy,
+        native_auth_spy=native_auth_spy,
+        session_cache_dir=str(tmp_path / "sessions"),
     )
+    await harness.connect_account("+7999", session_string="b")
+    await harness.connect_account("+7000", session_string="a")
+    app.state.auth = harness.auth
+    app.state.pool = harness.pool
     app.state.collector = Collector(app.state.pool, db, config.scheduler)
     app.state.search_engine = MagicMock()
     app.state.ai_search = MagicMock()
     app.state.scheduler = SchedulerManager(app.state.collector, config.scheduler)
     app.state.session_secret = "secret"
-    await db.add_account(Account(phone="+7000", session_string="a"))
-    await db.add_account(Account(phone="+7999", session_string="b"))
 
+    created_before = len(telethon_cli_spy.created)
     transport = ASGITransport(app=app)
     auth_header = base64.b64encode(b":testpass").decode()
     async with AsyncClient(
@@ -497,7 +552,7 @@ async def test_photo_loader_page_without_phone_selects_first_account(tmp_path, t
         assert 'name="target_type" value="channel"' not in resp.text
         assert "Цель не выбрана" in resp.text
 
-    assert len(telethon_cli_spy.created) == 1
+    assert len(telethon_cli_spy.created) - created_before == 1
     await db.close()
 
 
@@ -505,6 +560,7 @@ async def test_photo_loader_page_without_phone_selects_first_account(tmp_path, t
 async def test_photo_loader_page_without_selectable_targets_disables_forms(
     tmp_path,
     telethon_cli_spy,
+    native_auth_spy,
 ):
     config = AppConfig()
     config.database.path = str(tmp_path / "test.db")
@@ -516,19 +572,24 @@ async def test_photo_loader_page_without_selectable_targets_disables_forms(
     db = Database(config.database.path)
     await db.initialize()
     app.state.db = db
-    from src.telegram.auth import TelegramAuth
 
-    app.state.auth = TelegramAuth(12345, "hash")
     telethon_cli_spy.default_client = _make_photo_dialog_client(
         [{"channel_id": 77, "title": "Only Bot", "channel_type": "bot"}]
     )
-    app.state.pool = make_cli_pool(app.state.auth, db, clients={"+7000": object()})
+    harness = RealPoolHarness.build(
+        db=db,
+        telethon_cli_spy=telethon_cli_spy,
+        native_auth_spy=native_auth_spy,
+        session_cache_dir=str(tmp_path / "sessions"),
+    )
+    await harness.connect_account("+7000", session_string="s", is_primary=True)
+    app.state.auth = harness.auth
+    app.state.pool = harness.pool
     app.state.collector = Collector(app.state.pool, db, config.scheduler)
     app.state.search_engine = MagicMock()
     app.state.ai_search = MagicMock()
     app.state.scheduler = SchedulerManager(app.state.collector, config.scheduler)
     app.state.session_secret = "secret"
-    await db.add_account(Account(phone="+7000", session_string="s"))
 
     transport = ASGITransport(app=app)
     auth_header = base64.b64encode(b":testpass").decode()
@@ -548,7 +609,9 @@ async def test_photo_loader_page_without_selectable_targets_disables_forms(
 
 
 @pytest.mark.asyncio
-async def test_photo_loader_page_without_accounts_renders_empty_state(tmp_path):
+async def test_photo_loader_page_without_accounts_renders_empty_state(
+    tmp_path, telethon_cli_spy, native_auth_spy,
+):
     config = AppConfig()
     config.database.path = str(tmp_path / "test.db")
     config.telegram.api_id = 12345
@@ -559,10 +622,15 @@ async def test_photo_loader_page_without_accounts_renders_empty_state(tmp_path):
     db = Database(config.database.path)
     await db.initialize()
     app.state.db = db
-    from src.telegram.auth import TelegramAuth
 
-    app.state.auth = TelegramAuth(12345, "hash")
-    app.state.pool = make_cli_pool(app.state.auth, db, clients={})
+    harness = RealPoolHarness.build(
+        db=db,
+        telethon_cli_spy=telethon_cli_spy,
+        native_auth_spy=native_auth_spy,
+        session_cache_dir=str(tmp_path / "sessions"),
+    )
+    app.state.auth = harness.auth
+    app.state.pool = harness.pool
     app.state.collector = Collector(app.state.pool, db, config.scheduler)
     app.state.search_engine = MagicMock()
     app.state.ai_search = MagicMock()
@@ -586,7 +654,9 @@ async def test_photo_loader_page_without_accounts_renders_empty_state(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_photo_loader_refresh_warms_dialog_cache(tmp_path, telethon_cli_spy):
+async def test_photo_loader_refresh_warms_dialog_cache(
+    tmp_path, telethon_cli_spy, native_auth_spy,
+):
     config = AppConfig()
     config.database.path = str(tmp_path / "test.db")
     config.telegram.api_id = 12345
@@ -597,20 +667,26 @@ async def test_photo_loader_refresh_warms_dialog_cache(tmp_path, telethon_cli_sp
     db = Database(config.database.path)
     await db.initialize()
     app.state.db = db
-    from src.telegram.auth import TelegramAuth
 
-    app.state.auth = TelegramAuth(12345, "hash")
     telethon_cli_spy.default_client = _make_photo_dialog_client(
         [{"channel_id": -1001, "title": "Target Channel", "channel_type": "channel"}]
     )
-    app.state.pool = make_cli_pool(app.state.auth, db, clients={"+7000": object()})
+    harness = RealPoolHarness.build(
+        db=db,
+        telethon_cli_spy=telethon_cli_spy,
+        native_auth_spy=native_auth_spy,
+        session_cache_dir=str(tmp_path / "sessions"),
+    )
+    await harness.connect_account("+7000", session_string="s", is_primary=True)
+    app.state.auth = harness.auth
+    app.state.pool = harness.pool
     app.state.collector = Collector(app.state.pool, db, config.scheduler)
     app.state.search_engine = MagicMock()
     app.state.ai_search = MagicMock()
     app.state.scheduler = SchedulerManager(app.state.collector, config.scheduler)
     app.state.session_secret = "secret"
-    await db.add_account(Account(phone="+7000", session_string="s"))
 
+    created_before = len(telethon_cli_spy.created)
     transport = ASGITransport(app=app)
     auth_header = base64.b64encode(b":testpass").decode()
     async with AsyncClient(
@@ -633,7 +709,7 @@ async def test_photo_loader_refresh_warms_dialog_cache(tmp_path, telethon_cli_sp
         "deactivate": False,
         "is_own": False,
     }]
-    assert len(telethon_cli_spy.created) == 1
+    assert len(telethon_cli_spy.created) - created_before == 1
     await db.close()
 
 
@@ -700,8 +776,8 @@ def test_photo_loader_cli_send_command(tmp_path, capsys):
 
 
 @pytest.mark.asyncio
-async def test_photo_schedule_logs_exception(tmp_path, caplog, telethon_cli_spy):
-    app, db = await _build_photo_loader_app(tmp_path, telethon_cli_spy)
+async def test_photo_schedule_logs_exception(tmp_path, caplog, telethon_cli_spy, native_auth_spy):
+    app, db = await _build_photo_loader_app(tmp_path, telethon_cli_spy, native_auth_spy)
     app.state.photo_task_service = SimpleNamespace(
         schedule_send=AsyncMock(side_effect=RuntimeError("boom")),
     )
@@ -740,10 +816,12 @@ async def test_photo_schedule_redirects_when_target_validation_raises(
     tmp_path,
     caplog,
     telethon_cli_spy,
+    native_auth_spy,
 ):
     app, db = await _build_photo_loader_app(
         tmp_path,
         telethon_cli_spy,
+        native_auth_spy,
         dialogs_error=RuntimeError("dialogs boom"),
     )
     app.state.photo_task_service = SimpleNamespace(
@@ -781,8 +859,10 @@ async def test_photo_schedule_redirects_when_target_validation_raises(
 
 
 @pytest.mark.asyncio
-async def test_photo_schedule_requires_target_selection(tmp_path, telethon_cli_spy):
-    app, db = await _build_photo_loader_app(tmp_path, telethon_cli_spy)
+async def test_photo_schedule_requires_target_selection(
+    tmp_path, telethon_cli_spy, native_auth_spy,
+):
+    app, db = await _build_photo_loader_app(tmp_path, telethon_cli_spy, native_auth_spy)
     app.state.photo_task_service = SimpleNamespace(
         schedule_send=AsyncMock(),
     )
@@ -816,8 +896,8 @@ async def test_photo_schedule_requires_target_selection(tmp_path, telethon_cli_s
 
 
 @pytest.mark.asyncio
-async def test_photo_schedule_rejects_unknown_target(tmp_path, telethon_cli_spy):
-    app, db = await _build_photo_loader_app(tmp_path, telethon_cli_spy)
+async def test_photo_schedule_rejects_unknown_target(tmp_path, telethon_cli_spy, native_auth_spy):
+    app, db = await _build_photo_loader_app(tmp_path, telethon_cli_spy, native_auth_spy)
     app.state.photo_task_service = SimpleNamespace(
         schedule_send=AsyncMock(),
     )
@@ -851,8 +931,8 @@ async def test_photo_schedule_rejects_unknown_target(tmp_path, telethon_cli_spy)
 
 
 @pytest.mark.asyncio
-async def test_photo_send_logs_exception(tmp_path, caplog, telethon_cli_spy):
-    app, db = await _build_photo_loader_app(tmp_path, telethon_cli_spy)
+async def test_photo_send_logs_exception(tmp_path, caplog, telethon_cli_spy, native_auth_spy):
+    app, db = await _build_photo_loader_app(tmp_path, telethon_cli_spy, native_auth_spy)
     app.state.photo_task_service = SimpleNamespace(
         send_now=AsyncMock(side_effect=RuntimeError("boom")),
     )
@@ -890,10 +970,12 @@ async def test_photo_send_redirects_when_target_validation_raises(
     tmp_path,
     caplog,
     telethon_cli_spy,
+    native_auth_spy,
 ):
     app, db = await _build_photo_loader_app(
         tmp_path,
         telethon_cli_spy,
+        native_auth_spy,
         dialogs_error=RuntimeError("dialogs boom"),
     )
     app.state.photo_task_service = SimpleNamespace(
@@ -930,8 +1012,8 @@ async def test_photo_send_redirects_when_target_validation_raises(
 
 
 @pytest.mark.asyncio
-async def test_photo_send_requires_target_selection(tmp_path, telethon_cli_spy):
-    app, db = await _build_photo_loader_app(tmp_path, telethon_cli_spy)
+async def test_photo_send_requires_target_selection(tmp_path, telethon_cli_spy, native_auth_spy):
+    app, db = await _build_photo_loader_app(tmp_path, telethon_cli_spy, native_auth_spy)
     app.state.photo_task_service = SimpleNamespace(
         send_now=AsyncMock(),
     )
@@ -964,8 +1046,8 @@ async def test_photo_send_requires_target_selection(tmp_path, telethon_cli_spy):
 
 
 @pytest.mark.asyncio
-async def test_photo_batch_logs_exception(tmp_path, caplog, telethon_cli_spy):
-    app, db = await _build_photo_loader_app(tmp_path, telethon_cli_spy)
+async def test_photo_batch_logs_exception(tmp_path, caplog, telethon_cli_spy, native_auth_spy):
+    app, db = await _build_photo_loader_app(tmp_path, telethon_cli_spy, native_auth_spy)
     app.state.photo_task_service = SimpleNamespace(
         create_batch=AsyncMock(side_effect=RuntimeError("boom")),
     )
@@ -1002,10 +1084,12 @@ async def test_photo_batch_redirects_when_target_validation_raises(
     tmp_path,
     caplog,
     telethon_cli_spy,
+    native_auth_spy,
 ):
     app, db = await _build_photo_loader_app(
         tmp_path,
         telethon_cli_spy,
+        native_auth_spy,
         dialogs_error=RuntimeError("dialogs boom"),
     )
     app.state.photo_task_service = SimpleNamespace(
@@ -1041,8 +1125,8 @@ async def test_photo_batch_redirects_when_target_validation_raises(
 
 
 @pytest.mark.asyncio
-async def test_photo_batch_rejects_unknown_target(tmp_path, telethon_cli_spy):
-    app, db = await _build_photo_loader_app(tmp_path, telethon_cli_spy)
+async def test_photo_batch_rejects_unknown_target(tmp_path, telethon_cli_spy, native_auth_spy):
+    app, db = await _build_photo_loader_app(tmp_path, telethon_cli_spy, native_auth_spy)
     app.state.photo_task_service = SimpleNamespace(
         create_batch=AsyncMock(),
     )
@@ -1074,10 +1158,11 @@ async def test_photo_batch_rejects_unknown_target(tmp_path, telethon_cli_spy):
 
 
 @pytest.mark.asyncio
-async def test_photo_send_rejects_bot_target(tmp_path, telethon_cli_spy):
+async def test_photo_send_rejects_bot_target(tmp_path, telethon_cli_spy, native_auth_spy):
     app, db = await _build_photo_loader_app(
         tmp_path,
         telethon_cli_spy,
+        native_auth_spy,
         dialogs=[
             {"channel_id": -1001, "title": "Target Channel", "channel_type": "channel"},
             {"channel_id": 99, "title": "Target Bot", "channel_type": "bot"},
@@ -1115,8 +1200,8 @@ async def test_photo_send_rejects_bot_target(tmp_path, telethon_cli_spy):
 
 
 @pytest.mark.asyncio
-async def test_photo_auto_logs_exception(tmp_path, caplog, telethon_cli_spy):
-    app, db = await _build_photo_loader_app(tmp_path, telethon_cli_spy)
+async def test_photo_auto_logs_exception(tmp_path, caplog, telethon_cli_spy, native_auth_spy):
+    app, db = await _build_photo_loader_app(tmp_path, telethon_cli_spy, native_auth_spy)
     app.state.photo_auto_upload_service = SimpleNamespace(
         create_job=AsyncMock(side_effect=RuntimeError("boom")),
     )
@@ -1155,10 +1240,12 @@ async def test_photo_auto_redirects_when_target_validation_raises(
     tmp_path,
     caplog,
     telethon_cli_spy,
+    native_auth_spy,
 ):
     app, db = await _build_photo_loader_app(
         tmp_path,
         telethon_cli_spy,
+        native_auth_spy,
         dialogs_error=RuntimeError("dialogs boom"),
     )
     app.state.photo_auto_upload_service = SimpleNamespace(
@@ -1196,8 +1283,8 @@ async def test_photo_auto_redirects_when_target_validation_raises(
 
 
 @pytest.mark.asyncio
-async def test_photo_auto_requires_target_selection(tmp_path, telethon_cli_spy):
-    app, db = await _build_photo_loader_app(tmp_path, telethon_cli_spy)
+async def test_photo_auto_requires_target_selection(tmp_path, telethon_cli_spy, native_auth_spy):
+    app, db = await _build_photo_loader_app(tmp_path, telethon_cli_spy, native_auth_spy)
     app.state.photo_auto_upload_service = SimpleNamespace(
         create_job=AsyncMock(),
     )
@@ -1231,8 +1318,8 @@ async def test_photo_auto_requires_target_selection(tmp_path, telethon_cli_spy):
 
 
 @pytest.mark.asyncio
-async def test_photo_run_due_logs_exception(tmp_path, caplog, telethon_cli_spy):
-    app, db = await _build_photo_loader_app(tmp_path, telethon_cli_spy)
+async def test_photo_run_due_logs_exception(tmp_path, caplog, telethon_cli_spy, native_auth_spy):
+    app, db = await _build_photo_loader_app(tmp_path, telethon_cli_spy, native_auth_spy)
     app.state.photo_task_service = SimpleNamespace(
         run_due=AsyncMock(side_effect=RuntimeError("boom")),
     )
