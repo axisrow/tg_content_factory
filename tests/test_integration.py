@@ -59,18 +59,15 @@ def _resolved_channel_entity(identifier: object) -> SimpleNamespace:
 
 
 @pytest.fixture
-async def app_with_db(tmp_path, real_pool_harness_factory):
+async def app_with_db(db, real_pool_harness_factory):
     """Create a full app with initialized DB, yielding (app, db)."""
     config = AppConfig()
-    config.database.path = str(tmp_path / "test.db")
     config.telegram.api_id = 12345
     config.telegram.api_hash = "test_hash"
     config.web.password = "testpass"
 
     app = create_app(config)
 
-    db = Database(config.database.path)
-    await db.initialize()
     app.state.db = db
     harness = real_pool_harness_factory()
     harness.queue_cli_client(
@@ -88,8 +85,6 @@ async def app_with_db(tmp_path, real_pool_harness_factory):
     app.state.ai_search = AISearchEngine(config.llm, db)
     app.state.scheduler = SchedulerManager(collector, config.scheduler)
     yield app, db
-
-    await db.close()
 
 
 @pytest.fixture

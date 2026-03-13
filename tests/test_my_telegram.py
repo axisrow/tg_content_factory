@@ -10,7 +10,6 @@ from httpx import ASGITransport, AsyncClient
 
 from src.collection_queue import CollectionQueue
 from src.config import AppConfig
-from src.database import Database
 from src.scheduler.manager import SchedulerManager
 from src.search.ai_search import AISearchEngine
 from src.search.engine import SearchEngine
@@ -99,16 +98,13 @@ def _strip_extra_dialog_fields(dialogs: list[dict]) -> list[dict]:
 
 
 @pytest.fixture
-async def client(tmp_path, real_pool_harness_factory):
+async def client(db, real_pool_harness_factory):
     config = AppConfig()
-    config.database.path = str(tmp_path / "test.db")
     config.telegram.api_id = 12345
     config.telegram.api_hash = "test_hash"
     config.web.password = "testpass"
     app = create_app(config)
 
-    db = Database(config.database.path)
-    await db.initialize()
     app.state.db = db
 
     harness = real_pool_harness_factory()
@@ -138,7 +134,6 @@ async def client(tmp_path, real_pool_harness_factory):
         yield c
 
     await app.state.collection_queue.shutdown()
-    await db.close()
 
 
 @pytest.mark.asyncio
@@ -171,16 +166,13 @@ async def test_my_telegram_page_shows_dialogs(client):
 
 
 @pytest.mark.asyncio
-async def test_my_telegram_page_requires_auth(tmp_path, real_pool_harness_factory):
+async def test_my_telegram_page_requires_auth(db, real_pool_harness_factory):
     config = AppConfig()
-    config.database.path = str(tmp_path / "test.db")
     config.telegram.api_id = 12345
     config.telegram.api_hash = "test_hash"
     config.web.password = "testpass"
     app = create_app(config)
 
-    db = Database(config.database.path)
-    await db.initialize()
     app.state.db = db
     harness = real_pool_harness_factory()
     app.state.auth = harness.auth
@@ -193,7 +185,6 @@ async def test_my_telegram_page_requires_auth(tmp_path, real_pool_harness_factor
     ) as c:
         resp = await c.get("/my-telegram/")
     assert resp.status_code == 401
-    await db.close()
 
 
 @pytest.mark.asyncio
@@ -321,16 +312,13 @@ async def test_leave_dialogs_post(client):
 
 
 @pytest.mark.asyncio
-async def test_refresh_dialogs_post_warms_cache(tmp_path, real_pool_harness_factory):
+async def test_refresh_dialogs_post_warms_cache(db, real_pool_harness_factory):
     config = AppConfig()
-    config.database.path = str(tmp_path / "test.db")
     config.telegram.api_id = 12345
     config.telegram.api_hash = "test_hash"
     config.web.password = "testpass"
     app = create_app(config)
 
-    db = Database(config.database.path)
-    await db.initialize()
     app.state.db = db
 
     harness = real_pool_harness_factory()
@@ -528,18 +516,15 @@ async def test_get_dialogs_for_phone_partial_on_timeout():
 
 @pytest.mark.asyncio
 async def test_my_telegram_page_without_phone_does_not_fetch_dialogs(
-    tmp_path,
+    db,
     real_pool_harness_factory,
 ):
     config = AppConfig()
-    config.database.path = str(tmp_path / "test.db")
     config.telegram.api_id = 12345
     config.telegram.api_hash = "test_hash"
     config.web.password = "testpass"
     app = create_app(config)
 
-    db = Database(config.database.path)
-    await db.initialize()
     app.state.db = db
 
     harness = real_pool_harness_factory()
@@ -574,23 +559,19 @@ async def test_my_telegram_page_without_phone_does_not_fetch_dialogs(
     assert len(harness.telethon_cli_spy.created) == 1
 
     await app.state.collection_queue.shutdown()
-    await db.close()
 
 
 @pytest.mark.asyncio
 async def test_my_telegram_page_without_accounts_shows_disabled_photo_loader(
-    tmp_path,
+    db,
     real_pool_harness_factory,
 ):
     config = AppConfig()
-    config.database.path = str(tmp_path / "test.db")
     config.telegram.api_id = 12345
     config.telegram.api_hash = "test_hash"
     config.web.password = "testpass"
     app = create_app(config)
 
-    db = Database(config.database.path)
-    await db.initialize()
     app.state.db = db
     harness = real_pool_harness_factory()
     app.state.auth = harness.auth
@@ -620,7 +601,6 @@ async def test_my_telegram_page_without_accounts_shows_disabled_photo_loader(
     assert 'aria-disabled="true"' in resp.text
 
     await app.state.collection_queue.shutdown()
-    await db.close()
 
 
 @pytest.mark.asyncio

@@ -36,10 +36,9 @@ REAL_TG_OPTIONAL_ENV_VARS = (
 
 
 @pytest.fixture
-async def db(tmp_path):
-    """In-memory-like test database (uses temp file)."""
-    db_path = str(tmp_path / "test.db")
-    database = Database(db_path)
+async def db():
+    """In-memory test database."""
+    database = Database(":memory:")
     await database.initialize()
     yield database
     await database.close()
