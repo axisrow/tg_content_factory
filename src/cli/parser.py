@@ -250,5 +250,9 @@ def build_parser() -> argparse.ArgumentParser:
     test_sub.add_parser("read", help="Read-only DB checks")
     test_sub.add_parser("write", help="Write DB checks on a temporary DB copy")
     test_sub.add_parser("telegram", help="Live Telegram API tests on a temporary DB copy")
+    test_sub.add_parser(
+        "benchmark",
+        help="Benchmark serial pytest run against the safe mixed parallel test workflow",
+    )
 
     return parser
