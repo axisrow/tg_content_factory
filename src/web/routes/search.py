@@ -120,7 +120,7 @@ async def search_page(
     mode: str = Query("local"),
     is_fts: bool = Query(False),
     msg_length_op: str = Query(""),
-    msg_length_val: int | None = Query(None),
+    msg_length_val: str = Query(""),
     page: int = Query(1),
 ):
     return await _render_search_page(
@@ -132,6 +132,6 @@ async def search_page(
         mode=mode,
         is_fts=is_fts,
         msg_length_op=msg_length_op,
-        msg_length_val=msg_length_val,
+        msg_length_val=int(msg_length_val) if msg_length_val else None,
         page=page,
     )
