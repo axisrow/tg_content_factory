@@ -29,10 +29,11 @@ async def test_initialize_uses_runtime_backend_without_persistent_clients(
     await harness.initialize_connected_accounts()
 
     assert "+70000000001" in harness.pool.clients
-    assert harness.pool._direct_session("+70000000001") is None
+    # After initialize(), the session is kept alive in the pool (persistent connection)
+    assert harness.pool._direct_session("+70000000001") is not None
     accounts = await harness.db.get_accounts()
     assert accounts[0].is_premium is True
-    cli_client.disconnect.assert_awaited_once()
+    cli_client.disconnect.assert_not_awaited()  # persistent; no disconnect during initialize
     assert len(harness.telethon_cli_spy.created) == 1
 
 
@@ -41,10 +42,7 @@ async def test_add_client_supports_session_override_before_db_write(
     real_pool_harness_factory,
 ):
     harness = real_pool_harness_factory()
-    first_client = harness.queue_cli_client(
-        client=FakeCliTelethonClient(),
-    )
-    second_client = harness.queue_cli_client(
+    cli_client = harness.queue_cli_client(
         client=FakeCliTelethonClient(),
     )
 
@@ -54,13 +52,14 @@ async def test_add_client_supports_session_override_before_db_write(
     assert acquired is not None
     session, phone = acquired
     assert phone == "+79990000001"
-    assert session.raw_client is second_client
+    # add_client keeps the connection alive; get_client_by_phone reuses the same session
+    assert session.raw_client is cli_client
     assert "+79990000001" in harness.pool.clients
-    first_client.disconnect.assert_awaited_once()
+    cli_client.disconnect.assert_not_awaited()  # persistent session; no disconnect on add
 
     await harness.pool.release_client("+79990000001")
-    second_client.disconnect.assert_awaited_once()
-    assert len(harness.telethon_cli_spy.created) == 2
+    cli_client.disconnect.assert_not_awaited()  # release doesn't disconnect persistent sessions
+    assert len(harness.telethon_cli_spy.created) == 1
 
 
 @pytest.mark.asyncio

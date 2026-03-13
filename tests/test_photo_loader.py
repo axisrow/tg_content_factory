@@ -552,7 +552,8 @@ async def test_photo_loader_page_without_phone_selects_first_account(
         assert 'name="target_type" value="channel"' not in resp.text
         assert "Цель не выбрана" in resp.text
 
-    assert len(telethon_cli_spy.created) - created_before == 1
+    # With persistent sessions, dialogs page reuses the connection from connect_account
+    assert len(telethon_cli_spy.created) - created_before == 0
     await db.close()
 
 
@@ -709,7 +710,8 @@ async def test_photo_loader_refresh_warms_dialog_cache(
         "deactivate": False,
         "is_own": False,
     }]
-    assert len(telethon_cli_spy.created) - created_before == 1
+    # With persistent sessions, get_dialogs reuses the connection from connect_account
+    assert len(telethon_cli_spy.created) - created_before == 0
     await db.close()
 
 

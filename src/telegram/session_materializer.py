@@ -37,6 +37,8 @@ class SessionMaterializer:
 
         if session_file.exists():
             session_file.unlink()
+        if hash_path.exists():
+            hash_path.unlink()
 
         target = SQLiteSession(str(base_path))
         try:

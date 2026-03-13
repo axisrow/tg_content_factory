@@ -29,6 +29,8 @@ from src.telegram.backends import (
 from src.telegram.session_materializer import SessionMaterializer
 
 logger = logging.getLogger(__name__)
+# Sentinel for phones registered in the pool before a live session is available.
+# Prefer storing a TelegramTransportSession in self.clients whenever possible.
 _CONNECTED_ACCOUNT_MARKER = object()
 
 
@@ -202,6 +204,8 @@ class ClientPool:
         """Load active accounts and validate that their sessions are usable."""
         accounts = await self._db.get_accounts(active_only=True)
         for acc in accounts:
+            if acc.phone in self.clients:
+                continue  # Already connected — skip to avoid reconnecting on repeated calls
             lease: BackendClientLease | None = None
             try:
                 lease = await self._connect_account(acc)
@@ -332,7 +336,12 @@ class ClientPool:
                 except Exception:
                     logger.debug("Failed to release live lease for %s", phone, exc_info=True)
         client = self.clients.pop(phone, None)
-        if self._is_live_client(client):
+        if isinstance(client, TelegramTransportSession):
+            try:
+                await client.raw_client.disconnect()
+            except Exception:
+                logger.debug("Failed to disconnect session for %s", phone, exc_info=True)
+        elif self._is_live_client(client):
             try:
                 await client.disconnect()
             except Exception:
@@ -417,7 +426,8 @@ class ClientPool:
         force_native: bool = False,
     ) -> tuple[TelegramTransportSession, str] | None:
         phone = account_lease.account.phone
-        direct_session = self._direct_session(phone)
+        # force_native bypasses the persistent pool session — callers need a raw native client
+        direct_session = None if force_native else self._direct_session(phone)
         lease: BackendClientLease | None = None
         try:
             if direct_session is not None:
@@ -432,7 +442,13 @@ class ClientPool:
                     account_lease.account,
                     force_native=force_native,
                 )
-                self.clients[phone] = _CONNECTED_ACCOUNT_MARKER
+                if not force_native:
+                    # Store persistent session for future direct reuse.
+                    # force_native sessions are short-lived and must not replace the pool session.
+                    self.clients[phone] = TelegramTransportSession(
+                        lease.session.raw_client, disconnect_on_close=False
+                    )
+                    lease.disconnect_on_release = False
 
             async with self._lock:
                 self._active_leases[phone].append(lease)
@@ -452,7 +468,11 @@ class ClientPool:
 
     async def _connect_account(self, account: Account) -> BackendClientLease:
         lease = await self._backend_router.acquire_client(account)
-        self.clients[account.phone] = _CONNECTED_ACCOUNT_MARKER
+        # Store persistent transport session so _direct_session() can reuse the connection
+        self.clients[account.phone] = TelegramTransportSession(
+            lease.session.raw_client, disconnect_on_close=False
+        )
+        lease.disconnect_on_release = False
         return lease
 
     @staticmethod
@@ -464,7 +484,12 @@ class ClientPool:
         return value.astimezone(timezone.utc)
 
     async def get_users_info(self) -> list[TelegramUserInfo]:
-        """Get info about all connected Telegram accounts."""
+        """Get info about all connected Telegram accounts.
+
+        Direct sessions (self.clients) are borrowed refs with disconnect_on_close=False —
+        they must NOT be released here; the pool owns their lifetime.
+        Only the fallback lease (when no direct session is available) requires explicit release.
+        """
         accounts = await self._db.get_accounts(active_only=True)
         primary_phones = {a.phone for a in accounts if a.is_primary}
         result: list[TelegramUserInfo] = []

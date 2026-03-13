@@ -116,11 +116,7 @@ class AccountLeasePool:
         return "all_flooded", retry_after_sec, earliest
 
     async def _get_account(self, phone: str) -> Account | None:
-        accounts = await self._db.get_accounts(active_only=True)
-        for account in accounts:
-            if account.phone == phone:
-                return account
-        return None
+        return await self.get_account(phone, active_only=True)
 
     @classmethod
     def _is_flood_waited(cls, account: Account, now: datetime | None = None) -> bool:

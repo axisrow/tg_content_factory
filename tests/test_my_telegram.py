@@ -363,7 +363,8 @@ async def test_refresh_dialogs_post_warms_cache(tmp_path, real_pool_harness_fact
     assert "My Channel" in resp.text
     cached = await db.repos.dialog_cache.list_dialogs("+1234567890")
     assert _strip_extra_dialog_fields(cached) == _strip_extra_dialog_fields(_FAKE_DIALOGS)
-    assert len(harness.telethon_cli_spy.created) == 2
+    # With persistent sessions, the same connection is reused for the refresh request
+    assert len(harness.telethon_cli_spy.created) == 1
 
     await app.state.collection_queue.shutdown()
     await db.close()

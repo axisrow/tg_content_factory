@@ -13,7 +13,7 @@ from src.config import AppConfig
 from src.database import Database
 from src.telegram.auth import TelegramAuth
 from src.telegram.session_materializer import SessionMaterializer
-from tests.helpers import FakeCliTelethonClient, build_real_pool_harness
+from tests.helpers import build_real_pool_harness
 
 REAL_TG_SAFE_MARK = "real_tg_safe"
 REAL_TG_MANUAL_MARK = "real_tg_manual"
@@ -285,7 +285,10 @@ def _enforce_cli_transport(
         elif telethon_cli_spy.default_client is not None:
             client = telethon_cli_spy.default_client
         else:
-            client = FakeCliTelethonClient()
+            raise AssertionError(
+                "telethon_cli_spy has no queued/bound/default client for namespace "
+                f"{namespace!r}. Use harness.queue_cli_client() or telethon_cli_spy.enqueue()."
+            )
         telethon_cli_spy.created.append((namespace, client))
         return client
 
@@ -314,7 +317,11 @@ def _enforce_cli_transport(
             elif native_auth_spy.default_client is not None:
                 client = native_auth_spy.default_client
             else:
-                client = FakeCliTelethonClient()
+                raise AssertionError(
+                    "native_auth_spy has no queued/bound/default client for session "
+                    f"{session_string!r}. Use harness.queue_native_client() or "
+                    "native_auth_spy.enqueue()."
+                )
             native_auth_spy.created.append((session_string, client))
             return client
 

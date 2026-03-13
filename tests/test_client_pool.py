@@ -98,7 +98,8 @@ async def test_pool_disconnect_all_releases_active_leases(real_pool_harness_fact
     await harness.pool.disconnect_all()
 
     assert len(harness.pool.clients) == 0
-    assert cli_client.disconnect.await_count == 2
+    # disconnect_all disconnects the persistent pool session exactly once
+    assert cli_client.disconnect.await_count == 1
 
 
 @pytest.mark.asyncio

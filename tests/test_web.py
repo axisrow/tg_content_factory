@@ -2471,7 +2471,9 @@ async def test_notification_setup_and_delete_json(client, monkeypatch):
     pool = client._transport.app.state.pool
     await db.add_account(Account(phone="+79990000003", session_string="session", is_primary=True))
     await db.set_setting("notification_account_phone", "+79990000003")
-    await pool.add_client("+79990000003", "session")
+    # Mark the phone as connected without a real backend connection; get_native_client_by_phone
+    # is mocked immediately below, so we only need the phone key in pool.clients.
+    pool.clients["+79990000003"] = object()
 
     fake_client = SimpleNamespace(
         get_me=AsyncMock(return_value=SimpleNamespace(id=42, username="owner")),
