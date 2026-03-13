@@ -250,5 +250,7 @@ class BackendRouter:
         raise ValueError(f"Unknown backend mode: {self._mode!r}")
 
     async def release(self, lease: BackendClientLease) -> None:
+        if lease.backend_name == "direct":
+            return  # persistent session, nothing to release
         backend = self._native if lease.backend_name == self._native.name else self._primary
         await backend.release(lease)

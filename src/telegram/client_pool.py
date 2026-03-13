@@ -29,9 +29,6 @@ from src.telegram.backends import (
 from src.telegram.session_materializer import SessionMaterializer
 
 logger = logging.getLogger(__name__)
-# Sentinel for phones registered in the pool before a live session is available.
-# Prefer storing a TelegramTransportSession in self.clients whenever possible.
-_CONNECTED_ACCOUNT_MARKER = object()
 
 
 @dataclass
@@ -364,8 +361,14 @@ class ClientPool:
                 cli_transport="hybrid",
             )
         if runtime_config.backend_mode not in {"auto", "telethon_cli", "native"}:
+            logger.warning(
+                "Unknown backend_mode %r, falling back to 'auto'", runtime_config.backend_mode
+            )
             runtime_config.backend_mode = "auto"
         if runtime_config.cli_transport not in {"in_process", "subprocess", "hybrid"}:
+            logger.warning(
+                "Unknown cli_transport %r, falling back to 'hybrid'", runtime_config.cli_transport
+            )
             runtime_config.cli_transport = "hybrid"
         return runtime_config
 
