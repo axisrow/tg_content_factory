@@ -13,7 +13,7 @@ from src.config import AppConfig
 from src.database import Database
 from src.telegram.auth import TelegramAuth
 from src.telegram.session_materializer import SessionMaterializer
-from tests.helpers import build_real_pool_harness
+from tests.helpers import RealPoolHarness
 
 REAL_TG_SAFE_MARK = "real_tg_safe"
 REAL_TG_MANUAL_MARK = "real_tg_manual"
@@ -211,7 +211,7 @@ def real_pool_harness_factory(db, telethon_cli_spy, native_auth_spy, tmp_path):
         session_cache_dir: str | Path | None = None,
         auth: TelegramAuth | None = None,
     ):
-        return build_real_pool_harness(
+        return RealPoolHarness.build(
             db=db,
             telethon_cli_spy=telethon_cli_spy,
             native_auth_spy=native_auth_spy,
