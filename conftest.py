@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 from functools import lru_cache
 from pathlib import Path
 
@@ -31,7 +32,9 @@ def _file_requires_aiosqlite_serial(path_str: str) -> bool:
         text = path.read_text(encoding="utf-8")
     except OSError:
         return False
-    return any(token in text for token in _AIOSQLITE_SERIAL_TOKENS)
+    return any(
+        bool(re.search(r"^" + token, text, re.MULTILINE)) for token in _AIOSQLITE_SERIAL_TOKENS
+    )
 
 
 def pytest_collection_modifyitems(items) -> None:

@@ -411,26 +411,6 @@ class RealPoolHarness:
         return account
 
 
-def build_real_pool_harness(
-    *,
-    db: object,
-    telethon_cli_spy: object,
-    native_auth_spy: object,
-    backend_mode: str = "auto",
-    cli_transport: str = "hybrid",
-    session_cache_dir: str | Path = "data/test_telegram_sessions",
-    auth: TelegramAuth | None = None,
-) -> RealPoolHarness:
-    return RealPoolHarness.build(
-        db=db,
-        telethon_cli_spy=telethon_cli_spy,
-        native_auth_spy=native_auth_spy,
-        backend_mode=backend_mode,
-        cli_transport=cli_transport,
-        session_cache_dir=session_cache_dir,
-        auth=auth,
-    )
-
 
 
 async def _maybe_await(value):

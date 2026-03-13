@@ -338,11 +338,6 @@ class ClientPool:
                 await client.raw_client.disconnect()
             except Exception:
                 logger.debug("Failed to disconnect session for %s", phone, exc_info=True)
-        elif self._is_live_client(client):
-            try:
-                await client.disconnect()
-            except Exception:
-                logger.debug("Failed to disconnect client for %s", phone, exc_info=True)
         self._in_use.discard(phone)
         self._dialogs_fetched.discard(phone)
         self.invalidate_dialogs_cache(phone)
@@ -375,16 +370,8 @@ class ClientPool:
     def _connected_phones(self) -> set[str]:
         return set(self.clients.keys())
 
-    @staticmethod
-    def _is_live_client(candidate: object) -> bool:
-        return callable(getattr(candidate, "disconnect", None)) and callable(
-            getattr(candidate, "get_me", None)
-        )
-
     def _direct_session(self, phone: str) -> TelegramTransportSession | None:
         candidate = self.clients.get(phone)
-        if self._is_live_client(candidate):
-            return adapt_transport_session(candidate, disconnect_on_close=False)
         if isinstance(candidate, TelegramTransportSession):
             return candidate
         return None
