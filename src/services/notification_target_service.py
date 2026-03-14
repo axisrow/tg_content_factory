@@ -85,7 +85,7 @@ class NotificationTargetService:
                 effective_phone=account.phone,
             )
 
-        flood_until = self._normalize_utc(account.flood_wait_until)
+        flood_until = normalize_utc(account.flood_wait_until)
         if flood_until and flood_until > datetime.now(timezone.utc):
             return NotificationTargetStatus(
                 mode=mode,
@@ -134,6 +134,3 @@ class NotificationTargetService:
         finally:
             await self._pool.release_client(phone)
 
-    @staticmethod
-    def _normalize_utc(value):
-        return normalize_utc(value)
