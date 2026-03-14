@@ -36,6 +36,7 @@ def _embed_history_in_prompt(history_msgs: list[dict], message: str) -> str:
     parts.append(f"<user>\n{message}\n</user>")
     return "\n".join(parts)
 
+
 _SYSTEM_PROMPT = (
     "Ты — аналитический ассистент для работы с данными из Telegram-каналов.\n"
     "Используй search_messages для поиска сообщений и get_channels для списка каналов.\n"
@@ -595,6 +596,9 @@ class DeepagentsBackend:
         history_msgs: list[dict] | None = None,
     ) -> str:
         agent = self._build_agent(cfg)
+        # Different agent frameworks have different history handling:
+        # - `.run(prompt_str)` agents receive history embedded as XML tags in a single string
+        # - `.invoke({"messages": [...]})` agents receive history as a structured message list
         if hasattr(agent, "run"):
             run_prompt = (
                 _embed_history_in_prompt(history_msgs, prompt) if history_msgs else prompt
@@ -840,6 +844,33 @@ class AgentManager:
     def available(self) -> bool:
         return self._claude_backend.available or self._deepagents_backend.available
 
+    def _build_prompt_stats_only(self, history: list[dict], message: str) -> dict:
+        """Compute prompt statistics without building the full formatted string."""
+        user_part_chars = len(f"<user>\n{message}\n</user>")
+        budget = _HISTORY_BUDGET
+        used = user_part_chars
+
+        total_msgs = len(history)
+        kept_count = 0
+        for msg in reversed(history):
+            tag = "user" if msg["role"] == "user" else "assistant"
+            part_chars = len(f"<{tag}>\n{msg['content']}\n</{tag}>")
+            if used + part_chars > budget:
+                break
+            kept_count += 1
+            used += part_chars
+
+        # Approximate prompt_chars: sum of all parts plus newlines between them.
+        # Each message part produces 1 newline separator + the part itself.
+        sep_count = kept_count + 1  # kept messages + current message
+        prompt_chars = used + sep_count - 1  # -1 because no separator before first
+        return {
+            "total_msgs": total_msgs,
+            "kept_msgs": kept_count,
+            "total_chars": sum(len(m["content"]) for m in history) + len(message),
+            "prompt_chars": prompt_chars,
+        }
+
     def _build_prompt(self, history: list[dict], message: str) -> tuple[str, dict]:
         user_part = f"<user>\n{message}\n</user>"
         budget = _HISTORY_BUDGET
@@ -940,9 +971,12 @@ class AgentManager:
         assert not history or history[-1]["role"] == "user", (
             "Expected last DB message to be the user message just saved"
         )
-        _, stats = self._build_prompt(history[:-1], message)
+        stats = self._build_prompt_stats_only(history[:-1], message)
         history_for_backend = history[:-1][-stats["kept_msgs"]:] if stats["kept_msgs"] else []
         prompt = message
+        # stats["prompt_chars"] estimates total context size formatted as XML.
+        # Not the actual prompt sent to backend (which is just `message`).
+        # Useful approximation for monitoring context consumption.
         logger.info(
             "Prompt for thread %d: %d chars (~%dK tokens), %d/%d history msgs",
             thread_id,

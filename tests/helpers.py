@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -11,6 +12,7 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
+from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
 from src.collection_queue import CollectionQueue
@@ -445,7 +447,7 @@ async def build_web_app(
     db: Database | None = None,
     add_account: str | None = None,
     session_secret: str = "test_secret_key",
-) -> tuple:
+) -> tuple[FastAPI, Database]:
     app = create_app(config)
     if db is None:
         db = Database(config.database.path)
@@ -496,7 +498,7 @@ def make_channel_entity(
         username = None
     else:
         ident = identifier.strip().lower().lstrip("@")
-        channel_id = abs(hash(ident)) % 10**10
+        channel_id = int(hashlib.md5(ident.encode()).hexdigest(), 16) % 10**10
         title = f"Channel {ident}"
         username = ident if not ident.lstrip("-").isdigit() else None
     defaults = dict(
