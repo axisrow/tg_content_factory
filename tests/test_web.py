@@ -28,22 +28,18 @@ from src.web.app import create_app
 from src.web.routes.channel_collection import _COLLECT_ALL_BTN, _COLLECT_ALL_FORM
 from src.web.session import COOKIE_NAME, create_session_token
 from src.web.template_globals import PYPROJECT_PATH, _agent_available_for_request, get_app_version
+from tests.helpers import build_web_app, make_auth_client, make_test_config
 
 
 @pytest.fixture
 async def client(tmp_path, real_pool_harness_factory):
-    config = AppConfig()
-    config.database.path = str(tmp_path / "test.db")
-    config.telegram.api_id = 12345
-    config.telegram.api_hash = "test_hash"
-    config.web.password = "testpass"
+    config = make_test_config(tmp_path)
     config.security.session_encryption_key = "test-encryption-key"
-    app = create_app(config)
 
-    # Manually initialize state (lifespan doesn't run with ASGITransport)
-    db = Database(config.database.path)
-    await db.initialize()
-    app.state.db = db
+    harness = real_pool_harness_factory()
+    app, db = await build_web_app(
+        config, harness, add_account="+1234567890",
+    )
 
     async def _no_users(self):
         return []
@@ -81,33 +77,13 @@ async def client(tmp_path, real_pool_harness_factory):
     ):
         return []
 
-    harness = real_pool_harness_factory()
-    app.state.auth = harness.auth
-    pool = harness.pool
+    pool = app.state.pool
     pool.get_users_info = MethodType(_no_users, pool)
     pool.resolve_channel = MethodType(_resolve_channel, pool)
     pool.get_dialogs = MethodType(_get_dialogs, pool)
     pool.get_dialogs_for_phone = MethodType(_get_dialogs_for_phone, pool)
-    app.state.pool = pool
-    app.state.notifier = None
-    collector = Collector(app.state.pool, db, config.scheduler)
-    app.state.collector = collector
-    app.state.collection_queue = CollectionQueue(collector, db)
-    app.state.search_engine = SearchEngine(db)
-    app.state.ai_search = AISearchEngine(config.llm, db)
-    app.state.scheduler = SchedulerManager(collector, config.scheduler)
-    app.state.session_secret = "test_secret_key"
 
-    await db.add_account(Account(phone="+1234567890", session_string="test_session"))
-
-    transport = ASGITransport(app=app)
-    auth_header = base64.b64encode(b":testpass").decode()
-    async with AsyncClient(
-        transport=transport,
-        base_url="http://test",
-        follow_redirects=True,
-        headers={"Authorization": f"Basic {auth_header}"},
-    ) as c:
+    async with make_auth_client(app) as c:
         yield c
 
     await app.state.collection_queue.shutdown()

@@ -8,6 +8,7 @@ from src.database import Database
 from src.database.bundles import NotificationBundle
 from src.models import Account
 from src.telegram.client_pool import ClientPool
+from src.telegram.utils import normalize_utc
 
 SETTING_KEY = "notification_account_phone"
 
@@ -84,7 +85,7 @@ class NotificationTargetService:
                 effective_phone=account.phone,
             )
 
-        flood_until = self._normalize_utc(account.flood_wait_until)
+        flood_until = normalize_utc(account.flood_wait_until)
         if flood_until and flood_until > datetime.now(timezone.utc):
             return NotificationTargetStatus(
                 mode=mode,
@@ -133,10 +134,3 @@ class NotificationTargetService:
         finally:
             await self._pool.release_client(phone)
 
-    @staticmethod
-    def _normalize_utc(value):
-        if value is None:
-            return None
-        if value.tzinfo is None:
-            return value.replace(tzinfo=timezone.utc)
-        return value.astimezone(timezone.utc)

@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import base64
+import hashlib
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -9,10 +12,20 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
-from src.config import TelegramRuntimeConfig
+from fastapi import FastAPI
+from httpx import ASGITransport, AsyncClient
+
+from src.collection_queue import CollectionQueue
+from src.config import AppConfig, TelegramRuntimeConfig
+from src.database import Database
 from src.models import Account
+from src.scheduler.manager import SchedulerManager
+from src.search.ai_search import AISearchEngine
+from src.search.engine import SearchEngine
 from src.telegram.auth import TelegramAuth
 from src.telegram.client_pool import ClientPool
+from src.telegram.collector import Collector
+from src.web.app import create_app
 
 
 class AsyncIterEmpty:
@@ -411,6 +424,90 @@ class RealPoolHarness:
         return account
 
 
+
+
+def make_test_config(
+    tmp_path: Path,
+    *,
+    db_name: str = "test.db",
+    password: str = "testpass",
+) -> AppConfig:
+    config = AppConfig()
+    config.database.path = str(tmp_path / db_name)
+    config.telegram.api_id = 12345
+    config.telegram.api_hash = "test_hash"
+    config.web.password = password
+    return config
+
+
+async def build_web_app(
+    config: AppConfig,
+    harness: RealPoolHarness,
+    *,
+    db: Database | None = None,
+    add_account: str | None = None,
+    session_secret: str = "test_secret_key",
+) -> tuple[FastAPI, Database]:
+    app = create_app(config)
+    if db is None:
+        db = Database(config.database.path)
+        await db.initialize()
+    app.state.db = db
+    app.state.auth = harness.auth
+    app.state.pool = harness.pool
+    app.state.notifier = None
+    collector = Collector(app.state.pool, db, config.scheduler)
+    app.state.collector = collector
+    app.state.collection_queue = CollectionQueue(collector, db)
+    app.state.search_engine = SearchEngine(db)
+    app.state.ai_search = AISearchEngine(config.llm, db)
+    app.state.scheduler = SchedulerManager(collector, config.scheduler)
+    app.state.session_secret = session_secret
+    if add_account:
+        await db.add_account(Account(phone=add_account, session_string="test_session"))
+    return app, db
+
+
+@asynccontextmanager
+async def make_auth_client(app, *, password: str = "testpass", with_auth: bool = True):
+    transport = ASGITransport(app=app)
+    headers = {}
+    if with_auth:
+        auth_header = base64.b64encode(f":{password}".encode()).decode()
+        headers["Authorization"] = f"Basic {auth_header}"
+    async with AsyncClient(
+        transport=transport,
+        base_url="http://test",
+        follow_redirects=True,
+        headers=headers,
+    ) as c:
+        yield c
+
+
+def make_channel_entity(
+    identifier: str | int = "test_channel",
+    *,
+    broadcast: bool = True,
+    scam: bool = False,
+    fake: bool = False,
+    **overrides,
+) -> SimpleNamespace:
+    if isinstance(identifier, int):
+        channel_id = identifier
+        title = f"Channel {identifier}"
+        username = None
+    else:
+        ident = identifier.strip().lower().lstrip("@")
+        channel_id = int(hashlib.md5(ident.encode()).hexdigest(), 16) % 10**10
+        title = f"Channel {ident}"
+        username = ident if not ident.lstrip("-").isdigit() else None
+    defaults = dict(
+        id=channel_id, title=title, username=username,
+        broadcast=broadcast, megagroup=False, gigagroup=False,
+        forum=False, monoforum=False, scam=scam, fake=fake, restricted=False,
+    )
+    defaults.update(overrides)
+    return SimpleNamespace(**defaults)
 
 
 async def _maybe_await(value):

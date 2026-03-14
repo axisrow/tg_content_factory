@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 
 from src.database import Database
 from src.models import Account
+from src.telegram.utils import normalize_utc
 
 
 @dataclass(frozen=True)
@@ -103,7 +104,7 @@ class AccountLeasePool:
 
         earliest: datetime | None = None
         for account in accounts:
-            flood_until = self._normalize_utc(account.flood_wait_until)
+            flood_until = normalize_utc(account.flood_wait_until)
             if flood_until is None or flood_until <= now:
                 return "available", None, None
             if earliest is None or flood_until < earliest:
@@ -121,13 +122,6 @@ class AccountLeasePool:
     @classmethod
     def _is_flood_waited(cls, account: Account, now: datetime | None = None) -> bool:
         now = now or datetime.now(timezone.utc)
-        flood_until = cls._normalize_utc(account.flood_wait_until)
+        flood_until = normalize_utc(account.flood_wait_until)
         return flood_until is not None and flood_until > now
 
-    @staticmethod
-    def _normalize_utc(value: datetime | None) -> datetime | None:
-        if value is None:
-            return None
-        if value.tzinfo is None:
-            return value.replace(tzinfo=timezone.utc)
-        return value.astimezone(timezone.utc)

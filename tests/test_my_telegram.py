@@ -1,22 +1,19 @@
 from __future__ import annotations
 
 import asyncio
-import base64
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from httpx import ASGITransport, AsyncClient
 
-from src.collection_queue import CollectionQueue
 from src.config import AppConfig
-from src.scheduler.manager import SchedulerManager
-from src.search.ai_search import AISearchEngine
-from src.search.engine import SearchEngine
 from src.services.channel_service import ChannelService
-from src.telegram.collector import Collector
-from src.web.app import create_app
-from tests.helpers import AsyncIterMessages, FakeCliTelethonClient
+from tests.helpers import (
+    AsyncIterMessages,
+    FakeCliTelethonClient,
+    build_web_app,
+    make_auth_client,
+)
 
 _FAKE_DIALOGS = [
     {"channel_id": -100111, "title": "My Channel", "username": "mychan",
@@ -97,40 +94,32 @@ def _strip_extra_dialog_fields(dialogs: list[dict]) -> list[dict]:
     ]
 
 
-@pytest.fixture
-async def client(db, real_pool_harness_factory):
+async def _build_my_telegram_app(db, real_pool_harness_factory, *, with_account=True):
+    """Build app for my-telegram tests with optional account."""
     config = AppConfig()
     config.telegram.api_id = 12345
     config.telegram.api_hash = "test_hash"
     config.web.password = "testpass"
-    app = create_app(config)
-
-    app.state.db = db
 
     harness = real_pool_harness_factory()
-    harness.queue_cli_client(
-        phone="+1234567890",
-        client=_make_dialog_client(_FAKE_DIALOGS),
-    )
-    await harness.connect_account("+1234567890", session_string="test_session", is_primary=True)
-    app.state.auth = harness.auth
-    app.state.pool = harness.pool
-    app.state.notifier = None
-    collector = Collector(app.state.pool, db, config.scheduler)
-    app.state.collector = collector
-    app.state.collection_queue = CollectionQueue(collector, db)
-    app.state.search_engine = SearchEngine(db)
-    app.state.ai_search = AISearchEngine(config.llm, db)
-    app.state.scheduler = SchedulerManager(collector, config.scheduler)
-    app.state.session_secret = "test_secret_key"
-    transport = ASGITransport(app=app)
-    auth_header = base64.b64encode(b":testpass").decode()
-    async with AsyncClient(
-        transport=transport,
-        base_url="http://test",
-        follow_redirects=True,
-        headers={"Authorization": f"Basic {auth_header}"},
-    ) as c:
+    if with_account:
+        harness.queue_cli_client(
+            phone="+1234567890",
+            client=_make_dialog_client(_FAKE_DIALOGS),
+        )
+        await harness.connect_account(
+            "+1234567890", session_string="test_session", is_primary=True,
+        )
+
+    app, db = await build_web_app(config, harness, db=db)
+    return app, db, harness
+
+
+@pytest.fixture
+async def client(db, real_pool_harness_factory):
+    app, db, harness = await _build_my_telegram_app(db, real_pool_harness_factory)
+
+    async with make_auth_client(app) as c:
         yield c
 
     await app.state.collection_queue.shutdown()
@@ -167,24 +156,15 @@ async def test_my_telegram_page_shows_dialogs(client):
 
 @pytest.mark.asyncio
 async def test_my_telegram_page_requires_auth(db, real_pool_harness_factory):
-    config = AppConfig()
-    config.telegram.api_id = 12345
-    config.telegram.api_hash = "test_hash"
-    config.web.password = "testpass"
-    app = create_app(config)
+    app, db, harness = await _build_my_telegram_app(
+        db, real_pool_harness_factory, with_account=False,
+    )
 
-    app.state.db = db
-    harness = real_pool_harness_factory()
-    app.state.auth = harness.auth
-    app.state.pool = harness.pool
-    app.state.session_secret = "test_secret_key"
-
-    transport = ASGITransport(app=app)
-    async with AsyncClient(
-        transport=transport, base_url="http://test", follow_redirects=False
-    ) as c:
-        resp = await c.get("/my-telegram/")
+    async with make_auth_client(app, with_auth=False) as c:
+        resp = await c.get("/my-telegram/", follow_redirects=False)
     assert resp.status_code == 401
+
+    await app.state.collection_queue.shutdown()
 
 
 @pytest.mark.asyncio
@@ -313,38 +293,9 @@ async def test_leave_dialogs_post(client):
 
 @pytest.mark.asyncio
 async def test_refresh_dialogs_post_warms_cache(db, real_pool_harness_factory):
-    config = AppConfig()
-    config.telegram.api_id = 12345
-    config.telegram.api_hash = "test_hash"
-    config.web.password = "testpass"
-    app = create_app(config)
+    app, db, harness = await _build_my_telegram_app(db, real_pool_harness_factory)
 
-    app.state.db = db
-
-    harness = real_pool_harness_factory()
-    harness.queue_cli_client(
-        phone="+1234567890",
-        client=_make_dialog_client(_FAKE_DIALOGS),
-    )
-    await harness.connect_account("+1234567890", session_string="test_session", is_primary=True)
-    app.state.auth = harness.auth
-    app.state.pool = harness.pool
-    app.state.notifier = None
-    collector = Collector(app.state.pool, db, config.scheduler)
-    app.state.collector = collector
-    app.state.collection_queue = CollectionQueue(collector, db)
-    app.state.search_engine = SearchEngine(db)
-    app.state.ai_search = AISearchEngine(config.llm, db)
-    app.state.scheduler = SchedulerManager(collector, config.scheduler)
-    app.state.session_secret = "test_secret_key"
-    transport = ASGITransport(app=app)
-    auth_header = base64.b64encode(b":testpass").decode()
-    async with AsyncClient(
-        transport=transport,
-        base_url="http://test",
-        follow_redirects=True,
-        headers={"Authorization": f"Basic {auth_header}"},
-    ) as c:
+    async with make_auth_client(app) as c:
         resp = await c.post("/my-telegram/refresh", data={"phone": "+1234567890"})
 
     assert resp.status_code == 200
@@ -519,38 +470,9 @@ async def test_my_telegram_page_without_phone_does_not_fetch_dialogs(
     db,
     real_pool_harness_factory,
 ):
-    config = AppConfig()
-    config.telegram.api_id = 12345
-    config.telegram.api_hash = "test_hash"
-    config.web.password = "testpass"
-    app = create_app(config)
+    app, db, harness = await _build_my_telegram_app(db, real_pool_harness_factory)
 
-    app.state.db = db
-
-    harness = real_pool_harness_factory()
-    harness.queue_cli_client(
-        phone="+1234567890",
-        client=_make_dialog_client(_FAKE_DIALOGS),
-    )
-    await harness.connect_account("+1234567890", session_string="test_session", is_primary=True)
-    app.state.auth = harness.auth
-    app.state.pool = harness.pool
-    app.state.notifier = None
-    collector = Collector(app.state.pool, db, config.scheduler)
-    app.state.collector = collector
-    app.state.collection_queue = CollectionQueue(collector, db)
-    app.state.search_engine = SearchEngine(db)
-    app.state.ai_search = AISearchEngine(config.llm, db)
-    app.state.scheduler = SchedulerManager(collector, config.scheduler)
-    app.state.session_secret = "test_secret_key"
-    transport = ASGITransport(app=app)
-    auth_header = base64.b64encode(b":testpass").decode()
-    async with AsyncClient(
-        transport=transport,
-        base_url="http://test",
-        follow_redirects=True,
-        headers={"Authorization": f"Basic {auth_header}"},
-    ) as c:
+    async with make_auth_client(app) as c:
         resp = await c.get("/my-telegram/")
 
     assert resp.status_code == 200
@@ -566,33 +488,11 @@ async def test_my_telegram_page_without_accounts_shows_disabled_photo_loader(
     db,
     real_pool_harness_factory,
 ):
-    config = AppConfig()
-    config.telegram.api_id = 12345
-    config.telegram.api_hash = "test_hash"
-    config.web.password = "testpass"
-    app = create_app(config)
+    app, db, harness = await _build_my_telegram_app(
+        db, real_pool_harness_factory, with_account=False,
+    )
 
-    app.state.db = db
-    harness = real_pool_harness_factory()
-    app.state.auth = harness.auth
-    app.state.pool = harness.pool
-    app.state.notifier = None
-    collector = Collector(app.state.pool, db, config.scheduler)
-    app.state.collector = collector
-    app.state.collection_queue = CollectionQueue(collector, db)
-    app.state.search_engine = SearchEngine(db)
-    app.state.ai_search = AISearchEngine(config.llm, db)
-    app.state.scheduler = SchedulerManager(collector, config.scheduler)
-    app.state.session_secret = "test_secret_key"
-
-    transport = ASGITransport(app=app)
-    auth_header = base64.b64encode(b":testpass").decode()
-    async with AsyncClient(
-        transport=transport,
-        base_url="http://test",
-        follow_redirects=True,
-        headers={"Authorization": f"Basic {auth_header}"},
-    ) as c:
+    async with make_auth_client(app) as c:
         resp = await c.get("/my-telegram/")
 
     assert resp.status_code == 200
