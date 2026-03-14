@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from src.web import deps
@@ -14,13 +14,40 @@ async def cancel_task(request: Request, task_id: int):
 
 
 @router.get("/", response_class=HTMLResponse)
-async def scheduler_page(request: Request):
+async def scheduler_page(
+    request: Request,
+    page: int = Query(1),
+    status: str = Query("all"),
+    limit: int = Query(50),
+):
     sched = deps.get_scheduler(request)
     collector = deps.get_collector(request)
     db = deps.get_db(request)
     msg = request.query_params.get("msg")
-    tasks = await db.get_collection_tasks()
-    has_active_tasks = any(t.status in ("pending", "running") for t in tasks)
+
+    # Validation
+    page = max(1, page)
+    limit = max(10, min(limit, 100))  # 10-100 задач
+
+    # Get tasks with filter and pagination
+    offset = (page - 1) * limit
+    tasks, total_count = await db.get_collection_tasks_paginated(
+        limit=limit, offset=offset, status_filter=status
+    )
+
+    # Calculate pagination
+    total_pages = (total_count + limit - 1) // limit if total_count > 0 else 1
+    if page > total_pages:
+        page = max(1, total_pages)
+
+    # Count active tasks (for counter)
+    _, active_count = await db.get_collection_tasks_paginated(
+        limit=10000, status_filter="active"
+    )
+
+    # Check if there are any active tasks (for auto-refresh)
+    has_active_tasks = active_count > 0
+
     search_log = await db.get_recent_searches()
     return deps.get_templates(request).TemplateResponse(
         request,
@@ -37,6 +64,12 @@ async def scheduler_page(request: Request):
             "msg": msg,
             "tasks": tasks,
             "has_active_tasks": has_active_tasks,
+            "page": page,
+            "total_pages": total_pages,
+            "total_count": total_count,
+            "active_count": active_count,
+            "status_filter": status,
+            "limit": limit,
             "search_log": search_log,
         },
     )

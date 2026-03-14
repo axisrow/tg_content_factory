@@ -100,11 +100,28 @@
 </div>
 {% endif %}
 
-{% if tasks %}
+{% if total_count > 0 %}
 <div class="card mb-4">
     <div class="card-header fw-semibold">Задачи сбора</div>
     <div class="card-body p-0">
         <p class="px-3 pt-3"><small class="text-muted">Здесь отображаются и ручные задачи из кнопки «Загрузить все», и одиночные загрузки каналов.</small></p>
+
+        <!-- Filter tabs -->
+        <div class="px-3 pb-2">
+            <div class="btn-group" role="tablist">
+                <a href="/scheduler?status=all&page=1" class="btn btn-sm {% if status_filter == 'all' %}btn-primary{% else %}btn-outline-primary{% endif %}">
+                    Все ({{ total_count }})
+                </a>
+                <a href="/scheduler?status=active&page=1" class="btn btn-sm {% if status_filter == 'active' %}btn-primary{% else %}btn-outline-primary{% endif %}">
+                    Активные ({{ active_count }})
+                </a>
+                <a href="/scheduler?status=completed&page=1" class="btn btn-sm {% if status_filter == 'completed' %}btn-primary{% else %}btn-outline-primary{% endif %}">
+                    Завершенные ({{ total_count - active_count }})
+                </a>
+            </div>
+        </div>
+
+        {% if tasks %}
         <!-- Desktop -->
         <div class="table-responsive d-none d-md-block">
         <table class="table table-striped table-sm mb-0">
@@ -205,6 +222,22 @@
             </div>
             {% endfor %}
         </div>
+
+        <!-- Pagination -->
+        {% if total_pages > 1 %}
+        <nav>
+            <ul class="pagination justify-content-center mb-0">
+                {% if page > 1 %}
+                <li class="page-item"><a class="page-link" href="/scheduler?status={{ status_filter }}&page={{ page - 1 }}">Назад</a></li>
+                {% endif %}
+                <li class="page-item disabled"><span class="page-link">Страница {{ page }} из {{ total_pages }}</span></li>
+                {% if page < total_pages %}
+                <li class="page-item"><a class="page-link" href="/scheduler?status={{ status_filter }}&page={{ page + 1 }}">Далее</a></li>
+                {% endif %}
+            </ul>
+        </nav>
+        {% endif %}
+        {% endif %}
     </div>
 </div>
 {% endif %}

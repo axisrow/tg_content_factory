@@ -182,6 +182,47 @@ class CollectionTasksRepository:
         rows = await cur.fetchall()
         return [self._to_task(r) for r in rows]
 
+    async def get_collection_tasks_paginated(
+        self, limit: int = 20, offset: int = 0, status_filter: str | None = None
+    ) -> tuple[list[CollectionTask], int]:
+        """Get tasks with pagination and optional status filter.
+
+        Returns: (tasks, total_count)
+        """
+        # Base query
+        query = "SELECT * FROM collection_tasks"
+        params: list[Any] = []
+
+        # Add filter if needed
+        where_clause = ""
+        if status_filter and status_filter != "all":
+            if status_filter == "active":
+                where_clause = " WHERE status IN (?, ?)"
+                params = [CollectionTaskStatus.PENDING.value, CollectionTaskStatus.RUNNING.value]
+            elif status_filter == "completed":
+                where_clause = (
+                    " WHERE status IN (?, ?, ?)"
+                )
+                params = [
+                    CollectionTaskStatus.COMPLETED.value,
+                    CollectionTaskStatus.FAILED.value,
+                    CollectionTaskStatus.CANCELLED.value,
+                ]
+
+        # Get total count
+        count_query = f"SELECT COUNT(*) as cnt FROM collection_tasks{where_clause}"
+        cur = await self._db.execute(count_query, params)
+        count_row = await cur.fetchone()
+        total = count_row["cnt"] if count_row else 0
+
+        # Get paginated results
+        query += where_clause + " ORDER BY id DESC LIMIT ? OFFSET ?"
+        params.extend([limit, offset])
+        cur = await self._db.execute(query, params)
+        rows = await cur.fetchall()
+
+        return [self._to_task(r) for r in rows], total
+
     async def get_active_collection_tasks_for_channel(
         self,
         channel_id: int,
