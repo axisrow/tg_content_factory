@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from src.web import deps
@@ -13,14 +13,49 @@ async def cancel_task(request: Request, task_id: int):
     return RedirectResponse(url="/scheduler?msg=task_cancelled", status_code=303)
 
 
+VALID_STATUS_FILTERS = {"all", "active", "completed"}
+
+
 @router.get("/", response_class=HTMLResponse)
-async def scheduler_page(request: Request):
+async def scheduler_page(
+    request: Request,
+    page: int = Query(1),
+    status: str = Query("all"),
+    limit: int = Query(50),
+):
     sched = deps.get_scheduler(request)
     collector = deps.get_collector(request)
     db = deps.get_db(request)
     msg = request.query_params.get("msg")
-    tasks = await db.get_collection_tasks()
-    has_active_tasks = any(t.status in ("pending", "running") for t in tasks)
+
+    # Validation
+    page = max(1, page)
+    limit = max(10, min(limit, 100))  # 10-100 задач
+    status_filter = status if status in VALID_STATUS_FILTERS else "all"
+
+    # Get tasks with filter and pagination
+    offset = (page - 1) * limit
+    tasks, filtered_count = await db.get_collection_tasks_paginated(
+        limit=limit, offset=offset, status_filter=status_filter
+    )
+
+    # Calculate pagination; clamp page and re-fetch if needed
+    total_pages = max(1, (filtered_count + limit - 1) // limit)
+    if page > total_pages:
+        page = total_pages
+        offset = (page - 1) * limit
+        tasks, filtered_count = await db.get_collection_tasks_paginated(
+            limit=limit, offset=offset, status_filter=status_filter
+        )
+
+    # Get counts for all tabs (cheap count-only queries)
+    all_count = await db.count_collection_tasks()
+    active_count = await db.count_collection_tasks("active")
+    completed_count = all_count - active_count
+
+    # Check if there are any active tasks (for auto-refresh)
+    has_active_tasks = active_count > 0
+
     search_log = await db.get_recent_searches()
     return deps.get_templates(request).TemplateResponse(
         request,
@@ -37,6 +72,13 @@ async def scheduler_page(request: Request):
             "msg": msg,
             "tasks": tasks,
             "has_active_tasks": has_active_tasks,
+            "page": page,
+            "total_pages": total_pages,
+            "all_count": all_count,
+            "active_count": active_count,
+            "completed_count": completed_count,
+            "status_filter": status_filter,
+            "limit": limit,
             "search_log": search_log,
         },
     )

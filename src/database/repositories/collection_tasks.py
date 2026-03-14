@@ -182,6 +182,54 @@ class CollectionTasksRepository:
         rows = await cur.fetchall()
         return [self._to_task(r) for r in rows]
 
+    @staticmethod
+    def _status_where(status_filter: str | None) -> tuple[str, tuple[Any, ...]]:
+        """Build WHERE clause for status filter. Returns (clause, params)."""
+        if status_filter == "active":
+            return " WHERE status IN (?, ?)", (
+                CollectionTaskStatus.PENDING.value,
+                CollectionTaskStatus.RUNNING.value,
+            )
+        if status_filter == "completed":
+            return " WHERE status IN (?, ?, ?)", (
+                CollectionTaskStatus.COMPLETED.value,
+                CollectionTaskStatus.FAILED.value,
+                CollectionTaskStatus.CANCELLED.value,
+            )
+        return "", ()
+
+    async def count_collection_tasks(self, status_filter: str | None = None) -> int:
+        """Count tasks matching the given status filter."""
+        where, params = self._status_where(status_filter)
+        cur = await self._db.execute(
+            f"SELECT COUNT(*) as cnt FROM collection_tasks{where}", params
+        )
+        row = await cur.fetchone()
+        return row["cnt"] if row else 0
+
+    async def get_collection_tasks_paginated(
+        self, limit: int = 20, offset: int = 0, status_filter: str | None = None
+    ) -> tuple[list[CollectionTask], int]:
+        """Get tasks with pagination and optional status filter.
+
+        Returns: (tasks, total_count)
+        """
+        where, base_params = self._status_where(status_filter)
+
+        # Get total count
+        cur = await self._db.execute(
+            f"SELECT COUNT(*) as cnt FROM collection_tasks{where}", base_params
+        )
+        count_row = await cur.fetchone()
+        total = count_row["cnt"] if count_row else 0
+
+        # Get paginated results
+        query = f"SELECT * FROM collection_tasks{where} ORDER BY id DESC LIMIT ? OFFSET ?"
+        cur = await self._db.execute(query, (*base_params, limit, offset))
+        rows = await cur.fetchall()
+
+        return [self._to_task(r) for r in rows], total
+
     async def get_active_collection_tasks_for_channel(
         self,
         channel_id: int,

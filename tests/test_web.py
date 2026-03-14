@@ -1109,6 +1109,49 @@ async def test_scheduler_page(client):
 
 
 @pytest.mark.asyncio
+async def test_scheduler_filter_active(client):
+    db = client._transport.app.state.db
+    await db.create_collection_task(-100901, "Active Task")
+    done_id = await db.create_collection_task(-100902, "Done Task")
+    await db.update_collection_task(done_id, "completed", messages_collected=10)
+
+    resp = await client.get("/scheduler/?status=active")
+    assert resp.status_code == 200
+    assert "Active Task" in resp.text
+
+    resp = await client.get("/scheduler/?status=completed")
+    assert resp.status_code == 200
+    assert "Done Task" in resp.text
+
+
+@pytest.mark.asyncio
+async def test_scheduler_filter_invalid_status(client):
+    resp = await client.get("/scheduler/?status=bogus")
+    assert resp.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_scheduler_pagination_out_of_range(client):
+    db = client._transport.app.state.db
+    await db.create_collection_task(-100950, "Some Task")
+
+    resp = await client.get("/scheduler/?page=999")
+    assert resp.status_code == 200
+    assert "Some Task" in resp.text
+
+
+@pytest.mark.asyncio
+async def test_scheduler_limit_preserved_in_links(client):
+    db = client._transport.app.state.db
+    for i in range(15):
+        await db.create_collection_task(-100800 - i, f"Task {i}")
+
+    resp = await client.get("/scheduler/?limit=10")
+    assert resp.status_code == 200
+    assert "limit=10" in resp.text
+
+
+@pytest.mark.asyncio
 async def test_search_with_query(client):
     resp = await client.get("/search?q=test&mode=local")
     assert resp.status_code == 200
