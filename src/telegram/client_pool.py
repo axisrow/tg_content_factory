@@ -27,6 +27,7 @@ from src.telegram.backends import (
     adapt_transport_session,
 )
 from src.telegram.session_materializer import SessionMaterializer
+from src.telegram.utils import normalize_utc
 
 logger = logging.getLogger(__name__)
 
@@ -467,11 +468,7 @@ class ClientPool:
 
     @staticmethod
     def _normalize_utc(value: datetime | None) -> datetime | None:
-        if value is None:
-            return None
-        if value.tzinfo is None:
-            return value.replace(tzinfo=timezone.utc)
-        return value.astimezone(timezone.utc)
+        return normalize_utc(value)
 
     async def get_users_info(self) -> list[TelegramUserInfo]:
         """Get info about all connected Telegram accounts.

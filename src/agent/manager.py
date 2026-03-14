@@ -24,6 +24,18 @@ from src.services.agent_provider_service import (
 
 logger = logging.getLogger(__name__)
 
+_HISTORY_BUDGET = 100_000 * 4  # ~100K tokens in chars
+
+
+def _embed_history_in_prompt(history_msgs: list[dict], message: str) -> str:
+    """Build a single prompt string with conversation history and current message."""
+    parts: list[str] = []
+    for msg in history_msgs:
+        tag = "user" if msg["role"] == "user" else "assistant"
+        parts.append(f"<{tag}>\n{msg['content']}\n</{tag}>")
+    parts.append(f"<user>\n{message}\n</user>")
+    return "\n".join(parts)
+
 _SYSTEM_PROMPT = (
     "Ты — аналитический ассистент для работы с данными из Telegram-каналов.\n"
     "Используй search_messages для поиска сообщений и get_channels для списка каналов.\n"
@@ -87,7 +99,10 @@ class ClaudeSdkBackend:
         stats: dict,
         model: str | None,
         queue: asyncio.Queue[str | None],
+        history_msgs: list[dict] | None = None,
     ) -> None:
+        if history_msgs:
+            prompt = _embed_history_in_prompt(history_msgs, prompt)
         resolved_model = model or self._config.agent.model.strip() or os.environ.get("AGENT_MODEL")
         extra: dict = {}
         if resolved_model:
@@ -572,12 +587,25 @@ class DeepagentsBackend:
             return str(result)
         return str(result)
 
-    def _run_agent(self, prompt: str, cfg: ProviderRuntimeConfig) -> str:
+    def _run_agent(
+        self,
+        prompt: str,
+        cfg: ProviderRuntimeConfig,
+        *,
+        history_msgs: list[dict] | None = None,
+    ) -> str:
         agent = self._build_agent(cfg)
         if hasattr(agent, "run"):
-            result = agent.run(prompt)
+            run_prompt = (
+                _embed_history_in_prompt(history_msgs, prompt) if history_msgs else prompt
+            )
+            result = agent.run(run_prompt)
         else:
-            result = agent.invoke({"messages": [{"role": "user", "content": prompt}]})
+            messages: list[dict] = []
+            for msg in (history_msgs or []):
+                messages.append({"role": msg["role"], "content": msg["content"]})
+            messages.append({"role": "user", "content": prompt})
+            result = agent.invoke({"messages": messages})
         return self._extract_result_text(result)
 
     def _probe_tools(self) -> tuple[list[Callable], dict[str, int]]:
@@ -738,6 +766,7 @@ class DeepagentsBackend:
         stats: dict,
         model: str | None,
         queue: asyncio.Queue[str | None],
+        history_msgs: list[dict] | None = None,
     ) -> None:
         del thread_id, stats, model
         errors: list[str] = []
@@ -747,7 +776,9 @@ class DeepagentsBackend:
                 errors.append(f"{cfg.provider}: {validation_error}")
                 continue
             try:
-                full_text = await asyncio.to_thread(self._run_agent, prompt, cfg)
+                full_text = await asyncio.to_thread(
+                    self._run_agent, prompt, cfg, history_msgs=history_msgs
+                )
                 self._init_error = None
                 if full_text:
                     chunk_payload = json.dumps({"text": full_text}, ensure_ascii=False)
@@ -811,7 +842,7 @@ class AgentManager:
 
     def _build_prompt(self, history: list[dict], message: str) -> tuple[str, dict]:
         user_part = f"<user>\n{message}\n</user>"
-        budget = 100_000 * 4
+        budget = _HISTORY_BUDGET
         used = len(user_part)
 
         total_msgs = len(history)
@@ -909,9 +940,11 @@ class AgentManager:
         assert not history or history[-1]["role"] == "user", (
             "Expected last DB message to be the user message just saved"
         )
-        prompt, stats = self._build_prompt(history[:-1], message)
+        _, stats = self._build_prompt(history[:-1], message)
+        history_for_backend = history[:-1][-stats["kept_msgs"]:] if stats["kept_msgs"] else []
+        prompt = message
         logger.info(
-            "Prompt for thread %d: %d chars (~%dK tokens), %d/%d history msgs kept",
+            "Prompt for thread %d: %d chars (~%dK tokens), %d/%d history msgs",
             thread_id,
             stats["prompt_chars"],
             stats["prompt_chars"] // 4000,
@@ -955,6 +988,7 @@ class AgentManager:
                     stats=stats,
                     model=model,
                     queue=queue,
+                    history_msgs=history_for_backend,
                 )
             except Exception as exc:
                 logger.exception("Agent chat error for thread %d", thread_id)
