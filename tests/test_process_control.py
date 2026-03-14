@@ -43,6 +43,15 @@ def test_ensure_server_not_running_raises_for_live_server(tmp_path):
             ensure_server_not_running(path)
 
 
+def test_ensure_server_not_running_removes_own_pid(tmp_path):
+    path = tmp_path / "app.pid"
+    path.write_text(f"{os.getpid()}\n", encoding="utf-8")
+
+    ensure_server_not_running(path)
+
+    assert not path.exists()
+
+
 def test_ensure_server_not_running_cleans_stale_pid(tmp_path):
     path = tmp_path / "app.pid"
     path.write_text("123\n", encoding="utf-8")

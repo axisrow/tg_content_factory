@@ -111,6 +111,10 @@ def ensure_server_not_running(path: Path) -> None:
     if pid is None:
         return
 
+    if pid == os.getpid():
+        remove_pid_file(path)
+        return
+
     if is_expected_server_process(pid):
         raise ProcessControlError(f"Server already running with PID {pid}")
 
