@@ -100,7 +100,7 @@
 </div>
 {% endif %}
 
-{% if total_count > 0 %}
+{% if all_count > 0 %}
 <div class="card mb-4">
     <div class="card-header fw-semibold">Задачи сбора</div>
     <div class="card-body p-0">
@@ -109,14 +109,14 @@
         <!-- Filter tabs -->
         <div class="px-3 pb-2">
             <div class="btn-group" role="tablist">
-                <a href="/scheduler?status=all&page=1" class="btn btn-sm {% if status_filter == 'all' %}btn-primary{% else %}btn-outline-primary{% endif %}">
-                    Все ({{ total_count }})
+                <a href="/scheduler?status=all&page=1&limit={{ limit }}" class="btn btn-sm {% if status_filter == 'all' %}btn-primary{% else %}btn-outline-primary{% endif %}">
+                    Все ({{ all_count }})
                 </a>
-                <a href="/scheduler?status=active&page=1" class="btn btn-sm {% if status_filter == 'active' %}btn-primary{% else %}btn-outline-primary{% endif %}">
+                <a href="/scheduler?status=active&page=1&limit={{ limit }}" class="btn btn-sm {% if status_filter == 'active' %}btn-primary{% else %}btn-outline-primary{% endif %}">
                     Активные ({{ active_count }})
                 </a>
-                <a href="/scheduler?status=completed&page=1" class="btn btn-sm {% if status_filter == 'completed' %}btn-primary{% else %}btn-outline-primary{% endif %}">
-                    Завершенные ({{ total_count - active_count }})
+                <a href="/scheduler?status=completed&page=1&limit={{ limit }}" class="btn btn-sm {% if status_filter == 'completed' %}btn-primary{% else %}btn-outline-primary{% endif %}">
+                    Завершенные ({{ completed_count }})
                 </a>
             </div>
         </div>
@@ -228,15 +228,17 @@
         <nav>
             <ul class="pagination justify-content-center mb-0">
                 {% if page > 1 %}
-                <li class="page-item"><a class="page-link" href="/scheduler?status={{ status_filter }}&page={{ page - 1 }}">Назад</a></li>
+                <li class="page-item"><a class="page-link" href="/scheduler?status={{ status_filter }}&page={{ page - 1 }}&limit={{ limit }}">Назад</a></li>
                 {% endif %}
                 <li class="page-item disabled"><span class="page-link">Страница {{ page }} из {{ total_pages }}</span></li>
                 {% if page < total_pages %}
-                <li class="page-item"><a class="page-link" href="/scheduler?status={{ status_filter }}&page={{ page + 1 }}">Далее</a></li>
+                <li class="page-item"><a class="page-link" href="/scheduler?status={{ status_filter }}&page={{ page + 1 }}&limit={{ limit }}">Далее</a></li>
                 {% endif %}
             </ul>
         </nav>
         {% endif %}
+        {% else %}
+        <p class="text-muted text-center py-3">Нет задач с выбранным фильтром.</p>
         {% endif %}
     </div>
 </div>

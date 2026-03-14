@@ -13,6 +13,9 @@ async def cancel_task(request: Request, task_id: int):
     return RedirectResponse(url="/scheduler?msg=task_cancelled", status_code=303)
 
 
+VALID_STATUS_FILTERS = {"all", "active", "completed"}
+
+
 @router.get("/", response_class=HTMLResponse)
 async def scheduler_page(
     request: Request,
@@ -28,22 +31,27 @@ async def scheduler_page(
     # Validation
     page = max(1, page)
     limit = max(10, min(limit, 100))  # 10-100 задач
+    status_filter = status if status in VALID_STATUS_FILTERS else "all"
 
     # Get tasks with filter and pagination
     offset = (page - 1) * limit
-    tasks, total_count = await db.get_collection_tasks_paginated(
-        limit=limit, offset=offset, status_filter=status
+    tasks, filtered_count = await db.get_collection_tasks_paginated(
+        limit=limit, offset=offset, status_filter=status_filter
     )
 
-    # Calculate pagination
-    total_pages = (total_count + limit - 1) // limit if total_count > 0 else 1
+    # Calculate pagination; clamp page and re-fetch if needed
+    total_pages = max(1, (filtered_count + limit - 1) // limit)
     if page > total_pages:
-        page = max(1, total_pages)
+        page = total_pages
+        offset = (page - 1) * limit
+        tasks, filtered_count = await db.get_collection_tasks_paginated(
+            limit=limit, offset=offset, status_filter=status_filter
+        )
 
-    # Count active tasks (for counter)
-    _, active_count = await db.get_collection_tasks_paginated(
-        limit=10000, status_filter="active"
-    )
+    # Get counts for all tabs (cheap count-only queries)
+    all_count = await db.count_collection_tasks()
+    active_count = await db.count_collection_tasks("active")
+    completed_count = all_count - active_count
 
     # Check if there are any active tasks (for auto-refresh)
     has_active_tasks = active_count > 0
@@ -66,9 +74,10 @@ async def scheduler_page(
             "has_active_tasks": has_active_tasks,
             "page": page,
             "total_pages": total_pages,
-            "total_count": total_count,
+            "all_count": all_count,
             "active_count": active_count,
-            "status_filter": status,
+            "completed_count": completed_count,
+            "status_filter": status_filter,
             "limit": limit,
             "search_log": search_log,
         },

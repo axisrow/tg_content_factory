@@ -182,6 +182,31 @@ class CollectionTasksRepository:
         rows = await cur.fetchall()
         return [self._to_task(r) for r in rows]
 
+    @staticmethod
+    def _status_where(status_filter: str | None) -> tuple[str, list[Any]]:
+        """Build WHERE clause for status filter. Returns (clause, params)."""
+        if status_filter == "active":
+            return " WHERE status IN (?, ?)", [
+                CollectionTaskStatus.PENDING.value,
+                CollectionTaskStatus.RUNNING.value,
+            ]
+        if status_filter == "completed":
+            return " WHERE status IN (?, ?, ?)", [
+                CollectionTaskStatus.COMPLETED.value,
+                CollectionTaskStatus.FAILED.value,
+                CollectionTaskStatus.CANCELLED.value,
+            ]
+        return "", []
+
+    async def count_collection_tasks(self, status_filter: str | None = None) -> int:
+        """Count tasks matching the given status filter."""
+        where, params = self._status_where(status_filter)
+        cur = await self._db.execute(
+            f"SELECT COUNT(*) as cnt FROM collection_tasks{where}", params
+        )
+        row = await cur.fetchone()
+        return row["cnt"] if row else 0
+
     async def get_collection_tasks_paginated(
         self, limit: int = 20, offset: int = 0, status_filter: str | None = None
     ) -> tuple[list[CollectionTask], int]:
@@ -189,34 +214,17 @@ class CollectionTasksRepository:
 
         Returns: (tasks, total_count)
         """
-        # Base query
-        query = "SELECT * FROM collection_tasks"
-        params: list[Any] = []
-
-        # Add filter if needed
-        where_clause = ""
-        if status_filter and status_filter != "all":
-            if status_filter == "active":
-                where_clause = " WHERE status IN (?, ?)"
-                params = [CollectionTaskStatus.PENDING.value, CollectionTaskStatus.RUNNING.value]
-            elif status_filter == "completed":
-                where_clause = (
-                    " WHERE status IN (?, ?, ?)"
-                )
-                params = [
-                    CollectionTaskStatus.COMPLETED.value,
-                    CollectionTaskStatus.FAILED.value,
-                    CollectionTaskStatus.CANCELLED.value,
-                ]
+        where, params = self._status_where(status_filter)
 
         # Get total count
-        count_query = f"SELECT COUNT(*) as cnt FROM collection_tasks{where_clause}"
-        cur = await self._db.execute(count_query, params)
+        cur = await self._db.execute(
+            f"SELECT COUNT(*) as cnt FROM collection_tasks{where}", list(params)
+        )
         count_row = await cur.fetchone()
         total = count_row["cnt"] if count_row else 0
 
         # Get paginated results
-        query += where_clause + " ORDER BY id DESC LIMIT ? OFFSET ?"
+        query = f"SELECT * FROM collection_tasks{where} ORDER BY id DESC LIMIT ? OFFSET ?"
         params.extend([limit, offset])
         cur = await self._db.execute(query, params)
         rows = await cur.fetchall()

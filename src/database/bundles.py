@@ -200,6 +200,9 @@ class ChannelBundle:
     async def get_collection_tasks(self, limit: int = 20) -> list[CollectionTask]:
         return await self.tasks.get_collection_tasks(limit)
 
+    async def count_collection_tasks(self, status_filter: str | None = None) -> int:
+        return await self.tasks.count_collection_tasks(status_filter)
+
     async def get_collection_tasks_paginated(
         self, limit: int = 20, offset: int = 0, status_filter: str | None = None
     ) -> tuple[list[CollectionTask], int]:
@@ -620,6 +623,9 @@ class SchedulerBundle:
 
     async def get_collection_tasks(self, limit: int = 20) -> list[CollectionTask]:
         return await self.tasks.get_collection_tasks(limit)
+
+    async def count_collection_tasks(self, status_filter: str | None = None) -> int:
+        return await self.tasks.count_collection_tasks(status_filter)
 
     async def get_collection_tasks_paginated(
         self, limit: int = 20, offset: int = 0, status_filter: str | None = None
