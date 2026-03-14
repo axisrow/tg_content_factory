@@ -1118,10 +1118,12 @@ async def test_scheduler_filter_active(client):
     resp = await client.get("/scheduler/?status=active")
     assert resp.status_code == 200
     assert "Active Task" in resp.text
+    assert "Done Task" not in resp.text
 
     resp = await client.get("/scheduler/?status=completed")
     assert resp.status_code == 200
     assert "Done Task" in resp.text
+    assert "Active Task" not in resp.text
 
 
 @pytest.mark.asyncio
