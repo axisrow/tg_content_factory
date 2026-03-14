@@ -117,7 +117,7 @@
                                         <strong class="d-block">{{ dialog.title }}</strong>
                                         <span class="text-muted small">{{ dialog.channel_type }}</span>
                                     </span>
-                                    <span class="badge rounded-pill text-bg-light">{{ target_group_label(group) }}</span>
+                                    <span class="badge rounded-pill text-bg-secondary">{{ target_group_label(group) }}</span>
                                 </button>
                                 {% endfor %}
                             </div>
@@ -486,7 +486,7 @@
         var spacerAfterTitle = document.createTextNode(" ");
 
         var badge = document.createElement("span");
-        badge.className = "badge text-bg-light";
+        badge.className = "badge text-bg-secondary";
         badge.textContent = target.groupLabel;
 
         var spacerAfterBadge = document.createTextNode(" ");

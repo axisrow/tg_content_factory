@@ -89,7 +89,7 @@
                 <div class="card-body">
                     <div class="d-flex justify-content-between">
                         <strong class="text-truncate">{{ entry.query }}</strong>
-                        <span class="badge bg-secondary">{{ entry.results_count }}</span>
+                        <span class="badge text-bg-secondary">{{ entry.results_count }}</span>
                     </div>
                     <small class="text-muted">{{ entry.phone }} &middot; {{ entry.created_at }}</small>
                 </div>
@@ -135,7 +135,7 @@
                             Завершено
                             {% if t.note %}<br><small class="text-muted">{{ t.note }}</small>{% endif %}
                         {% elif t.status == 'failed' %}
-                            <span class="badge bg-danger">Ошибка</span>
+                            <span class="badge text-bg-danger">Ошибка</span>
                             {% if t.error %}<br><small>{{ t.error[:100] }}</small>{% endif %}
                         {% elif t.status == 'cancelled' %}
                             Отменена
@@ -180,13 +180,13 @@
                             {% if t.status == 'running' %}
                                 <span class="spinner-border spinner-border-sm" role="status"></span>
                             {% elif t.status == 'completed' %}
-                                <span class="badge bg-success">OK</span>
+                                <span class="badge text-bg-success">OK</span>
                             {% elif t.status == 'failed' %}
-                                <span class="badge bg-danger">Ошибка</span>
+                                <span class="badge text-bg-danger">Ошибка</span>
                             {% elif t.status == 'cancelled' %}
-                                <span class="badge bg-secondary">Отменена</span>
+                                <span class="badge text-bg-secondary">Отменена</span>
                             {% else %}
-                                <span class="badge bg-warning text-dark">Ожидание</span>
+                                <span class="badge text-bg-warning">Ожидание</span>
                             {% endif %}
                         </span>
                     </div>

@@ -1,78 +1,34 @@
 from __future__ import annotations
 
-import base64
-from types import SimpleNamespace
-
 import pytest
-from httpx import ASGITransport, AsyncClient
 
-from src.config import AppConfig
-from src.database import Database
-from src.scheduler.manager import SchedulerManager
-from src.search.ai_search import AISearchEngine
-from src.search.engine import SearchEngine
-from src.telegram.collector import Collector
-from src.web.app import create_app
-from tests.helpers import FakeCliTelethonClient
+from tests.helpers import (
+    FakeCliTelethonClient,
+    build_web_app,
+    make_auth_client,
+    make_channel_entity,
+    make_test_config,
+)
 
 
-def _resolved_channel_entity(identifier: object) -> SimpleNamespace:
+def _resolved_channel_entity(identifier: object):
     if not isinstance(identifier, str):
-        return SimpleNamespace(id=abs(hash(str(identifier))) % 10**10, title="Channel peer")
-    ident = identifier.strip().lower().lstrip("@")
-    channel_id = abs(hash(ident)) % 10**10
-    username = ident if not ident.lstrip("-").isdigit() else None
-    return SimpleNamespace(
-        id=channel_id,
-        title=f"Channel {ident}",
-        username=username,
-        broadcast=True,
-        megagroup=False,
-        gigagroup=False,
-        forum=False,
-        monoforum=False,
-        scam=False,
-        fake=False,
-        restricted=False,
-    )
+        return make_channel_entity(abs(hash(str(identifier))) % 10**10)
+    return make_channel_entity(identifier)
 
 
 @pytest.fixture
 async def client(tmp_path, real_pool_harness_factory):
-    config = AppConfig()
-    config.database.path = str(tmp_path / "test.db")
-    config.telegram.api_id = 12345
-    config.telegram.api_hash = "test_hash"
-    config.web.password = "testpass"
-    app = create_app(config)
-
-    db = Database(config.database.path)
-    await db.initialize()
-    app.state.db = db
-
+    config = make_test_config(tmp_path)
     harness = real_pool_harness_factory()
     harness.queue_cli_client(
         phone="+7000",
         client=FakeCliTelethonClient(entity_resolver=_resolved_channel_entity),
     )
     await harness.connect_account("+7000", session_string="session", is_primary=True)
-    app.state.auth = harness.auth
-    app.state.pool = harness.pool
-    app.state.notifier = None
-    collector = Collector(app.state.pool, db, config.scheduler)
-    app.state.collector = collector
-    app.state.search_engine = SearchEngine(db)
-    app.state.ai_search = AISearchEngine(config.llm, db)
-    app.state.scheduler = SchedulerManager(collector, config.scheduler)
-    app.state.session_secret = "test_secret_key"
-    transport = ASGITransport(app=app)
-    auth_header = base64.b64encode(b":testpass").decode()
-    async with AsyncClient(
-        transport=transport,
-        base_url="http://test",
-        follow_redirects=True,
-        headers={"Authorization": f"Basic {auth_header}"},
-    ) as c:
+    app, db = await build_web_app(config, harness)
+
+    async with make_auth_client(app) as c:
         yield c
 
     await db.close()
@@ -136,36 +92,11 @@ async def test_import_button_on_channels_page(client):
 @pytest.fixture
 async def client_no_accounts(tmp_path, real_pool_harness_factory):
     """Client fixture with no connected Telegram accounts."""
-    config = AppConfig()
-    config.database.path = str(tmp_path / "test_no_acc.db")
-    config.telegram.api_id = 12345
-    config.telegram.api_hash = "test_hash"
-    config.web.password = "testpass"
-    app = create_app(config)
-
-    db = Database(config.database.path)
-    await db.initialize()
-    app.state.db = db
-
+    config = make_test_config(tmp_path, db_name="test_no_acc.db")
     harness = real_pool_harness_factory()
-    app.state.auth = harness.auth
-    app.state.pool = harness.pool
-    app.state.notifier = None
-    collector = Collector(app.state.pool, db, config.scheduler)
-    app.state.collector = collector
-    app.state.search_engine = SearchEngine(db)
-    app.state.ai_search = AISearchEngine(config.llm, db)
-    app.state.scheduler = SchedulerManager(collector, config.scheduler)
-    app.state.session_secret = "test_secret_key"
+    app, db = await build_web_app(config, harness)
 
-    transport = ASGITransport(app=app)
-    auth_header = base64.b64encode(b":testpass").decode()
-    async with AsyncClient(
-        transport=transport,
-        base_url="http://test",
-        follow_redirects=True,
-        headers={"Authorization": f"Basic {auth_header}"},
-    ) as c:
+    async with make_auth_client(app) as c:
         yield c
 
     await db.close()
@@ -200,16 +131,9 @@ async def test_import_file_upload(client):
 @pytest.fixture
 async def client_scam(tmp_path, real_pool_harness_factory):
     """Client fixture where resolve_channel returns a scam channel."""
-    config = AppConfig()
-    config.database.path = str(tmp_path / "test_scam.db")
-    config.telegram.api_id = 12345
-    config.telegram.api_hash = "test_hash"
-    config.web.password = "testpass"
-    app = create_app(config)
-
-    db = Database(config.database.path)
-    await db.initialize()
-    app.state.db = db
+    config = make_test_config(tmp_path, db_name="test_scam.db")
+    harness = real_pool_harness_factory()
+    app, db = await build_web_app(config, harness)
 
     async def _no_users(self):
         return []
@@ -226,28 +150,11 @@ async def client_scam(tmp_path, real_pool_harness_factory):
     async def _get_dialogs(self):
         return []
 
-    harness = real_pool_harness_factory()
-    app.state.auth = harness.auth
-    app.state.pool = harness.pool
     app.state.pool.get_users_info = _no_users.__get__(app.state.pool, type(app.state.pool))
     app.state.pool.resolve_channel = _resolve_scam.__get__(app.state.pool, type(app.state.pool))
     app.state.pool.get_dialogs = _get_dialogs.__get__(app.state.pool, type(app.state.pool))
-    app.state.notifier = None
-    collector = Collector(app.state.pool, db, config.scheduler)
-    app.state.collector = collector
-    app.state.search_engine = SearchEngine(db)
-    app.state.ai_search = AISearchEngine(config.llm, db)
-    app.state.scheduler = SchedulerManager(collector, config.scheduler)
-    app.state.session_secret = "test_secret_key"
 
-    transport = ASGITransport(app=app)
-    auth_header = base64.b64encode(b":testpass").decode()
-    async with AsyncClient(
-        transport=transport,
-        base_url="http://test",
-        follow_redirects=True,
-        headers={"Authorization": f"Basic {auth_header}"},
-    ) as c:
+    async with make_auth_client(app) as c:
         yield c, db
 
     await db.close()

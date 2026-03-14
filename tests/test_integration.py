@@ -20,13 +20,15 @@ from src.config import AppConfig, SchedulerConfig, load_config
 from src.database import Database
 from src.models import Channel, Message, SearchQuery
 from src.scheduler.manager import SchedulerManager
-from src.search.ai_search import AISearchEngine
 from src.search.engine import SearchEngine
 from src.telegram.client_pool import ClientPool
 from src.telegram.collector import Collector
 from src.web.app import create_app
 from tests.helpers import (
     FakeCliTelethonClient,
+    build_web_app,
+    make_auth_client,
+    make_channel_entity,
 )
 from tests.helpers import (
     make_mock_pool as _make_pool,
@@ -39,18 +41,10 @@ def _resolved_channel_entity(identifier: object) -> SimpleNamespace:
     else:
         ident = identifier.strip().lower().lstrip("@")
     username = ident if not ident.lstrip("-").isdigit() else None
-    return SimpleNamespace(
-        id=-1001234567890,
+    return make_channel_entity(
+        -1001234567890,
         title="Resolved Channel",
         username=username,
-        broadcast=True,
-        megagroup=False,
-        gigagroup=False,
-        forum=False,
-        monoforum=False,
-        scam=False,
-        fake=False,
-        restricted=False,
     )
 
 # ---------------------------------------------------------------------------
@@ -66,24 +60,13 @@ async def app_with_db(db, real_pool_harness_factory):
     config.telegram.api_hash = "test_hash"
     config.web.password = "testpass"
 
-    app = create_app(config)
-
-    app.state.db = db
     harness = real_pool_harness_factory()
     harness.queue_cli_client(
         phone="+1234567890",
         client=FakeCliTelethonClient(entity_resolver=_resolved_channel_entity),
     )
     await harness.connect_account("+1234567890", session_string="test_session", is_primary=True)
-    app.state.auth = harness.auth
-    app.state.pool = harness.pool
-    app.state.notifier = None
-
-    collector = Collector(app.state.pool, db, config.scheduler)
-    app.state.collector = collector
-    app.state.search_engine = SearchEngine(db)
-    app.state.ai_search = AISearchEngine(config.llm, db)
-    app.state.scheduler = SchedulerManager(collector, config.scheduler)
+    app, db = await build_web_app(config, harness, db=db)
     yield app, db
 
 
@@ -91,14 +74,7 @@ async def app_with_db(db, real_pool_harness_factory):
 async def auth_client(app_with_db):
     """Authenticated HTTP client."""
     app, _ = app_with_db
-    transport = ASGITransport(app=app)
-    auth_header = base64.b64encode(b":testpass").decode()
-    async with AsyncClient(
-        transport=transport,
-        base_url="http://test",
-        follow_redirects=True,
-        headers={"Authorization": f"Basic {auth_header}"},
-    ) as c:
+    async with make_auth_client(app) as c:
         yield c
 
 
@@ -106,12 +82,7 @@ async def auth_client(app_with_db):
 async def noauth_client(app_with_db):
     """Unauthenticated HTTP client (shares the same app)."""
     app, _ = app_with_db
-    transport = ASGITransport(app=app)
-    async with AsyncClient(
-        transport=transport,
-        base_url="http://test",
-        follow_redirects=True,
-    ) as c:
+    async with make_auth_client(app, with_auth=False) as c:
         yield c
 
 

@@ -50,6 +50,9 @@ asyncio_mode = "auto"
 testpaths = ["tests"]
 timeout = 30
 addopts = "--dist=loadgroup"
+filterwarnings = [
+    "ignore:Exception ignored in.*_SyncHttpxClientWrapper:pytest.PytestUnraisableExceptionWarning",
+]
 markers = [
     "native_backend_allowed: test intentionally exercises explicit native Telethon allowlist flows",
     "real_tg_safe: opt-in real Telegram API test limited to read-only sandbox scenarios",

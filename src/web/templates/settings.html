@@ -90,7 +90,7 @@
 <div class="card mb-4">
     <div class="card-header fw-semibold">Telegram API credentials</div>
     <div class="card-body">
-        <p><span class="badge bg-warning text-dark">Управляется через окружение</span> — <code>TG_API_ID</code> и <code>TG_API_HASH</code> заданы во внешней конфигурации, поэтому эта форма скрыта.</p>
+        <p><span class="badge text-bg-warning">Управляется через окружение</span> — <code>TG_API_ID</code> и <code>TG_API_HASH</code> заданы во внешней конфигурации, поэтому эта форма скрыта.</p>
     </div>
 </div>
 {% else %}
@@ -98,9 +98,9 @@
     <div class="card-header fw-semibold">Telegram API credentials</div>
     <div class="card-body">
         {% if is_configured %}
-        <p><span class="badge bg-success">Настроено</span> — API credentials сохранены.</p>
+        <p><span class="badge text-bg-success">Настроено</span> — API credentials сохранены.</p>
         {% else %}
-        <p><span class="badge bg-warning text-dark">Не настроено</span> — для работы приложения необходимо указать Telegram API credentials.</p>
+        <p><span class="badge text-bg-warning">Не настроено</span> — для работы приложения необходимо указать Telegram API credentials.</p>
         {% endif %}
 
         <details {% if not is_configured %}open{% endif %}>
@@ -424,9 +424,9 @@
         </form>
 
         {% if notification_target.state == "available" %}
-        <p><span class="badge bg-success">Активно</span> {{ notification_target.message }}</p>
+        <p><span class="badge text-bg-success">Активно</span> {{ notification_target.message }}</p>
         {% else %}
-        <p><span class="badge bg-warning text-dark">Недоступно</span> {{ notification_target.message }}</p>
+        <p><span class="badge text-bg-warning">Недоступно</span> {{ notification_target.message }}</p>
         {% endif %}
 
         {% if notification_bot %}

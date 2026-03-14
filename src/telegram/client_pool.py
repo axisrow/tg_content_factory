@@ -27,6 +27,7 @@ from src.telegram.backends import (
     adapt_transport_session,
 )
 from src.telegram.session_materializer import SessionMaterializer
+from src.telegram.utils import normalize_utc
 
 logger = logging.getLogger(__name__)
 
@@ -400,7 +401,7 @@ class ClientPool:
         account = await self._get_account_for_phone(phone)
         if account is None:
             return None
-        flood_until = self._normalize_utc(account.flood_wait_until)
+        flood_until = normalize_utc(account.flood_wait_until)
         if flood_until and flood_until > datetime.now(timezone.utc):
             return None
         async with self._lock:
@@ -465,13 +466,6 @@ class ClientPool:
         lease.disconnect_on_release = False
         return lease
 
-    @staticmethod
-    def _normalize_utc(value: datetime | None) -> datetime | None:
-        if value is None:
-            return None
-        if value.tzinfo is None:
-            return value.replace(tzinfo=timezone.utc)
-        return value.astimezone(timezone.utc)
 
     async def get_users_info(self) -> list[TelegramUserInfo]:
         """Get info about all connected Telegram accounts.
@@ -842,7 +836,7 @@ class ClientPool:
         accounts = await self._db.get_accounts(active_only=True)
         now = datetime.now(timezone.utc)
         for acc in accounts:
-            flood_until = self._normalize_utc(acc.flood_wait_until)
+            flood_until = normalize_utc(acc.flood_wait_until)
             if flood_until and flood_until > now:
                 continue
             if acc.phone in self.clients:
