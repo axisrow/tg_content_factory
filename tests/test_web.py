@@ -1112,8 +1112,8 @@ async def test_scheduler_page(client):
 async def test_scheduler_filter_active(client):
     db = client._transport.app.state.db
     await db.create_collection_task(-100901, "Active Task")
-    await db.create_collection_task(-100902, "Done Task")
-    await db.update_collection_task(2, "completed", messages_collected=10)
+    done_id = await db.create_collection_task(-100902, "Done Task")
+    await db.update_collection_task(done_id, "completed", messages_collected=10)
 
     resp = await client.get("/scheduler/?status=active")
     assert resp.status_code == 200
