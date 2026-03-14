@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 from telethon.errors import FloodWaitError
 
-from tests.helpers import FakeCliTelethonClient
+from tests.helpers import FakeCliTelethonClient, make_channel_entity
 
 
 def _channel_entity(
@@ -15,19 +15,7 @@ def _channel_entity(
     title: str = "Test Channel",
     username: str | None = "test_chan",
 ):
-    return SimpleNamespace(
-        id=channel_id,
-        title=title,
-        username=username,
-        broadcast=True,
-        megagroup=False,
-        gigagroup=False,
-        forum=False,
-        monoforum=False,
-        scam=False,
-        fake=False,
-        restricted=False,
-    )
+    return make_channel_entity(channel_id, title=title, username=username)
 
 
 @pytest.mark.asyncio

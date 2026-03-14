@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 
 from src.database import Database
 from src.models import Account
+from src.telegram.utils import normalize_utc
 
 
 @dataclass(frozen=True)
@@ -126,8 +127,4 @@ class AccountLeasePool:
 
     @staticmethod
     def _normalize_utc(value: datetime | None) -> datetime | None:
-        if value is None:
-            return None
-        if value.tzinfo is None:
-            return value.replace(tzinfo=timezone.utc)
-        return value.astimezone(timezone.utc)
+        return normalize_utc(value)

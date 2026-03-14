@@ -28,7 +28,12 @@ from src.services.photo_publish_service import PhotoPublishService
 from src.services.photo_task_service import PhotoTarget, PhotoTaskService
 from src.telegram.collector import Collector
 from src.web.app import create_app
-from tests.helpers import AsyncIterMessages, FakeCliTelethonClient, RealPoolHarness
+from tests.helpers import (
+    AsyncIterMessages,
+    FakeCliTelethonClient,
+    RealPoolHarness,
+    make_test_config,
+)
 
 
 def _photo_dialog_from_spec(spec: dict) -> MagicMock:
@@ -82,11 +87,8 @@ def _make_photo_dialog_client(
 async def _build_photo_loader_app(
     tmp_path, telethon_cli_spy, native_auth_spy, dialogs=None, dialogs_error=None,
 ):
-    config = AppConfig()
-    config.database.path = str(tmp_path / "test.db")
-    config.telegram.api_id = 12345
+    config = make_test_config(tmp_path)
     config.telegram.api_hash = "hash"
-    config.web.password = "testpass"
     app = create_app(config)
 
     db = Database(config.database.path)

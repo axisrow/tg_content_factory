@@ -55,11 +55,11 @@ document.querySelector('form[action$="/import"]').addEventListener('submit', fun
                     <td><code>{{ item.identifier }}</code></td>
                     <td>
                         {% if item.status == "added" %}
-                            <span class="badge bg-success">Добавлен</span>
+                            <span class="badge text-bg-success">Добавлен</span>
                         {% elif item.status == "skipped" %}
                             Пропущен
                         {% else %}
-                            <span class="badge bg-danger">Ошибка</span>
+                            <span class="badge text-bg-danger">Ошибка</span>
                         {% endif %}
                     </td>
                     <td>{{ item.detail }}</td>
