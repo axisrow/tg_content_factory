@@ -342,6 +342,16 @@ class Database:
         self._require()
         return await self._tasks.get_collection_tasks(limit)
 
+    async def count_collection_tasks(self, status_filter: str | None = None) -> int:
+        self._require()
+        return await self._tasks.count_collection_tasks(status_filter)
+
+    async def get_collection_tasks_paginated(
+        self, limit: int = 20, offset: int = 0, status_filter: str | None = None
+    ) -> tuple[list[CollectionTask], int]:
+        self._require()
+        return await self._tasks.get_collection_tasks_paginated(limit, offset, status_filter)
+
     async def get_active_collection_tasks_for_channel(
         self,
         channel_id: int,
