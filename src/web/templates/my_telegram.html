@@ -32,7 +32,7 @@
             {% endfor %}
         </select>
         <span id="dialogs-loading" class="htmx-indicator d-inline-block mt-2">&#9203; Загрузка диалогов…</span>
-        <form method="post" action="/my-telegram/refresh" class="mt-2">
+        <form method="post" action="/my-telegram/refresh" class="mt-2" data-busy>
             <input type="hidden" name="phone" value="{{ selected_phone or '' }}">
             <button class="btn btn-outline-secondary btn-sm" type="submit" {% if not selected_phone %}disabled{% endif %}>Обновить диалоги</button>
         </form>
@@ -64,7 +64,7 @@
 
 <p class="text-muted">Всего диалогов: <strong>{{ dialogs|length }}</strong></p>
 
-<form method="post" action="/my-telegram/leave" id="leave-form">
+<form method="post" action="/my-telegram/leave" id="leave-form" data-busy>
 <input type="hidden" name="phone" value="{{ selected_phone }}">
 
 <div id="leave-bar" class="d-none gap-3 align-items-center mb-3">

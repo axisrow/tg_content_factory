@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 _COLLECT_ALL_FORM = (
     '<form method="post" action="/channels/collect-all" class="d-inline"'
     ' hx-post="/channels/collect-all" hx-target="#collect-all-btn" hx-swap="outerHTML">'
-    '<button type="submit" class="btn btn-outline-primary btn-sm">Собрать все каналы</button>'
+    '<button type="submit" class="btn btn-secondary btn-sm">Собрать все каналы</button>'
     '</form>'
 )
 

@@ -21,7 +21,7 @@
                 <div class="alert alert-danger" role="alert">{{ error }}</div>
                 {% endif %}
 
-                <form method="post" action="/login">
+                <form method="post" action="/login" data-busy>
                     <input type="hidden" name="next" value="{{ next }}">
                     <div class="mb-3">
                         <label for="password" class="form-label">Пароль</label>
@@ -40,5 +40,17 @@
             </div>
         </div>
     </div>
+<script>
+document.addEventListener('submit', function(e) {
+    if (e.defaultPrevented) return;
+    var form = e.target;
+    if (!form.hasAttribute('data-busy')) return;
+    var btn = e.submitter || form.querySelector('button[type="submit"]');
+    if (!btn || btn.disabled) return;
+    btn.disabled = true;
+    var label = btn.getAttribute('data-busy-label') || btn.textContent.trim();
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> ' + label;
+});
+</script>
 </body>
 </html>

@@ -33,7 +33,7 @@
     <div class="card-header fw-semibold">Шаг 1: API Credentials</div>
     <div class="card-body">
         <p>API credentials не настроены. Введите <code>api_id</code> и <code>api_hash</code> с <a href="https://my.telegram.org/apps" target="_blank">my.telegram.org/apps</a>.</p>
-        <form method="post" action="/auth/save-credentials">
+        <form method="post" action="/auth/save-credentials" data-busy>
             <div class="mb-3">
                 <label for="api_id" class="form-label">API ID</label>
                 <input type="number" class="form-control" id="api_id" name="api_id" placeholder="12345678" required>
@@ -50,7 +50,7 @@
 {% elif step == 'phone' or not step %}
 <div class="card mb-4">
     <div class="card-body">
-        <form method="post" action="/auth/send-code">
+        <form method="post" action="/auth/send-code" data-busy>
             <div class="mb-3">
                 <label for="phone" class="form-label">Номер телефона</label>
                 <input type="tel" class="form-control" id="phone" name="phone" placeholder="+1234567890" value="{{ phone or '' }}" required>
@@ -63,7 +63,7 @@
 {% elif step == 'code' %}
 <div class="card mb-4">
     <div class="card-body">
-        <form method="post" action="/auth/verify-code">
+        <form method="post" action="/auth/verify-code" data-busy>
             <input type="hidden" name="phone" value="{{ phone }}">
             <input type="hidden" name="phone_code_hash" value="{{ phone_code_hash }}">
             <input type="hidden" name="code_type" value="{{ code_type or '' }}">
@@ -81,7 +81,7 @@
             <button type="submit" class="btn btn-primary">Подтвердить</button>
         </form>
         {% if next_type %}
-        <form method="post" action="/auth/resend-code" class="mt-3">
+        <form method="post" action="/auth/resend-code" class="mt-3" data-busy>
             <input type="hidden" name="phone" value="{{ phone }}">
             <input type="hidden" name="phone_code_hash" value="{{ phone_code_hash }}">
             <button type="submit" id="resend-btn" class="btn btn-outline-secondary">
@@ -89,7 +89,7 @@
             </button>
         </form>
         {% endif %}
-        <form method="post" action="/auth/send-code" class="mt-2">
+        <form method="post" action="/auth/send-code" class="mt-2" data-busy>
             <input type="hidden" name="phone" value="{{ phone }}">
             <button type="submit" class="btn btn-outline-secondary">Отправить код повторно</button>
         </form>
@@ -123,7 +123,7 @@
 {% elif step == '2fa' %}
 <div class="card mb-4">
     <div class="card-body">
-        <form method="post" action="/auth/verify-code">
+        <form method="post" action="/auth/verify-code" data-busy>
             <input type="hidden" name="phone" value="{{ phone }}">
             <input type="hidden" name="code" value="{{ code }}">
             <input type="hidden" name="phone_code_hash" value="{{ phone_code_hash }}">
