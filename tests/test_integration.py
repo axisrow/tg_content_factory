@@ -10,7 +10,7 @@ import asyncio
 import base64
 from datetime import datetime, timezone
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -411,81 +411,50 @@ class TestSchedulerStartStop:
         await auth_client.post("/scheduler/stop")
 
     @pytest.mark.asyncio
-    async def test_trigger_returns_immediately(self, app_with_db):
-        """POST /scheduler/trigger returns redirect with ?msg=triggered instantly."""
-        app, _ = app_with_db
-        scheduler = None
+    async def test_trigger_enqueues_channels(self, app_with_db):
+        """POST /scheduler/trigger enqueues collection tasks via the queue."""
+        app, db = app_with_db
+        from src.models import Channel
 
-        class BlockingCollector:
-            def __init__(self):
-                self.started_event = asyncio.Event()
-                self.release_event = asyncio.Event()
-                self._running = False
+        await db.add_channel(Channel(channel_id=-100801, title="Ch1", username="ch1"))
+        await db.add_channel(Channel(channel_id=-100802, title="Ch2", username="ch2"))
 
-            @property
-            def is_running(self):
-                return self._running
-
-            async def collect_all_channels(self):
-                self._running = True
-                self.started_event.set()
-                try:
-                    await self.release_event.wait()
-                    return {"channels": 0, "messages": 0, "errors": 0}
-                finally:
-                    self._running = False
-
-        collector = BlockingCollector()
-        scheduler = SchedulerManager(collector, SchedulerConfig())
-        app.state.collector = collector
-        app.state.scheduler = scheduler
+        # Disable the queue worker so tasks stay pending
+        queue = app.state.collection_queue
+        queue._ensure_worker = lambda: None
 
         transport = ASGITransport(app=app)
         auth_header = base64.b64encode(b":testpass").decode()
-        try:
-            async with AsyncClient(
-                transport=transport,
-                base_url="http://test",
-                follow_redirects=False,
-                headers={"Authorization": f"Basic {auth_header}"},
-            ) as c:
-                resp = await c.post("/scheduler/trigger")
-                assert resp.status_code == 303
-                assert "msg=triggered" in resp.headers["location"]
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            follow_redirects=False,
+            headers={"Authorization": f"Basic {auth_header}"},
+        ) as c:
+            resp = await c.post("/scheduler/trigger")
+            assert resp.status_code == 303
+            assert "msg=collect_all_queued" in resp.headers["location"]
 
-            await asyncio.wait_for(collector.started_event.wait(), timeout=1.0)
-            assert scheduler._bg_task is not None
-            assert not scheduler._bg_task.done()
-            assert collector.is_running is True
-        finally:
-            collector.release_event.set()
-            if scheduler is not None:
-                await scheduler.stop()
-
-        assert scheduler._bg_task is None
-        assert collector.is_running is False
+        tasks = await db.get_collection_tasks()
+        assert len(tasks) == 2
+        assert all(task.status == "pending" for task in tasks)
 
     @pytest.mark.asyncio
-    async def test_trigger_while_collecting(self, app_with_db):
-        """If collection is already running, redirect with ?msg=already_running."""
+    async def test_trigger_empty_returns_collect_all_empty(self, app_with_db):
+        """POST /scheduler/trigger with no channels returns collect_all_empty."""
         app, _ = app_with_db
-        collector = app.state.collector
 
         transport = ASGITransport(app=app)
         auth_header = base64.b64encode(b":testpass").decode()
-        with patch.object(
-            type(collector), "is_running",
-            new_callable=PropertyMock, return_value=True,
-        ):
-            async with AsyncClient(
-                transport=transport,
-                base_url="http://test",
-                follow_redirects=False,
-                headers={"Authorization": f"Basic {auth_header}"},
-            ) as c:
-                resp = await c.post("/scheduler/trigger")
-                assert resp.status_code == 303
-                assert "msg=already_running" in resp.headers["location"]
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            follow_redirects=False,
+            headers={"Authorization": f"Basic {auth_header}"},
+        ) as c:
+            resp = await c.post("/scheduler/trigger")
+            assert resp.status_code == 303
+            assert "msg=collect_all_empty" in resp.headers["location"]
 
 
 class TestCollectorIncremental:

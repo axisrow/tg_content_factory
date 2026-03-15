@@ -2179,7 +2179,7 @@ async def test_collect_all_htmx_returns_scheduler_link_and_creates_tasks(client,
     assert resp.status_code == 200
     assert "Добавлено задач: 2." in resp.text
     assert 'href="/scheduler"' in resp.text
-    assert "Загрузить все" in resp.text
+    assert "Собрать все каналы" in resp.text
 
     tasks = await db.get_collection_tasks()
     assert len(tasks) == 2
@@ -2339,7 +2339,7 @@ async def test_channels_page_collect_all_button_matches_htmx_fragment(client):
         'hx-target="#collect-all-btn"',
         'hx-swap="outerHTML"',
         "btn-outline-primary",
-        "Загрузить все",
+        "Собрать все каналы",
     ):
         assert expected in template_fragment
         assert expected in _COLLECT_ALL_BTN
