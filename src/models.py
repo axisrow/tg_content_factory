@@ -118,6 +118,7 @@ class NotificationBot(BaseModel):
 
 class SearchQuery(BaseModel):
     id: int | None = None
+    name: str = ""
     query: str
     is_regex: bool = False
     is_fts: bool = False
@@ -133,6 +134,12 @@ class SearchQuery(BaseModel):
     def check_mode_exclusive(self) -> "SearchQuery":
         if self.is_regex and self.is_fts:
             raise ValueError("is_regex and is_fts are mutually exclusive")
+        return self
+
+    @model_validator(mode="after")
+    def default_name_to_query(self) -> "SearchQuery":
+        if not self.name:
+            self.name = self.query
         return self
 
     @property

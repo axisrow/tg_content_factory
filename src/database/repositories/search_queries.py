@@ -18,7 +18,7 @@ class SearchQueriesRepository:
             "track_stats, interval_minutes, exclude_patterns, max_length) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
-                sq.query,
+                sq.name,
                 sq.query,
                 int(sq.is_regex),
                 int(sq.is_fts),
@@ -60,7 +60,7 @@ class SearchQueriesRepository:
             "exclude_patterns = ?, max_length = ? "
             "WHERE id = ?",
             (
-                sq.query,
+                sq.name,
                 sq.query,
                 int(sq.is_regex),
                 int(sq.is_fts),
@@ -157,6 +157,7 @@ class SearchQueriesRepository:
     def _row_to_model(row) -> SearchQuery:
         return SearchQuery(
             id=row["id"],
+            name=row["name"],
             query=row["query"],
             is_regex=bool(row["is_regex"]),
             is_fts=bool(row["is_fts"]) if row["is_fts"] is not None else False,
