@@ -5,6 +5,7 @@ import logging
 import re
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
+from typing import TYPE_CHECKING
 
 from telethon.errors import FloodWaitError, UsernameInvalidError, UsernameNotOccupiedError
 from telethon.tl.types import (
@@ -40,6 +41,9 @@ from src.telegram.backends import adapt_transport_session
 from src.telegram.client_pool import ClientPool
 from src.telegram.notifier import Notifier
 
+if TYPE_CHECKING:
+    from src.services.notification_matcher import NotificationMatcher
+
 logger = logging.getLogger(__name__)
 
 
@@ -71,6 +75,7 @@ class Collector:
         self._db = db
         self._config = config
         self._notifier = notifier
+        self._notification_matcher: NotificationMatcher | None = None
         self._running = False
         self._stats_running = False
         self._cancel_event = asyncio.Event()
@@ -680,14 +685,16 @@ class Collector:
         if not self._notifier:
             return
 
+        # Create matcher lazily so tests can set _notifier after construction.
+        if self._notification_matcher is None:
+            from src.services.notification_matcher import NotificationMatcher
+            self._notification_matcher = NotificationMatcher(self._notifier)
+
         queries = await self._db.get_notification_queries(active_only=True)
         if not queries:
             return
 
-        from src.services.notification_matcher import NotificationMatcher
-
-        matcher = NotificationMatcher(self._notifier)
-        await matcher.match_and_notify(messages, queries)
+        await self._notification_matcher.match_and_notify(messages, queries)
 
     async def _channel_still_exists(self, channel_id: int) -> bool:
         return await self._db.get_channel_by_channel_id(channel_id) is not None

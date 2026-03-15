@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime, timezone
 from typing import Any
 
@@ -472,6 +473,8 @@ class CollectionTasksRepository:
         await self._db.commit()
         return cur.rowcount or 0
 
+    _SAFE_JSON_KEY_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
+
     async def has_active_task(
         self,
         task_type: CollectionTaskType | str,
@@ -491,6 +494,11 @@ class CollectionTasksRepository:
             CollectionTaskStatus.RUNNING.value,
         ]
         if payload_filter_key is not None and payload_filter_value is not None:
+            if not self._SAFE_JSON_KEY_RE.match(payload_filter_key):
+                raise ValueError(
+                    f"Invalid payload_filter_key: {payload_filter_key!r}. "
+                    "Only alphanumeric characters and underscores are allowed."
+                )
             sql += f" AND json_extract(payload, '$.{payload_filter_key}') = ?"
             params.append(payload_filter_value)
         cur = await self._db.execute(sql, tuple(params))

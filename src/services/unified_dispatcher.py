@@ -126,8 +126,17 @@ class UnifiedDispatcher:
         while not self._stop_event.is_set():
             task: CollectionTask | None = None
             try:
+                # Don't claim STATS_ALL while main message collection is active;
+                # other task types (notification_search, photo, etc.) can still run.
+                main_collection_active = (
+                    self._collector.is_running and not self._collector.is_stats_running
+                )
+                claimable_types = [
+                    t for t in HANDLED_TYPES
+                    if not (t == CollectionTaskType.STATS_ALL.value and main_collection_active)
+                ]
                 task = await self._channels.claim_next_due_generic_task(
-                    datetime.now(timezone.utc), HANDLED_TYPES
+                    datetime.now(timezone.utc), claimable_types
                 )
                 if task is None:
                     await asyncio.sleep(self._poll_interval_sec)
@@ -202,9 +211,28 @@ class UnifiedDispatcher:
         cursor = next_index
 
         while cursor < batch_end:
-            if self._collector.is_running:
-                await asyncio.sleep(self._poll_interval_sec)
-                continue
+            if self._collector.is_running and not self._collector.is_stats_running:
+                # Main collection started mid-batch; defer remaining work so the
+                # dispatcher loop is not blocked waiting for it to finish.
+                defer_payload = StatsAllTaskPayload(
+                    channel_ids=channel_ids, next_index=cursor,
+                    batch_size=batch_size, channels_ok=channels_ok,
+                    channels_err=channels_err,
+                )
+                continuation_id = await self._channels.create_stats_continuation_task(
+                    payload=defer_payload,
+                    run_after=datetime.now(timezone.utc),
+                    parent_task_id=task.id,
+                )
+                await self._channels.update_collection_task(
+                    task.id, CollectionTaskStatus.FAILED,
+                    messages_collected=channels_ok,
+                    error=(
+                        f"Deferred to task #{continuation_id}: "
+                        "main collection active mid-batch"
+                    ),
+                )
+                return
 
             channel_id = channel_ids[cursor]
             channel = await self._channels.get_by_channel_id(channel_id)
