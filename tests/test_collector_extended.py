@@ -6,6 +6,7 @@ import pytest
 from telethon.errors import FloodWaitError
 
 from src.models import Channel, ChannelStats, Message, SearchQuery
+from src.services.notification_matcher import NotificationMatcher
 from src.telegram.collector import AllStatsClientsFloodedError, Collector, NoActiveStatsClientsError
 
 
@@ -121,14 +122,16 @@ async def test_flush_batch_persistence_error(collector, mock_pool, mock_db):
 
 @pytest.mark.asyncio
 async def test_notification_queries_logic(collector, mock_db):
-    collector._notifier = AsyncMock()
+    notifier = AsyncMock()
+    collector._notifier = notifier
+    collector._notification_matcher = NotificationMatcher(notifier)
     sq = SearchQuery(id=1, query="test", is_regex=False, is_fts=False)
     mock_db.get_notification_queries.return_value = [sq]
 
     # Need messages with actual text
     msgs = [Message(channel_id=1, message_id=1, text="This is a test message", date=datetime.now())]
     await collector._check_notification_queries(msgs)
-    collector._notifier.notify.assert_called_once()
+    notifier.notify.assert_called_once()
 
 @pytest.mark.asyncio
 async def test_fts_query_matches_logic():
