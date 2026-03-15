@@ -125,7 +125,10 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
             return app.state.templates.TemplateResponse(
                 request,
                 "error.html",
-                {"status_code": 500, "detail": str(exc)},
+                {
+                    "status_code": 500,
+                    "detail": "An unexpected error occurred. See /debug/ for details.",
+                },
                 status_code=500,
             )
         except Exception:
