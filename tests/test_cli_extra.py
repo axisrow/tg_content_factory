@@ -3,19 +3,13 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import signal
-from datetime import datetime, timezone
-from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from src.config import AppConfig
 from src.database import Database
-from src.models import Account, Channel, NotificationBot
-
-
-NOW = datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+from src.models import Channel, NotificationBot
 
 
 @pytest.fixture
@@ -179,7 +173,6 @@ class TestNotificationCommand:
         fake_pool.clients = {"+70001112233": AsyncMock()}
 
         from src.models import NotificationBot
-
         from src.services.notification_service import NotificationService
 
         mock_bot = NotificationBot(
@@ -490,10 +483,10 @@ class TestCollectCommand:
         ):
             from src.cli.commands.collect import run
 
-            run(_ns(channel_id="100", full=False))
+            run(_ns(channel_id=100, full=False))
 
         out = capsys.readouterr().out
-        assert "10" in out or "complete" in out.lower()
+        assert "Collected" in out and "100" in out
 
     def test_collect_full_mode(self, cli_env_with_pool, capsys):
         """Test collect with full flag for single channel."""
