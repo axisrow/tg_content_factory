@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+
+{% block title %}Ошибка {{ status_code }}{% endblock %}
+
+{% block content %}
+<div class="container py-5">
+    <div class="row justify-content-center">
+        <div class="col-md-8">
+            <div class="card border-danger">
+                <div class="card-body text-center py-5">
+                    <h1 class="display-1 text-danger mb-3">{{ status_code }}</h1>
+                    <h4 class="mb-3">Ошибка сервера</h4>
+                    <p class="text-muted mb-4">{{ detail }}</p>
+                    <a href="/debug/" class="btn btn-outline-secondary">Подробности в /debug/</a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
