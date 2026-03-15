@@ -276,6 +276,12 @@ class Database:
         self._require()
         return await self._messages.insert_messages_batch(messages)
 
+    async def search_messages_for_query(
+        self, sq: "SearchQuery", limit: int = 1,
+    ) -> tuple[list[Message], int]:
+        self._require()
+        return await self._messages.search_messages_for_query(sq, limit)
+
     async def search_messages(
         self,
         query: str = "",
@@ -285,6 +291,9 @@ class Database:
         limit: int = 50,
         offset: int = 0,
         topic_id: int | None = None,
+        is_fts: bool = False,
+        min_length: int | None = None,
+        max_length: int | None = None,
     ) -> tuple[list[Message], int]:
         self._require()
         return await self._messages.search_messages(
@@ -295,6 +304,9 @@ class Database:
             limit=limit,
             offset=offset,
             topic_id=topic_id,
+            is_fts=is_fts,
+            min_length=min_length,
+            max_length=max_length,
         )
 
     async def delete_messages_for_channel(self, channel_id: int) -> int:
