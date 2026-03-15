@@ -251,6 +251,17 @@ class MessagesRepository:
                 "FTS5 full-text search is unavailable (index build failed at startup)."
             )
 
+    async def search_messages_for_query(
+        self, sq: SearchQuery, limit: int = 1,
+    ) -> tuple[list[Message], int]:
+        """Search messages using all SearchQuery parameters."""
+        return await self.search_messages(
+            query=sq.query,
+            limit=limit,
+            is_fts=sq.is_fts,
+            max_length=sq.max_length,
+        )
+
     async def count_fts_matches_for_query(self, sq: SearchQuery) -> int:
         self._require_fts()
         fts_query = self._build_fts_match(sq.query, sq.is_fts)
