@@ -23,11 +23,13 @@ from src.database.bundles import (
 from src.scheduler.manager import SchedulerManager
 from src.search.ai_search import AISearchEngine
 from src.search.engine import SearchEngine
+from src.services.notification_matcher import NotificationMatcher
 from src.services.notification_target_service import NotificationTargetService
 from src.services.photo_auto_upload_service import PhotoAutoUploadService
 from src.services.photo_publish_service import PhotoPublishService
 from src.services.photo_task_service import PhotoTaskService
-from src.services.stats_task_dispatcher import StatsTaskDispatcher
+from src.services.task_enqueuer import TaskEnqueuer
+from src.services.unified_dispatcher import UnifiedDispatcher
 from src.settings_utils import parse_int_setting
 from src.telegram.auth import TelegramAuth
 from src.telegram.client_pool import ClientPool
@@ -122,19 +124,32 @@ async def build_container_with_templates(
     )
     collector = Collector(pool, db, config.scheduler, notifier)
     collection_queue = CollectionQueue(collector, channel_bundle)
-    stats_dispatcher = StatsTaskDispatcher(collector, channel_bundle, default_batch_size=20)
     search_engine = SearchEngine(search_bundle, pool)
     ai_search = AISearchEngine(config.llm, search_bundle)
     agent_manager = AgentManager(db, config)
     search_query_bundle = SearchQueryBundle(repos.search_queries, repos.messages)
-    scheduler = SchedulerManager(
+
+    from src.services.collection_service import CollectionService
+
+    collection_service = CollectionService(channel_bundle, collector, collection_queue)
+    task_enqueuer = TaskEnqueuer(db, collection_service)
+    notification_matcher = NotificationMatcher(notifier)
+    unified_dispatcher = UnifiedDispatcher(
         collector,
-        config.scheduler,
-        scheduler_bundle=scheduler_bundle,
+        channel_bundle,
+        repos.tasks,
+        notification_query_fn=repos.search_queries.get_notification_queries,
         search_engine=search_engine,
-        search_query_bundle=search_query_bundle,
+        notification_matcher=notification_matcher,
+        sq_bundle=search_query_bundle,
         photo_task_service=photo_task_service,
         photo_auto_upload_service=photo_auto_upload_service,
+    )
+    scheduler = SchedulerManager(
+        config.scheduler,
+        scheduler_bundle=scheduler_bundle,
+        search_query_bundle=search_query_bundle,
+        task_enqueuer=task_enqueuer,
     )
 
     _templates = configure_template_globals(
@@ -163,7 +178,8 @@ async def build_container_with_templates(
         photo_auto_upload_service=photo_auto_upload_service,
         collector=collector,
         collection_queue=collection_queue,
-        stats_dispatcher=stats_dispatcher,
+        task_enqueuer=task_enqueuer,
+        unified_dispatcher=unified_dispatcher,
         search_engine=search_engine,
         ai_search=ai_search,
         scheduler=scheduler,
@@ -192,8 +208,8 @@ async def start_container(container: AppContainer) -> None:
         if requeued:
             logger.info("Re-enqueued %d pending collection tasks on startup", requeued)
 
-    if container.stats_dispatcher is not None:
-        await container.stats_dispatcher.start()
+    if container.unified_dispatcher is not None:
+        await container.unified_dispatcher.start()
     container.ai_search.initialize()
     if container.agent_manager is not None:
         await container.agent_manager.refresh_settings_cache(preflight=True)
@@ -211,8 +227,8 @@ async def _cancel_bg_tasks(tasks: set[asyncio.Task]) -> None:
 async def stop_container(container: AppContainer) -> None:
     container.shutting_down = True
     shutdown_coroutines = []
-    if container.stats_dispatcher is not None:
-        shutdown_coroutines.append(("stats_dispatcher", container.stats_dispatcher.stop()))
+    if container.unified_dispatcher is not None:
+        shutdown_coroutines.append(("unified_dispatcher", container.unified_dispatcher.stop()))
     if container.collection_queue is not None:
         shutdown_coroutines.append(("collection_queue", container.collection_queue.shutdown()))
     if container.agent_manager is not None:

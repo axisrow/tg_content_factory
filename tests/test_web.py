@@ -1063,7 +1063,7 @@ async def test_settings_page_blocks_agent_provider_writes_without_encryption_sec
     app.state.collection_queue = CollectionQueue(collector, db)
     app.state.search_engine = SearchEngine(db)
     app.state.ai_search = AISearchEngine(config.llm, db)
-    app.state.scheduler = SchedulerManager(collector, config.scheduler)
+    app.state.scheduler = SchedulerManager(config.scheduler)
     app.state.session_secret = "test_secret_key"
     await db.add_account(Account(phone="+1234567890", session_string="test_session"))
     await db.set_setting("agent_dev_mode_enabled", "1")
@@ -1412,7 +1412,7 @@ async def test_settings_shows_accounts(tmp_path):
     app.state.collector = collector
     app.state.search_engine = SearchEngine(db)
     app.state.ai_search = AISearchEngine(config.llm, db)
-    app.state.scheduler = SchedulerManager(collector, config.scheduler)
+    app.state.scheduler = SchedulerManager(config.scheduler)
     app.state.session_secret = "test_secret_key"
 
     transport = ASGITransport(app=app)
@@ -1625,7 +1625,7 @@ async def test_resolve_channel_fail(tmp_path):
     app.state.collector = collector
     app.state.search_engine = SearchEngine(db)
     app.state.ai_search = AISearchEngine(config.llm, db)
-    app.state.scheduler = SchedulerManager(collector, config.scheduler)
+    app.state.scheduler = SchedulerManager(config.scheduler)
     app.state.session_secret = "test_secret_key"
 
     transport = ASGITransport(app=app)
@@ -1784,7 +1784,7 @@ async def test_add_scam_channel_is_inactive(tmp_path):
     app.state.collector = collector
     app.state.search_engine = SearchEngine(db)
     app.state.ai_search = AISearchEngine(config.llm, db)
-    app.state.scheduler = SchedulerManager(collector, config.scheduler)
+    app.state.scheduler = SchedulerManager(config.scheduler)
     app.state.session_secret = "test_secret_key"
 
     transport = ASGITransport(app=app)
@@ -1854,7 +1854,7 @@ async def test_bulk_add_scam_dialog_is_inactive(tmp_path):
     app.state.collector = collector
     app.state.search_engine = SearchEngine(db)
     app.state.ai_search = AISearchEngine(config.llm, db)
-    app.state.scheduler = SchedulerManager(collector, config.scheduler)
+    app.state.scheduler = SchedulerManager(config.scheduler)
     app.state.session_secret = "test_secret_key"
 
     transport = ASGITransport(app=app)

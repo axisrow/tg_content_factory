@@ -3,86 +3,46 @@
 {% block content %}
 <h1>Планировщик</h1>
 
-<div class="card mb-4">
-    <div class="card-header fw-semibold">
-        Статус планировщика
-        <span class="hint" data-tooltip="Планировщик автоматически собирает сообщения и запускает поиск по расписанию">?</span>
-    </div>
-    <div class="card-body">
-        <small class="text-muted d-block mb-2">Автоматический сбор сообщений из всех каналов и поиск по ключевым словам.</small>
-        <p>Планировщик: <strong>{{ "Запущен" if is_running else "Остановлен" }}</strong></p>
-        <p>Интервал сбора: <strong>{{ interval_minutes }}</strong> мин.</p>
-        <p>Сбор данных: <strong>{{ "Идёт" if collecting_now else "Ожидание" }}</strong></p>
-        {% if last_run %}
-        <p>Последний запуск: <strong>{{ last_run.strftime('%Y-%m-%d %H:%M:%S UTC') }}</strong></p>
-        {% endif %}
-        {% if last_stats %}
-        <p>Результат: каналов — {{ last_stats.channels }}, сообщений — {{ last_stats.messages }}, ошибок — {{ last_stats.errors }}</p>
-        {% endif %}
-    </div>
-</div>
-
-<div class="row g-3 mb-4">
-    <div class="col-12 col-md-6">
-        <div class="card h-100">
-            <div class="card-body">
-                <h6 class="card-title">Автоматический режим</h6>
-                <small class="text-muted d-block mb-3">
-                    Включает фоновый планировщик: сбор каждые {{ interval_minutes }} мин., поиск каждые {{ search_interval_minutes }} мин.
-                </small>
-                {% if not is_running %}
-                <form method="post" action="/scheduler/start" data-busy>
-                    <button type="submit" class="btn btn-primary w-100">&#9654; Запустить планировщик</button>
-                </form>
-                {% else %}
-                <form method="post" action="/scheduler/stop" data-busy>
-                    <button type="submit" class="btn btn-secondary w-100">&#9724; Остановить планировщик</button>
-                </form>
-                {% endif %}
-            </div>
-        </div>
-    </div>
-    <div class="col-12 col-md-6">
-        <div class="card h-100">
-            <div class="card-body">
-                <h6 class="card-title">Ручной сбор</h6>
-                <small class="text-muted d-block mb-3">
-                    Добавляет задачи в очередь для каждого активного канала. То же, что на странице <a href="/channels">каналов</a>.
-                </small>
-                <form method="post" action="/scheduler/trigger" data-busy>
-                    <button type="submit" class="btn btn-secondary w-100">
-                        &#9654; Собрать все каналы
-                    </button>
-                </form>
-            </div>
-        </div>
-    </div>
-</div>
+{% macro task_type_label(t) %}
+    {% if t.task_type.value == 'channel_collect' %}Сбор канала
+    {% elif t.task_type.value == 'stats_all' %}Статистика
+    {% elif t.task_type.value == 'notification_search' %}Поиск
+    {% elif t.task_type.value == 'sq_stats' %}Статистика запроса
+    {% elif t.task_type.value == 'photo_due' %}Фото
+    {% elif t.task_type.value == 'photo_auto' %}Автофото
+    {% else %}{{ t.task_type.value }}
+    {% endif %}
+{% endmacro %}
 
 <div class="card mb-4">
     <div class="card-header fw-semibold">
-        Поиск по запросам
-        <span class="hint" data-tooltip="Ищет совпадения по ключевым словам, настроенным на странице «Запросы»">?</span>
+        Планировщик
+        <span class="hint" data-tooltip="Планировщик автоматически ставит задачи в очередь: сбор, поиск, статистику">?</span>
     </div>
     <div class="card-body">
-        <small class="text-muted d-block mb-2">
-            Запускает поиск по всем активным <a href="/search-queries">поисковым запросам</a>. При совпадении отправляет уведомления.
-        </small>
-        <p>Интервал поиска: <strong>{{ search_interval_minutes }}</strong> мин.</p>
-        {% if last_search_run %}
-        <p>Последний поиск: <strong>{{ last_search_run.strftime('%Y-%m-%d %H:%M:%S UTC') }}</strong></p>
-        {% endif %}
-        {% if last_search_stats %}
-        <p>Результат: запросов — {{ last_search_stats.queries }}, найдено — {{ last_search_stats.results }}, ошибок — {{ last_search_stats.errors }}</p>
-        {% endif %}
+        <small class="text-muted d-block mb-2">Автоматическое создание задач: сбор каждые {{ interval_minutes }} мин., поиск каждые {{ search_interval_minutes }} мин.</small>
+        <p>Статус: <strong>{{ "Запущен" if is_running else "Остановлен" }}</strong></p>
+
         <div class="d-flex flex-wrap gap-2">
+            {% if not is_running %}
+            <form method="post" action="/scheduler/start" data-busy>
+                <button type="submit" class="btn btn-primary">&#9654; Запустить</button>
+            </form>
+            {% else %}
+            <form method="post" action="/scheduler/stop" data-busy>
+                <button type="submit" class="btn btn-secondary">&#9724; Остановить</button>
+            </form>
+            {% endif %}
+            <form method="post" action="/scheduler/trigger" data-busy>
+                <button type="submit" class="btn btn-outline-primary">&#9654; Собрать все каналы</button>
+            </form>
             <form method="post" action="/scheduler/trigger-search" data-busy>
-                <button type="submit" class="btn btn-secondary">&#9654; Запустить поиск по запросам</button>
+                <button type="submit" class="btn btn-outline-primary">&#9654; Запустить поиск</button>
             </form>
             <form method="post" action="/scheduler/test-notification" data-busy>
                 <button type="submit" class="btn btn-outline-secondary"
                         {% if not bot_configured %}disabled title="Подключите бот в Настройках → Уведомления"{% endif %}>
-                    Протестировать уведомления
+                    Тест уведомлений
                 </button>
             </form>
         </div>
@@ -139,9 +99,9 @@
 
 {% if all_count > 0 %}
 <div class="card mb-4">
-    <div class="card-header fw-semibold">Задачи сбора</div>
+    <div class="card-header fw-semibold">Задачи</div>
     <div class="card-body p-0">
-        <p class="px-3 pt-3"><small class="text-muted">Все задачи сбора: автоматические (от планировщика), ручные (кнопка выше) и одиночные (со страницы каналов).</small></p>
+        <p class="px-3 pt-3"><small class="text-muted">Все задачи: сбор каналов, поиск, статистика, фото.</small></p>
 
         <!-- Filter tabs -->
         <div class="px-3 pb-2">
@@ -164,9 +124,10 @@
         <table class="table table-striped table-sm mb-0">
             <thead>
                 <tr>
-                    <th>Канал</th>
+                    <th>Тип</th>
+                    <th>Канал / Описание</th>
                     <th>Статус</th>
-                    <th>Сообщений</th>
+                    <th>Результат</th>
                     <th>Создана</th>
                     <th>Завершена</th>
                     <th>Действие</th>
@@ -175,12 +136,12 @@
             <tbody>
                 {% for t in tasks %}
                 <tr>
+                    <td><span class="badge text-bg-info">{{ task_type_label(t) }}</span></td>
                     <td>
-                        {{ t.channel_title or t.channel_id }}
-                        <br><small class="text-muted">
-                            {%- if t.channel_username %}@{{ t.channel_username }} &middot; {% endif -%}
-                            {% if t.channel_id != 0 %}id: {{ t.channel_id }}{% endif %}
-                        </small>
+                        {{ t.channel_title or t.channel_id or '—' }}
+                        {% if t.channel_username %}
+                        <br><small class="text-muted">@{{ t.channel_username }}</small>
+                        {% endif %}
                     </td>
                     <td>
                         {% if t.status == 'running' %}
@@ -227,7 +188,8 @@
                 <div class="card-body">
                     <div class="d-flex justify-content-between align-items-start mb-1">
                         <div>
-                            <strong>{{ t.channel_title or t.channel_id }}</strong>
+                            <span class="badge text-bg-info me-1">{{ task_type_label(t) }}</span>
+                            <strong>{{ t.channel_title or t.channel_id or '—' }}</strong>
                             {% if t.channel_username %}<br><small class="text-muted">@{{ t.channel_username }}</small>{% endif %}
                         </div>
                         <span>
