@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 from typing import Any
 
@@ -33,6 +34,8 @@ from src.models import (
     StatsAllTaskPayload,
 )
 from src.security import SessionCipher
+
+logger = logging.getLogger(__name__)
 
 
 class Database:
@@ -78,6 +81,10 @@ class Database:
         await self._db.executescript(SCHEMA_SQL)
         await self._db.commit()
         self._fts_available = await run_migrations(self._db)
+        if not self._fts_available:
+            logger.warning(
+                "FTS5 full-text search is unavailable; text queries will use LIKE fallback"
+            )
 
         if not self._session_encryption_secret and await self._has_encrypted_sessions():
             await self._connection.close()
