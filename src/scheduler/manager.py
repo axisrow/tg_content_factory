@@ -108,6 +108,14 @@ class SchedulerManager:
             logger.warning("Scheduler already running")
             return
 
+        if self._scheduler is not None:
+            # Clean up a previously created but no-longer-running scheduler
+            # to avoid orphaning it when we create a new one below.
+            try:
+                self._scheduler.shutdown(wait=False)
+            except Exception:
+                pass
+
         self._scheduler = AsyncIOScheduler()
         saved_interval = await self._scheduler_bundle.get_setting("collect_interval_minutes")
         collect_interval = parse_int_setting(

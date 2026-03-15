@@ -63,8 +63,29 @@ async def test_scheduler_start_already_running(
 ):
     mgr = SchedulerManager(mock_collector, scheduler_config, mock_bundle)
     await mgr.start()
-    await mgr.start()  # Should log warning and return
+    original_scheduler = mgr._scheduler
+    await mgr.start()  # Should log warning and return early
     assert mgr.is_running
+    assert mgr._scheduler is original_scheduler  # Must not orphan the first scheduler
+    await mgr.stop()
+
+@pytest.mark.asyncio
+async def test_scheduler_start_cleans_stale_scheduler(
+    mock_collector, scheduler_config, mock_bundle,
+):
+    """If a previous scheduler exists but is not running, start() should clean it up."""
+    mgr = SchedulerManager(mock_collector, scheduler_config, mock_bundle)
+    await mgr.start()
+    await mgr.stop()
+    # stop() sets _scheduler to None, simulate a stale (non-None, not-running) scheduler
+    from apscheduler.schedulers.asyncio import AsyncIOScheduler
+    stale = AsyncIOScheduler()
+    mgr._scheduler = stale
+    assert not stale.running
+
+    await mgr.start()
+    assert mgr.is_running
+    assert mgr._scheduler is not stale  # Old stale scheduler was replaced
     await mgr.stop()
 
 @pytest.mark.asyncio
