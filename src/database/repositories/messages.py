@@ -144,27 +144,48 @@ class MessagesRepository:
         where = " WHERE " + " AND ".join(conditions)
 
         if query:
-            self._require_fts()
-            fts_query = self._build_fts_match(query, is_fts)
-            fts_join = (
-                " INNER JOIN (SELECT rowid FROM messages_fts"
-                " WHERE messages_fts MATCH ?) AS fts ON m.id = fts.rowid"
-            )
-            count_cur = await self._db.execute(
-                f"SELECT COUNT(*) as cnt FROM messages m{fts_join}{channel_join}{where}",
-                (fts_query, *params),
-            )
-            row = await count_cur.fetchone()
-            total = row["cnt"] if row else 0
+            if self._fts_available:
+                fts_query = self._build_fts_match(query, is_fts)
+                fts_join = (
+                    " INNER JOIN (SELECT rowid FROM messages_fts"
+                    " WHERE messages_fts MATCH ?) AS fts ON m.id = fts.rowid"
+                )
+                count_cur = await self._db.execute(
+                    f"SELECT COUNT(*) as cnt FROM messages m{fts_join}{channel_join}{where}",
+                    (fts_query, *params),
+                )
+                row = await count_cur.fetchone()
+                total = row["cnt"] if row else 0
 
-            cur = await self._db.execute(
-                f"""SELECT m.*, c.title as channel_title, c.username as channel_username
-                    FROM messages m{fts_join}{channel_join}
-                    {where}
-                    ORDER BY m.date DESC
-                    LIMIT ? OFFSET ?""",
-                (fts_query, *params, limit, offset),
-            )
+                cur = await self._db.execute(
+                    f"""SELECT m.*, c.title as channel_title, c.username as channel_username
+                        FROM messages m{fts_join}{channel_join}
+                        {where}
+                        ORDER BY m.date DESC
+                        LIMIT ? OFFSET ?""",
+                    (fts_query, *params, limit, offset),
+                )
+            else:
+                logger.warning("FTS5 unavailable, falling back to LIKE search")
+                conditions.append("m.text LIKE ?")
+                params.append(f"%{query}%")
+                where = " WHERE " + " AND ".join(conditions)
+
+                count_cur = await self._db.execute(
+                    f"SELECT COUNT(*) as cnt FROM messages m{channel_join}{where}",
+                    tuple(params),
+                )
+                row = await count_cur.fetchone()
+                total = row["cnt"] if row else 0
+
+                cur = await self._db.execute(
+                    f"""SELECT m.*, c.title as channel_title, c.username as channel_username
+                        FROM messages m{channel_join}
+                        {where}
+                        ORDER BY m.date DESC
+                        LIMIT ? OFFSET ?""",
+                    (*params, limit, offset),
+                )
         else:
             count_cur = await self._db.execute(
                 f"SELECT COUNT(*) as cnt FROM messages m{channel_join}{where}", tuple(params)
