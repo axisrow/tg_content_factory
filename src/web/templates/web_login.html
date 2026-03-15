@@ -42,6 +42,7 @@
     </div>
 <script>
 document.addEventListener('submit', function(e) {
+    if (e.defaultPrevented) return;
     var form = e.target;
     if (!form.hasAttribute('data-busy')) return;
     var btn = e.submitter || form.querySelector('button[type="submit"]');
