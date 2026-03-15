@@ -14,8 +14,8 @@ async def test_run_collection_without_enqueuer():
     manager = SchedulerManager(SchedulerConfig())
     stats = await manager._run_collection()
 
-    assert stats["channels"] == 0
-    assert stats["messages"] == 0
+    assert stats["enqueued"] == 0
+    assert stats["errors"] == 0
 
 
 @pytest.mark.asyncio
@@ -32,9 +32,10 @@ async def test_run_collection_with_enqueuer():
     manager = SchedulerManager(SchedulerConfig(), task_enqueuer=enqueuer)
     stats = await manager._run_collection()
 
-    assert stats["channels"] == 2
+    assert stats["enqueued"] == 2
     assert stats["skipped"] == 1
     assert stats["total"] == 3
+    assert stats["errors"] == 0
 
 
 @pytest.mark.asyncio
@@ -47,4 +48,4 @@ async def test_run_collection_enqueuer_error():
     stats = await manager._run_collection()
 
     assert stats["errors"] == 1
-    assert stats["channels"] == 0
+    assert stats["enqueued"] == 0

@@ -103,7 +103,7 @@ async def test_scheduler_trigger_now_with_enqueuer(
         task_enqueuer=mock_task_enqueuer,
     )
     res = await mgr.trigger_now()
-    assert res["channels"] == 3
+    assert res["enqueued"] == 3
     mock_task_enqueuer.enqueue_all_channels.assert_called_once()
 
 
@@ -111,7 +111,7 @@ async def test_scheduler_trigger_now_with_enqueuer(
 async def test_scheduler_trigger_now_without_enqueuer(scheduler_config, mock_bundle):
     mgr = SchedulerManager(scheduler_config, scheduler_bundle=mock_bundle)
     res = await mgr.trigger_now()
-    assert res["channels"] == 0
+    assert res["enqueued"] == 0
 
 
 @pytest.mark.asyncio
@@ -144,7 +144,7 @@ async def test_run_collection_failure(
 async def test_run_keyword_search_no_enqueuer(scheduler_config, mock_bundle):
     mgr = SchedulerManager(scheduler_config, scheduler_bundle=mock_bundle)
     res = await mgr._run_keyword_search()
-    assert res["queries"] == 0
+    assert res["enqueued"] is False
 
 
 @pytest.mark.asyncio

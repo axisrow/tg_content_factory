@@ -160,32 +160,33 @@ class SchedulerManager:
         """Enqueue all channels for collection."""
         logger.info("Starting scheduled collection")
         if not self._task_enqueuer:
-            return {"channels": 0, "messages": 0, "errors": 0}
+            return {"enqueued": 0, "skipped": 0, "total": 0, "errors": 0}
         try:
             result = await self._task_enqueuer.enqueue_all_channels()
             stats = {
-                "channels": result.queued_count,
+                "enqueued": result.queued_count,
                 "skipped": result.skipped_existing_count,
                 "total": result.total_candidates,
+                "errors": 0,
             }
             logger.info("Scheduled collection enqueued: %s", stats)
             return stats
         except Exception:
             logger.exception("Collection enqueue failed")
-            return {"channels": 0, "messages": 0, "errors": 1}
+            return {"enqueued": 0, "skipped": 0, "total": 0, "errors": 1}
 
     async def _run_keyword_search(self) -> dict:
         """Enqueue a notification search task."""
         if not self._task_enqueuer:
-            return {"queries": 0, "results": 0, "errors": 0}
+            return {"enqueued": False, "errors": 0}
         try:
             task_id = await self._task_enqueuer.enqueue_notification_search()
             if task_id:
                 logger.info("Enqueued notification search task #%d", task_id)
-            return {"enqueued": bool(task_id)}
+            return {"enqueued": bool(task_id), "errors": 0}
         except Exception:
             logger.exception("Notification search enqueue failed")
-            return {"queries": 0, "results": 0, "errors": 1}
+            return {"enqueued": False, "errors": 1}
 
     async def sync_search_query_jobs(self) -> None:
         if not self._sq_bundle or not self._scheduler:

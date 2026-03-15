@@ -171,10 +171,22 @@ class UnifiedDispatcher:
         batch_end = min(next_index + batch_size, len(channel_ids))
         cursor = next_index
 
+        collector_wait_sec = 0.0
         while cursor < batch_end:
+            if self._stop_event.is_set():
+                break
             if self._collector.is_running:
                 await asyncio.sleep(self._poll_interval_sec)
+                collector_wait_sec += self._poll_interval_sec
+                if collector_wait_sec >= self._channel_timeout_sec:
+                    await self._tasks.update_collection_task(
+                        task.id, CollectionTaskStatus.FAILED,
+                        messages_collected=channels_ok,
+                        error="Timed out waiting for collector to finish",
+                    )
+                    return
                 continue
+            collector_wait_sec = 0.0
 
             channel_id = channel_ids[cursor]
             channel = await self._channel_bundle.get_by_channel_id(channel_id)
@@ -311,6 +323,9 @@ class UnifiedDispatcher:
     # ── SQ_STATS ──
 
     async def _handle_sq_stats(self, task: CollectionTask) -> None:
+        if task.id is None:
+            return
+
         if not self._sq_bundle:
             await self._tasks.update_collection_task(
                 task.id, CollectionTaskStatus.COMPLETED,
@@ -356,6 +371,9 @@ class UnifiedDispatcher:
     # ── PHOTO_DUE ──
 
     async def _handle_photo_due(self, task: CollectionTask) -> None:
+        if task.id is None:
+            return
+
         if not self._photo_task_service:
             await self._tasks.update_collection_task(
                 task.id, CollectionTaskStatus.COMPLETED, note="No photo service",
@@ -375,6 +393,9 @@ class UnifiedDispatcher:
     # ── PHOTO_AUTO ──
 
     async def _handle_photo_auto(self, task: CollectionTask) -> None:
+        if task.id is None:
+            return
+
         if not self._photo_auto_upload_service:
             await self._tasks.update_collection_task(
                 task.id, CollectionTaskStatus.COMPLETED, note="No photo auto service",
