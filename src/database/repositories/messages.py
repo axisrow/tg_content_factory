@@ -166,7 +166,7 @@ class MessagesRepository:
                     (fts_query, *params, limit, offset),
                 )
             else:
-                logger.warning("FTS5 unavailable, falling back to LIKE search")
+                logger.debug("FTS5 unavailable, falling back to LIKE search")
                 conditions.append("m.text LIKE ?")
                 params.append(f"%{query}%")
                 where = " WHERE " + " AND ".join(conditions)
