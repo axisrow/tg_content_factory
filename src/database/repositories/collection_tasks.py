@@ -14,6 +14,8 @@ from src.models import (
     StatsAllTaskPayload,
 )
 
+_ALLOWED_PAYLOAD_FILTER_KEYS = frozenset({"sq_id"})
+
 
 class CollectionTasksRepository:
     def __init__(self, db: aiosqlite.Connection):
@@ -433,6 +435,8 @@ class CollectionTasksRepository:
             CollectionTaskStatus.RUNNING.value,
         ]
         if payload_filter_key is not None and payload_filter_value is not None:
+            if payload_filter_key not in _ALLOWED_PAYLOAD_FILTER_KEYS:
+                raise ValueError(f"Invalid payload filter key: {payload_filter_key!r}")
             sql += f" AND json_extract(payload, '$.{payload_filter_key}') = ?"
             params.append(payload_filter_value)
         cur = await self._db.execute(sql, tuple(params))
