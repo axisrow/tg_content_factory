@@ -2970,7 +2970,7 @@ async def test_unhandled_exception_returns_error_page(error_client):
     resp = await error_client.get("/test-500")
     assert resp.status_code == 500
     assert "Ошибка сервера" in resp.text
-    assert "kaboom" in resp.text
+    assert "kaboom" not in resp.text  # exception detail must not leak
     assert "/debug/" in resp.text
 
 
