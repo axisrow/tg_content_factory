@@ -36,6 +36,7 @@ def run(args: argparse.Namespace) -> None:
                     config.scheduler,
                     task_enqueuer=task_enqueuer,
                     search_engine=search_engine,
+                    db=db,
                 )
                 await manager.start()
                 print(

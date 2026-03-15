@@ -14,6 +14,8 @@ from src.models import (
     StatsAllTaskPayload,
 )
 
+_ALLOWED_PAYLOAD_KEYS = frozenset({"sq_id"})
+
 
 class CollectionTasksRepository:
     def __init__(self, db: aiosqlite.Connection):
@@ -144,6 +146,7 @@ class CollectionTasksRepository:
         messages_collected: int | None = None,
         error: str | None = None,
         note: str | None = None,
+        payload: dict[str, Any] | StatsAllTaskPayload | SqStatsTaskPayload | None = None,
     ) -> None:
         status_value = status.value if isinstance(status, CollectionTaskStatus) else status
         now = datetime.now(tz=timezone.utc).isoformat()
@@ -165,6 +168,9 @@ class CollectionTasksRepository:
         if note is not None:
             sets.append("note = ?")
             params.append(note)
+        if payload is not None:
+            sets.append("payload = ?")
+            params.append(self._serialize_payload(payload))
         params.append(task_id)
         await self._db.execute(
             f"UPDATE collection_tasks SET {', '.join(sets)} WHERE id = ?",
@@ -491,6 +497,8 @@ class CollectionTasksRepository:
             CollectionTaskStatus.RUNNING.value,
         ]
         if payload_filter_key is not None and payload_filter_value is not None:
+            if payload_filter_key not in _ALLOWED_PAYLOAD_KEYS:
+                raise ValueError(f"Invalid payload filter key: {payload_filter_key!r}")
             sql += f" AND json_extract(payload, '$.{payload_filter_key}') = ?"
             params.append(payload_filter_value)
         cur = await self._db.execute(sql, tuple(params))

@@ -23,7 +23,6 @@ class TaskEnqueuer:
         collection_service: CollectionService,
     ):
         self._db = db
-        self._channels = channels
         self._collection_service = collection_service
 
     async def enqueue_all_channels(self):
