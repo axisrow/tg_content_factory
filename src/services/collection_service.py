@@ -36,20 +36,26 @@ class CollectionService:
 
     async def _enqueue_channel(
         self, channel: Channel, force: bool = False, full: bool = True
-    ) -> None:
+    ) -> bool:
+        """Enqueue a channel for collection, atomically skipping duplicates.
+
+        Returns ``True`` if a new task was created, ``False`` if skipped.
+        """
         if self._queue is not None:
-            await self._queue.enqueue(channel, force=force, full=full)
+            task_id = await self._queue.enqueue(channel, force=force, full=full)
+            return task_id is not None
         else:
             payload = {}
             if force:
                 payload["force"] = True
             if not full:
                 payload["full"] = False
-            await self._channels.create_collection_task(
+            task_id = await self._channels.create_collection_task_if_not_active(
                 channel.channel_id, channel.title,
                 channel_username=channel.username,
                 payload=payload or None,
             )
+            return task_id is not None
 
     async def enqueue_channel_by_pk(self, pk: int, force: bool = False) -> EnqueueResult:
         channel = await self._channels.get_by_pk(pk)
@@ -62,18 +68,17 @@ class CollectionService:
 
     async def enqueue_all_channels(self) -> BulkEnqueueResult:
         channels = await self._channels.list_channels(active_only=True, include_filtered=False)
-        busy_channel_ids = await self._channels.get_channel_ids_with_active_tasks()
         queued_count = 0
         skipped_existing_count = 0
 
         for channel in channels:
-            if channel.channel_id in busy_channel_ids:
+            # Atomic INSERT … WHERE NOT EXISTS prevents duplicate tasks
+            # even under concurrent calls (scheduler + web UI).
+            created = await self._enqueue_channel(channel, force=True, full=False)
+            if created:
+                queued_count += 1
+            else:
                 skipped_existing_count += 1
-                continue
-            # Bulk collection should continue from last_collected_id when the
-            # channel already has history, instead of reloading the full archive.
-            await self._enqueue_channel(channel, force=True, full=False)
-            queued_count += 1
 
         return BulkEnqueueResult(
             queued_count=queued_count,
