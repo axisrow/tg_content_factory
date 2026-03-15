@@ -23,8 +23,6 @@ async def dashboard(request: Request):
         {
             "stats": stats,
             "scheduler_running": scheduler.is_running,
-            "last_run": scheduler.last_run,
-            "last_stats": scheduler.last_stats,
             "accounts_connected": len(deps.get_pool(request).clients),
         },
     )

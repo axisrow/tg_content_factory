@@ -874,7 +874,9 @@ async def test_stats_task_claim_and_continuation(db):
         run_after=now,
     )
 
-    claimed = await db.claim_next_due_stats_task(now)
+    claimed = await db.repos.tasks.claim_next_due_generic_task(
+        now, [CollectionTaskType.STATS_ALL.value]
+    )
     assert claimed is not None
     assert claimed.id == tid
     assert claimed.task_type == CollectionTaskType.STATS_ALL
@@ -900,7 +902,9 @@ async def test_requeue_running_stats_tasks_on_startup(db):
     tid = await db.create_stats_task(StatsAllTaskPayload(channel_ids=[]))
     await db.update_collection_task(tid, CollectionTaskStatus.RUNNING)
 
-    requeued = await db.requeue_running_stats_tasks_on_startup(datetime.now(timezone.utc))
+    requeued = await db.repos.tasks.requeue_running_generic_tasks_on_startup(
+        datetime.now(timezone.utc), [CollectionTaskType.STATS_ALL.value]
+    )
     assert requeued == 1
 
     task = await db.get_collection_task(tid)

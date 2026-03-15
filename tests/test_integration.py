@@ -719,54 +719,40 @@ class TestGracefulShutdown:
 
     @pytest.mark.asyncio
     async def test_trigger_task_cancelled_on_stop(self, test_db):
-        """trigger_background -> stop -> task is cancelled, collector not running."""
-        await test_db.add_channel(
-            Channel(channel_id=-100765, title="Blocking Channel", username="blocking_channel")
-        )
-        pool = _make_pool(get_available_client=AsyncMock(return_value=None))
-
-        config = SchedulerConfig(delay_between_requests_sec=0)
-        collector = Collector(pool, test_db, config)
-        manager = SchedulerManager(collector, config)
-
+        """trigger_background -> stop -> background task is cancelled."""
         started_event = asyncio.Event()
-        release_event = asyncio.Event()
         cancelled_event = asyncio.Event()
 
-        async def _blocking_collect(_channel, **_kwargs):
+        enqueuer = MagicMock()
+
+        async def _blocking_enqueue():
             started_event.set()
             try:
-                await release_event.wait()
-                return 0
+                await asyncio.sleep(10)
             except asyncio.CancelledError:
                 cancelled_event.set()
                 raise
 
-        collector._collect_channel = AsyncMock(side_effect=_blocking_collect)
+        enqueuer.enqueue_all_channels = AsyncMock(side_effect=_blocking_enqueue)
 
-        try:
-            await manager.trigger_background()
-            assert manager._bg_task is not None
-            await asyncio.wait_for(started_event.wait(), timeout=1.0)
-            assert not manager._bg_task.done()
-            assert collector.is_running is True
+        config = SchedulerConfig()
+        manager = SchedulerManager(config, task_enqueuer=enqueuer)
 
-            await manager.stop()
-            await asyncio.wait_for(cancelled_event.wait(), timeout=1.0)
-        finally:
-            release_event.set()
+        await manager.trigger_background()
+        assert manager._bg_task is not None
+        await asyncio.wait_for(started_event.wait(), timeout=1.0)
+        assert not manager._bg_task.done()
+
+        await manager.stop()
 
         assert manager._bg_task is None
-        assert collector.is_running is False
         assert cancelled_event.is_set()
 
     @pytest.mark.asyncio
     async def test_stop_without_bg_task_is_safe(self, test_db):
         """stop() with no background task does not raise."""
-        pool = _make_pool()
         config = SchedulerConfig()
-        collector = Collector(pool, test_db, config)
-        manager = SchedulerManager(collector, config)
+        manager = SchedulerManager(config)
 
         # Should not raise
         await manager.stop()
@@ -774,26 +760,23 @@ class TestGracefulShutdown:
 
     @pytest.mark.asyncio
     async def test_trigger_background_deduplicates_racing_calls(self, test_db):
-        await test_db.add_channel(
-            Channel(channel_id=-100876, title="Race Channel", username="race_channel")
-        )
-        pool = _make_pool(get_available_client=AsyncMock(return_value=None))
-        config = SchedulerConfig(delay_between_requests_sec=0)
-        collector = Collector(pool, test_db, config)
-        manager = SchedulerManager(collector, config)
-
         started_event = asyncio.Event()
         release_event = asyncio.Event()
         call_count = 0
 
-        async def _blocking_collect(_channel, **_kwargs):
+        enqueuer = MagicMock()
+
+        async def _blocking_enqueue():
             nonlocal call_count
             call_count += 1
             started_event.set()
             await release_event.wait()
-            return 0
+            return MagicMock(queued_count=0, skipped_existing_count=0, total_candidates=0)
 
-        collector._collect_channel = AsyncMock(side_effect=_blocking_collect)
+        enqueuer.enqueue_all_channels = AsyncMock(side_effect=_blocking_enqueue)
+
+        config = SchedulerConfig()
+        manager = SchedulerManager(config, task_enqueuer=enqueuer)
 
         try:
             await asyncio.gather(manager.trigger_background(), manager.trigger_background())

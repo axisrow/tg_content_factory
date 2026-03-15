@@ -111,7 +111,7 @@ async def _build_photo_loader_app(
     app.state.collector = Collector(app.state.pool, db, config.scheduler)
     app.state.search_engine = MagicMock()
     app.state.ai_search = MagicMock()
-    app.state.scheduler = SchedulerManager(app.state.collector, config.scheduler)
+    app.state.scheduler = SchedulerManager(config.scheduler)
     app.state.session_secret = "secret"
 
     return app, db
@@ -275,12 +275,14 @@ async def test_scheduler_registers_photo_jobs():
     photo_auto = MagicMock()
     photo_auto.run_due = AsyncMock(return_value=2)
 
+    task_enqueuer = MagicMock()
+    task_enqueuer.enqueue_photo_due = AsyncMock()
+    task_enqueuer.enqueue_photo_auto = AsyncMock()
+
     manager = SchedulerManager(
-        collector,
         AppConfig().scheduler,
         scheduler_bundle=bundle,
-        photo_task_service=photo_tasks,
-        photo_auto_upload_service=photo_auto,
+        task_enqueuer=task_enqueuer,
     )
     await manager.start()
     job_ids = {job.id for job in manager._scheduler.get_jobs()}
@@ -320,7 +322,7 @@ async def test_photo_loader_page_renders(tmp_path, telethon_cli_spy, native_auth
     app.state.collector = Collector(app.state.pool, db, config.scheduler)
     app.state.search_engine = MagicMock()
     app.state.ai_search = MagicMock()
-    app.state.scheduler = SchedulerManager(app.state.collector, config.scheduler)
+    app.state.scheduler = SchedulerManager(config.scheduler)
     app.state.session_secret = "secret"
 
     transport = ASGITransport(app=app)
@@ -439,7 +441,7 @@ async def test_photo_loader_page_feedback_panel_and_highlight_hooks(
     app.state.collector = Collector(app.state.pool, db, config.scheduler)
     app.state.search_engine = MagicMock()
     app.state.ai_search = MagicMock()
-    app.state.scheduler = SchedulerManager(app.state.collector, config.scheduler)
+    app.state.scheduler = SchedulerManager(config.scheduler)
     app.state.session_secret = "secret"
 
     bundle = PhotoLoaderBundle.from_database(db)
@@ -531,7 +533,7 @@ async def test_photo_loader_page_without_phone_selects_first_account(
     app.state.collector = Collector(app.state.pool, db, config.scheduler)
     app.state.search_engine = MagicMock()
     app.state.ai_search = MagicMock()
-    app.state.scheduler = SchedulerManager(app.state.collector, config.scheduler)
+    app.state.scheduler = SchedulerManager(config.scheduler)
     app.state.session_secret = "secret"
 
     created_before = len(telethon_cli_spy.created)
@@ -591,7 +593,7 @@ async def test_photo_loader_page_without_selectable_targets_disables_forms(
     app.state.collector = Collector(app.state.pool, db, config.scheduler)
     app.state.search_engine = MagicMock()
     app.state.ai_search = MagicMock()
-    app.state.scheduler = SchedulerManager(app.state.collector, config.scheduler)
+    app.state.scheduler = SchedulerManager(config.scheduler)
     app.state.session_secret = "secret"
 
     transport = ASGITransport(app=app)
@@ -637,7 +639,7 @@ async def test_photo_loader_page_without_accounts_renders_empty_state(
     app.state.collector = Collector(app.state.pool, db, config.scheduler)
     app.state.search_engine = MagicMock()
     app.state.ai_search = MagicMock()
-    app.state.scheduler = SchedulerManager(app.state.collector, config.scheduler)
+    app.state.scheduler = SchedulerManager(config.scheduler)
     app.state.session_secret = "secret"
 
     transport = ASGITransport(app=app)
@@ -686,7 +688,7 @@ async def test_photo_loader_refresh_warms_dialog_cache(
     app.state.collector = Collector(app.state.pool, db, config.scheduler)
     app.state.search_engine = MagicMock()
     app.state.ai_search = MagicMock()
-    app.state.scheduler = SchedulerManager(app.state.collector, config.scheduler)
+    app.state.scheduler = SchedulerManager(config.scheduler)
     app.state.session_secret = "secret"
 
     created_before = len(telethon_cli_spy.created)

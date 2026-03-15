@@ -212,7 +212,11 @@ class TestChannelBundle:
         active = await b.get_active_stats_task()
         assert active is not None
 
-        claimed = await b.claim_next_due_stats_task(NOW)
+        from src.models import CollectionTaskType
+
+        claimed = await b.tasks.claim_next_due_generic_task(
+            NOW, [CollectionTaskType.STATS_ALL.value]
+        )
         assert claimed is not None and claimed.id == tid
 
         cont_id = await b.create_stats_continuation_task(
@@ -222,7 +226,9 @@ class TestChannelBundle:
         )
         assert cont_id > tid
 
-        count = await b.requeue_running_stats_tasks_on_startup(NOW)
+        count = await b.tasks.requeue_running_generic_tasks_on_startup(
+            NOW, [CollectionTaskType.STATS_ALL.value]
+        )
         assert count >= 0
 
 

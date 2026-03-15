@@ -391,10 +391,6 @@ class Database:
         self._require()
         return await self._tasks.get_active_stats_task()
 
-    async def claim_next_due_stats_task(self, now: datetime) -> CollectionTask | None:
-        self._require()
-        return await self._tasks.claim_next_due_stats_task(now)
-
     async def create_stats_task(
         self,
         payload: StatsAllTaskPayload,
@@ -430,10 +426,6 @@ class Database:
     async def fail_running_collection_tasks_on_startup(self) -> int:
         self._require()
         return await self._tasks.fail_running_collection_tasks_on_startup()
-
-    async def requeue_running_stats_tasks_on_startup(self, now: datetime) -> int:
-        self._require()
-        return await self._tasks.requeue_running_stats_tasks_on_startup(now)
 
     async def cancel_collection_task(self, task_id: int, note: str | None = None) -> bool:
         self._require()

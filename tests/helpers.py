@@ -461,7 +461,7 @@ async def build_web_app(
     app.state.collection_queue = CollectionQueue(collector, db)
     app.state.search_engine = SearchEngine(db)
     app.state.ai_search = AISearchEngine(config.llm, db)
-    app.state.scheduler = SchedulerManager(collector, config.scheduler)
+    app.state.scheduler = SchedulerManager(config.scheduler)
     app.state.session_secret = session_secret
     if add_account:
         await db.add_account(Account(phone=add_account, session_string="test_session"))

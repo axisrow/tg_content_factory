@@ -4,7 +4,6 @@ import logging
 from typing import TYPE_CHECKING
 
 from src.database import Database
-from src.database.bundles import ChannelBundle
 from src.models import CollectionTaskType, SqStatsTaskPayload
 
 if TYPE_CHECKING:
@@ -19,7 +18,6 @@ class TaskEnqueuer:
     def __init__(
         self,
         db: Database,
-        channels: ChannelBundle,
         collection_service: CollectionService,
     ):
         self._db = db

@@ -47,7 +47,9 @@ class NotificationMatcher:
                     matched = sq.query.lower() in msg.text.lower()
 
                 if matched:
-                    key = sq.id or id(sq)
+                    if sq.id is None:
+                        continue
+                    key = sq.id
                     if key in matches:
                         name, count, preview = matches[key]
                         matches[key] = (name, count + 1, preview)

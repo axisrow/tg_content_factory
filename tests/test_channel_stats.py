@@ -179,9 +179,7 @@ async def _create_stats_web_test_context(tmp_path, collector):
     app.state.collector = collector
     app.state.search_engine = SearchEngine(db)
     app.state.ai_search = AISearchEngine(config.llm, db)
-    app.state.scheduler = SchedulerManager(
-        Collector(app.state.pool, db, config.scheduler), config.scheduler
-    )
+    app.state.scheduler = SchedulerManager(config.scheduler)
     app.state.session_secret = "test_secret_key"
     return app, db, pk
 

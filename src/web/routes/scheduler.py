@@ -158,5 +158,5 @@ async def test_notification(request: Request):
 async def trigger_search(request: Request):
     if getattr(request.app.state, "shutting_down", False):
         return RedirectResponse(url="/scheduler?error=shutting_down", status_code=303)
-    await deps.scheduler_service(request).trigger_search()
+    await deps.scheduler_service(request).trigger_search_background()
     return RedirectResponse(url="/scheduler?msg=search_triggered", status_code=303)
