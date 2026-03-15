@@ -2787,3 +2787,156 @@ class TestWebAgent:
         resp_stop = await client.post(f"/agent/threads/{thread_id}/stop")
         assert resp_stop.status_code == 200
         agent_manager.cancel_stream.assert_called_once_with(thread_id)
+
+
+@pytest.mark.asyncio
+async def test_test_notification_no_bot(client):
+    """No notifier and no bot → bot_not_configured error."""
+    app = client._transport.app
+    app.state.notifier = None
+
+    resp = await client.post("/scheduler/test-notification")
+    assert resp.status_code == 200
+    assert "Бот не подключён" in resp.text
+
+
+@pytest.mark.asyncio
+async def test_test_notification_no_queries(client, monkeypatch):
+    """Notifier configured but no search queries → fallback text."""
+    app = client._transport.app
+    app.state.notifier = SimpleNamespace(admin_chat_id=123)
+
+    captured = {}
+
+    async def fake_notify(self, text):
+        captured["text"] = text
+        return True
+
+    monkeypatch.setattr("src.telegram.notifier.Notifier.notify", fake_notify)
+
+    resp = await client.post("/scheduler/test-notification")
+    assert resp.status_code == 200
+    assert "нет поисковых запросов" in captured["text"]
+    assert "Тестовое уведомление отправлено" in resp.text
+
+
+@pytest.mark.asyncio
+async def test_test_notification_no_messages(client, monkeypatch):
+    """Active query exists but no matching messages → fallback text."""
+    from src.models import SearchQuery
+
+    db = client._transport.app.state.db
+    app = client._transport.app
+    app.state.notifier = SimpleNamespace(admin_chat_id=123)
+
+    await db.repos.search_queries.add(
+        SearchQuery(query="testword", notify_on_collect=True, is_active=True)
+    )
+
+    captured = {}
+
+    async def fake_notify(self, text):
+        captured["text"] = text
+        return True
+
+    monkeypatch.setattr("src.telegram.notifier.Notifier.notify", fake_notify)
+
+    resp = await client.post("/scheduler/test-notification")
+    assert resp.status_code == 200
+    assert "нет сообщений для отправки" in captured["text"]
+
+
+@pytest.mark.asyncio
+async def test_test_notification_with_public_channel_message(client, monkeypatch):
+    """Message with channel username → t.me/username/id link."""
+    from datetime import datetime, timezone
+
+    from src.models import Channel, Message, SearchQuery
+
+    db = client._transport.app.state.db
+    app = client._transport.app
+    app.state.notifier = SimpleNamespace(admin_chat_id=123)
+
+    await db.repos.search_queries.add(
+        SearchQuery(query="hello", notify_on_collect=True, is_active=True)
+    )
+    await db.add_channel(
+        Channel(channel_id=-100999, username="mychan", title="My Channel")
+    )
+    await db.insert_message(
+        Message(
+            channel_id=-100999,
+            message_id=42,
+            text="hello world",
+            date=datetime.now(timezone.utc),
+        )
+    )
+
+    captured = {}
+
+    async def fake_notify(self, text):
+        captured["text"] = text
+        return True
+
+    monkeypatch.setattr("src.telegram.notifier.Notifier.notify", fake_notify)
+
+    resp = await client.post("/scheduler/test-notification")
+    assert resp.status_code == 200
+    assert "hello world" in captured["text"]
+    assert "https://t.me/mychan/42" in captured["text"]
+
+
+@pytest.mark.asyncio
+async def test_test_notification_with_private_channel_message(client, monkeypatch):
+    """Private channel → t.me/c/channel_id/id link."""
+    from datetime import datetime, timezone
+
+    from src.models import Channel, Message, SearchQuery
+
+    db = client._transport.app.state.db
+    app = client._transport.app
+    app.state.notifier = SimpleNamespace(admin_chat_id=123)
+
+    await db.repos.search_queries.add(
+        SearchQuery(query="secret", notify_on_collect=True, is_active=True)
+    )
+    await db.add_channel(
+        Channel(channel_id=-100888, username=None, title="Private Chan")
+    )
+    await db.insert_message(
+        Message(
+            channel_id=-100888,
+            message_id=77,
+            text="secret data here",
+            date=datetime.now(timezone.utc),
+        )
+    )
+
+    captured = {}
+
+    async def fake_notify(self, text):
+        captured["text"] = text
+        return True
+
+    monkeypatch.setattr("src.telegram.notifier.Notifier.notify", fake_notify)
+
+    resp = await client.post("/scheduler/test-notification")
+    assert resp.status_code == 200
+    assert "secret data here" in captured["text"]
+    assert "https://t.me/c/-100888/77" in captured["text"]
+
+
+@pytest.mark.asyncio
+async def test_test_notification_notify_fails(client, monkeypatch):
+    """Notifier.notify returns False → failure flash."""
+    app = client._transport.app
+    app.state.notifier = SimpleNamespace(admin_chat_id=123)
+
+    async def fake_notify(self, text):
+        return False
+
+    monkeypatch.setattr("src.telegram.notifier.Notifier.notify", fake_notify)
+
+    resp = await client.post("/scheduler/test-notification")
+    assert resp.status_code == 200
+    assert "Не удалось отправить уведомление" in resp.text
