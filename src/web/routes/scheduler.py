@@ -136,7 +136,7 @@ async def test_notification(request: Request):
         return RedirectResponse(url="/scheduler?error=bot_not_configured", status_code=303)
 
     db = deps.get_db(request)
-    queries = await db.repos.search_queries.get_all(active_only=True)
+    queries = await db.get_notification_queries(active_only=True)
     if not queries:
         text = "🔔 Тест уведомлений: нет поисковых запросов"
     else:
@@ -148,7 +148,8 @@ async def test_notification(request: Request):
             if msg.channel_username:
                 link = f"https://t.me/{msg.channel_username}/{msg.message_id}"
             else:
-                link = f"https://t.me/c/{msg.channel_id}/{msg.message_id}"
+                bare_id = str(msg.channel_id).lstrip("-").removeprefix("100")
+                link = f"https://t.me/c/{bare_id}/{msg.message_id}"
             text = f"🔔 Тест уведомлений:\n{preview}\n{link}"
         else:
             text = "🔔 Тест уведомлений: нет сообщений для отправки"

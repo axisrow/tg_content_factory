@@ -2923,7 +2923,7 @@ async def test_test_notification_with_private_channel_message(client, monkeypatc
     resp = await client.post("/scheduler/test-notification")
     assert resp.status_code == 200
     assert "secret data here" in captured["text"]
-    assert "https://t.me/c/-100888/77" in captured["text"]
+    assert "https://t.me/c/888/77" in captured["text"]
 
 
 @pytest.mark.asyncio
