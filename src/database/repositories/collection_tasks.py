@@ -106,6 +106,52 @@ class CollectionTasksRepository:
         await self._db.commit()
         return cur.lastrowid or 0
 
+    async def create_collection_task_if_not_active(
+        self,
+        channel_id: int,
+        channel_title: str | None,
+        *,
+        channel_username: str | None = None,
+        run_after: datetime | None = None,
+        payload: dict[str, Any] | None = None,
+        parent_task_id: int | None = None,
+    ) -> int | None:
+        """Atomically create a collection task only if no active task exists.
+
+        Returns the new task ID, or ``None`` if an active task already exists.
+        """
+        run_after_iso = (
+            run_after.astimezone(timezone.utc).isoformat() if run_after else None
+        )
+        payload_json = self._serialize_payload(payload)
+        cur = await self._db.execute(
+            "INSERT INTO collection_tasks "
+            "(channel_id, channel_title, channel_username, task_type,"
+            " run_after, payload, parent_task_id) "
+            "SELECT ?, ?, ?, ?, ?, ?, ? "
+            "WHERE NOT EXISTS ("
+            "  SELECT 1 FROM collection_tasks "
+            "  WHERE channel_id = ? AND task_type = ? AND status IN (?, ?)"
+            ")",
+            (
+                channel_id,
+                channel_title,
+                channel_username,
+                CollectionTaskType.CHANNEL_COLLECT.value,
+                run_after_iso,
+                payload_json,
+                parent_task_id,
+                channel_id,
+                CollectionTaskType.CHANNEL_COLLECT.value,
+                CollectionTaskStatus.PENDING.value,
+                CollectionTaskStatus.RUNNING.value,
+            ),
+        )
+        await self._db.commit()
+        if cur.rowcount == 1:
+            return cur.lastrowid or 0
+        return None
+
     async def create_stats_task(
         self,
         payload: StatsAllTaskPayload,

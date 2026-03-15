@@ -102,6 +102,17 @@ async def collect_channel(request: Request, pk: int):
     if is_htmx:
         if enqueue_status == "not_found":
             return HTMLResponse(f'<span id="collect-btn-{pk}">❓</span>')
+        if enqueue_status == "already_active":
+            btn = (
+                '<button class="btn btn-outline-secondary btn-sm emoji-btn"'
+                ' disabled title="Уже в очереди">⏳</button>'
+            )
+            fragment = (
+                f'<span id="collect-btn-{pk}">{btn}</span>'
+                f'<span id="collect-btn-m-{pk}" hx-swap-oob="true">'
+                f'{btn}</span>'
+            )
+            return HTMLResponse(fragment)
         collector = deps.get_collector(request)
         label = "В очереди" if collector.is_running else "Запущен"
         filtered_badge = ' <small title="Канал отфильтрован">⚡</small>' if is_filtered else ""
@@ -119,6 +130,8 @@ async def collect_channel(request: Request, pk: int):
 
     if enqueue_status == "not_found":
         return RedirectResponse(url="/channels?msg=channel_not_found", status_code=303)
+    if enqueue_status == "already_active":
+        return RedirectResponse(url="/channels?msg=collect_already_active", status_code=303)
     collector = deps.get_collector(request)
     msg = "collect_queued" if collector.is_running else "collect_started"
     return RedirectResponse(url=f"/channels?msg={msg}", status_code=303)

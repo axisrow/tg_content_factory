@@ -175,6 +175,25 @@ class ChannelBundle:
             parent_task_id=parent_task_id,
         )
 
+    async def create_collection_task_if_not_active(
+        self,
+        channel_id: int,
+        channel_title: str | None,
+        *,
+        channel_username: str | None = None,
+        run_after: datetime | None = None,
+        payload: dict | None = None,
+        parent_task_id: int | None = None,
+    ) -> int | None:
+        return await self.tasks.create_collection_task_if_not_active(
+            channel_id,
+            channel_title,
+            channel_username=channel_username,
+            run_after=run_after,
+            payload=payload,
+            parent_task_id=parent_task_id,
+        )
+
     async def update_collection_task(
         self,
         task_id: int,

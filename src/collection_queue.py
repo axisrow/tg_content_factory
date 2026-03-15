@@ -21,16 +21,24 @@ class CollectionQueue:
         self._worker: asyncio.Task | None = None
         self._current_task_id: int | None = None
 
-    async def enqueue(self, channel: Channel, force: bool = False, full: bool = True) -> int:
+    async def enqueue(
+        self, channel: Channel, force: bool = False, full: bool = True
+    ) -> int | None:
+        """Enqueue a channel for collection, atomically skipping duplicates.
+
+        Returns the new task ID, or ``None`` if an active task already exists.
+        """
         payload = {}
         if force:
             payload["force"] = True
         if not full:
             payload["full"] = False
-        task_id = await self._channels.create_collection_task(
+        task_id = await self._channels.create_collection_task_if_not_active(
             channel.channel_id, channel.title, channel_username=channel.username,
             payload=payload or None,
         )
+        if task_id is None:
+            return None
         await self._queue.put((task_id, channel, force, full))
         self._ensure_worker()
         return task_id
