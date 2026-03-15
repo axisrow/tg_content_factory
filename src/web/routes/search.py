@@ -11,7 +11,7 @@ from src.web.template_globals import _agent_available_for_request
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
-_LEN_RE = re.compile(r"\blen\s*(<|>)\s*(\d+)")
+_LEN_RE = re.compile(r"\blen\s*(<|>)\s*(\d+)[,;]?")
 
 
 def _extract_length(q: str) -> tuple[str, int | None, int | None]:
@@ -64,7 +64,10 @@ async def _render_search_page(
         except ValueError:
             channel_id_error = f"Некорректный ID канала: {channel_id}"
 
-    fts_query, min_length, max_length = _extract_length(q)
+    if mode == "local":
+        fts_query, min_length, max_length = _extract_length(q)
+    else:
+        fts_query, min_length, max_length = q, None, None
 
     service = deps.search_service(request)
     channels = await db.get_channels()
