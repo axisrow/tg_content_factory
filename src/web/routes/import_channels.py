@@ -54,7 +54,7 @@ async def import_channels(
     failed = 0
 
     no_client = False
-    for ident in identifiers:
+    for i, ident in enumerate(identifiers):
         try:
             info = await pool.resolve_channel(ident.strip())
         except RuntimeError as exc:
@@ -64,7 +64,7 @@ async def import_channels(
                     ident,
                 )
                 no_client = True
-                for remaining in identifiers[identifiers.index(ident):]:
+                for remaining in identifiers[i:]:
                     details.append({
                         "identifier": remaining,
                         "status": "failed",
