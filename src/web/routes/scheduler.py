@@ -114,6 +114,8 @@ async def trigger_collection(request: Request):
 
 @router.post("/test-notification")
 async def test_notification(request: Request):
+    if getattr(request.app.state, "shutting_down", False):
+        return RedirectResponse(url="/scheduler?error=shutting_down", status_code=303)
     notifier = deps.get_notifier(request)
     if not notifier or not notifier.admin_chat_id:
         return RedirectResponse(url="/scheduler?error=bot_not_configured", status_code=303)
@@ -124,7 +126,8 @@ async def test_notification(request: Request):
         q = queries[0]
         messages, _ = await db.search_messages(query=q.query, limit=1)
         if messages:
-            text = f"🔔 Тест: Query '{q.query}' matched in channel:\n{messages[0].text[:200]}"
+            preview = (messages[0].text or "")[:200]
+            text = f"🔔 Тест: Query '{q.query}' matched in channel:\n{preview}"
     ok = await notifier.notify(text)
     msg = "test_notification_sent" if ok else "test_notification_failed"
     return RedirectResponse(url=f"/scheduler?msg={msg}", status_code=303)
