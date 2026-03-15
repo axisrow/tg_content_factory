@@ -4,8 +4,12 @@
 <h1>Планировщик</h1>
 
 <div class="card mb-4">
-    <div class="card-header fw-semibold">Статус</div>
+    <div class="card-header fw-semibold">
+        Статус планировщика
+        <span class="hint" data-tooltip="Планировщик автоматически собирает сообщения и запускает поиск по расписанию">?</span>
+    </div>
     <div class="card-body">
+        <small class="text-muted d-block mb-2">Автоматический сбор сообщений из всех каналов и поиск по ключевым словам.</small>
         <p>Планировщик: <strong>{{ "Запущен" if is_running else "Остановлен" }}</strong></p>
         <p>Интервал сбора: <strong>{{ interval_minutes }}</strong> мин.</p>
         <p>Сбор данных: <strong>{{ "Идёт" if collecting_now else "Ожидание" }}</strong></p>
@@ -20,28 +24,50 @@
 
 <div class="row g-3 mb-4">
     <div class="col-12 col-md-6">
-        {% if not is_running %}
-        <form method="post" action="/scheduler/start">
-            <button type="submit" class="btn btn-primary w-100">Запустить планировщик</button>
-        </form>
-        {% else %}
-        <form method="post" action="/scheduler/stop">
-            <button type="submit" class="btn btn-secondary w-100">Остановить планировщик</button>
-        </form>
-        {% endif %}
+        <div class="card h-100">
+            <div class="card-body">
+                <h6 class="card-title">Автоматический режим</h6>
+                <small class="text-muted d-block mb-3">
+                    Включает фоновый планировщик: сбор каждые {{ interval_minutes }} мин., поиск каждые {{ search_interval_minutes }} мин.
+                </small>
+                {% if not is_running %}
+                <form method="post" action="/scheduler/start">
+                    <button type="submit" class="btn btn-primary w-100">&#9654; Запустить планировщик</button>
+                </form>
+                {% else %}
+                <form method="post" action="/scheduler/stop">
+                    <button type="submit" class="btn btn-secondary w-100">&#9724; Остановить планировщик</button>
+                </form>
+                {% endif %}
+            </div>
+        </div>
     </div>
     <div class="col-12 col-md-6">
-        <form method="post" action="/scheduler/trigger">
-            <button type="submit" class="btn btn-secondary w-100" {{ 'disabled' if collecting_now else '' }}>
-                Запустить сбор сейчас
-            </button>
-        </form>
+        <div class="card h-100">
+            <div class="card-body">
+                <h6 class="card-title">Ручной сбор</h6>
+                <small class="text-muted d-block mb-3">
+                    Добавляет задачи в очередь для каждого активного канала. То же, что на странице <a href="/channels">каналов</a>.
+                </small>
+                <form method="post" action="/scheduler/trigger">
+                    <button type="submit" class="btn btn-secondary w-100">
+                        &#9654; Собрать все каналы
+                    </button>
+                </form>
+            </div>
+        </div>
     </div>
 </div>
 
 <div class="card mb-4">
-    <div class="card-header fw-semibold">Поиск по запросам</div>
+    <div class="card-header fw-semibold">
+        Поиск по запросам
+        <span class="hint" data-tooltip="Ищет совпадения по ключевым словам, настроенным на странице «Запросы»">?</span>
+    </div>
     <div class="card-body">
+        <small class="text-muted d-block mb-2">
+            Запускает поиск по всем активным <a href="/search-queries">поисковым запросам</a>. При совпадении отправляет уведомления.
+        </small>
         <p>Интервал поиска: <strong>{{ search_interval_minutes }}</strong> мин.</p>
         {% if last_search_run %}
         <p>Последний поиск: <strong>{{ last_search_run.strftime('%Y-%m-%d %H:%M:%S UTC') }}</strong></p>
@@ -49,15 +75,26 @@
         {% if last_search_stats %}
         <p>Результат: запросов — {{ last_search_stats.queries }}, найдено — {{ last_search_stats.results }}, ошибок — {{ last_search_stats.errors }}</p>
         {% endif %}
-        <form method="post" action="/scheduler/trigger-search">
-            <button type="submit" class="btn btn-secondary">Запустить поиск по запросам</button>
-        </form>
+        <div class="d-flex flex-wrap gap-2">
+            <form method="post" action="/scheduler/trigger-search">
+                <button type="submit" class="btn btn-secondary">&#9654; Запустить поиск по запросам</button>
+            </form>
+            <form method="post" action="/scheduler/test-notification">
+                <button type="submit" class="btn btn-outline-secondary"
+                        {% if not bot_configured %}disabled title="Подключите бот в Настройках → Уведомления"{% endif %}>
+                    Протестировать уведомления
+                </button>
+            </form>
+        </div>
     </div>
 </div>
 
 {% if search_log %}
 <div class="card mb-4">
-    <div class="card-header fw-semibold">Лог поиска</div>
+    <div class="card-header fw-semibold">
+        Лог поиска
+        <span class="hint" data-tooltip="Последние результаты поиска: какой запрос, сколько найдено, каким аккаунтом">?</span>
+    </div>
     <div class="card-body p-0">
         <!-- Desktop -->
         <div class="table-responsive d-none d-md-block">
@@ -104,7 +141,7 @@
 <div class="card mb-4">
     <div class="card-header fw-semibold">Задачи сбора</div>
     <div class="card-body p-0">
-        <p class="px-3 pt-3"><small class="text-muted">Здесь отображаются и ручные задачи из кнопки «Загрузить все», и одиночные загрузки каналов.</small></p>
+        <p class="px-3 pt-3"><small class="text-muted">Все задачи сбора: автоматические (от планировщика), ручные (кнопка выше) и одиночные (со страницы каналов).</small></p>
 
         <!-- Filter tabs -->
         <div class="px-3 pb-2">
