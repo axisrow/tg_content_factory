@@ -8,6 +8,7 @@ import pytest
 
 from src.models import Message
 from src.search.engine import SearchEngine
+from src.web.routes.search import _extract_length
 from tests.helpers import AsyncIterMessages, FakeCliTelethonClient
 
 
@@ -399,3 +400,26 @@ async def test_search_in_channel_runtime_error_returns_search_result(
 
     assert result.total == 0
     assert "channel search failure" in result.error
+
+
+@pytest.mark.parametrize(
+    "query, expected",
+    [
+        ("crypto len<400", ("crypto", None, 400)),
+        ("crypto len>100 len<400", ("crypto", 100, 400)),
+        ("len>100", ("", 100, None)),
+        ("crypto", ("crypto", None, None)),
+        ("", ("", None, None)),
+        ("lenovo", ("lenovo", None, None)),
+    ],
+    ids=[
+        "max_only",
+        "range",
+        "min_only",
+        "no_len",
+        "empty",
+        "lenovo_no_match",
+    ],
+)
+def test_extract_length(query, expected):
+    assert _extract_length(query) == expected
