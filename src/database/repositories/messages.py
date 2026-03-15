@@ -203,7 +203,11 @@ class MessagesRepository:
             )
 
         rows = await cur.fetchall()
-        messages = [
+        return self._rows_to_messages(rows), total
+
+    @staticmethod
+    def _rows_to_messages(rows) -> list[Message]:
+        return [
             Message(
                 id=r["id"],
                 channel_id=r["channel_id"],
@@ -222,7 +226,6 @@ class MessagesRepository:
             )
             for r in rows
         ]
-        return messages, total
 
     @staticmethod
     def _build_fts_match(query: str, is_fts: bool) -> str:
@@ -245,39 +248,69 @@ class MessagesRepository:
             params.append(f"%{stripped}%")
         return conditions, params
 
+    def _build_sq_parts(self, sq: SearchQuery) -> tuple[str, list[str], list]:
+        """Build FTS match and WHERE conditions from a SearchQuery.
+
+        Single source of truth for SearchQuery → SQL. All *_for_query methods
+        must use this instead of calling _build_fts_match/_build_extra_conditions
+        directly.
+
+        Returns (fts_query, extra_conditions, extra_params).
+        """
+        fts_query = self._build_fts_match(sq.query, sq.is_fts)
+        extra_conds, extra_params = self._build_extra_conditions(sq)
+        return fts_query, extra_conds, extra_params
+
     def _require_fts(self) -> None:
         if not self._fts_available:
             raise RuntimeError(
                 "FTS5 full-text search is unavailable (index build failed at startup)."
             )
 
+    _FTS_JOIN = (
+        " INNER JOIN (SELECT rowid FROM messages_fts"
+        " WHERE messages_fts MATCH ?) AS fts ON m.id = fts.rowid"
+    )
+    _CHANNEL_JOIN = " LEFT JOIN channels c ON m.channel_id = c.channel_id"
+    _BASE_FILTER = "(c.is_filtered IS NULL OR c.is_filtered = 0)"
+
     async def search_messages_for_query(
         self, sq: SearchQuery, limit: int = 1,
     ) -> tuple[list[Message], int]:
-        """Quick message lookup for test notifications.
+        """Search messages using all SearchQuery parameters."""
+        self._require_fts()
+        fts_query, extra_conds, extra_params = self._build_sq_parts(sq)
+        where_parts = [self._BASE_FILTER, *extra_conds]
+        where_clause = " AND ".join(where_parts)
 
-        Note: is_regex and exclude_patterns are not supported here;
-        this is a connectivity check, not a full notification simulation.
-        """
-        return await self.search_messages(
-            query=sq.query,
-            limit=limit,
-            is_fts=sq.is_fts,
-            max_length=sq.max_length,
+        count_cur = await self._db.execute(
+            f"SELECT COUNT(*) AS cnt FROM messages m"
+            f"{self._FTS_JOIN}{self._CHANNEL_JOIN}"
+            f" WHERE {where_clause}",
+            (fts_query, *extra_params),
         )
+        row = await count_cur.fetchone()
+        total = row["cnt"] if row else 0
+
+        cur = await self._db.execute(
+            f"SELECT m.*, c.title as channel_title, c.username as channel_username"
+            f" FROM messages m{self._FTS_JOIN}{self._CHANNEL_JOIN}"
+            f" WHERE {where_clause}"
+            f" ORDER BY m.date DESC LIMIT ?",
+            (fts_query, *extra_params, limit),
+        )
+        rows = await cur.fetchall()
+        messages = self._rows_to_messages(rows)
+        return messages, total
 
     async def count_fts_matches_for_query(self, sq: SearchQuery) -> int:
         self._require_fts()
-        fts_query = self._build_fts_match(sq.query, sq.is_fts)
-        extra_conds, extra_params = self._build_extra_conditions(sq)
-        where_parts = ["(c.is_filtered IS NULL OR c.is_filtered = 0)"]
-        where_parts.extend(extra_conds)
+        fts_query, extra_conds, extra_params = self._build_sq_parts(sq)
+        where_parts = [self._BASE_FILTER, *extra_conds]
         where_clause = " AND ".join(where_parts)
         cur = await self._db.execute(
             f"SELECT COUNT(*) AS cnt FROM messages m"
-            f" INNER JOIN (SELECT rowid FROM messages_fts"
-            f" WHERE messages_fts MATCH ?) AS fts ON m.id = fts.rowid"
-            f" LEFT JOIN channels c ON m.channel_id = c.channel_id"
+            f"{self._FTS_JOIN}{self._CHANNEL_JOIN}"
             f" WHERE {where_clause}",
             (fts_query, *extra_params),
         )
@@ -290,21 +323,17 @@ class MessagesRepository:
         self._require_fts()
         from src.models import SearchQueryDailyStat
 
-        fts_query = self._build_fts_match(sq.query, sq.is_fts)
-        extra_conds, extra_params = self._build_extra_conditions(sq)
+        fts_query, extra_conds, extra_params = self._build_sq_parts(sq)
         where_parts = [
-            "(c.is_filtered IS NULL OR c.is_filtered = 0)",
+            self._BASE_FILTER,
             "m.date >= datetime('now', ?)",
+            *extra_conds,
         ]
-        where_parts.extend(extra_conds)
         where_clause = " AND ".join(where_parts)
         cur = await self._db.execute(
             f"""
             SELECT date(m.date) AS day, COUNT(*) AS count
-            FROM messages m
-            INNER JOIN (SELECT rowid FROM messages_fts
-                        WHERE messages_fts MATCH ?) AS fts ON m.id = fts.rowid
-            LEFT JOIN channels c ON m.channel_id = c.channel_id
+            FROM messages m{self._FTS_JOIN}{self._CHANNEL_JOIN}
             WHERE {where_clause}
             GROUP BY date(m.date)
             ORDER BY day

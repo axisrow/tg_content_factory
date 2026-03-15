@@ -136,11 +136,11 @@ async def test_notification(request: Request):
         return RedirectResponse(url="/scheduler?error=bot_not_configured", status_code=303)
 
     db = deps.get_db(request)
-    queries = await db.get_notification_queries(active_only=True)
-    if not queries:
+    queries = await db.repos.search_queries.get_all(active_only=True)
+    q = next((q for q in queries if not q.is_regex), None)
+    if not q:
         text = "🔔 Тест уведомлений: нет поисковых запросов"
     else:
-        q = queries[0]
         messages, _ = await db.search_messages_for_query(q, limit=1)
         if messages:
             msg = messages[0]
