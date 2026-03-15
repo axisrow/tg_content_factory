@@ -1,4 +1,5 @@
 import logging
+import re
 
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -9,6 +10,22 @@ from src.web.template_globals import _agent_available_for_request
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+_LEN_RE = re.compile(r"\blen\s*(<|>)\s*(\d+)[,;]?")
+
+
+def _extract_length(q: str) -> tuple[str, int | None, int | None]:
+    """Extract ``len<N`` / ``len>N`` tokens from *q*, return cleaned query."""
+    min_length: int | None = None
+    max_length: int | None = None
+    for m in _LEN_RE.finditer(q):
+        op, val = m.group(1), int(m.group(2))
+        if op == "<":
+            max_length = val
+        else:
+            min_length = val
+    cleaned = re.sub(r"\s+", " ", _LEN_RE.sub("", q)).strip()
+    return cleaned, min_length, max_length
 
 
 @router.get("/", response_class=HTMLResponse)
@@ -26,8 +43,6 @@ async def _render_search_page(
     date_to: str = "",
     mode: str = "local",
     is_fts: bool = False,
-    msg_length_op: str = "",
-    msg_length_val: int | None = None,
     page: int = 1,
 ) -> HTMLResponse | RedirectResponse:
     # Onboarding: redirect if no accounts configured
@@ -49,8 +64,9 @@ async def _render_search_page(
         except ValueError:
             channel_id_error = f"Некорректный ID канала: {channel_id}"
 
-    min_length = msg_length_val if msg_length_op == "gt" and msg_length_val is not None else None
-    max_length = msg_length_val if msg_length_op == "lt" and msg_length_val is not None else None
+    fts_query, min_length, max_length = _extract_length(q)
+    if mode != "local":
+        min_length, max_length = None, None
 
     service = deps.search_service(request)
     channels = await db.get_channels()
@@ -62,7 +78,7 @@ async def _render_search_page(
             try:
                 result = await service.search(
                     mode=mode,
-                    query=q,
+                    query=fts_query,
                     limit=limit,
                     channel_id=channel_id_int,
                     date_from=date_from or None,
@@ -104,8 +120,6 @@ async def _render_search_page(
             "date_to": date_to,
             "mode": mode,
             "is_fts": is_fts,
-            "msg_length_op": msg_length_op,
-            "msg_length_val": msg_length_val,
             "page": page,
             "total_pages": total_pages,
             "ai_enabled": ai_enabled,
@@ -122,8 +136,6 @@ async def search_page(
     date_to: str = Query(""),
     mode: str = Query("local"),
     is_fts: bool = Query(False),
-    msg_length_op: str = Query(""),
-    msg_length_val: str = Query(""),
     page: int = Query(1),
 ):
     return await _render_search_page(
@@ -134,7 +146,5 @@ async def search_page(
         date_to=date_to,
         mode=mode,
         is_fts=is_fts,
-        msg_length_op=msg_length_op,
-        msg_length_val=int(msg_length_val) if msg_length_val else None,
         page=page,
     )
