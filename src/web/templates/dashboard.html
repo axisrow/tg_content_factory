@@ -47,12 +47,6 @@
     <div class="card-header fw-semibold">Планировщик</div>
     <div class="card-body">
         <p>Статус: <strong>{{ "Запущен" if scheduler_running else "Остановлен" }}</strong></p>
-        {% if last_run %}
-        <p>Последний запуск: {{ last_run.strftime('%Y-%m-%d %H:%M:%S UTC') }}</p>
-        {% endif %}
-        {% if last_stats %}
-        <p>Каналов обработано: {{ last_stats.channels }}, сообщений: {{ last_stats.messages }}, ошибок: {{ last_stats.errors }}</p>
-        {% endif %}
     </div>
     <div class="card-footer"><a href="/scheduler">Управление</a></div>
 </div>

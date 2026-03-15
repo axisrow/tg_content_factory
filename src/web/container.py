@@ -27,7 +27,8 @@ from src.services.notification_target_service import NotificationTargetService
 from src.services.photo_auto_upload_service import PhotoAutoUploadService
 from src.services.photo_publish_service import PhotoPublishService
 from src.services.photo_task_service import PhotoTaskService
-from src.services.stats_task_dispatcher import StatsTaskDispatcher
+from src.services.task_enqueuer import TaskEnqueuer
+from src.services.unified_dispatcher import UnifiedDispatcher
 from src.telegram.auth import TelegramAuth
 from src.telegram.client_pool import ClientPool
 from src.telegram.collector import Collector
@@ -57,7 +58,8 @@ class AppContainer:
     photo_auto_upload_service: PhotoAutoUploadService
     collector: Collector
     collection_queue: CollectionQueue | None
-    stats_dispatcher: StatsTaskDispatcher | None
+    task_enqueuer: TaskEnqueuer | None
+    unified_dispatcher: UnifiedDispatcher | None
     search_engine: SearchEngine
     ai_search: AISearchEngine
     scheduler: SchedulerManager
