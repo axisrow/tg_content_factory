@@ -5,10 +5,10 @@ import logging
 import secrets
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.responses import RedirectResponse, Response
+from starlette.responses import HTMLResponse, RedirectResponse, Response
 
 from src.config import AppConfig, load_config
 from src.web.assembly import (
@@ -110,6 +110,26 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
     if config.web.password:
         app.add_middleware(BasicAuthMiddleware, password=config.web.password)
     app.add_middleware(OriginCSRFMiddleware)
+
+    @app.exception_handler(Exception)
+    async def unhandled_exception_handler(request: Request, exc: Exception):
+        logger.exception("Unhandled exception on %s %s", request.method, request.url.path)
+
+        if request.headers.get("HX-Request") == "true":
+            return HTMLResponse(
+                '<div class="alert alert-danger">Internal error — check /debug/</div>',
+                status_code=500,
+            )
+
+        try:
+            return app.state.templates.TemplateResponse(
+                request,
+                "error.html",
+                {"status_code": 500, "detail": str(exc)},
+                status_code=500,
+            )
+        except Exception:
+            return HTMLResponse("Internal Server Error", status_code=500)
 
     register_builtin_endpoints(app)
     register_routes(app)
