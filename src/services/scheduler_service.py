@@ -14,10 +14,7 @@ class SchedulerService:
         await self._manager.stop()
 
     async def trigger_collection(self) -> None:
-        await self._manager.trigger_background()
+        await self._manager.trigger_now()
 
     async def trigger_search(self) -> None:
-        await self._manager.trigger_search_background()
-
-    async def trigger_search_now(self) -> dict:
-        return await self._manager.trigger_search_now()
+        await self._manager.trigger_search_now()

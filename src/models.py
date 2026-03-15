@@ -67,6 +67,10 @@ class CollectionTaskStatus(StrEnum):
 class CollectionTaskType(StrEnum):
     CHANNEL_COLLECT = "channel_collect"
     STATS_ALL = "stats_all"
+    NOTIFICATION_SEARCH = "notification_search"
+    SQ_STATS = "sq_stats"
+    PHOTO_DUE = "photo_due"
+    PHOTO_AUTO = "photo_auto"
 
 
 class StatsAllTaskPayload(BaseModel):
@@ -76,6 +80,11 @@ class StatsAllTaskPayload(BaseModel):
     batch_size: int = 20
     channels_ok: int = 0
     channels_err: int = 0
+
+
+class SqStatsTaskPayload(BaseModel):
+    task_kind: str = CollectionTaskType.SQ_STATS.value
+    sq_id: int
 
 
 class CollectionTask(BaseModel):
@@ -89,7 +98,7 @@ class CollectionTask(BaseModel):
     error: str | None = None
     note: str | None = None
     run_after: datetime | None = None
-    payload: dict[str, Any] | StatsAllTaskPayload | None = None
+    payload: dict[str, Any] | StatsAllTaskPayload | SqStatsTaskPayload | None = None
     parent_task_id: int | None = None
     created_at: datetime | None = None
     started_at: datetime | None = None

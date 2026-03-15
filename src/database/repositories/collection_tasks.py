@@ -10,6 +10,7 @@ from src.models import (
     CollectionTask,
     CollectionTaskStatus,
     CollectionTaskType,
+    SqStatsTaskPayload,
     StatsAllTaskPayload,
 )
 
@@ -21,7 +22,7 @@ class CollectionTasksRepository:
     @staticmethod
     def _deserialize_payload(
         raw: str | None,
-    ) -> dict[str, Any] | StatsAllTaskPayload | None:
+    ) -> dict[str, Any] | StatsAllTaskPayload | SqStatsTaskPayload | None:
         if not raw:
             return None
         try:
@@ -30,15 +31,20 @@ class CollectionTasksRepository:
             return None
         if not isinstance(parsed, dict):
             return None
-        if parsed.get("task_kind") == CollectionTaskType.STATS_ALL.value:
+        task_kind = parsed.get("task_kind")
+        if task_kind == CollectionTaskType.STATS_ALL.value:
             return StatsAllTaskPayload.model_validate(parsed)
+        if task_kind == CollectionTaskType.SQ_STATS.value:
+            return SqStatsTaskPayload.model_validate(parsed)
         return parsed
 
     @staticmethod
-    def _serialize_payload(payload: dict[str, Any] | StatsAllTaskPayload | None) -> str | None:
+    def _serialize_payload(
+        payload: dict[str, Any] | StatsAllTaskPayload | SqStatsTaskPayload | None,
+    ) -> str | None:
         if payload is None:
             return None
-        if isinstance(payload, StatsAllTaskPayload):
+        if isinstance(payload, (StatsAllTaskPayload, SqStatsTaskPayload)):
             return payload.model_dump_json()
         return json.dumps(payload)
 
@@ -375,6 +381,121 @@ class CollectionTasksRepository:
         )
         await self._db.commit()
         return cur.rowcount or 0
+
+    async def create_generic_task(
+        self,
+        task_type: CollectionTaskType | str,
+        *,
+        title: str = "",
+        payload: dict[str, Any] | StatsAllTaskPayload | SqStatsTaskPayload | None = None,
+        run_after: datetime | None = None,
+        parent_task_id: int | None = None,
+    ) -> int:
+        tt = task_type
+        task_type_value = tt.value if isinstance(tt, CollectionTaskType) else tt
+        run_after_iso = run_after.astimezone(timezone.utc).isoformat() if run_after else None
+        cur = await self._db.execute(
+            "INSERT INTO collection_tasks "
+            "(channel_id, channel_title, channel_username, task_type,"
+            " run_after, payload, parent_task_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                None,
+                title or task_type_value,
+                None,
+                task_type_value,
+                run_after_iso,
+                self._serialize_payload(payload),
+                parent_task_id,
+            ),
+        )
+        await self._db.commit()
+        return cur.lastrowid or 0
+
+    async def claim_next_due_generic_task(
+        self, now: datetime, handled_types: list[str]
+    ) -> CollectionTask | None:
+        if not handled_types:
+            return None
+        now_iso = now.astimezone(timezone.utc).isoformat()
+        placeholders = ", ".join("?" for _ in handled_types)
+        try:
+            await self._db.execute("BEGIN IMMEDIATE")
+            cur = await self._db.execute(
+                f"SELECT id FROM collection_tasks "
+                f"WHERE task_type IN ({placeholders}) "
+                "AND status = ? "
+                "AND (run_after IS NULL OR run_after <= ?) "
+                "ORDER BY COALESCE(run_after, ''), id ASC LIMIT 1",
+                (*handled_types, CollectionTaskStatus.PENDING.value, now_iso),
+            )
+            row = await cur.fetchone()
+            if row is None:
+                await self._db.commit()
+                return None
+            selected_id = row["id"]
+            updated = await self._db.execute(
+                "UPDATE collection_tasks "
+                "SET status = 'running', started_at = ?, completed_at = NULL "
+                "WHERE id = ? AND status = ?",
+                (now_iso, selected_id, CollectionTaskStatus.PENDING.value),
+            )
+            if (updated.rowcount or 0) == 0:
+                await self._db.commit()
+                return None
+            cur = await self._db.execute(
+                "SELECT * FROM collection_tasks WHERE id = ?",
+                (selected_id,),
+            )
+            claimed = await cur.fetchone()
+            await self._db.commit()
+            if claimed is None:
+                return None
+            return self._to_task(claimed)
+        except Exception:
+            await self._db.rollback()
+            raise
+
+    async def requeue_running_generic_tasks_on_startup(
+        self, now: datetime, handled_types: list[str]
+    ) -> int:
+        if not handled_types:
+            return 0
+        now_iso = now.astimezone(timezone.utc).isoformat()
+        placeholders = ", ".join("?" for _ in handled_types)
+        cur = await self._db.execute(
+            f"UPDATE collection_tasks "
+            "SET status = 'pending', started_at = NULL, run_after = COALESCE(run_after, ?) "
+            f"WHERE task_type IN ({placeholders}) AND status = ?",
+            (now_iso, *handled_types, CollectionTaskStatus.RUNNING.value),
+        )
+        await self._db.commit()
+        return cur.rowcount or 0
+
+    async def has_active_task(
+        self,
+        task_type: CollectionTaskType | str,
+        *,
+        payload_filter_key: str | None = None,
+        payload_filter_value: str | int | None = None,
+    ) -> bool:
+        tt = task_type
+        task_type_value = tt.value if isinstance(tt, CollectionTaskType) else tt
+        sql = (
+            "SELECT COUNT(*) as cnt FROM collection_tasks "
+            "WHERE task_type = ? AND status IN (?, ?)"
+        )
+        params: list[Any] = [
+            task_type_value,
+            CollectionTaskStatus.PENDING.value,
+            CollectionTaskStatus.RUNNING.value,
+        ]
+        if payload_filter_key is not None and payload_filter_value is not None:
+            sql += f" AND json_extract(payload, '$.{payload_filter_key}') = ?"
+            params.append(payload_filter_value)
+        cur = await self._db.execute(sql, tuple(params))
+        row = await cur.fetchone()
+        return (row["cnt"] if row else 0) > 0
 
     async def cancel_collection_task(self, task_id: int, note: str | None = None) -> bool:
         now = datetime.now(tz=timezone.utc).isoformat()
