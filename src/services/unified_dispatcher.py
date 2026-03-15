@@ -260,6 +260,9 @@ class UnifiedDispatcher:
     # ── NOTIFICATION_SEARCH ──
 
     async def _handle_notification_search(self, task: CollectionTask) -> None:
+        if task.id is None:
+            return
+
         if not self._search_engine:
             await self._tasks.update_collection_task(
                 task.id, CollectionTaskStatus.COMPLETED,
