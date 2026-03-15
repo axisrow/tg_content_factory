@@ -26,13 +26,12 @@ async def scheduler_page(
     limit: int = Query(50),
 ):
     sched = deps.get_scheduler(request)
-    collector = deps.get_collector(request)
     db = deps.get_db(request)
     msg = request.query_params.get("msg")
 
     # Validation
     page = max(1, page)
-    limit = max(10, min(limit, 100))  # 10-100 задач
+    limit = max(10, min(limit, 100))
     status_filter = status if status in VALID_STATUS_FILTERS else "all"
 
     # Get tasks with filter and pagination
@@ -50,12 +49,11 @@ async def scheduler_page(
             limit=limit, offset=offset, status_filter=status_filter
         )
 
-    # Get counts for all tabs (cheap count-only queries)
+    # Get counts for all tabs
     all_count = await db.count_collection_tasks()
     active_count = await db.count_collection_tasks("active")
     completed_count = all_count - active_count
 
-    # Check if there are any active tasks (for auto-refresh)
     has_active_tasks = active_count > 0
 
     search_log = await db.get_recent_searches()
@@ -72,13 +70,8 @@ async def scheduler_page(
         "scheduler.html",
         {
             "is_running": sched.is_running,
-            "last_run": sched.last_run,
-            "last_stats": sched.last_stats,
             "interval_minutes": sched.interval_minutes,
             "search_interval_minutes": sched.search_interval_minutes,
-            "last_search_run": sched.last_search_run,
-            "last_search_stats": sched.last_search_stats,
-            "collecting_now": collector.is_running,
             "msg": msg,
             "tasks": tasks,
             "has_active_tasks": has_active_tasks,
