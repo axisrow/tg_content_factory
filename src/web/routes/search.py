@@ -64,10 +64,9 @@ async def _render_search_page(
         except ValueError:
             channel_id_error = f"Некорректный ID канала: {channel_id}"
 
-    if mode == "local":
-        fts_query, min_length, max_length = _extract_length(q)
-    else:
-        fts_query, min_length, max_length = q, None, None
+    fts_query, min_length, max_length = _extract_length(q)
+    if mode != "local":
+        min_length, max_length = None, None
 
     service = deps.search_service(request)
     channels = await db.get_channels()
