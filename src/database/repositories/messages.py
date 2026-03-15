@@ -254,7 +254,11 @@ class MessagesRepository:
     async def search_messages_for_query(
         self, sq: SearchQuery, limit: int = 1,
     ) -> tuple[list[Message], int]:
-        """Search messages using all SearchQuery parameters."""
+        """Quick message lookup for test notifications.
+
+        Note: is_regex and exclude_patterns are not supported here;
+        this is a connectivity check, not a full notification simulation.
+        """
         return await self.search_messages(
             query=sq.query,
             limit=limit,
