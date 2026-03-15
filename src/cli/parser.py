@@ -135,7 +135,6 @@ def build_parser() -> argparse.ArgumentParser:
     sched_sub = sched_parser.add_subparsers(dest="scheduler_action")
     sched_sub.add_parser("start", help="Start scheduler (foreground)")
     sched_sub.add_parser("trigger", help="Trigger one-shot collection")
-    sched_sub.add_parser("search", help="Run notification query search now")
 
     my_tg_parser = sub.add_parser("my-telegram", help="View account dialogs")
     my_tg_sub = my_tg_parser.add_subparsers(dest="my_telegram_action")

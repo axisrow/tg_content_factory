@@ -53,15 +53,6 @@ def run(args: argparse.Namespace) -> None:
                     f"total {result.total_candidates}). "
                     f"Run 'serve' to execute tasks."
                 )
-            elif args.scheduler_action == "search":
-                task_id = await task_enqueuer.enqueue_notification_search()
-                if task_id:
-                    print(
-                        f"Enqueued notification search task #{task_id}. "
-                        f"Run 'serve' to execute tasks."
-                    )
-                else:
-                    print("Notification search task already active")
         finally:
             await pool.disconnect_all()
             await db.close()

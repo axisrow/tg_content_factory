@@ -34,12 +34,10 @@ class SchedulerManager:
         self._sq_bundle = search_query_bundle
         self._scheduler: AsyncIOScheduler | None = None
         self._job_id = "collect_all"
-        self._search_job_id = "notification_search"
         self._photo_due_job_id = "photo_due"
         self._photo_auto_job_id = "photo_auto"
         self._current_interval_minutes: int = config.collect_interval_minutes
         self._bg_task: asyncio.Task | None = None
-        self._search_bg_task: asyncio.Task | None = None
 
     @property
     def is_running(self) -> bool:
@@ -48,10 +46,6 @@ class SchedulerManager:
     @property
     def interval_minutes(self) -> int:
         return self._current_interval_minutes
-
-    @property
-    def search_interval_minutes(self) -> int:
-        return self._config.search_interval_minutes
 
     async def start(self) -> None:
         if self._scheduler is not None and self._scheduler.running:
@@ -83,18 +77,6 @@ class SchedulerManager:
             replace_existing=True,
         )
 
-        if self._task_enqueuer is not None:
-            self._scheduler.add_job(
-                self._run_keyword_search,
-                IntervalTrigger(minutes=self._config.search_interval_minutes),
-                id=self._search_job_id,
-                replace_existing=True,
-            )
-            logger.info(
-                "Notification search job added: every %d minutes",
-                self._config.search_interval_minutes,
-            )
-
         if self._sq_bundle:
             await self.sync_search_query_jobs()
 
@@ -116,15 +98,13 @@ class SchedulerManager:
         logger.info("Scheduler started: collecting every %d minutes", collect_interval)
 
     async def stop(self) -> None:
-        for task in (self._bg_task, self._search_bg_task):
-            if task and not task.done():
-                task.cancel()
-                try:
-                    await task
-                except asyncio.CancelledError:
-                    pass
+        if self._bg_task and not self._bg_task.done():
+            self._bg_task.cancel()
+            try:
+                await self._bg_task
+            except asyncio.CancelledError:
+                pass
         self._bg_task = None
-        self._search_bg_task = None
 
         if self._scheduler is None or not self._scheduler.running:
             return
@@ -147,15 +127,6 @@ class SchedulerManager:
             return
         self._bg_task = asyncio.create_task(self._run_collection())
 
-    async def trigger_search_now(self) -> dict:
-        return await self._run_keyword_search()
-
-    async def trigger_search_background(self) -> None:
-        """Fire-and-forget notification search run."""
-        if self._search_bg_task and not self._search_bg_task.done():
-            return
-        self._search_bg_task = asyncio.create_task(self._run_keyword_search())
-
     async def _run_collection(self) -> dict:
         """Enqueue all channels for collection."""
         logger.info("Starting scheduled collection")
@@ -174,19 +145,6 @@ class SchedulerManager:
         except Exception:
             logger.exception("Collection enqueue failed")
             return {"enqueued": 0, "skipped": 0, "total": 0, "errors": 1}
-
-    async def _run_keyword_search(self) -> dict:
-        """Enqueue a notification search task."""
-        if not self._task_enqueuer:
-            return {"enqueued": False, "errors": 0}
-        try:
-            task_id = await self._task_enqueuer.enqueue_notification_search()
-            if task_id:
-                logger.info("Enqueued notification search task #%d", task_id)
-            return {"enqueued": bool(task_id), "errors": 0}
-        except Exception:
-            logger.exception("Notification search enqueue failed")
-            return {"enqueued": False, "errors": 1}
 
     async def sync_search_query_jobs(self) -> None:
         if not self._sq_bundle or not self._scheduler:
