@@ -94,8 +94,8 @@ class CollectionQueue:
                 self._queue.task_done()
                 continue
 
-            self._current_task_id = task_id
             try:
+                self._current_task_id = task_id
                 await self._channels.update_collection_task(task_id, CollectionTaskStatus.RUNNING)
 
                 async def _progress(count: int) -> None:
