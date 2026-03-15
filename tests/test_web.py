@@ -2940,3 +2940,57 @@ async def test_test_notification_notify_fails(client, monkeypatch):
     resp = await client.post("/scheduler/test-notification")
     assert resp.status_code == 200
     assert "Не удалось отправить уведомление" in resp.text
+
+
+# --- Global error handler ---
+
+
+@pytest.fixture
+async def error_client(client):
+    """Client with raise_app_exceptions=False so exception handler is tested."""
+    app = client._transport.app
+
+    @app.get("/test-500")
+    async def _blow_up():
+        raise RuntimeError("kaboom")
+
+    transport = ASGITransport(app=app, raise_app_exceptions=False)
+    auth_header = base64.b64encode(b":testpass").decode()
+    async with AsyncClient(
+        transport=transport,
+        base_url="http://test",
+        headers={"Authorization": f"Basic {auth_header}"},
+    ) as c:
+        yield c
+
+
+@pytest.mark.asyncio
+async def test_unhandled_exception_returns_error_page(error_client):
+    """Unhandled exception in a route returns 500 with error template."""
+    resp = await error_client.get("/test-500")
+    assert resp.status_code == 500
+    assert "Ошибка сервера" in resp.text
+    assert "kaboom" not in resp.text  # exception detail must not leak
+    assert "/debug/" in resp.text
+
+
+@pytest.mark.asyncio
+async def test_unhandled_exception_htmx_returns_fragment(error_client):
+    """HTMX request to a broken route returns an alert fragment, not full page."""
+    resp = await error_client.get("/test-500", headers={"HX-Request": "true"})
+    assert resp.status_code == 500
+    assert "alert-danger" in resp.text
+    assert "/debug/" in resp.text
+
+
+@pytest.mark.asyncio
+async def test_unhandled_exception_logged_to_logbuffer(error_client):
+    """Exception traceback is captured by logger (and thus by LogBuffer)."""
+    app = error_client._transport.app
+    log_buffer = app.state.log_buffer
+
+    initial_count = len(log_buffer.get_records())
+    await error_client.get("/test-500")
+
+    new_records = log_buffer.get_records()[initial_count:]
+    assert any("kaboom" in r["message"] for r in new_records)
