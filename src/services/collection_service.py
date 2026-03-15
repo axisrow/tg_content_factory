@@ -11,7 +11,7 @@ if TYPE_CHECKING:
     from src.collection_queue import CollectionQueue
     from src.telegram.collector import Collector
 
-EnqueueResult = Literal["not_found", "filtered", "queued"]
+EnqueueResult = Literal["not_found", "filtered", "queued", "already_active"]
 
 
 @dataclass(slots=True)
@@ -63,8 +63,8 @@ class CollectionService:
             return "not_found"
         if channel.is_filtered and not force:
             return "filtered"
-        await self._enqueue_channel(channel, force=force)
-        return "queued"
+        created = await self._enqueue_channel(channel, force=force)
+        return "queued" if created else "already_active"
 
     async def enqueue_all_channels(self) -> BulkEnqueueResult:
         channels = await self._channels.list_channels(active_only=True, include_filtered=False)

@@ -148,7 +148,7 @@ class CollectionTasksRepository:
             ),
         )
         await self._db.commit()
-        if (cur.rowcount or 0) > 0:
+        if cur.rowcount == 1:
             return cur.lastrowid or 0
         return None
 
