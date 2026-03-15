@@ -229,341 +229,417 @@ class Collector:
         progress_offset: int = 0,
     ) -> int:
         """Collect new messages from a single channel. Returns count."""
-        channel_id = channel.channel_id
-        min_id = channel.last_collected_id
+        total_collected = 0
 
-        result = await self._pool.get_available_client()
-        if result is None:
-            logger.error("No available clients for collection")
-            return 0
+        while True:
+            channel_id = channel.channel_id
+            min_id = channel.last_collected_id
 
-        session, phone = result
-        session = adapt_transport_session(session, disconnect_on_close=False)
-        # Populate entity cache when using PeerChannel (StringSession loses cache between restarts).
-        # Only needed once per process lifetime per phone — the in-memory cache persists.
-        if not channel.username and not self._pool.is_dialogs_fetched(phone):
-            try:
-                await asyncio.wait_for(session.warm_dialog_cache(), timeout=30)
-                self._pool.mark_dialogs_fetched(phone)
-            except Exception as e:
-                logger.warning("Failed to prefetch dialogs for %s: %s", phone, e)
-        messages_batch: list[Message] = []
-        all_messages: list[Message] = []
-        persisted_max_msg_id = min_id
-        flood_wait_sec: int | None = None
-        stop_due_to_persistence_error = False
+            result = await self._pool.get_available_client()
+            if result is None:
+                logger.error("No available clients for collection")
+                return total_collected
 
-        is_first_run = channel.last_collected_id == 0
-        should_notify = self._notifier is not None and not is_first_run
-        limit = None  # first_run: все; incremental: все новые (диапазон ограничен min_id)
-        logger.info(
-            "Collecting channel %d (%s), first_run=%s, min_id=%d, limit=%s",
-            channel_id, channel.username or channel.title, is_first_run, min_id, limit,
-        )
+            session, phone = result
+            session = adapt_transport_session(session, disconnect_on_close=False)
+            # Populate entity cache when using PeerChannel
+            # (StringSession loses cache between restarts).
+            # Only needed once per process lifetime per phone —
+            # the in-memory cache persists.
+            if not channel.username and not self._pool.is_dialogs_fetched(phone):
+                try:
+                    await asyncio.wait_for(session.warm_dialog_cache(), timeout=30)
+                    self._pool.mark_dialogs_fetched(phone)
+                except Exception as e:
+                    logger.warning("Failed to prefetch dialogs for %s: %s", phone, e)
+            messages_batch: list[Message] = []
+            all_messages: list[Message] = []
+            persisted_max_msg_id = min_id
+            flood_wait_sec: int | None = None
+            stop_due_to_persistence_error = False
 
-        async def _flush_batch(batch: list[Message]) -> bool:
-            nonlocal persisted_max_msg_id
-            if not batch:
+            is_first_run = channel.last_collected_id == 0
+            should_notify = self._notifier is not None and not is_first_run
+            limit = None
+            logger.info(
+                "Collecting channel %d (%s), first_run=%s, min_id=%d, limit=%s",
+                channel_id,
+                channel.username or channel.title,
+                is_first_run,
+                min_id,
+                limit,
+            )
+
+            async def _flush_batch(batch: list[Message]) -> bool:
+                nonlocal persisted_max_msg_id
+                if not batch:
+                    return True
+
+                await self._db.insert_messages_batch(batch)
+                expected_ids = {message.message_id for message in batch}
+                placeholders = ",".join("?" for _ in expected_ids)
+                cur = await self._db.execute(
+                    f"SELECT message_id FROM messages WHERE channel_id = ? "
+                    f"AND message_id IN ({placeholders})",
+                    (channel_id, *expected_ids),
+                )
+                rows = await cur.fetchall()
+                persisted_ids = {row["message_id"] for row in rows}
+                missing_ids = expected_ids - persisted_ids
+                if missing_ids:
+                    logger.error(
+                        "Failed to persist %d/%d messages for channel %d; "
+                        "last persisted id remains %d",
+                        len(missing_ids),
+                        len(expected_ids),
+                        channel_id,
+                        persisted_max_msg_id,
+                    )
+                    return False
+
+                persisted_max_msg_id = max(persisted_max_msg_id, max(expected_ids))
+                all_messages.extend(batch)
+                logger.info(
+                    "Channel %d: persisted %d messages, total %d",
+                    channel_id,
+                    len(batch),
+                    len(all_messages),
+                )
+                if progress_callback:
+                    await progress_callback(
+                        total_collected + len(all_messages)
+                    )
                 return True
 
-            await self._db.insert_messages_batch(batch)
-            expected_ids = {message.message_id for message in batch}
-            placeholders = ",".join("?" for _ in expected_ids)
-            cur = await self._db.execute(
-                f"SELECT message_id FROM messages WHERE channel_id = ? "
-                f"AND message_id IN ({placeholders})",
-                (channel_id, *expected_ids),
-            )
-            rows = await cur.fetchall()
-            persisted_ids = {row["message_id"] for row in rows}
-            missing_ids = expected_ids - persisted_ids
-            if missing_ids:
-                logger.error(
-                    "Failed to persist %d/%d messages for channel %d; "
-                    "last persisted id remains %d",
-                    len(missing_ids),
-                    len(expected_ids),
-                    channel_id,
-                    persisted_max_msg_id,
-                )
-                return False
-
-            persisted_max_msg_id = max(persisted_max_msg_id, max(expected_ids))
-            all_messages.extend(batch)
-            logger.info(
-                "Channel %d: persisted %d messages, total %d",
-                channel_id,
-                len(batch),
-                len(all_messages),
-            )
-            if progress_callback:
-                await progress_callback(len(all_messages))
-            return True
-
-        try:
-            if channel.username:
-                try:
-                    entity = await asyncio.wait_for(
-                        session.resolve_entity(channel.username), timeout=30.0
-                    )
-                except asyncio.TimeoutError:
-                    logger.warning("get_entity timed out for channel %d, skipping", channel_id)
-                    return 0
-                except (ValueError, UsernameNotOccupiedError, UsernameInvalidError):
-                    logger.warning(
-                        "Channel %d (%s): username not found, trying numeric ID fallback",
-                        channel_id, channel.username,
-                    )
+            try:
+                if channel.username:
                     try:
-                        fallback_entity = await asyncio.wait_for(
+                        entity = await asyncio.wait_for(
+                            session.resolve_entity(channel.username), timeout=30.0
+                        )
+                    except asyncio.TimeoutError:
+                        logger.warning(
+                            "get_entity timed out for channel %d, skipping",
+                            channel_id,
+                        )
+                        return total_collected
+                    except (ValueError, UsernameNotOccupiedError, UsernameInvalidError):
+                        logger.warning(
+                            "Channel %d (%s): username not found, "
+                            "trying numeric ID fallback",
+                            channel_id, channel.username,
+                        )
+                        try:
+                            fallback_entity = await asyncio.wait_for(
+                                session.resolve_entity(PeerChannel(channel_id)),
+                                timeout=30.0,
+                            )
+                        except Exception:
+                            logger.warning(
+                                "Channel %d: all entity lookups failed, "
+                                "deactivating",
+                                channel_id,
+                            )
+                            if channel.id:
+                                await self._db.set_channel_active(channel.id, False)
+                            return total_collected
+                        new_username = getattr(fallback_entity, "username", None)
+                        new_title = (
+                            getattr(fallback_entity, "title", None)
+                            or channel.title
+                            or channel.username
+                            or str(channel_id)
+                        )
+                        await self._db.update_channel_meta(
+                            channel_id, username=new_username, title=new_title
+                        )
+                        logger.warning(
+                            "Channel %d: username changed %s → %s, "
+                            "marking filtered",
+                            channel_id, channel.username, new_username,
+                        )
+                        await self._db.set_channels_filtered_bulk(
+                            [(channel_id, "username_changed")]
+                        )
+                        return total_collected
+                else:
+                    try:
+                        entity = await asyncio.wait_for(
                             session.resolve_entity(PeerChannel(channel_id)),
                             timeout=30.0,
                         )
-                    except Exception:
+                    except asyncio.TimeoutError:
                         logger.warning(
-                            "Channel %d: all entity lookups failed, deactivating", channel_id
+                            "get_entity timed out for channel %d, skipping",
+                            channel_id,
                         )
-                        if channel.id:
-                            await self._db.set_channel_active(channel.id, False)
-                        return 0
-                    new_username = getattr(fallback_entity, "username", None)
-                    new_title = (
-                        getattr(fallback_entity, "title", None)
-                        or channel.title
-                        or channel.username
-                        or str(channel_id)
-                    )
-                    await self._db.update_channel_meta(
-                        channel_id, username=new_username, title=new_title
-                    )
-                    logger.warning(
-                        "Channel %d: username changed %s → %s, marking filtered",
-                        channel_id, channel.username, new_username,
-                    )
-                    await self._db.set_channels_filtered_bulk(
-                        [(channel_id, "username_changed")]
-                    )
-                    return 0
-            else:
-                try:
-                    entity = await asyncio.wait_for(
-                        session.resolve_entity(PeerChannel(channel_id)),
-                        timeout=30.0,
-                    )
-                except asyncio.TimeoutError:
-                    logger.warning("get_entity timed out for channel %d, skipping", channel_id)
-                    return 0
+                        return total_collected
 
-            # Превентивная фильтрация по subscriber_ratio до загрузки сообщений
-            # Пропускается при force=True (ручной запуск не должен менять фильтр-статус)
-            if not force:
-                stats_list = await self._db.get_channel_stats(channel_id, limit=1)
-                subscriber_count = stats_list[0].subscriber_count if stats_list else None
-                if subscriber_count is not None:
-                    if min_subs > 0 and subscriber_count < min_subs:
-                        await self._db.set_channels_filtered_bulk(
-                            [(channel_id, "low_subscriber_manual")]
-                        )
-                        logger.info(
-                            "Pre-filter: channel %d subscribers %d < %d, skipping",
-                            channel_id, subscriber_count, min_subs,
-                        )
-                        return 0
-                    cur = await self._db.execute(
-                        "SELECT COUNT(*) FROM messages WHERE channel_id = ?",
-                        (channel_id,),
+                # Превентивная фильтрация по subscriber_ratio до загрузки
+                # сообщений.
+                # Пропускается при force=True (ручной запуск не должен менять
+                # фильтр-статус)
+                if not force:
+                    stats_list = await self._db.get_channel_stats(
+                        channel_id, limit=1
                     )
-                    row = await cur.fetchone()
-                    message_count = row[0] if row else 0
-                    if message_count > 0:
-                        is_broadcast = channel.channel_type in ("channel", "monoforum")
-                        threshold = (
-                            LOW_SUBSCRIBER_RATIO_THRESHOLD
-                            if is_broadcast
-                            else LOW_SUBSCRIBER_RATIO_CHAT_THRESHOLD
-                        )
-                        ratio = subscriber_count / message_count
-                        if ratio < threshold:
+                    subscriber_count = (
+                        stats_list[0].subscriber_count if stats_list else None
+                    )
+                    if subscriber_count is not None:
+                        if min_subs > 0 and subscriber_count < min_subs:
                             await self._db.set_channels_filtered_bulk(
-                                [(channel_id, "low_subscriber_ratio")]
+                                [(channel_id, "low_subscriber_manual")]
                             )
                             logger.info(
-                                "Pre-filter: channel %d ratio %.4f < %.2f, skipping",
-                                channel_id, ratio, threshold,
+                                "Pre-filter: channel %d subscribers %d < %d,"
+                                " skipping",
+                                channel_id, subscriber_count, min_subs,
                             )
-                            return 0
-
-            # Pre-check: sample 10 posts to detect cross-channel duplicates
-            if is_first_run and not force:
-                try:
-                    sample_prefixes = await asyncio.wait_for(
-                        self._precheck_sample(session, entity, PRECHECK_CROSS_DUPE_SAMPLE),
-                        timeout=60.0,
-                    )
-                except asyncio.TimeoutError:
-                    logger.warning(
-                        "Precheck timed out for channel %d, skipping precheck", channel_id
-                    )
-                    sample_prefixes = []
-                unique_prefixes = list(dict.fromkeys(sample_prefixes))
-                if len(unique_prefixes) >= PRECHECK_CROSS_DUPE_MIN_SAMPLE:
-                    matches = await self._db.filter_repo.count_matching_prefixes_in_other_channels(
-                        channel_id, unique_prefixes
-                    )
-                    if matches / len(unique_prefixes) >= PRECHECK_CROSS_DUPE_RATIO:
-                        await self._db.set_channels_filtered_bulk(
-                            [(channel_id, "cross_channel_spam")]
+                            return total_collected
+                        cur = await self._db.execute(
+                            "SELECT COUNT(*) FROM messages"
+                            " WHERE channel_id = ?",
+                            (channel_id,),
                         )
+                        row = await cur.fetchone()
+                        message_count = row[0] if row else 0
+                        if message_count > 0:
+                            is_broadcast = channel.channel_type in (
+                                "channel", "monoforum",
+                            )
+                            threshold = (
+                                LOW_SUBSCRIBER_RATIO_THRESHOLD
+                                if is_broadcast
+                                else LOW_SUBSCRIBER_RATIO_CHAT_THRESHOLD
+                            )
+                            ratio = subscriber_count / message_count
+                            if ratio < threshold:
+                                await self._db.set_channels_filtered_bulk(
+                                    [(channel_id, "low_subscriber_ratio")]
+                                )
+                                logger.info(
+                                    "Pre-filter: channel %d ratio %.4f"
+                                    " < %.2f, skipping",
+                                    channel_id, ratio, threshold,
+                                )
+                                return total_collected
+
+                # Pre-check: sample 10 posts to detect cross-channel duplicates
+                if is_first_run and not force:
+                    try:
+                        sample_prefixes = await asyncio.wait_for(
+                            self._precheck_sample(
+                                session, entity, PRECHECK_CROSS_DUPE_SAMPLE
+                            ),
+                            timeout=60.0,
+                        )
+                    except asyncio.TimeoutError:
+                        logger.warning(
+                            "Precheck timed out for channel %d, "
+                            "skipping precheck",
+                            channel_id,
+                        )
+                        sample_prefixes = []
+                    unique_prefixes = list(dict.fromkeys(sample_prefixes))
+                    if len(unique_prefixes) >= PRECHECK_CROSS_DUPE_MIN_SAMPLE:
+                        repo = self._db.filter_repo
+                        matches = await repo.count_matching_prefixes_in_other_channels(
+                            channel_id, unique_prefixes
+                        )
+                        if (
+                            matches / len(unique_prefixes)
+                            >= PRECHECK_CROSS_DUPE_RATIO
+                        ):
+                            await self._db.set_channels_filtered_bulk(
+                                [(channel_id, "cross_channel_spam")]
+                            )
+                            logger.info(
+                                "Pre-filter: channel %d has %d/%d "
+                                "cross-dupe messages, skipping",
+                                channel_id,
+                                matches,
+                                len(unique_prefixes),
+                            )
+                            return total_collected
+
+                async for msg in session.stream_messages(
+                    entity,
+                    min_id=min_id,
+                    limit=limit,
+                    reverse=True,
+                    wait_time=self._config.delay_between_requests_sec,
+                ):
+                    topic_id = None
+                    reply_to = getattr(msg, "reply_to", None)
+                    if reply_to and getattr(reply_to, "forum_topic", False):
+                        topic_id = (
+                            getattr(reply_to, "reply_to_top_id", None)
+                            or getattr(reply_to, "reply_to_msg_id", None)
+                            or 1
+                        )
+                    elif reply_to:
+                        # Обычный reply (не форум) — topic_id не нужен
+                        pass
+                    message = Message(
+                        channel_id=channel_id,
+                        message_id=msg.id,
+                        sender_id=msg.sender_id,
+                        sender_name=self._get_sender_name(msg),
+                        text=msg.text,
+                        media_type=self._get_media_type(msg),
+                        topic_id=topic_id,
+                        date=msg.date.replace(tzinfo=timezone.utc)
+                        if msg.date and msg.date.tzinfo is None
+                        else msg.date,
+                    )
+                    messages_batch.append(message)
+
+                    if (
+                        len(messages_batch) % 10 == 0
+                        and self._cancel_event.is_set()
+                    ):
                         logger.info(
-                            "Pre-filter: channel %d has %d/%d cross-dupe messages, skipping",
-                            channel_id, matches, len(unique_prefixes),
+                            "Channel %d collection interrupted", channel_id
                         )
-                        return 0
+                        break
 
-            async for msg in session.stream_messages(
-                entity,
-                min_id=min_id,
-                limit=limit,
-                reverse=True,
-                wait_time=self._config.delay_between_requests_sec,
-            ):
-                topic_id = None
-                reply_to = getattr(msg, "reply_to", None)
-                if reply_to and getattr(reply_to, "forum_topic", False):
-                    topic_id = (
-                        getattr(reply_to, "reply_to_top_id", None)
-                        or getattr(reply_to, "reply_to_msg_id", None)
-                        or 1
-                    )
-                elif reply_to:
-                    # Обычный reply (не форум) — topic_id не нужен
-                    pass
-                message = Message(
-                    channel_id=channel_id,
-                    message_id=msg.id,
-                    sender_id=msg.sender_id,
-                    sender_name=self._get_sender_name(msg),
-                    text=msg.text,
-                    media_type=self._get_media_type(msg),
-                    topic_id=topic_id,
-                    date=msg.date.replace(tzinfo=timezone.utc)
-                    if msg.date and msg.date.tzinfo is None
-                    else msg.date,
-                )
-                messages_batch.append(message)
-
-                if len(messages_batch) % 10 == 0 and self._cancel_event.is_set():
-                    logger.info("Channel %d collection interrupted", channel_id)
-                    break
-
-                if is_first_run and len(messages_batch) >= 500:
-                    if not await self._channel_still_exists(channel_id):
+                    if is_first_run and len(messages_batch) >= 500:
+                        if not await self._channel_still_exists(channel_id):
+                            messages_batch = []
+                            break
+                        if not await _flush_batch(messages_batch):
+                            stop_due_to_persistence_error = True
+                            break
                         messages_batch = []
-                        break
-                    if not await _flush_batch(messages_batch):
-                        stop_due_to_persistence_error = True
-                        break
-                    messages_batch = []
-                    if self._cancel_event.is_set():
-                        break
+                        if self._cancel_event.is_set():
+                            break
 
-        except (UsernameNotOccupiedError, UsernameInvalidError):
-            logger.warning(
-                "Channel %d (%s): username not found, deactivating",
-                channel_id, channel.username,
-            )
-            if channel.id:
-                await self._db.set_channel_active(channel.id, False)
-            raise
-        except FloodWaitError as e:
-            flood_wait_sec = e.seconds
-            logger.warning("FloodWait %ds for %s on channel %d", flood_wait_sec, phone, channel_id)
-        finally:
-            # Flush remaining messages — each operation is protected independently
-            # so a failure in one doesn't prevent the other from executing.
-            try:
-                if messages_batch:
-                    if not await self._channel_still_exists(channel_id):
-                        messages_batch = []
-                    else:
-                        stop_due_to_persistence_error = not await _flush_batch(messages_batch)
-            except Exception as flush_err:
-                logger.error(
-                    "Failed to flush %d messages for channel %d: %s",
-                    len(messages_batch), channel_id, flush_err,
+            except (UsernameNotOccupiedError, UsernameInvalidError):
+                logger.warning(
+                    "Channel %d (%s): username not found, deactivating",
+                    channel_id, channel.username,
                 )
-                stop_due_to_persistence_error = True
-            try:
-                if persisted_max_msg_id > min_id and await self._channel_still_exists(channel_id):
-                    await self._db.update_channel_last_id(channel_id, persisted_max_msg_id)
-            except Exception as update_err:
-                logger.error(
-                    "Failed to update last_collected_id for channel %d: %s",
-                    channel_id, update_err,
+                if channel.id:
+                    await self._db.set_channel_active(channel.id, False)
+                raise
+            except FloodWaitError as e:
+                flood_wait_sec = e.seconds
+                logger.warning(
+                    "FloodWait %ds for %s on channel %d",
+                    flood_wait_sec, phone, channel_id,
                 )
-            await self._pool.release_client(phone)
-
-        if stop_due_to_persistence_error:
-            return len(all_messages)
-
-        # Handle FloodWait AFTER finally has flushed progress
-        if flood_wait_sec is not None:
-            await self._pool.report_flood(phone, flood_wait_sec)
-            if flood_wait_sec <= self._config.max_flood_wait_sec:
-                # Re-read channel from DB to get updated last_collected_id.
-                # Use get_channel_by_pk (no filtering) — collection already
-                # started, so we must finish even if the channel was filtered
-                # in the meantime.
-                updated = None
-                if channel.id is not None:
-                    updated = await self._db.get_channel_by_pk(channel.id)
-                if updated:
-                    return len(all_messages) + await self._collect_channel(
-                        updated,
-                        progress_callback=progress_callback,
-                        force=force,
-                        progress_offset=progress_offset + len(all_messages),
-                    )
-            else:
-                if self._notifier:
-                    await self._notifier.notify(
-                        f"FloodWait {flood_wait_sec}s on {phone}, "
-                        f"channel {channel_id} skipped"
-                    )
-            return len(all_messages)
-
-        if should_notify and all_messages:
-            await self._check_notification_queries(all_messages)
-
-        # Update forum topics in DB if messages with topic_id were collected
-        if all_messages and any(m.topic_id is not None for m in all_messages):
-            cached = await self._db.get_forum_topics(channel_id)
-            if not cached:
+            finally:
+                # Flush remaining messages — each operation is protected
+                # independently so a failure in one doesn't prevent the
+                # other from executing.
                 try:
-                    topics = await self._pool.get_forum_topics(channel_id)
-                    if topics:
-                        await self._db.upsert_forum_topics(channel_id, topics)
-                except Exception as e:
-                    logger.warning("Failed to update forum topics for %d: %s", channel_id, e)
-
-        if is_first_run and not force and len(all_messages) >= 50:
-            cur = await self._db.execute(
-                "SELECT COUNT(*) as total, COUNT(DISTINCT substr(text,1,100)) as uniq"
-                " FROM messages WHERE channel_id = ? AND text IS NOT NULL AND length(text) > 10",
-                (channel_id,),
-            )
-            row = await cur.fetchone()
-            if row and row["total"] >= 50:
-                ratio = row["uniq"] / row["total"] * 100
-                if ratio < LOW_UNIQUENESS_THRESHOLD:
-                    await self._db.set_channels_filtered_bulk([(channel_id, "low_uniqueness")])
-                    logger.warning(
-                        "Post-collection: channel %d low_uniqueness %.1f%%, marked filtered",
-                        channel_id,
-                        ratio,
+                    if messages_batch:
+                        if not await self._channel_still_exists(channel_id):
+                            messages_batch = []
+                        else:
+                            stop_due_to_persistence_error = (
+                                not await _flush_batch(messages_batch)
+                            )
+                except Exception as flush_err:
+                    logger.error(
+                        "Failed to flush %d messages for channel %d: %s",
+                        len(messages_batch), channel_id, flush_err,
                     )
+                    stop_due_to_persistence_error = True
+                try:
+                    if (
+                        persisted_max_msg_id > min_id
+                        and await self._channel_still_exists(channel_id)
+                    ):
+                        await self._db.update_channel_last_id(
+                            channel_id, persisted_max_msg_id
+                        )
+                except Exception as update_err:
+                    logger.error(
+                        "Failed to update last_collected_id for "
+                        "channel %d: %s",
+                        channel_id, update_err,
+                    )
+                await self._pool.release_client(phone)
 
-        return len(all_messages)
+            if stop_due_to_persistence_error:
+                return total_collected + len(all_messages)
+
+            # Handle FloodWait AFTER finally has flushed progress
+            if flood_wait_sec is not None:
+                await self._pool.report_flood(phone, flood_wait_sec)
+                if flood_wait_sec <= self._config.max_flood_wait_sec:
+                    # Re-read channel from DB to get updated
+                    # last_collected_id.
+                    # Use get_channel_by_pk (no filtering) — collection
+                    # already started, so we must finish even if the
+                    # channel was filtered in the meantime.
+                    updated = None
+                    if channel.id is not None:
+                        updated = await self._db.get_channel_by_pk(
+                            channel.id
+                        )
+                    if updated:
+                        total_collected += len(all_messages)
+                        progress_offset += len(all_messages)
+                        channel = updated
+                        continue
+                else:
+                    if self._notifier:
+                        await self._notifier.notify(
+                            f"FloodWait {flood_wait_sec}s on {phone}, "
+                            f"channel {channel_id} skipped"
+                        )
+                return total_collected + len(all_messages)
+
+            if should_notify and all_messages:
+                await self._check_notification_queries(all_messages)
+
+            # Update forum topics in DB if messages with topic_id
+            # were collected
+            if all_messages and any(
+                m.topic_id is not None for m in all_messages
+            ):
+                cached = await self._db.get_forum_topics(channel_id)
+                if not cached:
+                    try:
+                        topics = await self._pool.get_forum_topics(
+                            channel_id
+                        )
+                        if topics:
+                            await self._db.upsert_forum_topics(
+                                channel_id, topics
+                            )
+                    except Exception as e:
+                        logger.warning(
+                            "Failed to update forum topics for %d: %s",
+                            channel_id, e,
+                        )
+
+            if is_first_run and not force and len(all_messages) >= 50:
+                cur = await self._db.execute(
+                    "SELECT COUNT(*) as total,"
+                    " COUNT(DISTINCT substr(text,1,100)) as uniq"
+                    " FROM messages WHERE channel_id = ?"
+                    " AND text IS NOT NULL AND length(text) > 10",
+                    (channel_id,),
+                )
+                row = await cur.fetchone()
+                if row and row["total"] >= 50:
+                    ratio = row["uniq"] / row["total"] * 100
+                    if ratio < LOW_UNIQUENESS_THRESHOLD:
+                        await self._db.set_channels_filtered_bulk(
+                            [(channel_id, "low_uniqueness")]
+                        )
+                        logger.warning(
+                            "Post-collection: channel %d low_uniqueness"
+                            " %.1f%%, marked filtered",
+                            channel_id,
+                            ratio,
+                        )
+
+            return total_collected + len(all_messages)
 
     async def _precheck_sample(self, session, entity, limit: int) -> list[str]:
         """Sample up to `limit` messages for cross-channel precheck."""
