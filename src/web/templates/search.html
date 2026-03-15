@@ -148,11 +148,11 @@
 <nav>
     <ul class="pagination justify-content-center">
         {% if page > 1 %}
-        <li class="page-item"><a class="page-link" href="/?q={{ q|urlencode }}&channel_id={{ channel_id or '' }}&date_from={{ date_from }}&date_to={{ date_to }}&mode={{ mode }}&is_fts={{ 1 if is_fts else 0 }}&msg_length_op={{ msg_length_op }}{% if msg_length_val %}&msg_length_val={{ msg_length_val }}{% endif %}&page={{ page - 1 }}">Назад</a></li>
+        <li class="page-item"><a class="page-link" href="/search?q={{ q|urlencode }}&channel_id={{ channel_id or '' }}&date_from={{ date_from }}&date_to={{ date_to }}&mode={{ mode }}&is_fts={{ 1 if is_fts else 0 }}&msg_length_op={{ msg_length_op }}{% if msg_length_val %}&msg_length_val={{ msg_length_val }}{% endif %}&page={{ page - 1 }}">Назад</a></li>
         {% endif %}
         <li class="page-item disabled"><span class="page-link">Страница {{ page }} из {{ total_pages }}</span></li>
         {% if page < total_pages %}
-        <li class="page-item"><a class="page-link" href="/?q={{ q|urlencode }}&channel_id={{ channel_id or '' }}&date_from={{ date_from }}&date_to={{ date_to }}&mode={{ mode }}&is_fts={{ 1 if is_fts else 0 }}&msg_length_op={{ msg_length_op }}{% if msg_length_val %}&msg_length_val={{ msg_length_val }}{% endif %}&page={{ page + 1 }}">Далее</a></li>
+        <li class="page-item"><a class="page-link" href="/search?q={{ q|urlencode }}&channel_id={{ channel_id or '' }}&date_from={{ date_from }}&date_to={{ date_to }}&mode={{ mode }}&is_fts={{ 1 if is_fts else 0 }}&msg_length_op={{ msg_length_op }}{% if msg_length_val %}&msg_length_val={{ msg_length_val }}{% endif %}&page={{ page + 1 }}">Далее</a></li>
         {% endif %}
     </ul>
 </nav>

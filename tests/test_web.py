@@ -1254,10 +1254,11 @@ async def test_cookie_auth_without_basic(client):
 
 
 @pytest.mark.asyncio
-async def test_root_redirects_to_agent(client):
+async def test_root_redirects_to_search_when_agent_unavailable(client):
+    """Without LLM keys the root page should redirect to /search, not /agent."""
     resp = await client.get("/", follow_redirects=False)
     assert resp.status_code == 303
-    assert resp.headers["location"] == "/agent"
+    assert resp.headers["location"] == "/search"
 
 
 @pytest.mark.asyncio
