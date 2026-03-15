@@ -145,6 +145,7 @@ class UnifiedDispatcher:
                             await self._channels.update_collection_task(
                                 task.id,
                                 CollectionTaskStatus.FAILED,
+                                messages_collected=fresh.messages_collected,
                                 error="Task failed with unexpected dispatcher error",
                             )
                     except Exception:
@@ -192,6 +193,13 @@ class UnifiedDispatcher:
             task.id, next_index, batch_size, len(channel_ids),
         )
 
+        if self._collector.is_running:
+            logger.info("Collector is running, deferring STATS_ALL task #%s", task.id)
+            await self._channels.update_collection_task(
+                task.id, CollectionTaskStatus.PENDING,
+            )
+            return
+
         if next_index >= len(channel_ids):
             await self._channels.update_collection_task(
                 task.id, CollectionTaskStatus.COMPLETED, messages_collected=channels_ok,
@@ -203,8 +211,22 @@ class UnifiedDispatcher:
 
         while cursor < batch_end:
             if self._collector.is_running:
-                await asyncio.sleep(self._poll_interval_sec)
-                continue
+                logger.info(
+                    "Collector started mid-batch, suspending STATS_ALL task #%s at index %d",
+                    task.id, cursor,
+                )
+                suspended_payload = StatsAllTaskPayload(
+                    channel_ids=channel_ids,
+                    next_index=cursor,
+                    batch_size=batch_size,
+                    channels_ok=channels_ok,
+                    channels_err=channels_err,
+                )
+                await self._channels.update_collection_task(
+                    task.id, CollectionTaskStatus.PENDING,
+                    payload=suspended_payload,
+                )
+                return
 
             channel_id = channel_ids[cursor]
             channel = await self._channels.get_by_channel_id(channel_id)
