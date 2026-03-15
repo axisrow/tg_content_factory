@@ -26,13 +26,30 @@ class CollectionService:
         self,
         channels: ChannelBundle | Database,
         collector: Collector,
-        queue: CollectionQueue,
+        collection_queue: CollectionQueue | None = None,
     ):
         if isinstance(channels, Database):
             channels = ChannelBundle.from_database(channels)
         self._channels = channels
         self._collector = collector
-        self._queue = queue
+        self._queue = collection_queue
+
+    async def _enqueue_channel(
+        self, channel: Channel, force: bool = False, full: bool = True
+    ) -> None:
+        if self._queue is not None:
+            await self._queue.enqueue(channel, force=force, full=full)
+        else:
+            payload = {}
+            if force:
+                payload["force"] = True
+            if not full:
+                payload["full"] = False
+            await self._channels.create_collection_task(
+                channel.channel_id, channel.title,
+                channel_username=channel.username,
+                payload=payload or None,
+            )
 
     async def enqueue_channel_by_pk(self, pk: int, force: bool = False) -> EnqueueResult:
         channel = await self._channels.get_by_pk(pk)
@@ -40,7 +57,7 @@ class CollectionService:
             return "not_found"
         if channel.is_filtered and not force:
             return "filtered"
-        await self._queue.enqueue(channel, force=force)
+        await self._enqueue_channel(channel, force=force)
         return "queued"
 
     async def enqueue_all_channels(self) -> BulkEnqueueResult:
@@ -55,7 +72,7 @@ class CollectionService:
                 continue
             # Bulk collection should continue from last_collected_id when the
             # channel already has history, instead of reloading the full archive.
-            await self._queue.enqueue(channel, force=True, full=False)
+            await self._enqueue_channel(channel, force=True, full=False)
             queued_count += 1
 
         return BulkEnqueueResult(

@@ -5,7 +5,6 @@ import asyncio
 import logging
 
 from src.cli import runtime
-from src.collection_queue import CollectionQueue
 from src.database.bundles import ChannelBundle
 from src.scheduler.manager import SchedulerManager
 from src.services.collection_service import CollectionService
@@ -25,8 +24,9 @@ def run(args: argparse.Namespace) -> None:
 
             collector = Collector(pool, db, config.scheduler)
             channel_bundle = ChannelBundle.from_database(db)
-            collection_queue = CollectionQueue(collector, channel_bundle)
-            collection_service = CollectionService(channel_bundle, collector, collection_queue)
+            collection_service = CollectionService(
+                channel_bundle, collector, collection_queue=None
+            )
             task_enqueuer = TaskEnqueuer(db, collection_service)
 
             if args.scheduler_action == "start":
@@ -50,12 +50,16 @@ def run(args: argparse.Namespace) -> None:
                 print(
                     f"Enqueued {result.queued_count} channels "
                     f"(skipped {result.skipped_existing_count}, "
-                    f"total {result.total_candidates})"
+                    f"total {result.total_candidates}). "
+                    f"Run 'serve' to execute tasks."
                 )
             elif args.scheduler_action == "search":
                 task_id = await task_enqueuer.enqueue_notification_search()
                 if task_id:
-                    print(f"Enqueued notification search task #{task_id}")
+                    print(
+                        f"Enqueued notification search task #{task_id}. "
+                        f"Run 'serve' to execute tasks."
+                    )
                 else:
                     print("Notification search task already active")
         finally:
