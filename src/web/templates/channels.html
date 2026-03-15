@@ -6,7 +6,7 @@
 <div class="card mb-4">
     <div class="card-header fw-semibold">Добавить канал</div>
     <div class="card-body">
-        <form method="post" action="/channels/add">
+        <form method="post" action="/channels/add" data-busy>
             <div class="mb-3">
                 <label class="form-label">Username или ссылка</label>
                 <input type="text" class="form-control" name="identifier" required placeholder="Введите username или ссылку">
@@ -23,16 +23,16 @@
 
 {% if channels or show_all %}
 <div class="d-flex gap-2 align-items-center flex-wrap mb-3">
-    <a href="/channels" class="btn btn-sm {{ 'btn-primary' if not show_all else 'btn-outline-secondary' }}">Активные</a>
-    <a href="/channels?view=all" class="btn btn-sm {{ 'btn-primary' if show_all else 'btn-outline-secondary' }}">Все каналы</a>
+    <a href="/channels" class="btn btn-sm {{ 'btn-primary' if not show_all else 'btn-outline-primary' }}">Активные</a>
+    <a href="/channels?view=all" class="btn btn-sm {{ 'btn-primary' if show_all else 'btn-outline-primary' }}">Все каналы</a>
     <span class="flex-fill"></span>
-    <form method="post" action="/channels/filter/analyze" class="d-inline">
+    <form method="post" action="/channels/filter/analyze" class="d-inline" data-busy>
         <button type="submit" class="btn btn-outline-primary btn-sm">Обновить фильтры</button>
     </form>
-    <form method="post" action="/channels/filter/reset" class="d-inline">
+    <form method="post" action="/channels/filter/reset" class="d-inline" data-busy>
         <button type="submit" class="btn btn-outline-secondary btn-sm">Сброс фильтров</button>
     </form>
-    <form method="post" action="/channels/stats/all" class="d-inline">
+    <form method="post" action="/channels/stats/all" class="d-inline" data-busy>
         <button type="submit" class="btn btn-outline-primary btn-sm">Обновить статистику</button>
     </form>
     <span id="collect-all-btn">
@@ -40,7 +40,7 @@
               hx-post="/channels/collect-all"
               hx-target="#collect-all-btn"
               hx-swap="outerHTML">
-            <button type="submit" class="btn btn-outline-primary btn-sm">Собрать все каналы</button>
+            <button type="submit" class="btn btn-secondary btn-sm">Собрать все каналы</button>
         </form>
     </span>
 </div>

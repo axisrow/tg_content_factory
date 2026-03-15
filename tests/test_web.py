@@ -2338,7 +2338,7 @@ async def test_channels_page_collect_all_button_matches_htmx_fragment(client):
         'hx-post="/channels/collect-all"',
         'hx-target="#collect-all-btn"',
         'hx-swap="outerHTML"',
-        "btn-outline-primary",
+        "btn-secondary",
         "Собрать все каналы",
     ):
         assert expected in template_fragment

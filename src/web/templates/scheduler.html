@@ -31,11 +31,11 @@
                     Включает фоновый планировщик: сбор каждые {{ interval_minutes }} мин., поиск каждые {{ search_interval_minutes }} мин.
                 </small>
                 {% if not is_running %}
-                <form method="post" action="/scheduler/start">
+                <form method="post" action="/scheduler/start" data-busy>
                     <button type="submit" class="btn btn-primary w-100">&#9654; Запустить планировщик</button>
                 </form>
                 {% else %}
-                <form method="post" action="/scheduler/stop">
+                <form method="post" action="/scheduler/stop" data-busy>
                     <button type="submit" class="btn btn-secondary w-100">&#9724; Остановить планировщик</button>
                 </form>
                 {% endif %}
@@ -49,7 +49,7 @@
                 <small class="text-muted d-block mb-3">
                     Добавляет задачи в очередь для каждого активного канала. То же, что на странице <a href="/channels">каналов</a>.
                 </small>
-                <form method="post" action="/scheduler/trigger">
+                <form method="post" action="/scheduler/trigger" data-busy>
                     <button type="submit" class="btn btn-secondary w-100">
                         &#9654; Собрать все каналы
                     </button>
@@ -76,10 +76,10 @@
         <p>Результат: запросов — {{ last_search_stats.queries }}, найдено — {{ last_search_stats.results }}, ошибок — {{ last_search_stats.errors }}</p>
         {% endif %}
         <div class="d-flex flex-wrap gap-2">
-            <form method="post" action="/scheduler/trigger-search">
+            <form method="post" action="/scheduler/trigger-search" data-busy>
                 <button type="submit" class="btn btn-secondary">&#9654; Запустить поиск по запросам</button>
             </form>
-            <form method="post" action="/scheduler/test-notification">
+            <form method="post" action="/scheduler/test-notification" data-busy>
                 <button type="submit" class="btn btn-outline-secondary"
                         {% if not bot_configured %}disabled title="Подключите бот в Настройках → Уведомления"{% endif %}>
                     Протестировать уведомления
@@ -282,14 +282,6 @@
 {% endif %}
 
 <script>
-document.querySelectorAll('form[action$="/trigger"], form[action$="/start"], form[action$="/stop"]').forEach(function(form) {
-    form.addEventListener('submit', function() {
-        var btn = form.querySelector('button[type="submit"]');
-        btn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status"></span> ' + btn.textContent.trim();
-        btn.disabled = true;
-    });
-});
-
 {% if has_active_tasks %}
 setTimeout(function() {
     window.location.reload();

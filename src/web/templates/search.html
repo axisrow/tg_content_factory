@@ -3,7 +3,7 @@
 {% block content %}
 <h1>Поиск по постам</h1>
 
-<form method="get" action="/search">
+<form method="get" action="/search" data-busy>
     <div class="mb-3">
         <label for="q" class="form-label">Запрос</label>
         <input type="text" class="form-control" id="q" name="q" value="{{ q }}" placeholder="Введите поисковый запрос" autofocus>

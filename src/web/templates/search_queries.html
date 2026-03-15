@@ -9,7 +9,7 @@
 <div class="card mb-4">
     <div class="card-header fw-semibold">Добавить запрос</div>
     <div class="card-body">
-        <form method="post" action="/search-queries/add">
+        <form method="post" action="/search-queries/add" data-busy>
             <div class="row g-3 mb-3">
                 <div class="col-12 col-md-8">
                     <label class="form-label">Запрос <span class="hint" data-tooltip="Текст для поиска в собранных сообщениях. Поддерживает обычный текст, regex и FTS5-синтаксис">?</span></label>
@@ -89,22 +89,22 @@
                    class="btn btn-outline-secondary btn-sm emoji-btn" title="Найти посты">&#128269;</a>
                 {% endif %}
                 <button type="button" class="btn btn-outline-secondary btn-sm emoji-btn" title="Редактировать" onclick="toggleEdit({{ sq.id }})">&#9999;&#65039;</button>
-                <form method="post" action="/search-queries/{{ sq.id }}/run" class="d-inline">
+                <form method="post" action="/search-queries/{{ sq.id }}/run" class="d-inline" data-busy>
                     <button type="submit" class="btn btn-outline-secondary btn-sm emoji-btn" title="Запустить сейчас">&#9654;&#65039;</button>
                 </form>
-                <form method="post" action="/search-queries/{{ sq.id }}/toggle" class="d-inline">
+                <form method="post" action="/search-queries/{{ sq.id }}/toggle" class="d-inline" data-busy>
                     <button type="submit" class="btn btn-outline-secondary btn-sm emoji-btn" title="{{ 'Отключить' if sq.is_active else 'Включить' }}">
                         {{ "⏏️" if sq.is_active else "🔄" }}
                     </button>
                 </form>
-                <form method="post" action="/search-queries/{{ sq.id }}/delete" class="d-inline" onsubmit="return confirm('Удалить этот запрос и всю его статистику?')">
+                <form method="post" action="/search-queries/{{ sq.id }}/delete" class="d-inline" onsubmit="return confirm('Удалить этот запрос и всю его статистику?')" data-busy>
                     <button type="submit" class="btn btn-outline-danger btn-sm emoji-btn" title="Удалить">&#128465;&#65039;</button>
                 </form>
             </td>
         </tr>
         <tr id="edit-{{ sq.id }}" class="d-none">
             <td colspan="7">
-                <form method="post" action="/search-queries/{{ sq.id }}/edit">
+                <form method="post" action="/search-queries/{{ sq.id }}/edit" data-busy>
                     <div class="row g-3 mb-3">
                         <div class="col-12 col-md-8">
                             <label class="form-label">Запрос <span class="hint" data-tooltip="Текст для поиска в собранных сообщениях. Поддерживает обычный текст, regex и FTS5-синтаксис">?</span></label>
@@ -211,15 +211,15 @@
                 <a href="/search?q={{ sq.query|urlencode }}{% if sq.max_length %}+len%3C{{ sq.max_length }}{% endif %}{% if sq.is_fts %}&is_fts=1{% endif %}"
                    class="btn btn-outline-secondary btn-sm emoji-btn" title="Найти посты">&#128269;</a>
                 {% endif %}
-                <form method="post" action="/search-queries/{{ sq.id }}/run" class="d-inline">
+                <form method="post" action="/search-queries/{{ sq.id }}/run" class="d-inline" data-busy>
                     <button type="submit" class="btn btn-outline-secondary btn-sm emoji-btn" title="Запустить сейчас">&#9654;&#65039;</button>
                 </form>
-                <form method="post" action="/search-queries/{{ sq.id }}/toggle" class="d-inline">
+                <form method="post" action="/search-queries/{{ sq.id }}/toggle" class="d-inline" data-busy>
                     <button type="submit" class="btn btn-outline-secondary btn-sm emoji-btn" title="{{ 'Отключить' if sq.is_active else 'Включить' }}">
                         {{ "⏏️" if sq.is_active else "🔄" }}
                     </button>
                 </form>
-                <form method="post" action="/search-queries/{{ sq.id }}/delete" class="d-inline" onsubmit="return confirm('Удалить этот запрос и всю его статистику?')">
+                <form method="post" action="/search-queries/{{ sq.id }}/delete" class="d-inline" onsubmit="return confirm('Удалить этот запрос и всю его статистику?')" data-busy>
                     <button type="submit" class="btn btn-outline-danger btn-sm emoji-btn" title="Удалить">&#128465;&#65039;</button>
                 </form>
             </div>
