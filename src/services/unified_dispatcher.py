@@ -2,9 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable, Coroutine
 from datetime import date, datetime, timezone
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from src.database.bundles import ChannelBundle, SearchQueryBundle
 from src.database.repositories.collection_tasks import CollectionTasksRepository
@@ -12,15 +11,12 @@ from src.models import (
     CollectionTask,
     CollectionTaskStatus,
     CollectionTaskType,
-    SearchQuery,
     SqStatsTaskPayload,
     StatsAllTaskPayload,
 )
 from src.telegram.collector import Collector
 
 if TYPE_CHECKING:
-    from src.search.engine import SearchEngine
-    from src.services.notification_matcher import NotificationMatcher
     from src.services.photo_auto_upload_service import PhotoAutoUploadService
     from src.services.photo_task_service import PhotoTaskService
 
@@ -28,13 +24,10 @@ logger = logging.getLogger(__name__)
 
 HANDLED_TYPES = [
     CollectionTaskType.STATS_ALL.value,
-    CollectionTaskType.NOTIFICATION_SEARCH.value,
     CollectionTaskType.SQ_STATS.value,
     CollectionTaskType.PHOTO_DUE.value,
     CollectionTaskType.PHOTO_AUTO.value,
 ]
-
-NotificationQueryFn = Callable[..., Coroutine[Any, Any, list[SearchQuery]]]
 
 
 class UnifiedDispatcher:
@@ -46,9 +39,6 @@ class UnifiedDispatcher:
         channel_bundle: ChannelBundle,
         tasks_repo: CollectionTasksRepository,
         *,
-        notification_query_fn: NotificationQueryFn | None = None,
-        search_engine: SearchEngine | None = None,
-        notification_matcher: NotificationMatcher | None = None,
         sq_bundle: SearchQueryBundle | None = None,
         photo_task_service: PhotoTaskService | None = None,
         photo_auto_upload_service: PhotoAutoUploadService | None = None,
@@ -59,9 +49,6 @@ class UnifiedDispatcher:
         self._collector = collector
         self._channel_bundle = channel_bundle
         self._tasks = tasks_repo
-        self._notification_query_fn = notification_query_fn
-        self._search_engine = search_engine
-        self._notification_matcher = notification_matcher
         self._sq_bundle = sq_bundle
         self._photo_task_service = photo_task_service
         self._photo_auto_upload_service = photo_auto_upload_service
@@ -124,7 +111,6 @@ class UnifiedDispatcher:
     async def _dispatch(self, task: CollectionTask) -> None:
         handler = {
             CollectionTaskType.STATS_ALL: self._handle_stats_all,
-            CollectionTaskType.NOTIFICATION_SEARCH: self._handle_notification_search,
             CollectionTaskType.SQ_STATS: self._handle_sq_stats,
             CollectionTaskType.PHOTO_DUE: self._handle_photo_due,
             CollectionTaskType.PHOTO_AUTO: self._handle_photo_auto,
@@ -267,57 +253,6 @@ class UnifiedDispatcher:
 
         await self._tasks.update_collection_task(
             task.id, CollectionTaskStatus.COMPLETED, messages_collected=channels_ok,
-        )
-
-    # ── NOTIFICATION_SEARCH ──
-
-    async def _handle_notification_search(self, task: CollectionTask) -> None:
-        if task.id is None:
-            return
-
-        if not self._search_engine:
-            await self._tasks.update_collection_task(
-                task.id, CollectionTaskStatus.COMPLETED,
-                note="No search engine configured",
-            )
-            return
-
-        if not self._notification_query_fn:
-            await self._tasks.update_collection_task(
-                task.id, CollectionTaskStatus.COMPLETED,
-                note="No notification query source",
-            )
-            return
-
-        queries = await self._notification_query_fn(active_only=True)
-        total_results = 0
-        searched = 0
-        errors = 0
-
-        for sq in queries:
-            try:
-                quota = await self._search_engine.check_search_quota(sq.query)
-                if quota and quota.get("remains") == 0 and not quota.get("query_is_free"):
-                    logger.info("Search quota exhausted, stopping notification search")
-                    break
-
-                result = await self._search_engine.search_telegram(sq.query, limit=50)
-                if result.error:
-                    errors += 1
-                else:
-                    total_results += result.total
-                    searched += 1
-
-                    if self._notification_matcher and result.messages:
-                        await self._notification_matcher.match_and_notify(result.messages, [sq])
-            except Exception:
-                logger.exception("Error searching query '%s'", sq.query)
-                errors += 1
-
-        await self._tasks.update_collection_task(
-            task.id, CollectionTaskStatus.COMPLETED,
-            messages_collected=total_results,
-            note=f"queries={searched}, errors={errors}",
         )
 
     # ── SQ_STATS ──

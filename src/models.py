@@ -67,7 +67,6 @@ class CollectionTaskStatus(StrEnum):
 class CollectionTaskType(StrEnum):
     CHANNEL_COLLECT = "channel_collect"
     STATS_ALL = "stats_all"
-    NOTIFICATION_SEARCH = "notification_search"
     SQ_STATS = "sq_stats"
     PHOTO_DUE = "photo_due"
     PHOTO_AUTO = "photo_auto"
