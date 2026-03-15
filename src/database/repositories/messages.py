@@ -22,8 +22,9 @@ def _normalize_date_to(date_to: str) -> tuple[str, str]:
 
 
 class MessagesRepository:
-    def __init__(self, db: aiosqlite.Connection):
+    def __init__(self, db: aiosqlite.Connection, *, fts_available: bool = True):
         self._db = db
+        self._fts_available = fts_available
 
     @staticmethod
     def _normalize_date_from(value: str | None) -> str | None:
@@ -143,6 +144,7 @@ class MessagesRepository:
         where = " WHERE " + " AND ".join(conditions)
 
         if query:
+            self._require_fts()
             fts_query = self._build_fts_match(query, is_fts)
             fts_join = (
                 " INNER JOIN (SELECT rowid FROM messages_fts"
@@ -222,7 +224,14 @@ class MessagesRepository:
             params.append(f"%{stripped}%")
         return conditions, params
 
+    def _require_fts(self) -> None:
+        if not self._fts_available:
+            raise RuntimeError(
+                "FTS5 full-text search is unavailable (index build failed at startup)."
+            )
+
     async def count_fts_matches_for_query(self, sq: SearchQuery) -> int:
+        self._require_fts()
         fts_query = self._build_fts_match(sq.query, sq.is_fts)
         extra_conds, extra_params = self._build_extra_conditions(sq)
         where_parts = ["(c.is_filtered IS NULL OR c.is_filtered = 0)"]
@@ -242,6 +251,7 @@ class MessagesRepository:
     async def get_fts_daily_stats_for_query(
         self, sq: SearchQuery, days: int = 30
     ) -> list:
+        self._require_fts()
         from src.models import SearchQueryDailyStat
 
         fts_query = self._build_fts_match(sq.query, sq.is_fts)
@@ -271,6 +281,7 @@ class MessagesRepository:
     async def get_fts_daily_stats_batch(
         self, queries: list[SearchQuery], days: int = 30
     ) -> dict[int, list]:
+        self._require_fts()
         from src.models import SearchQueryDailyStat
 
         result: dict[int, list] = {}
