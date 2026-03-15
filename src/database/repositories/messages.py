@@ -215,8 +215,11 @@ class MessagesRepository:
             conditions.append("LENGTH(m.text) < ?")
             params.append(sq.max_length)
         for pat in sq.exclude_patterns_list:
+            stripped = pat.rstrip("*")
+            if not stripped:
+                continue
             conditions.append("m.text NOT LIKE ?")
-            params.append(f"%{pat.rstrip('*')}%")
+            params.append(f"%{stripped}%")
         return conditions, params
 
     async def count_fts_matches_for_query(self, sq: SearchQuery) -> int:

@@ -85,7 +85,7 @@
                 {% if sq.is_regex %}
                 <span class="btn btn-outline-secondary btn-sm emoji-btn opacity-50" style="cursor:default" title="Regex-запросы нельзя открыть в поиске">&#128269;</span>
                 {% else %}
-                <a href="/search?q={{ sq.query|urlencode }}{% if sq.is_fts %}&is_fts=1{% endif %}{% if sq.max_length %}&msg_length_op=lt&msg_length_val={{ sq.max_length }}{% endif %}"
+                <a href="/search?q={{ sq.query|urlencode }}{% if sq.max_length %}+len%3C{{ sq.max_length }}{% endif %}{% if sq.is_fts %}&is_fts=1{% endif %}"
                    class="btn btn-outline-secondary btn-sm emoji-btn" title="Найти посты">&#128269;</a>
                 {% endif %}
                 <button type="button" class="btn btn-outline-secondary btn-sm emoji-btn" title="Редактировать" onclick="toggleEdit({{ sq.id }})">&#9999;&#65039;</button>
@@ -208,7 +208,7 @@
             </small>
             <div class="card-actions">
                 {% if not sq.is_regex %}
-                <a href="/search?q={{ sq.query|urlencode }}{% if sq.is_fts %}&is_fts=1{% endif %}{% if sq.max_length %}&msg_length_op=lt&msg_length_val={{ sq.max_length }}{% endif %}"
+                <a href="/search?q={{ sq.query|urlencode }}{% if sq.max_length %}+len%3C{{ sq.max_length }}{% endif %}{% if sq.is_fts %}&is_fts=1{% endif %}"
                    class="btn btn-outline-secondary btn-sm emoji-btn" title="Найти посты">&#128269;</a>
                 {% endif %}
                 <form method="post" action="/search-queries/{{ sq.id }}/run" class="d-inline">
