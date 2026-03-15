@@ -7,7 +7,8 @@ import aiosqlite
 logger = logging.getLogger(__name__)
 
 
-async def run_migrations(db: aiosqlite.Connection) -> None:
+async def run_migrations(db: aiosqlite.Connection) -> bool:
+    """Run schema migrations. Returns True if FTS5 is available, False otherwise."""
     cur = await db.execute("PRAGMA table_info(messages)")
     msg_columns = {row["name"] for row in await cur.fetchall()}
     if "media_type" not in msg_columns:
@@ -371,6 +372,7 @@ async def run_migrations(db: aiosqlite.Connection) -> None:
     )
     await db.commit()
 
+    fts_available = True
     cur = await db.execute("SELECT value FROM settings WHERE key = 'fts5_initialized'")
     if not await cur.fetchone():
         try:
@@ -381,7 +383,8 @@ async def run_migrations(db: aiosqlite.Connection) -> None:
             await db.commit()
             logger.info("FTS5 index built for existing messages")
         except Exception as exc:
-            logger.warning("FTS5 index build failed (FTS5 may be unavailable): %s", exc)
+            fts_available = False
+            logger.error("FTS5 index build failed — full-text search unavailable: %s", exc)
 
     # Agent chat tables
     await db.execute(
@@ -405,3 +408,5 @@ async def run_migrations(db: aiosqlite.Connection) -> None:
         """
     )
     await db.commit()
+
+    return fts_available

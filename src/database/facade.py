@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 from typing import Any
 
@@ -34,6 +35,8 @@ from src.models import (
 )
 from src.security import SessionCipher
 
+logger = logging.getLogger(__name__)
+
 
 class Database:
     def __init__(
@@ -45,6 +48,7 @@ class Database:
         self._session_encryption_secret = session_encryption_secret
         self._connection = DBConnection(db_path)
         self._db: aiosqlite.Connection | None = None
+        self._fts_available: bool = True
         self._accounts: AccountsRepository | None = None
         self._channels: ChannelsRepository | None = None
         self._messages: MessagesRepository | None = None
@@ -76,7 +80,11 @@ class Database:
         self._db = await self._connection.connect()
         await self._db.executescript(SCHEMA_SQL)
         await self._db.commit()
-        await run_migrations(self._db)
+        self._fts_available = await run_migrations(self._db)
+        if not self._fts_available:
+            logger.warning(
+                "FTS5 full-text search is unavailable; text queries will use LIKE fallback"
+            )
 
         if not self._session_encryption_secret and await self._has_encrypted_sessions():
             await self._connection.close()
@@ -92,7 +100,7 @@ class Database:
 
         self._accounts = AccountsRepository(self._db, session_cipher=session_cipher)
         self._channels = ChannelsRepository(self._db)
-        self._messages = MessagesRepository(self._db)
+        self._messages = MessagesRepository(self._db, fts_available=self._fts_available)
         self._tasks = CollectionTasksRepository(self._db)
         self._search_log = SearchLogRepository(self._db)
         self._channel_stats = ChannelStatsRepository(self._db)
@@ -131,6 +139,10 @@ class Database:
     @property
     def db(self) -> aiosqlite.Connection | None:
         return self._db
+
+    @property
+    def fts_available(self) -> bool:
+        return self._fts_available
 
     @property
     def filter_repo(self) -> FilterRepository:
