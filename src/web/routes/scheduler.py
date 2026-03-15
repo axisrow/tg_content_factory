@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
+from src.telegram.notifier import Notifier
 from src.web import deps
 from src.web.routes.channel_collection import bulk_enqueue_msg
 
@@ -59,7 +60,13 @@ async def scheduler_page(
 
     search_log = await db.get_recent_searches()
     notifier = deps.get_notifier(request)
-    bot_configured = notifier is not None and notifier.admin_chat_id is not None
+    try:
+        bot = await deps.notification_service(request).get_status()
+    except Exception:
+        bot = None
+    bot_configured = (
+        (notifier is not None and notifier.admin_chat_id is not None) or bot is not None
+    )
     return deps.get_templates(request).TemplateResponse(
         request,
         "scheduler.html",
@@ -116,9 +123,18 @@ async def trigger_collection(request: Request):
 async def test_notification(request: Request):
     if getattr(request.app.state, "shutting_down", False):
         return RedirectResponse(url="/scheduler?error=shutting_down", status_code=303)
+
     notifier = deps.get_notifier(request)
-    if not notifier or not notifier.admin_chat_id:
+    admin_chat_id = notifier.admin_chat_id if notifier else None
+    try:
+        bot = await deps.notification_service(request).get_status()
+    except Exception:
+        bot = None
+    if not admin_chat_id and bot:
+        admin_chat_id = bot.tg_user_id
+    if not admin_chat_id and not bot:
         return RedirectResponse(url="/scheduler?error=bot_not_configured", status_code=303)
+
     db = deps.get_db(request)
     queries = await db.get_notification_queries(active_only=True)
     text = "🔔 Тест уведомлений: соединение установлено"
@@ -128,7 +144,10 @@ async def test_notification(request: Request):
         if messages:
             preview = (messages[0].text or "")[:200]
             text = f"🔔 Тест: Query '{q.query}' matched in channel:\n{preview}"
-    ok = await notifier.notify(text)
+
+    target_svc = deps.get_notification_target_service(request)
+    test_notifier = Notifier(target_svc, admin_chat_id, deps.get_notification_bundle(request))
+    ok = await test_notifier.notify(text)
     msg = "test_notification_sent" if ok else "test_notification_failed"
     return RedirectResponse(url=f"/scheduler?msg={msg}", status_code=303)
 
