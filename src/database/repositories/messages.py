@@ -216,7 +216,7 @@ class MessagesRepository:
             params.append(sq.max_length)
         for pat in sq.exclude_patterns_list:
             conditions.append("m.text NOT LIKE ?")
-            params.append(f"%{pat}%")
+            params.append(f"%{pat.rstrip('*')}%")
         return conditions, params
 
     async def count_fts_matches_for_query(self, sq: SearchQuery) -> int:
