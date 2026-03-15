@@ -1,12 +1,13 @@
 """Tests for src/agent/tools.py - MCP tools for Agent.
 
-These tests verify the tool logic without using the decorator infrastructure,
-which requires complex SDK setup. Instead, we test the underlying DB calls.
+These tests call the actual tool handler functions via the @tool decorator's
+.handler attribute, ensuring argument parsing, formatting, and error handling
+are all exercised.
 """
 from __future__ import annotations
 
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -19,265 +20,223 @@ def mock_db():
     return MagicMock(spec=Database)
 
 
-class TestSearchMessagesLogic:
-    """Tests for search_messages tool logic (DB interaction)."""
+def _get_tool_handlers(mock_db):
+    """Build MCP tools and return their handlers keyed by name."""
+    captured_tools = []
+
+    with patch(
+        "src.agent.tools.create_sdk_mcp_server",
+        side_effect=lambda **kwargs: captured_tools.extend(kwargs.get("tools", [])),
+    ):
+        from src.agent.tools import make_mcp_server
+
+        make_mcp_server(mock_db)
+
+    return {t.name: t.handler for t in captured_tools}
+
+
+def _text(result: dict) -> str:
+    """Extract text from tool result payload."""
+    return result["content"][0]["text"]
+
+
+# ---------------------------------------------------------------------------
+# search_messages tool
+# ---------------------------------------------------------------------------
+
+
+class TestSearchMessagesTool:
+    """Tests for the search_messages tool handler."""
 
     @pytest.mark.asyncio
-    async def test_search_messages_empty_result(self, mock_db):
-        """Test search_messages when no results found."""
+    async def test_empty_result(self, mock_db):
         mock_db.search_messages = AsyncMock(return_value=([], 0))
+        handlers = _get_tool_handlers(mock_db)
 
-        messages, total = await mock_db.search_messages(query="nonexistent", limit=20)
+        result = await handlers["search_messages"]({"query": "nonexistent", "limit": 20})
 
-        assert messages == []
-        assert total == 0
+        assert result["content"][0]["type"] == "text"
+        assert "Ничего не найдено" in _text(result)
+        assert "nonexistent" in _text(result)
         mock_db.search_messages.assert_awaited_once_with(query="nonexistent", limit=20)
 
     @pytest.mark.asyncio
-    async def test_search_messages_with_results(self, mock_db):
-        """Test search_messages with results found."""
+    async def test_with_results(self, mock_db):
         mock_messages = [
             SimpleNamespace(
-                channel_id=100,
-                message_id=1,
-                text="Test message one with important content",
-                date="2025-01-01",
+                channel_id=100, message_id=1,
+                text="Test message one", date="2025-01-01",
             ),
             SimpleNamespace(
-                channel_id=200,
-                message_id=2,
-                text="Another test message",
-                date="2025-01-02",
+                channel_id=200, message_id=2,
+                text="Another test message", date="2025-01-02",
             ),
         ]
         mock_db.search_messages = AsyncMock(return_value=(mock_messages, 2))
+        handlers = _get_tool_handlers(mock_db)
 
-        messages, total = await mock_db.search_messages(query="test", limit=10)
+        result = await handlers["search_messages"]({"query": "test", "limit": 10})
 
-        assert len(messages) == 2
-        assert total == 2
-        assert messages[0].channel_id == 100
-        assert messages[1].channel_id == 200
+        text = _text(result)
+        assert "Найдено 2 сообщений" in text
+        assert "channel_id=100" in text
+        assert "channel_id=200" in text
+        mock_db.search_messages.assert_awaited_once_with(query="test", limit=10)
 
     @pytest.mark.asyncio
-    async def test_search_messages_truncates_in_formatter(self, mock_db):
-        """Test that long text can be truncated to 300 chars in formatter."""
+    async def test_text_truncation(self, mock_db):
+        """Tool truncates message text to 300 chars."""
         long_text = "x" * 500
         mock_messages = [
-            SimpleNamespace(
-                channel_id=100,
-                message_id=1,
-                text=long_text,
-                date="2025-01-01",
-            ),
+            SimpleNamespace(channel_id=100, message_id=1, text=long_text, date="2025-01-01"),
         ]
         mock_db.search_messages = AsyncMock(return_value=(mock_messages, 1))
+        handlers = _get_tool_handlers(mock_db)
 
-        messages, total = await mock_db.search_messages(query="x", limit=20)
+        result = await handlers["search_messages"]({"query": "x", "limit": 20})
 
-        # Full text is returned from DB, truncation happens in tool formatter
-        assert len(messages[0].text) == 500
-        # The tool logic would truncate: (m.text or "")[:300]
-        truncated = (messages[0].text or "")[:300]
-        assert len(truncated) == 300
+        text = _text(result)
+        # Preview is capped at 300 chars
+        assert "x" * 300 in text
+        assert "x" * 301 not in text
 
     @pytest.mark.asyncio
-    async def test_search_messages_with_none_text(self, mock_db):
-        """Test search_messages handles messages with None text."""
+    async def test_none_text_handled(self, mock_db):
+        """Tool handles messages with None text without crashing."""
         mock_messages = [
-            SimpleNamespace(
-                channel_id=100,
-                message_id=1,
-                text=None,
-                date="2025-01-01",
-            ),
+            SimpleNamespace(channel_id=100, message_id=1, text=None, date="2025-01-01"),
         ]
         mock_db.search_messages = AsyncMock(return_value=(mock_messages, 1))
+        handlers = _get_tool_handlers(mock_db)
 
-        messages, total = await mock_db.search_messages(query="test", limit=20)
+        result = await handlers["search_messages"]({"query": "test", "limit": 20})
 
-        # Should not crash on None text
-        assert len(messages) == 1
-        # The tool logic handles None: (m.text or "")[:300]
-        safe_text = (messages[0].text or "")[:300]
-        assert safe_text == ""
+        text = _text(result)
+        assert "channel_id=100" in text
 
     @pytest.mark.asyncio
-    async def test_search_messages_default_limit(self, mock_db):
-        """Test search_messages uses default limit of 20."""
+    async def test_default_limit(self, mock_db):
+        """Tool applies default limit=20 when not provided."""
         mock_db.search_messages = AsyncMock(return_value=([], 0))
+        handlers = _get_tool_handlers(mock_db)
 
-        await mock_db.search_messages(query="test")
+        await handlers["search_messages"]({"query": "test"})
 
-        # Verify default limit behavior
-        mock_db.search_messages.assert_awaited_once_with(query="test")
+        mock_db.search_messages.assert_awaited_once_with(query="test", limit=20)
 
     @pytest.mark.asyncio
-    async def test_search_messages_custom_limit(self, mock_db):
-        """Test search_messages with custom limit."""
+    async def test_custom_limit(self, mock_db):
         mock_db.search_messages = AsyncMock(return_value=([], 0))
+        handlers = _get_tool_handlers(mock_db)
 
-        await mock_db.search_messages(query="test", limit=50)
+        await handlers["search_messages"]({"query": "test", "limit": 50})
 
         mock_db.search_messages.assert_awaited_once_with(query="test", limit=50)
 
     @pytest.mark.asyncio
-    async def test_search_messages_error_handling(self, mock_db):
-        """Test search_messages handles database errors."""
+    async def test_error_returns_text_not_exception(self, mock_db):
+        """Tool catches DB errors and returns error text (no exception raised)."""
         mock_db.search_messages = AsyncMock(side_effect=Exception("DB connection error"))
+        handlers = _get_tool_handlers(mock_db)
 
-        with pytest.raises(Exception, match="DB connection error"):
-            await mock_db.search_messages(query="test", limit=20)
+        result = await handlers["search_messages"]({"query": "test", "limit": 20})
+
+        text = _text(result)
+        assert "Ошибка поиска сообщений" in text
+        assert "DB connection error" in text
 
 
-class TestGetChannelsLogic:
-    """Tests for get_channels tool logic (DB interaction)."""
+# ---------------------------------------------------------------------------
+# get_channels tool
+# ---------------------------------------------------------------------------
+
+
+class TestGetChannelsTool:
+    """Tests for the get_channels tool handler."""
 
     @pytest.mark.asyncio
-    async def test_get_channels_empty(self, mock_db):
-        """Test get_channels when no channels exist."""
+    async def test_empty(self, mock_db):
         mock_db.get_channels = AsyncMock(return_value=[])
+        handlers = _get_tool_handlers(mock_db)
 
-        channels = await mock_db.get_channels()
+        result = await handlers["get_channels"]({})
 
-        assert channels == []
-        mock_db.get_channels.assert_awaited_once()
+        assert "Каналы не найдены" in _text(result)
 
     @pytest.mark.asyncio
-    async def test_get_channels_with_channels(self, mock_db):
-        """Test get_channels with multiple channels."""
+    async def test_with_channels(self, mock_db):
         mock_channels = [
             SimpleNamespace(
-                channel_id=100,
-                title="Active Channel",
-                username="active_ch",
-                is_active=True,
-                is_filtered=False,
+                channel_id=100, title="Active Channel",
+                username="active_ch", is_active=True, is_filtered=False,
             ),
             SimpleNamespace(
-                channel_id=200,
-                title="Inactive Channel",
-                username="inactive_ch",
-                is_active=False,
-                is_filtered=True,
-            ),
-            SimpleNamespace(
-                channel_id=300,
-                title="Filtered Active",
-                username="filtered_ch",
-                is_active=True,
-                is_filtered=True,
+                channel_id=200, title="Inactive Channel",
+                username="inactive_ch", is_active=False, is_filtered=True,
             ),
         ]
         mock_db.get_channels = AsyncMock(return_value=mock_channels)
+        handlers = _get_tool_handlers(mock_db)
 
-        channels = await mock_db.get_channels()
+        result = await handlers["get_channels"]({})
 
-        assert len(channels) == 3
-        assert channels[0].title == "Active Channel"
-        assert channels[1].is_active is False
-        assert channels[2].is_filtered is True
+        text = _text(result)
+        assert "Доступные каналы (2)" in text
+        assert "@active_ch" in text
+        assert "активен" in text
+        assert "неактивен" in text
+        assert "[отфильтрован]" in text
 
     @pytest.mark.asyncio
-    async def test_get_channels_with_no_username(self, mock_db):
-        """Test get_channels handles channels without username."""
+    async def test_none_username(self, mock_db):
+        """Channel with username=None renders @None (known pre-existing issue)."""
         mock_channels = [
             SimpleNamespace(
-                channel_id=100,
-                title="Private Channel",
-                username=None,
-                is_active=True,
-                is_filtered=False,
+                channel_id=100, title="Private Channel",
+                username=None, is_active=True, is_filtered=False,
             ),
         ]
         mock_db.get_channels = AsyncMock(return_value=mock_channels)
+        handlers = _get_tool_handlers(mock_db)
 
-        channels = await mock_db.get_channels()
+        result = await handlers["get_channels"]({})
 
-        assert len(channels) == 1
-        assert channels[0].username is None
+        text = _text(result)
+        assert "Private Channel" in text
+        # Known issue: renders @None for channels without username
+        assert "@None" in text
 
     @pytest.mark.asyncio
-    async def test_get_channels_error_handling(self, mock_db):
-        """Test get_channels handles database errors."""
+    async def test_error_returns_text_not_exception(self, mock_db):
+        """Tool catches DB errors and returns error text."""
         mock_db.get_channels = AsyncMock(side_effect=Exception("DB query failed"))
+        handlers = _get_tool_handlers(mock_db)
 
-        with pytest.raises(Exception, match="DB query failed"):
-            await mock_db.get_channels()
+        result = await handlers["get_channels"]({})
+
+        text = _text(result)
+        assert "Ошибка получения каналов" in text
+        assert "DB query failed" in text
+
+
+# ---------------------------------------------------------------------------
+# make_mcp_server factory
+# ---------------------------------------------------------------------------
 
 
 class TestMakeMcpServer:
     """Tests for make_mcp_server factory function."""
 
-    def test_creates_server_returns_object(self, mock_db):
-        """Test that make_mcp_server returns a server config object."""
+    def test_creates_server_returns_dict(self, mock_db):
         from src.agent.tools import make_mcp_server
 
         server = make_mcp_server(mock_db)
-        # create_sdk_mcp_server returns some kind of config object
         assert server is not None
+        assert isinstance(server, dict)
+        assert server["name"] == "telegram_db"
 
-    def test_server_is_callable_with_db(self, mock_db):
-        """Test that make_mcp_server can be called with db parameter."""
+    def test_server_has_instance(self, mock_db):
         from src.agent.tools import make_mcp_server
 
-        # Should not raise
         server = make_mcp_server(mock_db)
-        assert server is not None
-
-
-class TestToolMessageFormatting:
-    """Tests for message formatting logic in tools."""
-
-    def test_format_empty_results(self):
-        """Test formatting when no messages found."""
-        query = "nonexistent"
-        messages = []
-        total = 0
-
-        if not messages:
-            text = f"Ничего не найдено по запросу: {query!r}"
-        else:
-            text = f"Found {total}"
-
-        assert "Ничего не найдено" in text
-        assert "nonexistent" in text
-
-    def test_format_with_results(self):
-        """Test formatting when messages are found."""
-        messages = [
-            SimpleNamespace(channel_id=100, text="test", date="2025-01-01"),
-        ]
-        total = 1
-
-        lines = [f"Найдено {total} сообщений для 'test'. Показаны первые {len(messages)}:"]
-        for m in messages:
-            preview = (m.text or "")[:300]
-            lines.append(f"- [channel_id={m.channel_id}, date={m.date}]: {preview}")
-        text = "\n".join(lines)
-
-        assert "Найдено 1 сообщений" in text
-        assert "channel_id=100" in text
-
-    def test_format_channels_list(self):
-        """Test formatting channel list."""
-        channels = [
-            SimpleNamespace(
-                title="Test",
-                username="test_ch",
-                channel_id=100,
-                is_active=True,
-                is_filtered=False,
-            ),
-        ]
-
-        lines = [f"Доступные каналы ({len(channels)}):"]
-        for ch in channels:
-            status = "активен" if ch.is_active else "неактивен"
-            filtered = " [отфильтрован]" if ch.is_filtered else ""
-            lines.append(f"- {ch.title} (@{ch.username}, id={ch.channel_id}, {status}{filtered})")
-        text = "\n".join(lines)
-
-        assert "Доступные каналы (1)" in text
-        assert "@test_ch" in text
-        assert "активен" in text
+        assert "instance" in server

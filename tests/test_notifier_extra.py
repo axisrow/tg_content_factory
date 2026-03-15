@@ -32,7 +32,9 @@ class TestNotifierFastPath:
     """Tests for Notifier fast path with cached me.id and bot."""
 
     @pytest.mark.asyncio
-    async def test_notify_with_cached_me_id_and_bot(self, mock_target_service, mock_notification_bundle):
+    async def test_notify_with_cached_me_id_and_bot(
+        self, mock_target_service, mock_notification_bundle,
+    ):
         """Test fast path when me.id is cached and bot is available."""
         bot = NotificationBot(
             tg_user_id=123,
@@ -221,7 +223,9 @@ class TestNotifierErrorHandling:
     """Tests for Notifier error handling."""
 
     @pytest.mark.asyncio
-    async def test_notify_cancelled_error_propagates(self, mock_target_service, mock_notification_bundle):
+    async def test_notify_cancelled_error_propagates(
+        self, mock_target_service, mock_notification_bundle,
+    ):
         """Test that CancelledError is re-raised, not swallowed."""
         mock_client = MagicMock()
         mock_client.get_me = AsyncMock(side_effect=asyncio.CancelledError)
@@ -241,7 +245,9 @@ class TestNotifierErrorHandling:
             await notifier.notify("Test message")
 
     @pytest.mark.asyncio
-    async def test_notify_general_exception_returns_false(self, mock_target_service, mock_notification_bundle):
+    async def test_notify_general_exception_returns_false(
+        self, mock_target_service, mock_notification_bundle,
+    ):
         """Test that general exceptions are caught and result in False return."""
         mock_client = MagicMock()
         mock_client.get_me = AsyncMock(side_effect=RuntimeError("Connection failed"))
