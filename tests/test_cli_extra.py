@@ -294,48 +294,28 @@ class TestSchedulerCommand:
         assert "No connected accounts" in caplog.text
 
     def test_trigger_success(self, cli_env_with_pool, capsys):
-        """Test scheduler trigger collects channels."""
+        """Test scheduler trigger enqueues channels."""
         cli_env, fake_pool = cli_env_with_pool
         fake_pool.clients = {"+70001112233": AsyncMock()}
 
-        from src.telegram.collector import Collector
+        from src.cli.commands.scheduler import run
 
-        mock_stats = {"collected": 10, "errors": 0}
-
-        with patch.object(
-            Collector, "collect_all_channels", new_callable=AsyncMock, return_value=mock_stats
-        ):
-            from src.cli.commands.scheduler import run
-
-            run(_ns(scheduler_action="trigger"))
+        run(_ns(scheduler_action="trigger"))
 
         out = capsys.readouterr().out
-        assert "collected" in out
+        assert "enqueued" in out.lower()
 
     def test_search_success(self, cli_env_with_pool, capsys):
-        """Test scheduler search triggers notification queries."""
+        """Test scheduler search enqueues notification search task."""
         cli_env, fake_pool = cli_env_with_pool
         fake_pool.clients = {"+70001112233": AsyncMock()}
 
-        from src.scheduler.manager import SchedulerManager
+        from src.cli.commands.scheduler import run
 
-        mock_stats = {"searches": 5, "notified": 2}
-
-        with patch.object(
-            SchedulerManager, "trigger_search_now", new_callable=AsyncMock, return_value=mock_stats
-        ):
-            from src.cli.commands.scheduler import run
-
-            # Patch the SchedulerManager constructor to not require db
-            with patch("src.cli.commands.scheduler.SchedulerManager") as mock_sm_class:
-                mock_sm = MagicMock()
-                mock_sm.trigger_search_now = AsyncMock(return_value=mock_stats)
-                mock_sm_class.return_value = mock_sm
-
-                run(_ns(scheduler_action="search"))
+        run(_ns(scheduler_action="search"))
 
         out = capsys.readouterr().out
-        assert "search" in out.lower() or "complete" in out.lower() or "notified" in out.lower()
+        assert "enqueued" in out.lower() or "search" in out.lower()
 
 
 # ---------------------------------------------------------------------------
@@ -448,23 +428,16 @@ class TestCollectCommand:
         assert "No connected accounts" in caplog.text
 
     def test_collect_success(self, cli_env_with_pool, capsys):
-        """Test collect runs collection."""
+        """Test collect enqueues channels."""
         cli_env, fake_pool = cli_env_with_pool
         fake_pool.clients = {"+70001112233": AsyncMock()}
 
-        from src.telegram.collector import Collector
+        from src.cli.commands.collect import run
 
-        mock_stats = {"collected": 50, "errors": 0}
-
-        with patch.object(
-            Collector, "collect_all_channels", new_callable=AsyncMock, return_value=mock_stats
-        ):
-            from src.cli.commands.collect import run
-
-            run(_ns(channel_id=None, full=False))
+        run(_ns(channel_id=None, full=False))
 
         out = capsys.readouterr().out
-        assert "50" in out or "collected" in out.lower()
+        assert "enqueued" in out.lower()
 
     def test_collect_single_channel(self, cli_env_with_pool, capsys):
         """Test collect for a single channel."""

@@ -676,11 +676,7 @@ class Collector:
         return True
 
     async def _check_notification_queries(self, messages: list[Message]) -> None:
-        """Check messages against active notification queries and send batched notifications.
-
-        Sends one notification per query per collection run with a count and
-        a preview of the first matching message to avoid flooding.
-        """
+        """Check messages against active notification queries and send batched notifications."""
         if not self._notifier:
             return
 
@@ -688,46 +684,10 @@ class Collector:
         if not queries:
             return
 
-        # Collect matches per query: {sq_id: (sq, count, first_preview)}
-        matches: dict[int, tuple[str, int, str]] = {}
-        for msg in messages:
-            if not msg.text:
-                continue
-            for sq in queries:
-                # Apply exclude_patterns and max_length filters first
-                if sq.max_length is not None and len(msg.text) >= sq.max_length:
-                    continue
-                if any(p.lower() in msg.text.lower() for p in sq.exclude_patterns_list):
-                    continue
+        from src.services.notification_matcher import NotificationMatcher
 
-                matched = False
-                if sq.is_regex:
-                    try:
-                        matched = bool(re.search(sq.query, msg.text, re.IGNORECASE))
-                    except re.error:
-                        pass
-                elif sq.is_fts:
-                    matched = self._fts_query_matches(sq.query, msg.text)
-                else:
-                    matched = sq.query.lower() in msg.text.lower()
-
-                if matched:
-                    key = sq.id or id(sq)
-                    if key in matches:
-                        name, count, preview = matches[key]
-                        matches[key] = (name, count + 1, preview)
-                    else:
-                        matches[key] = (sq.query, 1, msg.text[:200])
-
-        for _sq_id, (name, count, preview) in matches.items():
-            if count == 1:
-                await self._notifier.notify(
-                    f"Query '{name}' matched in channel:\n{preview}"
-                )
-            else:
-                await self._notifier.notify(
-                    f"Query '{name}' matched {count} times. First:\n{preview}"
-                )
+        matcher = NotificationMatcher(self._notifier)
+        await matcher.match_and_notify(messages, queries)
 
     async def _channel_still_exists(self, channel_id: int) -> bool:
         return await self._db.get_channel_by_channel_id(channel_id) is not None
