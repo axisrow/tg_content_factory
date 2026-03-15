@@ -111,7 +111,7 @@ class TestAuthFlow:
     async def test_with_auth_returns_200(self, auth_client):
         resp = await auth_client.get("/")
         assert resp.status_code == 200
-        assert resp.url.path == "/agent"
+        assert resp.url.path == "/search"
 
     @pytest.mark.asyncio
     async def test_health_no_auth_returns_200(self, noauth_client):
