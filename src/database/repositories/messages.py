@@ -133,10 +133,10 @@ class MessagesRepository:
             params.append(normalized_date_to)
 
         if min_length is not None:
-            conditions.append("LENGTH(m.text) >= ?")
+            conditions.append("LENGTH(m.text) > ?")
             params.append(min_length)
         if max_length is not None:
-            conditions.append("LENGTH(m.text) <= ?")
+            conditions.append("LENGTH(m.text) < ?")
             params.append(max_length)
 
         channel_join = " LEFT JOIN channels c ON m.channel_id = c.channel_id"
@@ -212,7 +212,7 @@ class MessagesRepository:
         conditions: list[str] = []
         params: list = []
         if sq.max_length is not None:
-            conditions.append("LENGTH(m.text) <= ?")
+            conditions.append("LENGTH(m.text) < ?")
             params.append(sq.max_length)
         for pat in sq.exclude_patterns_list:
             conditions.append("m.text NOT LIKE ?")

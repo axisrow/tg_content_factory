@@ -24,7 +24,7 @@ def _extract_length(q: str) -> tuple[str, int | None, int | None]:
             max_length = val
         else:
             min_length = val
-    cleaned = _LEN_RE.sub("", q).strip()
+    cleaned = re.sub(r"\s+", " ", _LEN_RE.sub("", q)).strip()
     return cleaned, min_length, max_length
 
 
