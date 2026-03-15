@@ -5,14 +5,17 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 
 from src.models import SearchResult
 from src.web import deps
+from src.web.template_globals import _agent_available_for_request
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
 @router.get("/", response_class=HTMLResponse)
-async def root_page():
-    return RedirectResponse(url="/agent", status_code=303)
+async def root_page(request: Request):
+    if _agent_available_for_request(request):
+        return RedirectResponse(url="/agent", status_code=303)
+    return RedirectResponse(url="/search", status_code=303)
 
 
 async def _render_search_page(
