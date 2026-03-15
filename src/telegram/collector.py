@@ -35,6 +35,7 @@ from src.filters.criteria import (
     PRECHECK_CROSS_DUPE_SAMPLE,
 )
 from src.models import Channel, ChannelStats, Message
+from src.services.notification_matcher import NotificationMatcher
 from src.settings_utils import parse_int_setting
 from src.telegram.backends import adapt_transport_session
 from src.telegram.client_pool import ClientPool
@@ -71,6 +72,7 @@ class Collector:
         self._db = db
         self._config = config
         self._notifier = notifier
+        self._notification_matcher = NotificationMatcher(notifier) if notifier else None
         self._running = False
         self._stats_running = False
         self._cancel_event = asyncio.Event()
@@ -676,58 +678,15 @@ class Collector:
         return True
 
     async def _check_notification_queries(self, messages: list[Message]) -> None:
-        """Check messages against active notification queries and send batched notifications.
-
-        Sends one notification per query per collection run with a count and
-        a preview of the first matching message to avoid flooding.
-        """
-        if not self._notifier:
+        """Check messages against active notification queries and send batched notifications."""
+        if not self._notification_matcher:
             return
 
         queries = await self._db.get_notification_queries(active_only=True)
         if not queries:
             return
 
-        # Collect matches per query: {sq_id: (sq, count, first_preview)}
-        matches: dict[int, tuple[str, int, str]] = {}
-        for msg in messages:
-            if not msg.text:
-                continue
-            for sq in queries:
-                # Apply exclude_patterns and max_length filters first
-                if sq.max_length is not None and len(msg.text) >= sq.max_length:
-                    continue
-                if any(p.lower() in msg.text.lower() for p in sq.exclude_patterns_list):
-                    continue
-
-                matched = False
-                if sq.is_regex:
-                    try:
-                        matched = bool(re.search(sq.query, msg.text, re.IGNORECASE))
-                    except re.error:
-                        pass
-                elif sq.is_fts:
-                    matched = self._fts_query_matches(sq.query, msg.text)
-                else:
-                    matched = sq.query.lower() in msg.text.lower()
-
-                if matched:
-                    key = sq.id or id(sq)
-                    if key in matches:
-                        name, count, preview = matches[key]
-                        matches[key] = (name, count + 1, preview)
-                    else:
-                        matches[key] = (sq.query, 1, msg.text[:200])
-
-        for _sq_id, (name, count, preview) in matches.items():
-            if count == 1:
-                await self._notifier.notify(
-                    f"Query '{name}' matched in channel:\n{preview}"
-                )
-            else:
-                await self._notifier.notify(
-                    f"Query '{name}' matched {count} times. First:\n{preview}"
-                )
+        await self._notification_matcher.match_and_notify(messages, queries)
 
     async def _channel_still_exists(self, channel_id: int) -> bool:
         return await self._db.get_channel_by_channel_id(channel_id) is not None

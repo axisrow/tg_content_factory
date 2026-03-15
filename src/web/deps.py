@@ -33,7 +33,8 @@ from src.services.photo_task_service import PhotoTaskService
 from src.services.scheduler_service import SchedulerService
 from src.services.search_query_service import SearchQueryService
 from src.services.search_service import SearchService
-from src.services.stats_task_dispatcher import StatsTaskDispatcher
+from src.services.task_enqueuer import TaskEnqueuer
+from src.services.unified_dispatcher import UnifiedDispatcher
 from src.telegram.auth import TelegramAuth
 from src.telegram.client_pool import ClientPool
 from src.telegram.collector import Collector
@@ -121,7 +122,8 @@ def get_container(request: Request) -> AppContainer:
         photo_auto_upload_service=photo_auto_upload_service,
         collector=_require_app_state_attr(request, "collector"),
         collection_queue=getattr(request.app.state, "collection_queue", None),
-        stats_dispatcher=getattr(request.app.state, "stats_dispatcher", None),
+        task_enqueuer=getattr(request.app.state, "task_enqueuer", None),
+        unified_dispatcher=getattr(request.app.state, "unified_dispatcher", None),
         search_engine=_require_app_state_attr(request, "search_engine"),
         ai_search=_require_app_state_attr(request, "ai_search"),
         scheduler=_require_app_state_attr(request, "scheduler"),
@@ -184,8 +186,12 @@ def get_queue(request: Request) -> CollectionQueue:
     return get_container(request).collection_queue
 
 
-def get_stats_dispatcher(request: Request) -> StatsTaskDispatcher:
-    return get_container(request).stats_dispatcher
+def get_unified_dispatcher(request: Request) -> UnifiedDispatcher:
+    return get_container(request).unified_dispatcher
+
+
+def get_task_enqueuer(request: Request) -> TaskEnqueuer:
+    return get_container(request).task_enqueuer
 
 
 def get_scheduler(request: Request) -> SchedulerManager:

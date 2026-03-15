@@ -5,6 +5,10 @@ import asyncio
 import logging
 
 from src.cli import runtime
+from src.collection_queue import CollectionQueue
+from src.database.bundles import ChannelBundle
+from src.services.collection_service import CollectionService
+from src.services.task_enqueuer import TaskEnqueuer
 from src.telegram.collector import Collector
 
 
@@ -33,8 +37,18 @@ def run(args: argparse.Namespace) -> None:
                 count = await collector.collect_single_channel(channel, full=True)
                 print(f"Collected {count} messages from channel {args.channel_id}")
             else:
-                stats = await collector.collect_all_channels()
-                print(f"Collection complete: {stats}")
+                channel_bundle = ChannelBundle.from_database(db)
+                collection_queue = CollectionQueue(collector, channel_bundle)
+                collection_service = CollectionService(
+                    channel_bundle, collector, collection_queue
+                )
+                task_enqueuer = TaskEnqueuer(db, channel_bundle, collection_service)
+                result = await task_enqueuer.enqueue_all_channels()
+                print(
+                    f"Enqueued {result.queued_count} channels "
+                    f"(skipped {result.skipped_existing_count}, "
+                    f"total {result.total_candidates})"
+                )
         finally:
             await pool.disconnect_all()
             await db.close()
