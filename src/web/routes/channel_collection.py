@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 _COLLECT_ALL_FORM = (
     '<form method="post" action="/channels/collect-all" class="d-inline"'
     ' hx-post="/channels/collect-all" hx-target="#collect-all-btn" hx-swap="outerHTML">'
-    '<button type="submit" class="btn btn-outline-primary btn-sm">Загрузить все</button>'
+    '<button type="submit" class="btn btn-outline-primary btn-sm">Собрать все каналы</button>'
     '</form>'
 )
 
@@ -49,14 +49,17 @@ def _collect_all_result_fragment(result: BulkEnqueueResult) -> str:
     )
 
 
-def _collect_all_redirect_url(result: BulkEnqueueResult) -> str:
+def bulk_enqueue_msg(result: BulkEnqueueResult) -> str:
+    """Map BulkEnqueueResult to a flash-message key."""
     if result.total_candidates == 0:
-        msg = "collect_all_empty"
-    elif result.queued_count > 0:
-        msg = "collect_all_queued"
-    else:
-        msg = "collect_all_noop"
-    return f"/channels?msg={msg}"
+        return "collect_all_empty"
+    if result.queued_count > 0:
+        return "collect_all_queued"
+    return "collect_all_noop"
+
+
+def _collect_all_redirect_url(result: BulkEnqueueResult) -> str:
+    return f"/channels?msg={bulk_enqueue_msg(result)}"
 
 
 @router.post("/collect-all")

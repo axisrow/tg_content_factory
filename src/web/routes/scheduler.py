@@ -1,7 +1,9 @@
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
+from src.telegram.notifier import Notifier
 from src.web import deps
+from src.web.routes.channel_collection import bulk_enqueue_msg
 
 router = APIRouter()
 
@@ -57,6 +59,14 @@ async def scheduler_page(
     has_active_tasks = active_count > 0
 
     search_log = await db.get_recent_searches()
+    notifier = deps.get_notifier(request)
+    try:
+        bot = await deps.notification_service(request).get_status()
+    except Exception:
+        bot = None
+    bot_configured = (
+        (notifier is not None and notifier.admin_chat_id is not None) or bot is not None
+    )
     return deps.get_templates(request).TemplateResponse(
         request,
         "scheduler.html",
@@ -80,6 +90,7 @@ async def scheduler_page(
             "status_filter": status_filter,
             "limit": limit,
             "search_log": search_log,
+            "bot_configured": bot_configured,
         },
     )
 
@@ -102,11 +113,43 @@ async def stop_scheduler(request: Request):
 async def trigger_collection(request: Request):
     if getattr(request.app.state, "shutting_down", False):
         return RedirectResponse(url="/scheduler?error=shutting_down", status_code=303)
-    collector = deps.get_collector(request)
-    if collector.is_running:
-        return RedirectResponse(url="/scheduler?msg=already_running", status_code=303)
-    await deps.scheduler_service(request).trigger_collection()
-    return RedirectResponse(url="/scheduler?msg=triggered", status_code=303)
+    service = deps.collection_service(request)
+    result = await service.enqueue_all_channels()
+    msg = bulk_enqueue_msg(result)
+    return RedirectResponse(url=f"/scheduler?msg={msg}", status_code=303)
+
+
+@router.post("/test-notification")
+async def test_notification(request: Request):
+    if getattr(request.app.state, "shutting_down", False):
+        return RedirectResponse(url="/scheduler?error=shutting_down", status_code=303)
+
+    notifier = deps.get_notifier(request)
+    admin_chat_id = notifier.admin_chat_id if notifier else None
+    try:
+        bot = await deps.notification_service(request).get_status()
+    except Exception:
+        bot = None
+    if not admin_chat_id and bot:
+        admin_chat_id = bot.tg_user_id
+    if not admin_chat_id and not bot:
+        return RedirectResponse(url="/scheduler?error=bot_not_configured", status_code=303)
+
+    db = deps.get_db(request)
+    queries = await db.get_notification_queries(active_only=True)
+    text = "🔔 Тест уведомлений: соединение установлено"
+    if queries:
+        q = queries[0]
+        messages, _ = await db.search_messages(query=q.query, limit=1)
+        if messages:
+            preview = (messages[0].text or "")[:200]
+            text = f"🔔 Тест: Query '{q.query}' matched in channel:\n{preview}"
+
+    target_svc = deps.get_notification_target_service(request)
+    test_notifier = Notifier(target_svc, admin_chat_id, deps.get_notification_bundle(request))
+    ok = await test_notifier.notify(text)
+    msg = "test_notification_sent" if ok else "test_notification_failed"
+    return RedirectResponse(url=f"/scheduler?msg={msg}", status_code=303)
 
 
 @router.post("/trigger-search")
