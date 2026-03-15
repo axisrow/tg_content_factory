@@ -182,6 +182,17 @@
             a.classList.add("active");
         }
     });
+    // Unified busy-button handler: add data-busy to any <form> for auto spinner
+    document.addEventListener('submit', function(e) {
+        if (e.defaultPrevented) return;
+        var form = e.target;
+        if (!form.hasAttribute('data-busy')) return;
+        var btn = e.submitter || form.querySelector('button[type="submit"]');
+        if (!btn || btn.disabled) return;
+        btn.disabled = true;
+        var label = btn.getAttribute('data-busy-label') || btn.textContent.trim();
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> ' + label;
+    });
 })();
 </script>
 </body>

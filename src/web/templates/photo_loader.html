@@ -52,7 +52,7 @@
                 {% endfor %}
             </select>
         </form>
-        <form method="post" action="/my-telegram/photos/refresh" class="col-md-auto">
+        <form method="post" action="/my-telegram/photos/refresh" class="col-md-auto" data-busy>
             <input type="hidden" name="phone" value="{{ selected_phone or '' }}">
             <button class="btn btn-outline-secondary" type="submit" {% if not selected_phone %}disabled{% endif %}>Обновить диалоги</button>
         </form>
@@ -278,7 +278,7 @@
                         <textarea name="caption" class="form-control" rows="2"></textarea>
                     </div>
                     <div class="col-12">
-                        <button class="btn btn-outline-dark" type="submit" data-photo-submit-button data-busy-label="Создаём авто-джоб..." disabled>Создать авто-джоб</button>
+                        <button class="btn btn-outline-secondary" type="submit" data-photo-submit-button data-busy-label="Создаём авто-джоб..." disabled>Создать авто-джоб</button>
                         <div class="photo-submit-status d-none" data-photo-submit-status aria-live="polite"></div>
                     </div>
                 </form>
@@ -287,7 +287,7 @@
     </div>
 
     <div class="col-12">
-        <form method="post" action="/my-telegram/photos/run-due">
+        <form method="post" action="/my-telegram/photos/run-due" data-busy>
             <input type="hidden" name="phone" value="{{ selected_phone }}">
             <button class="btn btn-sm btn-secondary" type="submit">Запустить due photo tasks сейчас</button>
         </form>
@@ -340,11 +340,11 @@
                             <td>{{ "active" if job.is_active else "paused" }}</td>
                             <td>{{ job.last_run_at or "—" }}</td>
                             <td class="d-flex gap-2">
-                                <form method="post" action="/my-telegram/photos/auto/{{ job.id }}/toggle">
+                                <form method="post" action="/my-telegram/photos/auto/{{ job.id }}/toggle" data-busy>
                                     <input type="hidden" name="phone" value="{{ selected_phone }}">
-                                    <button class="btn btn-sm btn-outline-primary" type="submit">Toggle</button>
+                                    <button class="btn btn-sm btn-outline-secondary" type="submit">Toggle</button>
                                 </form>
-                                <form method="post" action="/my-telegram/photos/auto/{{ job.id }}/delete">
+                                <form method="post" action="/my-telegram/photos/auto/{{ job.id }}/delete" data-busy>
                                     <input type="hidden" name="phone" value="{{ selected_phone }}">
                                     <button class="btn btn-sm btn-outline-danger" type="submit">Delete</button>
                                 </form>
