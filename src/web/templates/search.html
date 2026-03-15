@@ -29,18 +29,6 @@
             <label for="date-to" class="form-label">Дата до</label>
             <input type="date" class="form-control" name="date_to" id="date-to" value="{{ date_to }}">
         </div>
-        <div class="col-12 col-sm-6 col-md-3">
-            <label class="form-label">Длина сообщения</label>
-            <div class="input-group">
-                <select name="msg_length_op" id="msg-length-op" class="form-select" style="max-width: 5rem;">
-                    <option value="">Выкл</option>
-                    <option value="gt" {{ 'selected' if msg_length_op == 'gt' else '' }}>&gt;</option>
-                    <option value="lt" {{ 'selected' if msg_length_op == 'lt' else '' }}>&lt;</option>
-                </select>
-                <input type="number" class="form-control" name="msg_length_val" id="msg-length-val"
-                       min="1" placeholder="символов" value="{{ msg_length_val or '' }}">
-            </div>
-        </div>
     </div>
 
     <div class="d-flex align-items-center gap-3 flex-wrap mb-3">
@@ -73,7 +61,7 @@
         {% endif %}
         <div class="form-check form-check-inline" id="fts-label" title="Полнотекстовый поиск FTS5 (поддерживает операторы AND, OR, NOT, фразы в кавычках)">
             <input class="form-check-input" type="checkbox" name="is_fts" value="1" id="fts-checkbox" {{ 'checked' if is_fts else '' }}>
-            <label class="form-check-label" for="fts-checkbox">FTS5 <span class="hint" data-tooltip="Полнотекстовый поиск с поддержкой операторов: OR, AND, NOT, префикс*, «точная фраза»">?</span></label>
+            <label class="form-check-label" for="fts-checkbox">FTS5 <span class="hint" data-tooltip="Полнотекстовый поиск с поддержкой операторов: OR, AND, NOT, префикс*, «точная фраза», len&lt;400, len&gt;100">?</span></label>
         </div>
         <button type="submit" class="btn btn-primary ms-auto">Найти</button>
     </div>
@@ -148,11 +136,11 @@
 <nav>
     <ul class="pagination justify-content-center">
         {% if page > 1 %}
-        <li class="page-item"><a class="page-link" href="/search?q={{ q|urlencode }}&channel_id={{ channel_id or '' }}&date_from={{ date_from }}&date_to={{ date_to }}&mode={{ mode }}&is_fts={{ 1 if is_fts else 0 }}&msg_length_op={{ msg_length_op }}{% if msg_length_val %}&msg_length_val={{ msg_length_val }}{% endif %}&page={{ page - 1 }}">Назад</a></li>
+        <li class="page-item"><a class="page-link" href="/search?q={{ q|urlencode }}&channel_id={{ channel_id or '' }}&date_from={{ date_from }}&date_to={{ date_to }}&mode={{ mode }}&is_fts={{ 1 if is_fts else 0 }}&page={{ page - 1 }}">Назад</a></li>
         {% endif %}
         <li class="page-item disabled"><span class="page-link">Страница {{ page }} из {{ total_pages }}</span></li>
         {% if page < total_pages %}
-        <li class="page-item"><a class="page-link" href="/search?q={{ q|urlencode }}&channel_id={{ channel_id or '' }}&date_from={{ date_from }}&date_to={{ date_to }}&mode={{ mode }}&is_fts={{ 1 if is_fts else 0 }}&msg_length_op={{ msg_length_op }}{% if msg_length_val %}&msg_length_val={{ msg_length_val }}{% endif %}&page={{ page + 1 }}">Далее</a></li>
+        <li class="page-item"><a class="page-link" href="/search?q={{ q|urlencode }}&channel_id={{ channel_id or '' }}&date_from={{ date_from }}&date_to={{ date_to }}&mode={{ mode }}&is_fts={{ 1 if is_fts else 0 }}&page={{ page + 1 }}">Далее</a></li>
         {% endif %}
     </ul>
 </nav>
@@ -172,8 +160,6 @@
     var dateTo = document.getElementById('date-to');
     var ftsLabel = document.getElementById('fts-label');
     var ftsCheckbox = document.getElementById('fts-checkbox');
-    var msgLengthOp = document.getElementById('msg-length-op');
-    var msgLengthVal = document.getElementById('msg-length-val');
 
     function updateState() {
         var mode = document.querySelector('input[name="mode"]:checked').value;
@@ -183,8 +169,6 @@
         dateTo.disabled = !isLocal;
         ftsLabel.style.display = isLocal ? '' : 'none';
         ftsCheckbox.disabled = !isLocal;
-        msgLengthOp.disabled = !isLocal;
-        msgLengthVal.disabled = !isLocal;
     }
 
     radios.forEach(function(r) {
