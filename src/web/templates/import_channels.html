@@ -6,7 +6,7 @@
 
 <div class="card mb-4">
     <div class="card-body">
-        <form method="post" action="/channels/import" enctype="multipart/form-data">
+        <form method="post" action="/channels/import" enctype="multipart/form-data" data-busy>
             <div class="mb-3">
                 <label class="form-label">Файл (любой формат)</label>
                 <input type="file" class="form-control" name="file">
@@ -16,18 +16,11 @@
                 <textarea class="form-control" name="text_input" rows="6" placeholder="@channel1&#10;t.me/channel2&#10;-1001234567890&#10;https://t.me/+invite_hash"></textarea>
                 <div class="form-text">Загрузите файл любого формата — парсер автоматически найдёт все Telegram-идентификаторы (<code>@username</code>, <code>t.me/...</code>, числовой ID).</div>
             </div>
-            <button type="submit" class="btn btn-primary" id="import-btn">Импортировать</button>
+            <button type="submit" class="btn btn-primary" id="import-btn" data-busy-label="Импорт выполняется...">Импортировать</button>
         </form>
     </div>
 </div>
 
-<script>
-document.querySelector('form[action$="/import"]').addEventListener('submit', function() {
-    var btn = document.getElementById('import-btn');
-    btn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status"></span> Импорт выполняется…';
-    btn.disabled = true;
-});
-</script>
 
 {% if results is not none %}
 <div class="card">

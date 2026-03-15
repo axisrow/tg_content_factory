@@ -113,7 +113,7 @@
             </ol>
         </details>
 
-        <form method="post" action="/settings/save-credentials" class="mt-3">
+        <form method="post" action="/settings/save-credentials" class="mt-3" data-busy>
             <div class="row g-3 mb-3">
                 <div class="col-12 col-md-6">
                     <label for="api_id" class="form-label">API ID</label>
@@ -139,7 +139,7 @@
 <div class="card mb-4">
     <div class="card-header fw-semibold">Планировщик</div>
     <div class="card-body">
-        <form method="post" action="/settings/save-scheduler">
+        <form method="post" action="/settings/save-scheduler" data-busy>
             <div class="mb-3">
                 <label for="collect_interval_minutes" class="form-label">Интервал сбора сообщений (минуты)</label>
                 <input type="number" class="form-control" id="collect_interval_minutes" name="collect_interval_minutes"
@@ -154,7 +154,7 @@
 <div class="card mb-4">
     <div class="card-header fw-semibold">Режим разработчика</div>
     <div class="card-body">
-        <form method="post" action="/settings/save-agent">
+        <form method="post" action="/settings/save-agent" data-busy>
             <input type="hidden" name="agent_form_scope" value="dev_mode">
             <div class="form-check form-switch mb-3">
                 <input class="form-check-input" type="checkbox" id="agent_dev_mode_enabled"
@@ -184,7 +184,7 @@
 <div class="card mb-4">
     <div class="card-header fw-semibold">AI Agent</div>
     <div class="card-body">
-        <form method="post" action="/settings/save-agent">
+        <form method="post" action="/settings/save-agent" data-busy>
             <input type="hidden" name="agent_form_scope" value="backend_override">
             <div class="mb-3">
                 <label for="agent_backend_override" class="form-label">Backend override</label>
@@ -222,7 +222,7 @@
                         {% if not agent_provider_writes_enabled %}disabled{% endif %}>
                     Обновить модели у всех
                 </button>
-                <button type="button" class="btn btn-outline-primary btn-sm"
+                <button type="button" class="btn btn-outline-secondary btn-sm"
                         id="bulk-test-agent-providers-btn"
                         onclick="bulkTestAgentProviders()"
                         {% if not agent_provider_writes_enabled %}disabled{% endif %}>
@@ -238,7 +238,7 @@
         </div>
         {% endif %}
 
-        <form method="post" action="/settings/agent-providers/add" class="row g-2 align-items-end mb-4">
+        <form method="post" action="/settings/agent-providers/add" class="row g-2 align-items-end mb-4" data-busy>
             <div class="col-12 col-md-6">
                 <label for="deepagents_provider_add" class="form-label">Добавить провайдера</label>
                 <select id="deepagents_provider_add" name="provider" class="form-select" {% if not agent_provider_writes_enabled %}disabled{% endif %}>
@@ -254,7 +254,7 @@
         </form>
 
         {% if agent_provider_views %}
-        <form method="post" action="/settings/agent-providers/save">
+        <form method="post" action="/settings/agent-providers/save" data-busy>
             {% for item in agent_provider_views %}
             <div class="border rounded p-3 mb-3" data-provider-card="{{ item.provider }}">
                 <input type="hidden" name="provider_present__{{ item.provider }}" value="1">
@@ -388,7 +388,7 @@
 <div class="card mb-4">
     <div class="card-header fw-semibold">Фильтры каналов</div>
     <div class="card-body">
-        <form method="post" action="/settings/save-filters">
+        <form method="post" action="/settings/save-filters" data-busy>
             <div class="mb-3">
                 <label for="min_subscribers_filter" class="form-label">Минимальное количество подписчиков</label>
                 <input type="number" class="form-control" id="min_subscribers_filter" name="min_subscribers_filter"
@@ -404,7 +404,7 @@
 <div class="card mb-4">
     <div class="card-header fw-semibold">Уведомления</div>
     <div class="card-body">
-        <form method="post" action="/settings/save-notification-account" class="mb-3">
+        <form method="post" action="/settings/save-notification-account" class="mb-3" data-busy>
             <div class="mb-3">
                 <label for="notification_account_phone" class="form-label">Аккаунт для уведомлений</label>
                 <select id="notification_account_phone" name="notification_account_phone" class="form-select" class="w-auto">
@@ -434,19 +434,19 @@
             Notification bot: <code>@{{ notification_bot.bot_username }}</code>
             {% if notification_bot.bot_id %}(ID {{ notification_bot.bot_id }}){% endif %}
         </p>
-        <form method="post" action="/settings/notifications/delete" class="d-inline">
+        <form method="post" action="/settings/notifications/delete" class="d-inline" data-busy>
             <button type="submit" class="btn btn-outline-danger">Удалить notification bot</button>
         </form>
         {% if notification_target.state == "available" %}
-        <form method="post" action="/settings/notifications/test" class="d-inline">
-            <button type="submit" class="btn btn-outline-primary">Тест</button>
+        <form method="post" action="/settings/notifications/test" class="d-inline" data-busy>
+            <button type="submit" class="btn btn-outline-secondary">Тест</button>
         </form>
         {% endif %}
         {% elif notification_bot_error %}
         <p><small class="text-muted">{{ notification_bot_error }}</small></p>
         {% else %}
         <p>Для выбранного аккаунта notification bot ещё не настроен.</p>
-        <form method="post" action="/settings/notifications/setup" class="d-inline">
+        <form method="post" action="/settings/notifications/setup" class="d-inline" data-busy>
             <button type="submit" class="btn btn-outline-primary">Создать notification bot</button>
         </form>
         {% endif %}
