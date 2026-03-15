@@ -72,17 +72,19 @@ class Collector:
         self._notifier = notifier
         self._running = False
         self._stats_running = False
+        self._stats_all_running = False
         self._cancel_event = asyncio.Event()
         self._lock = asyncio.Lock()
         self._stats_lock = asyncio.Lock()
+        self._stats_all_lock = asyncio.Lock()
 
     @property
     def is_running(self) -> bool:
-        return self._running or self._stats_running
+        return self._running or self._stats_running or self._stats_all_running
 
     @property
     def is_stats_running(self) -> bool:
-        return self._stats_running
+        return self._stats_running or self._stats_all_running
 
     @property
     def delay_between_channels_sec(self) -> int:
@@ -782,8 +784,8 @@ class Collector:
                 await self._pool.release_client(phone)
 
     async def collect_all_stats(self) -> dict:
-        async with self._stats_lock:
-            self._stats_running = True
+        async with self._stats_all_lock:
+            self._stats_all_running = True
             try:
                 channels = await self._db.get_channels(
                     active_only=True, include_filtered=False
@@ -792,7 +794,8 @@ class Collector:
                 for idx, channel in enumerate(channels):
                     while True:
                         try:
-                            await self._collect_channel_stats(channel)
+                            async with self._stats_lock:
+                                await self._collect_channel_stats(channel)
                             stats["channels"] += 1
                             break
                         except AllStatsClientsFloodedError as e:
@@ -804,18 +807,22 @@ class Collector:
                             )
                             await asyncio.sleep(e.retry_after_sec)
                         except NoActiveStatsClientsError:
-                            logger.error("No active connected clients for stats collection")
+                            logger.error(
+                                "No active connected clients for stats collection"
+                            )
                             stats["errors"] += len(channels) - idx
                             return stats
                         except Exception as e:
-                            logger.error("Stats error for %s: %s", channel.channel_id, e)
+                            logger.error(
+                                "Stats error for %s: %s", channel.channel_id, e
+                            )
                             stats["errors"] += 1
                             break
                     if idx < len(channels) - 1:
                         await asyncio.sleep(self._config.delay_between_channels_sec)
                 return stats
             finally:
-                self._stats_running = False
+                self._stats_all_running = False
 
     @staticmethod
     def _get_sender_name(msg) -> str | None:
