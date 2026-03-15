@@ -61,6 +61,8 @@ class Notifier:
                 target = self._admin_chat_id or "me"
                 await asyncio.wait_for(client.send_message(target, text), timeout=30.0)
             return True
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
             logger.error("Failed to send notification: %s", e)
             return False
@@ -80,6 +82,8 @@ async def _send_via_bot_api(token: str, chat_id: int, text: str) -> bool:
                     logger.error("Bot API error: %s", data)
                     return False
         return True
+    except asyncio.CancelledError:
+        raise
     except Exception as e:
         logger.error("Bot API call failed: %s", e)
         return False
