@@ -117,7 +117,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
 
         if request.headers.get("HX-Request") == "true":
             return HTMLResponse(
-                '<div class="alert alert-danger">Internal error — check /debug/</div>',
+                '<div class="alert alert-danger">Внутренняя ошибка — см. /debug/</div>',
                 status_code=500,
             )
 
