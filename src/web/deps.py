@@ -30,7 +30,6 @@ from src.services.notification_target_service import NotificationTargetService
 from src.services.photo_auto_upload_service import PhotoAutoUploadService
 from src.services.photo_publish_service import PhotoPublishService
 from src.services.photo_task_service import PhotoTaskService
-from src.services.scheduler_service import SchedulerService
 from src.services.search_query_service import SearchQueryService
 from src.services.search_service import SearchService
 from src.services.task_enqueuer import TaskEnqueuer
@@ -303,7 +302,5 @@ def search_query_service(request: Request) -> SearchQueryService:
     )
 
 
-def scheduler_service(request: Request) -> SchedulerService:
-    return _request_cached(
-        request, "_scheduler_service", lambda: SchedulerService(get_scheduler(request))
-    )
+def scheduler_service(request: Request) -> SchedulerManager:
+    return get_scheduler(request)

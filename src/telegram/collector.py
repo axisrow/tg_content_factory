@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import re
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 
@@ -35,7 +34,6 @@ from src.filters.criteria import (
     PRECHECK_CROSS_DUPE_SAMPLE,
 )
 from src.models import Channel, ChannelStats, Message
-from src.services.notification_matcher import NotificationMatcher
 from src.settings_utils import parse_int_setting
 from src.telegram.backends import adapt_transport_session
 from src.telegram.client_pool import ClientPool
@@ -72,7 +70,6 @@ class Collector:
         self._db = db
         self._config = config
         self._notifier = notifier
-        self._notification_matcher = NotificationMatcher(notifier) if notifier else None
         self._running = False
         self._stats_running = False
         self._cancel_event = asyncio.Event()
@@ -657,36 +654,19 @@ class Collector:
                 prefixes.append(msg.text[:100])
         return prefixes
 
-    @staticmethod
-    def _fts_query_matches(query_str: str, text: str) -> bool:
-        """Check if text matches an FTS5-style boolean query (local approximation).
-
-        Supports (A OR B) AND (C OR D) syntax as conjunction of disjunctions.
-        Falls back to simple substring check for plain queries.
-        """
-        text_lower = text.lower()
-        # Strip outer whitespace
-        q = query_str.strip()
-        # Split by AND (top-level conjunction)
-        parts = re.split(r"\bAND\b", q, flags=re.IGNORECASE)
-        for part in parts:
-            part = part.strip().strip("()")
-            # Split by OR (disjunction within each part)
-            alternatives = re.split(r"\bOR\b", part, flags=re.IGNORECASE)
-            if not any(alt.strip().strip('"').lower() in text_lower for alt in alternatives):
-                return False
-        return True
-
     async def _check_notification_queries(self, messages: list[Message]) -> None:
         """Check messages against active notification queries and send batched notifications."""
-        if not self._notification_matcher:
+        if not self._notifier:
             return
 
         queries = await self._db.get_notification_queries(active_only=True)
         if not queries:
             return
 
-        await self._notification_matcher.match_and_notify(messages, queries)
+        from src.services.notification_matcher import NotificationMatcher
+
+        matcher = NotificationMatcher(self._notifier)
+        await matcher.match_and_notify(messages, queries)
 
     async def _channel_still_exists(self, channel_id: int) -> bool:
         return await self._db.get_channel_by_channel_id(channel_id) is not None

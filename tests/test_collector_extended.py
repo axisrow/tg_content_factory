@@ -134,10 +134,12 @@ async def test_notification_queries_logic(collector, mock_db):
     notifier.notify.assert_called_once()
 
 @pytest.mark.asyncio
-async def test_fts_query_matches_logic(collector):
-    assert collector._fts_query_matches("(apple OR orange) AND fruit", "I love apple fruit")
-    assert not collector._fts_query_matches("(apple OR orange) AND fruit", "I love apple juice")
-    assert collector._fts_query_matches("simple", "Simple query test")
+async def test_fts_query_matches_logic():
+    from src.services.notification_matcher import _fts_query_matches
+
+    assert _fts_query_matches("(apple OR orange) AND fruit", "I love apple fruit")
+    assert not _fts_query_matches("(apple OR orange) AND fruit", "I love apple juice")
+    assert _fts_query_matches("simple", "Simple query test")
 
 @pytest.mark.asyncio
 async def test_collect_channel_stats_flooded_error(collector, mock_pool):

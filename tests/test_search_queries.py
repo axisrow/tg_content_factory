@@ -229,19 +229,19 @@ async def test_max_length_filter(bundle, db):
 
 @pytest.mark.asyncio
 async def test_fts_collector_matching():
-    """Test the _fts_query_matches static method."""
-    from src.telegram.collector import Collector
+    """Test the _fts_query_matches function."""
+    from src.services.notification_matcher import _fts_query_matches
 
-    assert Collector._fts_query_matches(
+    assert _fts_query_matches(
         "(байк OR мотобайк) AND (аренда OR снять)",
         "хочу снять байк на неделю",
     )
-    assert not Collector._fts_query_matches(
+    assert not _fts_query_matches(
         "(байк OR мотобайк) AND (аренда OR снять)",
         "продажа байка",
     )
-    assert Collector._fts_query_matches("аренда квартир", "аренда квартир в центре")
-    assert not Collector._fts_query_matches("аренда квартир", "продажа домов")
+    assert _fts_query_matches("аренда квартир", "аренда квартир в центре")
+    assert not _fts_query_matches("аренда квартир", "продажа домов")
 
 
 @pytest.mark.asyncio

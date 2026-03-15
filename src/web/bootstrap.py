@@ -132,11 +132,13 @@ async def build_container_with_templates(
     from src.services.collection_service import CollectionService
 
     collection_service = CollectionService(channel_bundle, collector, collection_queue)
-    task_enqueuer = TaskEnqueuer(db, channel_bundle, collection_service)
+    task_enqueuer = TaskEnqueuer(db, collection_service)
     notification_matcher = NotificationMatcher(notifier)
     unified_dispatcher = UnifiedDispatcher(
         collector,
-        db,
+        channel_bundle,
+        repos.tasks,
+        notification_query_fn=repos.search_queries.get_notification_queries,
         search_engine=search_engine,
         notification_matcher=notification_matcher,
         sq_bundle=search_query_bundle,

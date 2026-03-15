@@ -14,7 +14,7 @@ from src.models import (
     StatsAllTaskPayload,
 )
 
-_ALLOWED_PAYLOAD_KEYS = frozenset({"sq_id"})
+_ALLOWED_PAYLOAD_FILTER_KEYS = frozenset({"sq_id"})
 
 
 class CollectionTasksRepository:
@@ -146,7 +146,6 @@ class CollectionTasksRepository:
         messages_collected: int | None = None,
         error: str | None = None,
         note: str | None = None,
-        payload: dict[str, Any] | StatsAllTaskPayload | SqStatsTaskPayload | None = None,
     ) -> None:
         status_value = status.value if isinstance(status, CollectionTaskStatus) else status
         now = datetime.now(tz=timezone.utc).isoformat()
@@ -168,9 +167,6 @@ class CollectionTasksRepository:
         if note is not None:
             sets.append("note = ?")
             params.append(note)
-        if payload is not None:
-            sets.append("payload = ?")
-            params.append(self._serialize_payload(payload))
         params.append(task_id)
         await self._db.execute(
             f"UPDATE collection_tasks SET {', '.join(sets)} WHERE id = ?",
@@ -289,49 +285,6 @@ class CollectionTasksRepository:
             return None
         return self._to_task(row)
 
-    async def claim_next_due_stats_task(self, now: datetime) -> CollectionTask | None:
-        now_iso = now.astimezone(timezone.utc).isoformat()
-        try:
-            await self._db.execute("BEGIN IMMEDIATE")
-            cur = await self._db.execute(
-                "SELECT id FROM collection_tasks "
-                "WHERE task_type = ? "
-                "AND status = ? "
-                "AND (run_after IS NULL OR run_after <= ?) "
-                "ORDER BY COALESCE(run_after, ''), id ASC LIMIT 1",
-                (
-                    CollectionTaskType.STATS_ALL.value,
-                    CollectionTaskStatus.PENDING.value,
-                    now_iso,
-                ),
-            )
-            row = await cur.fetchone()
-            if row is None:
-                await self._db.commit()
-                return None
-            selected_id = row["id"]
-            updated = await self._db.execute(
-                "UPDATE collection_tasks "
-                "SET status = 'running', started_at = ?, completed_at = NULL "
-                "WHERE id = ? AND status = ?",
-                (now_iso, selected_id, CollectionTaskStatus.PENDING.value),
-            )
-            if (updated.rowcount or 0) == 0:
-                await self._db.commit()
-                return None
-            cur = await self._db.execute(
-                "SELECT * FROM collection_tasks WHERE id = ?",
-                (selected_id,),
-            )
-            claimed = await cur.fetchone()
-            await self._db.commit()
-            if claimed is None:
-                return None
-            return self._to_task(claimed)
-        except Exception:
-            await self._db.rollback()
-            raise
-
     async def create_stats_continuation_task(
         self,
         *,
@@ -367,21 +320,6 @@ class CollectionTasksRepository:
             (
                 now,
                 CollectionTaskType.CHANNEL_COLLECT.value,
-                CollectionTaskStatus.RUNNING.value,
-            ),
-        )
-        await self._db.commit()
-        return cur.rowcount or 0
-
-    async def requeue_running_stats_tasks_on_startup(self, now: datetime) -> int:
-        now_iso = now.astimezone(timezone.utc).isoformat()
-        cur = await self._db.execute(
-            "UPDATE collection_tasks "
-            "SET status = 'pending', started_at = NULL, run_after = COALESCE(run_after, ?) "
-            "WHERE task_type = ? AND status = ?",
-            (
-                now_iso,
-                CollectionTaskType.STATS_ALL.value,
                 CollectionTaskStatus.RUNNING.value,
             ),
         )
@@ -497,7 +435,7 @@ class CollectionTasksRepository:
             CollectionTaskStatus.RUNNING.value,
         ]
         if payload_filter_key is not None and payload_filter_value is not None:
-            if payload_filter_key not in _ALLOWED_PAYLOAD_KEYS:
+            if payload_filter_key not in _ALLOWED_PAYLOAD_FILTER_KEYS:
                 raise ValueError(f"Invalid payload filter key: {payload_filter_key!r}")
             sql += f" AND json_extract(payload, '$.{payload_filter_key}') = ?"
             params.append(payload_filter_value)

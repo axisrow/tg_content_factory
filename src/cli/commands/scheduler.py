@@ -5,10 +5,8 @@ import asyncio
 import logging
 
 from src.cli import runtime
-from src.collection_queue import CollectionQueue
 from src.database.bundles import ChannelBundle
 from src.scheduler.manager import SchedulerManager
-from src.search.engine import SearchEngine
 from src.services.collection_service import CollectionService
 from src.services.task_enqueuer import TaskEnqueuer
 from src.telegram.collector import Collector
@@ -25,18 +23,16 @@ def run(args: argparse.Namespace) -> None:
                 return
 
             collector = Collector(pool, db, config.scheduler)
-            search_engine = SearchEngine(db, pool)
             channel_bundle = ChannelBundle.from_database(db)
-            collection_queue = CollectionQueue(collector, channel_bundle)
-            collection_service = CollectionService(channel_bundle, collector, collection_queue)
-            task_enqueuer = TaskEnqueuer(db, channel_bundle, collection_service)
+            collection_service = CollectionService(
+                channel_bundle, collector, collection_queue=None
+            )
+            task_enqueuer = TaskEnqueuer(db, collection_service)
 
             if args.scheduler_action == "start":
                 manager = SchedulerManager(
                     config.scheduler,
                     task_enqueuer=task_enqueuer,
-                    search_engine=search_engine,
-                    db=db,
                 )
                 await manager.start()
                 print(
@@ -54,12 +50,16 @@ def run(args: argparse.Namespace) -> None:
                 print(
                     f"Enqueued {result.queued_count} channels "
                     f"(skipped {result.skipped_existing_count}, "
-                    f"total {result.total_candidates})"
+                    f"total {result.total_candidates}). "
+                    f"Run 'serve' to execute tasks."
                 )
             elif args.scheduler_action == "search":
                 task_id = await task_enqueuer.enqueue_notification_search()
                 if task_id:
-                    print(f"Enqueued notification search task #{task_id}")
+                    print(
+                        f"Enqueued notification search task #{task_id}. "
+                        f"Run 'serve' to execute tasks."
+                    )
                 else:
                     print("Notification search task already active")
         finally:
