@@ -184,6 +184,7 @@
     });
     // Unified busy-button handler: add data-busy to any <form> for auto spinner
     document.addEventListener('submit', function(e) {
+        if (e.defaultPrevented) return;
         var form = e.target;
         if (!form.hasAttribute('data-busy')) return;
         var btn = e.submitter || form.querySelector('button[type="submit"]');
