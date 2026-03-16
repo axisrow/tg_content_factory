@@ -84,6 +84,7 @@ def build_parser() -> argparse.ArgumentParser:
         "hard-delete", help="Hard-delete filtered channels from DB (dev/testing)",
     )
     flt_hard.add_argument("--pks", default=None, help="Comma-separated PKs (default: all)")
+    flt_hard.add_argument("--yes", action="store_true", help="Skip confirmation prompt")
 
     sq_parser = sub.add_parser("search-query", help="Search query management")
     sq_sub = sq_parser.add_subparsers(dest="search_query_action")
