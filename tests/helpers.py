@@ -279,7 +279,25 @@ class FakeClientPool(MagicMock):
         return ClientPool._classify_entity(entity)
 
 
-def make_mock_message(msg_id, text=None, media=None, sender_id=None, *, date=None):
+def make_mock_reactions(items: list[tuple[str, int]]) -> SimpleNamespace:
+    """Create a mock MessageReactions object.
+
+    Args:
+        items: list of (emoji_or_custom_id, count) tuples.
+            Plain strings are treated as emoticons;
+            integers are treated as custom emoji document_ids.
+    """
+    results = []
+    for emoji, count in items:
+        if isinstance(emoji, int):
+            reaction = SimpleNamespace(emoticon=None, document_id=emoji)
+        else:
+            reaction = SimpleNamespace(emoticon=emoji)
+        results.append(SimpleNamespace(reaction=reaction, count=count))
+    return SimpleNamespace(results=results)
+
+
+def make_mock_message(msg_id, text=None, media=None, sender_id=None, *, date=None, reactions=None):
     return SimpleNamespace(
         id=msg_id,
         text=text,
@@ -287,6 +305,7 @@ def make_mock_message(msg_id, text=None, media=None, sender_id=None, *, date=Non
         sender_id=sender_id,
         sender=None,
         date=date or datetime(2025, 1, 1, tzinfo=timezone.utc),
+        reactions=reactions,
     )
 
 
