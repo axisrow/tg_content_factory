@@ -103,6 +103,12 @@ async def add_pipeline(
         )
     except PipelineValidationError:
         return _pipeline_redirect("pipeline_invalid", error=True)
+    # sync scheduler jobs
+    try:
+        scheduler = deps.get_scheduler(request)
+        await scheduler.sync_pipeline_jobs()
+    except Exception:
+        pass
     return _pipeline_redirect("pipeline_added")
 
 
@@ -144,6 +150,12 @@ async def edit_pipeline(
         return _pipeline_redirect("pipeline_invalid", error=True)
     if not ok:
         return _pipeline_redirect("pipeline_invalid", error=True)
+    # sync scheduler jobs
+    try:
+        scheduler = deps.get_scheduler(request)
+        await scheduler.sync_pipeline_jobs()
+    except Exception:
+        pass
     return _pipeline_redirect("pipeline_edited")
 
 
@@ -152,12 +164,22 @@ async def toggle_pipeline(request: Request, pipeline_id: int):
     ok = await deps.pipeline_service(request).toggle(pipeline_id)
     if not ok:
         return _pipeline_redirect("pipeline_invalid", error=True)
+    try:
+        scheduler = deps.get_scheduler(request)
+        await scheduler.sync_pipeline_jobs()
+    except Exception:
+        pass
     return _pipeline_redirect("pipeline_toggled")
 
 
 @router.post("/{pipeline_id}/delete")
 async def delete_pipeline(request: Request, pipeline_id: int):
     await deps.pipeline_service(request).delete(pipeline_id)
+    try:
+        scheduler = deps.get_scheduler(request)
+        await scheduler.sync_pipeline_jobs()
+    except Exception:
+        pass
     return _pipeline_redirect("pipeline_deleted")
 
 
