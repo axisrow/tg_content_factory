@@ -159,8 +159,9 @@
     if (code && msgs[code]) {
         container.innerHTML = '<div class="alert alert-success" role="alert">' + msgs[code] + '</div>';
     }
-    if (errCode && errors[errCode]) {
-        container.innerHTML = '<div class="alert alert-danger" role="alert">' + errors[errCode] + '</div>';
+    if (errCode) {
+        var errMsg = errors[errCode] || errCode;
+        container.innerHTML = '<div class="alert alert-danger" role="alert">' + errMsg + '</div>';
     }
     if (code || errCode) {
         params.delete("msg");

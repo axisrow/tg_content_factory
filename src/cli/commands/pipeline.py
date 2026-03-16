@@ -14,9 +14,9 @@ from src.services.pipeline_service import (
 def _parse_target_refs(values: list[str]) -> list[PipelineTargetRef]:
     refs: list[PipelineTargetRef] = []
     for value in values:
-        phone, separator, raw_dialog_id = value.partition(":")
+        phone, separator, raw_dialog_id = value.partition("|")
         if not separator:
-            raise PipelineValidationError("Target must be in PHONE:DIALOG_ID format.")
+            raise PipelineValidationError("Target must be in PHONE|DIALOG_ID format.")
         try:
             dialog_id = int(raw_dialog_id)
         except ValueError as exc:

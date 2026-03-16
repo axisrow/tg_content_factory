@@ -129,8 +129,8 @@ class PipelineService:
             "source_ids": [source.channel_id for source in sources],
             "target_refs": [f"{target.phone}|{target.dialog_id}" for target in targets],
             "source_titles": [
-                channels_by_id.get(source.channel_id).title or str(source.channel_id)
-                if channels_by_id.get(source.channel_id)
+                (ch.title or str(source.channel_id))
+                if (ch := channels_by_id.get(source.channel_id))
                 else str(source.channel_id)
                 for source in sources
             ],
@@ -178,8 +178,8 @@ class PipelineService:
             "source_ids": [source.channel_id for source in sources],
             "target_refs": [f"{target.phone}|{target.dialog_id}" for target in targets],
             "source_titles": [
-                channels_by_id.get(source.channel_id).title or str(source.channel_id)
-                if channels_by_id.get(source.channel_id)
+                (ch.title or str(source.channel_id))
+                if (ch := channels_by_id.get(source.channel_id))
                 else str(source.channel_id)
                 for source in sources
             ],
