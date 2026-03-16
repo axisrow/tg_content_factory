@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from src.agent.models import CLAUDE_MODEL_IDS
+from src.agent.models import CLAUDE_MODELS
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,7 +61,7 @@ PROVIDER_SPECS: dict[str, ProviderSpec] = {
         name="anthropic",
         display_name="Anthropic",
         package_name="langchain-anthropic",
-        static_models=tuple(CLAUDE_MODEL_IDS),
+        static_models=tuple(m[0] for m in CLAUDE_MODELS),
         secret_fields=(_field("api_key", "API key", required=True, secret=True),),
     ),
     "azure_openai": ProviderSpec(
