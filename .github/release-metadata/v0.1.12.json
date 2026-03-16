@@ -8,7 +8,7 @@
     },
     {
       "title": "Installable CLI and Web Assets",
-      "description": "Expose the `tg-search` console entry point and include the bundled web templates and static assets in package data so installed builds behave like the source checkout."
+      "description": "Expose the `tg-agent` console entry point and include the bundled web templates and static assets in package data so installed builds behave like the source checkout."
     },
     {
       "title": "Release Publishing Workflow",

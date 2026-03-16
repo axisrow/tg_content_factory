@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 PROVIDER_SETTINGS_KEY = "agent_deepagents_providers_v1"
 MODEL_CACHE_SETTINGS_KEY = "agent_deepagents_model_cache_v1"
 MODEL_COMPATIBILITY_FRESHNESS_HOURS = 24
-_PACKAGE_NAME = "tg-user-search"
+_PACKAGE_NAME = "tg-agent"
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _PYPROJECT_PATH = _PROJECT_ROOT / "pyproject.toml"
 COMMUNITY_COMPATIBILITY_CATALOG_PATH = (
@@ -643,7 +643,7 @@ class AgentProviderService:
 
         payload = {
             "generated_at": datetime.now(UTC).isoformat(),
-            "generated_by": f"tg-user-search {self._app_version()}",
+            "generated_by": f"tg-agent {self._app_version()}",
             "providers": providers_payload,
         }
         export_path.parent.mkdir(parents=True, exist_ok=True)

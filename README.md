@@ -31,6 +31,12 @@ A personal Telegram monitoring toolkit — collect messages, search across chann
 ### Installation
 
 ```bash
+pip install tg-agent
+```
+
+Or from source:
+
+```bash
 pip install .
 cp .env.example .env
 ```
