@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from src.agent.prompt_template import AGENT_PROMPT_TEMPLATE_SETTING
+from src.agent.prompt_template import AGENT_PROMPT_TEMPLATE_SETTING, DEFAULT_AGENT_PROMPT_TEMPLATE
 from src.agent.provider_registry import ProviderRuntimeConfig
 from src.collection_queue import CollectionQueue
 from src.config import AppConfig
@@ -400,6 +400,24 @@ async def test_settings_save_agent_rejects_invalid_prompt_template(client):
     assert resp.status_code == 303
     assert "error=agent_prompt_template_invalid" in resp.headers["location"]
     assert await db.get_setting(AGENT_PROMPT_TEMPLATE_SETTING) == "Канал: {channel_title}"
+
+
+@pytest.mark.asyncio
+async def test_settings_save_agent_blank_prompt_template_resets_to_default(client):
+    db = client._transport.app.state.db
+    await db.set_setting(AGENT_PROMPT_TEMPLATE_SETTING, "Канал: {channel_title}")
+
+    resp = await client.post(
+        "/settings/save-agent",
+        data={
+            "agent_form_scope": "prompt_template",
+            "agent_prompt_template": "   ",
+        },
+        follow_redirects=False,
+    )
+
+    assert resp.status_code == 303
+    assert await db.get_setting(AGENT_PROMPT_TEMPLATE_SETTING) == DEFAULT_AGENT_PROMPT_TEMPLATE
 
 
 @pytest.mark.asyncio

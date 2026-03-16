@@ -100,13 +100,15 @@ async def test_agent_chat_stream_renders_saved_prompt_template_variables(db):
     assistant_msg = MagicMock(spec=AssistantMessage)
     assistant_msg.content = [TextBlock(text="hello")]
     result_msg = MagicMock(spec=ResultMessage)
+    expected_system_prompt = (
+        f"Дата: {date.today().isoformat()}\n"
+        "Канал: ForumChan\n"
+        "Тема: Вопросы\n"
+        'Сообщения:\n{"id": 1, "date": "2024-01-15", "author": "User", "text": "hello"}'
+    )
 
-    async def mock_query(prompt, options):
-        del prompt
-        assert f"Дата: {date.today().isoformat()}" in options.system_prompt
-        assert "Канал: ForumChan" in options.system_prompt
-        assert "Тема: Вопросы" in options.system_prompt
-        assert '"text": "hello"' in options.system_prompt
+    async def mock_query(_prompt, options):
+        assert options.system_prompt == expected_system_prompt
         yield assistant_msg
         yield result_msg
 

@@ -12,6 +12,12 @@ DEFAULT_AGENT_PROMPT_TEMPLATE = (
     "Основной use-case: анализ вопросов и ответов из каналов для создания учебного курса.\n"
     "Отвечай на русском языке. Будь точным и структурированным."
 )
+_VALIDATION_SAMPLE_VALUES = {
+    "source_messages": "sample message",
+    "channel_title": "Sample Channel",
+    "topic": "Sample Topic",
+    "date": "2024-01-01",
+}
 
 _CONTEXT_HEADER_RE = re.compile(
     r'^\[КОНТЕКСТ:\s*(?P<channel_title>.+?)(?:,\s*тема\s+(?P<topic>".*?"|#\d+))?,\s*\d+\s+сообщений\]$'
@@ -26,19 +32,23 @@ def validate_prompt_template(template: str) -> None:
     formatter = Formatter()
     try:
         parsed = list(formatter.parse(template))
-        template.format_map({name: name for name in ALLOWED_TEMPLATE_VARIABLES})
     except ValueError as exc:
         raise PromptTemplateError(
             "Шаблон содержит некорректный синтаксис фигурных скобок."
         ) from exc
-    except KeyError as exc:
-        raise PromptTemplateError(f"Недопустимая переменная: {exc.args[0]}") from exc
 
     for _literal_text, field_name, _format_spec, _conversion in parsed:
         if field_name is None:
             continue
         if field_name not in ALLOWED_TEMPLATE_VARIABLES:
             raise PromptTemplateError(f"Недопустимая переменная: {field_name}")
+
+    try:
+        template.format_map(_VALIDATION_SAMPLE_VALUES)
+    except ValueError as exc:
+        raise PromptTemplateError(
+            "Шаблон содержит некорректный синтаксис фигурных скобок."
+        ) from exc
 
 
 def build_prompt_template_context(
@@ -65,7 +75,7 @@ def build_prompt_template_context(
         if match:
             channel_title = match.group("channel_title") or ""
             topic = match.group("topic") or ""
-            if topic.startswith('"') and topic.endswith('"'):
+            if len(topic) >= 2 and topic.startswith('"') and topic.endswith('"'):
                 topic = topic[1:-1]
             source_messages = body
         else:
@@ -81,6 +91,5 @@ def build_prompt_template_context(
 
 
 def render_prompt_template(template: str, values: dict[str, str]) -> str:
-    validate_prompt_template(template)
     rendered_values = {name: str(values.get(name, "")) for name in ALLOWED_TEMPLATE_VARIABLES}
     return template.format_map(rendered_values)

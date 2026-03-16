@@ -997,7 +997,7 @@ class AgentManager:
                 prompt_template,
                 build_prompt_template_context(history),
             )
-        except PromptTemplateError:
+        except (PromptTemplateError, KeyError, ValueError):
             logger.warning(
                 "Invalid saved agent prompt template, falling back to default.",
                 exc_info=True,
