@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 import aiosqlite
 
@@ -63,7 +63,7 @@ class DialogCacheRepository:
         try:
             await self._db.execute("DELETE FROM dialog_cache WHERE phone = ?", (phone,))
             if dialogs:
-                cached_at = datetime.now().isoformat()
+                cached_at = datetime.now(timezone.utc).isoformat()
                 await self._db.executemany(
                     """
                     INSERT INTO dialog_cache (
