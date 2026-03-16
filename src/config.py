@@ -37,6 +37,7 @@ class NotificationsConfig(BaseModel):
 
 class DatabaseConfig(BaseModel):
     path: str = "data/tg_search.db"
+    sqlite_vec_path: str = ""
 
 
 class LLMConfig(BaseModel):
@@ -150,6 +151,9 @@ def load_config(path: str | Path = "config.yaml") -> AppConfig:
             "will stay disabled until it is corrected.",
             config.agent.fallback_model,
         )
+    env_sqlite_vec_path = os.environ.get("SQLITE_VEC_PATH", "").strip()
+    if env_sqlite_vec_path:
+        config.database.sqlite_vec_path = env_sqlite_vec_path
 
     return config
 

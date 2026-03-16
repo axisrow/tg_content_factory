@@ -26,6 +26,13 @@
         </button>
     </li>
     <li class="nav-item" role="presentation">
+        <button class="nav-link" id="tab-semantic" data-bs-toggle="pill"
+                data-bs-target="#pane-semantic" type="button" role="tab"
+                aria-controls="pane-semantic" aria-selected="false">
+            <i class="bi bi-search-heart me-1"></i>Semantic Search
+        </button>
+    </li>
+    <li class="nav-item" role="presentation">
         <button class="nav-link" id="tab-devmode" data-bs-toggle="pill"
                 data-bs-target="#pane-devmode" type="button" role="tab"
                 aria-controls="pane-devmode" aria-selected="false">
@@ -72,6 +79,15 @@
             <div class="card-header bg-body-secondary fw-semibold">Планировщик</div>
             <div class="card-body">
                 {% include "settings/_scheduler.html" %}
+            </div>
+        </div>
+    </div>
+
+    <div class="tab-pane fade" id="pane-semantic" role="tabpanel" aria-labelledby="tab-semantic">
+        <div class="card shadow-sm">
+            <div class="card-header bg-body-secondary fw-semibold">Semantic Search & Embeddings</div>
+            <div class="card-body">
+                {% include "settings/_semantic.html" %}
             </div>
         </div>
     </div>
