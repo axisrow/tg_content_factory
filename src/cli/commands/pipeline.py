@@ -4,13 +4,13 @@ import argparse
 import asyncio
 
 from src.cli import runtime
+from src.search.engine import SearchEngine
+from src.services.generation_service import GenerationService
 from src.services.pipeline_service import (
     PipelineService,
     PipelineTargetRef,
     PipelineValidationError,
 )
-from src.search.engine import SearchEngine
-from src.services.generation_service import GenerationService
 
 
 def _parse_target_refs(values: list[str]) -> list[PipelineTargetRef]:
@@ -172,9 +172,10 @@ def run(args: argparse.Namespace) -> None:
                 run_id = await db.repos.generation_runs.create_run(pipeline.id, pipeline.prompt_template)
                 await db.repos.generation_runs.set_status(run_id, "running")
                 print(f"Created generation run id={run_id}")
+                retrieval_query = pipeline.prompt_template or pipeline.name or ""
                 try:
                     result = await gen_svc.generate(
-                        query="",
+                        query=retrieval_query,
                         prompt_template=pipeline.prompt_template,
                         limit=args.limit,
                         model=pipeline.llm_model,
