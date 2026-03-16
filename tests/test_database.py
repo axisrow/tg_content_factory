@@ -1310,6 +1310,153 @@ async def test_get_top_reacted_messages(db):
     assert top[1].message_id == 3
 
 
+@pytest.mark.asyncio
+async def test_get_top_messages_empty(db):
+    """get_top_messages returns empty list when no messages with reactions exist."""
+    result = await db.get_top_messages(limit=10)
+    assert result == []
+
+
+@pytest.mark.asyncio
+async def test_get_top_messages_sorted_by_reactions(db):
+    """get_top_messages returns messages sorted by total reaction count descending."""
+    await db.add_channel(Channel(channel_id=-100500, title="TopTest"))
+    msgs = [
+        Message(
+            channel_id=-100500,
+            message_id=1,
+            text="low",
+            reactions_json='[{"emoji": "👍", "count": 2}]',
+            date=datetime(2025, 1, 1, tzinfo=timezone.utc),
+        ),
+        Message(
+            channel_id=-100500,
+            message_id=2,
+            text="high",
+            reactions_json='[{"emoji": "❤️", "count": 10}, {"emoji": "🔥", "count": 5}]',
+            date=datetime(2025, 1, 2, tzinfo=timezone.utc),
+        ),
+        Message(
+            channel_id=-100500,
+            message_id=3,
+            text="no reactions",
+            date=datetime(2025, 1, 3, tzinfo=timezone.utc),
+        ),
+    ]
+    for m in msgs:
+        await db.insert_message(m)
+
+    result = await db.get_top_messages(limit=10)
+    assert len(result) == 2  # message without reactions excluded
+    assert result[0]["message_id"] == 2
+    assert result[0]["total_reactions"] == 15
+    assert result[1]["message_id"] == 1
+    assert result[1]["total_reactions"] == 2
+
+
+@pytest.mark.asyncio
+async def test_get_top_messages_date_filter(db):
+    """get_top_messages respects date_from/date_to filters."""
+    await db.add_channel(Channel(channel_id=-100501, title="DateFilter"))
+    msgs = [
+        Message(
+            channel_id=-100501,
+            message_id=1,
+            text="old",
+            reactions_json='[{"emoji": "👍", "count": 5}]',
+            date=datetime(2024, 6, 1, tzinfo=timezone.utc),
+        ),
+        Message(
+            channel_id=-100501,
+            message_id=2,
+            text="new",
+            reactions_json='[{"emoji": "👍", "count": 3}]',
+            date=datetime(2025, 3, 1, tzinfo=timezone.utc),
+        ),
+    ]
+    for m in msgs:
+        await db.insert_message(m)
+
+    result = await db.get_top_messages(limit=10, date_from="2025-01-01")
+    assert len(result) == 1
+    assert result[0]["message_id"] == 2
+
+
+@pytest.mark.asyncio
+async def test_get_engagement_by_media_type(db):
+    """get_engagement_by_media_type groups messages by media type with counts."""
+    await db.add_channel(Channel(channel_id=-100502, title="MediaTypes"))
+    msgs = [
+        Message(
+            channel_id=-100502,
+            message_id=1,
+            text="text msg",
+            media_type=None,
+            reactions_json='[{"emoji": "👍", "count": 4}]',
+            date=datetime(2025, 1, 1, tzinfo=timezone.utc),
+        ),
+        Message(
+            channel_id=-100502,
+            message_id=2,
+            text="photo msg",
+            media_type="photo",
+            reactions_json='[{"emoji": "❤️", "count": 6}]',
+            date=datetime(2025, 1, 2, tzinfo=timezone.utc),
+        ),
+        Message(
+            channel_id=-100502,
+            message_id=3,
+            text="another text",
+            media_type=None,
+            date=datetime(2025, 1, 3, tzinfo=timezone.utc),
+        ),
+    ]
+    for m in msgs:
+        await db.insert_message(m)
+
+    result = await db.get_engagement_by_media_type()
+    content_types = {r["content_type"]: r for r in result}
+    assert "text" in content_types
+    assert "photo" in content_types
+    assert content_types["text"]["message_count"] == 2
+    assert content_types["photo"]["message_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_get_hourly_activity(db):
+    """get_hourly_activity groups messages by hour with correct counts."""
+    await db.add_channel(Channel(channel_id=-100503, title="Hourly"))
+    msgs = [
+        Message(
+            channel_id=-100503,
+            message_id=1,
+            text="morning",
+            date=datetime(2025, 1, 1, 9, 0, tzinfo=timezone.utc),
+        ),
+        Message(
+            channel_id=-100503,
+            message_id=2,
+            text="morning2",
+            date=datetime(2025, 1, 2, 9, 30, tzinfo=timezone.utc),
+        ),
+        Message(
+            channel_id=-100503,
+            message_id=3,
+            text="evening",
+            date=datetime(2025, 1, 1, 20, 0, tzinfo=timezone.utc),
+        ),
+    ]
+    for m in msgs:
+        await db.insert_message(m)
+
+    result = await db.get_hourly_activity()
+    hours = {r["hour"]: r for r in result}
+    assert 9 in hours
+    assert hours[9]["message_count"] == 2
+    assert 20 in hours
+    assert hours[20]["message_count"] == 1
+
+
 @pytest.mark.aiosqlite_serial
 @pytest.mark.asyncio
 async def test_migration_backfills_message_reactions(tmp_path):
@@ -1378,3 +1525,105 @@ async def test_migration_backfills_message_reactions(tmp_path):
     assert result == {"🎉": 7}
 
     await database.close()
+
+
+@pytest.mark.aiosqlite_serial
+@pytest.mark.asyncio
+async def test_migrate_adds_engagement_columns(tmp_path):
+    """Migration adds views, forwards, reply_count columns to existing DB without them."""
+    db_path = str(tmp_path / "migrate_engagement.db")
+
+    conn = await aiosqlite.connect(db_path)
+    try:
+        await conn.executescript("""
+            CREATE TABLE IF NOT EXISTS messages (
+                id INTEGER PRIMARY KEY,
+                channel_id INTEGER NOT NULL,
+                message_id INTEGER NOT NULL,
+                sender_id INTEGER,
+                sender_name TEXT,
+                text TEXT,
+                media_type TEXT,
+                topic_id INTEGER,
+                reactions_json TEXT,
+                date TEXT NOT NULL,
+                collected_at TEXT DEFAULT (datetime('now')),
+                UNIQUE(channel_id, message_id)
+            );
+            CREATE TABLE IF NOT EXISTS accounts (
+                id INTEGER PRIMARY KEY,
+                phone TEXT UNIQUE NOT NULL,
+                session_string TEXT NOT NULL,
+                is_primary INTEGER DEFAULT 0,
+                is_active INTEGER DEFAULT 1,
+                flood_wait_until TEXT,
+                created_at TEXT DEFAULT (datetime('now'))
+            );
+            CREATE TABLE IF NOT EXISTS channels (
+                id INTEGER PRIMARY KEY,
+                channel_id INTEGER UNIQUE NOT NULL,
+                title TEXT,
+                username TEXT,
+                is_active INTEGER DEFAULT 1,
+                last_collected_id INTEGER DEFAULT 0,
+                added_at TEXT DEFAULT (datetime('now'))
+            );
+            CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
+        """)
+        await conn.commit()
+    finally:
+        await conn.close()
+
+    database = Database(db_path)
+    await database.initialize()
+
+    cur = await database.execute("PRAGMA table_info(messages)")
+    columns = {row["name"] for row in await cur.fetchall()}
+    assert "views" in columns
+    assert "forwards" in columns
+    assert "reply_count" in columns
+
+    await database.close()
+
+
+@pytest.mark.asyncio
+async def test_engagement_stats_roundtrip(db):
+    """views, forwards, reply_count are persisted and retrieved via search_messages."""
+    await db.add_channel(Channel(channel_id=-100777, title="EngageTest"))
+    msg = Message(
+        channel_id=-100777,
+        message_id=10,
+        text="popular post",
+        views=1234,
+        forwards=56,
+        reply_count=7,
+        date=datetime.now(timezone.utc),
+    )
+    await db.insert_message(msg)
+
+    messages, total = await db.search_messages(channel_id=-100777)
+    assert total == 1
+    assert messages[0].views == 1234
+    assert messages[0].forwards == 56
+    assert messages[0].reply_count == 7
+
+
+@pytest.mark.asyncio
+async def test_engagement_stats_null_when_absent(db):
+    """views, forwards, reply_count are None when not provided."""
+    await db.add_channel(Channel(channel_id=-100776, title="NoEngageTest"))
+    msg = Message(
+        channel_id=-100776,
+        message_id=1,
+        text="plain post",
+        date=datetime.now(timezone.utc),
+    )
+    await db.insert_message(msg)
+
+    messages, _ = await db.search_messages(channel_id=-100776)
+    assert messages[0].views is None
+    assert messages[0].forwards is None
+    assert messages[0].reply_count is None

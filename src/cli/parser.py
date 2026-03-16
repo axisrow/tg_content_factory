@@ -302,4 +302,34 @@ def build_parser() -> argparse.ArgumentParser:
         help="Benchmark serial pytest run against the safe mixed parallel test workflow",
     )
 
+    analytics_parser = sub.add_parser("analytics", help="Message analytics")
+    analytics_sub = analytics_parser.add_subparsers(dest="analytics_action")
+
+    analytics_top = analytics_sub.add_parser("top", help="Top messages by reactions")
+    analytics_top.add_argument(
+        "--limit", type=int, default=20, help="Number of results (default: 20)"
+    )
+    analytics_top.add_argument(
+        "--date-from", dest="date_from", default=None, help="Start date (YYYY-MM-DD)"
+    )
+    analytics_top.add_argument(
+        "--date-to", dest="date_to", default=None, help="End date (YYYY-MM-DD)"
+    )
+
+    analytics_ct = analytics_sub.add_parser("content-types", help="Engagement by content type")
+    analytics_ct.add_argument(
+        "--date-from", dest="date_from", default=None, help="Start date (YYYY-MM-DD)"
+    )
+    analytics_ct.add_argument(
+        "--date-to", dest="date_to", default=None, help="End date (YYYY-MM-DD)"
+    )
+
+    analytics_hourly = analytics_sub.add_parser("hourly", help="Hourly activity patterns")
+    analytics_hourly.add_argument(
+        "--date-from", dest="date_from", default=None, help="Start date (YYYY-MM-DD)"
+    )
+    analytics_hourly.add_argument(
+        "--date-to", dest="date_to", default=None, help="End date (YYYY-MM-DD)"
+    )
+
     return parser

@@ -21,19 +21,22 @@ html { font-size: 14px; }
 .channels-table {
     table-layout: fixed;
     width: 100%;
-    min-width: 1050px;
+    min-width: 1250px;
 }
 .channels-table th { white-space: nowrap; }
 .channels-table th:nth-child(1), .channels-table td:nth-child(1) { width: 100px; }
-.channels-table th:nth-child(2), .channels-table td:nth-child(2) { width: 145px; }
-.channels-table th:nth-child(3), .channels-table td:nth-child(3) { width: 120px; }
-.channels-table th:nth-child(4), .channels-table td:nth-child(4) { width: 90px; }
-.channels-table th:nth-child(5), .channels-table td:nth-child(5) { width: 60px; }
-.channels-table th:nth-child(6), .channels-table td:nth-child(6) { width: 90px; }
-.channels-table th:nth-child(7), .channels-table td:nth-child(7) { width: 95px; }
-.channels-table th:nth-child(8), .channels-table td:nth-child(8) { width: 70px; }
-.channels-table th:nth-child(9), .channels-table td:nth-child(9) { width: 195px; }
-.channels-table td:nth-child(9) { white-space: nowrap; }
+.channels-table th:nth-child(2), .channels-table td:nth-child(2) { width: 135px; }
+.channels-table th:nth-child(3), .channels-table td:nth-child(3) { width: 110px; }
+.channels-table th:nth-child(4), .channels-table td:nth-child(4) { width: 85px; }
+.channels-table th:nth-child(5), .channels-table td:nth-child(5) { width: 55px; }
+.channels-table th:nth-child(6), .channels-table td:nth-child(6) { width: 80px; }
+.channels-table th:nth-child(7), .channels-table td:nth-child(7) { width: 100px; }
+.channels-table th:nth-child(8), .channels-table td:nth-child(8) { width: 75px; }
+.channels-table th:nth-child(9), .channels-table td:nth-child(9) { width: 70px; }
+.channels-table th:nth-child(10), .channels-table td:nth-child(10) { width: 70px; }
+.channels-table th:nth-child(11), .channels-table td:nth-child(11) { width: 65px; }
+.channels-table th:nth-child(12), .channels-table td:nth-child(12) { width: 175px; }
+.channels-table td:nth-child(12) { white-space: nowrap; }
 .channels-table td:nth-child(1),
 .channels-table td:nth-child(2),
 .channels-table td:nth-child(3) {

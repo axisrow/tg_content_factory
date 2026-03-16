@@ -334,6 +334,31 @@ class Database:
             limit=limit, channel_id=channel_id, days=days
         )
 
+    async def get_top_messages(
+        self,
+        limit: int = 50,
+        date_from: str | None = None,
+        date_to: str | None = None,
+    ) -> list[dict]:
+        self._require()
+        return await self._messages.get_top_messages(limit, date_from, date_to)
+
+    async def get_engagement_by_media_type(
+        self,
+        date_from: str | None = None,
+        date_to: str | None = None,
+    ) -> list[dict]:
+        self._require()
+        return await self._messages.get_engagement_by_media_type(date_from, date_to)
+
+    async def get_hourly_activity(
+        self,
+        date_from: str | None = None,
+        date_to: str | None = None,
+    ) -> list[dict]:
+        self._require()
+        return await self._messages.get_hourly_activity(date_from, date_to)
+
     async def get_notification_queries(
         self, active_only: bool = True
     ) -> list[SearchQuery]:
@@ -467,6 +492,10 @@ class Database:
     async def get_latest_stats_for_all(self) -> dict[int, ChannelStats]:
         self._require()
         return await self._channel_stats.get_latest_stats_for_all()
+
+    async def get_previous_subscriber_counts(self) -> dict[int, int | None]:
+        self._require()
+        return await self._channel_stats.get_previous_subscriber_counts()
 
     async def get_setting(self, key: str) -> str | None:
         self._require()

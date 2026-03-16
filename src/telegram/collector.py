@@ -523,6 +523,9 @@ class Collector:
                         media_type=self._get_media_type(msg),
                         topic_id=topic_id,
                         reactions_json=self._extract_reactions(msg),
+                        views=getattr(msg, "views", None),
+                        forwards=getattr(msg, "forwards", None),
+                        reply_count=getattr(getattr(msg, "replies", None), "replies", None),
                         date=msg.date.replace(tzinfo=timezone.utc)
                         if msg.date and msg.date.tzinfo is None
                         else msg.date,
