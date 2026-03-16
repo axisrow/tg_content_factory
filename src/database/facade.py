@@ -13,12 +13,12 @@ from src.database.repositories.accounts import AccountsRepository
 from src.database.repositories.channel_stats import ChannelStatsRepository
 from src.database.repositories.channels import ChannelsRepository
 from src.database.repositories.collection_tasks import CollectionTasksRepository
+from src.database.repositories.content_pipelines import ContentPipelinesRepository
 from src.database.repositories.dialog_cache import DialogCacheRepository
 from src.database.repositories.filters import FilterRepository
 from src.database.repositories.messages import MessagesRepository
 from src.database.repositories.notification_bots import NotificationBotsRepository
 from src.database.repositories.photo_loader import PhotoLoaderRepository
-from src.database.repositories.pipelines import PipelinesRepository
 from src.database.repositories.search_log import SearchLogRepository
 from src.database.repositories.search_queries import SearchQueriesRepository
 from src.database.repositories.settings import SettingsRepository
@@ -62,7 +62,7 @@ class Database:
         self._search_queries: SearchQueriesRepository | None = None
         self._photo_loader: PhotoLoaderRepository | None = None
         self._dialog_cache: DialogCacheRepository | None = None
-        self._pipelines: PipelinesRepository | None = None
+        self._content_pipelines: ContentPipelinesRepository | None = None
         self._repos: DatabaseRepositories | None = None
 
     async def _has_encrypted_sessions(self) -> bool:
@@ -112,7 +112,7 @@ class Database:
         self._search_queries = SearchQueriesRepository(self._db)
         self._photo_loader = PhotoLoaderRepository(self._db)
         self._dialog_cache = DialogCacheRepository(self._db)
-        self._pipelines = PipelinesRepository(self._db)
+        self._content_pipelines = ContentPipelinesRepository(self._db)
         self._repos = DatabaseRepositories(
             accounts=self._accounts,
             channels=self._channels,
@@ -126,7 +126,7 @@ class Database:
             search_queries=self._search_queries,
             photo_loader=self._photo_loader,
             dialog_cache=self._dialog_cache,
-            pipelines=self._pipelines,
+            content_pipelines=self._content_pipelines,
         )
 
         await self._accounts.migrate_sessions()
@@ -176,7 +176,7 @@ class Database:
                 self._search_queries,
                 self._photo_loader,
                 self._dialog_cache,
-                self._pipelines,
+                self._content_pipelines,
             )
         ):
             raise RuntimeError("Database.initialize() has not been called")
@@ -469,10 +469,6 @@ class Database:
     async def get_pending_channel_tasks(self) -> list[CollectionTask]:
         self._require()
         return await self._tasks.get_pending_channel_tasks()
-
-    async def delete_pending_channel_tasks(self) -> int:
-        self._require()
-        return await self._tasks.delete_pending_channel_tasks()
 
     async def fail_running_collection_tasks_on_startup(self) -> int:
         self._require()

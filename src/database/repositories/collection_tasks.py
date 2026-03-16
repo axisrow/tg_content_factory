@@ -10,6 +10,7 @@ from src.models import (
     CollectionTask,
     CollectionTaskStatus,
     CollectionTaskType,
+    PipelineRunTaskPayload,
     SqStatsTaskPayload,
     StatsAllTaskPayload,
 )
@@ -31,7 +32,7 @@ class CollectionTasksRepository:
     @staticmethod
     def _deserialize_payload(
         raw: str | None,
-    ) -> dict[str, Any] | StatsAllTaskPayload | SqStatsTaskPayload | None:
+    ) -> dict[str, Any] | StatsAllTaskPayload | SqStatsTaskPayload | PipelineRunTaskPayload | None:
         if not raw:
             return None
         try:
@@ -45,15 +46,23 @@ class CollectionTasksRepository:
             return StatsAllTaskPayload.model_validate(parsed)
         if task_kind == CollectionTaskType.SQ_STATS.value:
             return SqStatsTaskPayload.model_validate(parsed)
+        if task_kind == CollectionTaskType.PIPELINE_RUN.value:
+            return PipelineRunTaskPayload.model_validate(parsed)
         return parsed
 
     @staticmethod
     def _serialize_payload(
-        payload: dict[str, Any] | StatsAllTaskPayload | SqStatsTaskPayload | None,
+        payload: (
+            dict[str, Any]
+            | StatsAllTaskPayload
+            | SqStatsTaskPayload
+            | PipelineRunTaskPayload
+            | None
+        ),
     ) -> str | None:
         if payload is None:
             return None
-        if isinstance(payload, (StatsAllTaskPayload, SqStatsTaskPayload)):
+        if isinstance(payload, (StatsAllTaskPayload, SqStatsTaskPayload, PipelineRunTaskPayload)):
             return payload.model_dump_json()
         return json.dumps(payload)
 

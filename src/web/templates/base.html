@@ -35,9 +35,9 @@
                     <li class="nav-item"><a class="nav-link" href="/channels">Каналы</a></li>
                     <li class="nav-item"><a class="nav-link" href="/channels/filter/manage">Очистка</a></li>
                     <li class="nav-item"><a class="nav-link" href="/search-queries">Запросы</a></li>
+                    <li class="nav-item"><a class="nav-link" href="/pipelines">Пайплайны</a></li>
                     <li class="nav-item"><a class="nav-link" href="/my-telegram">Мой Телеграм</a></li>
                     <li class="nav-item"><a class="nav-link" href="/scheduler">Планировщик</a></li>
-                    <li class="nav-item"><a class="nav-link" href="/pipelines">Пайплайны</a></li>
                     <li class="nav-item"><a class="nav-link" href="/debug">Дебаг</a></li>
                     <li class="nav-item"><a class="nav-link" href="/settings">Настройки</a></li>
                     <li class="nav-item"><a class="nav-link" href="/logout">Выйти</a></li>
@@ -96,12 +96,16 @@
         stats_collection_queued: "Сбор статистики поставлен в очередь.",
         search_triggered: "Поиск запущен.",
         no_accounts: "Для начала работы добавьте Telegram-аккаунт.",
-        sq_added: "Поисковый запрос добавлен.",
-        sq_deleted: "Поисковый запрос удалён.",
-        sq_toggled: "Статус поискового запроса изменён.",
-        sq_run: "Поисковый запрос выполнен.",
-        sq_edited: "Поисковый запрос обновлён.",
-        notification_test_sent: "Тестовое уведомление отправлено.",
+         sq_added: "Поисковый запрос добавлен.",
+         sq_deleted: "Поисковый запрос удалён.",
+         sq_toggled: "Статус поискового запроса изменён.",
+         sq_run: "Поисковый запрос выполнен.",
+         sq_edited: "Поисковый запрос обновлён.",
+         pipeline_added: "Pipeline добавлен.",
+         pipeline_deleted: "Pipeline удалён.",
+         pipeline_toggled: "Статус pipeline изменён.",
+         pipeline_edited: "Pipeline обновлён.",
+         notification_test_sent: "Тестовое уведомление отправлено.",
         photo_sent: "Фото отправлены.",
         photo_scheduled: "Фото поставлены в отложенную отправку Telegram.",
         photo_batch_created: "Batch photo tasks созданы.",
@@ -147,11 +151,13 @@
         photo_target_required: "Сначала выберите канал, чат или личный диалог.",
         photo_target_invalid: "Выбранная цель недоступна. Выберите её заново.",
         photo_schedule_failed: "Не удалось создать отложенную отправку фото.",
-        photo_batch_failed: "Не удалось создать batch photo tasks.",
-        photo_auto_failed: "Не удалось создать или изменить auto job.",
-        photo_run_due_failed: "Не удалось выполнить due photo tasks.",
-        photo_item_cancel_failed: "Не удалось отменить photo task."
-    };
+         photo_batch_failed: "Не удалось создать batch photo tasks.",
+         photo_auto_failed: "Не удалось создать или изменить auto job.",
+         photo_run_due_failed: "Не удалось выполнить due photo tasks.",
+         photo_item_cancel_failed: "Не удалось отменить photo task.",
+         pipeline_invalid: "Параметры pipeline некорректны или dialog cache не заполнен.",
+         channel_in_pipeline: "Канал используется в pipeline и не может быть удалён."
+     };
     var params = new URLSearchParams(window.location.search);
     var code = params.get("msg");
     var errCode = params.get("error");
@@ -162,8 +168,16 @@
     if (code && msgs[code]) {
         container.innerHTML = '<div class="alert alert-success" role="alert">' + msgs[code] + '</div>';
     }
-    if (errCode && errors[errCode]) {
-        container.innerHTML = '<div class="alert alert-danger" role="alert">' + errors[errCode] + '</div>';
+    if (errCode) {
+        var errDiv = document.createElement("div");
+        errDiv.className = "alert alert-danger";
+        errDiv.setAttribute("role", "alert");
+        if (errors[errCode]) {
+            errDiv.innerHTML = errors[errCode];
+        } else {
+            errDiv.textContent = errCode;
+        }
+        container.appendChild(errDiv);
     }
     if (code || errCode) {
         params.delete("msg");

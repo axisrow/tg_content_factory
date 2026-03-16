@@ -136,6 +136,100 @@ def build_parser() -> argparse.ArgumentParser:
     sq_stats.add_argument("id", type=int, help="Search query id")
     sq_stats.add_argument("--days", type=int, default=30, help="Number of days")
 
+    pipeline_parser = sub.add_parser("pipeline", help="Content pipeline management")
+    pipeline_sub = pipeline_parser.add_subparsers(dest="pipeline_action")
+    pipeline_sub.add_parser("list", help="List pipelines")
+
+    pipeline_show = pipeline_sub.add_parser("show", help="Show pipeline details")
+    pipeline_show.add_argument("id", type=int, help="Pipeline id")
+
+    pipeline_add = pipeline_sub.add_parser("add", help="Add pipeline")
+    pipeline_add.add_argument("name", help="Pipeline name")
+    pipeline_add.add_argument("--prompt-template", required=True, help="Prompt template")
+    pipeline_add.add_argument(
+        "--source",
+        type=int,
+        action="append",
+        required=True,
+        help="Source channel_id; repeat for multiple channels",
+    )
+    pipeline_add.add_argument(
+        "--target",
+        action="append",
+        required=True,
+        help="Target in PHONE|DIALOG_ID format; repeat for multiple targets",
+    )
+    pipeline_add.add_argument("--llm-model", default=None, help="Optional LLM model")
+    pipeline_add.add_argument("--image-model", default=None, help="Optional image model")
+    pipeline_add.add_argument(
+        "--publish-mode",
+        choices=["auto", "moderated"],
+        default="moderated",
+        help="Publish mode",
+    )
+    pipeline_add.add_argument(
+        "--generation-backend",
+        choices=["chain", "agent"],
+        default="chain",
+        help="Generation backend",
+    )
+    pipeline_add.add_argument(
+        "--interval",
+        type=int,
+        default=60,
+        help="Generate interval in minutes",
+    )
+    pipeline_add.add_argument("--inactive", action="store_true", help="Create pipeline disabled")
+
+    pipeline_edit = pipeline_sub.add_parser("edit", help="Edit pipeline")
+    pipeline_edit.add_argument("id", type=int, help="Pipeline id")
+    pipeline_edit.add_argument("--name", default=None, help="New pipeline name")
+    pipeline_edit.add_argument("--prompt-template", default=None, help="New prompt template")
+    pipeline_edit.add_argument(
+        "--source",
+        type=int,
+        action="append",
+        default=None,
+        help="Replace sources with these channel_id values",
+    )
+    pipeline_edit.add_argument(
+        "--target",
+        action="append",
+        default=None,
+        help="Replace targets with PHONE|DIALOG_ID values",
+    )
+    pipeline_edit.add_argument("--llm-model", default=None, help="Optional LLM model")
+    pipeline_edit.add_argument("--image-model", default=None, help="Optional image model")
+    pipeline_edit.add_argument("--publish-mode", choices=["auto", "moderated"], default=None)
+    pipeline_edit.add_argument("--generation-backend", choices=["chain", "agent"], default=None)
+    pipeline_edit.add_argument(
+        "--interval",
+        type=int,
+        default=None,
+        help="Generate interval in minutes",
+    )
+    pipeline_edit.add_argument(
+        "--active",
+        dest="active",
+        action="store_const",
+        const=True,
+        default=None,
+        help="Enable pipeline",
+    )
+    pipeline_edit.add_argument(
+        "--inactive",
+        dest="active",
+        action="store_const",
+        const=False,
+        help="Disable pipeline",
+    )
+
+    pipeline_delete = pipeline_sub.add_parser("delete", help="Delete pipeline")
+    pipeline_delete.add_argument("id", type=int, help="Pipeline id")
+
+    pipeline_toggle = pipeline_sub.add_parser("toggle", help="Toggle pipeline active state")
+    pipeline_toggle.add_argument("id", type=int, help="Pipeline id")
+
     acc_parser = sub.add_parser("account", help="Account management")
     acc_sub = acc_parser.add_subparsers(dest="account_action")
     acc_sub.add_parser("list", help="List accounts")

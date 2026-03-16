@@ -131,6 +131,7 @@ def register_routes(app: FastAPI) -> None:
     app.include_router(channels_router, prefix="/channels")
     app.include_router(filter_router, prefix="/channels")
     app.include_router(search_queries_router, prefix="/search-queries")
+    app.include_router(pipelines_router, prefix="/pipelines")
     app.include_router(channel_collection_router, prefix="/channels")
     app.include_router(import_router, prefix="/channels")
     app.include_router(scheduler_router, prefix="/scheduler")

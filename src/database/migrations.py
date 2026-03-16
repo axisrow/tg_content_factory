@@ -259,6 +259,79 @@ async def run_migrations(db: aiosqlite.Connection) -> bool:
     if "is_fts" not in sq_columns:
         await db.execute("ALTER TABLE search_queries ADD COLUMN is_fts INTEGER DEFAULT 0")
         await db.commit()
+    await db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS content_pipelines (
+            id INTEGER PRIMARY KEY,
+            name TEXT NOT NULL,
+            prompt_template TEXT NOT NULL,
+            llm_model TEXT,
+            image_model TEXT,
+            publish_mode TEXT NOT NULL DEFAULT 'moderated',
+            generation_backend TEXT NOT NULL DEFAULT 'chain',
+            is_active INTEGER NOT NULL DEFAULT 1,
+            last_generated_id INTEGER NOT NULL DEFAULT 0,
+            generate_interval_minutes INTEGER NOT NULL DEFAULT 60,
+            created_at TEXT DEFAULT (datetime('now'))
+        )
+        """
+    )
+    await db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS pipeline_sources (
+            id INTEGER PRIMARY KEY,
+            pipeline_id INTEGER NOT NULL,
+            channel_id INTEGER NOT NULL,
+            created_at TEXT DEFAULT (datetime('now')),
+            UNIQUE(pipeline_id, channel_id),
+            FOREIGN KEY (pipeline_id) REFERENCES content_pipelines(id) ON DELETE CASCADE,
+            FOREIGN KEY (channel_id) REFERENCES channels(channel_id) ON DELETE RESTRICT
+        )
+        """
+    )
+    await db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS pipeline_targets (
+            id INTEGER PRIMARY KEY,
+            pipeline_id INTEGER NOT NULL,
+            phone TEXT NOT NULL,
+            target_dialog_id INTEGER NOT NULL,
+            target_title TEXT,
+            target_type TEXT,
+            created_at TEXT DEFAULT (datetime('now')),
+            UNIQUE(pipeline_id, phone, target_dialog_id),
+            FOREIGN KEY (pipeline_id) REFERENCES content_pipelines(id) ON DELETE CASCADE
+        )
+        """
+    )
+    await db.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_content_pipelines_active
+        ON content_pipelines(is_active, id)
+        """
+    )
+    await db.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_pipeline_sources_pipeline
+        ON pipeline_sources(pipeline_id)
+        """
+    )
+    await db.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_pipeline_targets_pipeline
+        ON pipeline_targets(pipeline_id)
+        """
+    )
+    await db.commit()
+
+    cur = await db.execute("PRAGMA table_info(pipeline_targets)")
+    pipeline_target_columns = {row["name"] for row in await cur.fetchall()}
+    if "target_title" not in pipeline_target_columns:
+        await db.execute("ALTER TABLE pipeline_targets ADD COLUMN target_title TEXT")
+        await db.commit()
+    if "target_type" not in pipeline_target_columns:
+        await db.execute("ALTER TABLE pipeline_targets ADD COLUMN target_type TEXT")
+        await db.commit()
     if "exclude_patterns" not in sq_columns:
         await db.execute(
             "ALTER TABLE search_queries ADD COLUMN exclude_patterns TEXT DEFAULT ''"

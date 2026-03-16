@@ -16,6 +16,7 @@ from src.database.bundles import (
     DatabaseRepositories,
     NotificationBundle,
     PhotoLoaderBundle,
+    PipelineBundle,
     SchedulerBundle,
     SearchBundle,
     SearchQueryBundle,
@@ -45,6 +46,7 @@ class AppContainer:
     channel_bundle: ChannelBundle
     collection_bundle: CollectionBundle
     notification_bundle: NotificationBundle
+    pipeline_bundle: PipelineBundle
     photo_loader_bundle: PhotoLoaderBundle
     search_bundle: SearchBundle
     scheduler_bundle: SchedulerBundle

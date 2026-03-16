@@ -1,42 +1,80 @@
 from __future__ import annotations
 
+import logging
 from urllib.parse import quote
 
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
-from pydantic import ValidationError
 
-from src.models import PipelinePublishMode, PipelineTarget
+from src.agent.prompt_template import ALLOWED_TEMPLATE_VARIABLES
+from src.models import PipelineGenerationBackend, PipelinePublishMode
+from src.services.pipeline_service import (
+    PipelineService,
+    PipelineTargetRef,
+    PipelineValidationError,
+)
 from src.web import deps
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
 
-@router.get("/", response_class=HTMLResponse)
-async def pipelines_page(request: Request, phone: str | None = None):
+def _pipeline_redirect(
+    code: str,
+    *,
+    error: bool = False,
+    phone: str | None = None,
+) -> RedirectResponse:
+    key = "error" if error else "msg"
+    suffix = f"&phone={quote(phone, safe='')}" if phone else ""
+    return RedirectResponse(url=f"/pipelines?{key}={quote(code, safe='')}{suffix}", status_code=303)
+
+
+def _target_refs(values: list[str]) -> list[PipelineTargetRef]:
+    refs: list[PipelineTargetRef] = []
+    for value in values:
+        phone, separator, raw_dialog_id = value.partition("|")
+        if not separator:
+            raise PipelineValidationError("Некорректный формат цели pipeline.")
+        try:
+            dialog_id = int(raw_dialog_id)
+        except ValueError as exc:
+            raise PipelineValidationError("Некорректный dialog id для pipeline target.") from exc
+        refs.append(PipelineTargetRef(phone=phone, dialog_id=dialog_id))
+    return refs
+
+
+async def _page_context(request: Request) -> dict:
     svc = deps.pipeline_service(request)
-    pipelines = await svc.list()
-
-    pool = deps.get_pool(request)
-    accounts = sorted(pool.clients.keys())
-    selected_phone = phone if phone in pool.clients else (accounts[0] if accounts else None)
-
-    channels = await deps.get_channel_bundle(request).list_channels()
-
-    dialogs: list[dict] = []
+    channels = await deps.get_channel_bundle(request).list_channels(include_filtered=True)
+    accounts = await deps.get_account_bundle(request).list_accounts()
+    selected_phone = request.query_params.get("phone") or (accounts[0].phone if accounts else "")
     if selected_phone:
-        dialogs = await deps.channel_service(request).get_my_dialogs(selected_phone)
+        refresh = request.query_params.get("refresh") == "1"
+        try:
+            await deps.channel_service(request).get_my_dialogs(selected_phone, refresh=refresh)
+        except Exception:
+            logger.warning("Failed to refresh dialog cache for %s", selected_phone, exc_info=True)
+    cached_dialogs = await svc.list_cached_dialogs_by_phone()
+    return {
+        "items": await svc.get_with_relations(),
+        "channels": channels,
+        "accounts": accounts,
+        "cached_dialogs": cached_dialogs,
+        "selected_phone": selected_phone,
+        "prompt_variables": sorted(ALLOWED_TEMPLATE_VARIABLES),
+        "publish_modes": list(PipelinePublishMode),
+        "generation_backends": list(PipelineGenerationBackend),
+    }
 
+
+@router.get("/", response_class=HTMLResponse)
+async def pipelines_page(request: Request):
     return deps.get_templates(request).TemplateResponse(
         request,
         "pipelines.html",
-        {
-            "pipelines": pipelines,
-            "accounts": accounts,
-            "selected_phone": selected_phone,
-            "channels": channels,
-            "dialogs": dialogs,
-        },
+        await _page_context(request),
     )
 
 
@@ -44,39 +82,34 @@ async def pipelines_page(request: Request, phone: str | None = None):
 async def add_pipeline(
     request: Request,
     name: str = Form(...),
-    phone: str = Form(...),
-    source_channel_ids: list[str] = Form(default=[]),
-    target_dialog_ids: list[str] = Form(default=[]),
-    prompt_template: str = Form(""),
+    prompt_template: str = Form(...),
+    source_channel_ids: list[int] = Form(default=[]),
+    target_refs: list[str] = Form(default=[]),
     llm_model: str = Form(""),
-    publish_mode: str = Form("draft"),
+    image_model: str = Form(""),
+    publish_mode: str = Form(PipelinePublishMode.MODERATED.value),
+    generation_backend: str = Form(PipelineGenerationBackend.CHAIN.value),
+    generate_interval_minutes: int = Form(60),
+    is_active: bool = Form(False),
 ):
-    svc = deps.pipeline_service(request)
-    pool = deps.get_pool(request)
-    if phone not in pool.clients:
-        return RedirectResponse(url="/pipelines?error=invalid_account", status_code=303)
-    sources = [int(x) for x in source_channel_ids if x.lstrip("-").isdigit()]
-    targets = []
-    for tid in target_dialog_ids:
-        if tid.lstrip("-").isdigit():
-            targets.append(PipelineTarget(dialog_id=int(tid)))
-    try:
-        mode = PipelinePublishMode(publish_mode)
-    except ValueError:
-        mode = PipelinePublishMode.DRAFT
+    svc: PipelineService = deps.pipeline_service(request)
+    phone = request.query_params.get("phone")
     try:
         await svc.add(
-            name,
-            phone,
-            source_channel_ids=sources,
-            targets=targets,
-            prompt_template=prompt_template or None,
-            llm_model=llm_model or None,
-            publish_mode=mode,
+            name=name,
+            prompt_template=prompt_template,
+            source_channel_ids=source_channel_ids,
+            target_refs=_target_refs(target_refs),
+            llm_model=llm_model,
+            image_model=image_model,
+            publish_mode=publish_mode,
+            generation_backend=generation_backend,
+            generate_interval_minutes=generate_interval_minutes,
+            is_active=is_active,
         )
-    except ValidationError:
-        return RedirectResponse(url="/pipelines?error=invalid_value", status_code=303)
-    return RedirectResponse(url="/pipelines?msg=pipeline_added", status_code=303)
+    except PipelineValidationError as exc:
+        return _pipeline_redirect(str(exc), error=True, phone=phone)
+    return _pipeline_redirect("pipeline_added", phone=phone)
 
 
 @router.post("/{pipeline_id}/edit")
@@ -84,62 +117,53 @@ async def edit_pipeline(
     request: Request,
     pipeline_id: int,
     name: str = Form(...),
-    phone: str = Form(...),
-    source_channel_ids: list[str] = Form(default=[]),
-    target_dialog_ids: list[str] = Form(default=[]),
-    prompt_template: str = Form(""),
+    prompt_template: str = Form(...),
+    source_channel_ids: list[int] = Form(default=[]),
+    target_refs: list[str] = Form(default=[]),
     llm_model: str = Form(""),
-    publish_mode: str = Form("draft"),
+    image_model: str = Form(""),
+    publish_mode: str = Form(PipelinePublishMode.MODERATED.value),
+    generation_backend: str = Form(PipelineGenerationBackend.CHAIN.value),
+    generate_interval_minutes: int = Form(60),
+    is_active: bool = Form(False),
 ):
-    svc = deps.pipeline_service(request)
-    pool = deps.get_pool(request)
-    if phone not in pool.clients:
-        return RedirectResponse(url="/pipelines?error=invalid_account", status_code=303)
-    sources = [int(x) for x in source_channel_ids if x.lstrip("-").isdigit()]
-    targets = []
-    for tid in target_dialog_ids:
-        if tid.lstrip("-").isdigit():
-            targets.append(PipelineTarget(dialog_id=int(tid)))
+    svc: PipelineService = deps.pipeline_service(request)
+    phone = request.query_params.get("phone")
+    existing = await svc.get(pipeline_id)
+    if existing is None:
+        return _pipeline_redirect("pipeline_invalid", error=True, phone=phone)
     try:
-        mode = PipelinePublishMode(publish_mode)
-    except ValueError:
-        mode = PipelinePublishMode.DRAFT
-    try:
-        updated = await svc.update(
+        ok = await svc.update(
             pipeline_id,
-            name,
-            phone,
-            source_channel_ids=sources,
-            targets=targets,
-            prompt_template=prompt_template or None,
-            llm_model=llm_model or None,
-            publish_mode=mode,
+            name=name,
+            prompt_template=prompt_template,
+            source_channel_ids=source_channel_ids,
+            target_refs=_target_refs(target_refs),
+            llm_model=llm_model,
+            image_model=image_model,
+            publish_mode=publish_mode,
+            generation_backend=generation_backend,
+            generate_interval_minutes=generate_interval_minutes,
+            is_active=is_active,
         )
-    except ValidationError:
-        return RedirectResponse(url="/pipelines?error=invalid_value", status_code=303)
-    if not updated:
-        return RedirectResponse(url="/pipelines?error=not_found", status_code=303)
-    return RedirectResponse(url="/pipelines?msg=pipeline_edited", status_code=303)
+    except PipelineValidationError as exc:
+        return _pipeline_redirect(str(exc), error=True, phone=phone)
+    if not ok:
+        return _pipeline_redirect("pipeline_invalid", error=True, phone=phone)
+    return _pipeline_redirect("pipeline_edited", phone=phone)
 
 
 @router.post("/{pipeline_id}/toggle")
 async def toggle_pipeline(request: Request, pipeline_id: int):
-    svc = deps.pipeline_service(request)
-    await svc.toggle(pipeline_id)
-    return RedirectResponse(url="/pipelines?msg=pipeline_toggled", status_code=303)
+    phone = request.query_params.get("phone")
+    ok = await deps.pipeline_service(request).toggle(pipeline_id)
+    if not ok:
+        return _pipeline_redirect("pipeline_invalid", error=True, phone=phone)
+    return _pipeline_redirect("pipeline_toggled", phone=phone)
 
 
 @router.post("/{pipeline_id}/delete")
 async def delete_pipeline(request: Request, pipeline_id: int):
-    svc = deps.pipeline_service(request)
-    await svc.delete(pipeline_id)
-    return RedirectResponse(url="/pipelines?msg=pipeline_deleted", status_code=303)
-
-
-@router.post("/refresh")
-async def pipelines_refresh(request: Request, phone: str = Form(...)):
-    await deps.channel_service(request).get_my_dialogs(phone, refresh=True)
-    return RedirectResponse(
-        url=f"/pipelines?phone={quote(phone, safe='')}",
-        status_code=303,
-    )
+    phone = request.query_params.get("phone")
+    await deps.pipeline_service(request).delete(pipeline_id)
+    return _pipeline_redirect("pipeline_deleted", phone=phone)
