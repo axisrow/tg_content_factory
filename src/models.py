@@ -159,6 +159,24 @@ class SearchQuery(BaseModel):
         return [p.strip() for p in self.exclude_patterns.splitlines() if p.strip()]
 
 
+class PipelineTarget(BaseModel):
+    dialog_id: int
+    title: str | None = None
+    dialog_type: str | None = None
+
+
+class Pipeline(BaseModel):
+    id: int | None = None
+    name: str
+    phone: str
+    source_channel_ids: list[int] = Field(default_factory=list)
+    targets: list[PipelineTarget] = Field(default_factory=list)
+    prompt_template: str
+    llm_model: str
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
 class SearchQueryDailyStat(BaseModel):
     day: str  # "2026-03-07"
     count: int

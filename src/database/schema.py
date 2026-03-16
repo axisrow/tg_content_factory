@@ -124,6 +124,18 @@ CREATE TABLE IF NOT EXISTS search_query_stats (
 CREATE INDEX IF NOT EXISTS idx_sqs_query_date
     ON search_query_stats(query_id, recorded_at);
 
+CREATE TABLE IF NOT EXISTS pipelines (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    phone TEXT NOT NULL,
+    source_channel_ids_json TEXT NOT NULL DEFAULT '[]',
+    targets_json TEXT NOT NULL DEFAULT '[]',
+    prompt_template TEXT NOT NULL,
+    llm_model TEXT NOT NULL,
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS forum_topics (
     id INTEGER PRIMARY KEY,
     channel_id INTEGER NOT NULL,

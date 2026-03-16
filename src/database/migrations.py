@@ -383,6 +383,21 @@ async def run_migrations(db: aiosqlite.Connection) -> bool:
         ON dialog_cache(phone)
         """
     )
+    await db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS pipelines (
+            id INTEGER PRIMARY KEY,
+            name TEXT NOT NULL,
+            phone TEXT NOT NULL,
+            source_channel_ids_json TEXT NOT NULL DEFAULT '[]',
+            targets_json TEXT NOT NULL DEFAULT '[]',
+            prompt_template TEXT NOT NULL,
+            llm_model TEXT NOT NULL,
+            created_at TEXT DEFAULT (datetime('now')),
+            updated_at TEXT DEFAULT (datetime('now'))
+        )
+        """
+    )
     await db.commit()
 
     fts_available = True

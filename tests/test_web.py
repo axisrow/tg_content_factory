@@ -14,7 +14,15 @@ from src.agent.provider_registry import ProviderRuntimeConfig
 from src.collection_queue import CollectionQueue
 from src.config import AppConfig
 from src.database import Database
-from src.models import Account, CollectionTaskStatus, CollectionTaskType, StatsAllTaskPayload
+from src.models import (
+    Account,
+    Channel,
+    CollectionTaskStatus,
+    CollectionTaskType,
+    Pipeline,
+    PipelineTarget,
+    StatsAllTaskPayload,
+)
 from src.scheduler.manager import SchedulerManager
 from src.search.ai_search import AISearchEngine
 from src.search.engine import SearchEngine
@@ -1095,6 +1103,55 @@ async def test_channels_page(client):
 
 
 @pytest.mark.asyncio
+async def test_pipelines_page_renders(client):
+    db = client._transport.app.state.db
+    pool = client._transport.app.state.pool
+    pool.clients["+1234567890"] = object()
+
+    dialogs = [
+        {
+            "channel_id": -100901,
+            "title": "Target Dialog",
+            "username": "targetdialog",
+            "channel_type": "channel",
+        },
+        {
+            "channel_id": 77,
+            "title": "Target DM",
+            "username": None,
+            "channel_type": "dm",
+        },
+    ]
+
+    async def _get_dialogs_for_phone(
+        self,
+        phone,
+        include_dm=False,
+        mode="channels_only",
+        refresh=False,
+    ):
+        return dialogs
+
+    pool.get_dialogs_for_phone = MethodType(_get_dialogs_for_phone, pool)
+    await db.add_channel(Channel(channel_id=-100101, title="Source One", channel_type="channel"))
+    await db.add_channel(Channel(channel_id=-100202, title="Source Two", channel_type="supergroup"))
+    await db.repos.dialog_cache.replace_dialogs("+1234567890", dialogs)
+
+    resp = await client.get("/pipelines/?phone=%2B1234567890")
+
+    assert resp.status_code == 200
+    assert "Пайплайны" in resp.text
+    assert 'action="/pipelines/refresh"' in resp.text
+    assert "Используется сохранённый список диалогов" in resp.text
+    assert "Source One" in resp.text
+    assert "Target Dialog" in resp.text
+    assert 'name="source_channel_ids"' in resp.text
+    assert 'name="target_dialog_ids"' in resp.text
+    assert 'name="prompt_template"' in resp.text
+    assert 'name="llm_model"' in resp.text
+
+
+@pytest.mark.asyncio
 async def test_search_page(client):
     resp = await client.get("/search")
     assert resp.status_code == 200
@@ -1676,6 +1733,156 @@ async def test_add_channel_redirect_has_msg(client):
     )
     assert resp.status_code == 303
     assert "msg=channel_added" in resp.headers["location"]
+
+
+@pytest.mark.asyncio
+async def test_add_pipeline_redirect_has_msg(client):
+    db = client._transport.app.state.db
+    pool = client._transport.app.state.pool
+    pool.clients["+1234567890"] = object()
+
+    dialogs = [
+        {
+            "channel_id": -100901,
+            "title": "Target Dialog",
+            "username": "targetdialog",
+            "channel_type": "channel",
+        }
+    ]
+
+    async def _get_dialogs_for_phone(
+        self,
+        phone,
+        include_dm=False,
+        mode="channels_only",
+        refresh=False,
+    ):
+        return dialogs
+
+    pool.get_dialogs_for_phone = MethodType(_get_dialogs_for_phone, pool)
+    await db.add_channel(Channel(channel_id=-100101, title="Source One", channel_type="channel"))
+
+    resp = await client.post(
+        "/pipelines/add",
+        data={
+            "phone": "+1234567890",
+            "name": "Daily Rewrite",
+            "llm_model": "openai:gpt-4o-mini",
+            "source_channel_ids": ["-100101"],
+            "target_dialog_ids": ["-100901"],
+            "prompt_template": "Rewrite this for the target audience.",
+        },
+        follow_redirects=False,
+    )
+
+    assert resp.status_code == 303
+    assert "msg=pipeline_added" in resp.headers["location"]
+    items = await db.repos.pipelines.list("+1234567890")
+    assert len(items) == 1
+    assert items[0].name == "Daily Rewrite"
+    assert items[0].source_channel_ids == [-100101]
+    assert [target.dialog_id for target in items[0].targets] == [-100901]
+
+
+@pytest.mark.asyncio
+async def test_edit_pipeline_updates_values(client):
+    db = client._transport.app.state.db
+    pool = client._transport.app.state.pool
+    pool.clients["+1234567890"] = object()
+
+    dialogs = [
+        {
+            "channel_id": -100901,
+            "title": "Target Dialog",
+            "username": "targetdialog",
+            "channel_type": "channel",
+        },
+        {
+            "channel_id": 77,
+            "title": "Target DM",
+            "username": None,
+            "channel_type": "dm",
+        },
+    ]
+
+    async def _get_dialogs_for_phone(
+        self,
+        phone,
+        include_dm=False,
+        mode="channels_only",
+        refresh=False,
+    ):
+        return dialogs
+
+    pool.get_dialogs_for_phone = MethodType(_get_dialogs_for_phone, pool)
+    await db.add_channel(Channel(channel_id=-100101, title="Source One", channel_type="channel"))
+    await db.add_channel(Channel(channel_id=-100202, title="Source Two", channel_type="supergroup"))
+    pipeline_id = await db.repos.pipelines.add(
+        Pipeline(
+            name="Daily Rewrite",
+            phone="+1234567890",
+            source_channel_ids=[-100101],
+            targets=[
+                PipelineTarget(
+                    dialog_id=-100901,
+                    title="Target Dialog",
+                    dialog_type="channel",
+                )
+            ],
+            prompt_template="Old prompt",
+            llm_model="openai:gpt-4o-mini",
+        )
+    )
+
+    resp = await client.post(
+        f"/pipelines/{pipeline_id}/edit",
+        data={
+            "phone": "+1234567890",
+            "name": "Daily Rewrite Updated",
+            "llm_model": "openai:gpt-4.1-mini",
+            "source_channel_ids": ["-100202"],
+            "target_dialog_ids": ["77"],
+            "prompt_template": "New prompt",
+        },
+        follow_redirects=False,
+    )
+
+    assert resp.status_code == 303
+    assert "msg=pipeline_edited" in resp.headers["location"]
+    item = await db.repos.pipelines.get_by_id(pipeline_id)
+    assert item is not None
+    assert item.name == "Daily Rewrite Updated"
+    assert item.source_channel_ids == [-100202]
+    assert [target.dialog_id for target in item.targets] == [77]
+    assert item.prompt_template == "New prompt"
+    assert item.llm_model == "openai:gpt-4.1-mini"
+
+
+@pytest.mark.asyncio
+async def test_delete_pipeline_redirect_has_msg(client):
+    db = client._transport.app.state.db
+    pipeline_id = await db.repos.pipelines.add(
+        Pipeline(
+            name="Daily Rewrite",
+            phone="+1234567890",
+            source_channel_ids=[-100101],
+            targets=[
+                PipelineTarget(
+                    dialog_id=-100901,
+                    title="Target Dialog",
+                    dialog_type="channel",
+                )
+            ],
+            prompt_template="Prompt",
+            llm_model="openai:gpt-4o-mini",
+        )
+    )
+
+    resp = await client.post(f"/pipelines/{pipeline_id}/delete", follow_redirects=False)
+
+    assert resp.status_code == 303
+    assert "msg=pipeline_deleted" in resp.headers["location"]
+    assert await db.repos.pipelines.get_by_id(pipeline_id) is None
 
 
 @pytest.mark.asyncio

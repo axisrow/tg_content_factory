@@ -13,6 +13,7 @@ from src.database.repositories.filters import FilterRepository
 from src.database.repositories.messages import MessagesRepository
 from src.database.repositories.notification_bots import NotificationBotsRepository
 from src.database.repositories.photo_loader import PhotoLoaderRepository
+from src.database.repositories.pipelines import PipelinesRepository
 from src.database.repositories.search_log import SearchLogRepository
 from src.database.repositories.search_queries import SearchQueriesRepository
 from src.database.repositories.settings import SettingsRepository
@@ -29,6 +30,7 @@ from src.models import (
     PhotoBatchItem,
     PhotoBatchStatus,
     PhotoSendMode,
+    Pipeline,
     SearchQuery,
     SearchQueryDailyStat,
     StatsAllTaskPayload,
@@ -52,6 +54,7 @@ class DatabaseRepositories:
     search_queries: SearchQueriesRepository
     photo_loader: PhotoLoaderRepository
     dialog_cache: DialogCacheRepository
+    pipelines: PipelinesRepository
 
 
 @dataclass(frozen=True)
@@ -561,6 +564,40 @@ class PhotoLoaderBundle:
 
     async def mark_auto_file_sent(self, job_id: int, file_path: str) -> None:
         await self.photo_loader.mark_auto_file_sent(job_id, file_path)
+
+
+@dataclass(frozen=True)
+class PipelineBundle:
+    pipelines: PipelinesRepository
+    channels: ChannelsRepository
+
+    @classmethod
+    def from_database(cls, db: "Database") -> "PipelineBundle":
+        repos = db.repos
+        return cls(repos.pipelines, repos.channels)
+
+    async def list(self, phone: str | None = None) -> list[Pipeline]:
+        return await self.pipelines.list(phone)
+
+    async def get_by_id(self, pipeline_id: int) -> Pipeline | None:
+        return await self.pipelines.get_by_id(pipeline_id)
+
+    async def add(self, pipeline: Pipeline) -> int:
+        return await self.pipelines.add(pipeline)
+
+    async def update(self, pipeline_id: int, pipeline: Pipeline) -> None:
+        await self.pipelines.update(pipeline_id, pipeline)
+
+    async def delete(self, pipeline_id: int) -> None:
+        await self.pipelines.delete(pipeline_id)
+
+    async def list_channels(
+        self,
+        *,
+        active_only: bool = False,
+        include_filtered: bool = False,
+    ) -> list[Channel]:
+        return await self.channels.get_channels(active_only, include_filtered)
 
 
 @dataclass(frozen=True)

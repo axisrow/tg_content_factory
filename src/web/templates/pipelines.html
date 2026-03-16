@@ -1,0 +1,154 @@
+{% extends "base.html" %}
+{% block title %}Пайплайны — TG Agent{% endblock %}
+{% block content %}
+<h1>Пайплайны</h1>
+
+{% if not accounts %}
+<p>Нет подключённых аккаунтов. Добавьте аккаунт в <a href="/settings">Настройках</a>.</p>
+{% else %}
+<div class="row g-4">
+    <div class="col-12">
+        <div class="row g-2 align-items-end">
+            <form method="get" action="/pipelines" class="col-md-4">
+                <label class="form-label">Аккаунт для целей</label>
+                <select name="phone" class="form-select" onchange="this.form.submit()">
+                    {% for acc in accounts %}
+                    <option value="{{ acc }}" {% if acc == selected_phone %}selected{% endif %}>{{ acc }}</option>
+                    {% endfor %}
+                </select>
+            </form>
+            <form method="post" action="/pipelines/refresh" class="col-md-auto" data-busy>
+                <input type="hidden" name="phone" value="{{ selected_phone or '' }}">
+                <button class="btn btn-outline-secondary" type="submit" {% if not selected_phone %}disabled{% endif %}>Обновить диалоги</button>
+            </form>
+            <div class="col-12">
+                <small class="text-muted">
+                    Используется сохранённый список диалогов{% if dialogs_cached_at %} от {{ dialogs_cached_at.strftime("%Y-%m-%d %H:%M") }}{% endif %}. Кнопка обновления заново загружает данные из Telegram.
+                </small>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-lg-6">
+        <div class="card h-100">
+            <div class="card-body">
+                <h2 class="h5">Создать пайплайн</h2>
+                <form method="post" action="/pipelines/add" class="row g-3">
+                    <input type="hidden" name="phone" value="{{ selected_phone }}">
+                    <div class="col-12">
+                        <label class="form-label">Название</label>
+                        <input class="form-control" type="text" name="name" placeholder="Например, Daily rewrites" required>
+                    </div>
+                    <div class="col-12">
+                        <label class="form-label">LLM model</label>
+                        <input class="form-control" type="text" name="llm_model" placeholder="openai:gpt-4o-mini" required>
+                    </div>
+                    <div class="col-12">
+                        <label class="form-label">Source channels</label>
+                        <div class="border rounded p-3 overflow-auto" style="max-height: 18rem;">
+                            {% for channel in source_channels %}
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" name="source_channel_ids" value="{{ channel.channel_id }}" id="add-source-{{ loop.index }}">
+                                <label class="form-check-label" for="add-source-{{ loop.index }}">
+                                    {{ channel.title or channel.channel_id }}
+                                </label>
+                            </div>
+                            {% else %}
+                            <p class="text-muted mb-0">Нет доступных каналов. Сначала добавьте source channels в разделе <a href="/channels">Каналы</a>.</p>
+                            {% endfor %}
+                        </div>
+                    </div>
+                    <div class="col-12">
+                        <label class="form-label">Target dialogs</label>
+                        <div class="border rounded p-3 overflow-auto" style="max-height: 18rem;">
+                            {% for dialog in dialogs %}
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" name="target_dialog_ids" value="{{ dialog.channel_id }}" id="add-target-{{ loop.index }}">
+                                <label class="form-check-label" for="add-target-{{ loop.index }}">
+                                    {{ dialog.title }} <span class="text-muted">({{ dialog.channel_type }})</span>
+                                </label>
+                            </div>
+                            {% else %}
+                            <p class="text-muted mb-0">Для выбранного аккаунта нет доступных target dialogs.</p>
+                            {% endfor %}
+                        </div>
+                    </div>
+                    <div class="col-12">
+                        <label class="form-label">Prompt template</label>
+                        <textarea class="form-control" name="prompt_template" rows="6" placeholder="Перепиши сообщение в фирменном стиле..." required></textarea>
+                    </div>
+                    <div class="col-12">
+                        <button class="btn btn-primary" type="submit">Сохранить пайплайн</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-lg-6">
+        <div class="card h-100">
+            <div class="card-body">
+                <h2 class="h5">Существующие пайплайны</h2>
+                {% for pipeline in pipelines %}
+                {% set pipeline_target_ids = pipeline.targets | map(attribute='dialog_id') | list %}
+                <div class="border rounded p-3 mb-3">
+                    <form method="post" action="/pipelines/{{ pipeline.id }}/edit" class="row g-3">
+                        <input type="hidden" name="phone" value="{{ pipeline.phone }}">
+                        <div class="col-sm-8">
+                            <label class="form-label">Название</label>
+                            <input class="form-control" type="text" name="name" value="{{ pipeline.name }}" required>
+                        </div>
+                        <div class="col-sm-4">
+                            <label class="form-label">LLM model</label>
+                            <input class="form-control" type="text" name="llm_model" value="{{ pipeline.llm_model }}" required>
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label">Source channels</label>
+                            <div class="border rounded p-3 overflow-auto" style="max-height: 12rem;">
+                                {% for channel in source_channels %}
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" name="source_channel_ids" value="{{ channel.channel_id }}" id="pipeline-{{ pipeline.id }}-source-{{ loop.index }}" {% if channel.channel_id in pipeline.source_channel_ids %}checked{% endif %}>
+                                    <label class="form-check-label" for="pipeline-{{ pipeline.id }}-source-{{ loop.index }}">
+                                        {{ channel.title or channel.channel_id }}
+                                    </label>
+                                </div>
+                                {% endfor %}
+                            </div>
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label">Target dialogs</label>
+                            <div class="border rounded p-3 overflow-auto" style="max-height: 12rem;">
+                                {% for dialog in dialogs %}
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" name="target_dialog_ids" value="{{ dialog.channel_id }}" id="pipeline-{{ pipeline.id }}-target-{{ loop.index }}" {% if dialog.channel_id in pipeline_target_ids %}checked{% endif %}>
+                                    <label class="form-check-label" for="pipeline-{{ pipeline.id }}-target-{{ loop.index }}">
+                                        {{ dialog.title }} <span class="text-muted">({{ dialog.channel_type }})</span>
+                                    </label>
+                                </div>
+                                {% endfor %}
+                            </div>
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label">Prompt template</label>
+                            <textarea class="form-control" name="prompt_template" rows="5" required>{{ pipeline.prompt_template }}</textarea>
+                        </div>
+                        <div class="col-12 d-flex flex-wrap gap-2 align-items-center">
+                            <button class="btn btn-outline-primary" type="submit">Сохранить изменения</button>
+                            <span class="text-muted small">
+                                {{ pipeline.phone }} · {{ pipeline.source_channel_ids | length }} source · {{ pipeline.targets | length }} target
+                            </span>
+                        </div>
+                    </form>
+                    <form method="post" action="/pipelines/{{ pipeline.id }}/delete" class="mt-2">
+                        <button class="btn btn-outline-danger btn-sm" type="submit">Удалить</button>
+                    </form>
+                </div>
+                {% else %}
+                <p class="text-muted mb-0">Для выбранного аккаунта пайплайнов пока нет.</p>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+{% endblock %}

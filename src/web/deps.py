@@ -31,6 +31,7 @@ from src.services.notification_target_service import NotificationTargetService
 from src.services.photo_auto_upload_service import PhotoAutoUploadService
 from src.services.photo_publish_service import PhotoPublishService
 from src.services.photo_task_service import PhotoTaskService
+from src.services.pipeline_service import PipelineService
 from src.services.search_query_service import SearchQueryService
 from src.services.search_service import SearchService
 from src.services.task_enqueuer import TaskEnqueuer
@@ -300,6 +301,14 @@ def search_query_service(request: Request) -> SearchQueryService:
         request,
         "_search_query_service",
         lambda: SearchQueryService(get_search_query_bundle(request)),
+    )
+
+
+def pipeline_service(request: Request) -> PipelineService:
+    return _request_cached(
+        request,
+        "_pipeline_service",
+        lambda: PipelineService(get_db(request)),
     )
 
 
