@@ -239,6 +239,14 @@ def build_parser() -> argparse.ArgumentParser:
     pipeline_toggle = pipeline_sub.add_parser("toggle", help="Toggle pipeline active state")
     pipeline_toggle.add_argument("id", type=int, help="Pipeline id")
 
+    pipeline_run = pipeline_sub.add_parser("run", help="Run pipeline generation (preview/publish)")
+    pipeline_run.add_argument("id", type=int, help="Pipeline id")
+    pipeline_run.add_argument("--preview", action="store_true", default=False, help="Only preview generated draft")
+    pipeline_run.add_argument("--publish", action="store_true", default=False, help="Publish generated draft to targets (requires accounts and confirmation)")
+    pipeline_run.add_argument("--limit", type=int, default=8, help="Number of context messages to fetch")
+    pipeline_run.add_argument("--max-tokens", type=int, default=256, help="Max tokens for LLM generation")
+    pipeline_run.add_argument("--temperature", type=float, default=0.0, help="Sampling temperature for generation")
+
     acc_parser = sub.add_parser("account", help="Account management")
     acc_sub = acc_parser.add_subparsers(dest="account_action")
     acc_sub.add_parser("list", help="List accounts")
