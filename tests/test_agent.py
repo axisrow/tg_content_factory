@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import date, datetime
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -9,6 +9,11 @@ from langchain_core.tools import StructuredTool
 
 from src.agent.context import format_context
 from src.agent.manager import AgentManager
+from src.agent.prompt_template import (
+    AGENT_PROMPT_TEMPLATE_SETTING,
+    PromptTemplateError,
+    validate_prompt_template,
+)
 from src.agent.provider_registry import ProviderRuntimeConfig
 from src.agent.tools import make_mcp_server
 from src.config import AppConfig
@@ -63,6 +68,57 @@ async def test_agent_chat_stream_mocked(db):
     assert all(c.startswith("data: ") for c in chunks)
     last_chunk = chunks[-1]
     assert "done" in last_chunk or "full_text" in last_chunk or "hello" in last_chunk
+
+
+@pytest.mark.asyncio
+async def test_agent_chat_stream_renders_saved_prompt_template_variables(db):
+    await db.set_setting(
+        AGENT_PROMPT_TEMPLATE_SETTING,
+        "Дата: {date}\nКанал: {channel_title}\nТема: {topic}\nСообщения:\n{source_messages}",
+    )
+    thread_id = await db.create_agent_thread("test thread")
+    context = format_context(
+        [
+            Message(
+                channel_id=100,
+                message_id=1,
+                text="hello",
+                topic_id=10,
+                sender_name="User",
+                date=_NOW,
+            )
+        ],
+        "ForumChan",
+        topic_id=10,
+        topics_map={10: "Вопросы"},
+    )
+    await db.save_agent_message(thread_id, "user", context)
+    await db.save_agent_message(thread_id, "user", "test")
+
+    from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
+
+    assistant_msg = MagicMock(spec=AssistantMessage)
+    assistant_msg.content = [TextBlock(text="hello")]
+    result_msg = MagicMock(spec=ResultMessage)
+    expected_system_prompt = (
+        f"Дата: {date.today().isoformat()}\n"
+        "Канал: ForumChan\n"
+        "Тема: Вопросы\n"
+        'Сообщения:\n{"id": 1, "date": "2024-01-15", "author": "User", "text": "hello"}'
+    )
+
+    async def mock_query(_prompt, options):
+        assert options.system_prompt == expected_system_prompt
+        yield assistant_msg
+        yield result_msg
+
+    mgr = AgentManager(db)
+    mgr.initialize()
+
+    with patch("src.agent.manager.query", mock_query):
+        chunks = [chunk async for chunk in mgr.chat_stream(thread_id, "test")]
+
+    assert chunks
 
 
 @pytest.mark.asyncio
@@ -572,3 +628,8 @@ def test_format_context_unknown_topic_in_grouping():
     msgs = [_msg(1, "msg1", topic_id=55)]
     result = format_context(msgs, "Chan", topic_id=None, topics_map={})
     assert "## Тема #55" in result
+
+
+def test_validate_prompt_template_rejects_unknown_variable():
+    with pytest.raises(PromptTemplateError, match="Недопустимая переменная"):
+        validate_prompt_template("Канал: {unknown}")

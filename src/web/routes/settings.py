@@ -7,6 +7,13 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from src.agent.manager import AgentManager
+from src.agent.prompt_template import (
+    AGENT_PROMPT_TEMPLATE_SETTING,
+    ALLOWED_TEMPLATE_VARIABLES,
+    DEFAULT_AGENT_PROMPT_TEMPLATE,
+    PromptTemplateError,
+    validate_prompt_template,
+)
 from src.agent.provider_registry import PROVIDER_ORDER, ProviderRuntimeConfig
 from src.agent.provider_registry import provider_spec as deepagents_provider_spec
 from src.services.agent_provider_service import (
@@ -323,6 +330,9 @@ async def settings_page(request: Request):
     saved_interval = await db.get_setting("collect_interval_minutes")
     agent_dev_mode_enabled = (await db.get_setting("agent_dev_mode_enabled") or "0") == "1"
     agent_backend_override = await db.get_setting("agent_backend_override") or "auto"
+    agent_prompt_template = (
+        await db.get_setting(AGENT_PROMPT_TEMPLATE_SETTING) or DEFAULT_AGENT_PROMPT_TEMPLATE
+    )
     if agent_backend_override not in {"auto", "claude", "deepagents"}:
         agent_backend_override = "auto"
     config = request.app.state.config
@@ -380,8 +390,10 @@ async def settings_page(request: Request):
             "collect_interval_minutes": collect_interval_minutes,
             "agent_dev_mode_enabled": agent_dev_mode_enabled,
             "agent_backend_override": agent_backend_override,
+            "agent_prompt_template": agent_prompt_template,
             "agent_fallback_model": config.agent.fallback_model
             or os.environ.get("AGENT_FALLBACK_MODEL", "").strip(),
+            "agent_prompt_template_variables": sorted(ALLOWED_TEMPLATE_VARIABLES),
             "agent_provider_writes_enabled": provider_service.writes_enabled,
             "agent_provider_views": provider_views,
             "agent_provider_options": available_provider_options,
@@ -413,6 +425,9 @@ async def save_agent_settings(request: Request):
     form_scope = str(form.get("agent_form_scope", "dev_mode")).strip()
     current_dev_mode = (await db.get_setting("agent_dev_mode_enabled") or "0") == "1"
     current_backend_override = await db.get_setting("agent_backend_override") or "auto"
+    current_prompt_template = (
+        await db.get_setting(AGENT_PROMPT_TEMPLATE_SETTING) or DEFAULT_AGENT_PROMPT_TEMPLATE
+    )
 
     wants_dev_mode = str(form.get("agent_dev_mode_enabled", "")).strip() == "1"
     disclaimer_accepted = str(form.get("agent_dev_mode_disclaimer", "")).strip() == "1"
@@ -434,8 +449,24 @@ async def save_agent_settings(request: Request):
         else:
             dev_mode_enabled = current_dev_mode
 
+    if form_scope == "prompt_template":
+        prompt_template = str(form.get("agent_prompt_template") or "")
+        if not prompt_template.strip():
+            prompt_template = DEFAULT_AGENT_PROMPT_TEMPLATE
+        try:
+            validate_prompt_template(prompt_template)
+        except PromptTemplateError as exc:
+            logger.warning("Rejected invalid agent prompt template: %s", exc)
+            return RedirectResponse(
+                url="/settings?error=agent_prompt_template_invalid",
+                status_code=303,
+            )
+    else:
+        prompt_template = current_prompt_template
+
     await db.set_setting("agent_dev_mode_enabled", "1" if dev_mode_enabled else "0")
     await db.set_setting("agent_backend_override", backend_override)
+    await db.set_setting(AGENT_PROMPT_TEMPLATE_SETTING, prompt_template)
     agent_manager = deps.get_agent_manager(request)
     if agent_manager is not None:
         await agent_manager.refresh_settings_cache(preflight=True)
