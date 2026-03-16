@@ -213,4 +213,44 @@ CREATE TABLE IF NOT EXISTS dialog_cache (
 
 CREATE INDEX IF NOT EXISTS idx_dialog_cache_phone
     ON dialog_cache(phone);
+
+CREATE TABLE IF NOT EXISTS content_pipelines (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    prompt_template TEXT NOT NULL,
+    llm_model TEXT,
+    image_model TEXT,
+    publish_mode TEXT NOT NULL DEFAULT 'moderated',
+    generation_backend TEXT NOT NULL DEFAULT 'chain',
+    is_active INTEGER NOT NULL DEFAULT 1,
+    last_generated_id INTEGER NOT NULL DEFAULT 0,
+    generate_interval_minutes INTEGER NOT NULL DEFAULT 60,
+    created_at TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS pipeline_sources (
+    id INTEGER PRIMARY KEY,
+    pipeline_id INTEGER NOT NULL,
+    channel_id INTEGER NOT NULL,
+    created_at TEXT DEFAULT (datetime('now')),
+    UNIQUE(pipeline_id, channel_id),
+    FOREIGN KEY (pipeline_id) REFERENCES content_pipelines(id) ON DELETE CASCADE,
+    FOREIGN KEY (channel_id) REFERENCES channels(channel_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_pipeline_sources_pipeline
+    ON pipeline_sources(pipeline_id);
+
+CREATE TABLE IF NOT EXISTS pipeline_targets (
+    id INTEGER PRIMARY KEY,
+    pipeline_id INTEGER NOT NULL,
+    target_phone TEXT NOT NULL,
+    target_dialog_id INTEGER NOT NULL,
+    created_at TEXT DEFAULT (datetime('now')),
+    UNIQUE(pipeline_id, target_phone, target_dialog_id),
+    FOREIGN KEY (pipeline_id) REFERENCES content_pipelines(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_pipeline_targets_pipeline
+    ON pipeline_targets(pipeline_id);
 """

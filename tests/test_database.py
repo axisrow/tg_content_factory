@@ -12,7 +12,12 @@ from src.models import (
     Channel,
     CollectionTaskStatus,
     CollectionTaskType,
+    ContentGenerationBackend,
+    ContentPipeline,
     Message,
+    PipelinePublishMode,
+    PipelineSource,
+    PipelineTarget,
     SearchQuery,
     StatsAllTaskPayload,
 )
@@ -652,6 +657,91 @@ async def test_channel_upsert_reactivates_existing_channel(db):
 
 
 @pytest.mark.asyncio
+async def test_content_pipeline_schema_and_models(db):
+    pipeline = ContentPipeline(
+        name="Morning digest",
+        prompt_template="Summarize {messages}",
+        llm_model="gpt-4.1-mini",
+        image_model="gpt-image-1",
+        publish_mode=PipelinePublishMode.AUTO,
+        generation_backend=ContentGenerationBackend.AGENT,
+        generate_interval_minutes=90,
+    )
+    source = PipelineSource(pipeline_id=1, channel_id=-100321)
+    target = PipelineTarget(pipeline_id=1, target_phone="+15550000000", target_dialog_id=777000)
+
+    assert pipeline.publish_mode == PipelinePublishMode.AUTO
+    assert pipeline.generation_backend == ContentGenerationBackend.AGENT
+    assert source.channel_id == -100321
+    assert target.target_dialog_id == 777000
+
+    await db.add_channel(Channel(channel_id=-100321, title="Source"))
+    await db.repos.dialog_cache.replace_dialogs(
+        "+15550000000",
+        [
+            {
+                "channel_id": 777000,
+                "title": "Saved Messages",
+                "username": None,
+                "channel_type": "dm",
+                "deactivate": False,
+                "is_own": True,
+            }
+        ],
+    )
+
+    await db.execute(
+        """
+        INSERT INTO content_pipelines (
+            name, prompt_template, llm_model, image_model, publish_mode,
+            generation_backend, generate_interval_minutes
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            pipeline.name,
+            pipeline.prompt_template,
+            pipeline.llm_model,
+            pipeline.image_model,
+            pipeline.publish_mode.value,
+            pipeline.generation_backend.value,
+            pipeline.generate_interval_minutes,
+        ),
+    )
+    await db.execute(
+        "INSERT INTO pipeline_sources (pipeline_id, channel_id) VALUES (?, ?)",
+        (1, source.channel_id),
+    )
+    await db.execute(
+        """
+        INSERT INTO pipeline_targets (pipeline_id, target_phone, target_dialog_id)
+        VALUES (?, ?, ?)
+        """,
+        (1, target.target_phone, target.target_dialog_id),
+    )
+
+    cur = await db.execute("SELECT * FROM content_pipelines WHERE id = 1")
+    row = await cur.fetchone()
+    assert row is not None
+    assert row["publish_mode"] == PipelinePublishMode.AUTO.value
+    assert row["generation_backend"] == ContentGenerationBackend.AGENT.value
+    assert row["is_active"] == 1
+    assert row["last_generated_id"] == 0
+    assert row["generate_interval_minutes"] == 90
+
+    cur = await db.execute("SELECT channel_id FROM pipeline_sources WHERE pipeline_id = 1")
+    rows = await cur.fetchall()
+    assert [r["channel_id"] for r in rows] == [-100321]
+
+    cur = await db.execute(
+        "SELECT target_phone, target_dialog_id FROM pipeline_targets WHERE pipeline_id = 1"
+    )
+    rows = await cur.fetchall()
+    assert [(r["target_phone"], r["target_dialog_id"]) for r in rows] == [
+        ("+15550000000", 777000)
+    ]
+
+
+@pytest.mark.asyncio
 async def test_migrate_adds_channel_type_column(tmp_path):
     """Migration adds channel_type column to existing channels table."""
     db_path = str(tmp_path / "migrate_channel_type_test.db")
@@ -726,6 +816,146 @@ async def test_migrate_adds_channel_type_column(tmp_path):
     await database.add_channel(ch)
     channels = await database.get_channels()
     assert any(c.channel_type == "group" for c in channels)
+
+    await database.close()
+
+
+@pytest.mark.asyncio
+async def test_migrate_adds_content_pipeline_tables(tmp_path):
+    db_path = str(tmp_path / "migrate_content_pipelines.db")
+
+    conn = await aiosqlite.connect(db_path)
+    try:
+        await conn.executescript("""
+            CREATE TABLE IF NOT EXISTS accounts (
+                id INTEGER PRIMARY KEY,
+                phone TEXT UNIQUE NOT NULL,
+                session_string TEXT NOT NULL,
+                is_primary INTEGER DEFAULT 0,
+                is_active INTEGER DEFAULT 1,
+                flood_wait_until TEXT,
+                created_at TEXT DEFAULT (datetime('now'))
+            );
+            CREATE TABLE IF NOT EXISTS channels (
+                id INTEGER PRIMARY KEY,
+                channel_id INTEGER UNIQUE NOT NULL,
+                title TEXT,
+                username TEXT,
+                is_active INTEGER DEFAULT 1,
+                last_collected_id INTEGER DEFAULT 0,
+                added_at TEXT DEFAULT (datetime('now'))
+            );
+            CREATE TABLE IF NOT EXISTS messages (
+                id INTEGER PRIMARY KEY,
+                channel_id INTEGER NOT NULL,
+                message_id INTEGER NOT NULL,
+                sender_id INTEGER,
+                sender_name TEXT,
+                text TEXT,
+                media_type TEXT,
+                date TEXT NOT NULL,
+                collected_at TEXT DEFAULT (datetime('now')),
+                UNIQUE(channel_id, message_id)
+            );
+            CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
+        """)
+        await conn.execute(
+            "INSERT INTO channels (channel_id, title) VALUES (?, ?)",
+            (-100654, "Legacy Source"),
+        )
+        await conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS dialog_cache (
+                id INTEGER PRIMARY KEY,
+                phone TEXT NOT NULL,
+                dialog_id INTEGER NOT NULL,
+                title TEXT,
+                username TEXT,
+                channel_type TEXT NOT NULL,
+                deactivate INTEGER NOT NULL DEFAULT 0,
+                is_own INTEGER NOT NULL DEFAULT 0,
+                cached_at TEXT NOT NULL DEFAULT (datetime('now')),
+                UNIQUE(phone, dialog_id)
+            )
+            """
+        )
+        await conn.execute(
+            """
+            INSERT INTO dialog_cache (phone, dialog_id, title, channel_type)
+            VALUES (?, ?, ?, ?)
+            """,
+            ("+15551111111", 9001, "Target", "group"),
+        )
+        await conn.commit()
+    finally:
+        await conn.close()
+
+    database = Database(db_path)
+    await database.initialize()
+
+    for table_name, expected_columns in {
+        "content_pipelines": {
+            "id",
+            "name",
+            "prompt_template",
+            "llm_model",
+            "image_model",
+            "publish_mode",
+            "generation_backend",
+            "is_active",
+            "last_generated_id",
+            "generate_interval_minutes",
+            "created_at",
+        },
+        "pipeline_sources": {"id", "pipeline_id", "channel_id", "created_at"},
+        "pipeline_targets": {
+            "id",
+            "pipeline_id",
+            "target_phone",
+            "target_dialog_id",
+            "created_at",
+        },
+    }.items():
+        cur = await database.execute(f"PRAGMA table_info({table_name})")
+        columns = {row["name"] for row in await cur.fetchall()}
+        assert expected_columns.issubset(columns)
+
+    await database.execute(
+        """
+        INSERT INTO content_pipelines (
+            name, prompt_template, publish_mode, generation_backend
+        ) VALUES (?, ?, ?, ?)
+        """,
+        (
+            "Legacy migration pipeline",
+            "Rewrite {messages}",
+            PipelinePublishMode.MODERATED.value,
+            ContentGenerationBackend.CHAIN.value,
+        ),
+    )
+    await database.execute(
+        "INSERT INTO pipeline_sources (pipeline_id, channel_id) VALUES (?, ?)",
+        (1, -100654),
+    )
+    await database.execute(
+        """
+        INSERT INTO pipeline_targets (pipeline_id, target_phone, target_dialog_id)
+        VALUES (?, ?, ?)
+        """,
+        (1, "+15551111111", 9001),
+    )
+
+    cur = await database.execute(
+        "SELECT COUNT(*) AS cnt FROM pipeline_sources WHERE pipeline_id = 1"
+    )
+    assert (await cur.fetchone())["cnt"] == 1
+    cur = await database.execute(
+        "SELECT COUNT(*) AS cnt FROM pipeline_targets WHERE pipeline_id = 1"
+    )
+    assert (await cur.fetchone())["cnt"] == 1
 
     await database.close()
 

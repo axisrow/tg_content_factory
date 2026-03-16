@@ -116,6 +116,45 @@ class ChannelStats(BaseModel):
     collected_at: datetime | None = None
 
 
+class PipelinePublishMode(StrEnum):
+    AUTO = "auto"
+    MODERATED = "moderated"
+
+
+class ContentGenerationBackend(StrEnum):
+    CHAIN = "chain"
+    AGENT = "agent"
+
+
+class ContentPipeline(BaseModel):
+    id: int | None = None
+    name: str
+    prompt_template: str
+    llm_model: str | None = None
+    image_model: str | None = None
+    publish_mode: PipelinePublishMode = PipelinePublishMode.MODERATED
+    generation_backend: ContentGenerationBackend = ContentGenerationBackend.CHAIN
+    is_active: bool = True
+    last_generated_id: int = 0
+    generate_interval_minutes: int = Field(60, ge=1)
+    created_at: datetime | None = None
+
+
+class PipelineSource(BaseModel):
+    id: int | None = None
+    pipeline_id: int
+    channel_id: int
+    created_at: datetime | None = None
+
+
+class PipelineTarget(BaseModel):
+    id: int | None = None
+    pipeline_id: int
+    target_phone: str
+    target_dialog_id: int
+    created_at: datetime | None = None
+
+
 class NotificationBot(BaseModel):
     id: int = 0
     tg_user_id: int
