@@ -20,6 +20,7 @@ from src.cli.commands import agent as agent_cmd
 from src.cli.commands import analytics as analytics_cmd
 from src.cli.commands import filter as filter_cmd
 from src.cli.commands import my_telegram as my_telegram_cmd
+from src.cli.commands import pipeline as pipeline_cmd
 from src.cli.commands import (
     test as test_cmd,
 )
@@ -51,6 +52,7 @@ def main() -> None:
         "test": test_cmd.run,
         "agent": agent_cmd.run,
         "analytics": analytics_cmd.run,
+        "pipeline": pipeline_cmd.run,
     }
 
     handler = commands.get(args.command)
@@ -67,6 +69,7 @@ def main() -> None:
             "test": "test_action",
             "agent": "agent_action",
             "analytics": "analytics_action",
+            "pipeline": "pipeline_action",
         }
         if args.command in sub_attr and not getattr(args, sub_attr[args.command], None):
             parser.parse_args([args.command, "--help"])

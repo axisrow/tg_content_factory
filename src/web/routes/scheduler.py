@@ -10,9 +10,21 @@ router = APIRouter()
 
 @router.post("/tasks/{task_id}/cancel")
 async def cancel_task(request: Request, task_id: int):
+    if getattr(request.app.state, "shutting_down", False):
+        return RedirectResponse(url="/scheduler?error=shutting_down", status_code=303)
     queue = deps.get_queue(request)
     await queue.cancel_task(task_id)
     return RedirectResponse(url="/scheduler?msg=task_cancelled", status_code=303)
+
+
+@router.post("/tasks/clear-pending-collect")
+async def clear_pending_collect_tasks(request: Request):
+    if getattr(request.app.state, "shutting_down", False):
+        return RedirectResponse(url="/scheduler?error=shutting_down", status_code=303)
+    queue = deps.get_queue(request)
+    deleted = await queue.clear_pending_tasks()
+    msg = "pending_collect_tasks_deleted" if deleted > 0 else "pending_collect_tasks_empty"
+    return RedirectResponse(url=f"/scheduler?msg={msg}", status_code=303)
 
 
 VALID_STATUS_FILTERS = {"all", "active", "completed"}
@@ -55,6 +67,7 @@ async def scheduler_page(
     completed_count = all_count - active_count
 
     has_active_tasks = active_count > 0
+    pending_collect_count = len(await db.get_pending_channel_tasks())
 
     search_log = await db.get_recent_searches()
     notifier = deps.get_notifier(request)
@@ -83,6 +96,7 @@ async def scheduler_page(
             "limit": limit,
             "search_log": search_log,
             "bot_configured": bot_configured,
+            "pending_collect_count": pending_collect_count,
         },
     )
 
@@ -151,5 +165,4 @@ async def test_notification(request: Request):
     ok = await test_notifier.notify(text)
     msg = "test_notification_sent" if ok else "test_notification_failed"
     return RedirectResponse(url=f"/scheduler?msg={msg}", status_code=303)
-
 

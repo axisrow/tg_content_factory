@@ -364,6 +364,18 @@ class CollectionTasksRepository:
         rows = await cur.fetchall()
         return [self._to_task(r) for r in rows]
 
+    async def delete_pending_channel_tasks(self) -> int:
+        cur = await self._db.execute(
+            "DELETE FROM collection_tasks "
+            "WHERE task_type = ? AND status = ?",
+            (
+                CollectionTaskType.CHANNEL_COLLECT.value,
+                CollectionTaskStatus.PENDING.value,
+            ),
+        )
+        await self._db.commit()
+        return cur.rowcount or 0
+
     async def fail_running_collection_tasks_on_startup(self) -> int:
         now = datetime.now(tz=timezone.utc).isoformat()
         cur = await self._db.execute(

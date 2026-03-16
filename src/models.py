@@ -175,6 +175,29 @@ class SearchResult(BaseModel):
     error: str | None = None
 
 
+class PipelinePublishMode(StrEnum):
+    DRAFT = "draft"
+    AUTO = "auto"
+
+
+class PipelineTarget(BaseModel):
+    dialog_id: int
+    title: str | None = None
+
+
+class Pipeline(BaseModel):
+    id: int | None = None
+    name: str
+    phone: str
+    source_channel_ids: list[int] = Field(default_factory=list)
+    targets: list[PipelineTarget] = Field(default_factory=list)
+    prompt_template: str | None = None
+    llm_model: str | None = None
+    publish_mode: PipelinePublishMode = PipelinePublishMode.DRAFT
+    is_active: bool = True
+    created_at: datetime | None = None
+
+
 class PhotoSendMode(StrEnum):
     ALBUM = "album"
     SEPARATE = "separate"
