@@ -139,6 +139,7 @@ def register_routes(app: FastAPI) -> None:
     app.include_router(my_telegram_router, prefix="/my-telegram")
     app.include_router(photo_loader_router, prefix="/my-telegram/photos")
     app.include_router(debug_router, prefix="/debug")
+    app.include_router(pipelines_router, prefix="/pipelines")
 
 
 def build_log_buffer() -> logging.Handler:

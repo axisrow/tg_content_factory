@@ -10,7 +10,6 @@ from src.cli.commands import (
     collect,
     notification,
     photo_loader,
-    pipeline,
     scheduler,
     search,
     search_query,
@@ -21,6 +20,7 @@ from src.cli.commands import agent as agent_cmd
 from src.cli.commands import analytics as analytics_cmd
 from src.cli.commands import filter as filter_cmd
 from src.cli.commands import my_telegram as my_telegram_cmd
+from src.cli.commands import pipeline as pipeline_cmd
 from src.cli.commands import (
     test as test_cmd,
 )
@@ -44,7 +44,7 @@ def main() -> None:
         "channel": channel.run,
         "filter": filter_cmd.run,
         "search-query": search_query.run,
-        "pipeline": pipeline.run,
+        "pipeline": pipeline_cmd.run,
         "account": account.run,
         "scheduler": scheduler.run,
         "notification": notification.run,
