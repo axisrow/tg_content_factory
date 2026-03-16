@@ -42,13 +42,23 @@ html { font-size: 14px; }
     white-space: nowrap;
 }
 
-/* Emoji action buttons */
+/* Emoji action buttons (used in channels, search queries) */
 .emoji-btn {
     padding: 0.25rem 0.4rem !important;
     font-size: 1rem;
     line-height: 1;
     margin: 0 1px;
     display: inline-flex !important;
+    align-items: center;
+}
+
+/* Settings tabs */
+#settings-tabs {
+    gap: 0.25rem;
+}
+#settings-tabs .nav-link {
+    font-size: 0.9rem;
+    display: inline-flex;
     align-items: center;
 }
 
@@ -205,6 +215,15 @@ label:first-child .hint::before { left: 0.5em; transform: none; }
         font-size: 1.15rem;
         justify-content: center;
     }
+
+    #settings-tabs {
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+    }
+    #settings-tabs .nav-link {
+        white-space: nowrap;
+    }
 }
 
 /* ── Responsive: Phone (<576px) ── */
@@ -217,6 +236,8 @@ label:first-child .hint::before { left: 0.5em; transform: none; }
     }
 
     h1 { font-size: 1.4rem; }
+
+    #settings-tabs .nav-link { font-size: 0.8rem; }
 
     .card-body { padding: 0.75rem; }
 }

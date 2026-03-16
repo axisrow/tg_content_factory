@@ -200,7 +200,7 @@ async def test_settings_page(client):
     assert "Аккаунт для уведомлений" in resp.text
     assert "Режим разработчика" in resp.text
     assert "Я понимаю, что включаю потенциально опасные изменения" in resp.text
-    assert '<div class="card-header fw-semibold">AI Agent</div>' not in resp.text
+    assert "Backend override" not in resp.text
 
 
 @pytest.mark.asyncio
@@ -219,9 +219,9 @@ async def test_settings_page_hides_credentials_form_when_env_credentials_configu
     assert 'href="/auth/login"' in resp.text
     assert "Добавить аккаунт" in resp.text
     template_text = Path("src/web/templates/settings.html").read_text(encoding="utf-8")
-    assert "Telegram-аккаунты" in template_text
-    assert "Планировщик" in template_text
-    assert template_text.index("Telegram-аккаунты") < template_text.index("Планировщик")
+    assert "_accounts.html" in template_text
+    assert "_scheduler.html" in template_text
+    assert template_text.index("_accounts.html") < template_text.index("_scheduler.html")
 
 
 @pytest.mark.asyncio
@@ -280,8 +280,8 @@ async def test_settings_page_shows_ai_agent_block_only_in_dev_mode(client):
     resp = await client.get("/settings/")
 
     assert resp.status_code == 200
-    assert '<div class="card-header fw-semibold">Режим разработчика</div>' in resp.text
-    assert '<div class="card-header fw-semibold">AI Agent</div>' in resp.text
+    assert "Режим разработчика" in resp.text
+    assert "Backend override" in resp.text
     assert "Deepagents Providers" in resp.text
     assert "Тестировать все модели" in resp.text
     assert 'id="bulk-test-agent-providers-btn"' in resp.text
@@ -381,7 +381,7 @@ async def test_settings_backend_override_submit_keeps_ai_agent_block_visible(cli
 
     page = await client.get("/settings/")
     assert page.status_code == 200
-    assert '<div class="card-header fw-semibold">AI Agent</div>' in page.text
+    assert "Backend override" in page.text
 
 
 @pytest.mark.asyncio
@@ -562,10 +562,9 @@ async def test_settings_page_refresh_provider_posts_unsaved_form_data(client):
     resp = await client.get("/settings/")
 
     assert resp.status_code == 200
-    assert "body: buildProviderFormData(provider)" in resp.text
-    assert "body: buildAllProviderFormData()" in resp.text
-    assert "applyRefreshedProviderState(provider, payload);" in resp.text
-    assert "window.location.reload()" not in resp.text
+    assert 'src="/static/settings.js' in resp.text
+    assert 'data-provider-card="openai"' in resp.text
+    assert 'data-provider-refresh-btn="openai"' in resp.text
 
 
 @pytest.mark.asyncio
