@@ -17,6 +17,7 @@ from src.database.repositories.photo_loader import PhotoLoaderRepository
 from src.database.repositories.search_log import SearchLogRepository
 from src.database.repositories.search_queries import SearchQueriesRepository
 from src.database.repositories.settings import SettingsRepository
+from src.database.repositories.generation_runs import GenerationRunsRepository
 from src.models import (
     Account,
     Channel,
@@ -36,6 +37,7 @@ from src.models import (
     SearchQuery,
     SearchQueryDailyStat,
     StatsAllTaskPayload,
+    GenerationRun,
 )
 
 if TYPE_CHECKING:
@@ -57,6 +59,7 @@ class DatabaseRepositories:
     photo_loader: PhotoLoaderRepository
     dialog_cache: DialogCacheRepository
     content_pipelines: ContentPipelinesRepository
+    generation_runs: GenerationRunsRepository
 
 
 @dataclass(frozen=True)

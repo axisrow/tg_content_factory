@@ -23,6 +23,7 @@ from src.database.repositories.photo_loader import PhotoLoaderRepository
 from src.database.repositories.search_log import SearchLogRepository
 from src.database.repositories.search_queries import SearchQueriesRepository
 from src.database.repositories.settings import SettingsRepository
+from src.database.repositories.generation_runs import GenerationRunsRepository
 from src.database.schema import SCHEMA_SQL
 from src.models import (
     Account,
@@ -162,6 +163,7 @@ class Database:
         self._photo_loader = PhotoLoaderRepository(self._db)
         self._dialog_cache = DialogCacheRepository(self._db)
         self._content_pipelines = ContentPipelinesRepository(self._db)
+        self._generation_runs = GenerationRunsRepository(self._db)
         self._repos = DatabaseRepositories(
             accounts=self._accounts,
             channels=self._channels,
@@ -176,6 +178,7 @@ class Database:
             photo_loader=self._photo_loader,
             dialog_cache=self._dialog_cache,
             content_pipelines=self._content_pipelines,
+            generation_runs=self._generation_runs,
         )
 
         await self._accounts.migrate_sessions()
