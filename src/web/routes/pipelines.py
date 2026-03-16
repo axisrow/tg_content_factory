@@ -159,7 +159,8 @@ async def edit_pipeline(request: Request, pipeline_id: int):
         return _redirect(phone, "invalid_value", error=True)
     pipeline, error = await _parse_pipeline_form(request)
     if error or pipeline is None:
-        phone = str((await request.form()).get("phone") or existing.phone).strip() or None
+        submitted_phone = str((await request.form()).get("phone") or "").strip()
+        phone = submitted_phone or existing.phone
         return _redirect(phone, error or "invalid_value", error=True)
     await deps.pipeline_service(request).update(pipeline_id, pipeline)
     return _redirect(pipeline.phone, "pipeline_edited")
