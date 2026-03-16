@@ -18,7 +18,8 @@ class GenerationRunsRepository:
 
     async def create_run(self, pipeline_id: int | None, prompt: str) -> int:
         cur = await self._db.execute(
-            "INSERT INTO generation_runs (pipeline_id, status, prompt, created_at) VALUES (?, 'pending', ?, datetime('now'))",
+            ("INSERT INTO generation_runs (pipeline_id, status, prompt, created_at) "
+             "VALUES (?, 'pending', ?, datetime('now'))"),
             (pipeline_id, prompt),
         )
         await self._db.commit()
@@ -35,7 +36,8 @@ class GenerationRunsRepository:
         self, run_id: int, generated_text: str, metadata: dict | None = None
     ) -> None:
         await self._db.execute(
-            "UPDATE generation_runs SET generated_text = ?, metadata = ?, status = 'completed', updated_at = datetime('now') WHERE id = ?",
+            ("UPDATE generation_runs SET generated_text = ?, metadata = ?, status = 'completed', "
+             "updated_at = datetime('now') WHERE id = ?"),
             (generated_text, json.dumps(metadata or {}, ensure_ascii=False), run_id),
         )
         await self._db.commit()
