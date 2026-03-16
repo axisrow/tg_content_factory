@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from src.agent.prompt_template import AGENT_PROMPT_TEMPLATE_SETTING
 from src.agent.provider_registry import ProviderRuntimeConfig
 from src.collection_queue import CollectionQueue
 from src.config import AppConfig
@@ -287,8 +288,10 @@ async def test_settings_page_shows_ai_agent_block_only_in_dev_mode(client):
     assert 'id="bulk-test-agent-providers-btn"' in resp.text
     assert 'id="agent-provider-actions-status"' in resp.text
     assert 'name="agent_backend_override"' in resp.text
+    assert 'name="agent_prompt_template"' in resp.text
     assert 'name="agent_form_scope" value="dev_mode"' in resp.text
     assert 'name="agent_form_scope" value="backend_override"' in resp.text
+    assert 'name="agent_form_scope" value="prompt_template"' in resp.text
 
 
 @pytest.mark.asyncio
@@ -360,6 +363,43 @@ async def test_settings_save_agent_can_disable_dev_mode_without_disclaimer(clien
     assert resp.status_code == 303
     assert await db.get_setting("agent_dev_mode_enabled") == "0"
     assert await db.get_setting("agent_backend_override") == "deepagents"
+
+
+@pytest.mark.asyncio
+async def test_settings_save_agent_persists_prompt_template(client):
+    db = client._transport.app.state.db
+    template = "Канал: {channel_title}\nТема: {topic}\nДата: {date}\n{source_messages}"
+
+    resp = await client.post(
+        "/settings/save-agent",
+        data={
+            "agent_form_scope": "prompt_template",
+            "agent_prompt_template": template,
+        },
+        follow_redirects=False,
+    )
+
+    assert resp.status_code == 303
+    assert await db.get_setting(AGENT_PROMPT_TEMPLATE_SETTING) == template
+
+
+@pytest.mark.asyncio
+async def test_settings_save_agent_rejects_invalid_prompt_template(client):
+    db = client._transport.app.state.db
+    await db.set_setting(AGENT_PROMPT_TEMPLATE_SETTING, "Канал: {channel_title}")
+
+    resp = await client.post(
+        "/settings/save-agent",
+        data={
+            "agent_form_scope": "prompt_template",
+            "agent_prompt_template": "Канал: {unknown}",
+        },
+        follow_redirects=False,
+    )
+
+    assert resp.status_code == 303
+    assert "error=agent_prompt_template_invalid" in resp.headers["location"]
+    assert await db.get_setting(AGENT_PROMPT_TEMPLATE_SETTING) == "Канал: {channel_title}"
 
 
 @pytest.mark.asyncio

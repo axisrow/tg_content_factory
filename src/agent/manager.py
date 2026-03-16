@@ -14,6 +14,13 @@ from typing import TypeVar
 from claude_agent_sdk import AssistantMessage, ClaudeAgentOptions, ResultMessage, TextBlock, query
 
 from src.agent.models import CLAUDE_MODEL_IDS
+from src.agent.prompt_template import (
+    AGENT_PROMPT_TEMPLATE_SETTING,
+    DEFAULT_AGENT_PROMPT_TEMPLATE,
+    PromptTemplateError,
+    build_prompt_template_context,
+    render_prompt_template,
+)
 from src.agent.provider_registry import ProviderRuntimeConfig
 from src.config import AppConfig
 from src.database import Database
@@ -37,13 +44,6 @@ def _embed_history_in_prompt(history_msgs: list[dict], message: str) -> str:
     parts.append(f"<user>\n{message}\n</user>")
     return "\n".join(parts)
 
-
-_SYSTEM_PROMPT = (
-    "Ты — аналитический ассистент для работы с данными из Telegram-каналов.\n"
-    "Используй search_messages для поиска сообщений и get_channels для списка каналов.\n"
-    "Основной use-case: анализ вопросов и ответов из каналов для создания учебного курса.\n"
-    "Отвечай на русском языке. Будь точным и структурированным."
-)
 
 _ALLOWED_TOOLS = ["mcp__telegram_db__search_messages", "mcp__telegram_db__get_channels"]
 _DEEPAGENTS_PROBE_PROMPT = (
@@ -92,6 +92,7 @@ class ClaudeSdkBackend:
         *,
         thread_id: int,
         prompt: str,
+        system_prompt: str,
         stats: dict,
         model: str | None,
         queue: asyncio.Queue[str | None],
@@ -114,7 +115,7 @@ class ClaudeSdkBackend:
         logger.info("claude-cli path: %s", cli_path)
 
         options = ClaudeAgentOptions(
-            system_prompt=_SYSTEM_PROMPT,
+            system_prompt=system_prompt,
             mcp_servers={"telegram_db": self._server},
             allowed_tools=_ALLOWED_TOOLS,
             cli_path=cli_path or None,
@@ -419,6 +420,7 @@ class DeepagentsBackend:
         *,
         tools: list[Callable] | None = None,
         record_last_used: bool = True,
+        system_prompt: str = DEFAULT_AGENT_PROMPT_TEMPLATE,
     ):
         configured_model_name = cfg.selected_model.strip()
         if not configured_model_name:
@@ -460,7 +462,7 @@ class DeepagentsBackend:
             agent = create_deep_agent(
                 model=model,
                 tools=tools or [self._search_messages_tool, self._get_channels_tool],
-                system_prompt=_SYSTEM_PROMPT,
+                system_prompt=system_prompt,
             )
             if record_last_used:
                 self._last_used_provider = provider
@@ -589,8 +591,9 @@ class DeepagentsBackend:
         cfg: ProviderRuntimeConfig,
         *,
         history_msgs: list[dict] | None = None,
+        system_prompt: str = DEFAULT_AGENT_PROMPT_TEMPLATE,
     ) -> str:
-        agent = self._build_agent(cfg)
+        agent = self._build_agent(cfg, system_prompt=system_prompt)
         # Different agent frameworks have different history handling:
         # - `.run(prompt_str)` agents receive history embedded as XML tags in a single string
         # - `.invoke({"messages": [...]})` agents receive history as a structured message list
@@ -762,6 +765,7 @@ class DeepagentsBackend:
         *,
         thread_id: int,
         prompt: str,
+        system_prompt: str,
         stats: dict,
         model: str | None,
         queue: asyncio.Queue[str | None],
@@ -776,7 +780,11 @@ class DeepagentsBackend:
                 continue
             try:
                 full_text = await asyncio.to_thread(
-                    self._run_agent, prompt, cfg, history_msgs=history_msgs
+                    self._run_agent,
+                    prompt,
+                    cfg,
+                    history_msgs=history_msgs,
+                    system_prompt=system_prompt,
                 )
                 self._init_error = None
                 if full_text:
@@ -980,6 +988,21 @@ class AgentManager:
             stats["kept_msgs"],
             stats["total_msgs"],
         )
+        prompt_template = (
+            await self._db.get_setting(AGENT_PROMPT_TEMPLATE_SETTING)
+            or DEFAULT_AGENT_PROMPT_TEMPLATE
+        )
+        try:
+            system_prompt = render_prompt_template(
+                prompt_template,
+                build_prompt_template_context(history),
+            )
+        except PromptTemplateError:
+            logger.warning(
+                "Invalid saved agent prompt template, falling back to default.",
+                exc_info=True,
+            )
+            system_prompt = DEFAULT_AGENT_PROMPT_TEMPLATE
 
         status = await self.get_runtime_status()
         backend_name = status.selected_backend
@@ -1014,6 +1037,7 @@ class AgentManager:
                 await selected_backend.chat_stream(
                     thread_id=thread_id,
                     prompt=prompt,
+                    system_prompt=system_prompt,
                     stats=stats,
                     model=model,
                     queue=queue,
