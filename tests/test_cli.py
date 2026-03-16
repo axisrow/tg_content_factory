@@ -103,6 +103,47 @@ class TestCLIAccount:
         run(_ns(account_action="delete", id=pk))
         assert "Deleted" in capsys.readouterr().out
 
+    def test_flood_status_no_flood(self, cli_env, capsys):
+        _add_account(cli_env, phone="+10001112233")
+        from src.cli.commands.account import run
+        run(_ns(account_action="flood-status"))
+        out = capsys.readouterr().out
+        assert "+10001112233" in out
+        assert "OK" in out
+
+    def test_flood_status_with_flood(self, cli_env, capsys):
+        import re
+        from datetime import datetime, timedelta, timezone
+        phone = "+10001112244"
+        _add_account(cli_env, phone=phone)
+        until = datetime.now(timezone.utc) + timedelta(seconds=300)
+        asyncio.run(cli_env.update_account_flood(phone, until))
+        from src.cli.commands.account import run
+        run(_ns(account_action="flood-status"))
+        out = capsys.readouterr().out
+        assert phone in out
+        assert re.search(r"\d+s", out)
+
+    def test_flood_status_no_accounts(self, cli_env, capsys):
+        from src.cli.commands.account import run
+        run(_ns(account_action="flood-status"))
+        assert "No accounts found." in capsys.readouterr().out
+
+    def test_flood_clear(self, cli_env, capsys):
+        from datetime import datetime, timedelta, timezone
+        phone = "+10001112255"
+        _add_account(cli_env, phone=phone)
+        until = datetime.now(timezone.utc) + timedelta(seconds=120)
+        asyncio.run(cli_env.update_account_flood(phone, until))
+        from src.cli.commands.account import run
+        run(_ns(account_action="flood-clear", phone=phone))
+        assert "cleared" in capsys.readouterr().out
+
+    def test_flood_clear_not_found(self, cli_env, capsys):
+        from src.cli.commands.account import run
+        run(_ns(account_action="flood-clear", phone="+19990000000"))
+        assert "not found" in capsys.readouterr().out
+
 
 # ---------------------------------------------------------------------------
 # channel (DB-only)
