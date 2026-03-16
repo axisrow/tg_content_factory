@@ -162,14 +162,16 @@ def run(args: argparse.Namespace) -> None:
                 # Build search engine and generation service
                 engine = SearchEngine(db)
 
-                # Simple provider stub for CLI: replace with real provider wiring later
-                async def _provider_stub(**kwargs):
-                    prompt = kwargs.get("prompt") or ""
-                    return "DRAFT (preview): " + prompt[:200]
+                # Resolve provider callable via AgentProviderService (falls back to default stub)
+                from src.services.provider_service import AgentProviderService
 
-                gen_svc = GenerationService(engine, provider_callable=_provider_stub)
+                provider_service = AgentProviderService(db)
+                provider_callable = provider_service.get_provider_callable(pipeline.llm_model)
+
+                gen_svc = GenerationService(engine, provider_callable=provider_callable)
                 # Create generation run record
                 run_id = await db.repos.generation_runs.create_run(pipeline.id, pipeline.prompt_template)
+                await db.repos.generation_runs.set_status(run_id, "running")
                 print(f"Created generation run id={run_id}")
                 try:
                     result = await gen_svc.generate(
