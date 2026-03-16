@@ -113,6 +113,11 @@ def run(args: argparse.Namespace) -> None:
                 _print_result(result, "Purged messages from")
 
             elif args.filter_action == "hard-delete":
+                dev_mode = (await db.get_setting("agent_dev_mode_enabled") or "0") == "1"
+                if not dev_mode:
+                    print("Hard-delete requires developer mode. "
+                          "Enable it in Settings → Developer mode.")
+                    return
                 svc = _build_deletion_service(db)
                 if hasattr(args, "pks") and args.pks:
                     pks = _parse_pks(args.pks)
