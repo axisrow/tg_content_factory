@@ -209,9 +209,10 @@ async def generate_pipeline(
     gen = GenerationService(engine, provider_callable=provider_callable)
     run_id = await db.repos.generation_runs.create_run(pipeline_id, pipeline.prompt_template)
     await db.repos.generation_runs.set_status(run_id, "running")
+    retrieval_query = pipeline.prompt_template or pipeline.name or ""
     try:
         result = await gen.generate(
-            query="",
+            query=retrieval_query,
             prompt_template=pipeline.prompt_template,
             model=(model or pipeline.llm_model),
             max_tokens=max_tokens,
@@ -220,10 +221,11 @@ async def generate_pipeline(
         await db.repos.generation_runs.save_result(run_id, result.get("generated_text", ""), {"citations": result.get("citations", [])})
     except Exception as exc:
         await db.repos.generation_runs.set_status(run_id, "failed")
+        runs = await db.repos.generation_runs.list_by_pipeline(pipeline_id)
         return deps.get_templates(request).TemplateResponse(
             request,
             "pipelines/generate.html",
-            {"pipeline": pipeline, "error": str(exc), "request": request},
+            {"pipeline": pipeline, "runs": runs, "error": str(exc), "request": request},
         )
     run = await db.repos.generation_runs.get(run_id)
     return deps.get_templates(request).TemplateResponse(
