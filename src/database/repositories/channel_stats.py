@@ -75,3 +75,21 @@ class ChannelStatsRepository:
             )
             for r in rows
         }
+
+    async def get_previous_subscriber_counts(self) -> dict[int, int | None]:
+        """Return the second-most-recent subscriber count per channel.
+
+        Channels with only one recorded stats entry are not included in the result.
+        """
+        cur = await self._db.execute(
+            """WITH ranked AS (
+                   SELECT channel_id, subscriber_count,
+                          ROW_NUMBER() OVER (
+                              PARTITION BY channel_id ORDER BY collected_at DESC, id DESC
+                          ) AS rn
+                   FROM channel_stats
+               )
+               SELECT channel_id, subscriber_count FROM ranked WHERE rn = 2"""
+        )
+        rows = await cur.fetchall()
+        return {r["channel_id"]: r["subscriber_count"] for r in rows}

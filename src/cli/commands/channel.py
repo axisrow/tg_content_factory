@@ -24,7 +24,11 @@ def run(args: argparse.Namespace) -> None:
                 if not channels:
                     print("No channels found.")
                     return
-                fmt = "{:<5} {:<15} {:<25} {:<12} {:<8} {:<10} {:<12} {:<20}"
+                latest_stats = await db.get_latest_stats_for_all()
+                fmt = (
+                    "{:<5} {:<15} {:<25} {:<12} {:<8} {:<10} "
+                    "{:<12} {:<12} {:<10} {:<10} {:<10} {:<20}"
+                )
                 header = (
                     "ID",
                     "Channel ID",
@@ -33,15 +37,32 @@ def run(args: argparse.Namespace) -> None:
                     "Active",
                     "Messages",
                     "Last msg ID",
+                    "Subscribers",
+                    "Avg views",
+                    "Avg react.",
+                    "Avg fwd.",
                     "Filter",
                 )
                 print(fmt.format(*header))
-                print("-" * 110)
+                print("-" * 145)
                 for ch in channels:
                     if ch.is_filtered:
                         filt = ch.filter_flags if ch.filter_flags else "Yes"
                     else:
                         filt = "-"
+                    st = latest_stats.get(ch.channel_id)
+                    sub = st.subscriber_count if st and st.subscriber_count is not None else "—"
+                    avg_v = f"{st.avg_views:.0f}" if st and st.avg_views is not None else "—"
+                    avg_r = (
+                        f"{st.avg_reactions:.0f}"
+                        if st and st.avg_reactions is not None
+                        else "—"
+                    )
+                    avg_f = (
+                        f"{st.avg_forwards:.0f}"
+                        if st and st.avg_forwards is not None
+                        else "—"
+                    )
                     print(
                         fmt.format(
                             ch.id or 0,
@@ -51,6 +72,10 @@ def run(args: argparse.Namespace) -> None:
                             "Yes" if ch.is_active else "No",
                             ch.message_count,
                             ch.last_collected_id,
+                            sub,
+                            avg_v,
+                            avg_r,
+                            avg_f,
                             filt,
                         )
                     )
