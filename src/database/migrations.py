@@ -392,6 +392,12 @@ async def run_migrations(db: aiosqlite.Connection) -> bool:
         ON dialog_cache(phone)
         """
     )
+    await db.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_channel_stats_lookup
+        ON channel_stats(channel_id, collected_at DESC, id DESC)
+        """
+    )
     await db.commit()
 
     fts_available = True

@@ -451,6 +451,10 @@ class Database:
         self._require()
         return await self._channel_stats.get_latest_stats_for_all()
 
+    async def get_previous_subscriber_counts(self) -> dict[int, int | None]:
+        self._require()
+        return await self._channel_stats.get_previous_subscriber_counts()
+
     async def get_setting(self, key: str) -> str | None:
         self._require()
         return await self._settings.get_setting(key)
