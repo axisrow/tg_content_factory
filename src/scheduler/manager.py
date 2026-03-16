@@ -123,6 +123,26 @@ class SchedulerManager:
             self._scheduler.reschedule_job(self._job_id, trigger=IntervalTrigger(minutes=minutes))
             logger.info("Collection interval updated to %d minutes", minutes)
 
+    def get_job_next_run(self, job_id: str):
+        """Return next_run_time for a scheduled job, or None if missing."""
+        if self._scheduler is None:
+            return None
+        # Prefer scheduler.get_job if available
+        try:
+            job = self._scheduler.get_job(job_id)
+            if job is None:
+                return None
+            return getattr(job, "next_run_time", None)
+        except Exception:
+            # Fallback: scan jobs list for compatibility with fake schedulers in tests
+            try:
+                for job in self._scheduler.get_jobs():
+                    if getattr(job, "id", None) == job_id:
+                        return getattr(job, "next_run_time", None)
+            except Exception:
+                return None
+            return None
+
     async def trigger_now(self) -> dict:
         return await self._run_collection()
 
