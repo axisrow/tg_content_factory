@@ -15,7 +15,7 @@ from src.models import (
     StatsAllTaskPayload,
 )
 
-_ALLOWED_PAYLOAD_FILTER_KEYS = frozenset({"sq_id"})
+_ALLOWED_PAYLOAD_FILTER_KEYS = frozenset({"sq_id", "pipeline_id"})
 
 
 def _safe_task_type(raw: str) -> CollectionTaskType:

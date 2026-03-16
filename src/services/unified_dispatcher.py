@@ -5,7 +5,7 @@ import logging
 from datetime import date, datetime, timezone
 from typing import TYPE_CHECKING
 
-from src.database.bundles import ChannelBundle, SearchQueryBundle
+from src.database.bundles import ChannelBundle, SearchQueryBundle, PipelineBundle
 from src.database.repositories.collection_tasks import CollectionTasksRepository
 from src.models import (
     CollectionTask,
@@ -13,12 +13,15 @@ from src.models import (
     CollectionTaskType,
     SqStatsTaskPayload,
     StatsAllTaskPayload,
+    PipelineRunTaskPayload,
 )
 from src.telegram.collector import Collector
 
 if TYPE_CHECKING:
     from src.services.photo_auto_upload_service import PhotoAutoUploadService
     from src.services.photo_task_service import PhotoTaskService
+    from src.search.engine import SearchEngine
+    from src.database import Database
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +30,7 @@ HANDLED_TYPES = [
     CollectionTaskType.SQ_STATS.value,
     CollectionTaskType.PHOTO_DUE.value,
     CollectionTaskType.PHOTO_AUTO.value,
+    CollectionTaskType.PIPELINE_RUN.value,
 ]
 
 
@@ -45,7 +49,11 @@ class UnifiedDispatcher:
         default_batch_size: int = 20,
         poll_interval_sec: float = 1.0,
         channel_timeout_sec: float = 120.0,
+        search_engine: "SearchEngine" | None = None,
+        pipeline_bundle: PipelineBundle | None = None,
+        db: "Database" | None = None,
     ):
+
         self._collector = collector
         self._channel_bundle = channel_bundle
         self._tasks = tasks_repo
@@ -55,6 +63,9 @@ class UnifiedDispatcher:
         self._default_batch_size = default_batch_size
         self._poll_interval_sec = poll_interval_sec
         self._channel_timeout_sec = channel_timeout_sec
+        self._search_engine = search_engine
+        self._pipeline_bundle = pipeline_bundle
+        self._db = db
         self._task: asyncio.Task | None = None
         self._stop_event = asyncio.Event()
 
@@ -114,6 +125,7 @@ class UnifiedDispatcher:
             CollectionTaskType.SQ_STATS: self._handle_sq_stats,
             CollectionTaskType.PHOTO_DUE: self._handle_photo_due,
             CollectionTaskType.PHOTO_AUTO: self._handle_photo_auto,
+            CollectionTaskType.PIPELINE_RUN: self._handle_pipeline_run,
         }.get(task.task_type)
         if handler is None:
             await self._tasks.update_collection_task(
@@ -342,6 +354,77 @@ class UnifiedDispatcher:
                 task.id, CollectionTaskStatus.COMPLETED,
                 messages_collected=jobs,
             )
+        except Exception as exc:
+            await self._tasks.update_collection_task(
+                task.id, CollectionTaskStatus.FAILED, error=str(exc)[:500],
+            )
+
+    async def _handle_pipeline_run(self, task: CollectionTask) -> None:
+        """Handle a PIPELINE_RUN generic task by executing the pipeline generation.
+
+        This will create a generation_run record and run the pipeline generation
+        using the configured SearchEngine and provider. The task is marked as
+        completed on success or failed otherwise.
+        """
+        if task.id is None:
+            return
+
+        payload = task.payload
+        if not isinstance(payload, PipelineRunTaskPayload):
+            await self._tasks.update_collection_task(
+                task.id, CollectionTaskStatus.FAILED, error="Invalid PIPELINE_RUN payload",
+            )
+            return
+
+        if not self._pipeline_bundle or not self._search_engine or not self._db:
+            await self._tasks.update_collection_task(
+                task.id, CollectionTaskStatus.FAILED,
+                error="Pipeline execution environment not configured",
+            )
+            return
+
+        pipeline_id = payload.pipeline_id
+        try:
+            # Import lazily to avoid circular imports during module load
+            from src.services.pipeline_service import PipelineService
+            from src.services.provider_service import AgentProviderService
+            from src.services.generation_service import GenerationService
+
+            svc = PipelineService(self._pipeline_bundle or self._db)
+            pipeline = await svc.get(pipeline_id)
+            if pipeline is None:
+                await self._tasks.update_collection_task(
+                    task.id, CollectionTaskStatus.COMPLETED,
+                    note=f"Pipeline id={pipeline_id} not found",
+                )
+                return
+
+            provider_service = AgentProviderService(self._db)
+            provider_callable = provider_service.get_provider_callable(pipeline.llm_model)
+            gen = GenerationService(self._search_engine, provider_callable=provider_callable)
+
+            # create generation run
+            db = self._db
+            run_id = await db.repos.generation_runs.create_run(pipeline.id, pipeline.prompt_template)
+            await db.repos.generation_runs.set_status(run_id, "running")
+            retrieval_query = pipeline.prompt_template or pipeline.name or ""
+            try:
+                result = await gen.generate(
+                    query=retrieval_query,
+                    prompt_template=pipeline.prompt_template,
+                    model=pipeline.llm_model,
+                )
+                await db.repos.generation_runs.save_result(run_id, result.get("generated_text", ""), {"citations": result.get("citations", [])})
+                await db.repos.generation_runs.set_status(run_id, "completed")
+                await self._tasks.update_collection_task(
+                    task.id, CollectionTaskStatus.COMPLETED, messages_collected=1,
+                    note=f"Pipeline run id={run_id}",
+                )
+            except Exception as exc:
+                await db.repos.generation_runs.set_status(run_id, "failed")
+                await self._tasks.update_collection_task(
+                    task.id, CollectionTaskStatus.FAILED, error=str(exc)[:500],
+                )
         except Exception as exc:
             await self._tasks.update_collection_task(
                 task.id, CollectionTaskStatus.FAILED, error=str(exc)[:500],
