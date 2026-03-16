@@ -14,7 +14,7 @@ def run(args: argparse.Namespace) -> None:
         try:
             if args.account_action == "info":
                 _, pool = await runtime.init_pool(config, db)
-                users = await pool.get_users_info()
+                users = await pool.get_users_info(include_avatar=False)
                 phone_filter = getattr(args, "phone", None)
                 if phone_filter:
                     users = [u for u in users if u.phone == phone_filter]
