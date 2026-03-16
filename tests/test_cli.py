@@ -339,6 +339,75 @@ class TestCLICollect:
         run(_ns(channel_id=None))
         assert "No connected accounts" in caplog.text
 
+    def test_sample_no_clients(self, cli_env_with_pool, capsys, caplog):
+        from src.cli.commands.collect import run
+        run(_ns(collect_action="sample", channel_id=-100123, limit=5))
+        assert "No connected accounts" in caplog.text
+
+    def test_sample_returns_previews(self, cli_env_with_pool, capsys):
+        from datetime import datetime, timezone
+        from unittest.mock import AsyncMock, patch
+
+        from src.cli.commands.collect import run
+
+        fake_previews = [
+            {
+                "message_id": 42,
+                "date": datetime(2024, 6, 1, 12, 0, tzinfo=timezone.utc),
+                "text_preview": "Hello world",
+                "media_type": None,
+            },
+            {
+                "message_id": 41,
+                "date": datetime(2024, 6, 1, 11, 0, tzinfo=timezone.utc),
+                "text_preview": None,
+                "media_type": "photo",
+            },
+        ]
+
+        fake_pool = AsyncMock()
+        fake_pool.clients = {"dummy": object()}
+        fake_pool.disconnect_all = AsyncMock()
+
+        async def fake_init_pool(config, db):
+            from src.telegram.auth import TelegramAuth
+            return TelegramAuth(0, ""), fake_pool
+
+        with patch("src.cli.runtime.init_pool", side_effect=fake_init_pool), patch(
+            "src.telegram.collector.Collector.sample_channel",
+            new=AsyncMock(return_value=fake_previews),
+        ):
+            run(_ns(collect_action="sample", channel_id=-100123, limit=2))
+
+        out = capsys.readouterr().out
+        assert "Sampling" in out
+        assert "#42" in out
+        assert "Hello world" in out
+        assert "#41" in out
+        assert "photo" in out
+
+    def test_sample_no_messages(self, cli_env_with_pool, capsys):
+        from unittest.mock import AsyncMock, patch
+
+        from src.cli.commands.collect import run
+
+        fake_pool = AsyncMock()
+        fake_pool.clients = {"dummy": object()}
+        fake_pool.disconnect_all = AsyncMock()
+
+        async def fake_init_pool(config, db):
+            from src.telegram.auth import TelegramAuth
+            return TelegramAuth(0, ""), fake_pool
+
+        with patch("src.cli.runtime.init_pool", side_effect=fake_init_pool), patch(
+            "src.telegram.collector.Collector.sample_channel",
+            new=AsyncMock(return_value=[]),
+        ):
+            run(_ns(collect_action="sample", channel_id=-100123, limit=10))
+
+        out = capsys.readouterr().out
+        assert "No messages found" in out
+
 
 # ---------------------------------------------------------------------------
 # scheduler
