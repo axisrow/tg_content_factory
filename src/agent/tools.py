@@ -99,14 +99,13 @@ def make_mcp_server(db: Database):
         try:
             from src.search.engine import SearchEngine
             engine = SearchEngine(db)
-            # provider stub: real provider wiring should be done via AgentProviderService
-            async def _provider_stub(**kwargs):
-                prompt = kwargs.get("prompt") or ""
-                return "DRAFT: " + (prompt[:400])
+            from src.services.provider_service import AgentProviderService
+            provider_service = AgentProviderService(db)
+            provider_callable = provider_service.get_provider_callable(None)
 
             from src.services.generation_service import GenerationService
 
-            gen = GenerationService(engine, provider_callable=_provider_stub)
+            gen = GenerationService(engine, provider_callable=provider_callable)
             result = await gen.generate(query=query, limit=limit, prompt_template=None)
             text = result.get("generated_text", "")
             citations = result.get("citations", [])
