@@ -1,0 +1,141 @@
+{% extends "base.html" %}
+{% block title %}Аналитика — TG Agent{% endblock %}
+{% block content %}
+<h1>Аналитика сообщений</h1>
+
+<form method="get" action="/analytics" class="mb-4" data-busy>
+    <div class="row g-3 align-items-end">
+        <div class="col-6 col-md-3">
+            <label for="date-from" class="form-label">Дата от</label>
+            <input type="date" class="form-control" name="date_from" id="date-from" value="{{ date_from }}">
+        </div>
+        <div class="col-6 col-md-3">
+            <label for="date-to" class="form-label">Дата до</label>
+            <input type="date" class="form-control" name="date_to" id="date-to" value="{{ date_to }}">
+        </div>
+        <div class="col-6 col-md-2">
+            <label for="limit-select" class="form-label">Топ</label>
+            <select name="limit" id="limit-select" class="form-select">
+                {% for n in [20, 50, 100] %}
+                <option value="{{ n }}" {{ 'selected' if limit == n else '' }}>{{ n }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="col-6 col-md-2">
+            <button type="submit" class="btn btn-primary w-100">Обновить</button>
+        </div>
+    </div>
+</form>
+
+<div class="card mb-4">
+    <div class="card-header fw-semibold">Топ сообщений по реакциям</div>
+    {% if top_messages %}
+    <!-- Desktop -->
+    <div class="table-responsive d-none d-md-block">
+    <table class="table table-striped table-hover table-sm mb-0">
+        <thead>
+            <tr>
+                <th>#</th>
+                <th>Дата</th>
+                <th>Канал</th>
+                <th>Тип</th>
+                <th>Текст</th>
+                <th>Реакции</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for msg in top_messages %}
+            <tr>
+                <td class="text-muted">{{ loop.index }}</td>
+                <td class="text-nowrap">{{ msg.date[:16] if msg.date else '—' }}</td>
+                <td>{{ msg.channel_title or msg.channel_username or msg.channel_id }}</td>
+                <td><span class="badge text-bg-secondary">{{ msg.media_type or 'text' }}</span></td>
+                <td>{{ (msg.text or '')[:100] }}{{ '…' if msg.text and msg.text|length > 100 else '' }}</td>
+                <td><strong>{{ msg.total_reactions }}</strong></td>
+                <td>
+                    {% if msg.channel_username %}
+                    <a href="https://t.me/{{ msg.channel_username }}/{{ msg.message_id }}" target="_blank" rel="noopener">&#8599;</a>
+                    {% else %}
+                    <a href="https://t.me/c/{{ msg.channel_id }}/{{ msg.message_id }}" target="_blank" rel="noopener">&#8599;</a>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+    <!-- Mobile -->
+    <div class="d-md-none mobile-cards p-2">
+        {% for msg in top_messages %}
+        <div class="card mb-2">
+            <div class="card-body">
+                <div class="d-flex justify-content-between align-items-center mb-1">
+                    <strong class="text-truncate me-2">{{ msg.channel_title or msg.channel_username or msg.channel_id }}</strong>
+                    <span class="badge text-bg-primary">{{ msg.total_reactions }} 👍</span>
+                </div>
+                <small class="text-muted">{{ msg.date[:16] if msg.date else '—' }} &middot; {{ msg.media_type or 'text' }}</small>
+                <p class="mb-1 mt-1" style="font-size:0.85rem">{{ (msg.text or '')[:100] }}{{ '…' if msg.text and msg.text|length > 100 else '' }}</p>
+                {% if msg.channel_username %}
+                <a href="https://t.me/{{ msg.channel_username }}/{{ msg.message_id }}" target="_blank" rel="noopener" class="btn btn-sm btn-outline-secondary">Открыть &#8599;</a>
+                {% else %}
+                <a href="https://t.me/c/{{ msg.channel_id }}/{{ msg.message_id }}" target="_blank" rel="noopener" class="btn btn-sm btn-outline-secondary">Открыть &#8599;</a>
+                {% endif %}
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <div class="card-body text-muted">Нет данных. Реакции собираются при сборе сообщений.</div>
+    {% endif %}
+</div>
+
+<div class="row g-4 mb-4">
+    <div class="col-12 col-md-6">
+        <div class="card h-100">
+            <div class="card-header fw-semibold">Вовлечённость по типу контента</div>
+            {% if by_media_type %}
+            <div class="table-responsive">
+            <table class="table table-sm mb-0">
+                <thead><tr><th>Тип</th><th>Сообщений</th><th>Ср. реакций</th></tr></thead>
+                <tbody>
+                    {% for row in by_media_type %}
+                    <tr>
+                        <td><span class="badge text-bg-secondary">{{ row.content_type }}</span></td>
+                        <td>{{ row.message_count }}</td>
+                        <td>{{ "%.1f"|format(row.avg_reactions) }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            </div>
+            {% else %}
+            <div class="card-body text-muted">Нет данных.</div>
+            {% endif %}
+        </div>
+    </div>
+    <div class="col-12 col-md-6">
+        <div class="card h-100">
+            <div class="card-header fw-semibold">Активность по часам (UTC)</div>
+            {% if hourly %}
+            <div class="table-responsive">
+            <table class="table table-sm mb-0">
+                <thead><tr><th>Час</th><th>Сообщений</th><th>Ср. реакций</th></tr></thead>
+                <tbody>
+                    {% for row in hourly %}
+                    <tr>
+                        <td>{{ '%02d:00'|format(row.hour) }}</td>
+                        <td>{{ row.message_count }}</td>
+                        <td>{{ "%.1f"|format(row.avg_reactions) }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            </div>
+            {% else %}
+            <div class="card-body text-muted">Нет данных.</div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}

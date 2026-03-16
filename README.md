@@ -175,6 +175,7 @@ telethon-cli users get-me --output json
 | Accounts | `/accounts` | Manage connected accounts |
 | Channels | `/channels` | Add/remove channels, keywords, import |
 | Search | `/search` | Search messages (local / Telegram / AI) |
+| Analytics | `/analytics` | Top posts leaderboard, engagement by content type, hourly patterns |
 | Filters | `/filter` | Anti-spam filter report and controls |
 | Scheduler | `/scheduler` | Start/stop/trigger collection and keyword search |
 | Agent | `/agent` | AI chat assistant with access to collected messages |

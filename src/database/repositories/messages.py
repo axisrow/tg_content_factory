@@ -412,3 +412,113 @@ class MessagesRepository:
             row = await cur.fetchone()
             stats[table] = row["cnt"] if row else 0
         return stats
+
+    async def get_top_messages(
+        self,
+        limit: int = 50,
+        date_from: str | None = None,
+        date_to: str | None = None,
+    ) -> list[dict]:
+        """Return top messages sorted by total reaction count."""
+        channel_join = " LEFT JOIN channels c ON m.channel_id = c.channel_id"
+        conditions: list[str] = [
+            "(c.is_filtered IS NULL OR c.is_filtered = 0)",
+            "m.reactions_json IS NOT NULL",
+            "m.reactions_json != ''",
+        ]
+        params: list = []
+        normalized_date_from = self._normalize_date_from(date_from)
+        normalized_date_to, date_to_operator = self._normalize_date_to(date_to)
+        if normalized_date_from:
+            conditions.append("m.date >= ?")
+            params.append(normalized_date_from)
+        if normalized_date_to:
+            conditions.append(f"m.date {date_to_operator} ?")
+            params.append(normalized_date_to)
+        where = " WHERE " + " AND ".join(conditions)
+        cur = await self._db.execute(
+            f"""SELECT m.id, m.channel_id, m.message_id, m.text, m.media_type,
+                       m.date, m.reactions_json,
+                       c.title as channel_title, c.username as channel_username,
+                       (SELECT COALESCE(SUM(json_extract(value, '$.count')), 0)
+                        FROM json_each(m.reactions_json)) as total_reactions
+                FROM messages m{channel_join}
+                {where}
+                ORDER BY total_reactions DESC
+                LIMIT ?""",
+            (*params, limit),
+        )
+        rows = await cur.fetchall()
+        return [dict(r) for r in rows]
+
+    async def get_engagement_by_media_type(
+        self,
+        date_from: str | None = None,
+        date_to: str | None = None,
+    ) -> list[dict]:
+        """Return message count and avg reactions per content type."""
+        channel_join = " LEFT JOIN channels c ON m.channel_id = c.channel_id"
+        conditions: list[str] = ["(c.is_filtered IS NULL OR c.is_filtered = 0)"]
+        params: list = []
+        normalized_date_from = self._normalize_date_from(date_from)
+        normalized_date_to, date_to_operator = self._normalize_date_to(date_to)
+        if normalized_date_from:
+            conditions.append("m.date >= ?")
+            params.append(normalized_date_from)
+        if normalized_date_to:
+            conditions.append(f"m.date {date_to_operator} ?")
+            params.append(normalized_date_to)
+        where = " WHERE " + " AND ".join(conditions)
+        cur = await self._db.execute(
+            f"""SELECT COALESCE(m.media_type, 'text') as content_type,
+                       COUNT(*) as message_count,
+                       COALESCE(AVG(
+                           CASE WHEN m.reactions_json IS NOT NULL AND m.reactions_json != ''
+                           THEN (SELECT COALESCE(SUM(json_extract(value, '$.count')), 0)
+                                 FROM json_each(m.reactions_json))
+                           ELSE 0 END
+                       ), 0) as avg_reactions
+                FROM messages m{channel_join}
+                {where}
+                GROUP BY content_type
+                ORDER BY message_count DESC""",
+            tuple(params),
+        )
+        rows = await cur.fetchall()
+        return [dict(r) for r in rows]
+
+    async def get_hourly_activity(
+        self,
+        date_from: str | None = None,
+        date_to: str | None = None,
+    ) -> list[dict]:
+        """Return message count and avg reactions per hour of day (0-23)."""
+        channel_join = " LEFT JOIN channels c ON m.channel_id = c.channel_id"
+        conditions: list[str] = ["(c.is_filtered IS NULL OR c.is_filtered = 0)"]
+        params: list = []
+        normalized_date_from = self._normalize_date_from(date_from)
+        normalized_date_to, date_to_operator = self._normalize_date_to(date_to)
+        if normalized_date_from:
+            conditions.append("m.date >= ?")
+            params.append(normalized_date_from)
+        if normalized_date_to:
+            conditions.append(f"m.date {date_to_operator} ?")
+            params.append(normalized_date_to)
+        where = " WHERE " + " AND ".join(conditions)
+        cur = await self._db.execute(
+            f"""SELECT CAST(strftime('%H', m.date) AS INTEGER) as hour,
+                       COUNT(*) as message_count,
+                       COALESCE(AVG(
+                           CASE WHEN m.reactions_json IS NOT NULL AND m.reactions_json != ''
+                           THEN (SELECT COALESCE(SUM(json_extract(value, '$.count')), 0)
+                                 FROM json_each(m.reactions_json))
+                           ELSE 0 END
+                       ), 0) as avg_reactions
+                FROM messages m{channel_join}
+                {where}
+                GROUP BY hour
+                ORDER BY hour""",
+            tuple(params),
+        )
+        rows = await cur.fetchall()
+        return [dict(r) for r in rows]
