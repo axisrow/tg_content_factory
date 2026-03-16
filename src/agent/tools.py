@@ -91,7 +91,43 @@ def make_mcp_server(db: Database):
             text = f"Ошибка получения каналов: {e}"
         return {"content": [{"type": "text", "text": text}]}
 
+    @tool("generate_draft", "Generate a draft from a query using RAG (returns draft text and citations)", {"query": str, "pipeline_id": int, "limit": int})
+    async def generate_draft(args):
+        query = args.get("query", "")
+        pipeline_id = args.get("pipeline_id")
+        limit = int(args.get("limit", 8))
+        try:
+            from src.search.engine import SearchEngine
+            from src.services.generation_service import GenerationService
+            from src.services.pipeline_service import PipelineService
+            from src.services.provider_service import AgentProviderService
+
+            engine = SearchEngine(db)
+            prompt_template = None
+            llm_model = None
+            if pipeline_id is not None:
+                svc = PipelineService(db)
+                pipeline = await svc.get(int(pipeline_id))
+                if pipeline is not None:
+                    prompt_template = pipeline.prompt_template
+                    llm_model = pipeline.llm_model
+                    if not query:
+                        query = prompt_template or pipeline.name or ""
+            provider_service = AgentProviderService(db)
+            provider_callable = provider_service.get_provider_callable(llm_model)
+
+            gen = GenerationService(engine, provider_callable=provider_callable)
+            result = await gen.generate(query=query, limit=limit, prompt_template=prompt_template)
+            text = result.get("generated_text", "")
+            citations = result.get("citations", [])
+            content = f"Generated draft:\n\n{text}\n\nCitations:\n" + "\n".join(
+                f"- {c['channel_title']} id={c['message_id']} date={c['date']}" for c in citations
+            )
+        except Exception as e:
+            content = f"Ошибка генерации: {e}"
+        return {"content": [{"type": "text", "text": content}]}
+
     return create_sdk_mcp_server(
         name="telegram_db",
-        tools=[search_messages, semantic_search, get_channels],
+        tools=[search_messages, semantic_search, get_channels, generate_draft],
     )
