@@ -1,0 +1,235 @@
+<form method="post" action="/settings/save-agent" data-busy>
+    <input type="hidden" name="agent_form_scope" value="dev_mode">
+    <div class="form-check form-switch mb-3">
+        <input class="form-check-input" type="checkbox" id="agent_dev_mode_enabled"
+               name="agent_dev_mode_enabled" value="1"
+               {% if agent_dev_mode_enabled %}checked{% endif %}>
+        <label class="form-check-label" for="agent_dev_mode_enabled">Режим разработчика</label>
+    </div>
+    <div class="alert alert-warning py-2 mb-3" role="alert">
+        Включает потенциально опасные изменения интерфейса и поведения AI Agent. Используйте только если понимаете последствия.
+    </div>
+    <div class="form-check mb-3">
+        <input class="form-check-input" type="checkbox" id="agent_dev_mode_disclaimer"
+               name="agent_dev_mode_disclaimer" value="1">
+        <label class="form-check-label" for="agent_dev_mode_disclaimer">
+            Я понимаю, что включаю потенциально опасные изменения
+        </label>
+    </div>
+    <div class="form-text mb-3">
+        Без подтверждения дисклеймера режим разработчика не включится. При уже включённом режиме этот экран можно использовать и для отключения.
+    </div>
+    <div class="d-flex justify-content-end">
+        <button type="submit" class="btn btn-primary">Сохранить режим разработчика</button>
+    </div>
+</form>
+
+{% if agent_dev_mode_enabled %}
+<hr class="my-4">
+
+<form method="post" action="/settings/save-agent" data-busy>
+    <input type="hidden" name="agent_form_scope" value="backend_override">
+    <div class="mb-3">
+        <label for="agent_backend_override" class="form-label">Backend override</label>
+        <select id="agent_backend_override" name="agent_backend_override" class="form-select w-auto">
+            <option value="auto" {{ 'selected' if agent_backend_override == 'auto' else '' }}>Авто</option>
+            <option value="claude" {{ 'selected' if agent_backend_override == 'claude' else '' }}>claude-agent-sdk</option>
+            <option value="deepagents" {{ 'selected' if agent_backend_override == 'deepagents' else '' }}>deepagents</option>
+        </select>
+        <div class="form-text">
+            Override применяется только при включённом режиме разработчика. В обычном режиме используется Claude, а при его отсутствии — deepagents fallback.
+        </div>
+    </div>
+    <p class="mb-3">
+        Fallback model из env/config:
+        {% if agent_fallback_model %}
+        <code>{{ agent_fallback_model }}</code>
+        {% else %}
+        <span class="text-muted">не задан</span>
+        {% endif %}
+    </p>
+    <div class="d-flex justify-content-end">
+        <button type="submit" class="btn btn-primary">Сохранить настройки агента</button>
+    </div>
+</form>
+
+<hr class="my-4">
+
+<div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+    <div>
+        <h6 class="mb-1">Deepagents Providers</h6>
+        <div class="form-text">Провайдеры используются по возрастанию приоритета. Если один провайдер не инициализируется или падает, runtime пробует следующий.</div>
+    </div>
+    <div class="d-flex flex-wrap gap-2">
+        <button type="button" class="btn btn-outline-secondary btn-sm"
+                id="refresh-all-agent-providers-btn"
+                onclick="refreshAllAgentProviders()"
+                {% if not agent_provider_writes_enabled %}disabled{% endif %}>
+            <i class="bi bi-arrow-repeat me-1"></i>Обновить модели у всех
+        </button>
+        <button type="button" class="btn btn-outline-secondary btn-sm"
+                id="bulk-test-agent-providers-btn"
+                onclick="bulkTestAgentProviders()"
+                {% if not agent_provider_writes_enabled %}disabled{% endif %}>
+            <i class="bi bi-check2-all me-1"></i>Тестировать все модели
+        </button>
+    </div>
+</div>
+<div id="agent-provider-actions-status" class="small mb-3" aria-live="polite"></div>
+
+{% if not agent_provider_writes_enabled %}
+<div class="alert alert-warning py-2">
+    Для управления deepagents providers требуется <code>SESSION_ENCRYPTION_KEY</code>. Без него настройки провайдеров доступны только для чтения.
+</div>
+{% endif %}
+
+<form method="post" action="/settings/agent-providers/add" class="row g-2 align-items-end mb-4" data-busy>
+    <div class="col-12 col-md-6">
+        <label for="deepagents_provider_add" class="form-label">Добавить провайдера</label>
+        <select id="deepagents_provider_add" name="provider" class="form-select" {% if not agent_provider_writes_enabled %}disabled{% endif %}>
+            <option value="">Выберите провайдера</option>
+            {% for spec in agent_provider_options %}
+            <option value="{{ spec.name }}">{{ spec.display_name }} ({{ spec.name }})</option>
+            {% endfor %}
+        </select>
+    </div>
+    <div class="col-12 col-md-auto">
+        <button type="submit" class="btn btn-outline-primary btn-sm" {% if not agent_provider_writes_enabled %}disabled{% endif %}>
+            <i class="bi bi-plus-lg me-1"></i>Добавить
+        </button>
+    </div>
+</form>
+
+{% if agent_provider_views %}
+<form method="post" action="/settings/agent-providers/save" data-busy>
+    {% for item in agent_provider_views %}
+    <div class="card shadow-sm mb-3" data-provider-card="{{ item.provider }}">
+        <div class="card-body">
+            <input type="hidden" name="provider_present__{{ item.provider }}" value="1">
+            <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-3">
+                <div>
+                    <div class="fw-semibold">{{ item.display_name }}</div>
+                    <div class="small text-muted">
+                        provider: <code>{{ item.provider }}</code> |
+                        package: <code>{{ item.package_name }}</code>
+                    </div>
+                </div>
+                <div class="d-flex gap-2 align-items-center">
+                    <button type="button" class="btn btn-outline-secondary btn-sm"
+                            data-provider-refresh-btn="{{ item.provider }}"
+                            onclick="refreshAgentProvider('{{ item.provider }}')"
+                            {% if not agent_provider_writes_enabled %}disabled{% endif %}>
+                        <i class="bi bi-arrow-repeat me-1"></i>Обновить модели
+                    </button>
+                    <button type="submit"
+                            class="btn btn-outline-danger btn-sm"
+                            formaction="/settings/agent-providers/{{ item.provider }}/delete"
+                            formmethod="post"
+                            {% if not agent_provider_writes_enabled %}disabled{% endif %}>
+                        <i class="bi bi-trash me-1"></i>Удалить
+                    </button>
+                </div>
+            </div>
+
+            <div class="row g-3 mb-3">
+                <div class="col-12 col-md-2">
+                    <label class="form-label" for="provider_priority__{{ item.provider }}">Приоритет</label>
+                    <input type="number" class="form-control" id="provider_priority__{{ item.provider }}"
+                           name="provider_priority__{{ item.provider }}" value="{{ item.priority }}" min="0"
+                           {% if not agent_provider_writes_enabled %}disabled{% endif %}>
+                </div>
+                <div class="col-12 col-md-3">
+                    <label class="form-label" for="provider_model__{{ item.provider }}">Модель</label>
+                    <select class="form-select" id="provider_model__{{ item.provider }}"
+                            name="provider_model__{{ item.provider }}" {% if not agent_provider_writes_enabled %}disabled{% endif %}>
+                        {% for option in item.model_options %}
+                        <option value="{{ option.value }}" data-compat-status="{{ option.status }}"
+                                {{ 'selected' if item.selected_model == option.value else '' }}>{{ option.label }}</option>
+                        {% endfor %}
+                    </select>
+                    <div class="form-text" id="provider_model_meta__{{ item.provider }}">
+                        source:
+                        <span class="badge text-bg-{{ 'success' if item.model_source == 'live' else 'secondary' }}">{{ item.model_source }}</span>
+                        {% if item.model_fetched_at %}| {{ item.model_fetched_at }}{% endif %}
+                    </div>
+                    <div class="small text-muted{{ '' if item.model_fetch_error else ' d-none' }}"
+                         id="provider_model_error__{{ item.provider }}">{{ item.model_fetch_error }}</div>
+                    <div class="small mt-2" id="provider_compat__{{ item.provider }}">
+                        {% if item.selected_compatibility %}
+                        <div>
+                            compatibility:
+                            <span class="badge text-bg-{{ 'success' if item.selected_compatibility.status == 'supported' else ('warning' if item.selected_compatibility.status == 'unknown' else 'danger') }}">{{ item.selected_compatibility.status }}</span>
+                            {% if item.selected_compatibility.tested_at %}| {{ item.selected_compatibility.tested_at }}{% endif %}
+                        </div>
+                        {% if item.selected_compatibility.reason %}
+                        <div class="text-muted">{{ item.selected_compatibility.reason }}</div>
+                        {% endif %}
+                        {% elif item.selected_compatibility_warning %}
+                        <div class="text-muted">{{ item.selected_compatibility_warning }}</div>
+                        {% else %}
+                        <div class="text-muted">Совместимость модели с deepagents ещё не проверялась.</div>
+                        {% endif %}
+                    </div>
+                </div>
+                <div class="col-12 col-md-2">
+                    <label class="form-label" for="provider_enabled__{{ item.provider }}">Статус</label>
+                    <select class="form-select" id="provider_enabled__{{ item.provider }}"
+                            name="provider_enabled__{{ item.provider }}" {% if not agent_provider_writes_enabled %}disabled{% endif %}>
+                        <option value="1" {{ 'selected' if item.enabled else '' }}>Enabled</option>
+                        <option value="" {{ 'selected' if not item.enabled else '' }}>Disabled</option>
+                    </select>
+                </div>
+            </div>
+
+            {% if item.plain_fields %}
+            <div class="row g-3 mb-3">
+                {% for field in item.plain_fields %}
+                <div class="col-12 col-md-4">
+                    <label class="form-label" for="provider_field__{{ item.provider }}__{{ field.name }}">{{ field.label }}</label>
+                    <input type="text" class="form-control"
+                           id="provider_field__{{ item.provider }}__{{ field.name }}"
+                           name="provider_field__{{ item.provider }}__{{ field.name }}"
+                           value="{{ field.value }}"
+                           placeholder="{{ field.placeholder }}"
+                           {% if not agent_provider_writes_enabled %}disabled{% endif %}>
+                    {% if field.help_text %}
+                    <div class="form-text">{{ field.help_text }}</div>
+                    {% endif %}
+                </div>
+                {% endfor %}
+            </div>
+            {% endif %}
+
+            {% if item.secret_fields %}
+            <div class="row g-3 mb-2">
+                {% for field in item.secret_fields %}
+                <div class="col-12 col-md-4">
+                    <label class="form-label" for="provider_secret__{{ item.provider }}__{{ field.name }}">{{ field.label }}</label>
+                    <input type="password" class="form-control"
+                           id="provider_secret__{{ item.provider }}__{{ field.name }}"
+                           name="provider_secret__{{ item.provider }}__{{ field.name }}"
+                           placeholder="{{ field.masked or 'Введите новое значение' }}"
+                           {% if not agent_provider_writes_enabled %}disabled{% endif %}>
+                    <div class="form-text">
+                        {% if field.has_value %}Значение сохранено и скрыто. Оставьте пустым, чтобы не менять.{% else %}Значение ещё не задано.{% endif %}
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+            {% endif %}
+
+            {% if item.last_validation_error %}
+            <div class="alert alert-warning py-2 mb-0">{{ item.last_validation_error }}</div>
+            {% endif %}
+        </div>
+    </div>
+    {% endfor %}
+
+    <div class="d-flex justify-content-end">
+        <button type="submit" class="btn btn-primary" {% if not agent_provider_writes_enabled %}disabled{% endif %}>Сохранить providers</button>
+    </div>
+</form>
+{% else %}
+<p class="text-muted mb-0">Провайдеры deepagents ещё не добавлены.</p>
+{% endif %}
+{% endif %}
