@@ -157,7 +157,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--target",
         action="append",
         required=True,
-        help="Target in PHONE:DIALOG_ID format; repeat for multiple targets",
+        help="Target in PHONE|DIALOG_ID format; repeat for multiple targets",
     )
     pipeline_add.add_argument("--llm-model", default=None, help="Optional LLM model")
     pipeline_add.add_argument("--image-model", default=None, help="Optional image model")
@@ -196,7 +196,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--target",
         action="append",
         default=None,
-        help="Replace targets with PHONE:DIALOG_ID values",
+        help="Replace targets with PHONE|DIALOG_ID values",
     )
     pipeline_edit.add_argument("--llm-model", default=None, help="Optional LLM model")
     pipeline_edit.add_argument("--image-model", default=None, help="Optional image model")
@@ -210,14 +210,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     pipeline_edit.add_argument(
         "--active",
-        action="store_true",
+        dest="active",
+        action="store_const",
+        const=True,
         default=None,
         help="Enable pipeline",
     )
     pipeline_edit.add_argument(
         "--inactive",
         dest="active",
-        action="store_false",
+        action="store_const",
+        const=False,
         help="Disable pipeline",
     )
 
