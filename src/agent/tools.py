@@ -98,7 +98,6 @@ def make_mcp_server(db: Database):
     )
     async def generate_draft(args):
         query = args.get("query", "")
-        pipeline_id = args.get("pipeline_id")
         limit = int(args.get("limit", 8))
         try:
             from src.search.engine import SearchEngine

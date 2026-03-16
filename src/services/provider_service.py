@@ -10,7 +10,13 @@ class AgentProviderService:
     """Simple provider registry for generation providers.
 
     Provider callable signature (async):
-        async def provider(prompt: str, model: Optional[str]=None, max_tokens: int=256, temperature: float=0.0, stream: bool=False) -> str
+        async def provider(
+            prompt: str,
+            model: Optional[str] = None,
+            max_tokens: int = 256,
+            temperature: float = 0.0,
+            stream: bool = False,
+        ) -> str
 
     The service registers a default stub provider under the name 'default'. If an
     OPENAI_API_KEY is present in the environment, a basic OpenAI chat provider is

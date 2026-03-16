@@ -40,7 +40,8 @@ def make_langchain_adapter(
     ) -> str:
         if not is_langchain_available():
             raise RuntimeError(
-                "LangChain is not installed. Set USE_LANGCHAIN=1 and install 'langchain' and provider packages to use LangChain adapters."
+                "LangChain is not installed. Set USE_LANGCHAIN=1 and install 'langchain' and "
+                "provider packages to use LangChain adapters."
             )
 
         # Import modules lazily to avoid hard dependency at import time

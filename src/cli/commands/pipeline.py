@@ -192,7 +192,8 @@ def run(args: argparse.Namespace) -> None:
                         print(result.get("generated_text"))
                     if args.publish:
                         print(
-                            "Publish requested — publishing via targets is not implemented in CLI; use web UI or implement account targets."
+                            "Publish requested — publishing via targets is not implemented in CLI; "
+                            "Use the web UI or implement account targets."
                         )
                 except Exception as exc:
                     await db.repos.generation_runs.set_status(run_id, "failed")
