@@ -32,7 +32,53 @@ class AgentProviderService:
         # optional Context7 provider (user may supply CONTEXT7_API_KEY)
         context7_key = os.environ.get("CONTEXT7_API_KEY") or os.environ.get("CTX7_API_KEY")
         if context7_key:
-            self.register_provider("context7", self._make_context7_provider(context7_key))
+            try:
+                from src.services.provider_adapters import make_context7_adapter
+
+                self.register_provider("context7", make_context7_adapter(context7_key))
+            except Exception:
+                # ignore if adapter module unavailable
+                pass
+
+        # Register lightweight HTTP adapters when env vars are present
+        try:
+            from src.services.provider_adapters import (
+                make_cohere_adapter,
+                make_ollama_adapter,
+                make_huggingface_adapter,
+                make_generic_http_adapter,
+            )
+
+            cohere_key = os.environ.get("COHERE_API_KEY")
+            if cohere_key and "cohere" not in self._registry:
+                self.register_provider("cohere", make_cohere_adapter(cohere_key))
+
+            ollama_base = os.environ.get("OLLAMA_BASE") or os.environ.get("OLLAMA_URL")
+            if ollama_base and "ollama" not in self._registry:
+                self.register_provider("ollama", make_ollama_adapter(ollama_base, os.environ.get("OLLAMA_API_KEY")))
+
+            hf_key = os.environ.get("HUGGINGFACE_API_KEY") or os.environ.get("HUGGINGFACE_TOKEN")
+            if hf_key and "huggingface" not in self._registry:
+                self.register_provider("huggingface", make_huggingface_adapter(hf_key))
+
+            # Generic providers (Fireworks / DeepSeek / Together) via base URL env vars
+            fireworks_base = os.environ.get("FIREWORKS_BASE") or os.environ.get("FIREWORKS_API_BASE")
+            fireworks_key = os.environ.get("FIREWORKS_API_KEY")
+            if fireworks_base and "fireworks" not in self._registry:
+                self.register_provider("fireworks", make_generic_http_adapter(fireworks_base, fireworks_key))
+
+            deepseek_base = os.environ.get("DEEPSEEK_BASE") or os.environ.get("DEEPSEEK_API_BASE")
+            deepseek_key = os.environ.get("DEEPSEEK_API_KEY")
+            if deepseek_base and "deepseek" not in self._registry:
+                self.register_provider("deepseek", make_generic_http_adapter(deepseek_base, deepseek_key))
+
+            together_base = os.environ.get("TOGETHER_BASE") or os.environ.get("TOGETHER_API_BASE")
+            together_key = os.environ.get("TOGETHER_API_KEY")
+            if together_base and "together" not in self._registry:
+                self.register_provider("together", make_generic_http_adapter(together_base, together_key))
+        except Exception:
+            # provider_adapters import failed — skip lightweight adapter registration
+            pass
 
         # Optional LangChain-backed adapters (enable by setting USE_LANGCHAIN=1).
         # When enabled, attempt to register LangChain adapters for common providers.
