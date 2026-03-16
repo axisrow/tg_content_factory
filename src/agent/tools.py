@@ -107,9 +107,21 @@ def make_mcp_server(db: Database):
             from src.services.generation_service import GenerationService
 
             gen = GenerationService(engine, provider_callable=provider_callable)
-            result = await gen.generate(query=query, limit=limit, prompt_template=None)
-            text = result.get("generated_text", "")
-            citations = result.get("citations", [])
+            # Prefer streaming generation when available; accumulate final text
+            final_text = ""
+            final_citations = []
+            try:
+                async for update in gen.generate_stream(query=query, prompt_template=None, limit=limit):
+                    final_text = update.get("generated_text", final_text)
+                    final_citations = update.get("citations", final_citations)
+            except Exception:
+                # Fallback to non-streaming generate
+                result = await gen.generate(query=query, limit=limit, prompt_template=None)
+                final_text = result.get("generated_text", "")
+                final_citations = result.get("citations", [])
+
+            text = final_text
+            citations = final_citations
             content = f"Generated draft:\n\n{text}\n\nCitations:\n" + "\n".join(
                 f"- {c['channel_title']} id={c['message_id']} date={c['date']}" for c in citations
             )
