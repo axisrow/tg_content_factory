@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import sqlite3
 
 from src.database import Database
 from src.filters.criteria import (
@@ -167,7 +168,7 @@ class ChannelAnalyzer:
         # (isolation_level=None means autocommit, so rollback is a no-op when clean).
         try:
             await conn.execute("BEGIN")
-        except Exception:
+        except sqlite3.OperationalError:
             await conn.rollback()
             await conn.execute("BEGIN")
         try:

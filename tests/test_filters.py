@@ -372,6 +372,18 @@ class TestChannelAnalyzer:
         assert row["is_filtered"] == 1
         assert row["filter_flags"] == "legacy_flag"
 
+    async def test_apply_filters_recovers_from_stale_transaction(self, db, raw_db):
+        """BEGIN succeeds even if a prior operation left an uncommitted txn."""
+        await _insert_channel(raw_db, 714, title="Stale")
+        await raw_db.commit()
+        # Simulate stale transaction left by an interrupted operation
+        await db.db.execute("BEGIN")
+        analyzer = ChannelAnalyzer(db)
+        report = FilterReport(results=[], total_channels=0, filtered_count=0)
+        # Should not raise OperationalError
+        count = await analyzer.apply_filters(report)
+        assert count == 0
+
     async def test_reset_filters(self, db, raw_db):
         await _insert_channel(raw_db, 800)
         await raw_db.execute(
