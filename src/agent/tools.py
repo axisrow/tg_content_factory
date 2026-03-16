@@ -91,7 +91,33 @@ def make_mcp_server(db: Database):
             text = f"Ошибка получения каналов: {e}"
         return {"content": [{"type": "text", "text": text}]}
 
+    @tool("generate_draft", "Generate a draft from a query using RAG (returns draft text and citations)", {"query": str, "pipeline_id": int, "limit": int})
+    async def generate_draft(args):
+        query = args.get("query", "")
+        pipeline_id = args.get("pipeline_id")
+        limit = int(args.get("limit", 8))
+        try:
+            from src.search.engine import SearchEngine
+            engine = SearchEngine(db)
+            # provider stub: real provider wiring should be done via AgentProviderService
+            async def _provider_stub(**kwargs):
+                prompt = kwargs.get("prompt") or ""
+                return "DRAFT: " + (prompt[:400])
+
+            from src.services.generation_service import GenerationService
+
+            gen = GenerationService(engine, provider_callable=_provider_stub)
+            result = await gen.generate(query=query, limit=limit, prompt_template=None)
+            text = result.get("generated_text", "")
+            citations = result.get("citations", [])
+            content = f"Generated draft:\n\n{text}\n\nCitations:\n" + "\n".join(
+                f"- {c['channel_title']} id={c['message_id']} date={c['date']}" for c in citations
+            )
+        except Exception as e:
+            content = f"Ошибка генерации: {e}"
+        return {"content": [{"type": "text", "text": content}]}
+
     return create_sdk_mcp_server(
         name="telegram_db",
-        tools=[search_messages, semantic_search, get_channels],
+        tools=[search_messages, semantic_search, get_channels, generate_draft],
     )
