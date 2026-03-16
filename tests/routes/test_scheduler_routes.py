@@ -10,7 +10,7 @@ from httpx import ASGITransport, AsyncClient
 from src.collection_queue import CollectionQueue
 from src.config import AppConfig
 from src.database import Database
-from src.models import Account, CollectionTaskStatus
+from src.models import Account, CollectionTaskStatus, StatsAllTaskPayload
 from src.scheduler.manager import SchedulerManager
 from src.search.ai_search import AISearchEngine
 from src.search.engine import SearchEngine
@@ -365,6 +365,64 @@ async def test_cancel_task_calls_queue(client):
 
     resp = await client.post(f"/scheduler/tasks/{task_id}/cancel")
     assert resp.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_clear_pending_collect_tasks_redirects_and_deletes_only_pending_channel_tasks(client):
+    db = client._transport.app.state.db
+
+    pending_id = await db.create_collection_task(
+        channel_id=-1001234567890,
+        channel_title="Pending Channel",
+    )
+    running_id = await db.create_collection_task(
+        channel_id=-1001234567891,
+        channel_title="Running Channel",
+    )
+    await db.update_collection_task(running_id, CollectionTaskStatus.RUNNING)
+    await db.create_stats_task(StatsAllTaskPayload(channel_ids=[-1001234567890]))
+
+    resp = await client.post(
+        "/scheduler/tasks/clear-pending-collect",
+        follow_redirects=False,
+    )
+
+    assert resp.status_code == 303
+    assert "msg=pending_collect_tasks_deleted" in resp.headers["location"]
+    assert await db.get_collection_task(pending_id) is None
+    assert (await db.get_collection_task(running_id)).status == CollectionTaskStatus.RUNNING
+
+
+@pytest.mark.asyncio
+async def test_clear_pending_collect_tasks_empty_queue_redirects(client):
+    resp = await client.post(
+        "/scheduler/tasks/clear-pending-collect",
+        follow_redirects=False,
+    )
+
+    assert resp.status_code == 303
+    assert "msg=pending_collect_tasks_empty" in resp.headers["location"]
+
+
+@pytest.mark.asyncio
+async def test_scheduler_page_shows_clear_pending_collect_button(client):
+    db = client._transport.app.state.db
+    await db.create_collection_task(
+        channel_id=-1001234567890, channel_title="Pending Channel",
+    )
+
+    resp = await client.get("/scheduler/")
+
+    assert resp.status_code == 200
+    assert 'action="/scheduler/tasks/clear-pending-collect"' in resp.text
+    assert "Очистить очередь загрузки" in resp.text
+
+
+@pytest.mark.asyncio
+async def test_scheduler_page_hides_clear_button_when_no_pending(client):
+    resp = await client.get("/scheduler/")
+    assert resp.status_code == 200
+    assert 'action="/scheduler/tasks/clear-pending-collect"' not in resp.text
 
 
 @pytest.mark.asyncio

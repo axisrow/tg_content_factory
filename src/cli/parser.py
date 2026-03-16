@@ -169,7 +169,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--target",
         action="append",
         required=True,
-        help="Target in PHONE:DIALOG_ID format; repeat for multiple targets",
+        help="Target in PHONE|DIALOG_ID format; repeat for multiple targets",
     )
     pipeline_add.add_argument("--llm-model", default=None, help="Optional LLM model")
     pipeline_add.add_argument("--image-model", default=None, help="Optional image model")
@@ -208,7 +208,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--target",
         action="append",
         default=None,
-        help="Replace targets with PHONE:DIALOG_ID values",
+        help="Replace targets with PHONE|DIALOG_ID values",
     )
     pipeline_edit.add_argument("--llm-model", default=None, help="Optional LLM model")
     pipeline_edit.add_argument("--image-model", default=None, help="Optional image model")
@@ -222,14 +222,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     pipeline_edit.add_argument(
         "--active",
-        action="store_true",
+        dest="active",
+        action="store_const",
+        const=True,
         default=None,
         help="Enable pipeline",
     )
     pipeline_edit.add_argument(
         "--inactive",
         dest="active",
-        action="store_false",
+        action="store_const",
+        const=False,
         help="Disable pipeline",
     )
 
@@ -393,6 +396,28 @@ def build_parser() -> argparse.ArgumentParser:
     photo_auto_delete.add_argument("id", type=int, help="Job id")
 
     photo_sub.add_parser("run-due", help="Run due photo items and auto jobs now")
+
+    pipe_parser = sub.add_parser("pipeline", help="Pipeline management")
+    pipe_sub = pipe_parser.add_subparsers(dest="pipeline_action")
+    pipe_sub.add_parser("list", help="List pipelines")
+
+    pipe_add = pipe_sub.add_parser("add", help="Add pipeline")
+    pipe_add.add_argument("name", help="Pipeline name")
+    pipe_add.add_argument("--phone", required=True, help="Account phone")
+    pipe_add.add_argument("--prompt-template", default=None, dest="prompt_template")
+    pipe_add.add_argument("--llm-model", default=None, dest="llm_model")
+
+    pipe_edit = pipe_sub.add_parser("edit", help="Edit pipeline")
+    pipe_edit.add_argument("id", type=int, help="Pipeline id")
+    pipe_edit.add_argument("--name", default=None, help="New name")
+    pipe_edit.add_argument("--prompt-template", default=None, dest="prompt_template")
+    pipe_edit.add_argument("--llm-model", default=None, dest="llm_model")
+
+    pipe_del = pipe_sub.add_parser("delete", help="Delete pipeline")
+    pipe_del.add_argument("id", type=int, help="Pipeline id")
+
+    pipe_toggle = pipe_sub.add_parser("toggle", help="Toggle pipeline active state")
+    pipe_toggle.add_argument("id", type=int, help="Pipeline id")
 
     test_parser = sub.add_parser("test", help="Run diagnostic tests")
     test_sub = test_parser.add_subparsers(dest="test_action")

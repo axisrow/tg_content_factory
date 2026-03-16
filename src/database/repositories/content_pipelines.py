@@ -125,7 +125,7 @@ class ContentPipelinesRepository:
                 UPDATE content_pipelines
                 SET name = ?, prompt_template = ?, llm_model = ?, image_model = ?,
                     publish_mode = ?, generation_backend = ?, is_active = ?,
-                    last_generated_id = ?, generate_interval_minutes = ?
+                    generate_interval_minutes = ?
                 WHERE id = ?
                 """,
                 (
@@ -136,7 +136,6 @@ class ContentPipelinesRepository:
                     pipeline.publish_mode.value,
                     pipeline.generation_backend.value,
                     int(pipeline.is_active),
-                    pipeline.last_generated_id,
                     pipeline.generate_interval_minutes,
                     pipeline_id,
                 ),
@@ -156,6 +155,13 @@ class ContentPipelinesRepository:
         await self._db.execute(
             "UPDATE content_pipelines SET is_active = ? WHERE id = ?",
             (int(active), pipeline_id),
+        )
+        await self._db.commit()
+
+    async def set_last_generated_id(self, pipeline_id: int, value: int) -> None:
+        await self._db.execute(
+            "UPDATE content_pipelines SET last_generated_id = ? WHERE id = ?",
+            (value, pipeline_id),
         )
         await self._db.commit()
 
