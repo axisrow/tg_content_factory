@@ -24,6 +24,7 @@ class TelegramUserInfo(BaseModel):
     last_name: str = ""
     username: str | None = None
     is_primary: bool = False
+    is_premium: bool = False
     avatar_base64: str | None = None  # "data:image/jpeg;base64,..."
 
 

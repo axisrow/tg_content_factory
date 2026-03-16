@@ -510,6 +510,7 @@ class ClientPool:
                     last_name=me.last_name or "",
                     username=me.username,
                     is_primary=phone in primary_phones,
+                    is_premium=getattr(me, "premium", False) or False,
                     avatar_base64=avatar_base64,
                 ))
             except Exception as e:

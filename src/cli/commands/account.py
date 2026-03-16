@@ -22,15 +22,14 @@ def run(args: argparse.Namespace) -> None:
                     return
                 db_accounts = await db.get_accounts()
                 active_by_phone = {a.phone: a.is_active for a in db_accounts}
-                premium_by_phone = {a.phone: a.is_premium for a in db_accounts}
                 fmt = "{:<16} {:<25} {:<20} {:<9} {:<8}"
                 print(fmt.format("Phone", "Name", "Username", "Premium", "Active"))
                 print("-" * 82)
                 for u in users:
                     name = f"{u.first_name} {u.last_name}".strip() or "—"
                     username = f"@{u.username}" if u.username else "—"
-                    premium = "Yes" if premium_by_phone.get(u.phone, False) else "No"
-                    active = "Yes" if active_by_phone.get(u.phone, True) else "No"
+                    premium = "Yes" if u.is_premium else "No"
+                    active = "Yes" if active_by_phone.get(u.phone, False) else "No"
                     print(fmt.format(u.phone, name[:25], username[:20], premium, active))
                 return
             if args.account_action == "list":
