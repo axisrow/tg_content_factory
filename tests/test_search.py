@@ -2,12 +2,13 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from src.models import Message
 from src.search.engine import SearchEngine
+from src.services.embedding_service import EmbeddingService
 from src.web.routes.search import _extract_length
 from tests.helpers import AsyncIterMessages, FakeCliTelethonClient
 
@@ -84,6 +85,53 @@ async def test_search_local_maps_channel_title(db):
     assert result.total == 1
     assert result.messages[0].channel_title == "Crypto News"
     assert result.messages[0].channel_username == "crypto_news"
+
+
+@pytest.mark.asyncio
+async def test_search_semantic_with_results(db, monkeypatch):
+    if not db.vec_available:
+        pytest.skip("sqlite-vec extension is unavailable in this environment")
+
+    await db.insert_messages_batch(
+        [
+            Message(
+                channel_id=-100123,
+                message_id=1,
+                text="Bitcoin sentiment is rising",
+                date=datetime.now(timezone.utc),
+            ),
+            Message(
+                channel_id=-100123,
+                message_id=2,
+                text="Rainy weather all week",
+                date=datetime.now(timezone.utc),
+            ),
+        ]
+    )
+    rows = await db.execute_fetchall("SELECT id, text FROM messages ORDER BY id")
+    ids_by_text = {row["text"]: int(row["id"]) for row in rows}
+    await db.repos.messages.upsert_message_embeddings(
+        [
+            (ids_by_text["Bitcoin sentiment is rising"], [1.0, 0.0]),
+            (ids_by_text["Rainy weather all week"], [0.0, 1.0]),
+        ]
+    )
+    monkeypatch.setattr(
+        EmbeddingService,
+        "index_pending_messages",
+        AsyncMock(return_value=0),
+    )
+    monkeypatch.setattr(
+        EmbeddingService,
+        "embed_query",
+        AsyncMock(return_value=[1.0, 0.0]),
+    )
+
+    engine = SearchEngine(db)
+    result = await engine.search_semantic("bitcoin")
+
+    assert result.total >= 1
+    assert result.messages[0].text == "Bitcoin sentiment is rising"
 
 
 def _make_mock_api_message(channel_id=100123, msg_id=42, text="Test message about AI"):

@@ -11,6 +11,7 @@ from src.models import Message, SearchQuery
 
 logger = logging.getLogger(__name__)
 _DATE_ONLY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_EMBEDDING_DIMENSIONS_SETTING = "semantic_embedding_dimensions"
 
 
 def _parse_reactions_json(reactions_json: str) -> list[dict]:
@@ -32,9 +33,16 @@ def _normalize_date_to(date_to: str) -> tuple[str, str]:
 
 
 class MessagesRepository:
-    def __init__(self, db: aiosqlite.Connection, *, fts_available: bool = True):
+    def __init__(
+        self,
+        db: aiosqlite.Connection,
+        *,
+        fts_available: bool = True,
+        vec_available: bool = False,
+    ):
         self._db = db
         self._fts_available = fts_available
+        self._vec_available = vec_available
 
     @staticmethod
     def _normalize_date_from(value: str | None) -> str | None:
@@ -50,6 +58,55 @@ class MessagesRepository:
             next_day = date.fromisoformat(value) + timedelta(days=1)
             return next_day.isoformat(), "<"
         return value, "<="
+
+    @property
+    def vec_available(self) -> bool:
+        return self._vec_available
+
+    async def _get_setting(self, key: str) -> str | None:
+        cur = await self._db.execute("SELECT value FROM settings WHERE key = ?", (key,))
+        row = await cur.fetchone()
+        return row["value"] if row else None
+
+    async def _set_setting(self, key: str, value: str) -> None:
+        await self._db.execute(
+            """
+            INSERT INTO settings (key, value)
+            VALUES (?, ?)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value
+            """,
+            (key, value),
+        )
+        await self._db.commit()
+
+    async def get_embedding_dimensions(self) -> int | None:
+        raw_value = await self._get_setting(_EMBEDDING_DIMENSIONS_SETTING)
+        if raw_value in (None, ""):
+            return None
+        try:
+            return int(raw_value)
+        except (TypeError, ValueError):
+            logger.warning("Invalid %s setting value %r", _EMBEDDING_DIMENSIONS_SETTING, raw_value)
+            return None
+
+    async def count_embeddings(self) -> int:
+        if not self._vec_available:
+            return 0
+        try:
+            cur = await self._db.execute("SELECT COUNT(*) AS cnt FROM vec_messages")
+        except Exception:
+            return 0
+        row = await cur.fetchone()
+        return int(row["cnt"]) if row else 0
+
+    async def reset_embeddings_index(self) -> None:
+        if self._vec_available:
+            await self._db.execute("DROP TABLE IF EXISTS vec_messages")
+        await self._db.execute(
+            "DELETE FROM settings WHERE key IN (?, ?)",
+            (_EMBEDDING_DIMENSIONS_SETTING, "semantic_last_embedded_id"),
+        )
+        await self._db.commit()
 
     async def insert_message(self, msg: Message) -> bool:
         try:
@@ -163,24 +220,80 @@ class MessagesRepository:
 
         return count
 
-    async def search_messages(
+    async def ensure_vec_table(self, dimensions: int) -> None:
+        if not self._vec_available:
+            raise RuntimeError(
+                "Semantic search is unavailable: sqlite-vec extension is not loaded."
+            )
+        if dimensions < 1:
+            raise ValueError("Embedding dimensions must be positive.")
+        existing_dimensions = await self.get_embedding_dimensions()
+        if existing_dimensions is not None and existing_dimensions != dimensions:
+            raise RuntimeError(
+                "Existing vec_messages index uses "
+                f"{existing_dimensions} dimensions; got {dimensions}."
+            )
+        await self._db.execute(
+            f"""
+            CREATE VIRTUAL TABLE IF NOT EXISTS vec_messages USING vec0(
+                message_id INTEGER PRIMARY KEY,
+                embedding FLOAT[{dimensions}] distance_metric=cosine
+            )
+            """
+        )
+        await self._db.commit()
+        if existing_dimensions is None:
+            await self._set_setting(_EMBEDDING_DIMENSIONS_SETTING, str(dimensions))
+
+    async def get_messages_for_embedding(
         self,
-        query: str = "",
+        *,
+        after_id: int = 0,
+        limit: int = 100,
+    ) -> list[tuple[int, str]]:
+        cur = await self._db.execute(
+            """
+            SELECT id, text
+            FROM messages
+            WHERE id > ?
+              AND COALESCE(TRIM(text), '') <> ''
+            ORDER BY id ASC
+            LIMIT ?
+            """,
+            (after_id, limit),
+        )
+        rows = await cur.fetchall()
+        return [(int(row["id"]), str(row["text"])) for row in rows]
+
+    async def upsert_message_embeddings(self, embeddings: list[tuple[int, list[float]]]) -> int:
+        if not embeddings:
+            return 0
+        dimensions = len(embeddings[0][1])
+        if dimensions < 1:
+            raise ValueError("Embeddings payload is empty.")
+        if any(len(vector) != dimensions for _, vector in embeddings):
+            raise ValueError("All embedding vectors must use the same dimensions.")
+        await self.ensure_vec_table(dimensions)
+        payload = [(message_id, json.dumps(vector)) for message_id, vector in embeddings]
+        cur = await self._db.executemany(
+            "INSERT OR REPLACE INTO vec_messages(message_id, embedding) VALUES (?, ?)",
+            payload,
+        )
+        await self._db.commit()
+        return cur.rowcount if cur.rowcount >= 0 else len(payload)
+
+    def _build_message_filters(
+        self,
+        *,
         channel_id: int | None = None,
         date_from: str | None = None,
         date_to: str | None = None,
-        limit: int = 50,
-        offset: int = 0,
-        is_fts: bool = False,
         min_length: int | None = None,
         max_length: int | None = None,
         topic_id: int | None = None,
-    ) -> tuple[list[Message], int]:
-        # Exclude messages from filtered channels; allow messages whose channel
-        # is not yet in the channels table (NULL join) for backward-compat.
+    ) -> tuple[list[str], list]:
         conditions: list[str] = ["(c.is_filtered IS NULL OR c.is_filtered = 0)"]
         params: list = []
-
         if channel_id:
             conditions.append("m.channel_id = ?")
             params.append(channel_id)
@@ -203,7 +316,106 @@ class MessagesRepository:
         if max_length is not None:
             conditions.append("LENGTH(m.text) < ?")
             params.append(max_length)
+        return conditions, params
 
+    async def _load_messages_by_ids(self, message_ids: list[int]) -> list[Message]:
+        if not message_ids:
+            return []
+        placeholders = ", ".join("?" for _ in message_ids)
+        ordering = "CASE " + " ".join(
+            f"WHEN m.id = ? THEN {index}" for index, _ in enumerate(message_ids)
+        ) + " END"
+        cur = await self._db.execute(
+            f"""
+            SELECT m.*, c.title as channel_title, c.username as channel_username
+            FROM messages m
+            LEFT JOIN channels c ON m.channel_id = c.channel_id
+            WHERE m.id IN ({placeholders})
+            ORDER BY {ordering}
+            """,
+            (*message_ids, *message_ids),
+        )
+        return self._rows_to_messages(await cur.fetchall())
+
+    async def _search_text_candidate_ids(
+        self,
+        query: str,
+        *,
+        channel_id: int | None = None,
+        date_from: str | None = None,
+        date_to: str | None = None,
+        is_fts: bool = False,
+        min_length: int | None = None,
+        max_length: int | None = None,
+        topic_id: int | None = None,
+        limit: int = 100,
+    ) -> list[int]:
+        conditions, params = self._build_message_filters(
+            channel_id=channel_id,
+            date_from=date_from,
+            date_to=date_to,
+            min_length=min_length,
+            max_length=max_length,
+            topic_id=topic_id,
+        )
+
+        channel_join = " LEFT JOIN channels c ON m.channel_id = c.channel_id"
+        where = " WHERE " + " AND ".join(conditions)
+        if self._fts_available:
+            fts_query = self._build_fts_match(query, is_fts)
+            fts_join = (
+                " INNER JOIN (SELECT rowid FROM messages_fts"
+                " WHERE messages_fts MATCH ?) AS fts ON m.id = fts.rowid"
+            )
+            cur = await self._db.execute(
+                f"""
+                SELECT m.id
+                FROM messages m{fts_join}{channel_join}
+                {where}
+                ORDER BY m.date DESC
+                LIMIT ?
+                """,
+                (fts_query, *params, limit),
+            )
+        else:
+            logger.debug("FTS5 unavailable, falling back to LIKE search")
+            conditions.append("m.text LIKE ?")
+            params.append(f"%{query}%")
+            where = " WHERE " + " AND ".join(conditions)
+            cur = await self._db.execute(
+                f"""
+                SELECT m.id
+                FROM messages m{channel_join}
+                {where}
+                ORDER BY m.date DESC
+                LIMIT ?
+                """,
+                (*params, limit),
+            )
+        rows = await cur.fetchall()
+        return [int(row["id"]) for row in rows]
+
+    async def search_messages(
+        self,
+        query: str = "",
+        channel_id: int | None = None,
+        date_from: str | None = None,
+        date_to: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+        is_fts: bool = False,
+        min_length: int | None = None,
+        max_length: int | None = None,
+        topic_id: int | None = None,
+    ) -> tuple[list[Message], int]:
+        conditions, params = self._build_message_filters(
+            channel_id=channel_id,
+            date_from=date_from,
+            date_to=date_to,
+            min_length=min_length,
+            max_length=max_length,
+            topic_id=topic_id,
+        )
         channel_join = " LEFT JOIN channels c ON m.channel_id = c.channel_id"
         where = " WHERE " + " AND ".join(conditions)
 
@@ -268,6 +480,141 @@ class MessagesRepository:
 
         rows = await cur.fetchall()
         return self._rows_to_messages(rows), total
+
+    async def _search_semantic_candidates(
+        self,
+        query_embedding: list[float],
+        *,
+        channel_id: int | None = None,
+        date_from: str | None = None,
+        date_to: str | None = None,
+        min_length: int | None = None,
+        max_length: int | None = None,
+        topic_id: int | None = None,
+        limit: int = 100,
+    ) -> list[tuple[int, float]]:
+        if not self._vec_available:
+            raise RuntimeError(
+                "Semantic search is unavailable: sqlite-vec extension is not loaded."
+            )
+        dimensions = await self.get_embedding_dimensions()
+        if dimensions is None:
+            return []
+        if len(query_embedding) != dimensions:
+            raise RuntimeError(
+                "Query embedding dimensions "
+                f"{len(query_embedding)} do not match index {dimensions}."
+            )
+        conditions, params = self._build_message_filters(
+            channel_id=channel_id,
+            date_from=date_from,
+            date_to=date_to,
+            min_length=min_length,
+            max_length=max_length,
+            topic_id=topic_id,
+        )
+        where = " AND ".join(conditions)
+        cur = await self._db.execute(
+            f"""
+            SELECT m.id, v.distance
+            FROM vec_messages v
+            JOIN messages m ON m.id = v.message_id
+            LEFT JOIN channels c ON m.channel_id = c.channel_id
+            WHERE v.embedding MATCH ?
+              AND k = ?
+              AND {where}
+            ORDER BY v.distance ASC
+            """,
+            (json.dumps(query_embedding), limit, *params),
+        )
+        rows = await cur.fetchall()
+        return [(int(row["id"]), float(row["distance"])) for row in rows]
+
+    async def search_semantic_messages(
+        self,
+        query_embedding: list[float],
+        *,
+        channel_id: int | None = None,
+        date_from: str | None = None,
+        date_to: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+        min_length: int | None = None,
+        max_length: int | None = None,
+        topic_id: int | None = None,
+        candidate_limit: int | None = None,
+    ) -> tuple[list[Message], int]:
+        fetch_limit = candidate_limit or max(offset + limit, 50)
+        candidates = await self._search_semantic_candidates(
+            query_embedding,
+            channel_id=channel_id,
+            date_from=date_from,
+            date_to=date_to,
+            min_length=min_length,
+            max_length=max_length,
+            topic_id=topic_id,
+            limit=fetch_limit,
+        )
+        page_ids = [message_id for message_id, _distance in candidates[offset : offset + limit]]
+        messages = await self._load_messages_by_ids(page_ids)
+        return messages, len(candidates)
+
+    async def search_hybrid_messages(
+        self,
+        query: str,
+        query_embedding: list[float],
+        *,
+        channel_id: int | None = None,
+        date_from: str | None = None,
+        date_to: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+        is_fts: bool = False,
+        min_length: int | None = None,
+        max_length: int | None = None,
+        topic_id: int | None = None,
+        candidate_limit: int | None = None,
+        rrf_k: int = 60,
+    ) -> tuple[list[Message], int]:
+        fetch_limit = candidate_limit or max(offset + limit, 50)
+        text_ids = await self._search_text_candidate_ids(
+            query,
+            channel_id=channel_id,
+            date_from=date_from,
+            date_to=date_to,
+            is_fts=is_fts,
+            min_length=min_length,
+            max_length=max_length,
+            topic_id=topic_id,
+            limit=fetch_limit,
+        )
+        semantic_candidates = await self._search_semantic_candidates(
+            query_embedding,
+            channel_id=channel_id,
+            date_from=date_from,
+            date_to=date_to,
+            min_length=min_length,
+            max_length=max_length,
+            topic_id=topic_id,
+            limit=fetch_limit,
+        )
+        if not text_ids and not semantic_candidates:
+            return [], 0
+        fused_scores: dict[int, float] = {}
+        for rank, message_id in enumerate(text_ids, start=1):
+            fused_scores[message_id] = fused_scores.get(message_id, 0.0) + (1.0 / (rrf_k + rank))
+        for rank, (message_id, _distance) in enumerate(semantic_candidates, start=1):
+            fused_scores[message_id] = fused_scores.get(message_id, 0.0) + (1.0 / (rrf_k + rank))
+        ranked_ids = [
+            message_id
+            for message_id, _score in sorted(
+                fused_scores.items(),
+                key=lambda item: (-item[1], item[0]),
+            )
+        ]
+        page_ids = ranked_ids[offset : offset + limit]
+        messages = await self._load_messages_by_ids(page_ids)
+        return messages, len(ranked_ids)
 
     @staticmethod
     def _rows_to_messages(rows) -> list[Message]:

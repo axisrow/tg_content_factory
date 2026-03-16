@@ -21,6 +21,18 @@ from src.services.agent_provider_service import (
     ProviderModelCacheEntry,
     ProviderModelCompatibilityRecord,
 )
+from src.services.embedding_service import (
+    DEFAULT_EMBEDDINGS_BATCH_SIZE,
+    DEFAULT_EMBEDDINGS_MODEL,
+    DEFAULT_EMBEDDINGS_PROVIDER,
+    EMBEDDINGS_API_KEY_SETTING,
+    EMBEDDINGS_BASE_URL_SETTING,
+    EMBEDDINGS_BATCH_SIZE_SETTING,
+    EMBEDDINGS_MODEL_SETTING,
+    EMBEDDINGS_PROVIDER_SETTING,
+    LAST_EMBEDDED_ID_SETTING,
+    EmbeddingService,
+)
 from src.services.notification_service import NotificationService
 from src.settings_utils import parse_int_setting
 from src.telegram.notifier import Notifier
@@ -48,6 +60,41 @@ def _wants_json(request: Request) -> bool:
 
 def _agent_provider_service(request: Request) -> AgentProviderService:
     return AgentProviderService(deps.get_db(request), request.app.state.config)
+
+
+async def _semantic_settings_context(request: Request) -> dict[str, object]:
+    db = deps.get_db(request)
+    last_embedded_id = parse_int_setting(
+        await db.get_setting(LAST_EMBEDDED_ID_SETTING),
+        setting_name=LAST_EMBEDDED_ID_SETTING,
+        default=0,
+        logger=logger,
+    )
+    batch_size = parse_int_setting(
+        await db.get_setting(EMBEDDINGS_BATCH_SIZE_SETTING),
+        setting_name=EMBEDDINGS_BATCH_SIZE_SETTING,
+        default=DEFAULT_EMBEDDINGS_BATCH_SIZE,
+        logger=logger,
+    )
+    embedding_dimensions = await db.repos.messages.get_embedding_dimensions()
+    embeddings_count = await db.repos.messages.count_embeddings()
+    return {
+        "semantic_vec_available": db.vec_available,
+        "semantic_embeddings_provider": (
+            await db.get_setting(EMBEDDINGS_PROVIDER_SETTING) or DEFAULT_EMBEDDINGS_PROVIDER
+        ),
+        "semantic_embeddings_model": (
+            await db.get_setting(EMBEDDINGS_MODEL_SETTING) or DEFAULT_EMBEDDINGS_MODEL
+        ),
+        "semantic_embeddings_api_key": CREDENTIALS_MASK
+        if await db.get_setting(EMBEDDINGS_API_KEY_SETTING)
+        else "",
+        "semantic_embeddings_base_url": await db.get_setting(EMBEDDINGS_BASE_URL_SETTING) or "",
+        "semantic_embeddings_batch_size": batch_size,
+        "semantic_last_embedded_id": last_embedded_id,
+        "semantic_embedding_dimensions": embedding_dimensions,
+        "semantic_embeddings_count": embeddings_count,
+    }
 
 
 def _settings_agent_manager(request: Request) -> tuple[AgentManager, bool]:
@@ -369,6 +416,7 @@ async def settings_page(request: Request):
         for name in PROVIDER_ORDER
         if name not in configured_names
     ]
+    semantic_context = await _semantic_settings_context(request)
     return deps.get_templates(request).TemplateResponse(
         request,
         "settings.html",
@@ -397,6 +445,7 @@ async def settings_page(request: Request):
             "agent_provider_writes_enabled": provider_service.writes_enabled,
             "agent_provider_views": provider_views,
             "agent_provider_options": available_provider_options,
+            **semantic_context,
         },
     )
 
@@ -415,6 +464,69 @@ async def save_scheduler_settings(request: Request):
     if scheduler:
         scheduler.update_interval(interval)
     return RedirectResponse(url="/settings?msg=scheduler_saved", status_code=303)
+
+
+@router.post("/save-semantic-search")
+async def save_semantic_search_settings(request: Request):
+    form = await request.form()
+    db = deps.get_db(request)
+
+    provider = str(form.get("semantic_embeddings_provider", DEFAULT_EMBEDDINGS_PROVIDER)).strip()
+    model = str(form.get("semantic_embeddings_model", DEFAULT_EMBEDDINGS_MODEL)).strip()
+    base_url = str(form.get("semantic_embeddings_base_url", "")).strip()
+    api_key_raw = form.get("semantic_embeddings_api_key")
+    batch_size_raw = str(form.get("semantic_embeddings_batch_size", DEFAULT_EMBEDDINGS_BATCH_SIZE))
+    reset_index = str(form.get("semantic_reset_index", "")).strip() == "1"
+
+    if not provider or not model:
+        return RedirectResponse(url="/settings?error=semantic_invalid_value", status_code=303)
+    try:
+        batch_size = int(batch_size_raw)
+    except (TypeError, ValueError):
+        return RedirectResponse(url="/settings?error=semantic_invalid_value", status_code=303)
+    batch_size = max(1, min(1000, batch_size))
+
+    current_values = {
+        EMBEDDINGS_PROVIDER_SETTING: await db.get_setting(EMBEDDINGS_PROVIDER_SETTING)
+        or DEFAULT_EMBEDDINGS_PROVIDER,
+        EMBEDDINGS_MODEL_SETTING: await db.get_setting(EMBEDDINGS_MODEL_SETTING)
+        or DEFAULT_EMBEDDINGS_MODEL,
+        EMBEDDINGS_BASE_URL_SETTING: await db.get_setting(EMBEDDINGS_BASE_URL_SETTING) or "",
+        EMBEDDINGS_API_KEY_SETTING: await db.get_setting(EMBEDDINGS_API_KEY_SETTING) or "",
+    }
+    changed = (
+        current_values[EMBEDDINGS_PROVIDER_SETTING] != provider
+        or current_values[EMBEDDINGS_MODEL_SETTING] != model
+        or current_values[EMBEDDINGS_BASE_URL_SETTING] != base_url
+    )
+    await db.set_setting(EMBEDDINGS_PROVIDER_SETTING, provider)
+    await db.set_setting(EMBEDDINGS_MODEL_SETTING, model)
+    await db.set_setting(EMBEDDINGS_BASE_URL_SETTING, base_url)
+    await db.set_setting(EMBEDDINGS_BATCH_SIZE_SETTING, str(batch_size))
+    if api_key_raw is not None:
+        api_key = str(api_key_raw).strip()
+        if api_key and api_key != CREDENTIALS_MASK:
+            changed = changed or current_values[EMBEDDINGS_API_KEY_SETTING] != api_key
+            await db.set_setting(EMBEDDINGS_API_KEY_SETTING, api_key)
+    if changed or reset_index:
+        await db.repos.messages.reset_embeddings_index()
+    return RedirectResponse(url="/settings?msg=semantic_saved", status_code=303)
+
+
+@router.post("/semantic-index")
+async def run_semantic_index(request: Request):
+    db = deps.get_db(request)
+    if not db.vec_available:
+        return RedirectResponse(url="/settings?error=semantic_unavailable", status_code=303)
+    form = await request.form()
+    reset_index = str(form.get("semantic_reset_index", "")).strip() == "1"
+    if reset_index:
+        await db.repos.messages.reset_embeddings_index()
+    indexed = await EmbeddingService(db, request.app.state.config).index_pending_messages()
+    return RedirectResponse(
+        url=f"/settings?msg=semantic_indexed&indexed={indexed}",
+        status_code=303,
+    )
 
 
 @router.post("/save-agent")

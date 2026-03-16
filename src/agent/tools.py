@@ -3,10 +3,30 @@ from __future__ import annotations
 from claude_agent_sdk import create_sdk_mcp_server, tool
 
 from src.database import Database
+from src.services.embedding_service import EmbeddingService
 
 
 def make_mcp_server(db: Database):
     """Create an in-process MCP server with DB-bound tools."""
+
+    def _render_search_result(
+        *,
+        query: str,
+        messages,
+        total: int,
+        empty_prefix: str,
+        found_prefix: str,
+    ) -> str:
+        if not messages:
+            return f"{empty_prefix}: {query!r}"
+        lines = [
+            f"{found_prefix} {total} сообщений для '{query}'. "
+            f"Показаны первые {len(messages)}:"
+        ]
+        for message in messages:
+            preview = (message.text or "")[:300]
+            lines.append(f"- [channel_id={message.channel_id}, date={message.date}]: {preview}")
+        return "\n".join(lines)
 
     @tool(
         "search_messages",
@@ -18,18 +38,39 @@ def make_mcp_server(db: Database):
         limit = int(args.get("limit", 20))
         try:
             messages, total = await db.search_messages(query=query, limit=limit)
-            if not messages:
-                text = f"Ничего не найдено по запросу: {query!r}"
-            else:
-                lines = [
-                    f"Найдено {total} сообщений для '{query}'. Показаны первые {len(messages)}:"
-                ]
-                for m in messages:
-                    preview = (m.text or "")[:300]
-                    lines.append(f"- [channel_id={m.channel_id}, date={m.date}]: {preview}")
-                text = "\n".join(lines)
+            text = _render_search_result(
+                query=query,
+                messages=messages,
+                total=total,
+                empty_prefix="Ничего не найдено по запросу",
+                found_prefix="Найдено",
+            )
         except Exception as e:
             text = f"Ошибка поиска сообщений: {e}"
+        return {"content": [{"type": "text", "text": text}]}
+
+    @tool(
+        "semantic_search",
+        "Search messages in the local database by semantic similarity",
+        {"query": str, "limit": int},
+    )
+    async def semantic_search(args):
+        query = args.get("query", "")
+        limit = int(args.get("limit", 10))
+        embedding_service = EmbeddingService(db)
+        try:
+            await embedding_service.index_pending_messages()
+            query_embedding = await embedding_service.embed_query(query)
+            messages, total = await db.search_semantic_messages(query_embedding, limit=limit)
+            text = _render_search_result(
+                query=query,
+                messages=messages,
+                total=total,
+                empty_prefix="Семантически похожие сообщения не найдены по запросу",
+                found_prefix="Семантически найдено",
+            )
+        except Exception as e:
+            text = f"Ошибка семантического поиска: {e}"
         return {"content": [{"type": "text", "text": text}]}
 
     @tool("get_channels", "List all available Telegram channels in the database", {})
@@ -53,5 +94,5 @@ def make_mcp_server(db: Database):
 
     return create_sdk_mcp_server(
         name="telegram_db",
-        tools=[search_messages, get_channels],
+        tools=[search_messages, semantic_search, get_channels],
     )
