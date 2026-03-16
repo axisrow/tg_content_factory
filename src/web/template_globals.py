@@ -13,7 +13,7 @@ from src.web.paths import TEMPLATES_DIR
 
 logger = logging.getLogger(__name__)
 
-PACKAGE_NAME = "tg-user-search"
+PACKAGE_NAME = "tg-agent"
 PROJECT_ROOT = TEMPLATES_DIR.parent.parent.parent
 PYPROJECT_PATH = PROJECT_ROOT / "pyproject.toml"
 

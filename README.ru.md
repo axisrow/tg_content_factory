@@ -30,6 +30,12 @@
 ### Установка
 
 ```bash
+pip install tg-agent
+```
+
+Или из исходников:
+
+```bash
 pip install .
 cp .env.example .env
 ```

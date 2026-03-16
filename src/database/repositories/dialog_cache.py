@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 import aiosqlite
 
@@ -63,7 +63,7 @@ class DialogCacheRepository:
         try:
             await self._db.execute("DELETE FROM dialog_cache WHERE phone = ?", (phone,))
             if dialogs:
-                cached_at = datetime.now().isoformat()
+                cached_at = datetime.now(timezone.utc).isoformat()
                 await self._db.executemany(
                     """
                     INSERT INTO dialog_cache (
@@ -110,3 +110,25 @@ class DialogCacheRepository:
         if not row:
             return None
         return _dt(row["cached_at"])
+
+    async def get_all_phones(self) -> list[str]:
+        """Return all distinct phone numbers that have entries in dialog_cache."""
+        cur = await self._db.execute(
+            "SELECT DISTINCT phone FROM dialog_cache ORDER BY phone ASC"
+        )
+        rows = await cur.fetchall()
+        return [row["phone"] for row in rows]
+
+    async def count_dialogs(self, phone: str) -> int:
+        """Return the number of cached dialog entries for the given phone."""
+        cur = await self._db.execute(
+            "SELECT COUNT(*) AS cnt FROM dialog_cache WHERE phone = ?",
+            (phone,),
+        )
+        row = await cur.fetchone()
+        return int(row["cnt"]) if row else 0
+
+    async def clear_all_dialogs(self) -> None:
+        """Delete all entries from dialog_cache regardless of phone."""
+        await self._db.execute("DELETE FROM dialog_cache")
+        await self._db.commit()

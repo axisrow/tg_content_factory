@@ -1,0 +1,18 @@
+{
+  "tag": "v0.1.12",
+  "title": "PyPI Packaging",
+  "highlights": [
+    {
+      "title": "PyPI-Ready Project Metadata",
+      "description": "Round out the package metadata with project URLs, classifiers, keywords, author information, and an explicit MIT license so the distribution is ready for a proper PyPI release."
+    },
+    {
+      "title": "Installable CLI and Web Assets",
+      "description": "Expose the `tg-agent` console entry point and include the bundled web templates and static assets in package data so installed builds behave like the source checkout."
+    },
+    {
+      "title": "Release Publishing Workflow",
+      "description": "Add the repository release script, token placeholders in `.env.example`, and the missing license file so the staged TestPyPI-to-PyPI publication flow is reproducible."
+    }
+  ]
+}
