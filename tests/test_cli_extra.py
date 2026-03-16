@@ -158,6 +158,226 @@ class TestMyTelegramCommand:
         # Should use first account alphabetically
         mock_get.assert_awaited_once_with("+70001112233")
 
+    def test_leave_no_accounts(self, cli_env_with_pool, capsys):
+        """Test my-telegram leave when no accounts connected."""
+        cli_env, fake_pool = cli_env_with_pool
+        fake_pool.clients = {}
+
+        from src.cli.commands.my_telegram import run
+
+        run(_ns(my_telegram_action="leave", phone=None, dialog_ids=["-100123"], yes=True))
+        out = capsys.readouterr().out
+        assert "No connected accounts" in out
+
+    def test_leave_account_not_connected(self, cli_env_with_pool, capsys):
+        """Test my-telegram leave when specified account not connected."""
+        cli_env, fake_pool = cli_env_with_pool
+        fake_pool.clients = {"+10001112233": AsyncMock()}
+
+        from src.cli.commands.my_telegram import run
+
+        run(_ns(my_telegram_action="leave", phone="+10009999999", dialog_ids=["-100123"], yes=True))
+        out = capsys.readouterr().out
+        assert "not connected" in out
+
+    def test_leave_invalid_ids(self, cli_env_with_pool, capsys):
+        """Test my-telegram leave with non-numeric dialog IDs."""
+        cli_env, fake_pool = cli_env_with_pool
+        fake_pool.clients = {"+10001112233": AsyncMock()}
+
+        from src.services.channel_service import ChannelService
+
+        with patch.object(
+            ChannelService, "get_my_dialogs", new_callable=AsyncMock, return_value=[]
+        ):
+            from src.cli.commands.my_telegram import run
+
+            run(_ns(my_telegram_action="leave", phone="+10001112233",
+                    dialog_ids=["notanid"], yes=True))
+
+        out = capsys.readouterr().out
+        assert "Invalid dialog ID" in out
+        assert "No valid dialog IDs" in out
+
+    def test_leave_success_with_yes_flag(self, cli_env_with_pool, capsys):
+        """Test my-telegram leave succeeds when --yes skips confirmation."""
+        cli_env, fake_pool = cli_env_with_pool
+        fake_pool.clients = {"+10001112233": AsyncMock()}
+
+        from src.services.channel_service import ChannelService
+
+        dialogs_info = [
+            {
+                "channel_id": -100123456, "channel_type": "channel",
+                "title": "Chan", "username": None,
+            },
+        ]
+
+        with (
+            patch.object(
+                ChannelService, "get_my_dialogs", new_callable=AsyncMock, return_value=dialogs_info
+            ),
+            patch.object(
+                ChannelService,
+                "leave_dialogs",
+                new_callable=AsyncMock,
+                return_value={-100123456: True},
+            ),
+        ):
+            from src.cli.commands.my_telegram import run
+
+            run(_ns(my_telegram_action="leave", phone="+10001112233",
+                    dialog_ids=["-100123456"], yes=True))
+
+        out = capsys.readouterr().out
+        assert "left" in out
+        assert "Done:" in out
+
+    def test_leave_comma_separated_ids(self, cli_env_with_pool, capsys):
+        """Test my-telegram leave accepts comma-separated dialog IDs in a single arg."""
+        cli_env, fake_pool = cli_env_with_pool
+        fake_pool.clients = {"+10001112233": AsyncMock()}
+
+        from src.services.channel_service import ChannelService
+
+        with (
+            patch.object(
+                ChannelService, "get_my_dialogs", new_callable=AsyncMock, return_value=[]
+            ),
+            patch.object(
+                ChannelService,
+                "leave_dialogs",
+                new_callable=AsyncMock,
+                return_value={-100111: True, -100222: False},
+            ) as mock_leave,
+        ):
+            from src.cli.commands.my_telegram import run
+
+            run(_ns(my_telegram_action="leave", phone="+10001112233",
+                    dialog_ids=["-100111,-100222"], yes=True))
+
+        called_dialogs = mock_leave.call_args[0][1]
+        assert (-100111, "channel") in called_dialogs
+        assert (-100222, "channel") in called_dialogs
+
+    def test_leave_aborted_on_no_confirmation(self, cli_env_with_pool, capsys):
+        """Test my-telegram leave aborts when user answers 'n' to confirmation."""
+        cli_env, fake_pool = cli_env_with_pool
+        fake_pool.clients = {"+10001112233": AsyncMock()}
+
+        from src.services.channel_service import ChannelService
+
+        dialogs_info = [
+            {
+                "channel_id": -100123456, "channel_type": "channel",
+                "title": "Chan", "username": None,
+            },
+        ]
+
+        with (
+            patch.object(
+                ChannelService, "get_my_dialogs", new_callable=AsyncMock, return_value=dialogs_info
+            ),
+            patch("builtins.input", return_value="n"),
+        ):
+            from src.cli.commands.my_telegram import run
+
+            run(_ns(my_telegram_action="leave", phone="+10001112233",
+                    dialog_ids=["-100123456"], yes=False))
+
+        out = capsys.readouterr().out
+        assert "Aborted" in out
+
+    def test_leave_confirms_on_yes(self, cli_env_with_pool, capsys):
+        """Test my-telegram leave proceeds when user answers 'y' to confirmation."""
+        cli_env, fake_pool = cli_env_with_pool
+        fake_pool.clients = {"+10001112233": AsyncMock()}
+
+        from src.services.channel_service import ChannelService
+
+        dialogs_info = [
+            {
+                "channel_id": -100123456, "channel_type": "channel",
+                "title": "Chan", "username": None,
+            },
+        ]
+
+        with (
+            patch.object(
+                ChannelService, "get_my_dialogs", new_callable=AsyncMock, return_value=dialogs_info
+            ),
+            patch.object(
+                ChannelService,
+                "leave_dialogs",
+                new_callable=AsyncMock,
+                return_value={-100123456: True},
+            ),
+            patch("builtins.input", return_value="y"),
+        ):
+            from src.cli.commands.my_telegram import run
+
+            run(_ns(my_telegram_action="leave", phone="+10001112233",
+                    dialog_ids=["-100123456"], yes=False))
+
+        out = capsys.readouterr().out
+        assert "Done:" in out
+
+    def test_leave_uses_first_account_by_default(self, cli_env_with_pool, capsys):
+        """Test my-telegram leave uses first available account when phone not specified."""
+        cli_env, fake_pool = cli_env_with_pool
+        fake_pool.clients = {
+            "+10001112233": AsyncMock(),
+            "+10002223344": AsyncMock(),
+        }
+
+        from src.services.channel_service import ChannelService
+
+        with (
+            patch.object(
+                ChannelService, "get_my_dialogs", new_callable=AsyncMock, return_value=[]
+            ),
+            patch.object(
+                ChannelService,
+                "leave_dialogs",
+                new_callable=AsyncMock,
+                return_value={-100123456: True},
+            ) as mock_leave,
+        ):
+            from src.cli.commands.my_telegram import run
+
+            run(_ns(my_telegram_action="leave", phone=None, dialog_ids=["-100123456"], yes=True))
+
+        # First account alphabetically should be used
+        mock_leave.assert_awaited_once()
+        called_phone = mock_leave.call_args[0][0]
+        assert called_phone == "+10001112233"
+
+    def test_leave_dm_uses_dm_type(self, cli_env_with_pool, capsys):
+        """Test my-telegram leave infers 'dm' type for positive IDs not in cache."""
+        cli_env, fake_pool = cli_env_with_pool
+        fake_pool.clients = {"+10001112233": AsyncMock()}
+
+        from src.services.channel_service import ChannelService
+
+        with (
+            patch.object(
+                ChannelService, "get_my_dialogs", new_callable=AsyncMock, return_value=[]
+            ),
+            patch.object(
+                ChannelService,
+                "leave_dialogs",
+                new_callable=AsyncMock,
+                return_value={123456: True},
+            ) as mock_leave,
+        ):
+            from src.cli.commands.my_telegram import run
+
+            run(_ns(my_telegram_action="leave", phone="+10001112233",
+                    dialog_ids=["123456"], yes=True))
+
+        called_dialogs = mock_leave.call_args[0][1]
+        assert (123456, "dm") in called_dialogs
+
 
 # ---------------------------------------------------------------------------
 # notification command
