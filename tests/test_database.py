@@ -1065,3 +1065,108 @@ async def test_update_channel_meta(db):
     # Other fields must remain untouched
     assert stored.is_active is True
     assert stored.is_filtered is False
+
+
+@pytest.mark.aiosqlite_serial
+@pytest.mark.asyncio
+async def test_migrate_adds_reactions_json_column(tmp_path):
+    """Migration adds reactions_json column to existing DB without it."""
+    db_path = str(tmp_path / "migrate_reactions.db")
+
+    conn = await aiosqlite.connect(db_path)
+    try:
+        await conn.executescript("""
+            CREATE TABLE IF NOT EXISTS messages (
+                id INTEGER PRIMARY KEY,
+                channel_id INTEGER NOT NULL,
+                message_id INTEGER NOT NULL,
+                sender_id INTEGER,
+                sender_name TEXT,
+                text TEXT,
+                media_type TEXT,
+                topic_id INTEGER,
+                date TEXT NOT NULL,
+                collected_at TEXT DEFAULT (datetime('now')),
+                UNIQUE(channel_id, message_id)
+            );
+            CREATE TABLE IF NOT EXISTS accounts (
+                id INTEGER PRIMARY KEY,
+                phone TEXT UNIQUE NOT NULL,
+                session_string TEXT NOT NULL,
+                is_primary INTEGER DEFAULT 0,
+                is_active INTEGER DEFAULT 1,
+                flood_wait_until TEXT,
+                created_at TEXT DEFAULT (datetime('now'))
+            );
+            CREATE TABLE IF NOT EXISTS channels (
+                id INTEGER PRIMARY KEY,
+                channel_id INTEGER UNIQUE NOT NULL,
+                title TEXT,
+                username TEXT,
+                is_active INTEGER DEFAULT 1,
+                last_collected_id INTEGER DEFAULT 0,
+                added_at TEXT DEFAULT (datetime('now'))
+            );
+            CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
+        """)
+        await conn.commit()
+    finally:
+        await conn.close()
+
+    database = Database(db_path)
+    await database.initialize()
+
+    cur = await database.execute("PRAGMA table_info(messages)")
+    columns = {row["name"] for row in await cur.fetchall()}
+    assert "reactions_json" in columns
+
+    msg = Message(
+        channel_id=-100123,
+        message_id=1,
+        text="test",
+        reactions_json='[{"emoji": "👍", "count": 5}]',
+        date=datetime.now(timezone.utc),
+    )
+    await database.insert_message(msg)
+    messages, total = await database.search_messages()
+    assert total == 1
+    assert messages[0].reactions_json == '[{"emoji": "👍", "count": 5}]'
+
+    await database.close()
+
+
+@pytest.mark.asyncio
+async def test_reactions_json_roundtrip(db):
+    """reactions_json is persisted and retrieved via search_messages."""
+    await db.add_channel(Channel(channel_id=-100999, title="ReactTest"))
+    msg = Message(
+        channel_id=-100999,
+        message_id=42,
+        text="hello",
+        reactions_json='[{"emoji": "❤️", "count": 3}]',
+        date=datetime.now(timezone.utc),
+    )
+    await db.insert_message(msg)
+
+    messages, total = await db.search_messages(channel_id=-100999)
+    assert total == 1
+    assert messages[0].reactions_json == '[{"emoji": "❤️", "count": 3}]'
+
+
+@pytest.mark.asyncio
+async def test_reactions_json_null_when_absent(db):
+    """reactions_json is None when message has no reactions."""
+    await db.add_channel(Channel(channel_id=-100998, title="NoReact"))
+    msg = Message(
+        channel_id=-100998,
+        message_id=1,
+        text="no reactions",
+        date=datetime.now(timezone.utc),
+    )
+    await db.insert_message(msg)
+
+    messages, _ = await db.search_messages(channel_id=-100998)
+    assert messages[0].reactions_json is None

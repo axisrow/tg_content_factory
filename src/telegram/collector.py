@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
@@ -490,6 +491,7 @@ class Collector:
                         text=msg.text,
                         media_type=self._get_media_type(msg),
                         topic_id=topic_id,
+                        reactions_json=self._extract_reactions(msg),
                         date=msg.date.replace(tzinfo=timezone.utc)
                         if msg.date and msg.date.tzinfo is None
                         else msg.date,
@@ -823,6 +825,32 @@ class Collector:
                 return stats
             finally:
                 self._stats_all_running = False
+
+    @staticmethod
+    def _extract_reactions(msg) -> str | None:
+        """Extract reactions from a Telethon message as JSON string."""
+        reactions = getattr(msg, "reactions", None)
+        if not reactions:
+            return None
+        results = getattr(reactions, "results", None)
+        if not results:
+            return None
+        items = []
+        for r in results:
+            reaction = getattr(r, "reaction", None)
+            if reaction is None:
+                continue
+            emoticon = getattr(reaction, "emoticon", None)
+            if emoticon:
+                emoji = emoticon
+            else:
+                document_id = getattr(reaction, "document_id", None)
+                if document_id is not None:
+                    emoji = f"custom:{document_id}"
+                else:
+                    continue
+            items.append({"emoji": emoji, "count": getattr(r, "count", 0)})
+        return json.dumps(items, ensure_ascii=False) if items else None
 
     @staticmethod
     def _get_sender_name(msg) -> str | None:
