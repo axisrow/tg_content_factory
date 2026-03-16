@@ -133,6 +133,7 @@
                 <td>{{ pipeline.generate_interval_minutes }} мин</td>
                 <td class="text-nowrap">
                     <button type="button" class="btn btn-outline-secondary btn-sm" onclick="togglePipelineEdit({{ pipeline.id }})">Редактировать</button>
+                    <a class="btn btn-outline-primary btn-sm" href="/pipelines/{{ pipeline.id }}/generate">Generate</a>
                     <form method="post" action="/pipelines/{{ pipeline.id }}/toggle{% if selected_phone %}?phone={{ selected_phone|urlencode }}{% endif %}" class="d-inline" data-busy>
                         <button type="submit" class="btn btn-outline-secondary btn-sm">{{ "Выключить" if pipeline.is_active else "Включить" }}</button>
                     </form>
