@@ -78,6 +78,12 @@ def build_parser() -> argparse.ArgumentParser:
     flt_sub.add_parser("apply", help="Analyze and mark filtered channels")
     flt_sub.add_parser("reset", help="Reset all channel filters")
     flt_sub.add_parser("precheck", help="Apply pre-filter by subscriber ratio (no Telegram needed)")
+    flt_purge = flt_sub.add_parser("purge", help="Purge messages from filtered channels")
+    flt_purge.add_argument("--pks", default=None, help="Comma-separated PKs (default: all)")
+    flt_hard = flt_sub.add_parser(
+        "hard-delete", help="Hard-delete filtered channels from DB (dev/testing)",
+    )
+    flt_hard.add_argument("--pks", default=None, help="Comma-separated PKs (default: all)")
 
     sq_parser = sub.add_parser("search-query", help="Search query management")
     sq_sub = sq_parser.add_subparsers(dest="search_query_action")

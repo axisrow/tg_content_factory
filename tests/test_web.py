@@ -1897,9 +1897,9 @@ async def test_filter_analyze_applies_filters(client):
         ]
     )
 
-    resp = await client.post("/channels/filter/analyze")
-    assert resp.status_code == 200
-    assert "low_uniqueness" in resp.text or "Низкая уникальность" in resp.text
+    resp = await client.post("/channels/filter/analyze", follow_redirects=False)
+    assert resp.status_code == 303
+    assert "/channels/filter/manage" in resp.headers["location"]
 
     channel = await db.get_channel_by_channel_id(-100551)
     assert channel is not None
