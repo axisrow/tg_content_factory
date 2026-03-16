@@ -168,7 +168,9 @@ class ChannelAnalyzer:
         # (isolation_level=None means autocommit, so rollback is a no-op when clean).
         try:
             await conn.execute("BEGIN")
-        except sqlite3.OperationalError:
+        except sqlite3.OperationalError as e:
+            if "cannot start a transaction within a transaction" not in str(e):
+                raise
             await conn.rollback()
             await conn.execute("BEGIN")
         try:
