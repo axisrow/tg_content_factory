@@ -16,6 +16,7 @@ def run(args: argparse.Namespace) -> None:
 
             if action == "top":
                 limit = getattr(args, "limit", 20)
+                limit = max(1, min(limit, 100))
                 rows = await db.get_top_messages(limit=limit, date_from=date_from, date_to=date_to)
                 if not rows:
                     print("No messages with reactions found.")
