@@ -105,7 +105,7 @@ async def edit_pipeline(
     except ValueError:
         mode = PipelinePublishMode.DRAFT
     try:
-        await svc.update(
+        updated = await svc.update(
             pipeline_id,
             name,
             phone,
@@ -117,6 +117,8 @@ async def edit_pipeline(
         )
     except ValidationError:
         return RedirectResponse(url="/pipelines?error=invalid_value", status_code=303)
+    if not updated:
+        return RedirectResponse(url="/pipelines?error=not_found", status_code=303)
     return RedirectResponse(url="/pipelines?msg=pipeline_edited", status_code=303)
 
 
