@@ -161,8 +161,15 @@
         container.innerHTML = '<div class="alert alert-success" role="alert">' + msgs[code] + '</div>';
     }
     if (errCode) {
-        var errMsg = errors[errCode] || errCode;
-        container.innerHTML = '<div class="alert alert-danger" role="alert">' + errMsg + '</div>';
+        var errDiv = document.createElement("div");
+        errDiv.className = "alert alert-danger";
+        errDiv.setAttribute("role", "alert");
+        if (errors[errCode]) {
+            errDiv.innerHTML = errors[errCode];
+        } else {
+            errDiv.textContent = errCode;
+        }
+        container.appendChild(errDiv);
     }
     if (code || errCode) {
         params.delete("msg");
