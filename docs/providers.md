@@ -1,28 +1,37 @@
 Provider adapters and environment variables
 
-This project includes lightweight HTTP adapters for common LLM providers and a mechanism to register adapters automatically from environment variables. Use the web UI (Settings → Providers) to manage provider configs for production/long-term use.
+This project includes lightweight HTTP adapters for common LLM providers and a mechanism to register adapters automatically from environment variables. For operator‑managed provider configurations (per-provider models, encrypted secrets), use the web UI: Settings → Developer → Providers.
 
 Supported env vars (examples)
 
-- OPENAI_API_KEY — OpenAI REST API key (OpenAI-style adapters)
-- COHERE_API_KEY — Cohere API key (cohere.generate endpoint)
+- OPENAI_API_KEY — OpenAI REST API key
+- COHERE_API_KEY — Cohere API key (Cohere generate endpoint)
 - OLLAMA_BASE or OLLAMA_URL — Ollama server base URL (e.g., http://localhost:11434)
 - HUGGINGFACE_API_KEY or HUGGINGFACE_TOKEN — Hugging Face Inference API token
+- CONTEXT7_API_KEY or CTX7_API_KEY — Context7 API key (uses the generic shim)
 - FIREWORKS_BASE, FIREWORKS_API_KEY — Fireworks inference endpoint
 - DEEPSEEK_BASE, DEEPSEEK_API_KEY — DeepSeek endpoint
 - TOGETHER_BASE, TOGETHER_API_KEY — Together API base
 
-Registration behavior
+Env-based registration
 
-- When the application starts, src/services/provider_service.py attempts to auto-register lightweight adapters for providers whose env vars are present.
-- For operator-managed provider configs (multiple providers, per-provider models, encrypted secrets), use the web Settings UI which stores configs via src/services/agent_provider_service.py. That service requires SESSION_ENCRYPTION_KEY to encrypt provider secrets.
+- On startup, src/services/provider_service.py auto-registers lightweight adapters for providers with appropriate env vars set. This is convenient for single-provider deployments or CI testing.
 
-Fallbacks
+Settings UI
 
-- If langchain is enabled (USE_LANGCHAIN=1) and LangChain + provider client packages are installed, LangChain adapters are preferred for providers supported by LangChain.
-- If LangChain is not enabled or not available, the lightweight HTTP adapters are used.
+- Use the Settings → Developer → Providers form to add, edit or remove provider configurations. Secret fields are encrypted before storage using SESSION_ENCRYPTION_KEY; when this key is not set the UI is read-only for provider secrets.
+- The provider registry uses canonical provider names (e.g. "openai", "cohere", "ollama", "huggingface", "context7").
+- For local Ollama testing, set OLLAMA_BASE to your server URL and optionally OLLAMA_DEFAULT_MODEL.
+
+Context7 & operator caution
+
+- A Context7 shim adapter exists (provider name "context7") but operator consent is required before routing production traffic to third-party MSPs. Prefer local or operator-controlled providers.
 
 Testing
 
-- Tests for adapters live in tests/test_provider_adapters.py and mock aiohttp sessions.
-- For integration tests, mock HTTP responses (aioresponses or monkeypatching aiohttp.ClientSession) so tests do not require real service network calls.
+- Adapter unit tests mock aiohttp.ClientSession (see tests/test_provider_adapters.py).
+- For integration tests, mock HTTP responses with aioresponses or monkeypatch aiohttp.ClientSession; LangChain-specific tests should be gated behind USE_LANGCHAIN or a dedicated CI job.
+
+Security
+
+- Do NOT commit API keys or the SESSION_ENCRYPTION_KEY into source control. Prefer operator-managed secret stores and keep the DB encryption key rotated and out of the repo.
