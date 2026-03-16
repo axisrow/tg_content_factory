@@ -42,6 +42,16 @@ html { font-size: 14px; }
     white-space: nowrap;
 }
 
+/* Emoji action buttons (used in channels, search queries) */
+.emoji-btn {
+    padding: 0.25rem 0.4rem !important;
+    font-size: 1rem;
+    line-height: 1;
+    margin: 0 1px;
+    display: inline-flex !important;
+    align-items: center;
+}
+
 /* Settings tabs */
 #settings-tabs {
     gap: 0.25rem;
@@ -197,6 +207,13 @@ label:first-child .hint::before { left: 0.5em; transform: none; }
     .channels-table,
     .sq-table {
         min-width: 0;
+    }
+
+    .emoji-btn {
+        min-width: 44px;
+        min-height: 44px;
+        font-size: 1.15rem;
+        justify-content: center;
     }
 
     #settings-tabs {
