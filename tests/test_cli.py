@@ -758,12 +758,12 @@ class TestCLIAgent:
         with _patch("src.agent.manager.query", mock_query):
             run(_ns(
                 agent_action="chat", message="hello",
-                thread_id=None, model="claude-haiku-4-5",
+                thread_id=None, model="claude-haiku-4-5-20251001",
             ))
 
         out = capsys.readouterr().out
         assert "model reply" in out
-        assert captured_opts.get("model") == "claude-haiku-4-5"
+        assert captured_opts.get("model") == "claude-haiku-4-5-20251001"
 
     def test_test_escaping_uses_runtime_config_for_db_providers(self, cli_db, capsys):
         from src.agent.provider_registry import ProviderRuntimeConfig
@@ -822,6 +822,6 @@ class TestCLIAgent:
         assert args.channel_id == 100
         assert args.topic_id == 42
 
-        args = parser.parse_args(["agent", "chat", "hi", "--model", "claude-haiku-4-5"])
+        args = parser.parse_args(["agent", "chat", "hi", "--model", "claude-haiku-4-5-20251001"])
         assert args.agent_action == "chat"
-        assert args.model == "claude-haiku-4-5"
+        assert args.model == "claude-haiku-4-5-20251001"
