@@ -283,16 +283,6 @@ class TestSchedulerCommand:
         run(_ns(scheduler_action="trigger"))
         assert "No connected accounts" in caplog.text
 
-    def test_search_no_clients(self, cli_env_with_pool, capsys, caplog):
-        """Test scheduler search when no accounts connected."""
-        cli_env, fake_pool = cli_env_with_pool
-        fake_pool.clients = {}
-
-        from src.cli.commands.scheduler import run
-
-        run(_ns(scheduler_action="search"))
-        assert "No connected accounts" in caplog.text
-
     def test_trigger_success(self, cli_env_with_pool, capsys):
         """Test scheduler trigger enqueues channels."""
         cli_env, fake_pool = cli_env_with_pool
@@ -305,17 +295,6 @@ class TestSchedulerCommand:
         out = capsys.readouterr().out
         assert "enqueued" in out.lower()
 
-    def test_search_success(self, cli_env_with_pool, capsys):
-        """Test scheduler search enqueues notification search task."""
-        cli_env, fake_pool = cli_env_with_pool
-        fake_pool.clients = {"+70001112233": AsyncMock()}
-
-        from src.cli.commands.scheduler import run
-
-        run(_ns(scheduler_action="search"))
-
-        out = capsys.readouterr().out
-        assert "enqueued" in out.lower() or "search" in out.lower()
 
 
 # ---------------------------------------------------------------------------

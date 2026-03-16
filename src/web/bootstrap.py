@@ -23,7 +23,6 @@ from src.database.bundles import (
 from src.scheduler.manager import SchedulerManager
 from src.search.ai_search import AISearchEngine
 from src.search.engine import SearchEngine
-from src.services.notification_matcher import NotificationMatcher
 from src.services.notification_target_service import NotificationTargetService
 from src.services.photo_auto_upload_service import PhotoAutoUploadService
 from src.services.photo_publish_service import PhotoPublishService
@@ -133,14 +132,10 @@ async def build_container_with_templates(
 
     collection_service = CollectionService(channel_bundle, collector, collection_queue)
     task_enqueuer = TaskEnqueuer(db, collection_service)
-    notification_matcher = NotificationMatcher(notifier)
     unified_dispatcher = UnifiedDispatcher(
         collector,
         channel_bundle,
         repos.tasks,
-        notification_query_fn=repos.search_queries.get_notification_queries,
-        search_engine=search_engine,
-        notification_matcher=notification_matcher,
         sq_bundle=search_query_bundle,
         photo_task_service=photo_task_service,
         photo_auto_upload_service=photo_auto_upload_service,

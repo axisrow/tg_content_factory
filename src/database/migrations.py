@@ -128,6 +128,16 @@ async def run_migrations(db: aiosqlite.Connection) -> bool:
     )
     await db.commit()
 
+    # Remove legacy notification_search tasks (path removed in favour of notify_on_collect)
+    await db.execute(
+        """
+        UPDATE collection_tasks
+        SET status = 'failed', error = 'removed: NOTIFICATION_SEARCH path deleted'
+        WHERE task_type = 'notification_search' AND status IN ('pending', 'running')
+        """
+    )
+    await db.commit()
+
     await db.execute("UPDATE channels SET channel_type='supergroup' WHERE channel_type='group'")
     await db.execute("UPDATE channels SET channel_type='group' WHERE channel_type='chat'")
     await db.commit()

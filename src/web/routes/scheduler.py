@@ -71,7 +71,6 @@ async def scheduler_page(
         {
             "is_running": sched.is_running,
             "interval_minutes": sched.interval_minutes,
-            "search_interval_minutes": sched.search_interval_minutes,
             "msg": msg,
             "tasks": tasks,
             "has_active_tasks": has_active_tasks,
@@ -154,9 +153,3 @@ async def test_notification(request: Request):
     return RedirectResponse(url=f"/scheduler?msg={msg}", status_code=303)
 
 
-@router.post("/trigger-search")
-async def trigger_search(request: Request):
-    if getattr(request.app.state, "shutting_down", False):
-        return RedirectResponse(url="/scheduler?error=shutting_down", status_code=303)
-    await deps.scheduler_service(request).trigger_search_background()
-    return RedirectResponse(url="/scheduler?msg=search_triggered", status_code=303)
