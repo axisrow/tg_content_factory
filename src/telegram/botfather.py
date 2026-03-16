@@ -32,12 +32,12 @@ async def create_bot(client: TelegramClient, name: str, username: str) -> str:
         await conv.send_message(username)
         resp = await conv.get_response()
 
-        m = _TOKEN_RE.search(resp.text)
-        if not m:
+        token_match = _TOKEN_RE.search(resp.text)
+        if not token_match:
             raise RuntimeError(f"Could not extract token from BotFather response: {resp.text}")
 
         logger.info("Bot @%s created successfully", username)
-        return m.group(1)
+        return token_match.group(1)
 
 
 async def delete_bot(client: TelegramClient, bot_username: str) -> None:
