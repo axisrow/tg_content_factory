@@ -46,8 +46,9 @@ class MessagesRepository:
             cur = await self._db.execute(
                 """INSERT OR IGNORE INTO messages
                    (channel_id, message_id, sender_id, sender_name,
-                    text, media_type, topic_id, reactions_json, date)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    text, media_type, topic_id, reactions_json,
+                    views, forwards, reply_count, date)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     msg.channel_id,
                     msg.message_id,
@@ -57,6 +58,9 @@ class MessagesRepository:
                     msg.media_type,
                     msg.topic_id,
                     msg.reactions_json,
+                    msg.views,
+                    msg.forwards,
+                    msg.reply_count,
                     msg.date.isoformat(),
                 ),
             )
@@ -83,6 +87,9 @@ class MessagesRepository:
                 m.media_type,
                 m.topic_id,
                 m.reactions_json,
+                m.views,
+                m.forwards,
+                m.reply_count,
                 m.date.isoformat(),
             )
             for m in messages
@@ -91,8 +98,9 @@ class MessagesRepository:
             cur = await self._db.executemany(
                 """INSERT OR IGNORE INTO messages
                    (channel_id, message_id, sender_id, sender_name,
-                    text, media_type, topic_id, reactions_json, date)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    text, media_type, topic_id, reactions_json,
+                    views, forwards, reply_count, date)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 data,
             )
             await self._db.commit()
@@ -220,6 +228,9 @@ class MessagesRepository:
                 media_type=r["media_type"],
                 topic_id=r["topic_id"],
                 reactions_json=r["reactions_json"],
+                views=r["views"],
+                forwards=r["forwards"],
+                reply_count=r["reply_count"],
                 date=datetime.fromisoformat(r["date"]),
                 collected_at=(
                     datetime.fromisoformat(r["collected_at"]) if r["collected_at"] else None
