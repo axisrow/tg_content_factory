@@ -467,12 +467,16 @@ class ClientPool:
         return lease
 
 
-    async def get_users_info(self) -> list[TelegramUserInfo]:
+    async def get_users_info(self, include_avatar: bool = True) -> list[TelegramUserInfo]:
         """Get info about all connected Telegram accounts.
 
         Direct sessions (self.clients) are borrowed refs with disconnect_on_close=False —
         they must NOT be released here; the pool owns their lifetime.
         Only the fallback lease (when no direct session is available) requires explicit release.
+
+        Args:
+            include_avatar: If True (default), download and encode profile photos as base64.
+                           Set to False for CLI usage to skip unnecessary 15s I/O per account.
         """
         accounts = await self._db.get_accounts(active_only=True)
         primary_phones = {a.phone for a in accounts if a.is_primary}
@@ -491,18 +495,19 @@ class ClientPool:
 
                 me = await asyncio.wait_for(session.fetch_me(), timeout=15.0)
                 avatar_base64 = None
-                try:
-                    buf = io.BytesIO()
-                    downloaded = await asyncio.wait_for(
-                        session.fetch_profile_photo("me", file=buf),
-                        timeout=15.0,
-                    )
-                    if downloaded:
-                        buf.seek(0)
-                        encoded = base64.b64encode(buf.read()).decode()
-                        avatar_base64 = f"data:image/jpeg;base64,{encoded}"
-                except Exception:
-                    logger.debug("Failed to download avatar for %s", phone)
+                if include_avatar:
+                    try:
+                        buf = io.BytesIO()
+                        downloaded = await asyncio.wait_for(
+                            session.fetch_profile_photo("me", file=buf),
+                            timeout=15.0,
+                        )
+                        if downloaded:
+                            buf.seek(0)
+                            encoded = base64.b64encode(buf.read()).decode()
+                            avatar_base64 = f"data:image/jpeg;base64,{encoded}"
+                    except Exception:
+                        logger.debug("Failed to download avatar for %s", phone)
 
                 result.append(TelegramUserInfo(
                     phone=phone,
