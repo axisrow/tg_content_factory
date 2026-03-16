@@ -132,8 +132,9 @@ async def test_create_collection_task_run_after_normalization(repo):
     )
 
     task = await repo.get_collection_task(task_id)
-    # Should be stored as UTC (9:00 instead of 12:00)
+    # Should be stored as UTC (9:00 instead of 12:00 +03:00)
     assert task.run_after is not None
+    assert task.run_after.hour == 9
 
 
 # create_stats_task tests

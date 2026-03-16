@@ -162,7 +162,7 @@ async def test_fetch_uniqueness_map_basic(repo, channels_repo):
     # "First message here" and "Second message here" share same 100-char prefix
     # "Different content" is different
     # All are under 100 chars, so uniqueness depends on exact content
-    assert unique >= 1
+    assert unique == 3
 
 
 async def test_fetch_uniqueness_map_excludes_null_text(repo, channels_repo):

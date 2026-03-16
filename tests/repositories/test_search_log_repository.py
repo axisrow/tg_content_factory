@@ -16,6 +16,11 @@ async def test_log_search(repo):
     """Test logging a search."""
     await repo.log_search("+1234567890", "test query", 10)
 
+    result = await repo.get_recent_searches(limit=1)
+    assert len(result) == 1
+    assert result[0]["query"] == "test query"
+    assert result[0]["results_count"] == 10
+
 
 async def test_get_recent_searches_empty(repo):
     """Test getting searches when none exist."""

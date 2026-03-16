@@ -1,7 +1,7 @@
 """Tests for SearchQueriesRepository."""
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -231,13 +231,17 @@ async def test_get_daily_stats_multiple_days(repo):
     """Test getting stats across multiple days."""
     pk = await repo.add(make_query("test"))
 
-    # Insert stats for different days
+    # Insert stats for different days using relative dates
+    now = datetime.now(tz=timezone.utc)
+    day0 = (now - timedelta(days=2)).strftime("%Y-%m-%d 12:00:00")
+    day1 = (now - timedelta(days=1)).strftime("%Y-%m-%d 12:00:00")
+    day2 = now.strftime("%Y-%m-%d 12:00:00")
     await repo._db.executemany(
         "INSERT INTO search_query_stats (query_id, match_count, recorded_at) VALUES (?, ?, ?)",
         [
-            (pk, 10, "2026-03-14 12:00:00"),
-            (pk, 20, "2026-03-15 12:00:00"),
-            (pk, 30, "2026-03-16 12:00:00"),
+            (pk, 10, day0),
+            (pk, 20, day1),
+            (pk, 30, day2),
         ],
     )
     await repo._db.commit()
@@ -253,11 +257,12 @@ async def test_get_daily_stats_aggregates_by_day(repo):
     pk = await repo.add(make_query("test"))
 
     # Insert multiple stats for same day
+    today = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d")
     await repo._db.executemany(
         "INSERT INTO search_query_stats (query_id, match_count, recorded_at) VALUES (?, ?, ?)",
         [
-            (pk, 10, "2026-03-16 10:00:00"),
-            (pk, 20, "2026-03-16 15:00:00"),
+            (pk, 10, f"{today} 10:00:00"),
+            (pk, 20, f"{today} 15:00:00"),
         ],
     )
     await repo._db.commit()
@@ -280,11 +285,12 @@ async def test_get_stats_for_all_multiple_queries(repo):
     pk1 = await repo.add(make_query("query1"))
     pk2 = await repo.add(make_query("query2"))
 
+    today = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d 12:00:00")
     await repo._db.executemany(
         "INSERT INTO search_query_stats (query_id, match_count, recorded_at) VALUES (?, ?, ?)",
         [
-            (pk1, 10, "2026-03-16 12:00:00"),
-            (pk2, 20, "2026-03-16 12:00:00"),
+            (pk1, 10, today),
+            (pk2, 20, today),
         ],
     )
     await repo._db.commit()
@@ -309,18 +315,22 @@ async def test_get_last_recorded_at(repo):
     """Test getting last recorded time."""
     pk = await repo.add(make_query("test"))
 
+    now = datetime.now(tz=timezone.utc)
+    ts_old = (now - timedelta(days=2)).strftime("%Y-%m-%d 12:00:00")
+    ts_latest = now.strftime("%Y-%m-%d 18:00:00")
+    ts_mid = (now - timedelta(days=1)).strftime("%Y-%m-%d 10:00:00")
     await repo._db.executemany(
         "INSERT INTO search_query_stats (query_id, match_count, recorded_at) VALUES (?, ?, ?)",
         [
-            (pk, 10, "2026-03-14 12:00:00"),
-            (pk, 20, "2026-03-16 18:00:00"),
-            (pk, 30, "2026-03-15 10:00:00"),
+            (pk, 10, ts_old),
+            (pk, 20, ts_latest),
+            (pk, 30, ts_mid),
         ],
     )
     await repo._db.commit()
 
     result = await repo.get_last_recorded_at(pk)
-    assert result == "2026-03-16 18:00:00"
+    assert result == ts_latest
 
 
 # get_last_recorded_at_all tests
@@ -336,18 +346,21 @@ async def test_get_last_recorded_at_all(repo):
     pk1 = await repo.add(make_query("query1"))
     pk2 = await repo.add(make_query("query2"))
 
+    now = datetime.now(tz=timezone.utc)
+    ts1 = (now - timedelta(days=1)).strftime("%Y-%m-%d 12:00:00")
+    ts2 = now.strftime("%Y-%m-%d 18:00:00")
     await repo._db.executemany(
         "INSERT INTO search_query_stats (query_id, match_count, recorded_at) VALUES (?, ?, ?)",
         [
-            (pk1, 10, "2026-03-15 12:00:00"),
-            (pk2, 20, "2026-03-16 18:00:00"),
+            (pk1, 10, ts1),
+            (pk2, 20, ts2),
         ],
     )
     await repo._db.commit()
 
     result = await repo.get_last_recorded_at_all()
-    assert result[pk1] == "2026-03-15 12:00:00"
-    assert result[pk2] == "2026-03-16 18:00:00"
+    assert result[pk1] == ts1
+    assert result[pk2] == ts2
 
 
 # get_notification_queries tests
