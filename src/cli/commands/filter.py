@@ -124,7 +124,6 @@ def run(args: argparse.Namespace) -> None:
                     if not pks:
                         print("No valid PKs provided.")
                         return
-                    result = await svc.hard_delete_channels_by_pks(pks)
                 else:
                     channels = await db.get_channels_with_counts(
                         active_only=False, include_filtered=True,
@@ -136,7 +135,15 @@ def run(args: argparse.Namespace) -> None:
                     if not pks:
                         print("No filtered channels to delete.")
                         return
-                    result = await svc.hard_delete_channels_by_pks(pks)
+                if not getattr(args, "yes", False):
+                    confirm = input(
+                        f"Hard-delete {len(pks)} channel(s) from DB? "
+                        "This is irreversible. Type YES to confirm: "
+                    )
+                    if confirm.strip() != "YES":
+                        print("Aborted.")
+                        return
+                result = await svc.hard_delete_channels_by_pks(pks)
                 _print_result(result, "Hard-deleted")
         finally:
             await db.close()
