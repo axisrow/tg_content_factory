@@ -28,6 +28,7 @@ CREATE TABLE IF NOT EXISTS messages (
     text TEXT,
     media_type TEXT,
     topic_id INTEGER,
+    reactions_json TEXT,
     date TEXT NOT NULL,
     collected_at TEXT DEFAULT (datetime('now')),
     UNIQUE(channel_id, message_id)
