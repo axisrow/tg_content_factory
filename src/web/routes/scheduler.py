@@ -129,11 +129,11 @@ async def test_notification(request: Request):
 
     db = deps.get_db(request)
     queries = await db.repos.search_queries.get_all(active_only=True)
-    q = next((q for q in queries if not q.is_regex), None)
-    if not q:
+    sample_query = next((sq for sq in queries if not sq.is_regex), None)
+    if not sample_query:
         text = "🔔 Тест уведомлений: нет поисковых запросов"
     else:
-        messages, _ = await db.search_messages_for_query(q, limit=1)
+        messages, _ = await db.search_messages_for_query(sample_query, limit=1)
         if messages:
             msg = messages[0]
             preview = (msg.text or "")[:200]

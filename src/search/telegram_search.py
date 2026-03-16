@@ -44,13 +44,13 @@ class TelegramSearch:
 
     async def _check_search_quota_with_client(self, session, query: str = "") -> dict | None:
         try:
-            r = await session.lookup_search_posts_flood(query)
+            quota_response = await session.lookup_search_posts_flood(query)
             return {
-                "total_daily": getattr(r, "total_daily", None),
-                "remains": getattr(r, "remains", None),
-                "wait_till": getattr(r, "wait_till", None),
-                "query_is_free": getattr(r, "query_is_free", False),
-                "stars_amount": getattr(r, "stars_amount", None),
+                "total_daily": getattr(quota_response, "total_daily", None),
+                "remains": getattr(quota_response, "remains", None),
+                "wait_till": getattr(quota_response, "wait_till", None),
+                "query_is_free": getattr(quota_response, "query_is_free", False),
+                "stars_amount": getattr(quota_response, "stars_amount", None),
             }
         except Exception as exc:
             logger.debug("checkSearchPostsFlood unavailable: %s", exc)
@@ -133,7 +133,7 @@ class TelegramSearch:
 
         while len(messages) < limit:
             batch_limit = min(limit - len(messages), 100)
-            r = await session.search_posts_batch(
+            search_response = await session.search_posts_batch(
                 query,
                 offset_rate=offset_rate,
                 offset_peer=offset_peer,
@@ -141,13 +141,13 @@ class TelegramSearch:
                 limit=batch_limit,
             )
 
-            if not r.messages:
+            if not search_response.messages:
                 break
 
-            chats_map = {c.id: c for c in getattr(r, "chats", [])}
-            users_map = {u.id: u for u in getattr(r, "users", [])}
+            chats_map = {c.id: c for c in getattr(search_response, "chats", [])}
+            users_map = {u.id: u for u in getattr(search_response, "users", [])}
 
-            for msg in r.messages:
+            for msg in search_response.messages:
                 if not isinstance(getattr(msg, "peer_id", None), PeerChannel):
                     continue
                 chat_id = msg.peer_id.channel_id
@@ -183,10 +183,10 @@ class TelegramSearch:
                     )
                 )
 
-            next_rate = getattr(r, "next_rate", None)
-            if next_rate and len(r.messages) == batch_limit:
+            next_rate = getattr(search_response, "next_rate", None)
+            if next_rate and len(search_response.messages) == batch_limit:
                 offset_rate = next_rate
-                last_msg = r.messages[-1]
+                last_msg = search_response.messages[-1]
                 offset_id = last_msg.id
                 if isinstance(last_msg.peer_id, PeerChannel):
                     last_chat = chats_map.get(last_msg.peer_id.channel_id)
