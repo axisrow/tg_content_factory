@@ -708,6 +708,61 @@ class Collector:
     async def _channel_still_exists(self, channel_id: int) -> bool:
         return await self._db.get_channel_by_channel_id(channel_id) is not None
 
+    async def sample_channel(self, channel_id: int, limit: int = 10) -> list[dict]:
+        """Fetch the last `limit` messages from a channel for preview. No DB writes."""
+        result = await self._pool.get_available_client()
+        if result is None:
+            logger.error("No available clients for sample collection")
+            return []
+
+        session, phone = result
+        session = adapt_transport_session(session, disconnect_on_close=False)
+        try:
+            if not self._pool.is_dialogs_fetched(phone):
+                try:
+                    await asyncio.wait_for(session.warm_dialog_cache(), timeout=30)
+                    self._pool.mark_dialogs_fetched(phone)
+                except Exception as e:
+                    logger.warning("Failed to prefetch dialogs for %s: %s", phone, e)
+
+            try:
+                entity = await asyncio.wait_for(
+                    session.resolve_entity(PeerChannel(channel_id)),
+                    timeout=30.0,
+                )
+            except (asyncio.TimeoutError, ValueError, LookupError):
+                logger.warning(
+                    "Could not resolve entity for channel %d", channel_id
+                )
+                return []
+
+            previews: list[dict] = []
+            async for msg in session.stream_messages(
+                entity,
+                limit=limit,
+                wait_time=self._config.delay_between_requests_sec,
+            ):
+                if self._cancel_event.is_set():
+                    break
+                text = msg.text or ""
+                previews.append({
+                    "message_id": msg.id,
+                    "date": msg.date,
+                    "text_preview": text[:100] if text else None,
+                    "media_type": self._get_media_type(msg),
+                })
+
+            return previews
+        except FloodWaitError as e:
+            logger.warning(
+                "Flood wait %ds for sample on channel %d via %s",
+                e.seconds, channel_id, phone,
+            )
+            await self._pool.report_flood(phone, e.seconds)
+            return []
+        finally:
+            await self._pool.release_client(phone)
+
     async def collect_channel_stats(self, channel: Channel) -> ChannelStats | None:
         async with self._stats_lock:
             self._stats_running = True
