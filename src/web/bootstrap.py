@@ -16,6 +16,7 @@ from src.database.bundles import (
     CollectionBundle,
     NotificationBundle,
     PhotoLoaderBundle,
+    PipelineBundle,
     SchedulerBundle,
     SearchBundle,
     SearchQueryBundle,
@@ -92,6 +93,7 @@ async def build_container_with_templates(
         repos.settings,
         repos.notification_bots,
     )
+    pipeline_bundle = PipelineBundle.from_database(db)
     photo_loader_bundle = PhotoLoaderBundle(repos.photo_loader)
     search_bundle = SearchBundle(repos.messages, repos.search_log, repos.channels)
     scheduler_bundle = SchedulerBundle(
@@ -160,6 +162,7 @@ async def build_container_with_templates(
         channel_bundle=channel_bundle,
         collection_bundle=collection_bundle,
         notification_bundle=notification_bundle,
+        pipeline_bundle=pipeline_bundle,
         photo_loader_bundle=photo_loader_bundle,
         search_bundle=search_bundle,
         scheduler_bundle=scheduler_bundle,

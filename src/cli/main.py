@@ -44,6 +44,7 @@ def main() -> None:
         "channel": channel.run,
         "filter": filter_cmd.run,
         "search-query": search_query.run,
+        "pipeline": pipeline_cmd.run,
         "account": account.run,
         "scheduler": scheduler.run,
         "notification": notification.run,
@@ -52,7 +53,6 @@ def main() -> None:
         "test": test_cmd.run,
         "agent": agent_cmd.run,
         "analytics": analytics_cmd.run,
-        "pipeline": pipeline_cmd.run,
     }
 
     handler = commands.get(args.command)
@@ -61,6 +61,7 @@ def main() -> None:
             "channel": "channel_action",
             "filter": "filter_action",
             "search-query": "search_query_action",
+            "pipeline": "pipeline_action",
             "account": "account_action",
             "scheduler": "scheduler_action",
             "notification": "notification_action",
@@ -69,7 +70,6 @@ def main() -> None:
             "test": "test_action",
             "agent": "agent_action",
             "analytics": "analytics_action",
-            "pipeline": "pipeline_action",
         }
         if args.command in sub_attr and not getattr(args, sub_attr[args.command], None):
             parser.parse_args([args.command, "--help"])

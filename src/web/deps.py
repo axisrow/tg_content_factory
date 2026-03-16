@@ -78,6 +78,7 @@ def get_container(request: Request) -> AppContainer:
     channel_bundle = ChannelBundle.from_database(db)
     collection_bundle = CollectionBundle.from_database(db)
     notification_bundle = NotificationBundle.from_database(db)
+    pipeline_bundle = PipelineBundle.from_database(db)
     search_bundle = SearchBundle.from_database(db)
     scheduler_bundle = SchedulerBundle.from_database(db)
     search_query_bundle = SearchQueryBundle.from_database(db)
@@ -111,6 +112,7 @@ def get_container(request: Request) -> AppContainer:
         channel_bundle=channel_bundle,
         collection_bundle=collection_bundle,
         notification_bundle=notification_bundle,
+        pipeline_bundle=pipeline_bundle,
         photo_loader_bundle=photo_loader_bundle,
         search_bundle=search_bundle,
         scheduler_bundle=scheduler_bundle,
@@ -158,6 +160,10 @@ def get_collection_bundle(request: Request) -> CollectionBundle:
 
 def get_notification_bundle(request: Request) -> NotificationBundle:
     return get_container(request).notification_bundle
+
+
+def get_pipeline_bundle(request: Request) -> PipelineBundle:
+    return get_container(request).pipeline_bundle
 
 
 def get_search_bundle(request: Request) -> SearchBundle:
@@ -305,19 +311,19 @@ def search_query_service(request: Request) -> SearchQueryService:
     )
 
 
+def pipeline_service(request: Request) -> PipelineService:
+    return _request_cached(
+        request,
+        "_pipeline_service",
+        lambda: PipelineService(get_pipeline_bundle(request)),
+    )
+
+
 def filter_deletion_service(request: Request) -> FilterDeletionService:
     return _request_cached(
         request,
         "_filter_deletion_service",
         lambda: FilterDeletionService(get_db(request), channel_service(request)),
-    )
-
-
-def pipeline_service(request: Request) -> PipelineService:
-    return _request_cached(
-        request,
-        "_pipeline_service",
-        lambda: PipelineService(PipelineBundle.from_database(get_db(request))),
     )
 
 
