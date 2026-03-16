@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
@@ -108,6 +109,31 @@ class Collector:
             logger=logger,
         )
 
+    async def _is_auto_delete_enabled(self) -> bool:
+        """Check if auto_delete_on_collect is enabled (cached per collection run)."""
+        cached = getattr(self, "_auto_delete_cached", None)
+        if cached is not None:
+            return cached
+        setting = await self._db.get_setting("auto_delete_on_collect")
+        result = setting == "1"
+        self._auto_delete_cached = result
+        return result
+
+    async def _maybe_auto_delete(self, channel_id: int) -> bool:
+        """Purge messages from filtered channel if auto_delete_on_collect is enabled."""
+        if not await self._is_auto_delete_enabled():
+            return False
+        try:
+            deleted = await self._db.delete_messages_for_channel(channel_id)
+            logger.info(
+                "Auto-purged %d messages from filtered channel %d during collection",
+                deleted, channel_id,
+            )
+            return True
+        except Exception:
+            logger.exception("Failed to auto-purge channel %d", channel_id)
+            return False
+
     async def collect_single_channel(
         self,
         channel: Channel,
@@ -132,6 +158,7 @@ class Collector:
         async with self._lock:
             self._running = True
             self._cancel_event.clear()
+            self._auto_delete_cached = None
             try:
                 if full:
                     channel = Channel(**{**channel.model_dump(), "last_collected_id": 0})
@@ -148,6 +175,7 @@ class Collector:
         async with self._lock:
             self._running = True
             self._cancel_event.clear()
+            self._auto_delete_cached = None
             stats = {"channels": 0, "messages": 0, "errors": 0}
 
             try:
@@ -362,6 +390,7 @@ class Collector:
                         await self._db.set_channels_filtered_bulk(
                             [(channel_id, "username_changed")]
                         )
+                        await self._maybe_auto_delete(channel_id)
                         return total_collected
                 else:
                     try:
@@ -397,6 +426,7 @@ class Collector:
                                 " skipping",
                                 channel_id, subscriber_count, min_subs,
                             )
+                            await self._maybe_auto_delete(channel_id)
                             return total_collected
                         cur = await self._db.execute(
                             "SELECT COUNT(*) FROM messages"
@@ -424,6 +454,7 @@ class Collector:
                                     " < %.2f, skipping",
                                     channel_id, ratio, threshold,
                                 )
+                                await self._maybe_auto_delete(channel_id)
                                 return total_collected
 
                 # Pre-check: sample 10 posts to detect cross-channel duplicates
@@ -462,6 +493,7 @@ class Collector:
                                 matches,
                                 len(unique_prefixes),
                             )
+                            await self._maybe_auto_delete(channel_id)
                             return total_collected
 
                 async for msg in session.stream_messages(
@@ -490,6 +522,7 @@ class Collector:
                         text=msg.text,
                         media_type=self._get_media_type(msg),
                         topic_id=topic_id,
+                        reactions_json=self._extract_reactions(msg),
                         date=msg.date.replace(tzinfo=timezone.utc)
                         if msg.date and msg.date.tzinfo is None
                         else msg.date,
@@ -639,6 +672,8 @@ class Collector:
                             channel_id,
                             ratio,
                         )
+                        # Not auto-deleting here: messages were just collected,
+                        # channel will be deleted on the next collection run.
 
             return total_collected + len(all_messages)
 
@@ -823,6 +858,32 @@ class Collector:
                 return stats
             finally:
                 self._stats_all_running = False
+
+    @staticmethod
+    def _extract_reactions(msg) -> str | None:
+        """Extract reactions from a Telethon message as JSON string."""
+        reactions = getattr(msg, "reactions", None)
+        if not reactions:
+            return None
+        results = getattr(reactions, "results", None)
+        if not results:
+            return None
+        items = []
+        for r in results:
+            reaction = getattr(r, "reaction", None)
+            if reaction is None:
+                continue
+            emoticon = getattr(reaction, "emoticon", None)
+            if emoticon:
+                emoji = emoticon
+            else:
+                document_id = getattr(reaction, "document_id", None)
+                if document_id is not None:
+                    emoji = f"custom:{document_id}"
+                else:
+                    continue
+            items.append({"emoji": emoji, "count": getattr(r, "count", 0)})
+        return json.dumps(items, ensure_ascii=False) if items else None
 
     @staticmethod
     def _get_sender_name(msg) -> str | None:

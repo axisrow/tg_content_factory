@@ -25,6 +25,7 @@ from src.search.engine import SearchEngine
 from src.services.account_service import AccountService
 from src.services.channel_service import ChannelService
 from src.services.collection_service import CollectionService
+from src.services.filter_deletion_service import FilterDeletionService
 from src.services.notification_service import NotificationService
 from src.services.notification_target_service import NotificationTargetService
 from src.services.photo_auto_upload_service import PhotoAutoUploadService
@@ -299,6 +300,14 @@ def search_query_service(request: Request) -> SearchQueryService:
         request,
         "_search_query_service",
         lambda: SearchQueryService(get_search_query_bundle(request)),
+    )
+
+
+def filter_deletion_service(request: Request) -> FilterDeletionService:
+    return _request_cached(
+        request,
+        "_filter_deletion_service",
+        lambda: FilterDeletionService(get_db(request), channel_service(request)),
     )
 
 

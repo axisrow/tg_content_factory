@@ -6,6 +6,30 @@
                placeholder="0 — отключено">
         <div class="form-text">Каналы с числом подписчиков ниже порога будут помечены флагом &#9995; и пропущены при сборе. Значение 0 — фильтр отключён.</div>
     </div>
+
+    <hr>
+    <h6>Авто-очистка отфильтрованных каналов</h6>
+    <div class="form-check form-switch mb-2">
+        <input class="form-check-input" type="checkbox" id="auto_delete_filtered" name="auto_delete_filtered" value="1"
+               {{ 'checked' if auto_delete_filtered else '' }}
+               onchange="if(this.checked && !confirm('При включении сообщения отфильтрованных каналов будут автоматически очищаться при обновлении фильтров. Продолжить?')) this.checked=false;">
+        <label class="form-check-label" for="auto_delete_filtered">
+            Очищать сообщения после анализа фильтров
+            {% if auto_delete_filtered %}<span class="badge bg-warning text-dark ms-1">Активно</span>{% endif %}
+        </label>
+        <div class="form-text">При нажатии "Обновить фильтры" сообщения отфильтрованных каналов будут автоматически очищены. Каналы останутся в базе.</div>
+    </div>
+    <div class="form-check form-switch mb-3">
+        <input class="form-check-input" type="checkbox" id="auto_delete_on_collect" name="auto_delete_on_collect" value="1"
+               {{ 'checked' if auto_delete_on_collect else '' }}
+               onchange="if(this.checked && !confirm('При включении сообщения каналов, подпавших под фильтр во время сбора, будут автоматически очищены. Продолжить?')) this.checked=false;">
+        <label class="form-check-label" for="auto_delete_on_collect">
+            Очищать сообщения при сборе
+            {% if auto_delete_on_collect %}<span class="badge bg-warning text-dark ms-1">Активно</span>{% endif %}
+        </label>
+        <div class="form-text">Если канал подпадает под фильтр во время сбора, его сообщения будут автоматически очищены. Канал останется в базе.</div>
+    </div>
+
     <div class="d-flex justify-content-end">
         <button type="submit" class="btn btn-primary">Сохранить</button>
     </div>

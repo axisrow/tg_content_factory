@@ -32,6 +32,7 @@
                     <li class="nav-item"><a class="nav-link" href="/search">Поиск</a></li>
                     <li class="nav-item"><a class="nav-link" href="/dashboard">Панель</a></li>
                     <li class="nav-item"><a class="nav-link" href="/channels">Каналы</a></li>
+                    <li class="nav-item"><a class="nav-link" href="/channels/filter/manage">Очистка</a></li>
                     <li class="nav-item"><a class="nav-link" href="/search-queries">Запросы</a></li>
                     <li class="nav-item"><a class="nav-link" href="/my-telegram">Мой Телеграм</a></li>
                     <li class="nav-item"><a class="nav-link" href="/scheduler">Планировщик</a></li>
@@ -104,7 +105,11 @@
         photo_run_due_ok: "Due photo tasks обработаны.",
         photo_item_cancelled: "Photo task отменён.",
         photo_auto_toggled: "Статус auto job изменён.",
-        photo_auto_deleted: "Auto job удалён."
+        photo_auto_deleted: "Auto job удалён.",
+        deleted_filtered: "Каналы полностью удалены из базы.",
+        purged_selected: "Сообщения выбранных каналов очищены.",
+        purged_all_filtered: "Сообщения всех отфильтрованных каналов очищены.",
+        precheck_done: "Предпроверка подписчиков выполнена."
     };
     var errors = {
         resolve: "Не удалось найти канал. Проверьте username или ссылку.",
@@ -124,6 +129,8 @@
         notification_account_unavailable: "Выбранный аккаунт уведомлений недоступен.",
         notification_bot_missing: "Для выбранного аккаунта notification bot не найден.",
         notification_action_failed: "Не удалось выполнить действие с notification bot.",
+        no_filtered_channels: "Нет отфильтрованных каналов для удаления.",
+        dev_mode_required_for_hard_delete: "Для полного удаления каналов включите режим разработчика в настройках.",
         notification_test_failed: "Не удалось отправить тестовое уведомление.",
         photo_send_failed: "Не удалось отправить фото.",
         photo_target_required: "Сначала выберите канал, чат или личный диалог.",

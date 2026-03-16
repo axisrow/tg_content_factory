@@ -12,7 +12,12 @@ from src.models import Channel, ChannelStats, Message
 from src.telegram.collector import Collector
 from tests.helpers import AsyncIterEmpty as _AsyncIterEmpty
 from tests.helpers import AsyncIterMessages as _AsyncIterMessages
-from tests.helpers import FakeTelethonClient, make_mock_message, make_mock_pool
+from tests.helpers import (
+    FakeTelethonClient,
+    make_mock_message,
+    make_mock_pool,
+    make_mock_reactions,
+)
 
 
 @pytest.mark.asyncio
@@ -328,6 +333,56 @@ async def test_get_media_type_poll():
 
     msg = SimpleNamespace(media=MessageMediaPoll(poll=None, results=None))
     assert Collector._get_media_type(msg) == "poll"
+
+
+# --- _extract_reactions tests ---
+
+
+@pytest.mark.asyncio
+async def test_extract_reactions_none():
+    """No reactions attr → None."""
+    msg = SimpleNamespace(reactions=None)
+    assert Collector._extract_reactions(msg) is None
+
+
+@pytest.mark.asyncio
+async def test_extract_reactions_empty_results():
+    """reactions exists but results is empty → None."""
+    msg = SimpleNamespace(reactions=SimpleNamespace(results=[]))
+    assert Collector._extract_reactions(msg) is None
+
+
+@pytest.mark.asyncio
+async def test_extract_reactions_single_emoji():
+    import json
+
+    msg = SimpleNamespace(reactions=make_mock_reactions([("👍", 5)]))
+    result = Collector._extract_reactions(msg)
+    assert result is not None
+    parsed = json.loads(result)
+    assert parsed == [{"emoji": "👍", "count": 5}]
+
+
+@pytest.mark.asyncio
+async def test_extract_reactions_multiple():
+    import json
+
+    msg = SimpleNamespace(reactions=make_mock_reactions([("👍", 5), ("❤️", 3)]))
+    result = Collector._extract_reactions(msg)
+    parsed = json.loads(result)
+    assert len(parsed) == 2
+    assert parsed[0] == {"emoji": "👍", "count": 5}
+    assert parsed[1] == {"emoji": "❤️", "count": 3}
+
+
+@pytest.mark.asyncio
+async def test_extract_reactions_custom_emoji():
+    import json
+
+    msg = SimpleNamespace(reactions=make_mock_reactions([(12345678, 2)]))
+    result = Collector._extract_reactions(msg)
+    parsed = json.loads(result)
+    assert parsed == [{"emoji": "custom:12345678", "count": 2}]
 
 
 @pytest.mark.asyncio
