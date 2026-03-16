@@ -146,6 +146,11 @@ def build_parser() -> argparse.ArgumentParser:
     acc_del = acc_sub.add_parser("delete", help="Delete account")
     acc_del.add_argument("id", type=int, help="Account id")
 
+    acc_sub.add_parser("flood-status", help="Show flood wait timers for all accounts")
+
+    acc_flood_clear = acc_sub.add_parser("flood-clear", help="Clear flood wait for an account")
+    acc_flood_clear.add_argument("--phone", required=True, help="Account phone number")
+
     sched_parser = sub.add_parser("scheduler", help="Scheduler control")
     sched_sub = sched_parser.add_subparsers(dest="scheduler_action")
     sched_sub.add_parser("start", help="Start scheduler (foreground)")
