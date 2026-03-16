@@ -69,12 +69,13 @@ def run(args: argparse.Namespace) -> None:
                     cached_at_str = (
                         cached_at.strftime("%Y-%m-%d %H:%M:%S UTC") if cached_at else "-"
                     )
-                    mem_entries = sum(
+                    entry = pool._dialogs_cache.get((ph, "full"))
+                    mem_entries = (
                         len(entry.dialogs)
-                        for key, entry in pool._dialogs_cache.items()
-                        if key[0] == ph
+                        if entry
                         and (now_monotonic - entry.fetched_at_monotonic)
                         <= pool._dialogs_cache_ttl_sec
+                        else 0
                     )
                     print(fmt.format(ph, str(db_count), cached_at_str, str(mem_entries)))
         finally:
