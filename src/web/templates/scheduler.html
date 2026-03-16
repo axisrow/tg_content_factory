@@ -6,7 +6,6 @@
 {% macro task_type_label(t) %}
     {% if t.task_type.value == 'channel_collect' %}Сбор канала
     {% elif t.task_type.value == 'stats_all' %}Статистика
-    {% elif t.task_type.value == 'notification_search' %}Поиск
     {% elif t.task_type.value == 'sq_stats' %}Статистика запроса
     {% elif t.task_type.value == 'photo_due' %}Фото
     {% elif t.task_type.value == 'photo_auto' %}Автофото
@@ -17,10 +16,10 @@
 <div class="card mb-4">
     <div class="card-header fw-semibold">
         Планировщик
-        <span class="hint" data-tooltip="Планировщик автоматически ставит задачи в очередь: сбор, поиск, статистику">?</span>
+        <span class="hint" data-tooltip="Планировщик автоматически ставит задачи в очередь: сбор, статистику">?</span>
     </div>
     <div class="card-body">
-        <small class="text-muted d-block mb-2">Автоматическое создание задач: сбор каждые {{ interval_minutes }} мин., поиск каждые {{ search_interval_minutes }} мин.</small>
+        <small class="text-muted d-block mb-2">Автоматическое создание задач: сбор каждые {{ interval_minutes }} мин.</small>
         <p>Статус: <strong>{{ "Запущен" if is_running else "Остановлен" }}</strong></p>
 
         <div class="d-flex flex-wrap gap-2">
@@ -35,9 +34,6 @@
             {% endif %}
             <form method="post" action="/scheduler/trigger" data-busy>
                 <button type="submit" class="btn btn-outline-primary">&#9654; Собрать все каналы</button>
-            </form>
-            <form method="post" action="/scheduler/trigger-search" data-busy>
-                <button type="submit" class="btn btn-outline-primary">&#9654; Запустить поиск</button>
             </form>
             <form method="post" action="/scheduler/test-notification" data-busy>
                 <button type="submit" class="btn btn-outline-secondary"
@@ -101,7 +97,7 @@
 <div class="card mb-4">
     <div class="card-header fw-semibold">Задачи</div>
     <div class="card-body p-0">
-        <p class="px-3 pt-3"><small class="text-muted">Все задачи: сбор каналов, поиск, статистика, фото.</small></p>
+        <p class="px-3 pt-3"><small class="text-muted">Все задачи: сбор каналов, статистика, фото.</small></p>
 
         <!-- Filter tabs -->
         <div class="px-3 pb-2">

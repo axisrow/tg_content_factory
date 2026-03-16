@@ -32,7 +32,6 @@ def mock_task_enqueuer():
     result.skipped_existing_count = 1
     result.total_candidates = 4
     enqueuer.enqueue_all_channels = AsyncMock(return_value=result)
-    enqueuer.enqueue_notification_search = AsyncMock(return_value=42)
     enqueuer.enqueue_sq_stats = AsyncMock()
     enqueuer.enqueue_photo_due = AsyncMock()
     enqueuer.enqueue_photo_auto = AsyncMock()
@@ -41,9 +40,7 @@ def mock_task_enqueuer():
 
 @pytest.fixture
 def scheduler_config():
-    return SchedulerConfig(
-        collect_interval_minutes=60, search_interval_minutes=30,
-    )
+    return SchedulerConfig(collect_interval_minutes=60)
 
 
 @pytest.mark.asyncio
@@ -138,26 +135,6 @@ async def test_run_collection_failure(
     )
     res = await mgr._run_collection()
     assert res["errors"] == 1
-
-
-@pytest.mark.asyncio
-async def test_run_keyword_search_no_enqueuer(scheduler_config, mock_bundle):
-    mgr = SchedulerManager(scheduler_config, scheduler_bundle=mock_bundle)
-    res = await mgr._run_keyword_search()
-    assert res["enqueued"] is False
-
-
-@pytest.mark.asyncio
-async def test_run_keyword_search_with_enqueuer(
-    scheduler_config, mock_bundle, mock_task_enqueuer,
-):
-    mgr = SchedulerManager(
-        scheduler_config, scheduler_bundle=mock_bundle,
-        task_enqueuer=mock_task_enqueuer,
-    )
-    res = await mgr._run_keyword_search()
-    assert res["enqueued"] is True
-    mock_task_enqueuer.enqueue_notification_search.assert_called_once()
 
 
 @pytest.mark.asyncio

@@ -17,6 +17,13 @@ from src.models import (
 _ALLOWED_PAYLOAD_FILTER_KEYS = frozenset({"sq_id"})
 
 
+def _safe_task_type(raw: str) -> CollectionTaskType:
+    try:
+        return CollectionTaskType(raw)
+    except ValueError:
+        return CollectionTaskType.CHANNEL_COLLECT
+
+
 class CollectionTasksRepository:
     def __init__(self, db: aiosqlite.Connection):
         self._db = db
@@ -57,7 +64,7 @@ class CollectionTasksRepository:
             channel_id=row["channel_id"],
             channel_title=row["channel_title"],
             channel_username=row["channel_username"],
-            task_type=CollectionTaskType(row["task_type"]),
+            task_type=_safe_task_type(row["task_type"]),
             status=CollectionTaskStatus(row["status"]),
             messages_collected=row["messages_collected"],
             error=row["error"],
