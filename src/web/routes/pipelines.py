@@ -3,7 +3,8 @@ from __future__ import annotations
 from urllib.parse import quote
 
 from fastapi import APIRouter, Form, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
+import json
 
 from src.agent.prompt_template import ALLOWED_TEMPLATE_VARIABLES
 from src.models import PipelineGenerationBackend, PipelinePublishMode
@@ -173,6 +174,56 @@ async def generate_page(request: Request, pipeline_id: int):
         "pipelines/generate.html",
         {"pipeline": pipeline, "runs": runs, "request": request},
     )
+
+
+@router.get("/{pipeline_id}/generate-stream")
+async def generate_stream(request: Request, pipeline_id: int, model: str = "", max_tokens: int = 256, temperature: float = 0.0):
+    svc = deps.pipeline_service(request)
+    pipeline = await svc.get(pipeline_id)
+    if pipeline is None:
+        return _pipeline_redirect("pipeline_invalid", error=True)
+    db = deps.get_db(request)
+    engine = deps.get_search_engine(request)
+
+    from src.services.provider_service import AgentProviderService
+
+    provider_service = AgentProviderService(db)
+    provider_callable = provider_service.get_provider_callable(pipeline.llm_model)
+
+    from src.services.generation_service import GenerationService
+
+    gen = GenerationService(engine, provider_callable=provider_callable)
+
+    # persist run
+    run_id = await db.repos.generation_runs.create_run(pipeline_id, pipeline.prompt_template)
+    await db.repos.generation_runs.set_status(run_id, "running")
+    retrieval_query = pipeline.prompt_template or pipeline.name or ""
+
+    async def event_gen():
+        last = None
+        try:
+            async for update in gen.generate_stream(
+                query=retrieval_query,
+                prompt_template=pipeline.prompt_template,
+                model=(model or pipeline.llm_model),
+                max_tokens=max_tokens,
+                temperature=temperature,
+            ):
+                last = update
+                data = {"delta": update.get("delta"), "text": update.get("generated_text"), "citations": update.get("citations")}
+                yield f"data: {json.dumps(data)}\n\n"
+
+            # finished successfully
+            final_text = last.get("generated_text") if last else ""
+            metadata = {"citations": last.get("citations", []) if last else []}
+            await db.repos.generation_runs.save_result(run_id, final_text, metadata)
+            await db.repos.generation_runs.set_status(run_id, "completed")
+            yield f"event: done\ndata: {json.dumps({'run_id': run_id})}\n\n"
+        except Exception as exc:
+            await db.repos.generation_runs.set_status(run_id, "failed")
+            yield f"event: error\ndata: {json.dumps({'error': str(exc)})}\n\n"
+
+    return StreamingResponse(event_gen(), media_type="text/event-stream")
 
 
 @router.post("/{pipeline_id}/generate")
