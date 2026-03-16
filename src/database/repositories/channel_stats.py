@@ -52,12 +52,12 @@ class ChannelStatsRepository:
 
     async def get_latest_stats_for_all(self) -> dict[int, ChannelStats]:
         cur = await self._db.execute(
-            """SELECT cs.* FROM channel_stats cs
-               INNER JOIN (
-                   SELECT channel_id, MAX(collected_at) AS max_date
-                   FROM channel_stats GROUP BY channel_id
-               ) latest ON cs.channel_id = latest.channel_id
-                        AND cs.collected_at = latest.max_date"""
+            """WITH ranked AS (
+                   SELECT *, ROW_NUMBER() OVER (
+                       PARTITION BY channel_id ORDER BY collected_at DESC, id DESC
+                   ) AS rn FROM channel_stats
+               )
+               SELECT * FROM ranked WHERE rn = 1"""
         )
         rows = await cur.fetchall()
         return {
