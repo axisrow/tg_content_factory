@@ -318,6 +318,8 @@ async def settings_page(request: Request):
         default=0,
         logger=logger,
     )
+    auto_delete_filtered = (await db.get_setting("auto_delete_filtered") or "0") == "1"
+    auto_delete_on_collect = (await db.get_setting("auto_delete_on_collect") or "0") == "1"
     saved_interval = await db.get_setting("collect_interval_minutes")
     agent_dev_mode_enabled = (await db.get_setting("agent_dev_mode_enabled") or "0") == "1"
     agent_backend_override = await db.get_setting("agent_backend_override") or "auto"
@@ -366,6 +368,8 @@ async def settings_page(request: Request):
             "api_id": CREDENTIALS_MASK if api_id_raw else "",
             "api_hash": CREDENTIALS_MASK if api_hash_raw else "",
             "min_subscribers_filter": min_subscribers_filter,
+            "auto_delete_filtered": auto_delete_filtered,
+            "auto_delete_on_collect": auto_delete_on_collect,
             "accounts": accounts,
             "account_phones": [acc.phone for acc in accounts],
             "connected_phones": connected_phones,
@@ -725,6 +729,12 @@ async def save_filters(request: Request):
     if not min_subs.isdigit():
         return RedirectResponse(url="/settings?error=invalid_value", status_code=303)
     await db.set_setting("min_subscribers_filter", min_subs)
+    await db.set_setting(
+        "auto_delete_filtered", "1" if form.get("auto_delete_filtered") else "0",
+    )
+    await db.set_setting(
+        "auto_delete_on_collect", "1" if form.get("auto_delete_on_collect") else "0",
+    )
     if int(min_subs) > 0:
         all_stats = await db.get_latest_stats_for_all()
         to_filter = [
