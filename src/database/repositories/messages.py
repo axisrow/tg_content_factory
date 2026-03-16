@@ -425,6 +425,7 @@ class MessagesRepository:
             "(c.is_filtered IS NULL OR c.is_filtered = 0)",
             "m.reactions_json IS NOT NULL",
             "m.reactions_json != ''",
+            "json_valid(m.reactions_json) = 1",
         ]
         params: list = []
         normalized_date_from = self._normalize_date_from(date_from)
@@ -474,6 +475,7 @@ class MessagesRepository:
                        COUNT(*) as message_count,
                        COALESCE(AVG(
                            CASE WHEN m.reactions_json IS NOT NULL AND m.reactions_json != ''
+                                AND json_valid(m.reactions_json) = 1
                            THEN (SELECT COALESCE(SUM(json_extract(value, '$.count')), 0)
                                  FROM json_each(m.reactions_json))
                            ELSE 0 END
@@ -510,6 +512,7 @@ class MessagesRepository:
                        COUNT(*) as message_count,
                        COALESCE(AVG(
                            CASE WHEN m.reactions_json IS NOT NULL AND m.reactions_json != ''
+                                AND json_valid(m.reactions_json) = 1
                            THEN (SELECT COALESCE(SUM(json_extract(value, '$.count')), 0)
                                  FROM json_each(m.reactions_json))
                            ELSE 0 END
