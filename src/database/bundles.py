@@ -156,6 +156,9 @@ class ChannelBundle:
     async def get_latest_stats_for_all(self) -> dict[int, ChannelStats]:
         return await self.channel_stats.get_latest_stats_for_all()
 
+    async def get_previous_subscriber_counts(self) -> dict[int, int | None]:
+        return await self.channel_stats.get_previous_subscriber_counts()
+
     async def create_collection_task(
         self,
         channel_id: int,

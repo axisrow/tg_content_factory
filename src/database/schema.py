@@ -29,6 +29,9 @@ CREATE TABLE IF NOT EXISTS messages (
     media_type TEXT,
     topic_id INTEGER,
     reactions_json TEXT,
+    views INTEGER,
+    forwards INTEGER,
+    reply_count INTEGER,
     date TEXT NOT NULL,
     collected_at TEXT DEFAULT (datetime('now')),
     UNIQUE(channel_id, message_id)
@@ -80,6 +83,8 @@ CREATE TABLE IF NOT EXISTS channel_stats (
 
 CREATE INDEX IF NOT EXISTS idx_channel_stats_channel_date
     ON channel_stats(channel_id, collected_at);
+CREATE INDEX IF NOT EXISTS idx_channel_stats_lookup
+    ON channel_stats(channel_id, collected_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_messages_text ON messages(text);
 CREATE INDEX IF NOT EXISTS idx_messages_channel_date ON messages(channel_id, date);
 

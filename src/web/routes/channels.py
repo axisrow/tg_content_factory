@@ -14,7 +14,7 @@ router = APIRouter()
 async def channels_list(request: Request):
     service = deps.channel_service(request)
     show_all = request.query_params.get("view") == "all"
-    channels, latest_stats = await service.list_for_page(
+    channels, latest_stats, prev_subscriber_counts = await service.list_for_page(
         include_filtered=show_all
     )
     error = request.query_params.get("error")
@@ -25,6 +25,7 @@ async def channels_list(request: Request):
         {
             "channels": channels,
             "latest_stats": latest_stats,
+            "prev_subscriber_counts": prev_subscriber_counts,
             "error": error,
             "msg": msg,
             "show_all": show_all,
