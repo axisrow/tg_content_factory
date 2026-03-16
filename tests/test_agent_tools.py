@@ -185,11 +185,8 @@ class TestSemanticSearchTool:
             def __init__(self, _db):
                 pass
 
-            async def index_pending_messages(self):
-                raise RuntimeError("vec unavailable")
-
             async def embed_query(self, query):
-                raise AssertionError(f"unexpected query call: {query}")
+                raise RuntimeError("vec unavailable")
 
         with patch("src.agent.tools.EmbeddingService", BrokenEmbeddingService):
             handlers = _get_tool_handlers(mock_db)
