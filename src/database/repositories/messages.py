@@ -46,8 +46,8 @@ class MessagesRepository:
             cur = await self._db.execute(
                 """INSERT OR IGNORE INTO messages
                    (channel_id, message_id, sender_id, sender_name,
-                    text, media_type, topic_id, date)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                    text, media_type, topic_id, reactions_json, date)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     msg.channel_id,
                     msg.message_id,
@@ -56,6 +56,7 @@ class MessagesRepository:
                     msg.text,
                     msg.media_type,
                     msg.topic_id,
+                    msg.reactions_json,
                     msg.date.isoformat(),
                 ),
             )
@@ -81,6 +82,7 @@ class MessagesRepository:
                 m.text,
                 m.media_type,
                 m.topic_id,
+                m.reactions_json,
                 m.date.isoformat(),
             )
             for m in messages
@@ -89,8 +91,8 @@ class MessagesRepository:
             cur = await self._db.executemany(
                 """INSERT OR IGNORE INTO messages
                    (channel_id, message_id, sender_id, sender_name,
-                    text, media_type, topic_id, date)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                    text, media_type, topic_id, reactions_json, date)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 data,
             )
             await self._db.commit()
@@ -217,6 +219,7 @@ class MessagesRepository:
                 text=r["text"],
                 media_type=r["media_type"],
                 topic_id=r["topic_id"],
+                reactions_json=r["reactions_json"],
                 date=datetime.fromisoformat(r["date"]),
                 collected_at=(
                     datetime.fromisoformat(r["collected_at"]) if r["collected_at"] else None
