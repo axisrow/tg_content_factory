@@ -220,7 +220,8 @@ CREATE TABLE IF NOT EXISTS message_reactions (
     message_id INTEGER NOT NULL,
     emoji TEXT NOT NULL,
     count INTEGER NOT NULL DEFAULT 0,
-    FOREIGN KEY (channel_id, message_id) REFERENCES messages(channel_id, message_id),
+    FOREIGN KEY (channel_id, message_id)
+        REFERENCES messages(channel_id, message_id) ON DELETE CASCADE,
     UNIQUE(channel_id, message_id, emoji)
 );
 
@@ -228,4 +229,5 @@ CREATE INDEX IF NOT EXISTS idx_message_reactions_channel_msg
     ON message_reactions(channel_id, message_id);
 CREATE INDEX IF NOT EXISTS idx_message_reactions_emoji
     ON message_reactions(emoji);
+CREATE INDEX IF NOT EXISTS idx_messages_collected_at ON messages(collected_at);
 """
