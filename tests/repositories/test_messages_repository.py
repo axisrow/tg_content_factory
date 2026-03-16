@@ -41,7 +41,6 @@ def make_message(
 
 # insert_message tests
 
-@pytest.mark.asyncio
 async def test_insert_message_success(repo):
     """Test inserting a message successfully."""
     msg = make_message(1, 100, "Hello world")
@@ -49,7 +48,6 @@ async def test_insert_message_success(repo):
     assert result is True
 
 
-@pytest.mark.asyncio
 async def test_insert_message_duplicate_ignored(repo):
     """Test that duplicate messages are ignored."""
     msg = make_message(1, 100, "First")
@@ -65,7 +63,6 @@ async def test_insert_message_duplicate_ignored(repo):
     assert messages[0].text == "First"
 
 
-@pytest.mark.asyncio
 async def test_insert_message_with_all_fields(repo):
     """Test inserting message with all optional fields."""
     msg = Message(
@@ -90,14 +87,12 @@ async def test_insert_message_with_all_fields(repo):
 
 # insert_messages_batch tests
 
-@pytest.mark.asyncio
 async def test_insert_messages_batch_empty(repo):
     """Test batch insert with empty list."""
     count = await repo.insert_messages_batch([])
     assert count == 0
 
 
-@pytest.mark.asyncio
 async def test_insert_messages_batch_multiple(repo):
     """Test batch inserting multiple messages."""
     messages = [
@@ -112,7 +107,6 @@ async def test_insert_messages_batch_multiple(repo):
     assert total == 3
 
 
-@pytest.mark.asyncio
 async def test_insert_messages_batch_with_duplicates(repo):
     """Test batch insert ignores duplicates."""
     # Insert first batch
@@ -123,9 +117,7 @@ async def test_insert_messages_batch_with_duplicates(repo):
         make_message(1, 100, "Duplicate"),  # This should be ignored
         make_message(1, 101, "New"),
     ]
-    count = await repo.insert_messages_batch(messages)
-    # executemany may return -1 for rowcount
-    assert count >= 1
+    await repo.insert_messages_batch(messages)
 
     messages_list, total = await repo.search_messages()
     assert total == 2
@@ -181,7 +173,6 @@ def test_normalize_date_to_module_function():
 
 # search_messages tests
 
-@pytest.mark.asyncio
 async def test_search_messages_empty(repo):
     """Test searching when no messages exist."""
     messages, total = await repo.search_messages()
@@ -189,7 +180,6 @@ async def test_search_messages_empty(repo):
     assert total == 0
 
 
-@pytest.mark.asyncio
 async def test_search_messages_all(repo):
     """Test getting all messages."""
     await repo.insert_messages_batch([
@@ -202,7 +192,6 @@ async def test_search_messages_all(repo):
     assert total == 2
 
 
-@pytest.mark.asyncio
 async def test_search_messages_by_channel(repo):
     """Test filtering by channel_id."""
     await repo.insert_messages_batch([
@@ -217,7 +206,6 @@ async def test_search_messages_by_channel(repo):
     assert all(m.channel_id == 1 for m in messages)
 
 
-@pytest.mark.asyncio
 async def test_search_messages_by_topic(repo):
     """Test filtering by topic_id."""
     await repo.insert_messages_batch([
@@ -232,7 +220,6 @@ async def test_search_messages_by_topic(repo):
     assert messages[0].topic_id == 5
 
 
-@pytest.mark.asyncio
 async def test_search_messages_by_date_from(repo):
     """Test filtering by date_from."""
     await repo.insert_messages_batch([
@@ -245,7 +232,6 @@ async def test_search_messages_by_date_from(repo):
     assert messages[0].text == "New"
 
 
-@pytest.mark.asyncio
 async def test_search_messages_by_date_to(repo):
     """Test filtering by date_to (inclusive)."""
     await repo.insert_messages_batch([
@@ -259,7 +245,6 @@ async def test_search_messages_by_date_to(repo):
     assert messages[0].text == "Old"
 
 
-@pytest.mark.asyncio
 async def test_search_messages_by_date_range(repo):
     """Test filtering by date range."""
     await repo.insert_messages_batch([
@@ -275,7 +260,6 @@ async def test_search_messages_by_date_range(repo):
     assert messages[0].text == "In range"
 
 
-@pytest.mark.asyncio
 async def test_search_messages_by_min_length(repo):
     """Test filtering by min_length."""
     await repo.insert_messages_batch([
@@ -288,7 +272,6 @@ async def test_search_messages_by_min_length(repo):
     assert messages[0].text == "This is a longer message"
 
 
-@pytest.mark.asyncio
 async def test_search_messages_by_max_length(repo):
     """Test filtering by max_length."""
     await repo.insert_messages_batch([
@@ -301,7 +284,6 @@ async def test_search_messages_by_max_length(repo):
     assert messages[0].text == "Short"
 
 
-@pytest.mark.asyncio
 async def test_search_messages_pagination(repo):
     """Test pagination with limit and offset."""
     for i in range(10):
@@ -322,7 +304,6 @@ async def test_search_messages_pagination(repo):
     assert ids1.isdisjoint(ids2)
 
 
-@pytest.mark.asyncio
 async def test_search_messages_excludes_filtered_channels(repo, channels_repo):
     """Test that messages from filtered channels are excluded."""
     from src.models import Channel
@@ -345,7 +326,6 @@ async def test_search_messages_excludes_filtered_channels(repo, channels_repo):
     assert messages[0].channel_id == 1
 
 
-@pytest.mark.asyncio
 async def test_search_messages_fts(repo):
     """Test FTS search."""
     await repo.insert_messages_batch([
@@ -359,7 +339,6 @@ async def test_search_messages_fts(repo):
     assert all("hello" in m.text.lower() for m in messages)
 
 
-@pytest.mark.asyncio
 async def test_search_messages_plain_search(repo):
     """Test plain text search (non-FTS)."""
     await repo.insert_messages_batch([
@@ -394,7 +373,6 @@ def test_build_fts_match_escapes_quotes():
 
 # count_fts_matches_for_query tests
 
-@pytest.mark.asyncio
 async def test_count_fts_matches_for_query(repo):
     """Test counting FTS matches for a search query."""
     sq = SearchQuery(query="hello", is_fts=True)
@@ -409,7 +387,6 @@ async def test_count_fts_matches_for_query(repo):
     assert count == 2
 
 
-@pytest.mark.asyncio
 async def test_count_fts_matches_for_query_with_max_length(repo):
     """Test counting FTS matches with max_length filter."""
     sq = SearchQuery(query="hello", is_fts=True, max_length=15)
@@ -423,7 +400,6 @@ async def test_count_fts_matches_for_query_with_max_length(repo):
     assert count == 1
 
 
-@pytest.mark.asyncio
 async def test_count_fts_matches_for_query_with_exclude_patterns(repo):
     """Test counting FTS matches with exclude patterns."""
     sq = SearchQuery(query="hello", is_fts=True, exclude_patterns="spam")
@@ -439,7 +415,6 @@ async def test_count_fts_matches_for_query_with_exclude_patterns(repo):
 
 # get_fts_daily_stats_for_query tests
 
-@pytest.mark.asyncio
 async def test_get_fts_daily_stats_for_query(repo):
     """Test getting daily FTS stats for a query."""
     sq = SearchQuery(query="test", is_fts=True)
@@ -460,7 +435,6 @@ async def test_get_fts_daily_stats_for_query(repo):
 
 # get_fts_daily_stats_batch tests
 
-@pytest.mark.asyncio
 async def test_get_fts_daily_stats_batch(repo):
     """Test batch FTS daily stats."""
     sq1 = SearchQuery(id=1, query="hello", is_fts=True)
@@ -477,7 +451,6 @@ async def test_get_fts_daily_stats_batch(repo):
     assert 2 in result
 
 
-@pytest.mark.asyncio
 async def test_get_fts_daily_stats_batch_empty(repo):
     """Test batch FTS stats with empty list."""
     result = await repo.get_fts_daily_stats_batch([], days=7)
@@ -486,7 +459,6 @@ async def test_get_fts_daily_stats_batch_empty(repo):
 
 # delete_messages_for_channel tests
 
-@pytest.mark.asyncio
 async def test_delete_messages_for_channel(repo):
     """Test deleting all messages for a channel."""
     await repo.insert_messages_batch([
@@ -502,7 +474,6 @@ async def test_delete_messages_for_channel(repo):
     assert total == 1
 
 
-@pytest.mark.asyncio
 async def test_delete_messages_for_channel_nonexistent(repo):
     """Test deleting messages for non-existent channel."""
     count = await repo.delete_messages_for_channel(999)
@@ -511,7 +482,6 @@ async def test_delete_messages_for_channel_nonexistent(repo):
 
 # get_stats tests
 
-@pytest.mark.asyncio
 async def test_get_stats(repo, channels_repo):
     """Test getting database stats."""
     from src.database.repositories.accounts import AccountsRepository
@@ -534,7 +504,6 @@ async def test_get_stats(repo, channels_repo):
     assert stats["search_queries"] == 1
 
 
-@pytest.mark.asyncio
 async def test_get_stats_empty(repo):
     """Test getting stats from empty database."""
     stats = await repo.get_stats()

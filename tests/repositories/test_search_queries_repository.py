@@ -31,7 +31,6 @@ def make_query(query: str = "test query", **kwargs) -> SearchQuery:
 
 # add tests
 
-@pytest.mark.asyncio
 async def test_add_basic(repo):
     """Test adding a basic search query."""
     sq = make_query("hello world")
@@ -43,7 +42,6 @@ async def test_add_basic(repo):
     assert result.query == "hello world"
 
 
-@pytest.mark.asyncio
 async def test_add_with_all_fields(repo):
     """Test adding query with all fields."""
     sq = SearchQuery(
@@ -71,14 +69,12 @@ async def test_add_with_all_fields(repo):
 
 # get_all tests
 
-@pytest.mark.asyncio
 async def test_get_all_empty(repo):
     """Test getting all queries when none exist."""
     result = await repo.get_all()
     assert result == []
 
 
-@pytest.mark.asyncio
 async def test_get_all_multiple(repo):
     """Test getting all queries."""
     await repo.add(make_query("query1"))
@@ -91,7 +87,6 @@ async def test_get_all_multiple(repo):
     assert queries == {"query1", "query2", "query3"}
 
 
-@pytest.mark.asyncio
 async def test_get_all_active_only(repo):
     """Test getting only active queries."""
     await repo.add(make_query("active1", is_active=True))
@@ -103,7 +98,6 @@ async def test_get_all_active_only(repo):
     assert all(q.is_active for q in result)
 
 
-@pytest.mark.asyncio
 async def test_get_all_ordered_by_id(repo):
     """Test that queries are ordered by id."""
     id1 = await repo.add(make_query("first"))
@@ -118,7 +112,6 @@ async def test_get_all_ordered_by_id(repo):
 
 # get_by_id tests
 
-@pytest.mark.asyncio
 async def test_get_by_id_found(repo):
     """Test getting query by id."""
     sq = make_query("test query")
@@ -129,7 +122,6 @@ async def test_get_by_id_found(repo):
     assert result.query == "test query"
 
 
-@pytest.mark.asyncio
 async def test_get_by_id_not_found(repo):
     """Test getting non-existent query."""
     result = await repo.get_by_id(999)
@@ -138,7 +130,6 @@ async def test_get_by_id_not_found(repo):
 
 # set_active tests
 
-@pytest.mark.asyncio
 async def test_set_active_true(repo):
     """Test activating a query."""
     pk = await repo.add(make_query("test", is_active=False))
@@ -148,7 +139,6 @@ async def test_set_active_true(repo):
     assert result.is_active is True
 
 
-@pytest.mark.asyncio
 async def test_set_active_false(repo):
     """Test deactivating a query."""
     pk = await repo.add(make_query("test", is_active=True))
@@ -160,7 +150,6 @@ async def test_set_active_false(repo):
 
 # update tests
 
-@pytest.mark.asyncio
 async def test_update_query(repo):
     """Test updating a query."""
     pk = await repo.add(make_query("old query"))
@@ -174,7 +163,6 @@ async def test_update_query(repo):
     assert result.interval_minutes == 120
 
 
-@pytest.mark.asyncio
 async def test_update_preserves_id(repo):
     """Test that update preserves the original id."""
     pk = await repo.add(make_query("test"))
@@ -186,7 +174,6 @@ async def test_update_preserves_id(repo):
 
 # delete tests
 
-@pytest.mark.asyncio
 async def test_delete(repo):
     """Test deleting a query."""
     pk = await repo.add(make_query("test"))
@@ -196,7 +183,6 @@ async def test_delete(repo):
     assert result is None
 
 
-@pytest.mark.asyncio
 async def test_delete_cascades_stats(repo):
     """Test that deleting a query also deletes its stats."""
     pk = await repo.add(make_query("test"))
@@ -211,7 +197,6 @@ async def test_delete_cascades_stats(repo):
 
 # record_stat tests
 
-@pytest.mark.asyncio
 async def test_record_stat(repo):
     """Test recording a stat."""
     pk = await repo.add(make_query("test"))
@@ -222,7 +207,6 @@ async def test_record_stat(repo):
     assert stats[0].count == 42
 
 
-@pytest.mark.asyncio
 async def test_record_stat_replaces_same_day(repo):
     """Test that recording stat for same day replaces previous."""
     pk = await repo.add(make_query("test"))
@@ -236,7 +220,6 @@ async def test_record_stat_replaces_same_day(repo):
 
 # get_daily_stats tests
 
-@pytest.mark.asyncio
 async def test_get_daily_stats_empty(repo):
     """Test getting daily stats when none exist."""
     pk = await repo.add(make_query("test"))
@@ -244,7 +227,6 @@ async def test_get_daily_stats_empty(repo):
     assert stats == []
 
 
-@pytest.mark.asyncio
 async def test_get_daily_stats_multiple_days(repo):
     """Test getting stats across multiple days."""
     pk = await repo.add(make_query("test"))
@@ -266,7 +248,6 @@ async def test_get_daily_stats_multiple_days(repo):
     assert counts == {10, 20, 30}
 
 
-@pytest.mark.asyncio
 async def test_get_daily_stats_aggregates_by_day(repo):
     """Test that stats are aggregated by day."""
     pk = await repo.add(make_query("test"))
@@ -288,14 +269,12 @@ async def test_get_daily_stats_aggregates_by_day(repo):
 
 # get_stats_for_all tests
 
-@pytest.mark.asyncio
 async def test_get_stats_for_all_empty(repo):
     """Test getting all stats when none exist."""
     stats = await repo.get_stats_for_all()
     assert stats == {}
 
 
-@pytest.mark.asyncio
 async def test_get_stats_for_all_multiple_queries(repo):
     """Test getting stats for multiple queries."""
     pk1 = await repo.add(make_query("query1"))
@@ -319,7 +298,6 @@ async def test_get_stats_for_all_multiple_queries(repo):
 
 # get_last_recorded_at tests
 
-@pytest.mark.asyncio
 async def test_get_last_recorded_at_none(repo):
     """Test getting last recorded time when no stats exist."""
     pk = await repo.add(make_query("test"))
@@ -327,7 +305,6 @@ async def test_get_last_recorded_at_none(repo):
     assert result is None
 
 
-@pytest.mark.asyncio
 async def test_get_last_recorded_at(repo):
     """Test getting last recorded time."""
     pk = await repo.add(make_query("test"))
@@ -348,14 +325,12 @@ async def test_get_last_recorded_at(repo):
 
 # get_last_recorded_at_all tests
 
-@pytest.mark.asyncio
 async def test_get_last_recorded_at_all_empty(repo):
     """Test getting all last recorded times when no stats exist."""
     result = await repo.get_last_recorded_at_all()
     assert result == {}
 
 
-@pytest.mark.asyncio
 async def test_get_last_recorded_at_all(repo):
     """Test getting last recorded times for all queries."""
     pk1 = await repo.add(make_query("query1"))
@@ -377,14 +352,12 @@ async def test_get_last_recorded_at_all(repo):
 
 # get_notification_queries tests
 
-@pytest.mark.asyncio
 async def test_get_notification_queries_empty(repo):
     """Test getting notification queries when none exist."""
     result = await repo.get_notification_queries()
     assert result == []
 
 
-@pytest.mark.asyncio
 async def test_get_notification_queries(repo):
     """Test getting queries with notify_on_collect."""
     await repo.add(make_query("notify1", notify_on_collect=True))
@@ -397,7 +370,6 @@ async def test_get_notification_queries(repo):
     assert queries == {"notify1", "notify2"}
 
 
-@pytest.mark.asyncio
 async def test_get_notification_queries_active_only(repo):
     """Test that notification queries can filter by active."""
     await repo.add(make_query("active_notify", notify_on_collect=True, is_active=True))
@@ -408,7 +380,6 @@ async def test_get_notification_queries_active_only(repo):
     assert result[0].query == "active_notify"
 
 
-@pytest.mark.asyncio
 async def test_get_notification_queries_all(repo):
     """Test getting all notification queries including inactive."""
     await repo.add(make_query("active_notify", notify_on_collect=True, is_active=True))
@@ -420,13 +391,14 @@ async def test_get_notification_queries_all(repo):
 
 # _row_to_model tests
 
-@pytest.mark.asyncio
 async def test_row_to_model_handles_null_is_fts(repo):
     """Test that null is_fts is handled correctly."""
     # Directly insert with null is_fts
     await repo._db.execute(
-        "INSERT INTO search_queries (query, name, is_regex, is_fts, is_active, notify_on_collect, track_stats, interval_minutes) "
-        "VALUES (?, ?, ?, NULL, ?, ?, ?, ?)",
+        "INSERT INTO search_queries"
+        " (query, name, is_regex, is_fts, is_active,"
+        " notify_on_collect, track_stats, interval_minutes)"
+        " VALUES (?, ?, ?, NULL, ?, ?, ?, ?)",
         ("test", "test", 0, 1, 0, 1, 60),
     )
     await repo._db.commit()
@@ -436,12 +408,14 @@ async def test_row_to_model_handles_null_is_fts(repo):
     assert result[0].is_fts is False  # NULL -> False
 
 
-@pytest.mark.asyncio
 async def test_row_to_model_handles_null_exclude_patterns(repo):
     """Test that null exclude_patterns is handled correctly."""
     await repo._db.execute(
-        "INSERT INTO search_queries (query, name, is_regex, is_fts, is_active, notify_on_collect, track_stats, interval_minutes, exclude_patterns) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL)",
+        "INSERT INTO search_queries"
+        " (query, name, is_regex, is_fts, is_active,"
+        " notify_on_collect, track_stats, interval_minutes,"
+        " exclude_patterns)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL)",
         ("test", "test", 0, 0, 1, 0, 1, 60),
     )
     await repo._db.commit()
@@ -451,7 +425,6 @@ async def test_row_to_model_handles_null_exclude_patterns(repo):
     assert result[0].exclude_patterns == ""
 
 
-@pytest.mark.asyncio
 async def test_row_to_model_created_at(repo):
     """Test that created_at is properly parsed."""
     pk = await repo.add(make_query("test"))

@@ -7,6 +7,27 @@ from src.database.repositories.channels import ChannelsRepository
 from src.database.repositories.filters import FilterRepository, _has_cyrillic_udf
 from src.models import Channel
 
+_INSERT_MSG = (
+    "INSERT INTO messages (channel_id, message_id, text, date)"
+    " VALUES (?, ?, ?, datetime('now'))"
+)
+_INSERT_MSG_NO_TEXT = (
+    "INSERT INTO messages (channel_id, message_id, date)"
+    " VALUES (?, ?, datetime('now'))"
+)
+_INSERT_STATS = (
+    "INSERT INTO channel_stats (channel_id, subscriber_count, collected_at)"
+    " VALUES (?, ?, datetime('now'))"
+)
+_INSERT_STATS_TS = (
+    "INSERT INTO channel_stats (channel_id, subscriber_count, collected_at)"
+    " VALUES (?, ?, ?)"
+)
+_INSERT_STATS_NULL = (
+    "INSERT INTO channel_stats (channel_id, subscriber_count, collected_at)"
+    " VALUES (?, NULL, datetime('now'))"
+)
+
 
 @pytest.fixture
 async def repo(db):
@@ -60,14 +81,12 @@ def test_has_cyrillic_udf_yo():
 
 # fetch_channels_for_analysis tests
 
-@pytest.mark.asyncio
 async def test_fetch_channels_for_analysis_empty(repo, channels_repo):
     """Test fetching when no channels exist."""
     result = await repo.fetch_channels_for_analysis()
     assert result == []
 
 
-@pytest.mark.asyncio
 async def test_fetch_channels_for_analysis_basic(repo, channels_repo):
     """Test fetching channels for analysis."""
     await channels_repo.add_channel(Channel(channel_id=1, title="Channel 1"))
@@ -79,14 +98,13 @@ async def test_fetch_channels_for_analysis_basic(repo, channels_repo):
     assert result[1]["title"] == "Channel 2"
 
 
-@pytest.mark.asyncio
 async def test_fetch_channels_for_analysis_with_messages(repo, channels_repo):
     """Test that message_count is included."""
     await channels_repo.add_channel(Channel(channel_id=1, title="Test"))
 
     # Insert messages
     await repo._db.executemany(
-        "INSERT INTO messages (channel_id, message_id, date) VALUES (?, ?, datetime('now'))",
+        _INSERT_MSG_NO_TEXT,
         [(1, 100), (1, 101), (1, 102)],
     )
     await repo._db.commit()
@@ -96,7 +114,6 @@ async def test_fetch_channels_for_analysis_with_messages(repo, channels_repo):
     assert result[0]["message_count"] == 3
 
 
-@pytest.mark.asyncio
 async def test_fetch_channels_for_analysis_by_id(repo, channels_repo):
     """Test filtering by channel_id."""
     await channels_repo.add_channel(Channel(channel_id=1, title="Channel 1"))
@@ -107,7 +124,6 @@ async def test_fetch_channels_for_analysis_by_id(repo, channels_repo):
     assert result[0]["channel_id"] == 1
 
 
-@pytest.mark.asyncio
 async def test_fetch_channels_for_analysis_nonexistent_id(repo, channels_repo):
     """Test filtering by non-existent channel_id."""
     await channels_repo.add_channel(Channel(channel_id=1, title="Channel 1"))
@@ -118,21 +134,19 @@ async def test_fetch_channels_for_analysis_nonexistent_id(repo, channels_repo):
 
 # fetch_uniqueness_map tests
 
-@pytest.mark.asyncio
 async def test_fetch_uniqueness_map_empty(repo):
     """Test uniqueness map with no messages."""
     result = await repo.fetch_uniqueness_map()
     assert result == {}
 
 
-@pytest.mark.asyncio
 async def test_fetch_uniqueness_map_basic(repo, channels_repo):
     """Test basic uniqueness calculation."""
     await channels_repo.add_channel(Channel(channel_id=1, title="Test"))
 
     # Insert messages with different prefixes
     await repo._db.executemany(
-        "INSERT INTO messages (channel_id, message_id, text, date) VALUES (?, ?, ?, datetime('now'))",
+        _INSERT_MSG,
         [
             (1, 100, "First message here"),
             (1, 101, "Second message here"),  # Same 100-char prefix as 100
@@ -151,13 +165,12 @@ async def test_fetch_uniqueness_map_basic(repo, channels_repo):
     assert unique >= 1
 
 
-@pytest.mark.asyncio
 async def test_fetch_uniqueness_map_excludes_null_text(repo, channels_repo):
     """Test that NULL text is excluded."""
     await channels_repo.add_channel(Channel(channel_id=1, title="Test"))
 
     await repo._db.executemany(
-        "INSERT INTO messages (channel_id, message_id, text, date) VALUES (?, ?, ?, datetime('now'))",
+        _INSERT_MSG,
         [
             (1, 100, "Valid text"),
             (1, 101, None),
@@ -169,14 +182,13 @@ async def test_fetch_uniqueness_map_excludes_null_text(repo, channels_repo):
     assert result[1][0] == 1  # Only 1 message counted
 
 
-@pytest.mark.asyncio
 async def test_fetch_uniqueness_map_by_channel(repo, channels_repo):
     """Test filtering by channel_id."""
     await channels_repo.add_channel(Channel(channel_id=1, title="Test"))
     await channels_repo.add_channel(Channel(channel_id=2, title="Test 2"))
 
     await repo._db.executemany(
-        "INSERT INTO messages (channel_id, message_id, text, date) VALUES (?, ?, ?, datetime('now'))",
+        _INSERT_MSG,
         [(1, 100, "Message from channel 1"), (2, 100, "Message from channel 2")],
     )
     await repo._db.commit()
@@ -188,20 +200,18 @@ async def test_fetch_uniqueness_map_by_channel(repo, channels_repo):
 
 # fetch_subscriber_map tests
 
-@pytest.mark.asyncio
 async def test_fetch_subscriber_map_empty(repo):
     """Test subscriber map with no stats."""
     result = await repo.fetch_subscriber_map()
     assert result == {}
 
 
-@pytest.mark.asyncio
 async def test_fetch_subscriber_map_basic(repo, channels_repo):
     """Test basic subscriber map."""
     await channels_repo.add_channel(Channel(channel_id=1, title="Test"))
 
     await repo._db.execute(
-        "INSERT INTO channel_stats (channel_id, subscriber_count, collected_at) VALUES (?, ?, datetime('now'))",
+        _INSERT_STATS,
         (1, 1000),
     )
     await repo._db.commit()
@@ -210,14 +220,13 @@ async def test_fetch_subscriber_map_basic(repo, channels_repo):
     assert result[1] == 1000
 
 
-@pytest.mark.asyncio
 async def test_fetch_subscriber_map_latest_only(repo, channels_repo):
     """Test that only the latest subscriber count is returned."""
     await channels_repo.add_channel(Channel(channel_id=1, title="Test"))
 
     # Insert multiple stats with different timestamps
     await repo._db.executemany(
-        "INSERT INTO channel_stats (channel_id, subscriber_count, collected_at) VALUES (?, ?, ?)",
+        _INSERT_STATS_TS,
         [
             (1, 1000, "2026-03-10 12:00:00"),
             (1, 1500, "2026-03-15 12:00:00"),
@@ -230,13 +239,12 @@ async def test_fetch_subscriber_map_latest_only(repo, channels_repo):
     assert result[1] == 1500  # Latest
 
 
-@pytest.mark.asyncio
 async def test_fetch_subscriber_map_excludes_null(repo, channels_repo):
     """Test that NULL subscriber_count is excluded."""
     await channels_repo.add_channel(Channel(channel_id=1, title="Test"))
 
     await repo._db.execute(
-        "INSERT INTO channel_stats (channel_id, subscriber_count, collected_at) VALUES (?, NULL, datetime('now'))",
+        _INSERT_STATS_NULL,
         (1,),
     )
     await repo._db.commit()
@@ -245,14 +253,13 @@ async def test_fetch_subscriber_map_excludes_null(repo, channels_repo):
     assert 1 not in result
 
 
-@pytest.mark.asyncio
 async def test_fetch_subscriber_map_by_channel(repo, channels_repo):
     """Test filtering by channel_id."""
     await channels_repo.add_channel(Channel(channel_id=1, title="Test"))
     await channels_repo.add_channel(Channel(channel_id=2, title="Test 2"))
 
     await repo._db.executemany(
-        "INSERT INTO channel_stats (channel_id, subscriber_count, collected_at) VALUES (?, ?, datetime('now'))",
+        _INSERT_STATS,
         [(1, 1000), (2, 2000)],
     )
     await repo._db.commit()
@@ -263,20 +270,18 @@ async def test_fetch_subscriber_map_by_channel(repo, channels_repo):
 
 # fetch_short_message_map tests
 
-@pytest.mark.asyncio
 async def test_fetch_short_message_map_empty(repo):
     """Test short message map with no messages."""
     result = await repo.fetch_short_message_map()
     assert result == {}
 
 
-@pytest.mark.asyncio
 async def test_fetch_short_message_map_basic(repo, channels_repo):
     """Test basic short message counting."""
     await channels_repo.add_channel(Channel(channel_id=1, title="Test"))
 
     await repo._db.executemany(
-        "INSERT INTO messages (channel_id, message_id, text, date) VALUES (?, ?, ?, datetime('now'))",
+        _INSERT_MSG,
         [
             (1, 100, "Short"),      # 5 chars <= 10
             (1, 101, "Long message that is definitely more than ten characters"),
@@ -291,13 +296,12 @@ async def test_fetch_short_message_map_basic(repo, channels_repo):
     assert short == 2
 
 
-@pytest.mark.asyncio
 async def test_fetch_short_message_map_null_text(repo, channels_repo):
     """Test handling of NULL text."""
     await channels_repo.add_channel(Channel(channel_id=1, title="Test"))
 
     await repo._db.executemany(
-        "INSERT INTO messages (channel_id, message_id, text, date) VALUES (?, ?, ?, datetime('now'))",
+        _INSERT_MSG,
         [
             (1, 100, "Short"),
             (1, 101, None),
@@ -311,14 +315,13 @@ async def test_fetch_short_message_map_null_text(repo, channels_repo):
     assert short == 1  # NULL is not counted as short
 
 
-@pytest.mark.asyncio
 async def test_fetch_short_message_map_by_channel(repo, channels_repo):
     """Test filtering by channel_id."""
     await channels_repo.add_channel(Channel(channel_id=1, title="Test"))
     await channels_repo.add_channel(Channel(channel_id=2, title="Test 2"))
 
     await repo._db.executemany(
-        "INSERT INTO messages (channel_id, message_id, text, date) VALUES (?, ?, ?, datetime('now'))",
+        _INSERT_MSG,
         [(1, 100, "Short"), (2, 100, "Short")],
     )
     await repo._db.commit()
@@ -330,21 +333,19 @@ async def test_fetch_short_message_map_by_channel(repo, channels_repo):
 
 # count_matching_prefixes_in_other_channels tests
 
-@pytest.mark.asyncio
 async def test_count_matching_prefixes_empty_list(repo):
     """Test with empty prefixes list."""
     result = await repo.count_matching_prefixes_in_other_channels(1, [])
     assert result == 0
 
 
-@pytest.mark.asyncio
 async def test_count_matching_prefixes_no_matches(repo, channels_repo):
     """Test with no matching prefixes."""
     await channels_repo.add_channel(Channel(channel_id=1, title="Test"))
     await channels_repo.add_channel(Channel(channel_id=2, title="Test 2"))
 
     await repo._db.executemany(
-        "INSERT INTO messages (channel_id, message_id, text, date) VALUES (?, ?, ?, datetime('now'))",
+        _INSERT_MSG,
         [(2, 100, "Completely different text")],
     )
     await repo._db.commit()
@@ -355,7 +356,6 @@ async def test_count_matching_prefixes_no_matches(repo, channels_repo):
     assert result == 0
 
 
-@pytest.mark.asyncio
 async def test_count_matching_prefixes_with_matches(repo, channels_repo):
     """Test with matching prefixes."""
     await channels_repo.add_channel(Channel(channel_id=1, title="Test"))
@@ -363,7 +363,7 @@ async def test_count_matching_prefixes_with_matches(repo, channels_repo):
 
     prefix = "Same prefix message"
     await repo._db.executemany(
-        "INSERT INTO messages (channel_id, message_id, text, date) VALUES (?, ?, ?, datetime('now'))",
+        _INSERT_MSG,
         [
             (1, 100, prefix),
             (2, 100, prefix),  # Same prefix in other channel
@@ -375,14 +375,13 @@ async def test_count_matching_prefixes_with_matches(repo, channels_repo):
     assert result == 1
 
 
-@pytest.mark.asyncio
 async def test_count_matching_prefixes_multiple(repo, channels_repo):
     """Test with multiple matching prefixes."""
     await channels_repo.add_channel(Channel(channel_id=1, title="Test"))
     await channels_repo.add_channel(Channel(channel_id=2, title="Test 2"))
 
     await repo._db.executemany(
-        "INSERT INTO messages (channel_id, message_id, text, date) VALUES (?, ?, ?, datetime('now'))",
+        _INSERT_MSG,
         [
             (2, 100, "Prefix one message"),
             (2, 101, "Prefix two message"),
@@ -399,20 +398,18 @@ async def test_count_matching_prefixes_multiple(repo, channels_repo):
 
 # fetch_cross_dupe_map tests
 
-@pytest.mark.asyncio
 async def test_fetch_cross_dupe_map_empty(repo):
     """Test cross dupe map with no messages."""
     result = await repo.fetch_cross_dupe_map()
     assert result == {}
 
 
-@pytest.mark.asyncio
 async def test_fetch_cross_dupe_map_no_dupes(repo, channels_repo):
     """Test with no cross-channel duplicates."""
     await channels_repo.add_channel(Channel(channel_id=1, title="Test"))
 
     await repo._db.executemany(
-        "INSERT INTO messages (channel_id, message_id, text, date) VALUES (?, ?, ?, datetime('now'))",
+        _INSERT_MSG,
         [
             (1, 100, "Unique message one"),
             (1, 101, "Unique message two"),
@@ -426,7 +423,6 @@ async def test_fetch_cross_dupe_map_no_dupes(repo, channels_repo):
     assert duped == 0
 
 
-@pytest.mark.asyncio
 async def test_fetch_cross_dupe_map_with_dupes(repo, channels_repo):
     """Test with cross-channel duplicates."""
     await channels_repo.add_channel(Channel(channel_id=1, title="Test"))
@@ -435,7 +431,7 @@ async def test_fetch_cross_dupe_map_with_dupes(repo, channels_repo):
     # Same message in both channels (longer than 10 chars)
     shared_text = "This is a shared message between channels"
     await repo._db.executemany(
-        "INSERT INTO messages (channel_id, message_id, text, date) VALUES (?, ?, ?, datetime('now'))",
+        _INSERT_MSG,
         [
             (1, 100, shared_text),
             (2, 100, shared_text),
@@ -450,14 +446,13 @@ async def test_fetch_cross_dupe_map_with_dupes(repo, channels_repo):
     assert duped == 1  # 1 is duplicated in another channel
 
 
-@pytest.mark.asyncio
 async def test_fetch_cross_dupe_map_excludes_short(repo, channels_repo):
     """Test that short messages (<=10 chars) are excluded."""
     await channels_repo.add_channel(Channel(channel_id=1, title="Test"))
     await channels_repo.add_channel(Channel(channel_id=2, title="Test 2"))
 
     await repo._db.executemany(
-        "INSERT INTO messages (channel_id, message_id, text, date) VALUES (?, ?, ?, datetime('now'))",
+        _INSERT_MSG,
         [
             (1, 100, "Short"),  # <= 10 chars, excluded
             (2, 100, "Short"),
@@ -469,14 +464,13 @@ async def test_fetch_cross_dupe_map_excludes_short(repo, channels_repo):
     assert result == {}  # No messages > 10 chars
 
 
-@pytest.mark.asyncio
 async def test_fetch_cross_dupe_map_by_channel(repo, channels_repo):
     """Test filtering by channel_id."""
     await channels_repo.add_channel(Channel(channel_id=1, title="Test"))
     await channels_repo.add_channel(Channel(channel_id=2, title="Test 2"))
 
     await repo._db.executemany(
-        "INSERT INTO messages (channel_id, message_id, text, date) VALUES (?, ?, ?, datetime('now'))",
+        _INSERT_MSG,
         [
             (1, 100, "Long message from channel 1"),
             (2, 100, "Long message from channel 2"),
@@ -491,20 +485,18 @@ async def test_fetch_cross_dupe_map_by_channel(repo, channels_repo):
 
 # fetch_cyrillic_map tests
 
-@pytest.mark.asyncio
 async def test_fetch_cyrillic_map_empty(repo):
     """Test cyrillic map with no messages."""
     result = await repo.fetch_cyrillic_map()
     assert result == {}
 
 
-@pytest.mark.asyncio
 async def test_fetch_cyrillic_map_basic(repo, channels_repo):
     """Test basic cyrillic counting."""
     await channels_repo.add_channel(Channel(channel_id=1, title="Test"))
 
     await repo._db.executemany(
-        "INSERT INTO messages (channel_id, message_id, text, date) VALUES (?, ?, ?, datetime('now'))",
+        _INSERT_MSG,
         [
             (1, 100, "English text"),
             (1, 101, "Русский текст"),
@@ -519,13 +511,12 @@ async def test_fetch_cyrillic_map_basic(repo, channels_repo):
     assert cyr == 2  # 2 messages have cyrillic
 
 
-@pytest.mark.asyncio
 async def test_fetch_cyrillic_map_excludes_null_empty(repo, channels_repo):
     """Test that NULL and empty text are excluded."""
     await channels_repo.add_channel(Channel(channel_id=1, title="Test"))
 
     await repo._db.executemany(
-        "INSERT INTO messages (channel_id, message_id, text, date) VALUES (?, ?, ?, datetime('now'))",
+        _INSERT_MSG,
         [
             (1, 100, "Valid text"),
             (1, 101, None),
@@ -539,14 +530,13 @@ async def test_fetch_cyrillic_map_excludes_null_empty(repo, channels_repo):
     assert total == 1  # Only non-null, non-empty counted
 
 
-@pytest.mark.asyncio
 async def test_fetch_cyrillic_map_by_channel(repo, channels_repo):
     """Test filtering by channel_id."""
     await channels_repo.add_channel(Channel(channel_id=1, title="Test"))
     await channels_repo.add_channel(Channel(channel_id=2, title="Test 2"))
 
     await repo._db.executemany(
-        "INSERT INTO messages (channel_id, message_id, text, date) VALUES (?, ?, ?, datetime('now'))",
+        _INSERT_MSG,
         [
             (1, 100, "Текст на русском"),
             (2, 100, "English text"),
@@ -559,13 +549,12 @@ async def test_fetch_cyrillic_map_by_channel(repo, channels_repo):
     assert 2 not in result
 
 
-@pytest.mark.asyncio
 async def test_fetch_cyrillic_map_udf_registered(repo, channels_repo):
     """Test that UDF is registered on first call."""
     await channels_repo.add_channel(Channel(channel_id=1, title="Test"))
 
     await repo._db.execute(
-        "INSERT INTO messages (channel_id, message_id, text, date) VALUES (?, ?, ?, datetime('now'))",
+        _INSERT_MSG,
         (1, 100, "Test"),
     )
     await repo._db.commit()

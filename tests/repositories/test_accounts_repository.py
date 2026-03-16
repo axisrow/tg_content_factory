@@ -35,7 +35,6 @@ def make_account(phone: str, session: str = "session_string_123", **kwargs) -> A
 
 # add_account tests
 
-@pytest.mark.asyncio
 async def test_add_account_insert(repo):
     """Test inserting a new account."""
     account = make_account("+1234567890")
@@ -47,14 +46,13 @@ async def test_add_account_insert(repo):
     assert accounts[0].phone == "+1234567890"
 
 
-@pytest.mark.asyncio
 async def test_add_account_upsert_on_conflict(repo):
     """Test that add_account updates existing account on phone conflict."""
     account1 = make_account("+1234567890", is_active=True)
     await repo.add_account(account1)
 
     account2 = make_account("+1234567890", is_active=False, is_premium=True)
-    pk = await repo.add_account(account2)
+    await repo.add_account(account2)
 
     accounts = await repo.get_accounts()
     assert len(accounts) == 1
@@ -62,7 +60,6 @@ async def test_add_account_upsert_on_conflict(repo):
     assert accounts[0].is_premium is True
 
 
-@pytest.mark.asyncio
 async def test_add_account_with_cipher_encrypts_session(repo_with_cipher, cipher):
     """Test that session is encrypted when cipher is provided."""
     account = make_account("+1234567890", session="plaintext_session")
@@ -79,14 +76,12 @@ async def test_add_account_with_cipher_encrypts_session(repo_with_cipher, cipher
 
 # get_accounts tests
 
-@pytest.mark.asyncio
 async def test_get_accounts_empty(repo):
     """Test getting accounts when none exist."""
     accounts = await repo.get_accounts()
     assert accounts == []
 
 
-@pytest.mark.asyncio
 async def test_get_accounts_active_only(repo):
     """Test filtering by active_only."""
     await repo.add_account(make_account("+1111111111", is_active=True))
@@ -102,7 +97,6 @@ async def test_get_accounts_active_only(repo):
     assert phones == {"+1111111111", "+3333333333"}
 
 
-@pytest.mark.asyncio
 async def test_get_accounts_ordering(repo):
     """Test that accounts are ordered by is_primary DESC, id ASC."""
     await repo.add_account(make_account("+1111111111", is_primary=False))
@@ -115,7 +109,6 @@ async def test_get_accounts_ordering(repo):
     assert accounts[2].phone == "+3333333333"
 
 
-@pytest.mark.asyncio
 async def test_get_accounts_decrypts_sessions(repo_with_cipher, cipher):
     """Test that get_accounts decrypts encrypted sessions."""
     await repo_with_cipher.add_account(make_account("+1234567890", session="my_secret"))
@@ -125,7 +118,6 @@ async def test_get_accounts_decrypts_sessions(repo_with_cipher, cipher):
     assert accounts[0].session_string == "my_secret"
 
 
-@pytest.mark.asyncio
 async def test_get_accounts_handles_plaintext_when_cipher_set(repo_with_cipher):
     """Test that plaintext sessions work when cipher is configured."""
     # Insert plaintext directly
@@ -142,7 +134,6 @@ async def test_get_accounts_handles_plaintext_when_cipher_set(repo_with_cipher):
 
 # update_account_flood tests
 
-@pytest.mark.asyncio
 async def test_update_account_flood_set(repo):
     """Test setting flood_wait_until."""
     await repo.add_account(make_account("+1234567890"))
@@ -153,7 +144,6 @@ async def test_update_account_flood_set(repo):
     assert accounts[0].flood_wait_until == until
 
 
-@pytest.mark.asyncio
 async def test_update_account_flood_clear(repo):
     """Test clearing flood_wait_until."""
     await repo.add_account(make_account("+1234567890"))
@@ -169,7 +159,6 @@ async def test_update_account_flood_clear(repo):
 
 # update_account_premium tests
 
-@pytest.mark.asyncio
 async def test_update_account_premium_set_true(repo):
     """Test setting is_premium to True."""
     await repo.add_account(make_account("+1234567890", is_premium=False))
@@ -179,7 +168,6 @@ async def test_update_account_premium_set_true(repo):
     assert accounts[0].is_premium is True
 
 
-@pytest.mark.asyncio
 async def test_update_account_premium_set_false(repo):
     """Test setting is_premium to False."""
     await repo.add_account(make_account("+1234567890", is_premium=True))
@@ -191,7 +179,6 @@ async def test_update_account_premium_set_false(repo):
 
 # set_account_active tests
 
-@pytest.mark.asyncio
 async def test_set_account_active_deactivate(repo):
     """Test deactivating an account."""
     await repo.add_account(make_account("+1234567890", is_active=True))
@@ -204,7 +191,6 @@ async def test_set_account_active_deactivate(repo):
     assert accounts[0].is_active is False
 
 
-@pytest.mark.asyncio
 async def test_set_account_active_activate(repo):
     """Test activating an account."""
     await repo.add_account(make_account("+1234567890", is_active=False))
@@ -219,7 +205,6 @@ async def test_set_account_active_activate(repo):
 
 # delete_account tests
 
-@pytest.mark.asyncio
 async def test_delete_account(repo):
     """Test deleting an account."""
     await repo.add_account(make_account("+1234567890"))
@@ -232,7 +217,6 @@ async def test_delete_account(repo):
     assert len(accounts) == 0
 
 
-@pytest.mark.asyncio
 async def test_delete_account_nonexistent(repo):
     """Test deleting non-existent account does not raise."""
     await repo.delete_account(999)  # Should not raise
@@ -240,7 +224,6 @@ async def test_delete_account_nonexistent(repo):
 
 # migrate_sessions tests
 
-@pytest.mark.asyncio
 async def test_migrate_sessions_no_cipher(repo):
     """Test migrate_sessions returns 0 when no cipher is configured."""
     await repo.add_account(make_account("+1234567890", session="plaintext"))
@@ -248,7 +231,6 @@ async def test_migrate_sessions_no_cipher(repo):
     assert count == 0
 
 
-@pytest.mark.asyncio
 async def test_migrate_sessions_plaintext_to_encrypted(repo_with_cipher, cipher):
     """Test migrating plaintext sessions to encrypted."""
     # Insert plaintext directly
@@ -269,7 +251,6 @@ async def test_migrate_sessions_plaintext_to_encrypted(repo_with_cipher, cipher)
     assert cipher.is_encrypted(row["session_string"])
 
 
-@pytest.mark.asyncio
 async def test_migrate_sessions_already_encrypted_v2(repo_with_cipher, cipher):
     """Test that already encrypted v2 sessions are not re-encrypted."""
     encrypted = cipher.encrypt("already_encrypted")
@@ -290,13 +271,13 @@ async def test_migrate_sessions_already_encrypted_v2(repo_with_cipher, cipher):
     assert row["session_string"] == encrypted
 
 
-@pytest.mark.asyncio
 async def test_migrate_sessions_v1_to_v2(repo_with_cipher, cipher):
     """Test migrating v1 encrypted sessions to v2."""
     # Create v1 encrypted value manually
-    from src.security.session_cipher import _derive_fernet_key_v1
+
     from cryptography.fernet import Fernet
-    import base64
+
+    from src.security.session_cipher import _derive_fernet_key_v1
 
     fernet_v1 = Fernet(_derive_fernet_key_v1("test-secret-key-12345"))
     v1_token = fernet_v1.encrypt(b"session_data").decode("ascii")
@@ -319,62 +300,32 @@ async def test_migrate_sessions_v1_to_v2(repo_with_cipher, cipher):
     assert row["session_string"].startswith("enc:v2:")
 
 
-@pytest.mark.asyncio
 async def test_migrate_sessions_empty_table(repo_with_cipher):
     """Test migrate_sessions returns 0 when no accounts exist."""
     count = await repo_with_cipher.migrate_sessions()
     assert count == 0
 
 
-@pytest.mark.asyncio
-async def test_get_accounts_decrypts_v1_session():
+async def test_get_accounts_decrypts_v1_session(db):
     """Test that v1 encrypted sessions can be decrypted."""
     secret = "test-secret-key-12345"
     cipher = SessionCipher(secret)
 
-    from src.security.session_cipher import _derive_fernet_key_v1
     from cryptography.fernet import Fernet
+
+    from src.security.session_cipher import _derive_fernet_key_v1
 
     fernet_v1 = Fernet(_derive_fernet_key_v1(secret))
     v1_token = fernet_v1.encrypt(b"original_session").decode("ascii")
     v1_encrypted = f"enc:v1:{v1_token}"
 
-    # Need a fresh DB for this test
-    import aiosqlite
-    import tempfile
-    import os
+    await db.db.execute(
+        "INSERT INTO accounts (phone, session_string, is_primary, is_active) VALUES (?, ?, 0, 1)",
+        ("+1234567890", v1_encrypted),
+    )
+    await db.db.commit()
 
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".db") as f:
-        db_path = f.name
-
-    try:
-        db = await aiosqlite.connect(db_path)
-        db.row_factory = aiosqlite.Row
-        await db.executescript("""
-            CREATE TABLE accounts (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                phone TEXT UNIQUE NOT NULL,
-                session_string TEXT NOT NULL,
-                is_primary INTEGER DEFAULT 0,
-                is_active INTEGER DEFAULT 1,
-                is_premium INTEGER DEFAULT 0,
-                flood_wait_until TEXT,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        await db.commit()
-
-        await db.execute(
-            "INSERT INTO accounts (phone, session_string, is_primary, is_active) VALUES (?, ?, 0, 1)",
-            ("+1234567890", v1_encrypted),
-        )
-        await db.commit()
-
-        repo = AccountsRepository(db, session_cipher=cipher)
-        accounts = await repo.get_accounts()
-        assert len(accounts) == 1
-        assert accounts[0].session_string == "original_session"
-
-        await db.close()
-    finally:
-        os.unlink(db_path)
+    repo = AccountsRepository(db.db, session_cipher=cipher)
+    accounts = await repo.get_accounts()
+    assert len(accounts) == 1
+    assert accounts[0].session_string == "original_session"

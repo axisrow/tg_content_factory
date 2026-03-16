@@ -7,7 +7,6 @@ import pytest
 
 from src.database.repositories.collection_tasks import CollectionTasksRepository
 from src.models import (
-    CollectionTask,
     CollectionTaskStatus,
     CollectionTaskType,
     StatsAllTaskPayload,
@@ -85,7 +84,6 @@ def test_serialize_payload_stats_all():
 
 # create_collection_task tests
 
-@pytest.mark.asyncio
 async def test_create_collection_task_basic(repo):
     """Test creating a basic collection task."""
     task_id = await repo.create_collection_task(
@@ -102,7 +100,6 @@ async def test_create_collection_task_basic(repo):
     assert task.status == CollectionTaskStatus.PENDING
 
 
-@pytest.mark.asyncio
 async def test_create_collection_task_with_all_fields(repo):
     """Test creating a task with all optional fields."""
     run_after = datetime(2026, 3, 16, 12, 0, 0, tzinfo=timezone.utc)
@@ -122,7 +119,6 @@ async def test_create_collection_task_with_all_fields(repo):
     assert task.parent_task_id == 99
 
 
-@pytest.mark.asyncio
 async def test_create_collection_task_run_after_normalization(repo):
     """Test that run_after is normalized to UTC."""
     # Create datetime with different timezone
@@ -142,7 +138,6 @@ async def test_create_collection_task_run_after_normalization(repo):
 
 # create_stats_task tests
 
-@pytest.mark.asyncio
 async def test_create_stats_task_basic(repo):
     """Test creating a stats task."""
     payload = StatsAllTaskPayload(channel_ids=[1, 2, 3])
@@ -155,7 +150,6 @@ async def test_create_stats_task_basic(repo):
     assert task.payload.channel_ids == [1, 2, 3]
 
 
-@pytest.mark.asyncio
 async def test_create_stats_task_with_run_after(repo):
     """Test creating a stats task with run_after."""
     run_after = datetime(2026, 3, 16, 12, 0, 0, tzinfo=timezone.utc)
@@ -168,7 +162,6 @@ async def test_create_stats_task_with_run_after(repo):
 
 # update_collection_task_progress tests
 
-@pytest.mark.asyncio
 async def test_update_collection_task_progress(repo):
     """Test updating task progress."""
     task_id = await repo.create_collection_task(1, "Test")
@@ -180,7 +173,6 @@ async def test_update_collection_task_progress(repo):
 
 # update_collection_task tests
 
-@pytest.mark.asyncio
 async def test_update_collection_task_to_running(repo):
     """Test updating task to running status."""
     task_id = await repo.create_collection_task(1, "Test")
@@ -191,7 +183,6 @@ async def test_update_collection_task_to_running(repo):
     assert task.started_at is not None
 
 
-@pytest.mark.asyncio
 async def test_update_collection_task_to_completed(repo):
     """Test updating task to completed status."""
     task_id = await repo.create_collection_task(1, "Test")
@@ -210,7 +201,6 @@ async def test_update_collection_task_to_completed(repo):
     assert task.note == "Done"
 
 
-@pytest.mark.asyncio
 async def test_update_collection_task_to_failed(repo):
     """Test updating task to failed status."""
     task_id = await repo.create_collection_task(1, "Test")
@@ -226,7 +216,6 @@ async def test_update_collection_task_to_failed(repo):
     assert task.completed_at is not None
 
 
-@pytest.mark.asyncio
 async def test_update_collection_task_with_string_status(repo):
     """Test updating task with string status instead of enum."""
     task_id = await repo.create_collection_task(1, "Test")
@@ -238,7 +227,6 @@ async def test_update_collection_task_with_string_status(repo):
 
 # get_collection_task tests
 
-@pytest.mark.asyncio
 async def test_get_collection_task_not_found(repo):
     """Test getting non-existent task."""
     task = await repo.get_collection_task(999)
@@ -247,14 +235,12 @@ async def test_get_collection_task_not_found(repo):
 
 # get_collection_tasks tests
 
-@pytest.mark.asyncio
 async def test_get_collection_tasks_empty(repo):
     """Test getting tasks when none exist."""
     tasks = await repo.get_collection_tasks()
     assert tasks == []
 
 
-@pytest.mark.asyncio
 async def test_get_collection_tasks_ordered(repo):
     """Test that tasks are ordered by id DESC."""
     id1 = await repo.create_collection_task(1, "First")
@@ -269,7 +255,6 @@ async def test_get_collection_tasks_ordered(repo):
     assert tasks[2].id == id1
 
 
-@pytest.mark.asyncio
 async def test_get_collection_tasks_limit(repo):
     """Test that limit is respected."""
     for i in range(10):
@@ -281,14 +266,12 @@ async def test_get_collection_tasks_limit(repo):
 
 # get_active_collection_tasks_for_channel tests
 
-@pytest.mark.asyncio
 async def test_get_active_collection_tasks_for_channel_empty(repo):
     """Test getting active tasks when none exist."""
     tasks = await repo.get_active_collection_tasks_for_channel(12345)
     assert tasks == []
 
 
-@pytest.mark.asyncio
 async def test_get_active_collection_tasks_for_channel(repo):
     """Test getting active tasks for a channel."""
     channel_id = 12345
@@ -304,7 +287,6 @@ async def test_get_active_collection_tasks_for_channel(repo):
     assert tasks[0].id == task_id2
 
 
-@pytest.mark.asyncio
 async def test_get_active_collection_tasks_excludes_other_types(repo):
     """Test that stats tasks are excluded."""
     channel_id = 12345
@@ -317,7 +299,6 @@ async def test_get_active_collection_tasks_excludes_other_types(repo):
 
 # get_channel_ids_with_active_tasks tests
 
-@pytest.mark.asyncio
 async def test_get_channel_ids_with_active_tasks(repo):
     """Test getting channel IDs with active tasks."""
     await repo.create_collection_task(1, "Channel 1")
@@ -332,7 +313,6 @@ async def test_get_channel_ids_with_active_tasks(repo):
     assert ids == {1, 2}
 
 
-@pytest.mark.asyncio
 async def test_get_channel_ids_with_active_tasks_empty(repo):
     """Test getting channel IDs when no active tasks."""
     ids = await repo.get_channel_ids_with_active_tasks()
@@ -341,14 +321,12 @@ async def test_get_channel_ids_with_active_tasks_empty(repo):
 
 # get_active_stats_task tests
 
-@pytest.mark.asyncio
 async def test_get_active_stats_task_none(repo):
     """Test getting active stats task when none exists."""
     task = await repo.get_active_stats_task()
     assert task is None
 
 
-@pytest.mark.asyncio
 async def test_get_active_stats_task(repo):
     """Test getting active stats task."""
     payload = StatsAllTaskPayload(channel_ids=[1, 2])
@@ -359,7 +337,6 @@ async def test_get_active_stats_task(repo):
     assert task.id == task_id
 
 
-@pytest.mark.asyncio
 async def test_get_active_stats_task_excludes_completed(repo):
     """Test that completed stats tasks are not returned."""
     payload = StatsAllTaskPayload(channel_ids=[1, 2])
@@ -372,7 +349,6 @@ async def test_get_active_stats_task_excludes_completed(repo):
 
 # claim_next_due_stats_task tests
 
-@pytest.mark.asyncio
 async def test_claim_next_due_stats_task_none_available(repo):
     """Test claiming when no stats tasks available."""
     now = datetime.now(tz=timezone.utc)
@@ -380,7 +356,6 @@ async def test_claim_next_due_stats_task_none_available(repo):
     assert task is None
 
 
-@pytest.mark.asyncio
 async def test_claim_next_due_stats_task_success(repo):
     """Test successfully claiming a stats task."""
     payload = StatsAllTaskPayload(channel_ids=[1, 2])
@@ -395,7 +370,6 @@ async def test_claim_next_due_stats_task_success(repo):
     assert claimed.started_at is not None
 
 
-@pytest.mark.asyncio
 async def test_claim_next_due_stats_task_respects_run_after(repo):
     """Test that run_after is respected."""
     now = datetime.now(tz=timezone.utc)
@@ -408,7 +382,6 @@ async def test_claim_next_due_stats_task_respects_run_after(repo):
     assert claimed is None
 
 
-@pytest.mark.asyncio
 async def test_claim_next_due_stats_task_run_after_passed(repo):
     """Test claiming task when run_after has passed."""
     now = datetime.now(tz=timezone.utc)
@@ -422,7 +395,6 @@ async def test_claim_next_due_stats_task_run_after_passed(repo):
     assert claimed.id == task_id
 
 
-@pytest.mark.asyncio
 async def test_claim_next_due_stats_task_skips_running(repo):
     """Test that running tasks are not claimed."""
     payload = StatsAllTaskPayload(channel_ids=[1, 2])
@@ -436,7 +408,6 @@ async def test_claim_next_due_stats_task_skips_running(repo):
 
 # create_stats_continuation_task tests
 
-@pytest.mark.asyncio
 async def test_create_stats_continuation_task(repo):
     """Test creating a continuation task."""
     parent_id = await repo.create_stats_task(StatsAllTaskPayload(channel_ids=[1, 2]))
@@ -456,7 +427,6 @@ async def test_create_stats_continuation_task(repo):
 
 # get_pending_channel_tasks tests
 
-@pytest.mark.asyncio
 async def test_get_pending_channel_tasks(repo):
     """Test getting pending channel tasks."""
     id1 = await repo.create_collection_task(1, "Channel 1")
@@ -471,7 +441,6 @@ async def test_get_pending_channel_tasks(repo):
 
 # fail_running_collection_tasks_on_startup tests
 
-@pytest.mark.asyncio
 async def test_fail_running_collection_tasks_on_startup(repo):
     """Test failing running collection tasks."""
     id1 = await repo.create_collection_task(1, "Channel 1")
@@ -490,7 +459,6 @@ async def test_fail_running_collection_tasks_on_startup(repo):
     assert task2.status == CollectionTaskStatus.PENDING
 
 
-@pytest.mark.asyncio
 async def test_fail_running_collection_tasks_excludes_stats(repo):
     """Test that stats tasks are not affected."""
     stats_id = await repo.create_stats_task(StatsAllTaskPayload(channel_ids=[1]))
@@ -505,7 +473,6 @@ async def test_fail_running_collection_tasks_excludes_stats(repo):
 
 # requeue_running_stats_tasks_on_startup tests
 
-@pytest.mark.asyncio
 async def test_requeue_running_stats_tasks_on_startup(repo):
     """Test requeueing running stats tasks."""
     stats_id = await repo.create_stats_task(StatsAllTaskPayload(channel_ids=[1]))
@@ -520,7 +487,6 @@ async def test_requeue_running_stats_tasks_on_startup(repo):
     assert task.started_at is None
 
 
-@pytest.mark.asyncio
 async def test_requeue_running_stats_tasks_excludes_channel_collect(repo):
     """Test that channel collect tasks are not affected."""
     channel_id = await repo.create_collection_task(1, "Channel")
@@ -531,7 +497,6 @@ async def test_requeue_running_stats_tasks_excludes_channel_collect(repo):
     assert count == 0
 
 
-@pytest.mark.asyncio
 async def test_requeue_running_stats_tasks_sets_run_after(repo):
     """Test that run_after is set if not already set."""
     stats_id = await repo.create_stats_task(StatsAllTaskPayload(channel_ids=[1]))
@@ -546,7 +511,6 @@ async def test_requeue_running_stats_tasks_sets_run_after(repo):
 
 # cancel_collection_task tests
 
-@pytest.mark.asyncio
 async def test_cancel_collection_task_pending(repo):
     """Test cancelling a pending task."""
     task_id = await repo.create_collection_task(1, "Test")
@@ -558,7 +522,6 @@ async def test_cancel_collection_task_pending(repo):
     assert task.completed_at is not None
 
 
-@pytest.mark.asyncio
 async def test_cancel_collection_task_running(repo):
     """Test cancelling a running task."""
     task_id = await repo.create_collection_task(1, "Test")
@@ -570,7 +533,6 @@ async def test_cancel_collection_task_running(repo):
     assert task.status == CollectionTaskStatus.CANCELLED
 
 
-@pytest.mark.asyncio
 async def test_cancel_collection_task_completed(repo):
     """Test cancelling a completed task fails."""
     task_id = await repo.create_collection_task(1, "Test")
@@ -579,7 +541,6 @@ async def test_cancel_collection_task_completed(repo):
     assert result is False
 
 
-@pytest.mark.asyncio
 async def test_cancel_collection_task_with_note(repo):
     """Test cancelling with a note."""
     task_id = await repo.create_collection_task(1, "Test")
@@ -589,7 +550,6 @@ async def test_cancel_collection_task_with_note(repo):
     assert task.note == "User requested"
 
 
-@pytest.mark.asyncio
 async def test_cancel_collection_task_not_found(repo):
     """Test cancelling non-existent task."""
     result = await repo.cancel_collection_task(999)
@@ -598,7 +558,6 @@ async def test_cancel_collection_task_not_found(repo):
 
 # _to_task tests
 
-@pytest.mark.asyncio
 async def test_to_task_deserializes_payload(repo):
     """Test that _to_task properly deserializes payload."""
     payload = StatsAllTaskPayload(channel_ids=[1, 2, 3], next_index=5)

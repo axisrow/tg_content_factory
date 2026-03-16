@@ -20,7 +20,6 @@ def make_channel(channel_id: int, title: str = "Test Channel", **kwargs) -> Chan
 
 # add_channel tests
 
-@pytest.mark.asyncio
 async def test_add_channel_insert(repo):
     """Test inserting a new channel."""
     channel = make_channel(12345)
@@ -32,14 +31,13 @@ async def test_add_channel_insert(repo):
     assert channels[0].channel_id == 12345
 
 
-@pytest.mark.asyncio
 async def test_add_channel_upsert_on_conflict(repo):
     """Test that add_channel updates existing channel on channel_id conflict."""
     channel1 = make_channel(12345, title="Original Title", is_active=True)
     await repo.add_channel(channel1)
 
     channel2 = make_channel(12345, title="Updated Title", is_active=False)
-    pk = await repo.add_channel(channel2)
+    await repo.add_channel(channel2)
 
     channels = await repo.get_channels()
     assert len(channels) == 1
@@ -47,7 +45,6 @@ async def test_add_channel_upsert_on_conflict(repo):
     assert channels[0].is_active is False
 
 
-@pytest.mark.asyncio
 async def test_add_channel_with_all_fields(repo):
     """Test inserting channel with all optional fields."""
     channel = make_channel(
@@ -67,14 +64,12 @@ async def test_add_channel_with_all_fields(repo):
 
 # get_channels tests
 
-@pytest.mark.asyncio
 async def test_get_channels_empty(repo):
     """Test getting channels when none exist."""
     channels = await repo.get_channels()
     assert channels == []
 
 
-@pytest.mark.asyncio
 async def test_get_channels_active_only(repo):
     """Test filtering by active_only."""
     await repo.add_channel(make_channel(1, is_active=True))
@@ -90,7 +85,6 @@ async def test_get_channels_active_only(repo):
     assert ids == {1, 3}
 
 
-@pytest.mark.asyncio
 async def test_get_channels_include_filtered(repo):
     """Test filtering by include_filtered."""
     await repo.add_channel(make_channel(1))
@@ -110,7 +104,6 @@ async def test_get_channels_include_filtered(repo):
     assert unfiltered[0].channel_id == 2
 
 
-@pytest.mark.asyncio
 async def test_get_channels_ordering(repo):
     """Test that channels are ordered by id ASC."""
     await repo.add_channel(make_channel(300))
@@ -125,7 +118,6 @@ async def test_get_channels_ordering(repo):
 
 # get_channel_by_pk tests
 
-@pytest.mark.asyncio
 async def test_get_channel_by_pk_found(repo):
     """Test getting channel by primary key."""
     channel = make_channel(12345, title="Test")
@@ -137,7 +129,6 @@ async def test_get_channel_by_pk_found(repo):
     assert result.title == "Test"
 
 
-@pytest.mark.asyncio
 async def test_get_channel_by_pk_not_found(repo):
     """Test getting non-existent channel by pk returns None."""
     result = await repo.get_channel_by_pk(999)
@@ -146,7 +137,6 @@ async def test_get_channel_by_pk_not_found(repo):
 
 # get_channel_by_channel_id tests
 
-@pytest.mark.asyncio
 async def test_get_channel_by_channel_id_found(repo):
     """Test getting channel by channel_id."""
     await repo.add_channel(make_channel(12345, title="Test"))
@@ -156,7 +146,6 @@ async def test_get_channel_by_channel_id_found(repo):
     assert result.title == "Test"
 
 
-@pytest.mark.asyncio
 async def test_get_channel_by_channel_id_not_found(repo):
     """Test getting non-existent channel by channel_id returns None."""
     result = await repo.get_channel_by_channel_id(999)
@@ -165,14 +154,12 @@ async def test_get_channel_by_channel_id_not_found(repo):
 
 # get_channels_with_counts tests
 
-@pytest.mark.asyncio
 async def test_get_channels_with_counts_empty(repo):
     """Test getting channels with counts when none exist."""
     channels = await repo.get_channels_with_counts()
     assert channels == []
 
 
-@pytest.mark.asyncio
 async def test_get_channels_with_counts_no_messages(repo):
     """Test getting channels with counts when no messages exist."""
     await repo.add_channel(make_channel(1))
@@ -183,7 +170,6 @@ async def test_get_channels_with_counts_no_messages(repo):
     assert all(c.message_count == 0 for c in channels)
 
 
-@pytest.mark.asyncio
 async def test_get_channels_with_counts_with_messages(repo):
     """Test getting channels with message counts."""
     await repo.add_channel(make_channel(1))
@@ -203,7 +189,6 @@ async def test_get_channels_with_counts_with_messages(repo):
     assert counts[2] == 1
 
 
-@pytest.mark.asyncio
 async def test_get_channels_with_counts_filters(repo):
     """Test that active_only and include_filtered work with counts."""
     await repo.add_channel(make_channel(1, is_active=True))
@@ -223,7 +208,6 @@ async def test_get_channels_with_counts_filters(repo):
 
 # update_channel_last_id tests
 
-@pytest.mark.asyncio
 async def test_update_channel_last_id(repo):
     """Test updating last_collected_id."""
     await repo.add_channel(make_channel(12345))
@@ -233,7 +217,6 @@ async def test_update_channel_last_id(repo):
     assert channel.last_collected_id == 500
 
 
-@pytest.mark.asyncio
 async def test_update_channel_last_id_overwrites(repo):
     """Test that update_channel_last_id overwrites previous value."""
     await repo.add_channel(make_channel(12345))
@@ -246,7 +229,6 @@ async def test_update_channel_last_id_overwrites(repo):
 
 # set_channel_active tests
 
-@pytest.mark.asyncio
 async def test_set_channel_active_deactivate(repo):
     """Test deactivating a channel."""
     await repo.add_channel(make_channel(1, is_active=True))
@@ -259,7 +241,6 @@ async def test_set_channel_active_deactivate(repo):
     assert channel.is_active is False
 
 
-@pytest.mark.asyncio
 async def test_set_channel_active_activate(repo):
     """Test activating a channel."""
     await repo.add_channel(make_channel(1, is_active=False))
@@ -274,7 +255,6 @@ async def test_set_channel_active_activate(repo):
 
 # set_channel_filtered tests
 
-@pytest.mark.asyncio
 async def test_set_channel_filtered_true(repo):
     """Test marking channel as filtered."""
     await repo.add_channel(make_channel(1))
@@ -288,7 +268,6 @@ async def test_set_channel_filtered_true(repo):
     assert channel.filter_flags == "manual"
 
 
-@pytest.mark.asyncio
 async def test_set_channel_filtered_false(repo):
     """Test unmarking channel as filtered."""
     await repo.add_channel(make_channel(1))
@@ -305,14 +284,12 @@ async def test_set_channel_filtered_false(repo):
 
 # set_filtered_bulk tests
 
-@pytest.mark.asyncio
 async def test_set_filtered_bulk_empty(repo):
     """Test set_filtered_bulk with empty list."""
     count = await repo.set_filtered_bulk([])
     assert count == 0
 
 
-@pytest.mark.asyncio
 async def test_set_filtered_bulk_multiple(repo):
     """Test bulk updating filter flags."""
     await repo.add_channel(make_channel(1))
@@ -337,7 +314,6 @@ async def test_set_filtered_bulk_multiple(repo):
     assert c3.is_filtered is False
 
 
-@pytest.mark.asyncio
 async def test_set_filtered_bulk_nonexistent_channel(repo):
     """Test that nonexistent channels in bulk update don't affect count."""
     updates = [(999, "test_flag")]
@@ -347,7 +323,6 @@ async def test_set_filtered_bulk_nonexistent_channel(repo):
 
 # reset_all_filters tests
 
-@pytest.mark.asyncio
 async def test_reset_all_filters(repo):
     """Test resetting all channel filters."""
     await repo.add_channel(make_channel(1))
@@ -366,7 +341,6 @@ async def test_reset_all_filters(repo):
     assert all(c.filter_flags == "" for c in channels)
 
 
-@pytest.mark.asyncio
 async def test_reset_all_filters_empty(repo):
     """Test resetting filters when no channels exist."""
     count = await repo.reset_all_filters()
@@ -375,7 +349,6 @@ async def test_reset_all_filters_empty(repo):
 
 # update_channel_meta tests
 
-@pytest.mark.asyncio
 async def test_update_channel_meta(repo):
     """Test updating channel metadata."""
     await repo.add_channel(make_channel(1, title="Old Title", username="old_name"))
@@ -386,7 +359,6 @@ async def test_update_channel_meta(repo):
     assert channel.username == "new_name"
 
 
-@pytest.mark.asyncio
 async def test_update_channel_meta_null_values(repo):
     """Test updating channel metadata with None values."""
     await repo.add_channel(make_channel(1, title="Title", username="username"))
@@ -399,7 +371,6 @@ async def test_update_channel_meta_null_values(repo):
 
 # get_forum_topics tests
 
-@pytest.mark.asyncio
 async def test_get_forum_topics_empty(repo):
     """Test getting topics when none exist."""
     await repo.add_channel(make_channel(1))
@@ -407,7 +378,6 @@ async def test_get_forum_topics_empty(repo):
     assert topics == []
 
 
-@pytest.mark.asyncio
 async def test_get_forum_topics(repo):
     """Test getting forum topics."""
     await repo.add_channel(make_channel(1))
@@ -425,7 +395,6 @@ async def test_get_forum_topics(repo):
 
 # upsert_forum_topics tests
 
-@pytest.mark.asyncio
 async def test_upsert_forum_topics_insert(repo):
     """Test inserting forum topics."""
     await repo.add_channel(make_channel(1))
@@ -436,7 +405,6 @@ async def test_upsert_forum_topics_insert(repo):
     assert len(result) == 2
 
 
-@pytest.mark.asyncio
 async def test_upsert_forum_topics_replace(repo):
     """Test that upsert replaces existing topics."""
     await repo.add_channel(make_channel(1))
@@ -452,7 +420,6 @@ async def test_upsert_forum_topics_replace(repo):
     assert topics[0]["id"] == 2
 
 
-@pytest.mark.asyncio
 async def test_upsert_forum_topics_empty_list(repo):
     """Test upserting empty list deletes all topics."""
     await repo.add_channel(make_channel(1))
@@ -469,7 +436,6 @@ async def test_upsert_forum_topics_empty_list(repo):
 
 # delete_channel tests
 
-@pytest.mark.asyncio
 async def test_delete_channel(repo):
     """Test deleting a channel."""
     await repo.add_channel(make_channel(1))
@@ -482,7 +448,6 @@ async def test_delete_channel(repo):
     assert result is None
 
 
-@pytest.mark.asyncio
 async def test_delete_channel_cascades_messages(repo):
     """Test that deleting channel also deletes messages."""
     await repo.add_channel(make_channel(1))
@@ -504,7 +469,6 @@ async def test_delete_channel_cascades_messages(repo):
     assert row["cnt"] == 0
 
 
-@pytest.mark.asyncio
 async def test_delete_channel_cascades_stats(repo):
     """Test that deleting channel also deletes channel_stats."""
     await repo.add_channel(make_channel(1))
@@ -524,7 +488,6 @@ async def test_delete_channel_cascades_stats(repo):
     assert row["cnt"] == 0
 
 
-@pytest.mark.asyncio
 async def test_delete_channel_cascades_forum_topics(repo):
     """Test that deleting channel also deletes forum_topics."""
     await repo.add_channel(make_channel(1))
@@ -543,7 +506,6 @@ async def test_delete_channel_cascades_forum_topics(repo):
     assert row["cnt"] == 0
 
 
-@pytest.mark.asyncio
 async def test_delete_channel_nonexistent(repo):
     """Test deleting non-existent channel does not raise."""
     await repo.delete_channel(999)  # Should not raise
@@ -551,15 +513,10 @@ async def test_delete_channel_nonexistent(repo):
 
 # set_channel_type tests
 
-@pytest.mark.asyncio
 async def test_set_channel_type(repo):
     """Test updating channel type."""
     await repo.add_channel(make_channel(1, channel_type="channel"))
-    await repo._db.execute(
-        "UPDATE channels SET channel_type=? WHERE channel_id=?",
-        ("supergroup", 1),
-    )
-    await repo._db.commit()
+    await repo.set_channel_type(1, "supergroup")
 
     channel = await repo.get_channel_by_channel_id(1)
     assert channel.channel_type == "supergroup"
