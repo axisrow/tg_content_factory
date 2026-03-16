@@ -69,6 +69,26 @@ async def test_get_latest_stats_for_all(db):
     assert latest[-100222].subscriber_count == 300
 
 
+@pytest.mark.asyncio
+async def test_get_previous_subscriber_counts(db):
+    ch1 = Channel(channel_id=-100111, title="Ch1")
+    ch2 = Channel(channel_id=-100222, title="Ch2")
+    await db.add_channel(ch1)
+    await db.add_channel(ch2)
+
+    # ch1 has 2 entries — previous is 100, latest is 200
+    await db.save_channel_stats(ChannelStats(channel_id=-100111, subscriber_count=100))
+    await db.save_channel_stats(ChannelStats(channel_id=-100111, subscriber_count=200))
+    # ch2 has only 1 entry — no previous
+    await db.save_channel_stats(ChannelStats(channel_id=-100222, subscriber_count=300))
+
+    prev = await db.get_previous_subscriber_counts()
+    assert -100111 in prev
+    assert prev[-100111] == 100
+    # ch2 only has one entry, so it must not appear in previous counts
+    assert -100222 not in prev
+
+
 class _AsyncIterMessages:
     def __init__(self, messages):
         self._messages = list(messages)

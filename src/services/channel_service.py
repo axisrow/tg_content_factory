@@ -30,12 +30,13 @@ class ChannelService:
 
     async def list_for_page(
         self, include_filtered: bool = True
-    ) -> tuple[list[Channel], dict]:
+    ) -> tuple[list[Channel], dict, dict]:
         channels = await self._channels.list_channels_with_counts(
             include_filtered=include_filtered
         )
         latest_stats = await self._channels.get_latest_stats_for_all()
-        return channels, latest_stats
+        prev_subscriber_counts = await self._channels.get_previous_subscriber_counts()
+        return channels, latest_stats, prev_subscriber_counts
 
     async def add_by_identifier(self, identifier: str) -> bool:
         info = await self._pool.resolve_channel(identifier.strip())

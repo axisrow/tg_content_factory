@@ -52,12 +52,12 @@ class ChannelStatsRepository:
 
     async def get_latest_stats_for_all(self) -> dict[int, ChannelStats]:
         cur = await self._db.execute(
-            """SELECT cs.* FROM channel_stats cs
-               INNER JOIN (
-                   SELECT channel_id, MAX(collected_at) AS max_date
-                   FROM channel_stats GROUP BY channel_id
-               ) latest ON cs.channel_id = latest.channel_id
-                        AND cs.collected_at = latest.max_date"""
+            """WITH ranked AS (
+                   SELECT *, ROW_NUMBER() OVER (
+                       PARTITION BY channel_id ORDER BY collected_at DESC, id DESC
+                   ) AS rn FROM channel_stats
+               )
+               SELECT * FROM ranked WHERE rn = 1"""
         )
         rows = await cur.fetchall()
         return {
@@ -75,3 +75,21 @@ class ChannelStatsRepository:
             )
             for r in rows
         }
+
+    async def get_previous_subscriber_counts(self) -> dict[int, int | None]:
+        """Return the second-most-recent subscriber count per channel.
+
+        Channels with only one recorded stats entry are not included in the result.
+        """
+        cur = await self._db.execute(
+            """WITH ranked AS (
+                   SELECT channel_id, subscriber_count,
+                          ROW_NUMBER() OVER (
+                              PARTITION BY channel_id ORDER BY collected_at DESC, id DESC
+                          ) AS rn
+                   FROM channel_stats
+               )
+               SELECT channel_id, subscriber_count FROM ranked WHERE rn = 2"""
+        )
+        rows = await cur.fetchall()
+        return {r["channel_id"]: r["subscriber_count"] for r in rows}
