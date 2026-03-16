@@ -7,7 +7,30 @@ import aiosqlite
 logger = logging.getLogger(__name__)
 
 
-async def run_migrations(db: aiosqlite.Connection) -> bool:
+async def _ensure_vec_messages_table(db: aiosqlite.Connection) -> None:
+    cur = await db.execute(
+        "SELECT value FROM settings WHERE key = 'semantic_embedding_dimensions' LIMIT 1"
+    )
+    row = await cur.fetchone()
+    if not row or not row["value"]:
+        return
+    try:
+        dimensions = int(row["value"])
+    except (TypeError, ValueError):
+        logger.warning("Invalid semantic_embedding_dimensions setting %r", row["value"])
+        return
+    await db.execute(
+        f"""
+        CREATE VIRTUAL TABLE IF NOT EXISTS vec_messages USING vec0(
+            message_id INTEGER PRIMARY KEY,
+            embedding FLOAT[{dimensions}] distance_metric=cosine
+        )
+        """
+    )
+    await db.commit()
+
+
+async def run_migrations(db: aiosqlite.Connection, *, vec_available: bool = False) -> bool:
     """Run schema migrations. Returns True if FTS5 is available, False otherwise."""
     cur = await db.execute("PRAGMA table_info(messages)")
     msg_columns = {row["name"] for row in await cur.fetchall()}
@@ -561,5 +584,8 @@ async def run_migrations(db: aiosqlite.Connection) -> bool:
         "CREATE INDEX IF NOT EXISTS idx_messages_collected_at ON messages(collected_at)"
     )
     await db.commit()
+
+    if vec_available:
+        await _ensure_vec_messages_table(db)
 
     return fts_available

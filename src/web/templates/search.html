@@ -36,6 +36,14 @@
             <input class="form-check-input" type="radio" name="mode" id="mode-local" value="local" {{ 'checked' if mode == 'local' else '' }}>
             <label class="form-check-label" for="mode-local">Локальная база</label>
         </div>
+        <div class="form-check form-check-inline" title="Семантический поиск по локальной базе через embeddings и sqlite-vec">
+            <input class="form-check-input" type="radio" name="mode" id="mode-semantic" value="semantic" {{ 'checked' if mode == 'semantic' else '' }}>
+            <label class="form-check-label" for="mode-semantic">Семантический</label>
+        </div>
+        <div class="form-check form-check-inline" title="Гибридный поиск: объединяет FTS5 и семантическое сходство">
+            <input class="form-check-input" type="radio" name="mode" id="mode-hybrid" value="hybrid" {{ 'checked' if mode == 'hybrid' else '' }}>
+            <label class="form-check-label" for="mode-hybrid">Гибридный</label>
+        </div>
         <div class="form-check form-check-inline" title="Поиск по всем чатам и каналам подключённого аккаунта через Telegram API">
             <input class="form-check-input" type="radio" name="mode" id="mode-my-chats" value="my_chats" {{ 'checked' if mode == 'my_chats' else '' }}>
             <label class="form-check-label" for="mode-my-chats">Мои чаты</label>
@@ -177,12 +185,13 @@
 
     function updateState() {
         var mode = document.querySelector('input[name="mode"]:checked').value;
-        var isLocal = (mode === 'local');
-        channelSelect.disabled = (mode !== 'local' && mode !== 'channel');
-        dateFrom.disabled = !isLocal;
-        dateTo.disabled = !isLocal;
-        ftsLabel.style.display = isLocal ? '' : 'none';
-        ftsCheckbox.disabled = !isLocal;
+        var usesLocalDb = (mode === 'local' || mode === 'semantic' || mode === 'hybrid');
+        var supportsFtsToggle = (mode === 'local' || mode === 'hybrid');
+        channelSelect.disabled = !(mode === 'local' || mode === 'semantic' || mode === 'hybrid' || mode === 'channel');
+        dateFrom.disabled = !usesLocalDb;
+        dateTo.disabled = !usesLocalDb;
+        ftsLabel.style.display = supportsFtsToggle ? '' : 'none';
+        ftsCheckbox.disabled = !supportsFtsToggle;
     }
 
     radios.forEach(function(r) {

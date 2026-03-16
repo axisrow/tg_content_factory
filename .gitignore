@@ -44,6 +44,9 @@ pytest-of-*/
 # Claude Code
 .claude/
 
+# Local Copilot instructions overrides
+.github/copilot-instructions.md
+
 # Logs
 *.log
 

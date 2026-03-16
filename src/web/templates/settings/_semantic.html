@@ -1,0 +1,105 @@
+<div class="mb-4">
+    {% if semantic_vec_available %}
+    <div class="alert alert-success mb-3">
+        sqlite-vec доступен. Семантический и гибридный поиск активны.
+    </div>
+    {% else %}
+    <div class="alert alert-warning mb-3">
+        sqlite-vec недоступен. Семантический и гибридный поиск будут показывать ошибку, пока
+        расширение не станет доступно.
+    </div>
+    {% endif %}
+
+    {% if request.query_params.get("indexed") %}
+    <div class="alert alert-info">
+        Проиндексировано сообщений: <strong>{{ request.query_params.get("indexed") }}</strong>
+    </div>
+    {% endif %}
+
+    <dl class="row small mb-0">
+        <dt class="col-sm-4">Индексированных сообщений</dt>
+        <dd class="col-sm-8">{{ semantic_embeddings_count }}</dd>
+        <dt class="col-sm-4">Размерность embeddings</dt>
+        <dd class="col-sm-8">{{ semantic_embedding_dimensions or "—" }}</dd>
+        <dt class="col-sm-4">Последний indexed row id</dt>
+        <dd class="col-sm-8">{{ semantic_last_embedded_id }}</dd>
+    </dl>
+</div>
+
+<form method="post" action="/settings/save-semantic-search" class="mb-4" data-busy>
+    <div class="row g-3">
+        <div class="col-md-4">
+            <label for="semantic_embeddings_provider" class="form-label">Provider</label>
+            <input
+                id="semantic_embeddings_provider"
+                name="semantic_embeddings_provider"
+                class="form-control"
+                value="{{ semantic_embeddings_provider }}"
+                placeholder="openai"
+            >
+        </div>
+        <div class="col-md-8">
+            <label for="semantic_embeddings_model" class="form-label">Embedding model</label>
+            <input
+                id="semantic_embeddings_model"
+                name="semantic_embeddings_model"
+                class="form-control"
+                value="{{ semantic_embeddings_model }}"
+                placeholder="text-embedding-3-small"
+            >
+        </div>
+        <div class="col-md-6">
+            <label for="semantic_embeddings_base_url" class="form-label">Base URL</label>
+            <input
+                id="semantic_embeddings_base_url"
+                name="semantic_embeddings_base_url"
+                class="form-control"
+                value="{{ semantic_embeddings_base_url }}"
+                placeholder="https://api.openai.com/v1"
+            >
+        </div>
+        <div class="col-md-3">
+            <label for="semantic_embeddings_batch_size" class="form-label">Batch size</label>
+            <input
+                type="number"
+                min="1"
+                max="1000"
+                id="semantic_embeddings_batch_size"
+                name="semantic_embeddings_batch_size"
+                class="form-control"
+                value="{{ semantic_embeddings_batch_size }}"
+            >
+        </div>
+        <div class="col-md-3">
+            <label for="semantic_embeddings_api_key" class="form-label">API key</label>
+            <input
+                id="semantic_embeddings_api_key"
+                name="semantic_embeddings_api_key"
+                class="form-control"
+                value="{{ semantic_embeddings_api_key }}"
+                placeholder="optional"
+            >
+        </div>
+    </div>
+    <div class="form-check mt-3">
+        <input class="form-check-input" type="checkbox" value="1" id="semantic_reset_index" name="semantic_reset_index">
+        <label class="form-check-label" for="semantic_reset_index">
+            Сбросить текущий vector index при сохранении
+        </label>
+    </div>
+    <div class="mt-3">
+        <button type="submit" class="btn btn-primary">Сохранить semantic settings</button>
+    </div>
+</form>
+
+<form method="post" action="/settings/semantic-index" data-busy>
+    <div class="form-check mb-3">
+        <input class="form-check-input" type="checkbox" value="1" id="semantic_index_reset" name="semantic_reset_index">
+        <label class="form-check-label" for="semantic_index_reset">
+            Перед запуском пересоздать индекс embeddings
+        </label>
+    </div>
+    <button type="submit" class="btn btn-outline-primary" {% if not semantic_vec_available %}disabled{% endif %}>
+        Запустить индексацию сейчас
+    </button>
+</form>

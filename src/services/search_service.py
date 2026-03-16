@@ -31,6 +31,29 @@ class SearchService:
             return await self._engine.search_my_chats(query, limit=limit)
         if mode == "channel":
             return await self._engine.search_in_channel(channel_id, query, limit=limit)
+        if mode == "semantic":
+            return await self._engine.search_semantic(
+                query=query,
+                channel_id=channel_id,
+                date_from=date_from,
+                date_to=date_to,
+                limit=limit,
+                offset=offset,
+                min_length=min_length,
+                max_length=max_length,
+            )
+        if mode == "hybrid":
+            return await self._engine.search_hybrid(
+                query=query,
+                channel_id=channel_id,
+                date_from=date_from,
+                date_to=date_to,
+                limit=limit,
+                offset=offset,
+                is_fts=is_fts,
+                min_length=min_length,
+                max_length=max_length,
+            )
         return await self._engine.search_local(
             query=query,
             channel_id=channel_id,
