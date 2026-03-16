@@ -72,7 +72,7 @@ class MessagesRepository:
             )
             await self._db.commit()
             inserted = cur.rowcount > 0
-            if inserted and msg.reactions_json:
+            if msg.reactions_json:
                 await self._upsert_reactions(msg.channel_id, msg.message_id, msg.reactions_json)
             return inserted
         except Exception:
@@ -486,7 +486,9 @@ class MessagesRepository:
                 SELECT mr.emoji, SUM(mr.count) AS total
                 FROM message_reactions mr
                 JOIN messages m ON mr.channel_id = m.channel_id AND mr.message_id = m.message_id
-                WHERE m.collected_at >= datetime('now', ?)
+                LEFT JOIN channels c ON m.channel_id = c.channel_id
+                WHERE (c.is_filtered IS NULL OR c.is_filtered = 0)
+                  AND m.collected_at >= datetime('now', ?)
                 GROUP BY mr.emoji
                 ORDER BY total DESC
                 LIMIT ?
@@ -496,9 +498,12 @@ class MessagesRepository:
         else:
             cur = await self._db.execute(
                 """
-                SELECT emoji, SUM(count) AS total
-                FROM message_reactions
-                GROUP BY emoji
+                SELECT mr.emoji, SUM(mr.count) AS total
+                FROM message_reactions mr
+                JOIN messages m ON mr.channel_id = m.channel_id AND mr.message_id = m.message_id
+                LEFT JOIN channels c ON m.channel_id = c.channel_id
+                WHERE (c.is_filtered IS NULL OR c.is_filtered = 0)
+                GROUP BY mr.emoji
                 ORDER BY total DESC
                 LIMIT ?
                 """,
@@ -524,7 +529,7 @@ class MessagesRepository:
         Returns:
             List of :class:`Message` objects ordered by total reactions desc.
         """
-        conditions: list[str] = []
+        conditions: list[str] = ["(c.is_filtered IS NULL OR c.is_filtered = 0)"]
         params: list = []
 
         if channel_id is not None:
@@ -534,7 +539,7 @@ class MessagesRepository:
             conditions.append("m.collected_at >= datetime('now', ?)")
             params.append(f"-{days} days")
 
-        where = " WHERE " + " AND ".join(conditions) if conditions else ""
+        where = " WHERE " + " AND ".join(conditions)
         cur = await self._db.execute(
             f"""
             SELECT m.*, c.title as channel_title, c.username as channel_username,
