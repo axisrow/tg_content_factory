@@ -163,7 +163,13 @@ class ChannelAnalyzer:
         updates = [(cid, ",".join(sorted(flags))) for cid, flags in deduped.items()]
         conn = self._database.db
         assert conn is not None
-        await conn.execute("BEGIN")
+        # Rollback any stale transaction left by a prior interrupted operation
+        # (isolation_level=None means autocommit, so rollback is a no-op when clean).
+        try:
+            await conn.execute("BEGIN")
+        except Exception:
+            await conn.rollback()
+            await conn.execute("BEGIN")
         try:
             await self._database.reset_all_channel_filters(commit=False)
             count = 0
