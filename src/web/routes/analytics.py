@@ -15,6 +15,7 @@ async def analytics_page(
     date_to: str = "",
     limit: int = 50,
 ):
+    limit = limit if limit in (20, 50, 100) else 50
     db = deps.get_db(request)
     df = date_from or None
     dt = date_to or None
