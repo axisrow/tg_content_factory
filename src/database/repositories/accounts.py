@@ -99,20 +99,24 @@ class AccountsRepository:
                 # If plaintext is still in DB, use it as-is (migrate_sessions
                 # should have been called during initialize).
 
-            accounts.append(Account(
-                id=row["id"],
-                phone=row["phone"],
-                session_string=session_string,
-                is_primary=bool(row["is_primary"]),
-                is_active=bool(row["is_active"]),
-                is_premium=bool(row["is_premium"]) if row["is_premium"] is not None else False,
-                flood_wait_until=(
-                    datetime.fromisoformat(row["flood_wait_until"])
-                    if row["flood_wait_until"]
-                    else None
-                ),
-                created_at=datetime.fromisoformat(row["created_at"]) if row["created_at"] else None,
-            ))
+            accounts.append(
+                Account(
+                    id=row["id"],
+                    phone=row["phone"],
+                    session_string=session_string,
+                    is_primary=bool(row["is_primary"]),
+                    is_active=bool(row["is_active"]),
+                    is_premium=bool(row["is_premium"]) if row["is_premium"] is not None else False,
+                    flood_wait_until=(
+                        datetime.fromisoformat(row["flood_wait_until"])
+                        if row["flood_wait_until"]
+                        else None
+                    ),
+                    created_at=(
+                        datetime.fromisoformat(row["created_at"]) if row["created_at"] else None
+                    ),
+                )
+            )
 
         return accounts
 

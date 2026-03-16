@@ -60,9 +60,7 @@ class NotificationMatcher:
         for sq_id, (name, count, preview) in matches.items():
             result[sq_id] = count
             if count == 1:
-                await self._notifier.notify(
-                    f"Query '{name}' matched in channel:\n{preview}"
-                )
+                await self._notifier.notify(f"Query '{name}' matched in channel:\n{preview}")
             else:
                 await self._notifier.notify(
                     f"Query '{name}' matched {count} times. First:\n{preview}"

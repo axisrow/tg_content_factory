@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import importlib
 import os
-import asyncio
 from typing import Any, Awaitable, Callable, Dict, Optional
 
 
@@ -15,7 +15,9 @@ def is_langchain_available() -> bool:
         return False
 
 
-def make_langchain_adapter(provider: str, credentials: Optional[Dict[str, str]] = None) -> Callable[..., Awaitable[str]]:
+def make_langchain_adapter(
+    provider: str, credentials: Optional[Dict[str, str]] = None
+) -> Callable[..., Awaitable[str]]:
     """Create a LangChain-backed provider callable for `provider`.
 
     The returned callable has signature:
@@ -67,7 +69,9 @@ def make_langchain_adapter(provider: str, credentials: Optional[Dict[str, str]] 
                 cls = None
 
         if cls is None:
-            raise RuntimeError(f"LangChain adapter for provider '{provider}' is not available in the installed langchain package.")
+            raise RuntimeError(
+                f"LangChain adapter for provider '{provider}' is not available in the installed langchain package."
+            )
 
         # Build constructor kwargs using common names; tolerate differences with fallbacks
         init_kwargs: Dict[str, Any] = {}
@@ -79,7 +83,11 @@ def make_langchain_adapter(provider: str, credentials: Optional[Dict[str, str]] 
             if base_url:
                 init_kwargs["openai_api_base"] = base_url
         elif provider_lower == "ollama":
-            base = credentials.get("base_url") or os.environ.get("OLLAMA_BASE") or os.environ.get("OLLAMA_URL")
+            base = (
+                credentials.get("base_url")
+                or os.environ.get("OLLAMA_BASE")
+                or os.environ.get("OLLAMA_URL")
+            )
             if base:
                 init_kwargs["base_url"] = base
             api_key = credentials.get("api_key") or os.environ.get("OLLAMA_API_KEY")
@@ -103,11 +111,17 @@ def make_langchain_adapter(provider: str, credentials: Optional[Dict[str, str]] 
                 tmp.pop("model_name", None)
                 llm = cls(**tmp)
             except Exception as ex:
-                raise RuntimeError(f"Failed to instantiate LangChain LLM for provider {provider}: {ex}")
+                raise RuntimeError(
+                    f"Failed to instantiate LangChain LLM for provider {provider}: {ex}"
+                )
 
         # Build message payload using schema.HumanMessage when available
         HumanMessage = getattr(schema, "HumanMessage", None)
-        messages = [HumanMessage(content=prompt)] if HumanMessage is not None else [{"role": "user", "content": prompt}]
+        messages = (
+            [HumanMessage(content=prompt)]
+            if HumanMessage is not None
+            else [{"role": "user", "content": prompt}]
+        )
 
         # Prefer async API if available
         if hasattr(llm, "agenerate"):
@@ -118,8 +132,10 @@ def make_langchain_adapter(provider: str, credentials: Optional[Dict[str, str]] 
                 return str(result)
         elif hasattr(llm, "generate"):
             loop = asyncio.get_event_loop()
+
             def sync_call():
                 return llm.generate(messages)
+
             res = await loop.run_in_executor(None, sync_call)
             try:
                 return res.generations[0][0].text

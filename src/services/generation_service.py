@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-import inspect
-from typing import Any, Awaitable, Callable, Dict, Optional, List, AsyncIterator
 from datetime import datetime
+from typing import Any, AsyncIterator, Awaitable, Callable, Dict, List, Optional
 
 from src.agent.prompt_template import DEFAULT_AGENT_PROMPT_TEMPLATE, render_prompt_template
 from src.models import Message, SearchResult
@@ -100,7 +99,7 @@ class GenerationService:
                 temperature=temperature,
                 stream=True,
             )
-        except Exception as exc:
+        except Exception:
             raise
 
         # If it's awaitable (a coroutine), await it to get the concrete result
@@ -122,23 +121,45 @@ class GenerationService:
                 else:
                     delta = str(chunk)
                 buffer += delta
-                yield {"prompt": rendered_prompt, "generated_text": buffer, "delta": delta, "citations": citations}
+                yield {
+                    "prompt": rendered_prompt,
+                    "generated_text": buffer,
+                    "delta": delta,
+                    "citations": citations,
+                }
             return
 
         # If it's a synchronous iterator (list/iter), iterate synchronously
         if hasattr(result, "__iter__") and not isinstance(result, (str, bytes)):
             buffer = ""
             for chunk in result:  # type: ignore
-                delta = str(chunk) if not isinstance(chunk, dict) else (
-                    chunk.get("text") or chunk.get("content") or chunk.get("generated_text") or str(chunk)
+                delta = (
+                    str(chunk)
+                    if not isinstance(chunk, dict)
+                    else (
+                        chunk.get("text")
+                        or chunk.get("content")
+                        or chunk.get("generated_text")
+                        or str(chunk)
+                    )
                 )
                 buffer += delta
-                yield {"prompt": rendered_prompt, "generated_text": buffer, "delta": delta, "citations": citations}
+                yield {
+                    "prompt": rendered_prompt,
+                    "generated_text": buffer,
+                    "delta": delta,
+                    "citations": citations,
+                }
             return
 
         # Otherwise it's a final scalar result
         final_text = str(result)
-        yield {"prompt": rendered_prompt, "generated_text": final_text, "delta": final_text, "citations": citations}
+        yield {
+            "prompt": rendered_prompt,
+            "generated_text": final_text,
+            "delta": final_text,
+            "citations": citations,
+        }
 
     async def generate(
         self,
@@ -177,8 +198,18 @@ class GenerationService:
             if last is None:
                 # No output produced
                 messages = await self._collect_context(query, limit=limit)
-                return {"prompt": render_prompt_template(prompt_template, {"source_messages": self._build_source_messages(messages)}), "generated_text": "", "citations": []}
-            return {"prompt": last["prompt"], "generated_text": last["generated_text"], "citations": last.get("citations", [])}
+                return {
+                    "prompt": render_prompt_template(
+                        prompt_template, {"source_messages": self._build_source_messages(messages)}
+                    ),
+                    "generated_text": "",
+                    "citations": [],
+                }
+            return {
+                "prompt": last["prompt"],
+                "generated_text": last["generated_text"],
+                "citations": last.get("citations", []),
+            }
 
         # Non-streaming path (preserve existing behaviour)
         messages = await self._collect_context(query, limit=limit)

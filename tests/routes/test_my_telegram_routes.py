@@ -1,4 +1,5 @@
 """Tests for my_telegram routes."""
+
 from __future__ import annotations
 
 import base64
@@ -49,20 +50,22 @@ async def client(tmp_path):
     }
     pool_mock.resolve_channel = _resolve_channel
     pool_mock.get_dialogs = AsyncMock(return_value=[])
-    pool_mock.get_dialogs_for_phone = AsyncMock(return_value=[
-        {
-            "channel_id": -100111,
-            "title": "Dialog Channel 1",
-            "username": "dialog1",
-            "channel_type": "channel",
-        },
-        {
-            "channel_id": -100222,
-            "title": "Dialog Group",
-            "username": None,
-            "channel_type": "supergroup",
-        },
-    ])
+    pool_mock.get_dialogs_for_phone = AsyncMock(
+        return_value=[
+            {
+                "channel_id": -100111,
+                "title": "Dialog Channel 1",
+                "username": "dialog1",
+                "channel_type": "channel",
+            },
+            {
+                "channel_id": -100222,
+                "title": "Dialog Group",
+                "username": None,
+                "channel_type": "supergroup",
+            },
+        ]
+    )
     pool_mock.leave_channels = AsyncMock(return_value={-100111: True, -100222: True})
     app.state.pool = pool_mock
 
@@ -255,6 +258,7 @@ async def test_leave_dialogs_preserves_phone(client):
 async def test_my_telegram_logs_request(client, caplog):
     """Test my_telegram logs request details."""
     import logging
+
     with caplog.at_level(logging.INFO):
         resp = await client.get("/my-telegram/?phone=%2B1234567890")
         assert resp.status_code == 200
@@ -265,11 +269,13 @@ async def test_my_telegram_shows_already_added(client):
     """Test my_telegram shows already added flag."""
     # Add a channel that matches one of the dialogs
     db = client._transport.app.state.db
-    await db.add_channel(Channel(
-        channel_id=-100111,
-        title="Dialog Channel 1",
-        username="dialog1",
-    ))
+    await db.add_channel(
+        Channel(
+            channel_id=-100111,
+            title="Dialog Channel 1",
+            username="dialog1",
+        )
+    )
 
     resp = await client.get("/my-telegram/?phone=%2B1234567890")
     assert resp.status_code == 200

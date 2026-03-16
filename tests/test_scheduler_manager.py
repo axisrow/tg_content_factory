@@ -72,6 +72,7 @@ async def test_scheduler_start_cleans_stale_scheduler(scheduler_config, mock_bun
     await mgr.start()
     await mgr.stop()
     from apscheduler.schedulers.asyncio import AsyncIOScheduler
+
     stale = AsyncIOScheduler()
     mgr._scheduler = stale
     assert not stale.running
@@ -93,10 +94,13 @@ async def test_scheduler_update_interval(scheduler_config, mock_bundle):
 
 @pytest.mark.asyncio
 async def test_scheduler_trigger_now_with_enqueuer(
-    scheduler_config, mock_bundle, mock_task_enqueuer,
+    scheduler_config,
+    mock_bundle,
+    mock_task_enqueuer,
 ):
     mgr = SchedulerManager(
-        scheduler_config, scheduler_bundle=mock_bundle,
+        scheduler_config,
+        scheduler_bundle=mock_bundle,
         task_enqueuer=mock_task_enqueuer,
     )
     res = await mgr.trigger_now()
@@ -113,10 +117,13 @@ async def test_scheduler_trigger_now_without_enqueuer(scheduler_config, mock_bun
 
 @pytest.mark.asyncio
 async def test_scheduler_trigger_background(
-    scheduler_config, mock_bundle, mock_task_enqueuer,
+    scheduler_config,
+    mock_bundle,
+    mock_task_enqueuer,
 ):
     mgr = SchedulerManager(
-        scheduler_config, scheduler_bundle=mock_bundle,
+        scheduler_config,
+        scheduler_bundle=mock_bundle,
         task_enqueuer=mock_task_enqueuer,
     )
     await mgr.trigger_background()
@@ -126,11 +133,14 @@ async def test_scheduler_trigger_background(
 
 @pytest.mark.asyncio
 async def test_run_collection_failure(
-    scheduler_config, mock_bundle, mock_task_enqueuer,
+    scheduler_config,
+    mock_bundle,
+    mock_task_enqueuer,
 ):
     mock_task_enqueuer.enqueue_all_channels.side_effect = Exception("boom")
     mgr = SchedulerManager(
-        scheduler_config, scheduler_bundle=mock_bundle,
+        scheduler_config,
+        scheduler_bundle=mock_bundle,
         task_enqueuer=mock_task_enqueuer,
     )
     res = await mgr._run_collection()
@@ -139,16 +149,22 @@ async def test_run_collection_failure(
 
 @pytest.mark.asyncio
 async def test_sync_search_query_jobs(
-    scheduler_config, mock_bundle, mock_sq_bundle,
+    scheduler_config,
+    mock_bundle,
+    mock_sq_bundle,
 ):
     sq1 = SearchQuery(
-        id=1, name="q1", query="q1",
-        track_stats=True, interval_minutes=10,
+        id=1,
+        name="q1",
+        query="q1",
+        track_stats=True,
+        interval_minutes=10,
     )
     mock_sq_bundle.get_all.return_value = [sq1]
 
     mgr = SchedulerManager(
-        scheduler_config, scheduler_bundle=mock_bundle,
+        scheduler_config,
+        scheduler_bundle=mock_bundle,
         search_query_bundle=mock_sq_bundle,
     )
     await mgr.start()
@@ -168,10 +184,13 @@ async def test_sync_search_query_jobs(
 
 @pytest.mark.asyncio
 async def test_run_search_query_with_enqueuer(
-    scheduler_config, mock_bundle, mock_task_enqueuer,
+    scheduler_config,
+    mock_bundle,
+    mock_task_enqueuer,
 ):
     mgr = SchedulerManager(
-        scheduler_config, scheduler_bundle=mock_bundle,
+        scheduler_config,
+        scheduler_bundle=mock_bundle,
         task_enqueuer=mock_task_enqueuer,
     )
     await mgr._run_search_query(1)

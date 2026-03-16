@@ -8,7 +8,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 
 from src.config import SchedulerConfig
-from src.database.bundles import SchedulerBundle, SearchQueryBundle, PipelineBundle
+from src.database.bundles import PipelineBundle, SchedulerBundle, SearchQueryBundle
 from src.settings_utils import parse_int_setting
 
 if TYPE_CHECKING:

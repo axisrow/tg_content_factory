@@ -1,4 +1,5 @@
 """Tests for AccountsRepository."""
+
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -34,6 +35,7 @@ def make_account(phone: str, session: str = "session_string_123", **kwargs) -> A
 
 
 # add_account tests
+
 
 async def test_add_account_insert(repo):
     """Test inserting a new account."""
@@ -75,6 +77,7 @@ async def test_add_account_with_cipher_encrypts_session(repo_with_cipher, cipher
 
 
 # get_accounts tests
+
 
 async def test_get_accounts_empty(repo):
     """Test getting accounts when none exist."""
@@ -134,6 +137,7 @@ async def test_get_accounts_handles_plaintext_when_cipher_set(repo_with_cipher):
 
 # update_account_flood tests
 
+
 async def test_update_account_flood_set(repo):
     """Test setting flood_wait_until."""
     await repo.add_account(make_account("+1234567890"))
@@ -159,6 +163,7 @@ async def test_update_account_flood_clear(repo):
 
 # update_account_premium tests
 
+
 async def test_update_account_premium_set_true(repo):
     """Test setting is_premium to True."""
     await repo.add_account(make_account("+1234567890", is_premium=False))
@@ -178,6 +183,7 @@ async def test_update_account_premium_set_false(repo):
 
 
 # set_account_active tests
+
 
 async def test_set_account_active_deactivate(repo):
     """Test deactivating an account."""
@@ -205,6 +211,7 @@ async def test_set_account_active_activate(repo):
 
 # delete_account tests
 
+
 async def test_delete_account(repo):
     """Test deleting an account."""
     await repo.add_account(make_account("+1234567890"))
@@ -223,6 +230,7 @@ async def test_delete_account_nonexistent(repo):
 
 
 # migrate_sessions tests
+
 
 async def test_migrate_sessions_no_cipher(repo):
     """Test migrate_sessions returns 0 when no cipher is configured."""

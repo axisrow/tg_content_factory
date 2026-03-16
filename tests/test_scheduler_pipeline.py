@@ -1,12 +1,12 @@
 import pytest
 
-from src.scheduler.manager import SchedulerManager
 from src.models import (
-    PipelineRunTaskPayload,
     CollectionTask,
-    CollectionTaskType,
     CollectionTaskStatus,
+    CollectionTaskType,
+    PipelineRunTaskPayload,
 )
+from src.scheduler.manager import SchedulerManager
 
 
 class FakePipeline:
@@ -76,14 +76,18 @@ class FakeTasksRepo:
     def __init__(self):
         self.calls = []
 
-    async def update_collection_task(self, task_id, status, messages_collected=None, error=None, note=None):
-        self.calls.append({
-            "task_id": task_id,
-            "status": status,
-            "messages_collected": messages_collected,
-            "error": error,
-            "note": note,
-        })
+    async def update_collection_task(
+        self, task_id, status, messages_collected=None, error=None, note=None
+    ):
+        self.calls.append(
+            {
+                "task_id": task_id,
+                "status": status,
+                "messages_collected": messages_collected,
+                "error": error,
+                "note": note,
+            }
+        )
 
 
 @pytest.mark.asyncio

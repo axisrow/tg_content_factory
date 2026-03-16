@@ -30,8 +30,7 @@ def format_context(
             {
                 "id": m.message_id,
                 "date": m.date.strftime("%Y-%m-%d"),
-                "author": m.sender_name
-                or (f"id={m.sender_id}" if m.sender_id else "unknown"),
+                "author": m.sender_name or (f"id={m.sender_id}" if m.sender_id else "unknown"),
                 "text": (m.text or "").replace("\n", " ")[:_MAX_TEXT_LEN],
             },
             ensure_ascii=False,
@@ -45,9 +44,7 @@ def format_context(
             lines.append(_msg_line(m))
     else:
         # Forum with topics — group by topic
-        sorted_msgs = sorted(
-            messages, key=lambda m: m.topic_id if m.topic_id is not None else -1
-        )
+        sorted_msgs = sorted(messages, key=lambda m: m.topic_id if m.topic_id is not None else -1)
         for tid, group in groupby(sorted_msgs, key=lambda m: m.topic_id):
             if tid is not None and tid in topics_map:
                 lines.append(f"\n## Тема: {topics_map[tid]}")

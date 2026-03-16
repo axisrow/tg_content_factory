@@ -11,13 +11,13 @@ from src.database.repositories.collection_tasks import CollectionTasksRepository
 from src.database.repositories.content_pipelines import ContentPipelinesRepository
 from src.database.repositories.dialog_cache import DialogCacheRepository
 from src.database.repositories.filters import FilterRepository
+from src.database.repositories.generation_runs import GenerationRunsRepository
 from src.database.repositories.messages import MessagesRepository
 from src.database.repositories.notification_bots import NotificationBotsRepository
 from src.database.repositories.photo_loader import PhotoLoaderRepository
 from src.database.repositories.search_log import SearchLogRepository
 from src.database.repositories.search_queries import SearchQueriesRepository
 from src.database.repositories.settings import SettingsRepository
-from src.database.repositories.generation_runs import GenerationRunsRepository
 from src.models import (
     Account,
     Channel,
@@ -37,7 +37,6 @@ from src.models import (
     SearchQuery,
     SearchQueryDailyStat,
     StatsAllTaskPayload,
-    GenerationRun,
 )
 
 if TYPE_CHECKING:
@@ -400,9 +399,7 @@ class CollectionBundle:
     async def set_setting(self, key: str, value: str) -> None:
         await self.settings.set_setting(key, value)
 
-    async def list_notification_queries(
-        self, active_only: bool = True
-    ) -> list[SearchQuery]:
+    async def list_notification_queries(self, active_only: bool = True) -> list[SearchQuery]:
         return await self.search_queries.get_notification_queries(active_only)
 
     async def get_channel_stats(self, channel_id: int, limit: int = 1) -> list[ChannelStats]:
@@ -654,9 +651,7 @@ class SchedulerBundle:
     async def set_setting(self, key: str, value: str) -> None:
         await self.settings.set_setting(key, value)
 
-    async def list_notification_queries(
-        self, active_only: bool = True
-    ) -> list[SearchQuery]:
+    async def list_notification_queries(self, active_only: bool = True) -> list[SearchQuery]:
         return await self.search_queries.get_notification_queries(active_only)
 
     async def get_collection_tasks(self, limit: int = 20) -> list[CollectionTask]:
@@ -705,9 +700,7 @@ class SearchQueryBundle:
     async def record_stat(self, query_id: int, match_count: int) -> None:
         await self.search_queries.record_stat(query_id, match_count)
 
-    async def get_daily_stats(
-        self, query_id: int, days: int = 30
-    ) -> list[SearchQueryDailyStat]:
+    async def get_daily_stats(self, query_id: int, days: int = 30) -> list[SearchQueryDailyStat]:
         return await self.search_queries.get_daily_stats(query_id, days)
 
     async def get_stats_for_all(self, days: int = 30) -> dict[int, list[SearchQueryDailyStat]]:

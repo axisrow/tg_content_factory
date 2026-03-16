@@ -57,9 +57,7 @@ class AISearchEngine:
                 lines = [f"Found {total} results for '{query}'. Top results:"]
                 for m in messages:
                     text_preview = (m.text or "")[:200]
-                    lines.append(
-                        f"- [{m.date}] Channel {m.channel_id}: {text_preview}"
-                    )
+                    lines.append(f"- [{m.date}] Channel {m.channel_id}: {text_preview}")
                 return "\n".join(lines)
 
             model_str = f"{self._config.provider}:{self._config.model}"

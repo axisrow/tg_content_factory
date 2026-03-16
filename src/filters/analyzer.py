@@ -76,11 +76,7 @@ class ChannelAnalyzer:
                 )
                 low_subscriber = raw_ratio < threshold
             manual_subs_flagged = False
-            if (
-                min_subs > 0
-                and subscriber_count is not None
-                and subscriber_count < min_subs
-            ):
+            if min_subs > 0 and subscriber_count is not None and subscriber_count < min_subs:
                 flags.append("low_subscriber_manual")
                 manual_subs_flagged = True
 
@@ -177,9 +173,7 @@ class ChannelAnalyzer:
             await self._database.reset_all_channel_filters(commit=False)
             count = 0
             if updates:
-                count = await self._database.set_channels_filtered_bulk(
-                    updates, commit=False
-                )
+                count = await self._database.set_channels_filtered_bulk(updates, commit=False)
             await conn.commit()
             return count
         except Exception:
@@ -190,7 +184,8 @@ class ChannelAnalyzer:
         """Filter channels by subscriber_count/message_count without Telegram.
         Returns count of newly filtered channels."""
         channels = await self._database.get_channels_with_counts(
-            active_only=True, include_filtered=False,
+            active_only=True,
+            include_filtered=False,
         )
         stats_map = await self._database.get_latest_stats_for_all()
         to_filter: list[tuple[int, str]] = []
@@ -201,7 +196,8 @@ class ChannelAnalyzer:
                 continue
             is_broadcast = channel.channel_type in ("channel", "monoforum")
             threshold = (
-                LOW_SUBSCRIBER_RATIO_THRESHOLD if is_broadcast
+                LOW_SUBSCRIBER_RATIO_THRESHOLD
+                if is_broadcast
                 else LOW_SUBSCRIBER_RATIO_CHAT_THRESHOLD
             )
             if subscriber_count / channel.message_count < threshold:

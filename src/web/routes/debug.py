@@ -12,9 +12,7 @@ router = APIRouter()
 async def debug_page(request: Request):
     log_buffer = deps.get_log_buffer(request)
     records = log_buffer.get_records() if log_buffer is not None else []
-    return deps.get_templates(request).TemplateResponse(
-        request, "debug.html", {"records": records}
-    )
+    return deps.get_templates(request).TemplateResponse(request, "debug.html", {"records": records})
 
 
 @router.get("/logs", response_class=HTMLResponse)

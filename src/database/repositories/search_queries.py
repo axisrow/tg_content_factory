@@ -92,9 +92,7 @@ class SearchQueriesRepository:
         )
         await self._db.commit()
 
-    async def get_daily_stats(
-        self, query_id: int, days: int = 30
-    ) -> list[SearchQueryDailyStat]:
+    async def get_daily_stats(self, query_id: int, days: int = 30) -> list[SearchQueryDailyStat]:
         cur = await self._db.execute(
             """
             SELECT date(recorded_at) AS day, SUM(match_count) AS count
@@ -138,8 +136,7 @@ class SearchQueriesRepository:
 
     async def get_last_recorded_at_all(self) -> dict[int, str]:
         cur = await self._db.execute(
-            "SELECT query_id, MAX(recorded_at) AS last "
-            "FROM search_query_stats GROUP BY query_id"
+            "SELECT query_id, MAX(recorded_at) AS last " "FROM search_query_stats GROUP BY query_id"
         )
         rows = await cur.fetchall()
         return {r["query_id"]: r["last"] for r in rows if r["last"]}

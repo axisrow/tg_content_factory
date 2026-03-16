@@ -38,6 +38,7 @@ def cli_db(tmp_path):
     yield database
     asyncio.run(database.close())
 
+
 @pytest.fixture
 def cli_env(cli_db):
     config = AppConfig()
@@ -59,6 +60,7 @@ def cli_env(cli_db):
     ):
         yield cli_db
 
+
 @pytest.fixture
 def cli_env_with_mock_pool(cli_env):
     mock_pool = AsyncMock()
@@ -74,6 +76,7 @@ def cli_env_with_mock_pool(cli_env):
 
     async def fake_init_pool(config, db):
         from src.telegram.auth import TelegramAuth
+
         return TelegramAuth(0, ""), mock_pool
 
     with patch(
@@ -82,13 +85,17 @@ def cli_env_with_mock_pool(cli_env):
     ):
         yield cli_env, mock_pool
 
+
 class TestCLIChannelExtended:
     def test_add_success(self, cli_env_with_mock_pool, capsys):
         db, pool = cli_env_with_mock_pool
         pool.resolve_channel.return_value = _chan(
-            12345, "New Channel", "new_chan",
+            12345,
+            "New Channel",
+            "new_chan",
         )
         from src.cli.commands.channel import run
+
         run(_ns(channel_action="add", identifier="@new_chan"))
         out = capsys.readouterr().out
         assert "Added channel: New Channel (12345)" in out
@@ -101,9 +108,14 @@ class TestCLIChannelExtended:
     def test_add_deactivated(self, cli_env_with_mock_pool, capsys):
         db, pool = cli_env_with_mock_pool
         pool.resolve_channel.return_value = _chan(
-            67890, "Scam Channel", "scam_chan", "scam", True,
+            67890,
+            "Scam Channel",
+            "scam_chan",
+            "scam",
+            True,
         )
         from src.cli.commands.channel import run
+
         run(_ns(channel_action="add", identifier="@scam_chan"))
         out = capsys.readouterr().out
         assert "WARN: deactivated, type=scam" in out
@@ -119,6 +131,7 @@ class TestCLIChannelExtended:
             _chan(2, "Ch2", "u2"),
         ]
         from src.cli.commands.channel import run
+
         run(_ns(channel_action="import", source="u1, u2"))
         out = capsys.readouterr().out
         assert "Added: 2" in out
@@ -136,6 +149,7 @@ class TestCLIChannelExtended:
             _chan(3, "Ch3", "u3"),
         ]
         from src.cli.commands.channel import run
+
         run(_ns(channel_action="import", source="u1, u2, u3"))
         out = capsys.readouterr().out
         assert "Added: 1" in out
@@ -144,13 +158,18 @@ class TestCLIChannelExtended:
 
     def test_stats_single_success(self, cli_env_with_mock_pool, capsys):
         db, pool = cli_env_with_mock_pool
-        ch_id = asyncio.run(db.add_channel(
-            Channel(channel_id=100, title="StatsChan"),
-        ))
+        ch_id = asyncio.run(
+            db.add_channel(
+                Channel(channel_id=100, title="StatsChan"),
+            )
+        )
 
         mock_stats = ChannelStats(
-            channel_id=100, subscriber_count=500,
-            avg_views=10.5, avg_reactions=2.0, avg_forwards=1.0
+            channel_id=100,
+            subscriber_count=500,
+            avg_views=10.5,
+            avg_reactions=2.0,
+            avg_forwards=1.0,
         )
 
         with patch(
@@ -162,10 +181,14 @@ class TestCLIChannelExtended:
             )
 
             from src.cli.commands.channel import run
-            run(_ns(
-                channel_action="stats",
-                identifier=str(ch_id), all=False,
-            ))
+
+            run(
+                _ns(
+                    channel_action="stats",
+                    identifier=str(ch_id),
+                    all=False,
+                )
+            )
 
         out = capsys.readouterr().out
         assert "Subscribers: 500" in out
@@ -182,6 +205,7 @@ class TestCLIChannelExtended:
             )
 
             from src.cli.commands.channel import run
+
             run(_ns(channel_action="stats", identifier=None, all=True))
 
         out = capsys.readouterr().out
@@ -189,12 +213,26 @@ class TestCLIChannelExtended:
 
     def test_refresh_types_success(self, cli_env_with_mock_pool, capsys):
         db, pool = cli_env_with_mock_pool
-        asyncio.run(db.add_channel(Channel(
-            channel_id=101, title="T1", username="u1", is_active=True,
-        )))
-        asyncio.run(db.add_channel(Channel(
-            channel_id=102, title="T2", username="u2", is_active=True,
-        )))
+        asyncio.run(
+            db.add_channel(
+                Channel(
+                    channel_id=101,
+                    title="T1",
+                    username="u1",
+                    is_active=True,
+                )
+            )
+        )
+        asyncio.run(
+            db.add_channel(
+                Channel(
+                    channel_id=102,
+                    title="T2",
+                    username="u2",
+                    is_active=True,
+                )
+            )
+        )
 
         pool.resolve_channel.side_effect = [
             _chan(101, "T1", "u1", "supergroup"),
@@ -202,6 +240,7 @@ class TestCLIChannelExtended:
         ]
 
         from src.cli.commands.channel import run
+
         run(_ns(channel_action="refresh-types"))
 
         out = capsys.readouterr().out
@@ -217,6 +256,7 @@ class TestCLIChannelExtended:
         db, pool = cli_env_with_mock_pool
         pool.resolve_channel.side_effect = RuntimeError("no_client")
         from src.cli.commands.channel import run
+
         run(_ns(channel_action="add", identifier="@any"))
         out = capsys.readouterr().out
         assert "Нет доступных аккаунтов Telegram" in out
@@ -225,6 +265,7 @@ class TestCLIChannelExtended:
         db, pool = cli_env_with_mock_pool
         pool.resolve_channel.side_effect = Exception("boom")
         from src.cli.commands.channel import run
+
         run(_ns(channel_action="add", identifier="@any"))
         out = capsys.readouterr().out
         assert "Could not resolve channel" in out
@@ -239,6 +280,7 @@ class TestCLIChannelExtended:
             _chan(20, "C2", "chan2"),
         ]
         from src.cli.commands.channel import run
+
         run(_ns(channel_action="import", source=str(import_file)))
         out = capsys.readouterr().out
         assert "Added: 2" in out
@@ -247,55 +289,70 @@ class TestCLIChannelExtended:
         db, pool = cli_env_with_mock_pool
         pool.resolve_channel.side_effect = RuntimeError("no_client")
         from src.cli.commands.channel import run
+
         run(_ns(channel_action="import", source="@any"))
         out = capsys.readouterr().out
         assert "Нет доступных аккаунтов Telegram. Импорт прерван" in out
 
     def test_stats_no_client_available(self, cli_env_with_mock_pool, capsys):
         db, pool = cli_env_with_mock_pool
-        ch_id = asyncio.run(db.add_channel(
-            Channel(channel_id=100, title="StatsChan"),
-        ))
+        ch_id = asyncio.run(
+            db.add_channel(
+                Channel(channel_id=100, title="StatsChan"),
+            )
+        )
         with patch(
             "src.cli.commands.channel.Collector",
         ) as mock_collector:
             inst = mock_collector.return_value
             inst.collect_channel_stats = AsyncMock(return_value=None)
             from src.cli.commands.channel import run
-            run(_ns(
-                channel_action="stats",
-                identifier=str(ch_id), all=False,
-            ))
+
+            run(
+                _ns(
+                    channel_action="stats",
+                    identifier=str(ch_id),
+                    all=False,
+                )
+            )
         out = capsys.readouterr().out
         assert "No client available" in out
 
     def test_refresh_types_resolve_exception(self, cli_env_with_mock_pool, capsys):
         db, pool = cli_env_with_mock_pool
-        asyncio.run(db.add_channel(
-            Channel(channel_id=101, title="T1", is_active=True),
-        ))
+        asyncio.run(
+            db.add_channel(
+                Channel(channel_id=101, title="T1", is_active=True),
+            )
+        )
         pool.resolve_channel.side_effect = Exception("resolve error")
         from src.cli.commands.channel import run
+
         run(_ns(channel_action="refresh-types"))
         out = capsys.readouterr().out
         assert "Skipped: 1" in out
 
     def test_refresh_types_not_found(self, cli_env_with_mock_pool, capsys):
         db, pool = cli_env_with_mock_pool
-        asyncio.run(db.add_channel(
-            Channel(channel_id=101, title="T1", is_active=True),
-        ))
+        asyncio.run(
+            db.add_channel(
+                Channel(channel_id=101, title="T1", is_active=True),
+            )
+        )
         pool.resolve_channel.return_value = False  # Simulation of not found
         from src.cli.commands.channel import run
+
         run(_ns(channel_action="refresh-types"))
         out = capsys.readouterr().out
         assert "DEACTIVATED: T1" in out
 
     def test_collect_success(self, cli_env_with_mock_pool, capsys):
         db, pool = cli_env_with_mock_pool
-        ch_id = asyncio.run(db.add_channel(
-            Channel(channel_id=103, title="CollectMe"),
-        ))
+        ch_id = asyncio.run(
+            db.add_channel(
+                Channel(channel_id=103, title="CollectMe"),
+            )
+        )
 
         with patch(
             "src.cli.commands.channel.Collector",
@@ -304,6 +361,7 @@ class TestCLIChannelExtended:
             inst.collect_single_channel = AsyncMock(return_value=42)
 
             from src.cli.commands.channel import run
+
             run(_ns(channel_action="collect", identifier=str(ch_id)))
 
         out = capsys.readouterr().out
@@ -317,15 +375,21 @@ class TestCLIChannelExtended:
     def test_import_deactivated(self, cli_env_with_mock_pool, capsys):
         db, pool = cli_env_with_mock_pool
         pool.resolve_channel.return_value = _chan(
-            99, "Deactivated", "u99", "scam", True,
+            99,
+            "Deactivated",
+            "u99",
+            "scam",
+            True,
         )
         from src.cli.commands.channel import run
+
         run(_ns(channel_action="import", source="u99"))
         out = capsys.readouterr().out
         assert "WARN (scam): u99" in out
 
     def test_stats_no_identifier_error(self, cli_env_with_mock_pool, capsys):
         from src.cli.commands.channel import run
+
         run(_ns(channel_action="stats", identifier=None, all=False))
         out = capsys.readouterr().out
         assert "Specify a channel identifier or use --all" in out
@@ -333,51 +397,71 @@ class TestCLIChannelExtended:
     def test_stats_not_found(self, cli_env_with_mock_pool, capsys):
         db, pool = cli_env_with_mock_pool
         from src.cli.commands.channel import run
-        run(_ns(
-            channel_action="stats", identifier="999", all=False,
-        ))
+
+        run(
+            _ns(
+                channel_action="stats",
+                identifier="999",
+                all=False,
+            )
+        )
         out = capsys.readouterr().out
         assert "not found" in out
 
     def test_collect_not_found(self, cli_env_with_mock_pool, capsys):
         db, pool = cli_env_with_mock_pool
         from src.cli.commands.channel import run
+
         run(_ns(channel_action="collect", identifier="999"))
         out = capsys.readouterr().out
         assert "not found" in out
 
     def test_refresh_types_prefetch_error(self, cli_env_with_mock_pool, capsys):
         db, pool = cli_env_with_mock_pool
+
         async def _test():
             mock_client, _ = await pool.get_available_client()
             mock_client.get_dialogs.side_effect = Exception(
                 "prefetch failed",
             )
+
         asyncio.run(_test())
 
         from src.cli.commands.channel import run
+
         run(_ns(channel_action="refresh-types"))
         # Should continue even if prefetch fails
         assert "Active channels to check" in capsys.readouterr().out
 
     def test_refresh_types_with_null_type(self, cli_env_with_mock_pool, capsys):
         db, pool = cli_env_with_mock_pool
-        asyncio.run(db.add_channel(Channel(
-            channel_id=105, title="NullType", channel_type=None,
-        )))
+        asyncio.run(
+            db.add_channel(
+                Channel(
+                    channel_id=105,
+                    title="NullType",
+                    channel_type=None,
+                )
+            )
+        )
         pool.resolve_channel.return_value = _chan(
-            105, "NullType", "u105",
+            105,
+            "NullType",
+            "u105",
         )
         from src.cli.commands.channel import run
+
         run(_ns(channel_action="refresh-types"))
         out = capsys.readouterr().out
         assert "missing type: 1" in out
 
     def test_collect_error(self, cli_env_with_mock_pool, capsys):
         db, pool = cli_env_with_mock_pool
-        ch_id = asyncio.run(db.add_channel(
-            Channel(channel_id=103, title="CollectMe"),
-        ))
+        ch_id = asyncio.run(
+            db.add_channel(
+                Channel(channel_id=103, title="CollectMe"),
+            )
+        )
         with patch(
             "src.cli.commands.channel.Collector",
         ) as mock_collector:
@@ -386,14 +470,18 @@ class TestCLIChannelExtended:
                 side_effect=Exception("collect fail"),
             )
             from src.cli.commands.channel import run
+
             with pytest.raises(Exception, match="collect fail"):
-                run(_ns(
-                    channel_action="collect",
-                    identifier=str(ch_id),
-                ))
+                run(
+                    _ns(
+                        channel_action="collect",
+                        identifier=str(ch_id),
+                    )
+                )
         tasks = asyncio.run(db.get_collection_tasks(limit=1))
         assert tasks[0].status == CollectionTaskStatus.FAILED
         assert "collect fail" in tasks[0].error
+
 
 class TestCLITestExtended:
     def test_read_checks_with_errors(self, cli_env, capsys):
@@ -409,6 +497,7 @@ class TestCLITestExtended:
         )
 
         from src.cli.commands.test import run
+
         init_db_mock = AsyncMock(return_value=(AppConfig(), cli_env))
         with (
             patch(
@@ -426,6 +515,7 @@ class TestCLITestExtended:
     def test_write_checks_with_empty_db(self, cli_env, capsys):
         # Empty DB (no accounts, no channels)
         from src.cli.commands.test import run
+
         init_db_mock = AsyncMock(
             return_value=(AppConfig(), cli_env),
         )
@@ -441,12 +531,15 @@ class TestCLITestExtended:
         assert "write_db_copy" in out
 
     def test_telegram_live_checks_no_accounts(
-        self, cli_env_with_mock_pool, capsys,
+        self,
+        cli_env_with_mock_pool,
+        capsys,
     ):
         db, pool = cli_env_with_mock_pool
         pool.clients = {}  # No accounts
 
         from src.cli.commands.test import run
+
         init_db = AsyncMock(return_value=(AppConfig(), db))
         init_pool = AsyncMock(return_value=(None, pool))
         with patch(
@@ -462,20 +555,29 @@ class TestCLITestExtended:
         assert "tg_pool_init" in out
 
     def test_telegram_live_checks_full_mock(
-        self, cli_env_with_mock_pool, capsys,
+        self,
+        cli_env_with_mock_pool,
+        capsys,
     ):
         db, pool = cli_env_with_mock_pool
         # Add channel to avoid skips
-        asyncio.run(db.add_channel(Channel(
-            channel_id=1, title="Ch1", username="u1",
-            is_active=True,
-        )))
+        asyncio.run(
+            db.add_channel(
+                Channel(
+                    channel_id=1,
+                    title="Ch1",
+                    username="u1",
+                    is_active=True,
+                )
+            )
+        )
 
         # Mock various Telegram calls
         pool.get_users_info.return_value = [MagicMock(phone="+7999")]
         pool.get_dialogs.return_value = [{"id": 1, "title": "D1"}]
         pool.resolve_channel.return_value = {
-            "channel_id": 1, "title": "Ch1",
+            "channel_id": 1,
+            "title": "Ch1",
         }
 
         mock_client, _ = asyncio.run(pool.get_available_client())
@@ -488,6 +590,7 @@ class TestCLITestExtended:
             m.text = "test msg"
             m.sender_id = 123
             from datetime import datetime
+
             m.date = datetime.now()
             m.media = None
             sender_patch = patch(
@@ -500,6 +603,7 @@ class TestCLITestExtended:
             )
             with sender_patch, media_patch:
                 yield m
+
         mock_client.iter_messages = mock_iter
 
         with patch(
@@ -522,7 +626,8 @@ class TestCLITestExtended:
                 )
                 engine_inst.search_telegram = AsyncMock(
                     return_value=MagicMock(
-                        total=0, error="Premium needed",
+                        total=0,
+                        error="Premium needed",
                     ),
                 )
                 engine_inst.check_search_quota = AsyncMock(
@@ -530,6 +635,7 @@ class TestCLITestExtended:
                 )
 
                 from src.cli.commands.test import run
+
                 init_db = AsyncMock(
                     return_value=(AppConfig(), db),
                 )
@@ -544,10 +650,12 @@ class TestCLITestExtended:
                         "src.cli.commands.test.runtime.init_pool",
                         side_effect=init_pool,
                     ):
-                        run(_ns(
-                            command="test",
-                            test_action="telegram",
-                        ))
+                        run(
+                            _ns(
+                                command="test",
+                                test_action="telegram",
+                            )
+                        )
 
         out = capsys.readouterr().out
         assert "tg_users_info" in out

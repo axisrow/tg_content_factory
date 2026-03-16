@@ -58,8 +58,14 @@ def run(args: argparse.Namespace) -> None:
 
                 fmt = "{:<6} {:<25} {:<10} {:<10} {:<10} {:<10} {:<10} {:<15}"
                 header = (
-                    "ChanID", "Title", "Uniq%", "SubRatio",
-                    "Cyr%", "Short%", "XDupe%", "Flags",
+                    "ChanID",
+                    "Title",
+                    "Uniq%",
+                    "SubRatio",
+                    "Cyr%",
+                    "Short%",
+                    "XDupe%",
+                    "Flags",
                 )
                 print(fmt.format(*header))
                 print("-" * 100)
@@ -115,8 +121,10 @@ def run(args: argparse.Namespace) -> None:
             elif args.filter_action == "hard-delete":
                 dev_mode = (await db.get_setting("agent_dev_mode_enabled") or "0") == "1"
                 if not dev_mode:
-                    print("Hard-delete requires developer mode. "
-                          "Enable it in Settings → Developer mode.")
+                    print(
+                        "Hard-delete requires developer mode. "
+                        "Enable it in Settings → Developer mode."
+                    )
                     return
                 svc = _build_deletion_service(db)
                 if hasattr(args, "pks") and args.pks:
@@ -126,12 +134,10 @@ def run(args: argparse.Namespace) -> None:
                         return
                 else:
                     channels = await db.get_channels_with_counts(
-                        active_only=False, include_filtered=True,
+                        active_only=False,
+                        include_filtered=True,
                     )
-                    pks = [
-                        ch.id for ch in channels
-                        if ch.is_filtered and ch.id is not None
-                    ]
+                    pks = [ch.id for ch in channels if ch.is_filtered and ch.id is not None]
                     if not pks:
                         print("No filtered channels to delete.")
                         return

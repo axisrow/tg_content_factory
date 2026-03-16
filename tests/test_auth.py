@@ -131,9 +131,7 @@ class TestResendCode:
         )
         mock_client.return_value = fake_result
 
-        with (
-            patch("src.telegram.auth.SentCodeTypeSms", FakeSentCodeTypeSms),
-        ):
+        with (patch("src.telegram.auth.SentCodeTypeSms", FakeSentCodeTypeSms),):
             info = await auth.resend_code("+1234567890")
 
         assert info["phone_code_hash"] == "new_hash"

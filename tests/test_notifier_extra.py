@@ -1,4 +1,5 @@
 """Tests for src/telegram/notifier.py - extra coverage for error paths and bot API."""
+
 from __future__ import annotations
 
 import asyncio
@@ -33,7 +34,9 @@ class TestNotifierFastPath:
 
     @pytest.mark.asyncio
     async def test_notify_with_cached_me_id_and_bot(
-        self, mock_target_service, mock_notification_bundle,
+        self,
+        mock_target_service,
+        mock_notification_bundle,
     ):
         """Test fast path when me.id is cached and bot is available."""
         bot = NotificationBot(
@@ -224,7 +227,9 @@ class TestNotifierErrorHandling:
 
     @pytest.mark.asyncio
     async def test_notify_cancelled_error_propagates(
-        self, mock_target_service, mock_notification_bundle,
+        self,
+        mock_target_service,
+        mock_notification_bundle,
     ):
         """Test that CancelledError is re-raised, not swallowed."""
         mock_client = MagicMock()
@@ -246,7 +251,9 @@ class TestNotifierErrorHandling:
 
     @pytest.mark.asyncio
     async def test_notify_general_exception_returns_false(
-        self, mock_target_service, mock_notification_bundle,
+        self,
+        mock_target_service,
+        mock_notification_bundle,
     ):
         """Test that general exceptions are caught and result in False return."""
         mock_client = MagicMock()

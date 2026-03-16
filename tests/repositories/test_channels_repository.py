@@ -1,4 +1,5 @@
 """Tests for ChannelsRepository."""
+
 from __future__ import annotations
 
 import pytest
@@ -19,6 +20,7 @@ def make_channel(channel_id: int, title: str = "Test Channel", **kwargs) -> Chan
 
 
 # add_channel tests
+
 
 async def test_add_channel_insert(repo):
     """Test inserting a new channel."""
@@ -63,6 +65,7 @@ async def test_add_channel_with_all_fields(repo):
 
 
 # get_channels tests
+
 
 async def test_get_channels_empty(repo):
     """Test getting channels when none exist."""
@@ -118,6 +121,7 @@ async def test_get_channels_ordering(repo):
 
 # get_channel_by_pk tests
 
+
 async def test_get_channel_by_pk_found(repo):
     """Test getting channel by primary key."""
     channel = make_channel(12345, title="Test")
@@ -137,6 +141,7 @@ async def test_get_channel_by_pk_not_found(repo):
 
 # get_channel_by_channel_id tests
 
+
 async def test_get_channel_by_channel_id_found(repo):
     """Test getting channel by channel_id."""
     await repo.add_channel(make_channel(12345, title="Test"))
@@ -153,6 +158,7 @@ async def test_get_channel_by_channel_id_not_found(repo):
 
 
 # get_channels_with_counts tests
+
 
 async def test_get_channels_with_counts_empty(repo):
     """Test getting channels with counts when none exist."""
@@ -197,9 +203,7 @@ async def test_get_channels_with_counts_filters(repo):
 
     # Mark channel 3 as filtered
     channels = await repo.get_channels()
-    await repo.set_channel_filtered(
-        next(c.id for c in channels if c.channel_id == 3), True
-    )
+    await repo.set_channel_filtered(next(c.id for c in channels if c.channel_id == 3), True)
 
     result = await repo.get_channels_with_counts(active_only=True, include_filtered=False)
     assert len(result) == 1
@@ -207,6 +211,7 @@ async def test_get_channels_with_counts_filters(repo):
 
 
 # update_channel_last_id tests
+
 
 async def test_update_channel_last_id(repo):
     """Test updating last_collected_id."""
@@ -228,6 +233,7 @@ async def test_update_channel_last_id_overwrites(repo):
 
 
 # set_channel_active tests
+
 
 async def test_set_channel_active_deactivate(repo):
     """Test deactivating a channel."""
@@ -254,6 +260,7 @@ async def test_set_channel_active_activate(repo):
 
 
 # set_channel_filtered tests
+
 
 async def test_set_channel_filtered_true(repo):
     """Test marking channel as filtered."""
@@ -283,6 +290,7 @@ async def test_set_channel_filtered_false(repo):
 
 
 # set_filtered_bulk tests
+
 
 async def test_set_filtered_bulk_empty(repo):
     """Test set_filtered_bulk with empty list."""
@@ -323,6 +331,7 @@ async def test_set_filtered_bulk_nonexistent_channel(repo):
 
 # reset_all_filters tests
 
+
 async def test_reset_all_filters(repo):
     """Test resetting all channel filters."""
     await repo.add_channel(make_channel(1))
@@ -349,6 +358,7 @@ async def test_reset_all_filters_empty(repo):
 
 # update_channel_meta tests
 
+
 async def test_update_channel_meta(repo):
     """Test updating channel metadata."""
     await repo.add_channel(make_channel(1, title="Old Title", username="old_name"))
@@ -370,6 +380,7 @@ async def test_update_channel_meta_null_values(repo):
 
 
 # get_forum_topics tests
+
 
 async def test_get_forum_topics_empty(repo):
     """Test getting topics when none exist."""
@@ -394,6 +405,7 @@ async def test_get_forum_topics(repo):
 
 
 # upsert_forum_topics tests
+
 
 async def test_upsert_forum_topics_insert(repo):
     """Test inserting forum topics."""
@@ -435,6 +447,7 @@ async def test_upsert_forum_topics_empty_list(repo):
 
 
 # delete_channel tests
+
 
 async def test_delete_channel(repo):
     """Test deleting a channel."""
@@ -512,6 +525,7 @@ async def test_delete_channel_nonexistent(repo):
 
 
 # set_channel_type tests
+
 
 async def test_set_channel_type(repo):
     """Test updating channel type."""

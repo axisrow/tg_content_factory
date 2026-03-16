@@ -17,13 +17,13 @@ from src.database.repositories.collection_tasks import CollectionTasksRepository
 from src.database.repositories.content_pipelines import ContentPipelinesRepository
 from src.database.repositories.dialog_cache import DialogCacheRepository
 from src.database.repositories.filters import FilterRepository
+from src.database.repositories.generation_runs import GenerationRunsRepository
 from src.database.repositories.messages import MessagesRepository
 from src.database.repositories.notification_bots import NotificationBotsRepository
 from src.database.repositories.photo_loader import PhotoLoaderRepository
 from src.database.repositories.search_log import SearchLogRepository
 from src.database.repositories.search_queries import SearchQueriesRepository
 from src.database.repositories.settings import SettingsRepository
-from src.database.repositories.generation_runs import GenerationRunsRepository
 from src.database.schema import SCHEMA_SQL
 from src.models import (
     Account,
@@ -72,15 +72,13 @@ class Database:
 
     async def _has_encrypted_sessions(self) -> bool:
         assert self._db is not None
-        cur = await self._db.execute(
-            """
+        cur = await self._db.execute("""
             SELECT 1
             FROM accounts
             WHERE session_string LIKE 'enc:v1:%'
                OR session_string LIKE 'enc:v2:%'
             LIMIT 1
-            """
-        )
+            """)
         return bool(await cur.fetchone())
 
     def _resolve_sqlite_vec_path(self) -> str | None:
@@ -338,7 +336,9 @@ class Database:
         return await self._messages.insert_messages_batch(messages)
 
     async def search_messages_for_query(
-        self, sq: "SearchQuery", limit: int = 1,
+        self,
+        sq: "SearchQuery",
+        limit: int = 1,
     ) -> tuple[list[Message], int]:
         self._require()
         return await self._messages.search_messages_for_query(sq, limit)
@@ -434,9 +434,7 @@ class Database:
         self._require()
         return await self._messages.get_stats()
 
-    async def get_trending_emojis(
-        self, limit: int = 10, days: int | None = None
-    ) -> list[dict]:
+    async def get_trending_emojis(self, limit: int = 10, days: int | None = None) -> list[dict]:
         self._require()
         return await self._messages.get_trending_emojis(limit=limit, days=days)
 
@@ -476,9 +474,7 @@ class Database:
         self._require()
         return await self._messages.get_hourly_activity(date_from, date_to)
 
-    async def get_notification_queries(
-        self, active_only: bool = True
-    ) -> list[SearchQuery]:
+    async def get_notification_queries(self, active_only: bool = True) -> list[SearchQuery]:
         self._require()
         return await self._search_queries.get_notification_queries(active_only)
 
@@ -642,9 +638,7 @@ class Database:
     async def create_agent_thread(self, title: str = "Новый тред") -> int:
         self._require()
         assert self._db is not None
-        cur = await self._db.execute(
-            "INSERT INTO agent_threads (title) VALUES (?)", (title,)
-        )
+        cur = await self._db.execute("INSERT INTO agent_threads (title) VALUES (?)", (title,))
         await self._db.commit()
         assert cur.lastrowid is not None
         return cur.lastrowid

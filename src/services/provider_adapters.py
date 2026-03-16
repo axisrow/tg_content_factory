@@ -75,7 +75,9 @@ async def _parse_json_for_text(data: Any) -> str:
     return str(data)
 
 
-def make_cohere_adapter(api_key: str, base_url: Optional[str] = None) -> Callable[..., Awaitable[str]]:
+def make_cohere_adapter(
+    api_key: str, base_url: Optional[str] = None
+) -> Callable[..., Awaitable[str]]:
     base = base_url or os.environ.get("COHERE_API_BASE", "https://api.cohere.ai/v1/generate")
 
     async def provider(
@@ -99,13 +101,15 @@ def make_cohere_adapter(api_key: str, base_url: Optional[str] = None) -> Callabl
                         raise RuntimeError(f"Cohere error {resp.status}: {text}")
                     data = await resp.json()
                     return await _parse_json_for_text(data)
-        except Exception as ex:
+        except Exception:
             raise
 
     return provider
 
 
-def make_ollama_adapter(base_url: Optional[str] = None, api_key: Optional[str] = None) -> Callable[..., Awaitable[str]]:
+def make_ollama_adapter(
+    base_url: Optional[str] = None, api_key: Optional[str] = None
+) -> Callable[..., Awaitable[str]]:
     base = base_url or os.environ.get("OLLAMA_BASE", "http://localhost:11434")
     endpoint = base.rstrip("/") + "/api/generate"
 
@@ -117,7 +121,10 @@ def make_ollama_adapter(base_url: Optional[str] = None, api_key: Optional[str] =
         stream: bool = False,
         **kwargs: Any,
     ) -> str:
-        payload: Dict[str, Any] = {"model": model or os.environ.get("OLLAMA_DEFAULT_MODEL", "llama3.2"), "prompt": prompt}
+        payload: Dict[str, Any] = {
+            "model": model or os.environ.get("OLLAMA_DEFAULT_MODEL", "llama3.2"),
+            "prompt": prompt,
+        }
         headers = {"Content-Type": "application/json"}
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
@@ -135,9 +142,13 @@ def make_ollama_adapter(base_url: Optional[str] = None, api_key: Optional[str] =
     return provider
 
 
-def make_huggingface_adapter(api_token: str, base_url: Optional[str] = None) -> Callable[..., Awaitable[str]]:
+def make_huggingface_adapter(
+    api_token: str, base_url: Optional[str] = None
+) -> Callable[..., Awaitable[str]]:
     # Use inference endpoint when model is provided in model arg; otherwise use base_url
-    base = base_url or os.environ.get("HUGGINGFACE_API_BASE", "https://api-inference.huggingface.co/models")
+    base = base_url or os.environ.get(
+        "HUGGINGFACE_API_BASE", "https://api-inference.huggingface.co/models"
+    )
 
     async def provider(
         prompt: str = "",
@@ -168,7 +179,9 @@ def make_huggingface_adapter(api_token: str, base_url: Optional[str] = None) -> 
     return provider
 
 
-def make_generic_http_adapter(base_url: str, api_key: Optional[str] = None, api_key_header: str = "Authorization") -> Callable[..., Awaitable[str]]:
+def make_generic_http_adapter(
+    base_url: str, api_key: Optional[str] = None, api_key_header: str = "Authorization"
+) -> Callable[..., Awaitable[str]]:
     endpoint = base_url
 
     async def provider(
@@ -199,7 +212,9 @@ def make_generic_http_adapter(base_url: str, api_key: Optional[str] = None, api_
     return provider
 
 
-def make_context7_adapter(api_key: str, base_url: Optional[str] = None) -> Callable[..., Awaitable[str]]:
+def make_context7_adapter(
+    api_key: str, base_url: Optional[str] = None
+) -> Callable[..., Awaitable[str]]:
     base = base_url or os.environ.get("CONTEXT7_API_BASE", "https://api.context7.com/v1/generate")
     return make_generic_http_adapter(base, api_key)
 
@@ -209,7 +224,9 @@ def make_cohere(api_key: str) -> Callable[..., Awaitable[str]]:
     return make_cohere_adapter(api_key)
 
 
-def make_ollama(base_url: Optional[str] = None, api_key: Optional[str] = None) -> Callable[..., Awaitable[str]]:
+def make_ollama(
+    base_url: Optional[str] = None, api_key: Optional[str] = None
+) -> Callable[..., Awaitable[str]]:
     return make_ollama_adapter(base_url, api_key)
 
 

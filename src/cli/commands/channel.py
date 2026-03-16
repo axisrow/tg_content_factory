@@ -54,15 +54,9 @@ def run(args: argparse.Namespace) -> None:
                     sub = st.subscriber_count if st and st.subscriber_count is not None else "—"
                     avg_v = f"{st.avg_views:.0f}" if st and st.avg_views is not None else "—"
                     avg_r = (
-                        f"{st.avg_reactions:.0f}"
-                        if st and st.avg_reactions is not None
-                        else "—"
+                        f"{st.avg_reactions:.0f}" if st and st.avg_reactions is not None else "—"
                     )
-                    avg_f = (
-                        f"{st.avg_forwards:.0f}"
-                        if st and st.avg_forwards is not None
-                        else "—"
-                    )
+                    avg_f = f"{st.avg_forwards:.0f}" if st and st.avg_forwards is not None else "—"
                     print(
                         fmt.format(
                             ch.id or 0,

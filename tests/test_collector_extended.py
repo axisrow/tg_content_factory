@@ -19,6 +19,7 @@ def mock_pool():
     pool.is_dialogs_fetched = MagicMock(return_value=True)
     return pool
 
+
 @pytest.fixture
 def mock_db():
     db = MagicMock()
@@ -41,10 +42,13 @@ def mock_db():
     db.set_channel_type = AsyncMock()
     return db
 
+
 @pytest.fixture
 def collector(mock_pool, mock_db):
     from src.config import SchedulerConfig
+
     return Collector(mock_pool, mock_db, SchedulerConfig())
+
 
 @pytest.mark.asyncio
 async def test_collect_channel_flood_wait_retry(collector, mock_pool, mock_db):
@@ -74,10 +78,11 @@ async def test_collect_channel_flood_wait_retry(collector, mock_pool, mock_db):
     assert res == 1
     mock_pool.report_flood.assert_called_once()
 
+
 @pytest.mark.asyncio
 async def test_collect_channel_pre_filter_min_subs(collector, mock_pool, mock_db):
     channel = Channel(channel_id=123, title="Ch")
-    mock_db.get_setting.return_value = "100" # min_subscribers_filter
+    mock_db.get_setting.return_value = "100"  # min_subscribers_filter
     mock_db.get_channel_stats.return_value = [ChannelStats(channel_id=123, subscriber_count=50)]
 
     # Ensure client is available for internal calls before pre-filter
@@ -87,18 +92,20 @@ async def test_collect_channel_pre_filter_min_subs(collector, mock_pool, mock_db
     assert res == 0
     mock_db.set_channels_filtered_bulk.assert_called_with([(123, "low_subscriber_manual")])
 
+
 @pytest.mark.asyncio
 async def test_collect_channel_pre_filter_ratio(collector, mock_pool, mock_db):
     channel = Channel(channel_id=123, title="Ch", channel_type="channel")
     mock_db.get_channel_stats.return_value = [ChannelStats(channel_id=123, subscriber_count=10)]
     # Mock message count query
-    mock_db.execute.return_value.fetchone.return_value = [100] # 10 subs / 100 msgs = 0.1 ratio
+    mock_db.execute.return_value.fetchone.return_value = [100]  # 10 subs / 100 msgs = 0.1 ratio
 
     mock_pool.get_available_client.return_value = (AsyncMock(), "+7999")
 
     res = await collector.collect_single_channel(channel)
     assert res == 0
     mock_db.set_channels_filtered_bulk.assert_called_with([(123, "low_subscriber_ratio")])
+
 
 @pytest.mark.asyncio
 async def test_flush_batch_persistence_error(collector, mock_pool, mock_db):
@@ -112,13 +119,15 @@ async def test_flush_batch_persistence_error(collector, mock_pool, mock_db):
         m.sender.first_name = "First"
         m.sender.last_name = "Last"
         yield m
+
     client.iter_messages = mock_iter
 
     # Mock execute to return empty list (persistence failed)
     mock_db.execute.return_value.fetchall.return_value = []
 
     res = await collector._collect_channel(channel)
-    assert res == 0 # persisted_max_msg_id not updated, stop_due_to_persistence_error = True
+    assert res == 0  # persisted_max_msg_id not updated, stop_due_to_persistence_error = True
+
 
 @pytest.mark.asyncio
 async def test_notification_queries_logic(collector, mock_db):
@@ -133,6 +142,7 @@ async def test_notification_queries_logic(collector, mock_db):
     await collector._check_notification_queries(msgs)
     notifier.notify.assert_called_once()
 
+
 @pytest.mark.asyncio
 async def test_fts_query_matches_logic():
     from src.services.notification_matcher import _fts_query_matches
@@ -141,18 +151,23 @@ async def test_fts_query_matches_logic():
     assert not _fts_query_matches("(apple OR orange) AND fruit", "I love apple juice")
     assert _fts_query_matches("simple", "Simple query test")
 
+
 @pytest.mark.asyncio
 async def test_collect_channel_stats_flooded_error(collector, mock_pool):
     channel = Channel(channel_id=123)
     mock_pool.get_available_client.return_value = None
 
     from src.telegram.client_pool import StatsClientAvailability
-    mock_pool.get_stats_availability = AsyncMock(return_value=StatsClientAvailability(
-        state="all_flooded", retry_after_sec=10, next_available_at_utc=datetime.now()
-    ))
+
+    mock_pool.get_stats_availability = AsyncMock(
+        return_value=StatsClientAvailability(
+            state="all_flooded", retry_after_sec=10, next_available_at_utc=datetime.now()
+        )
+    )
 
     with pytest.raises(AllStatsClientsFloodedError):
         await collector._collect_channel_stats(channel)
+
 
 @pytest.mark.asyncio
 async def test_collect_all_stats_no_clients(collector, mock_db):
@@ -160,6 +175,7 @@ async def test_collect_all_stats_no_clients(collector, mock_db):
     with patch.object(collector, "_collect_channel_stats", side_effect=NoActiveStatsClientsError):
         res = await collector.collect_all_stats()
         assert res["errors"] == 1
+
 
 @pytest.mark.asyncio
 async def test_collect_channel_entity_timeout(collector, mock_pool):
@@ -170,6 +186,7 @@ async def test_collect_channel_entity_timeout(collector, mock_pool):
 
     res = await collector._collect_channel(channel)
     assert res == 0
+
 
 @pytest.mark.asyncio
 async def test_collect_channel_username_changed(collector, mock_pool, mock_db):

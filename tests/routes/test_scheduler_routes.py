@@ -1,4 +1,5 @@
 """Tests for scheduler routes."""
+
 from __future__ import annotations
 
 import base64
@@ -108,7 +109,7 @@ async def test_scheduler_page_with_error(client):
 @pytest.mark.asyncio
 async def test_start_scheduler_redirect(client):
     """Test start scheduler redirects."""
-    with patch('src.web.routes.scheduler.deps.scheduler_service') as mock_svc:
+    with patch("src.web.routes.scheduler.deps.scheduler_service") as mock_svc:
         mock_svc.return_value.start = AsyncMock()
         resp = await client.post("/scheduler/start", follow_redirects=False)
         assert resp.status_code == 303
@@ -128,7 +129,7 @@ async def test_start_scheduler_shutting_down(client):
 @pytest.mark.asyncio
 async def test_stop_scheduler_redirect(client):
     """Test stop scheduler redirects."""
-    with patch('src.web.routes.scheduler.deps.scheduler_service') as mock_svc:
+    with patch("src.web.routes.scheduler.deps.scheduler_service") as mock_svc:
         mock_svc.return_value.stop = AsyncMock()
         resp = await client.post("/scheduler/stop", follow_redirects=False)
         assert resp.status_code == 303
@@ -138,7 +139,7 @@ async def test_stop_scheduler_redirect(client):
 @pytest.mark.asyncio
 async def test_trigger_collection_redirect(client):
     """Test trigger collection redirects."""
-    with patch('src.web.routes.scheduler.deps.scheduler_service') as mock_svc:
+    with patch("src.web.routes.scheduler.deps.scheduler_service") as mock_svc:
         mock_svc.return_value.trigger_collection = AsyncMock()
         resp = await client.post("/scheduler/trigger", follow_redirects=False)
         assert resp.status_code == 303
@@ -265,6 +266,7 @@ async def test_scheduler_last_run_display(client):
     """Test scheduler displays last run time."""
     # Set last_run on scheduler
     from datetime import datetime
+
     client._transport.app.state.scheduler._last_run = datetime.now()
 
     resp = await client.get("/scheduler/")
@@ -284,6 +286,7 @@ async def test_scheduler_last_stats_display(client):
 async def test_scheduler_last_search_run_display(client):
     """Test scheduler displays last search run time."""
     from datetime import datetime
+
     client._transport.app.state.scheduler._last_search_run = datetime.now()
 
     resp = await client.get("/scheduler/")
@@ -319,7 +322,7 @@ async def test_start_scheduler_calls_service(client):
     mock_service = MagicMock()
     mock_service.start = AsyncMock()
 
-    with patch('src.web.routes.scheduler.deps.scheduler_service', return_value=mock_service):
+    with patch("src.web.routes.scheduler.deps.scheduler_service", return_value=mock_service):
         await client.post("/scheduler/start")
         mock_service.start.assert_called_once()
 
@@ -330,7 +333,7 @@ async def test_stop_scheduler_calls_service(client):
     mock_service = MagicMock()
     mock_service.stop = AsyncMock()
 
-    with patch('src.web.routes.scheduler.deps.scheduler_service', return_value=mock_service):
+    with patch("src.web.routes.scheduler.deps.scheduler_service", return_value=mock_service):
         await client.post("/scheduler/stop")
         mock_service.stop.assert_called_once()
 
@@ -346,7 +349,7 @@ async def test_trigger_collection_calls_service(client):
     mock_service.enqueue_all_channels = AsyncMock(return_value=mock_result)
 
     with patch(
-        'src.web.routes.scheduler.deps.collection_service',
+        "src.web.routes.scheduler.deps.collection_service",
         return_value=mock_service,
     ):
         await client.post("/scheduler/trigger")

@@ -6,10 +6,10 @@ from io import BytesIO
 # Compiled pattern for extracting Telegram identifiers from arbitrary text.
 # Order matters: full URLs first, then bare t.me/, then @username, then negative IDs.
 _IDENTIFIER_RE = re.compile(
-    r"https?://t\.me/[^\s\"'<>,;)]+"   # full t.me link
+    r"https?://t\.me/[^\s\"'<>,;)]+"  # full t.me link
     r"|(?<![a-zA-Z0-9/])t\.me/[^\s\"'<>,;)]+"  # bare t.me/ (negative lookbehind)
-    r"|@[a-zA-Z][a-zA-Z0-9_]{3,31}"    # @username (5-32 chars total)
-    r"|-1\d{9,}",                       # negative Telegram ID (-100...)
+    r"|@[a-zA-Z][a-zA-Z0-9_]{3,31}"  # @username (5-32 chars total)
+    r"|-1\d{9,}",  # negative Telegram ID (-100...)
 )
 
 

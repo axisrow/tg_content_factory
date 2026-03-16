@@ -4,7 +4,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from src.database import Database
-from src.models import CollectionTaskType, SqStatsTaskPayload, PipelineRunTaskPayload
+from src.models import CollectionTaskType, PipelineRunTaskPayload, SqStatsTaskPayload
 
 if TYPE_CHECKING:
     from src.services.collection_service import CollectionService

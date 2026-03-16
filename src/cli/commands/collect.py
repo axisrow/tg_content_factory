@@ -35,9 +35,7 @@ def run(args: argparse.Namespace) -> None:
                     print(f"Channel {args.channel_id} not found in DB")
                     return
                 if channel.is_filtered:
-                    print(
-                        f"Channel {args.channel_id} is filtered and excluded from collection"
-                    )
+                    print(f"Channel {args.channel_id} is filtered and excluded from collection")
                     return
                 count = await collector.collect_single_channel(channel, full=True)
                 print(f"Collected {count} messages from channel {args.channel_id}")

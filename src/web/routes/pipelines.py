@@ -1,10 +1,10 @@
 from __future__ import annotations
 
+import json
 from urllib.parse import quote
 
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
-import json
 
 from src.agent.prompt_template import ALLOWED_TEMPLATE_VARIABLES
 from src.models import PipelineGenerationBackend, PipelinePublishMode
@@ -231,7 +231,13 @@ async def generate_page(request: Request, pipeline_id: int):
 
 
 @router.get("/{pipeline_id}/generate-stream")
-async def generate_stream(request: Request, pipeline_id: int, model: str = "", max_tokens: int = 256, temperature: float = 0.0):
+async def generate_stream(
+    request: Request,
+    pipeline_id: int,
+    model: str = "",
+    max_tokens: int = 256,
+    temperature: float = 0.0,
+):
     svc = deps.pipeline_service(request)
     pipeline = await svc.get(pipeline_id)
     if pipeline is None:
@@ -264,7 +270,11 @@ async def generate_stream(request: Request, pipeline_id: int, model: str = "", m
                 temperature=temperature,
             ):
                 last = update
-                data = {"delta": update.get("delta"), "text": update.get("generated_text"), "citations": update.get("citations")}
+                data = {
+                    "delta": update.get("delta"),
+                    "text": update.get("generated_text"),
+                    "citations": update.get("citations"),
+                }
                 yield f"data: {json.dumps(data)}\n\n"
 
             # finished successfully
@@ -314,7 +324,9 @@ async def generate_pipeline(
             max_tokens=max_tokens,
             temperature=temperature,
         )
-        await db.repos.generation_runs.save_result(run_id, result.get("generated_text", ""), {"citations": result.get("citations", [])})
+        await db.repos.generation_runs.save_result(
+            run_id, result.get("generated_text", ""), {"citations": result.get("citations", [])}
+        )
     except Exception as exc:
         await db.repos.generation_runs.set_status(run_id, "failed")
         runs = await db.repos.generation_runs.list_by_pipeline(pipeline_id)

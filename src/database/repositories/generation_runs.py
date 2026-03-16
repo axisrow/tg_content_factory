@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-import aiosqlite
 import json
 from datetime import datetime
+
+import aiosqlite
 
 from src.models import GenerationRun
 
@@ -30,7 +31,9 @@ class GenerationRunsRepository:
         )
         await self._db.commit()
 
-    async def save_result(self, run_id: int, generated_text: str, metadata: dict | None = None) -> None:
+    async def save_result(
+        self, run_id: int, generated_text: str, metadata: dict | None = None
+    ) -> None:
         await self._db.execute(
             "UPDATE generation_runs SET generated_text = ?, metadata = ?, status = 'completed', updated_at = datetime('now') WHERE id = ?",
             (generated_text, json.dumps(metadata or {}, ensure_ascii=False), run_id),
@@ -59,7 +62,9 @@ class GenerationRunsRepository:
             updated_at=_dt(row["updated_at"]),
         )
 
-    async def list_by_pipeline(self, pipeline_id: int, limit: int = 20, offset: int = 0) -> list[GenerationRun]:
+    async def list_by_pipeline(
+        self, pipeline_id: int, limit: int = 20, offset: int = 0
+    ) -> list[GenerationRun]:
         cur = await self._db.execute(
             "SELECT * FROM generation_runs WHERE pipeline_id = ? ORDER BY id DESC LIMIT ? OFFSET ?",
             (pipeline_id, limit, offset),

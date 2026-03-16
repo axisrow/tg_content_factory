@@ -24,9 +24,7 @@ def run(args: argparse.Namespace) -> None:
 
             collector = Collector(pool, db, config.scheduler)
             channel_bundle = ChannelBundle.from_database(db)
-            collection_service = CollectionService(
-                channel_bundle, collector, collection_queue=None
-            )
+            collection_service = CollectionService(channel_bundle, collector, collection_queue=None)
             task_enqueuer = TaskEnqueuer(db, collection_service)
 
             if args.scheduler_action == "start":

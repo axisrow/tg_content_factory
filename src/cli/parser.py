@@ -18,16 +18,22 @@ def build_parser() -> argparse.ArgumentParser:
 
     collect_parser = sub.add_parser("collect", help="Run one-shot collection")
     collect_parser.add_argument(
-        "--channel-id", type=int, default=None,
+        "--channel-id",
+        type=int,
+        default=None,
         help="Collect single channel by channel_id (full mode)",
     )
     collect_sub = collect_parser.add_subparsers(dest="collect_action")
     collect_sample = collect_sub.add_parser(
-        "sample", help="Preview last N messages without saving to DB",
+        "sample",
+        help="Preview last N messages without saving to DB",
     )
     collect_sample.add_argument("channel_id", type=int, help="Channel ID (numeric)")
     collect_sample.add_argument(
-        "--limit", type=int, default=10, help="Number of messages to preview (default: 10)",
+        "--limit",
+        type=int,
+        default=10,
+        help="Number of messages to preview (default: 10)",
     )
 
     search_parser = sub.add_parser("search", help="Search messages")
@@ -40,7 +46,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="Search mode: local, semantic, hybrid, telegram, my_chats, channel",
     )
     search_parser.add_argument(
-        "--channel-id", type=int, default=None,
+        "--channel-id",
+        type=int,
+        default=None,
         help="Channel ID for --mode=channel",
     )
     search_parser.add_argument("--min-length", type=int, default=None, help="Min message length")
@@ -79,11 +87,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     ch_stats = ch_sub.add_parser("stats", help="Collect channel statistics")
     ch_stats.add_argument(
-        "identifier", nargs="?", default=None,
+        "identifier",
+        nargs="?",
+        default=None,
         help="Channel pk, channel_id, or @username",
     )
     ch_stats.add_argument(
-        "--all", action="store_true",
+        "--all",
+        action="store_true",
         help="Collect stats for all active channels",
     )
 
@@ -101,7 +112,8 @@ def build_parser() -> argparse.ArgumentParser:
     flt_purge = flt_sub.add_parser("purge", help="Purge messages from filtered channels")
     flt_purge.add_argument("--pks", default=None, help="Comma-separated PKs (default: all)")
     flt_hard = flt_sub.add_parser(
-        "hard-delete", help="Hard-delete filtered channels from DB (dev/testing)",
+        "hard-delete",
+        help="Hard-delete filtered channels from DB (dev/testing)",
     )
     flt_hard.add_argument("--pks", default=None, help="Comma-separated PKs (default: all)")
     flt_hard.add_argument("--yes", action="store_true", help="Skip confirmation prompt")
@@ -241,11 +253,24 @@ def build_parser() -> argparse.ArgumentParser:
 
     pipeline_run = pipeline_sub.add_parser("run", help="Run pipeline generation (preview/publish)")
     pipeline_run.add_argument("id", type=int, help="Pipeline id")
-    pipeline_run.add_argument("--preview", action="store_true", default=False, help="Only preview generated draft")
-    pipeline_run.add_argument("--publish", action="store_true", default=False, help="Publish generated draft to targets (requires accounts and confirmation)")
-    pipeline_run.add_argument("--limit", type=int, default=8, help="Number of context messages to fetch")
-    pipeline_run.add_argument("--max-tokens", type=int, default=256, help="Max tokens for LLM generation")
-    pipeline_run.add_argument("--temperature", type=float, default=0.0, help="Sampling temperature for generation")
+    pipeline_run.add_argument(
+        "--preview", action="store_true", default=False, help="Only preview generated draft"
+    )
+    pipeline_run.add_argument(
+        "--publish",
+        action="store_true",
+        default=False,
+        help="Publish generated draft to targets (requires accounts and confirmation)",
+    )
+    pipeline_run.add_argument(
+        "--limit", type=int, default=8, help="Number of context messages to fetch"
+    )
+    pipeline_run.add_argument(
+        "--max-tokens", type=int, default=256, help="Max tokens for LLM generation"
+    )
+    pipeline_run.add_argument(
+        "--temperature", type=float, default=0.0, help="Sampling temperature for generation"
+    )
 
     acc_parser = sub.add_parser("account", help="Account management")
     acc_sub = acc_parser.add_subparsers(dest="account_action")
@@ -273,7 +298,9 @@ def build_parser() -> argparse.ArgumentParser:
     my_tg_parser = sub.add_parser("my-telegram", help="View account dialogs")
     my_tg_sub = my_tg_parser.add_subparsers(dest="my_telegram_action")
     my_tg_list = my_tg_sub.add_parser("list", help="List all dialogs for an account")
-    my_tg_list.add_argument("--phone", default=None, help="Account phone (default: first connected)")  # noqa: E501
+    my_tg_list.add_argument(
+        "--phone", default=None, help="Account phone (default: first connected)"
+    )  # noqa: E501
     my_tg_leave = my_tg_sub.add_parser("leave", help="Leave dialogs by ID")
     my_tg_leave.add_argument(
         "dialog_ids",
@@ -283,17 +310,20 @@ def build_parser() -> argparse.ArgumentParser:
     my_tg_leave.add_argument(
         "--phone", default=None, help="Account phone (default: first connected)"
     )
-    my_tg_leave.add_argument(
-        "--yes", "-y", action="store_true", help="Skip confirmation prompt"
-    )
+    my_tg_leave.add_argument("--yes", "-y", action="store_true", help="Skip confirmation prompt")
 
     my_tg_topics = my_tg_sub.add_parser("topics", help="List forum topics for a channel")
     my_tg_topics.add_argument(
-        "--channel-id", type=int, required=True, dest="channel_id",
+        "--channel-id",
+        type=int,
+        required=True,
+        dest="channel_id",
         help="Channel ID to fetch forum topics for",
     )
     my_tg_topics.add_argument(
-        "--phone", default=None, help="Account phone (default: any available)",
+        "--phone",
+        default=None,
+        help="Account phone (default: any available)",
     )
 
     my_tg_clear = my_tg_sub.add_parser("cache-clear", help="Clear in-memory and DB dialog cache")

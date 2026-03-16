@@ -31,9 +31,7 @@ class ChannelService:
     async def list_for_page(
         self, include_filtered: bool = True
     ) -> tuple[list[Channel], dict, dict]:
-        channels = await self._channels.list_channels_with_counts(
-            include_filtered=include_filtered
-        )
+        channels = await self._channels.list_channels_with_counts(include_filtered=include_filtered)
         latest_stats = await self._channels.get_latest_stats_for_all()
         prev_subscriber_counts = await self._channels.get_previous_subscriber_counts()
         return channels, latest_stats, prev_subscriber_counts
@@ -121,9 +119,7 @@ class ChannelService:
                     )
         await self._channels.delete_channel(pk)
 
-    async def leave_dialogs(
-        self, phone: str, dialogs: list[tuple[int, str]]
-    ) -> dict[int, bool]:
+    async def leave_dialogs(self, phone: str, dialogs: list[tuple[int, str]]) -> dict[int, bool]:
         return await self._pool.leave_channels(phone, dialogs)
 
     async def get_by_pk(self, pk: int) -> Channel | None:

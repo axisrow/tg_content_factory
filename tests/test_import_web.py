@@ -85,7 +85,7 @@ async def test_import_skips_duplicates(client):
 async def test_import_button_on_channels_page(client):
     resp = await client.get("/channels/")
     assert resp.status_code == 200
-    assert '/channels/import' in resp.text
+    assert "/channels/import" in resp.text
     assert "Импорт" in resp.text
 
 

@@ -181,9 +181,7 @@ async def test_migrate_sessions_rollback_on_bad_row(tmp_path):
     # Verify rollback: both rows should be unchanged
     conn = await aiosqlite.connect(db_path)
     conn.row_factory = aiosqlite.Row
-    cur = await conn.execute(
-        "SELECT phone, session_string FROM accounts ORDER BY phone"
-    )
+    cur = await conn.execute("SELECT phone, session_string FROM accounts ORDER BY phone")
     rows = await cur.fetchall()
     assert len(rows) == 2
     assert rows[0]["session_string"] == "good_session"
@@ -948,8 +946,7 @@ async def test_migration_backfills_collection_task_type(tmp_path):
     conn = await aiosqlite.connect(db_path)
     try:
         conn.row_factory = aiosqlite.Row
-        await conn.executescript(
-            """
+        await conn.executescript("""
             CREATE TABLE collection_tasks (
                 id INTEGER PRIMARY KEY,
                 channel_id INTEGER NOT NULL,
@@ -964,8 +961,7 @@ async def test_migration_backfills_collection_task_type(tmp_path):
                 started_at TEXT,
                 completed_at TEXT
             );
-            """
-        )
+            """)
         await conn.execute(
             "INSERT INTO collection_tasks"
             " (id, channel_id, channel_title, status, payload)"
@@ -1004,16 +1000,22 @@ async def test_delete_messages_for_channel(db):
     await db.add_channel(ch1)
     await db.add_channel(ch2)
 
-    await db.insert_messages_batch([
-        Message(channel_id=-100301, message_id=i, text=f"msg {i}",
-                date=datetime.now(timezone.utc))
-        for i in range(1, 6)
-    ])
-    await db.insert_messages_batch([
-        Message(channel_id=-100302, message_id=i, text=f"msg {i}",
-                date=datetime.now(timezone.utc))
-        for i in range(1, 4)
-    ])
+    await db.insert_messages_batch(
+        [
+            Message(
+                channel_id=-100301, message_id=i, text=f"msg {i}", date=datetime.now(timezone.utc)
+            )
+            for i in range(1, 6)
+        ]
+    )
+    await db.insert_messages_batch(
+        [
+            Message(
+                channel_id=-100302, message_id=i, text=f"msg {i}", date=datetime.now(timezone.utc)
+            )
+            for i in range(1, 4)
+        ]
+    )
 
     deleted = await db.delete_messages_for_channel(-100301)
     assert deleted == 5
@@ -1032,14 +1034,26 @@ async def test_search_excludes_filtered_channels(db):
     await db.add_channel(ch_bad)
     await db.set_channels_filtered_bulk([(-100312, "low_uniqueness")])
 
-    await db.insert_messages_batch([
-        Message(channel_id=-100311, message_id=1, text="good message",
-                date=datetime.now(timezone.utc)),
-    ])
-    await db.insert_messages_batch([
-        Message(channel_id=-100312, message_id=1, text="filtered message",
-                date=datetime.now(timezone.utc)),
-    ])
+    await db.insert_messages_batch(
+        [
+            Message(
+                channel_id=-100311,
+                message_id=1,
+                text="good message",
+                date=datetime.now(timezone.utc),
+            ),
+        ]
+    )
+    await db.insert_messages_batch(
+        [
+            Message(
+                channel_id=-100312,
+                message_id=1,
+                text="filtered message",
+                date=datetime.now(timezone.utc),
+            ),
+        ]
+    )
 
     results, total = await db.search_messages()
     assert total == 1
