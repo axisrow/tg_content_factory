@@ -87,7 +87,16 @@ class PipelinesRepository:
             raw_targets = json.loads(row["targets"]) if row["targets"] else []
         except (json.JSONDecodeError, TypeError):
             raw_targets = []
-        targets = [PipelineTarget.model_validate(t) for t in raw_targets]
+        targets = []
+        for t in raw_targets:
+            try:
+                targets.append(PipelineTarget.model_validate(t))
+            except Exception:
+                pass
+        try:
+            publish_mode = PipelinePublishMode(row["publish_mode"])
+        except (ValueError, KeyError):
+            publish_mode = PipelinePublishMode.DRAFT
         return Pipeline(
             id=row["id"],
             name=row["name"],
@@ -96,7 +105,7 @@ class PipelinesRepository:
             targets=targets,
             prompt_template=row["prompt_template"],
             llm_model=row["llm_model"],
-            publish_mode=PipelinePublishMode(row["publish_mode"]),
+            publish_mode=publish_mode,
             is_active=bool(row["is_active"]),
             created_at=(
                 datetime.fromisoformat(row["created_at"]) if row["created_at"] else None
