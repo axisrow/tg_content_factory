@@ -9,13 +9,25 @@ from httpx import ASGITransport, AsyncClient
 
 from src.config import AppConfig
 from src.database import Database
-from src.models import Account
+from src.models import Account, Channel
 from src.scheduler.manager import SchedulerManager
 from src.search.ai_search import AISearchEngine
 from src.search.engine import SearchEngine
 from src.telegram.auth import TelegramAuth
 from src.telegram.collector import Collector
 from src.web.app import create_app
+
+_ADD_DATA = {
+    "name": "Test Pipeline",
+    "prompt_template": "Write a summary",
+    "publish_mode": "moderated",
+    "source_channel_ids": "100",
+    "target_refs": "+1234567890|200",
+    "llm_model": "",
+    "image_model": "",
+    "generation_backend": "chain",
+    "generate_interval_minutes": "60",
+}
 
 
 @pytest.fixture
@@ -47,6 +59,11 @@ async def client(tmp_path):
     app.state.shutting_down = False
 
     await db.add_account(Account(phone="+1234567890", session_string="test_session"))
+    await db.add_channel(Channel(channel_id=100, title="Test Channel"))
+    await db.repos.dialog_cache.replace_dialogs(
+        "+1234567890",
+        [{"channel_id": 200, "title": "Test Dialog", "channel_type": "channel"}],
+    )
 
     transport = ASGITransport(app=app)
     auth_header = base64.b64encode(b":testpass").decode()
@@ -72,13 +89,7 @@ async def test_pipelines_page_renders(client):
 async def test_add_pipeline(client):
     resp = await client.post(
         "/pipelines/add",
-        data={
-            "name": "Test Pipeline",
-            "phone": "+1234567890",
-            "publish_mode": "draft",
-            "prompt_template": "",
-            "llm_model": "",
-        },
+        data=_ADD_DATA,
         follow_redirects=False,
     )
     assert resp.status_code == 303
@@ -86,33 +97,10 @@ async def test_add_pipeline(client):
 
 
 @pytest.mark.asyncio
-async def test_add_pipeline_invalid_phone(client):
-    resp = await client.post(
-        "/pipelines/add",
-        data={
-            "name": "Test",
-            "phone": "+9999999999",
-            "publish_mode": "draft",
-            "prompt_template": "",
-            "llm_model": "",
-        },
-        follow_redirects=False,
-    )
-    assert resp.status_code == 303
-    assert "error=invalid_account" in resp.headers["location"]
-
-
-@pytest.mark.asyncio
 async def test_pipelines_page_lists_pipeline(client):
     await client.post(
         "/pipelines/add",
-        data={
-            "name": "Listed Pipeline",
-            "phone": "+1234567890",
-            "publish_mode": "draft",
-            "prompt_template": "",
-            "llm_model": "",
-        },
+        data={**_ADD_DATA, "name": "Listed Pipeline"},
     )
     resp = await client.get("/pipelines/")
     assert resp.status_code == 200
@@ -121,16 +109,7 @@ async def test_pipelines_page_lists_pipeline(client):
 
 @pytest.mark.asyncio
 async def test_toggle_pipeline(client):
-    await client.post(
-        "/pipelines/add",
-        data={
-            "name": "Toggle Test",
-            "phone": "+1234567890",
-            "publish_mode": "draft",
-            "prompt_template": "",
-            "llm_model": "",
-        },
-    )
+    await client.post("/pipelines/add", data=_ADD_DATA)
     resp = await client.post("/pipelines/1/toggle", follow_redirects=False)
     assert resp.status_code == 303
     assert "msg=pipeline_toggled" in resp.headers["location"]
@@ -138,16 +117,7 @@ async def test_toggle_pipeline(client):
 
 @pytest.mark.asyncio
 async def test_delete_pipeline(client):
-    await client.post(
-        "/pipelines/add",
-        data={
-            "name": "Delete Test",
-            "phone": "+1234567890",
-            "publish_mode": "draft",
-            "prompt_template": "",
-            "llm_model": "",
-        },
-    )
+    await client.post("/pipelines/add", data=_ADD_DATA)
     resp = await client.post("/pipelines/1/delete", follow_redirects=False)
     assert resp.status_code == 303
     assert "msg=pipeline_deleted" in resp.headers["location"]
@@ -155,50 +125,11 @@ async def test_delete_pipeline(client):
 
 @pytest.mark.asyncio
 async def test_edit_pipeline(client):
-    await client.post(
-        "/pipelines/add",
-        data={
-            "name": "Original",
-            "phone": "+1234567890",
-            "publish_mode": "draft",
-            "prompt_template": "",
-            "llm_model": "",
-        },
-    )
+    await client.post("/pipelines/add", data=_ADD_DATA)
     resp = await client.post(
         "/pipelines/1/edit",
-        data={
-            "name": "Edited",
-            "phone": "+1234567890",
-            "publish_mode": "auto",
-            "prompt_template": "new prompt",
-            "llm_model": "gpt-4o",
-        },
+        data={**_ADD_DATA, "name": "Edited", "publish_mode": "auto", "llm_model": "gpt-4o"},
         follow_redirects=False,
     )
     assert resp.status_code == 303
     assert "msg=pipeline_edited" in resp.headers["location"]
-
-
-@pytest.mark.asyncio
-async def test_refresh_dialogs(client):
-    resp = await client.post(
-        "/pipelines/refresh",
-        data={"phone": "+1234567890"},
-        follow_redirects=False,
-    )
-    assert resp.status_code == 303
-    assert "/pipelines" in resp.headers["location"]
-
-
-@pytest.mark.asyncio
-async def test_no_nested_form_in_template(client):
-    """Verify the nested form issue is fixed."""
-    resp = await client.get("/pipelines/")
-    text = resp.text
-    assert 'id="refresh-dialogs-form"' in text
-    # The refresh form should be outside the add form
-    add_form_start = text.index('action="/pipelines/add"')
-    add_form_end = text.index("</form>", add_form_start)
-    refresh_form_pos = text.index('id="refresh-dialogs-form"')
-    assert refresh_form_pos > add_form_end

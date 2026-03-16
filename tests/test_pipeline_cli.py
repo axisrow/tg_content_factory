@@ -55,7 +55,7 @@ def test_pipeline_add_and_list(tmp_path, capsys):
                 name="Digest",
                 prompt_template="Summarize {source_messages}",
                 source=[1001],
-                target=["+100:77"],
+                target=["+100|77"],
                 llm_model=None,
                 image_model=None,
                 publish_mode="moderated",

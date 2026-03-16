@@ -279,6 +279,9 @@ class ChannelBundle:
     async def get_pending_channel_tasks(self) -> list[CollectionTask]:
         return await self.tasks.get_pending_channel_tasks()
 
+    async def delete_pending_channel_tasks(self) -> int:
+        return await self.tasks.delete_pending_channel_tasks()
+
     async def fail_running_collection_tasks_on_startup(self) -> int:
         return await self.tasks.fail_running_collection_tasks_on_startup()
 
