@@ -824,7 +824,7 @@ class ClientPool:
                     "title": t.title,
                     "icon_emoji_id": getattr(t, "icon_emoji_id", None),
                     "date": (
-                        datetime.fromtimestamp(t.date, tz=timezone.utc).isoformat()
+                        t.date.isoformat()
                         if getattr(t, "date", None)
                         else None
                     ),
