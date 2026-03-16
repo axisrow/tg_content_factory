@@ -1170,3 +1170,105 @@ async def test_reactions_json_null_when_absent(db):
 
     messages, _ = await db.search_messages(channel_id=-100998)
     assert messages[0].reactions_json is None
+
+
+@pytest.mark.aiosqlite_serial
+@pytest.mark.asyncio
+async def test_migrate_adds_engagement_columns(tmp_path):
+    """Migration adds views, forwards, reply_count columns to existing DB without them."""
+    db_path = str(tmp_path / "migrate_engagement.db")
+
+    conn = await aiosqlite.connect(db_path)
+    try:
+        await conn.executescript("""
+            CREATE TABLE IF NOT EXISTS messages (
+                id INTEGER PRIMARY KEY,
+                channel_id INTEGER NOT NULL,
+                message_id INTEGER NOT NULL,
+                sender_id INTEGER,
+                sender_name TEXT,
+                text TEXT,
+                media_type TEXT,
+                topic_id INTEGER,
+                reactions_json TEXT,
+                date TEXT NOT NULL,
+                collected_at TEXT DEFAULT (datetime('now')),
+                UNIQUE(channel_id, message_id)
+            );
+            CREATE TABLE IF NOT EXISTS accounts (
+                id INTEGER PRIMARY KEY,
+                phone TEXT UNIQUE NOT NULL,
+                session_string TEXT NOT NULL,
+                is_primary INTEGER DEFAULT 0,
+                is_active INTEGER DEFAULT 1,
+                flood_wait_until TEXT,
+                created_at TEXT DEFAULT (datetime('now'))
+            );
+            CREATE TABLE IF NOT EXISTS channels (
+                id INTEGER PRIMARY KEY,
+                channel_id INTEGER UNIQUE NOT NULL,
+                title TEXT,
+                username TEXT,
+                is_active INTEGER DEFAULT 1,
+                last_collected_id INTEGER DEFAULT 0,
+                added_at TEXT DEFAULT (datetime('now'))
+            );
+            CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
+        """)
+        await conn.commit()
+    finally:
+        await conn.close()
+
+    database = Database(db_path)
+    await database.initialize()
+
+    cur = await database.execute("PRAGMA table_info(messages)")
+    columns = {row["name"] for row in await cur.fetchall()}
+    assert "views" in columns
+    assert "forwards" in columns
+    assert "reply_count" in columns
+
+    await database.close()
+
+
+@pytest.mark.asyncio
+async def test_engagement_stats_roundtrip(db):
+    """views, forwards, reply_count are persisted and retrieved via search_messages."""
+    await db.add_channel(Channel(channel_id=-100777, title="EngageTest"))
+    msg = Message(
+        channel_id=-100777,
+        message_id=10,
+        text="popular post",
+        views=1234,
+        forwards=56,
+        reply_count=7,
+        date=datetime.now(timezone.utc),
+    )
+    await db.insert_message(msg)
+
+    messages, total = await db.search_messages(channel_id=-100777)
+    assert total == 1
+    assert messages[0].views == 1234
+    assert messages[0].forwards == 56
+    assert messages[0].reply_count == 7
+
+
+@pytest.mark.asyncio
+async def test_engagement_stats_null_when_absent(db):
+    """views, forwards, reply_count are None when not provided."""
+    await db.add_channel(Channel(channel_id=-100776, title="NoEngageTest"))
+    msg = Message(
+        channel_id=-100776,
+        message_id=1,
+        text="plain post",
+        date=datetime.now(timezone.utc),
+    )
+    await db.insert_message(msg)
+
+    messages, _ = await db.search_messages(channel_id=-100776)
+    assert messages[0].views is None
+    assert messages[0].forwards is None
+    assert messages[0].reply_count is None
