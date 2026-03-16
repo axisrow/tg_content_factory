@@ -26,7 +26,7 @@ def run(args: argparse.Namespace) -> None:
                 print("-" * 80)
                 for pipeline in items:
                     created_at = (
-                        pipeline.created_at.isoformat(sep=" ")[:19]
+                        pipeline.created_at.strftime("%Y-%m-%d %H:%M:%S")
                         if pipeline.created_at else "—"
                     )
                     print(fmt.format(
