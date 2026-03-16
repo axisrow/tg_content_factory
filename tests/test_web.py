@@ -2993,3 +2993,21 @@ async def test_unhandled_exception_logged_to_logbuffer(error_client):
 
     new_records = log_buffer.get_records()[initial_count:]
     assert any("kaboom" in r["message"] for r in new_records)
+
+
+@pytest.mark.asyncio
+async def test_analytics_page_empty(client):
+    """Analytics page renders without error when no messages exist."""
+    resp = await client.get("/analytics")
+    assert resp.status_code == 200
+    assert "Аналитика" in resp.text
+
+
+@pytest.mark.asyncio
+async def test_analytics_page_with_date_filter(client):
+    """Analytics page accepts date_from/date_to query params."""
+    resp = await client.get("/analytics?date_from=2025-01-01&date_to=2025-12-31&limit=20")
+    assert resp.status_code == 200
+    assert "Аналитика" in resp.text
+    assert 'value="2025-01-01"' in resp.text
+    assert 'value="2025-12-31"' in resp.text

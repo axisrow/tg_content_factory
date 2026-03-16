@@ -58,7 +58,7 @@
                     {% if msg.channel_username %}
                     <a href="https://t.me/{{ msg.channel_username }}/{{ msg.message_id }}" target="_blank" rel="noopener">&#8599;</a>
                     {% else %}
-                    <a href="https://t.me/c/{{ msg.channel_id }}/{{ msg.message_id }}" target="_blank" rel="noopener">&#8599;</a>
+                    <a href="https://t.me/c/{{ (msg.channel_id | abs) - 1000000000000 }}/{{ msg.message_id }}" target="_blank" rel="noopener">&#8599;</a>
                     {% endif %}
                 </td>
             </tr>
@@ -80,7 +80,7 @@
                 {% if msg.channel_username %}
                 <a href="https://t.me/{{ msg.channel_username }}/{{ msg.message_id }}" target="_blank" rel="noopener" class="btn btn-sm btn-outline-secondary">Открыть &#8599;</a>
                 {% else %}
-                <a href="https://t.me/c/{{ msg.channel_id }}/{{ msg.message_id }}" target="_blank" rel="noopener" class="btn btn-sm btn-outline-secondary">Открыть &#8599;</a>
+                <a href="https://t.me/c/{{ (msg.channel_id | abs) - 1000000000000 }}/{{ msg.message_id }}" target="_blank" rel="noopener" class="btn btn-sm btn-outline-secondary">Открыть &#8599;</a>
                 {% endif %}
             </div>
         </div>

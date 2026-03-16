@@ -1170,3 +1170,150 @@ async def test_reactions_json_null_when_absent(db):
 
     messages, _ = await db.search_messages(channel_id=-100998)
     assert messages[0].reactions_json is None
+
+
+@pytest.mark.asyncio
+async def test_get_top_messages_empty(db):
+    """get_top_messages returns empty list when no messages with reactions exist."""
+    result = await db.get_top_messages(limit=10)
+    assert result == []
+
+
+@pytest.mark.asyncio
+async def test_get_top_messages_sorted_by_reactions(db):
+    """get_top_messages returns messages sorted by total reaction count descending."""
+    await db.add_channel(Channel(channel_id=-100500, title="TopTest"))
+    msgs = [
+        Message(
+            channel_id=-100500,
+            message_id=1,
+            text="low",
+            reactions_json='[{"emoji": "👍", "count": 2}]',
+            date=datetime(2025, 1, 1, tzinfo=timezone.utc),
+        ),
+        Message(
+            channel_id=-100500,
+            message_id=2,
+            text="high",
+            reactions_json='[{"emoji": "❤️", "count": 10}, {"emoji": "🔥", "count": 5}]',
+            date=datetime(2025, 1, 2, tzinfo=timezone.utc),
+        ),
+        Message(
+            channel_id=-100500,
+            message_id=3,
+            text="no reactions",
+            date=datetime(2025, 1, 3, tzinfo=timezone.utc),
+        ),
+    ]
+    for m in msgs:
+        await db.insert_message(m)
+
+    result = await db.get_top_messages(limit=10)
+    assert len(result) == 2  # message without reactions excluded
+    assert result[0]["message_id"] == 2
+    assert result[0]["total_reactions"] == 15
+    assert result[1]["message_id"] == 1
+    assert result[1]["total_reactions"] == 2
+
+
+@pytest.mark.asyncio
+async def test_get_top_messages_date_filter(db):
+    """get_top_messages respects date_from/date_to filters."""
+    await db.add_channel(Channel(channel_id=-100501, title="DateFilter"))
+    msgs = [
+        Message(
+            channel_id=-100501,
+            message_id=1,
+            text="old",
+            reactions_json='[{"emoji": "👍", "count": 5}]',
+            date=datetime(2024, 6, 1, tzinfo=timezone.utc),
+        ),
+        Message(
+            channel_id=-100501,
+            message_id=2,
+            text="new",
+            reactions_json='[{"emoji": "👍", "count": 3}]',
+            date=datetime(2025, 3, 1, tzinfo=timezone.utc),
+        ),
+    ]
+    for m in msgs:
+        await db.insert_message(m)
+
+    result = await db.get_top_messages(limit=10, date_from="2025-01-01")
+    assert len(result) == 1
+    assert result[0]["message_id"] == 2
+
+
+@pytest.mark.asyncio
+async def test_get_engagement_by_media_type(db):
+    """get_engagement_by_media_type groups messages by media type with counts."""
+    await db.add_channel(Channel(channel_id=-100502, title="MediaTypes"))
+    msgs = [
+        Message(
+            channel_id=-100502,
+            message_id=1,
+            text="text msg",
+            media_type=None,
+            reactions_json='[{"emoji": "👍", "count": 4}]',
+            date=datetime(2025, 1, 1, tzinfo=timezone.utc),
+        ),
+        Message(
+            channel_id=-100502,
+            message_id=2,
+            text="photo msg",
+            media_type="photo",
+            reactions_json='[{"emoji": "❤️", "count": 6}]',
+            date=datetime(2025, 1, 2, tzinfo=timezone.utc),
+        ),
+        Message(
+            channel_id=-100502,
+            message_id=3,
+            text="another text",
+            media_type=None,
+            date=datetime(2025, 1, 3, tzinfo=timezone.utc),
+        ),
+    ]
+    for m in msgs:
+        await db.insert_message(m)
+
+    result = await db.get_engagement_by_media_type()
+    content_types = {r["content_type"]: r for r in result}
+    assert "text" in content_types
+    assert "photo" in content_types
+    assert content_types["text"]["message_count"] == 2
+    assert content_types["photo"]["message_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_get_hourly_activity(db):
+    """get_hourly_activity groups messages by hour with correct counts."""
+    await db.add_channel(Channel(channel_id=-100503, title="Hourly"))
+    msgs = [
+        Message(
+            channel_id=-100503,
+            message_id=1,
+            text="morning",
+            date=datetime(2025, 1, 1, 9, 0, tzinfo=timezone.utc),
+        ),
+        Message(
+            channel_id=-100503,
+            message_id=2,
+            text="morning2",
+            date=datetime(2025, 1, 2, 9, 30, tzinfo=timezone.utc),
+        ),
+        Message(
+            channel_id=-100503,
+            message_id=3,
+            text="evening",
+            date=datetime(2025, 1, 1, 20, 0, tzinfo=timezone.utc),
+        ),
+    ]
+    for m in msgs:
+        await db.insert_message(m)
+
+    result = await db.get_hourly_activity()
+    hours = {r["hour"]: r for r in result}
+    assert 9 in hours
+    assert hours[9]["message_count"] == 2
+    assert 20 in hours
+    assert hours[20]["message_count"] == 1
