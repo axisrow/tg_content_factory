@@ -13,7 +13,6 @@ async def analytics_page(
     request: Request,
     date_from: str = "",
     date_to: str = "",
-    sort_by: str = "reactions",
     limit: int = 50,
 ):
     db = deps.get_db(request)
@@ -33,7 +32,6 @@ async def analytics_page(
             "hourly": hourly,
             "date_from": date_from,
             "date_to": date_to,
-            "sort_by": sort_by,
             "limit": limit,
         },
     )
