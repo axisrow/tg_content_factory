@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import time
 
 from src.cli import runtime
 from src.services.channel_service import ChannelService
@@ -57,6 +58,47 @@ def run(args: argparse.Namespace) -> None:
                         str(t.get("icon_emoji_id") or "-")[:20],
                         str(t.get("date") or "-")[:26],
                     ))
+
+            elif args.my_telegram_action == "cache-clear":
+                phone: str | None = getattr(args, "phone", None)
+                if phone:
+                    pool.invalidate_dialogs_cache(phone)
+                    await db.repos.dialog_cache.clear_dialogs(phone)
+                    print(f"Cache cleared for {phone}.")
+                else:
+                    pool.invalidate_dialogs_cache()
+                    await db.repos.dialog_cache.clear_all_dialogs()
+                    print("Cache cleared for all accounts.")
+
+            elif args.my_telegram_action == "cache-status":
+                phones = await db.repos.dialog_cache.get_all_phones()
+                now_monotonic = time.monotonic()
+
+                if not phones:
+                    in_memory_phones = {k[0] for k in pool._dialogs_cache}
+                    if not in_memory_phones:
+                        print("No cached dialogs.")
+                        return
+                    phones = sorted(in_memory_phones)
+
+                fmt = "{:<20} {:<10} {:<28} {:<10}"
+                print(fmt.format("Account", "DB entries", "DB cached at", "Mem entries"))
+                print("-" * 72)
+                for ph in sorted(set(phones) | {k[0] for k in pool._dialogs_cache}):
+                    db_count = await db.repos.dialog_cache.count_dialogs(ph)
+                    cached_at = await db.repos.dialog_cache.get_cached_at(ph)
+                    cached_at_str = (
+                        cached_at.strftime("%Y-%m-%d %H:%M:%S UTC") if cached_at else "-"
+                    )
+                    entry = pool._dialogs_cache.get((ph, "full"))
+                    mem_entries = (
+                        len(entry.dialogs)
+                        if entry
+                        and (now_monotonic - entry.fetched_at_monotonic)
+                        <= pool._dialogs_cache_ttl_sec
+                        else 0
+                    )
+                    print(fmt.format(ph, str(db_count), cached_at_str, str(mem_entries)))
         finally:
             await pool.disconnect_all()
             await db.close()

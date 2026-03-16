@@ -94,7 +94,7 @@ class SearchQueryService:
             return 0
         daily = await self._bundle.get_fts_daily_stats_for_query(sq, days=1)
         today = date_cls.today().isoformat()
-        count = next((d.count for d in daily if d.day == today), 0)
+        count = next((stat.count for stat in daily if stat.day == today), 0)
         if sq.track_stats:
             await self._bundle.record_stat(sq_id, count)
         logger.info("Search query '%s' (id=%d): %d matches today", sq.query, sq_id, count)
@@ -140,12 +140,12 @@ class SearchQueryService:
                 SearchQueryDailyStat(day=(today - timedelta(days=i)).isoformat(), count=0)
                 for i in range(days, -1, -1)
             ]
-        existing = {s.day: s for s in stats}
+        existing = {stat.day: stat for stat in stats}
         filled = []
         for i in range(days, 0, -1):
-            d = (today - timedelta(days=i)).isoformat()
-            filled.append(existing.get(d, SearchQueryDailyStat(day=d, count=0)))
+            day_str = (today - timedelta(days=i)).isoformat()
+            filled.append(existing.get(day_str, SearchQueryDailyStat(day=day_str, count=0)))
         # include today
-        d = today.isoformat()
-        filled.append(existing.get(d, SearchQueryDailyStat(day=d, count=0)))
+        day_str = today.isoformat()
+        filled.append(existing.get(day_str, SearchQueryDailyStat(day=day_str, count=0)))
         return filled
