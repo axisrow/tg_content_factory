@@ -75,7 +75,7 @@ class AgentProviderService:
                 "max_tokens": int(max_tokens or 256),
                 "temperature": float(temperature or 0.0),
             }
-            timeout = int(os.environ.get("OPENAI_TIMEOUT_SECONDS", "60"))
+            timeout = aiohttp.ClientTimeout(total=int(os.environ.get("OPENAI_TIMEOUT_SECONDS", "60")))
             async with aiohttp.ClientSession() as session:
                 async with session.post(url, json=payload, headers=headers, timeout=timeout) as resp:
                     text = await resp.text()
