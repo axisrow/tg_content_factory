@@ -1,0 +1,11 @@
+<form method="post" action="/settings/save-scheduler" data-busy>
+    <div class="mb-3">
+        <label for="collect_interval_minutes" class="form-label">Интервал сбора сообщений (минуты)</label>
+        <input type="number" class="form-control w-auto" id="collect_interval_minutes" name="collect_interval_minutes"
+               min="1" max="1440" value="{{ collect_interval_minutes }}">
+        <div class="form-text">Как часто планировщик автоматически собирает новые сообщения из каналов. Диапазон: 1–1440 минут.</div>
+    </div>
+    <div class="d-flex justify-content-end">
+        <button type="submit" class="btn btn-primary">Сохранить</button>
+    </div>
+</form>
