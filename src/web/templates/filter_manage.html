@@ -1,0 +1,155 @@
+{% extends "base.html" %}
+{% block title %}Очистка — TG Agent{% endblock %}
+{% block content %}
+<h1>Очистка каналов</h1>
+
+<div class="d-flex gap-2 flex-wrap mb-3">
+    <form method="post" action="/channels/filter/analyze" class="d-inline" data-busy>
+        <button type="submit" class="btn btn-primary btn-sm">Обновить фильтры</button>
+    </form>
+    <form method="post" action="/channels/filter/precheck" class="d-inline" data-busy>
+        <button type="submit" class="btn btn-outline-primary btn-sm">Предпроверка подписчиков</button>
+    </form>
+    <form method="post" action="/channels/filter/reset" class="d-inline" data-busy>
+        <button type="submit" class="btn btn-outline-secondary btn-sm">Сброс фильтров</button>
+    </form>
+    {% if channels %}
+    <form method="post" action="/channels/filter/purge-all" class="d-inline" data-busy
+          onsubmit="return confirm('Очистить сообщения у ВСЕХ {{ total }} отфильтрованных каналов?')">
+        <button type="submit" class="btn btn-warning btn-sm">Очистить все сообщения</button>
+    </form>
+    {% endif %}
+</div>
+
+{% if channels %}
+<p>Отфильтровано: <strong>{{ total }}</strong> каналов</p>
+
+<div class="table-responsive">
+<table class="table table-striped table-sm">
+    <thead>
+        <tr>
+            <th><input type="checkbox" id="select-all" class="form-check-input"></th>
+            <th>Название</th>
+            <th class="d-none d-sm-table-cell">Username</th>
+            <th class="d-none d-sm-table-cell">Сообщений</th>
+            <th>Причины</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% set flag_emoji = {
+            "low_uniqueness": ("&#128424;&#65039;", "Низкая уникальность контента"),
+            "low_subscriber_ratio": ("&#128201;", "Мало подписчиков"),
+            "low_subscriber_manual": ("&#9995;", "Мало подписчиков (абс.)"),
+            "manual": ("&#128683;", "Ручная фильтрация"),
+            "cross_channel_spam": ("&#128226;", "Кросс-канальный спам"),
+            "non_cyrillic": ("&#127760;", "Не кириллический контент"),
+            "chat_noise": ("&#128172;", "Шум чата"),
+            "username_changed": ("&#128256;", "Сменил юзернейм")
+        } %}
+        {% for ch in channels %}
+        <tr class="table-danger">
+            <td>
+                {% if ch.id is not none %}
+                <input type="checkbox" value="{{ ch.id }}" class="form-check-input ch-check">
+                {% endif %}
+            </td>
+            <td>{{ ch.title or "-" }}</td>
+            <td class="d-none d-sm-table-cell">{% if ch.username %}@{{ ch.username }}{% else %}-{% endif %}</td>
+            <td class="d-none d-sm-table-cell">{{ ch.message_count }}</td>
+            <td>
+                {% if ch.filter_flags %}
+                    {% for flag in ch.filter_flags.split(',') %}
+                        {% set f = flag.strip() %}
+                        {% if f in flag_emoji %}
+                            <span title="{{ flag_emoji[f][1] }}" style="margin-right:0.25rem;cursor:default;font-size:1.1em">{{ flag_emoji[f][0] }}</span>
+                        {% else %}
+                            <span title="{{ f }}" style="cursor:default">&#128683;</span>
+                        {% endif %}
+                    {% endfor %}
+                {% else %}
+                    <span title="Отфильтрован" style="cursor:default">&#128683;</span>
+                {% endif %}
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+</div>
+
+<div class="d-flex gap-2 flex-wrap">
+    <form method="post" action="/channels/filter/purge-selected" id="purge-form" class="d-inline" data-busy>
+        <button type="submit" class="btn btn-warning action-btn" disabled
+                onclick="return confirmPurge()">
+            Очистить сообщения (<span class="selected-count">0</span>)
+        </button>
+    </form>
+    {% if dev_mode %}
+    <form method="post" action="/channels/filter/hard-delete-selected" id="hard-delete-form" class="d-inline" data-busy>
+        <button type="submit" class="btn btn-danger action-btn" disabled
+                onclick="return confirmHardDelete()">
+            Удалить из БД (<span class="selected-count">0</span>)
+        </button>
+    </form>
+    {% endif %}
+</div>
+
+<script>
+(function() {
+    var selectAll = document.getElementById('select-all');
+    var checkboxes = document.querySelectorAll('.ch-check');
+    var countSpans = document.querySelectorAll('.selected-count');
+    var actionBtns = document.querySelectorAll('.action-btn');
+
+    function getCheckedPks() {
+        var pks = [];
+        checkboxes.forEach(function(cb) { if (cb.checked) pks.push(cb.value); });
+        return pks;
+    }
+
+    function syncHiddenInputs() {
+        // Copy checked PKs into each form as hidden inputs
+        document.querySelectorAll('.synced-pk').forEach(function(el) { el.remove(); });
+        var pks = getCheckedPks();
+        document.querySelectorAll('#purge-form, #hard-delete-form').forEach(function(form) {
+            pks.forEach(function(pk) {
+                var input = document.createElement('input');
+                input.type = 'hidden';
+                input.name = 'pks';
+                input.value = pk;
+                input.className = 'synced-pk';
+                form.appendChild(input);
+            });
+        });
+    }
+
+    function updateCount() {
+        var checked = getCheckedPks().length;
+        countSpans.forEach(function(s) { s.textContent = checked; });
+        actionBtns.forEach(function(b) { b.disabled = checked === 0; });
+        syncHiddenInputs();
+    }
+
+    selectAll.addEventListener('change', function() {
+        checkboxes.forEach(function(cb) { cb.checked = selectAll.checked; });
+        updateCount();
+    });
+    checkboxes.forEach(function(cb) {
+        cb.addEventListener('change', updateCount);
+    });
+})();
+
+function confirmPurge() {
+    var count = document.querySelectorAll('.ch-check:checked').length;
+    return confirm('Очистить сообщения у ' + count + ' канал(ов)? Каналы останутся в базе.');
+}
+
+function confirmHardDelete() {
+    var count = document.querySelectorAll('.ch-check:checked').length;
+    return confirm('ПОЛНОСТЬЮ удалить ' + count + ' канал(ов) из базы данных? Это действие необратимо.');
+}
+</script>
+
+{% else %}
+<p class="text-muted">Нет отфильтрованных каналов. Нажмите "Обновить фильтры" для анализа.</p>
+{% endif %}
+{% endblock %}

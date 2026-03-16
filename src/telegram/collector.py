@@ -109,6 +109,31 @@ class Collector:
             logger=logger,
         )
 
+    async def _is_auto_delete_enabled(self) -> bool:
+        """Check if auto_delete_on_collect is enabled (cached per collection run)."""
+        cached = getattr(self, "_auto_delete_cached", None)
+        if cached is not None:
+            return cached
+        setting = await self._db.get_setting("auto_delete_on_collect")
+        result = setting == "1"
+        self._auto_delete_cached = result
+        return result
+
+    async def _maybe_auto_delete(self, channel_id: int) -> bool:
+        """Purge messages from filtered channel if auto_delete_on_collect is enabled."""
+        if not await self._is_auto_delete_enabled():
+            return False
+        try:
+            deleted = await self._db.delete_messages_for_channel(channel_id)
+            logger.info(
+                "Auto-purged %d messages from filtered channel %d during collection",
+                deleted, channel_id,
+            )
+            return True
+        except Exception:
+            logger.exception("Failed to auto-purge channel %d", channel_id)
+            return False
+
     async def collect_single_channel(
         self,
         channel: Channel,
@@ -133,6 +158,7 @@ class Collector:
         async with self._lock:
             self._running = True
             self._cancel_event.clear()
+            self._auto_delete_cached = None
             try:
                 if full:
                     channel = Channel(**{**channel.model_dump(), "last_collected_id": 0})
@@ -149,6 +175,7 @@ class Collector:
         async with self._lock:
             self._running = True
             self._cancel_event.clear()
+            self._auto_delete_cached = None
             stats = {"channels": 0, "messages": 0, "errors": 0}
 
             try:
@@ -363,6 +390,7 @@ class Collector:
                         await self._db.set_channels_filtered_bulk(
                             [(channel_id, "username_changed")]
                         )
+                        await self._maybe_auto_delete(channel_id)
                         return total_collected
                 else:
                     try:
@@ -398,6 +426,7 @@ class Collector:
                                 " skipping",
                                 channel_id, subscriber_count, min_subs,
                             )
+                            await self._maybe_auto_delete(channel_id)
                             return total_collected
                         cur = await self._db.execute(
                             "SELECT COUNT(*) FROM messages"
@@ -425,6 +454,7 @@ class Collector:
                                     " < %.2f, skipping",
                                     channel_id, ratio, threshold,
                                 )
+                                await self._maybe_auto_delete(channel_id)
                                 return total_collected
 
                 # Pre-check: sample 10 posts to detect cross-channel duplicates
@@ -463,6 +493,7 @@ class Collector:
                                 matches,
                                 len(unique_prefixes),
                             )
+                            await self._maybe_auto_delete(channel_id)
                             return total_collected
 
                 async for msg in session.stream_messages(
@@ -641,6 +672,8 @@ class Collector:
                             channel_id,
                             ratio,
                         )
+                        # Not auto-deleting here: messages were just collected,
+                        # channel will be deleted on the next collection run.
 
             return total_collected + len(all_messages)
 
