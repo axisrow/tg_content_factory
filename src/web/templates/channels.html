@@ -50,6 +50,9 @@
             <th>Статус</th>
             <th>Сообщений</th>
             <th>Подписчики</th>
+            <th>Просмотры</th>
+            <th>Реакции</th>
+            <th>Репосты</th>
             <th>Фильтр</th>
             <th>Действия</th>
         </tr>
@@ -68,7 +71,25 @@
               {% else %}<span class="badge-inactive">&#9679;</span>{% endif %}
             </td>
             <td>{{ ch.message_count }}</td>
-            <td>{{ st.subscriber_count if st and st.subscriber_count is not none else "—" }}</td>
+            <td>
+                {%- set sub = st.subscriber_count if st and st.subscriber_count is not none else none -%}
+                {%- set prev_sub = prev_subscriber_counts.get(ch.channel_id) if prev_subscriber_counts else none -%}
+                {%- if sub is not none -%}
+                    {{ sub }}
+                    {%- if prev_sub is not none -%}
+                        {%- if sub > prev_sub -%}
+                            <span class="text-success ms-1" title="Рост: +{{ sub - prev_sub }}">&#9650;</span>
+                        {%- elif sub < prev_sub -%}
+                            <span class="text-danger ms-1" title="Падение: {{ sub - prev_sub }}">&#9660;</span>
+                        {%- else -%}
+                            <span class="text-muted ms-1" title="Без изменений">&#9644;</span>
+                        {%- endif -%}
+                    {%- endif -%}
+                {%- else -%}—{%- endif -%}
+            </td>
+            <td>{{ "%.0f"|format(st.avg_views) if st and st.avg_views is not none else "—" }}</td>
+            <td>{{ "%.0f"|format(st.avg_reactions) if st and st.avg_reactions is not none else "—" }}</td>
+            <td>{{ "%.0f"|format(st.avg_forwards) if st and st.avg_forwards is not none else "—" }}</td>
             <td>
                 {% if ch.is_filtered %}
                     {% set flag_emoji = {
@@ -152,6 +173,21 @@
                     <small class="text-muted">
                         {% if ch.username %}<a href="https://t.me/{{ ch.username }}" target="_blank" rel="noopener">@{{ ch.username }}</a> &middot; {% endif %}
                         ID: {{ ch.channel_id }} &middot; {{ ch.message_count }} сообщ.
+                        {%- if st -%}
+                            {%- if st.subscriber_count is not none %}
+                                &middot; {{ st.subscriber_count }}
+                                {%- set prev_sub = prev_subscriber_counts.get(ch.channel_id) if prev_subscriber_counts else none -%}
+                                {%- if prev_sub is not none -%}
+                                    {%- if st.subscriber_count > prev_sub %}<span class="text-success" title="Рост">&#9650;</span>
+                                    {%- elif st.subscriber_count < prev_sub %}<span class="text-danger" title="Падение">&#9660;</span>
+                                    {%- else %}<span class="text-muted">&#9644;</span>
+                                    {%- endif -%}
+                                {%- endif %} подп.
+                            {%- endif -%}
+                            {%- if st.avg_views is not none %} &middot; 👁 {{ "%.0f"|format(st.avg_views) }}{%- endif -%}
+                            {%- if st.avg_reactions is not none %} &middot; ❤️ {{ "%.0f"|format(st.avg_reactions) }}{%- endif -%}
+                            {%- if st.avg_forwards is not none %} &middot; ↪ {{ "%.0f"|format(st.avg_forwards) }}{%- endif -%}
+                        {%- endif -%}
                     </small>
                 </div>
             </div>
