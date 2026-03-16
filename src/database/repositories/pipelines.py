@@ -79,8 +79,14 @@ class PipelinesRepository:
 
     @staticmethod
     def _row_to_model(row) -> Pipeline:
-        source_ids = json.loads(row["source_channel_ids"]) if row["source_channel_ids"] else []
-        raw_targets = json.loads(row["targets"]) if row["targets"] else []
+        try:
+            source_ids = json.loads(row["source_channel_ids"]) if row["source_channel_ids"] else []
+        except (json.JSONDecodeError, TypeError):
+            source_ids = []
+        try:
+            raw_targets = json.loads(row["targets"]) if row["targets"] else []
+        except (json.JSONDecodeError, TypeError):
+            raw_targets = []
         targets = [PipelineTarget.model_validate(t) for t in raw_targets]
         return Pipeline(
             id=row["id"],
