@@ -68,13 +68,13 @@ class BenchmarkStep:
     command: tuple[str, ...]
 
 
-def _print_result(r: CheckResult) -> None:
+def _print_result(result: CheckResult) -> None:
     tag = {
         Status.PASS: "\033[32m[PASS]\033[0m",
         Status.FAIL: "\033[31m[FAIL]\033[0m",
         Status.SKIP: "\033[33m[SKIP]\033[0m",
-    }[r.status]
-    print(f"{tag} {r.name:<22} {r.detail}")
+    }[result.status]
+    print(f"{tag} {result.name:<22} {result.detail}")
 
 
 def _run_benchmark_step(step: BenchmarkStep) -> float:
@@ -630,8 +630,8 @@ def run(args: argparse.Namespace) -> None:
             try:
                 config, db = await runtime.init_db(args.config)
             except Exception as exc:
-                r = CheckResult("db_init", Status.FAIL, f"Cannot init DB: {exc}")
-                _print_result(r)
+                check_result = CheckResult("db_init", Status.FAIL, f"Cannot init DB: {exc}")
+                _print_result(check_result)
                 print(
                     "\n--- Test Summary ---\n"
                     "0 passed, 1 failed, 0 skipped (1 total)",
@@ -652,29 +652,29 @@ def run(args: argparse.Namespace) -> None:
                     _check_recent_searches(db),
                 ]
                 for coro in db_checks:
-                    r = await coro
-                    results.append(r)
-                    _print_result(r)
+                    check_result = await coro
+                    results.append(check_result)
+                    _print_result(check_result)
             finally:
                 await db.close()
 
         if run_write:
             print("\n=== Write Tests (on DB copy) ===")
             write_results = await _run_write_checks(args.config)
-            for r in write_results:
-                results.append(r)
-                _print_result(r)
+            for check_result in write_results:
+                results.append(check_result)
+                _print_result(check_result)
 
         if run_telegram:
             print("\n=== Telegram Live Tests (on DB copy) ===")
             tg_results = await _run_telegram_live_checks(args.config)
-            for r in tg_results:
-                results.append(r)
-                _print_result(r)
+            for check_result in tg_results:
+                results.append(check_result)
+                _print_result(check_result)
 
-        passed = sum(1 for r in results if r.status == Status.PASS)
-        failed = sum(1 for r in results if r.status == Status.FAIL)
-        skipped = sum(1 for r in results if r.status == Status.SKIP)
+        passed = sum(1 for check_result in results if check_result.status == Status.PASS)
+        failed = sum(1 for check_result in results if check_result.status == Status.FAIL)
+        skipped = sum(1 for check_result in results if check_result.status == Status.SKIP)
         total = len(results)
 
         print("\n--- Test Summary ---")
