@@ -132,6 +132,9 @@ def build_parser() -> argparse.ArgumentParser:
     acc_sub = acc_parser.add_subparsers(dest="account_action")
     acc_sub.add_parser("list", help="List accounts")
 
+    acc_info = acc_sub.add_parser("info", help="Show profile info for connected accounts")
+    acc_info.add_argument("--phone", default=None, help="Filter by phone number")
+
     acc_toggle = acc_sub.add_parser("toggle", help="Toggle account active state")
     acc_toggle.add_argument("id", type=int, help="Account id")
 
