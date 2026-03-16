@@ -7,17 +7,11 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from pydantic import BaseModel
 
+from src.agent.models import CLAUDE_MODEL_IDS, CLAUDE_MODELS
 from src.web import deps
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
-
-
-ALLOWED_MODELS = {
-    "claude-sonnet-4-5",
-    "claude-opus-4-6",
-    "claude-haiku-4-5-20251001",
-}
 
 
 class ChatRequest(BaseModel):
@@ -51,15 +45,16 @@ async def agent_page(request: Request, thread_id: int | None = None):
     if thread_id is not None:
         active_thread = await db.get_agent_thread(thread_id)
         if active_thread is None and threads:
-            # Redirect to first existing thread
+            logger.debug("Thread %s not found, redirect to first thread", thread_id)
             return RedirectResponse(url=f"/agent?thread_id={threads[0]['id']}", status_code=303)
         if active_thread is not None:
             messages = await db.get_agent_messages(thread_id)
     elif threads:
+        logger.debug("No thread_id param, redirect to first thread %s", threads[0]["id"])
         return RedirectResponse(url=f"/agent?thread_id={threads[0]['id']}", status_code=303)
     else:
-        # Auto-create first thread
         thread_id = await db.create_agent_thread("Новый тред")
+        logger.debug("No threads exist, auto-created thread %s", thread_id)
         return RedirectResponse(url=f"/agent?thread_id={thread_id}", status_code=303)
 
     return deps.get_templates(request).TemplateResponse(
@@ -70,6 +65,7 @@ async def agent_page(request: Request, thread_id: int | None = None):
             "active_thread": active_thread,
             "messages": messages,
             "agent_status": agent_status,
+            "model_options": CLAUDE_MODELS,
         },
     )
 
@@ -204,7 +200,7 @@ async def chat(request: Request, thread_id: int):
         raise HTTPException(status_code=400, detail="Message cannot be empty")
 
     raw_model = (body.get("model") or "").strip()
-    model = raw_model if raw_model in ALLOWED_MODELS else None
+    model = raw_model if raw_model in CLAUDE_MODEL_IDS else None
 
     db = deps.get_db(request)
     agent_manager = deps.get_agent_manager(request)
