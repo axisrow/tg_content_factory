@@ -84,6 +84,8 @@
         test_notification_sent: "Тестовое уведомление отправлено.",
         test_notification_failed: "Не удалось отправить уведомление.",
         task_cancelled: "Задача отменена.",
+        pending_collect_tasks_deleted: "Запланированные задачи на загрузку удалены из базы.",
+        pending_collect_tasks_empty: "Запланированных задач на загрузку нет.",
         already_running: "Сбор уже запущен.",
         triggered: "Сбор запущен вручную.",
         filter_toggled: "Фильтр канала изменён.",
@@ -111,13 +113,17 @@
         photo_run_due_ok: "Due photo tasks обработаны.",
         photo_item_cancelled: "Photo task отменён.",
         photo_auto_toggled: "Статус auto job изменён.",
-         photo_auto_deleted: "Auto job удалён.",
-         deleted_filtered: "Каналы полностью удалены из базы.",
-         purged_selected: "Сообщения выбранных каналов очищены.",
-         purged_all_filtered: "Сообщения всех отфильтрованных каналов очищены.",
-         precheck_done: "Предпроверка подписчиков выполнена.",
-         semantic_saved: "Настройки semantic search сохранены.",
-         semantic_indexed: "Индексация semantic search завершена."
+        photo_auto_deleted: "Auto job удалён.",
+        deleted_filtered: "Каналы полностью удалены из базы.",
+        purged_selected: "Сообщения выбранных каналов очищены.",
+        purged_all_filtered: "Сообщения всех отфильтрованных каналов очищены.",
+        precheck_done: "Предпроверка подписчиков выполнена.",
+        pipeline_added: "Пайплайн добавлен.",
+        pipeline_edited: "Пайплайн обновлён.",
+        pipeline_toggled: "Статус пайплайна изменён.",
+        pipeline_deleted: "Пайплайн удалён.",
+        semantic_saved: "Настройки semantic search сохранены.",
+        semantic_indexed: "Индексация semantic search завершена."
     };
     var errors = {
         resolve: "Не удалось найти канал. Проверьте username или ссылку.",
@@ -141,6 +147,8 @@
         no_filtered_channels: "Нет отфильтрованных каналов для удаления.",
         dev_mode_required_for_hard_delete: "Для полного удаления каналов включите режим разработчика в настройках.",
         notification_test_failed: "Не удалось отправить тестовое уведомление.",
+        invalid_account: "Выбран неизвестный аккаунт.",
+        not_found: "Объект не найден.",
         photo_send_failed: "Не удалось отправить фото.",
         photo_target_required: "Сначала выберите канал, чат или личный диалог.",
         photo_target_invalid: "Выбранная цель недоступна. Выберите её заново.",
@@ -151,7 +159,8 @@
          semantic_invalid_value: "Некорректные настройки semantic search.",
          semantic_unavailable: "sqlite-vec недоступен, semantic search выключен.",
          photo_item_cancel_failed: "Не удалось отменить photo task.",
-         pipeline_invalid: "Параметры pipeline некорректны или dialog cache не заполнен."
+         pipeline_invalid: "Параметры pipeline некорректны или dialog cache не заполнен.",
+         channel_in_pipeline: "Канал используется в pipeline и не может быть удалён."
      };
     var params = new URLSearchParams(window.location.search);
     var code = params.get("msg");
@@ -163,8 +172,16 @@
     if (code && msgs[code]) {
         container.innerHTML = '<div class="alert alert-success" role="alert">' + msgs[code] + '</div>';
     }
-    if (errCode && errors[errCode]) {
-        container.innerHTML = '<div class="alert alert-danger" role="alert">' + errors[errCode] + '</div>';
+    if (errCode) {
+        var errDiv = document.createElement("div");
+        errDiv.className = "alert alert-danger";
+        errDiv.setAttribute("role", "alert");
+        if (errors[errCode]) {
+            errDiv.innerHTML = errors[errCode];
+        } else {
+            errDiv.textContent = errCode;
+        }
+        container.appendChild(errDiv);
     }
     if (code || errCode) {
         params.delete("msg");

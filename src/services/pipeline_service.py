@@ -73,7 +73,6 @@ class PipelineService:
         generation_backend: PipelineGenerationBackend | str = PipelineGenerationBackend.CHAIN,
         generate_interval_minutes: int = 60,
         is_active: bool = True,
-        last_generated_id: int = 0,
     ) -> bool:
         pipeline = await self._build_pipeline(
             name=name,
@@ -84,7 +83,6 @@ class PipelineService:
             generation_backend=generation_backend,
             generate_interval_minutes=generate_interval_minutes,
             is_active=is_active,
-            last_generated_id=last_generated_id,
         )
         sources = await self._normalize_sources(source_channel_ids)
         targets = await self._normalize_targets(target_refs)
@@ -129,8 +127,8 @@ class PipelineService:
             "source_ids": [source.channel_id for source in sources],
             "target_refs": [f"{target.phone}|{target.dialog_id}" for target in targets],
             "source_titles": [
-                channels_by_id.get(source.channel_id).title or str(source.channel_id)
-                if channels_by_id.get(source.channel_id)
+                (ch.title or str(source.channel_id))
+                if (ch := channels_by_id.get(source.channel_id))
                 else str(source.channel_id)
                 for source in sources
             ],
@@ -178,8 +176,8 @@ class PipelineService:
             "source_ids": [source.channel_id for source in sources],
             "target_refs": [f"{target.phone}|{target.dialog_id}" for target in targets],
             "source_titles": [
-                channels_by_id.get(source.channel_id).title or str(source.channel_id)
-                if channels_by_id.get(source.channel_id)
+                (ch.title or str(source.channel_id))
+                if (ch := channels_by_id.get(source.channel_id))
                 else str(source.channel_id)
                 for source in sources
             ],

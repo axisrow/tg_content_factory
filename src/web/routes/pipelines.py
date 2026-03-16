@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from urllib.parse import quote
 
 from fastapi import APIRouter, Form, Request
@@ -14,6 +15,8 @@ from src.services.pipeline_service import (
 )
 from src.web import deps
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter()
 
 
@@ -25,7 +28,7 @@ def _pipeline_redirect(
 ) -> RedirectResponse:
     key = "error" if error else "msg"
     suffix = f"&phone={quote(phone, safe='')}" if phone else ""
-    return RedirectResponse(url=f"/pipelines?{key}={code}{suffix}", status_code=303)
+    return RedirectResponse(url=f"/pipelines?{key}={quote(code, safe='')}{suffix}", status_code=303)
 
 
 def _target_refs(values: list[str]) -> list[PipelineTargetRef]:
@@ -49,7 +52,10 @@ async def _page_context(request: Request) -> dict:
     selected_phone = request.query_params.get("phone") or (accounts[0].phone if accounts else "")
     if selected_phone:
         refresh = request.query_params.get("refresh") == "1"
-        await deps.channel_service(request).get_my_dialogs(selected_phone, refresh=refresh)
+        try:
+            await deps.channel_service(request).get_my_dialogs(selected_phone, refresh=refresh)
+        except Exception:
+            logger.warning("Failed to refresh dialog cache for %s", selected_phone, exc_info=True)
     cached_dialogs = await svc.list_cached_dialogs_by_phone()
     return {
         "items": await svc.get_with_relations(),
@@ -77,8 +83,8 @@ async def add_pipeline(
     request: Request,
     name: str = Form(...),
     prompt_template: str = Form(...),
-    source_channel_ids: list[int] = Form(...),
-    target_refs: list[str] = Form(...),
+    source_channel_ids: list[int] = Form(default=[]),
+    target_refs: list[str] = Form(default=[]),
     llm_model: str = Form(""),
     image_model: str = Form(""),
     publish_mode: str = Form(PipelinePublishMode.MODERATED.value),
@@ -87,6 +93,7 @@ async def add_pipeline(
     is_active: bool = Form(False),
 ):
     svc: PipelineService = deps.pipeline_service(request)
+    phone = request.query_params.get("phone")
     try:
         await svc.add(
             name=name,
@@ -100,9 +107,9 @@ async def add_pipeline(
             generate_interval_minutes=generate_interval_minutes,
             is_active=is_active,
         )
-    except PipelineValidationError:
-        return _pipeline_redirect("pipeline_invalid", error=True)
-    return _pipeline_redirect("pipeline_added")
+    except PipelineValidationError as exc:
+        return _pipeline_redirect(str(exc), error=True, phone=phone)
+    return _pipeline_redirect("pipeline_added", phone=phone)
 
 
 @router.post("/{pipeline_id}/edit")
@@ -111,8 +118,8 @@ async def edit_pipeline(
     pipeline_id: int,
     name: str = Form(...),
     prompt_template: str = Form(...),
-    source_channel_ids: list[int] = Form(...),
-    target_refs: list[str] = Form(...),
+    source_channel_ids: list[int] = Form(default=[]),
+    target_refs: list[str] = Form(default=[]),
     llm_model: str = Form(""),
     image_model: str = Form(""),
     publish_mode: str = Form(PipelinePublishMode.MODERATED.value),
@@ -121,9 +128,10 @@ async def edit_pipeline(
     is_active: bool = Form(False),
 ):
     svc: PipelineService = deps.pipeline_service(request)
+    phone = request.query_params.get("phone")
     existing = await svc.get(pipeline_id)
     if existing is None:
-        return _pipeline_redirect("pipeline_invalid", error=True)
+        return _pipeline_redirect("pipeline_invalid", error=True, phone=phone)
     try:
         ok = await svc.update(
             pipeline_id,
@@ -137,24 +145,25 @@ async def edit_pipeline(
             generation_backend=generation_backend,
             generate_interval_minutes=generate_interval_minutes,
             is_active=is_active,
-            last_generated_id=existing.last_generated_id,
         )
-    except PipelineValidationError:
-        return _pipeline_redirect("pipeline_invalid", error=True)
+    except PipelineValidationError as exc:
+        return _pipeline_redirect(str(exc), error=True, phone=phone)
     if not ok:
-        return _pipeline_redirect("pipeline_invalid", error=True)
-    return _pipeline_redirect("pipeline_edited")
+        return _pipeline_redirect("pipeline_invalid", error=True, phone=phone)
+    return _pipeline_redirect("pipeline_edited", phone=phone)
 
 
 @router.post("/{pipeline_id}/toggle")
 async def toggle_pipeline(request: Request, pipeline_id: int):
+    phone = request.query_params.get("phone")
     ok = await deps.pipeline_service(request).toggle(pipeline_id)
     if not ok:
-        return _pipeline_redirect("pipeline_invalid", error=True)
-    return _pipeline_redirect("pipeline_toggled")
+        return _pipeline_redirect("pipeline_invalid", error=True, phone=phone)
+    return _pipeline_redirect("pipeline_toggled", phone=phone)
 
 
 @router.post("/{pipeline_id}/delete")
 async def delete_pipeline(request: Request, pipeline_id: int):
+    phone = request.query_params.get("phone")
     await deps.pipeline_service(request).delete(pipeline_id)
-    return _pipeline_redirect("pipeline_deleted")
+    return _pipeline_redirect("pipeline_deleted", phone=phone)
