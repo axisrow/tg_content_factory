@@ -11,7 +11,7 @@ import pytest
 
 from src.config import AppConfig
 from src.database import Database
-from src.models import Account, Channel, Message
+from src.models import Account, Channel, Message, Pipeline
 
 NOW = datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
 
@@ -78,6 +78,29 @@ def _add_message(db: Database, channel_id: int = 100, message_id: int = 1, text:
             Message(channel_id=channel_id, message_id=message_id, text=text, date=NOW)
         )
     )
+
+
+def _add_pipeline(db: Database, name: str = "Pipeline") -> int:
+    from src.database.bundles import PipelineBundle
+    from src.services.pipeline_service import PipelineService
+
+    async def _add():
+        svc = PipelineService(PipelineBundle.from_database(db))
+        return await svc.add(name)
+
+    return asyncio.run(_add())
+
+
+def _get_pipeline(db_path: str, pipeline_id: int) -> Pipeline | None:
+    async def _get():
+        database = Database(db_path)
+        await database.initialize()
+        try:
+            return await database.repos.pipelines.get_by_id(pipeline_id)
+        finally:
+            await database.close()
+
+    return asyncio.run(_get())
 
 
 # ---------------------------------------------------------------------------
@@ -442,6 +465,71 @@ class TestCLISearchQuery:
         from src.cli.commands.search_query import run
         run(_sq_ns(search_query_action="delete", id=sq_id))
         assert "Deleted search query" in capsys.readouterr().out
+
+
+def _pipeline_ns(**kwargs) -> argparse.Namespace:
+    defaults = dict(pipeline_action=None, id=None, name=None)
+    defaults.update(kwargs)
+    return _ns(**defaults)
+
+
+class TestCLIPipeline:
+    def test_list_empty(self, cli_env, capsys):
+        from src.cli.commands.pipeline import run
+
+        run(_pipeline_ns(pipeline_action="list"))
+        assert "No pipelines found." in capsys.readouterr().out
+
+    def test_add(self, cli_env, capsys):
+        from src.cli.commands.pipeline import run
+
+        run(_pipeline_ns(pipeline_action="add", name="Daily digest"))
+        out = capsys.readouterr().out
+        assert "Added pipeline" in out
+        assert "Daily digest" in out
+
+    def test_list(self, cli_env, capsys):
+        _add_pipeline(cli_env, name="Pipeline one")
+        from src.cli.commands.pipeline import run
+
+        run(_pipeline_ns(pipeline_action="list"))
+        out = capsys.readouterr().out
+        assert "Pipeline one" in out
+        assert "yes" in out
+
+    def test_edit(self, cli_env, capsys):
+        pipeline_id = _add_pipeline(cli_env, name="Original")
+        from src.cli.commands.pipeline import run
+
+        run(_pipeline_ns(pipeline_action="edit", id=pipeline_id, name="Updated"))
+        assert "Updated pipeline" in capsys.readouterr().out
+
+        pipeline = _get_pipeline(cli_env._db_path, pipeline_id)
+        assert pipeline is not None
+        assert pipeline == Pipeline(
+            id=pipeline_id,
+            name="Updated",
+            is_active=True,
+            created_at=pipeline.created_at,
+        )
+
+    def test_toggle(self, cli_env, capsys):
+        pipeline_id = _add_pipeline(cli_env, name="Toggle me")
+        from src.cli.commands.pipeline import run
+
+        run(_pipeline_ns(pipeline_action="toggle", id=pipeline_id))
+        assert "Toggled pipeline" in capsys.readouterr().out
+        pipeline = _get_pipeline(cli_env._db_path, pipeline_id)
+        assert pipeline is not None
+        assert pipeline.is_active is False
+
+    def test_delete(self, cli_env, capsys):
+        pipeline_id = _add_pipeline(cli_env, name="Delete me")
+        from src.cli.commands.pipeline import run
+
+        run(_pipeline_ns(pipeline_action="delete", id=pipeline_id))
+        assert "Deleted pipeline" in capsys.readouterr().out
+        assert _get_pipeline(cli_env._db_path, pipeline_id) is None
 
 
 # ---------------------------------------------------------------------------

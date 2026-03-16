@@ -136,6 +136,23 @@ def build_parser() -> argparse.ArgumentParser:
     sq_stats.add_argument("id", type=int, help="Search query id")
     sq_stats.add_argument("--days", type=int, default=30, help="Number of days")
 
+    pipeline_parser = sub.add_parser("pipeline", help="Pipeline management")
+    pipeline_sub = pipeline_parser.add_subparsers(dest="pipeline_action")
+    pipeline_sub.add_parser("list", help="List pipelines")
+
+    pipeline_add = pipeline_sub.add_parser("add", help="Add pipeline")
+    pipeline_add.add_argument("name", help="Pipeline name")
+
+    pipeline_edit = pipeline_sub.add_parser("edit", help="Edit pipeline")
+    pipeline_edit.add_argument("id", type=int, help="Pipeline id")
+    pipeline_edit.add_argument("--name", help="New pipeline name")
+
+    pipeline_del = pipeline_sub.add_parser("delete", help="Delete pipeline")
+    pipeline_del.add_argument("id", type=int, help="Pipeline id")
+
+    pipeline_toggle = pipeline_sub.add_parser("toggle", help="Toggle pipeline active state")
+    pipeline_toggle.add_argument("id", type=int, help="Pipeline id")
+
     acc_parser = sub.add_parser("account", help="Account management")
     acc_sub = acc_parser.add_subparsers(dest="account_action")
     acc_sub.add_parser("list", help="List accounts")

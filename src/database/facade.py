@@ -18,6 +18,7 @@ from src.database.repositories.filters import FilterRepository
 from src.database.repositories.messages import MessagesRepository
 from src.database.repositories.notification_bots import NotificationBotsRepository
 from src.database.repositories.photo_loader import PhotoLoaderRepository
+from src.database.repositories.pipelines import PipelinesRepository
 from src.database.repositories.search_log import SearchLogRepository
 from src.database.repositories.search_queries import SearchQueriesRepository
 from src.database.repositories.settings import SettingsRepository
@@ -59,6 +60,7 @@ class Database:
         self._filters: FilterRepository | None = None
         self._notification_bots: NotificationBotsRepository | None = None
         self._search_queries: SearchQueriesRepository | None = None
+        self._pipelines: PipelinesRepository | None = None
         self._photo_loader: PhotoLoaderRepository | None = None
         self._dialog_cache: DialogCacheRepository | None = None
         self._repos: DatabaseRepositories | None = None
@@ -108,6 +110,7 @@ class Database:
         self._filters = FilterRepository(self._db)
         self._notification_bots = NotificationBotsRepository(self._db)
         self._search_queries = SearchQueriesRepository(self._db)
+        self._pipelines = PipelinesRepository(self._db)
         self._photo_loader = PhotoLoaderRepository(self._db)
         self._dialog_cache = DialogCacheRepository(self._db)
         self._repos = DatabaseRepositories(
@@ -121,6 +124,7 @@ class Database:
             filters=self._filters,
             notification_bots=self._notification_bots,
             search_queries=self._search_queries,
+            pipelines=self._pipelines,
             photo_loader=self._photo_loader,
             dialog_cache=self._dialog_cache,
         )
@@ -170,6 +174,7 @@ class Database:
                 self._filters,
                 self._notification_bots,
                 self._search_queries,
+                self._pipelines,
                 self._photo_loader,
                 self._dialog_cache,
             )

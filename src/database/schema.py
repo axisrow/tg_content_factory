@@ -113,6 +113,13 @@ CREATE TABLE IF NOT EXISTS search_queries (
     created_at       TEXT DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS pipelines (
+    id         INTEGER PRIMARY KEY,
+    name       TEXT NOT NULL,
+    is_active  INTEGER DEFAULT 1,
+    created_at TEXT DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS search_query_stats (
     id          INTEGER PRIMARY KEY,
     query_id    INTEGER NOT NULL,

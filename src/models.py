@@ -159,6 +159,13 @@ class SearchQuery(BaseModel):
         return [p.strip() for p in self.exclude_patterns.splitlines() if p.strip()]
 
 
+class Pipeline(BaseModel):
+    id: int | None = None
+    name: str = Field(min_length=1)
+    is_active: bool = True
+    created_at: datetime | None = None
+
+
 class SearchQueryDailyStat(BaseModel):
     day: str  # "2026-03-07"
     count: int

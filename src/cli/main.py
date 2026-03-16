@@ -10,15 +10,22 @@ from src.cli.commands import (
     collect,
     notification,
     photo_loader,
+    pipeline,
     scheduler,
     search,
     search_query,
     serve,
     server_control,
 )
-from src.cli.commands import agent as agent_cmd
-from src.cli.commands import filter as filter_cmd
-from src.cli.commands import my_telegram as my_telegram_cmd
+from src.cli.commands import (
+    agent as agent_cmd,
+)
+from src.cli.commands import (
+    filter as filter_cmd,
+)
+from src.cli.commands import (
+    my_telegram as my_telegram_cmd,
+)
 from src.cli.commands import (
     test as test_cmd,
 )
@@ -45,6 +52,7 @@ def main() -> None:
         "account": account.run,
         "scheduler": scheduler.run,
         "notification": notification.run,
+        "pipeline": pipeline.run,
         "photo-loader": photo_loader.run,
         "my-telegram": my_telegram_cmd.run,
         "test": test_cmd.run,
@@ -60,6 +68,7 @@ def main() -> None:
             "account": "account_action",
             "scheduler": "scheduler_action",
             "notification": "notification_action",
+            "pipeline": "pipeline_action",
             "photo-loader": "photo_loader_action",
             "my-telegram": "my_telegram_action",
             "test": "test_action",
