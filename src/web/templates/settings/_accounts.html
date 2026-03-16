@@ -1,0 +1,77 @@
+<p><a href="/auth/login" class="btn btn-primary btn-sm"><i class="bi bi-plus-lg me-1"></i>Добавить аккаунт</a></p>
+
+{% if accounts %}
+<!-- Desktop: table -->
+<div class="table-responsive d-none d-md-block">
+<table class="table table-striped table-sm align-middle">
+    <thead>
+        <tr>
+            <th>Телефон</th>
+            <th>Статус</th>
+            <th class="text-center">Premium</th>
+            <th class="text-center">Primary</th>
+            <th class="text-center">Подключён</th>
+            <th>Flood wait</th>
+            <th>Добавлен</th>
+            <th>Действия</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for acc in accounts %}
+        <tr>
+            <td>{{ acc.phone }}</td>
+            <td>{% if acc.is_active %}<span class="badge-active">&#9679; Активен</span>{% else %}<span class="badge-inactive">&#9679; Отключён</span>{% endif %}</td>
+            <td class="text-center">{% if acc.is_premium %}<span class="badge-active">&#9679;</span>{% else %}<span class="badge-inactive">&#9679;</span>{% endif %}</td>
+            <td class="text-center">{% if acc.is_primary %}<span class="badge-active">&#9679;</span>{% else %}<span class="badge-inactive">&#9679;</span>{% endif %}</td>
+            <td class="text-center">{% if acc.phone in connected_phones %}<span class="badge-active">&#9679;</span>{% else %}<span class="badge-inactive">&#9679;</span>{% endif %}</td>
+            <td>{{ acc.flood_wait_until.strftime('%H:%M:%S') if acc.flood_wait_until else "\u2014" }}</td>
+            <td>{{ acc.created_at.strftime('%Y-%m-%d') if acc.created_at else "\u2014" }}</td>
+            <td class="text-nowrap">
+                <form method="post" action="/settings/{{ acc.id }}/toggle" class="d-inline">
+                    <button type="submit" class="btn btn-outline-secondary btn-sm" title="{{ 'Отключить' if acc.is_active else 'Включить' }}">
+                        <i class="bi {{ 'bi-pause-circle' if acc.is_active else 'bi-play-circle' }}"></i>
+                    </button>
+                </form>
+                <form method="post" action="/settings/{{ acc.id }}/delete" class="d-inline" onsubmit="return confirm('Вы уверены, что хотите удалить этот аккаунт?')">
+                    <button type="submit" class="btn btn-outline-danger btn-sm" title="Удалить"><i class="bi bi-trash"></i></button>
+                </form>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+</div>
+
+<!-- Mobile: cards -->
+<div class="d-md-none mobile-cards">
+    {% for acc in accounts %}
+    <div class="card mb-2">
+        <div class="card-body">
+            <div class="d-flex justify-content-between align-items-center mb-1">
+                <strong>{{ acc.phone }}</strong>
+                {% if acc.is_active %}<span class="badge-active">&#9679; Активен</span>{% else %}<span class="badge-inactive">&#9679; Отключён</span>{% endif %}
+            </div>
+            <small class="text-muted">
+                {% if acc.is_premium %}Premium{% endif %}
+                {% if acc.is_primary %}&middot; Primary{% endif %}
+                {% if acc.phone in connected_phones %}&middot; Подключён{% endif %}
+                {% if acc.flood_wait_until %}&middot; Flood: {{ acc.flood_wait_until.strftime('%H:%M:%S') }}{% endif %}
+                {% if acc.created_at %}&middot; {{ acc.created_at.strftime('%Y-%m-%d') }}{% endif %}
+            </small>
+            <div class="card-actions">
+                <form method="post" action="/settings/{{ acc.id }}/toggle" class="d-inline">
+                    <button type="submit" class="btn btn-outline-secondary btn-sm" title="{{ 'Отключить' if acc.is_active else 'Включить' }}">
+                        <i class="bi {{ 'bi-pause-circle' if acc.is_active else 'bi-play-circle' }}"></i>
+                    </button>
+                </form>
+                <form method="post" action="/settings/{{ acc.id }}/delete" class="d-inline" onsubmit="return confirm('Вы уверены, что хотите удалить этот аккаунт?')">
+                    <button type="submit" class="btn btn-outline-danger btn-sm" title="Удалить"><i class="bi bi-trash"></i></button>
+                </form>
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% else %}
+<p class="text-muted mb-0">Нет подключённых аккаунтов. <a href="/auth/login">Добавьте первый аккаунт</a>.</p>
+{% endif %}

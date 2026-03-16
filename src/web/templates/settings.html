@@ -1,811 +1,112 @@
 {% extends "base.html" %}
 {% block title %}Настройки — TG Agent{% endblock %}
 {% block content %}
-<h1>Настройки</h1>
+<h1 class="mb-4">Настройки</h1>
 
-<div class="card mb-4">
-    <div class="card-header fw-semibold">Telegram-аккаунты</div>
-    <div class="card-body">
-        <p><a href="/auth/login" class="btn btn-primary">Добавить аккаунт</a></p>
+<ul class="nav nav-pills mb-4" id="settings-tabs" role="tablist">
+    <li class="nav-item" role="presentation">
+        <button class="nav-link active" id="tab-accounts" data-bs-toggle="pill"
+                data-bs-target="#pane-accounts" type="button" role="tab"
+                aria-controls="pane-accounts" aria-selected="true">
+            <i class="bi bi-phone me-1"></i>Аккаунты
+        </button>
+    </li>
+    <li class="nav-item" role="presentation">
+        <button class="nav-link" id="tab-credentials" data-bs-toggle="pill"
+                data-bs-target="#pane-credentials" type="button" role="tab"
+                aria-controls="pane-credentials" aria-selected="false">
+            <i class="bi bi-key me-1"></i>API
+        </button>
+    </li>
+    <li class="nav-item" role="presentation">
+        <button class="nav-link" id="tab-scheduler" data-bs-toggle="pill"
+                data-bs-target="#pane-scheduler" type="button" role="tab"
+                aria-controls="pane-scheduler" aria-selected="false">
+            <i class="bi bi-clock me-1"></i>Планировщик
+        </button>
+    </li>
+    <li class="nav-item" role="presentation">
+        <button class="nav-link" id="tab-devmode" data-bs-toggle="pill"
+                data-bs-target="#pane-devmode" type="button" role="tab"
+                aria-controls="pane-devmode" aria-selected="false">
+            <i class="bi bi-code-slash me-1"></i>Разработчик
+        </button>
+    </li>
+    <li class="nav-item" role="presentation">
+        <button class="nav-link" id="tab-filters" data-bs-toggle="pill"
+                data-bs-target="#pane-filters" type="button" role="tab"
+                aria-controls="pane-filters" aria-selected="false">
+            <i class="bi bi-funnel me-1"></i>Фильтры
+        </button>
+    </li>
+    <li class="nav-item" role="presentation">
+        <button class="nav-link" id="tab-notifications" data-bs-toggle="pill"
+                data-bs-target="#pane-notifications" type="button" role="tab"
+                aria-controls="pane-notifications" aria-selected="false">
+            <i class="bi bi-bell me-1"></i>Уведомления
+        </button>
+    </li>
+</ul>
 
-        {% if accounts %}
-        <!-- Desktop: table -->
-        <div class="table-responsive d-none d-md-block">
-        <table class="table table-striped table-sm">
-            <thead>
-                <tr>
-                    <th>Телефон</th>
-                    <th>Статус</th>
-                    <th class="text-center">Premium</th>
-                    <th class="text-center">Primary</th>
-                    <th class="text-center">Подключён</th>
-                    <th>Flood wait</th>
-                    <th>Добавлен</th>
-                    <th>Действия</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for acc in accounts %}
-                <tr>
-                    <td>{{ acc.phone }}</td>
-                    <td>{% if acc.is_active %}<span class="badge-active">&#9679; Активен</span>{% else %}<span class="badge-inactive">&#9679; Отключён</span>{% endif %}</td>
-                    <td class="text-center">{% if acc.is_premium %}<span class="badge-active">&#9679;</span>{% else %}<span class="badge-inactive">&#9679;</span>{% endif %}</td>
-                    <td class="text-center">{% if acc.is_primary %}<span class="badge-active">&#9679;</span>{% else %}<span class="badge-inactive">&#9679;</span>{% endif %}</td>
-                    <td class="text-center">{% if acc.phone in connected_phones %}<span class="badge-active">&#9679;</span>{% else %}<span class="badge-inactive">&#9679;</span>{% endif %}</td>
-                    <td>{{ acc.flood_wait_until.strftime('%H:%M:%S') if acc.flood_wait_until else "—" }}</td>
-                    <td>{{ acc.created_at.strftime('%Y-%m-%d') if acc.created_at else "—" }}</td>
-                    <td>
-                        <form method="post" action="/settings/{{ acc.id }}/toggle" class="d-inline">
-                            <button type="submit" class="btn btn-outline-secondary btn-sm emoji-btn" title="{{ 'Отключить' if acc.is_active else 'Включить' }}">
-                                {{ "⏏️" if acc.is_active else "▶️" }}
-                            </button>
-                        </form>
-                        <form method="post" action="/settings/{{ acc.id }}/delete" class="d-inline" onsubmit="return confirm('Вы уверены, что хотите удалить этот аккаунт?')">
-                            <button type="submit" class="btn btn-outline-danger btn-sm emoji-btn" title="Удалить">&#128465;&#65039;</button>
-                        </form>
-                    </td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
-        </div>
-
-        <!-- Mobile: cards -->
-        <div class="d-md-none mobile-cards">
-            {% for acc in accounts %}
-            <div class="card mb-2">
-                <div class="card-body">
-                    <div class="d-flex justify-content-between align-items-center mb-1">
-                        <strong>{{ acc.phone }}</strong>
-                        {% if acc.is_active %}<span class="badge-active">&#9679; Активен</span>{% else %}<span class="badge-inactive">&#9679; Отключён</span>{% endif %}
-                    </div>
-                    <small class="text-muted">
-                        {% if acc.is_premium %}Premium{% endif %}
-                        {% if acc.is_primary %}&middot; Primary{% endif %}
-                        {% if acc.phone in connected_phones %}&middot; Подключён{% endif %}
-                        {% if acc.flood_wait_until %}&middot; Flood: {{ acc.flood_wait_until.strftime('%H:%M:%S') }}{% endif %}
-                        {% if acc.created_at %}&middot; {{ acc.created_at.strftime('%Y-%m-%d') }}{% endif %}
-                    </small>
-                    <div class="card-actions">
-                        <form method="post" action="/settings/{{ acc.id }}/toggle" class="d-inline">
-                            <button type="submit" class="btn btn-outline-secondary btn-sm emoji-btn" title="{{ 'Отключить' if acc.is_active else 'Включить' }}">
-                                {{ "⏏️" if acc.is_active else "▶️" }}
-                            </button>
-                        </form>
-                        <form method="post" action="/settings/{{ acc.id }}/delete" class="d-inline" onsubmit="return confirm('Вы уверены, что хотите удалить этот аккаунт?')">
-                            <button type="submit" class="btn btn-outline-danger btn-sm emoji-btn" title="Удалить">&#128465;&#65039;</button>
-                        </form>
-                    </div>
-                </div>
-            </div>
-            {% endfor %}
-        </div>
-        {% else %}
-        <p>Нет подключённых аккаунтов. <a href="/auth/login">Добавьте первый аккаунт</a>.</p>
-        {% endif %}
-    </div>
-</div>
-
-{% if telegram_credentials_from_env %}
-<div class="card mb-4">
-    <div class="card-header fw-semibold">Telegram API credentials</div>
-    <div class="card-body">
-        <p><span class="badge text-bg-warning">Управляется через окружение</span> — <code>TG_API_ID</code> и <code>TG_API_HASH</code> заданы во внешней конфигурации, поэтому эта форма скрыта.</p>
-    </div>
-</div>
-{% else %}
-<div class="card mb-4">
-    <div class="card-header fw-semibold">Telegram API credentials</div>
-    <div class="card-body">
-        {% if is_configured %}
-        <p><span class="badge text-bg-success">Настроено</span> — API credentials сохранены.</p>
-        {% else %}
-        <p><span class="badge text-bg-warning">Не настроено</span> — для работы приложения необходимо указать Telegram API credentials.</p>
-        {% endif %}
-
-        <details {% if not is_configured %}open{% endif %}>
-            <summary>Как получить API ID и API Hash</summary>
-            <ol class="mt-2">
-                <li>Перейдите на <a href="https://my.telegram.org/apps" target="_blank" rel="noopener">my.telegram.org/apps</a></li>
-                <li>Авторизуйтесь с вашим номером телефона Telegram</li>
-                <li>Заполните форму создания приложения (название и короткое имя — любые)</li>
-                <li>Скопируйте <strong>App api_id</strong> и <strong>App api_hash</strong></li>
-            </ol>
-        </details>
-
-        <form method="post" action="/settings/save-credentials" class="mt-3" data-busy>
-            <div class="row g-3 mb-3">
-                <div class="col-12 col-md-6">
-                    <label for="api_id" class="form-label">API ID</label>
-                    <input type="text" class="form-control" id="api_id" name="api_id"
-                           placeholder="12345678"
-                           value="{{ api_id }}"
-                           {% if not is_configured %}inputmode="numeric" required{% endif %}>
-                </div>
-                <div class="col-12 col-md-6">
-                    <label for="api_hash" class="form-label">API Hash</label>
-                    <input type="text" class="form-control" id="api_hash" name="api_hash"
-                           placeholder="abcdef1234567890abcdef1234567890"
-                           value="{{ api_hash }}"
-                           {% if not is_configured %}required{% endif %}>
-                </div>
-            </div>
-            <button type="submit" class="btn btn-primary" class="w-auto">Сохранить</button>
-        </form>
-    </div>
-</div>
-{% endif %}
-
-<div class="card mb-4">
-    <div class="card-header fw-semibold">Планировщик</div>
-    <div class="card-body">
-        <form method="post" action="/settings/save-scheduler" data-busy>
-            <div class="mb-3">
-                <label for="collect_interval_minutes" class="form-label">Интервал сбора сообщений (минуты)</label>
-                <input type="number" class="form-control" id="collect_interval_minutes" name="collect_interval_minutes"
-                       min="1" max="1440" value="{{ collect_interval_minutes }}" class="w-auto">
-                <div class="form-text">Как часто планировщик автоматически собирает новые сообщения из каналов. Диапазон: 1–1440 минут.</div>
-            </div>
-            <button type="submit" class="btn btn-primary" class="w-auto">Сохранить</button>
-        </form>
-    </div>
-</div>
-
-<div class="card mb-4">
-    <div class="card-header fw-semibold">Режим разработчика</div>
-    <div class="card-body">
-        <form method="post" action="/settings/save-agent" data-busy>
-            <input type="hidden" name="agent_form_scope" value="dev_mode">
-            <div class="form-check form-switch mb-3">
-                <input class="form-check-input" type="checkbox" id="agent_dev_mode_enabled"
-                       name="agent_dev_mode_enabled" value="1"
-                       {% if agent_dev_mode_enabled %}checked{% endif %}>
-                <label class="form-check-label" for="agent_dev_mode_enabled">Режим разработчика</label>
-            </div>
-            <div class="alert alert-warning py-2 mb-3" role="alert">
-                Включает потенциально опасные изменения интерфейса и поведения AI Agent. Используйте только если понимаете последствия.
-            </div>
-            <div class="form-check mb-3">
-                <input class="form-check-input" type="checkbox" id="agent_dev_mode_disclaimer"
-                       name="agent_dev_mode_disclaimer" value="1">
-                <label class="form-check-label" for="agent_dev_mode_disclaimer">
-                    Я понимаю, что включаю потенциально опасные изменения
-                </label>
-            </div>
-            <div class="form-text mb-3">
-                Без подтверждения дисклеймера режим разработчика не включится. При уже включённом режиме этот экран можно использовать и для отключения.
-            </div>
-            <button type="submit" class="btn btn-primary">Сохранить режим разработчика</button>
-        </form>
-    </div>
-</div>
-
-{% if agent_dev_mode_enabled %}
-<div class="card mb-4">
-    <div class="card-header fw-semibold">AI Agent</div>
-    <div class="card-body">
-        <form method="post" action="/settings/save-agent" data-busy>
-            <input type="hidden" name="agent_form_scope" value="backend_override">
-            <div class="mb-3">
-                <label for="agent_backend_override" class="form-label">Backend override</label>
-                <select id="agent_backend_override" name="agent_backend_override" class="form-select">
-                    <option value="auto" {{ 'selected' if agent_backend_override == 'auto' else '' }}>Авто</option>
-                    <option value="claude" {{ 'selected' if agent_backend_override == 'claude' else '' }}>claude-agent-sdk</option>
-                    <option value="deepagents" {{ 'selected' if agent_backend_override == 'deepagents' else '' }}>deepagents</option>
-                </select>
-                <div class="form-text">
-                    Override применяется только при включённом режиме разработчика. В обычном режиме используется Claude, а при его отсутствии — deepagents fallback.
-                </div>
-            </div>
-            <p class="mb-3">
-                Fallback model из env/config:
-                {% if agent_fallback_model %}
-                <code>{{ agent_fallback_model }}</code>
-                {% else %}
-                <span class="text-muted">не задан</span>
-                {% endif %}
-            </p>
-            <button type="submit" class="btn btn-primary">Сохранить настройки агента</button>
-        </form>
-
-        <hr>
-
-        <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
-            <div>
-                <h5 class="mb-1">Deepagents Providers</h5>
-                <div class="form-text">Провайдеры используются по возрастанию приоритета. Если один провайдер не инициализируется или падает, runtime пробует следующий.</div>
-            </div>
-            <div class="d-flex flex-wrap gap-2">
-                <button type="button" class="btn btn-outline-secondary btn-sm"
-                        id="refresh-all-agent-providers-btn"
-                        onclick="refreshAllAgentProviders()"
-                        {% if not agent_provider_writes_enabled %}disabled{% endif %}>
-                    Обновить модели у всех
-                </button>
-                <button type="button" class="btn btn-outline-secondary btn-sm"
-                        id="bulk-test-agent-providers-btn"
-                        onclick="bulkTestAgentProviders()"
-                        {% if not agent_provider_writes_enabled %}disabled{% endif %}>
-                    Тестировать все модели
-                </button>
+<div class="tab-content" id="settings-tab-content">
+    <div class="tab-pane fade show active" id="pane-accounts" role="tabpanel" aria-labelledby="tab-accounts">
+        <div class="card shadow-sm">
+            <div class="card-header bg-body-secondary fw-semibold">Telegram-аккаунты</div>
+            <div class="card-body">
+                {% include "settings/_accounts.html" %}
             </div>
         </div>
-        <div id="agent-provider-actions-status" class="small mb-3" aria-live="polite"></div>
+    </div>
 
-        {% if not agent_provider_writes_enabled %}
-        <div class="alert alert-warning py-2">
-            Для управления deepagents providers требуется <code>SESSION_ENCRYPTION_KEY</code>. Без него настройки провайдеров доступны только для чтения.
+    <div class="tab-pane fade" id="pane-credentials" role="tabpanel" aria-labelledby="tab-credentials">
+        <div class="card shadow-sm">
+            <div class="card-header bg-body-secondary fw-semibold">Telegram API credentials</div>
+            <div class="card-body">
+                {% include "settings/_credentials.html" %}
+            </div>
         </div>
-        {% endif %}
-
-        <form method="post" action="/settings/agent-providers/add" class="row g-2 align-items-end mb-4" data-busy>
-            <div class="col-12 col-md-6">
-                <label for="deepagents_provider_add" class="form-label">Добавить провайдера</label>
-                <select id="deepagents_provider_add" name="provider" class="form-select" {% if not agent_provider_writes_enabled %}disabled{% endif %}>
-                    <option value="">Выберите провайдера</option>
-                    {% for spec in agent_provider_options %}
-                    <option value="{{ spec.name }}">{{ spec.display_name }} ({{ spec.name }})</option>
-                    {% endfor %}
-                </select>
-            </div>
-            <div class="col-12 col-md-auto">
-                <button type="submit" class="btn btn-outline-primary" {% if not agent_provider_writes_enabled %}disabled{% endif %}>Добавить</button>
-            </div>
-        </form>
-
-        {% if agent_provider_views %}
-        <form method="post" action="/settings/agent-providers/save" data-busy>
-            {% for item in agent_provider_views %}
-            <div class="border rounded p-3 mb-3" data-provider-card="{{ item.provider }}">
-                <input type="hidden" name="provider_present__{{ item.provider }}" value="1">
-                <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-3">
-                    <div>
-                        <div class="fw-semibold">{{ item.display_name }}</div>
-                        <div class="small text-muted">
-                            provider: <code>{{ item.provider }}</code> |
-                            package: <code>{{ item.package_name }}</code>
-                        </div>
-                    </div>
-                    <div class="d-flex gap-2 align-items-center">
-                        <button type="button" class="btn btn-outline-secondary btn-sm"
-                                data-provider-refresh-btn="{{ item.provider }}"
-                                onclick="refreshAgentProvider('{{ item.provider }}')"
-                                {% if not agent_provider_writes_enabled %}disabled{% endif %}>
-                            Обновить модели
-                        </button>
-                        <button type="submit"
-                                class="btn btn-outline-danger btn-sm"
-                                formaction="/settings/agent-providers/{{ item.provider }}/delete"
-                                formmethod="post"
-                                {% if not agent_provider_writes_enabled %}disabled{% endif %}>
-                            Удалить
-                        </button>
-                    </div>
-                </div>
-
-                <div class="row g-3 mb-3">
-                    <div class="col-12 col-md-2">
-                        <label class="form-label" for="provider_priority__{{ item.provider }}">Приоритет</label>
-                        <input type="number" class="form-control" id="provider_priority__{{ item.provider }}"
-                               name="provider_priority__{{ item.provider }}" value="{{ item.priority }}" min="0"
-                               {% if not agent_provider_writes_enabled %}disabled{% endif %}>
-                    </div>
-                    <div class="col-12 col-md-3">
-                        <label class="form-label" for="provider_model__{{ item.provider }}">Модель</label>
-                        <select class="form-select" id="provider_model__{{ item.provider }}"
-                                name="provider_model__{{ item.provider }}" {% if not agent_provider_writes_enabled %}disabled{% endif %}>
-                            {% for option in item.model_options %}
-                            <option value="{{ option.value }}" data-compat-status="{{ option.status }}"
-                                    {{ 'selected' if item.selected_model == option.value else '' }}>{{ option.label }}</option>
-                            {% endfor %}
-                        </select>
-                        <div class="form-text" id="provider_model_meta__{{ item.provider }}">
-                            source:
-                            <span class="badge text-bg-{{ 'success' if item.model_source == 'live' else 'secondary' }}">{{ item.model_source }}</span>
-                            {% if item.model_fetched_at %}| {{ item.model_fetched_at }}{% endif %}
-                        </div>
-                        <div class="small text-muted{{ '' if item.model_fetch_error else ' d-none' }}"
-                             id="provider_model_error__{{ item.provider }}">{{ item.model_fetch_error }}</div>
-                        <div class="small mt-2" id="provider_compat__{{ item.provider }}">
-                            {% if item.selected_compatibility %}
-                            <div>
-                                compatibility:
-                                <span class="badge text-bg-{{ 'success' if item.selected_compatibility.status == 'supported' else ('warning' if item.selected_compatibility.status == 'unknown' else 'danger') }}">{{ item.selected_compatibility.status }}</span>
-                                {% if item.selected_compatibility.tested_at %}| {{ item.selected_compatibility.tested_at }}{% endif %}
-                            </div>
-                            {% if item.selected_compatibility.reason %}
-                            <div class="text-muted">{{ item.selected_compatibility.reason }}</div>
-                            {% endif %}
-                            {% elif item.selected_compatibility_warning %}
-                            <div class="text-muted">{{ item.selected_compatibility_warning }}</div>
-                            {% else %}
-                            <div class="text-muted">Совместимость модели с deepagents ещё не проверялась.</div>
-                            {% endif %}
-                        </div>
-                    </div>
-                    <div class="col-12 col-md-2">
-                        <label class="form-label" for="provider_enabled__{{ item.provider }}">Статус</label>
-                        <select class="form-select" id="provider_enabled__{{ item.provider }}"
-                                name="provider_enabled__{{ item.provider }}" {% if not agent_provider_writes_enabled %}disabled{% endif %}>
-                            <option value="1" {{ 'selected' if item.enabled else '' }}>Enabled</option>
-                            <option value="" {{ 'selected' if not item.enabled else '' }}>Disabled</option>
-                        </select>
-                    </div>
-                </div>
-
-                {% if item.plain_fields %}
-                <div class="row g-3 mb-3">
-                    {% for field in item.plain_fields %}
-                    <div class="col-12 col-md-4">
-                        <label class="form-label" for="provider_field__{{ item.provider }}__{{ field.name }}">{{ field.label }}</label>
-                        <input type="text" class="form-control"
-                               id="provider_field__{{ item.provider }}__{{ field.name }}"
-                               name="provider_field__{{ item.provider }}__{{ field.name }}"
-                               value="{{ field.value }}"
-                               placeholder="{{ field.placeholder }}"
-                               {% if not agent_provider_writes_enabled %}disabled{% endif %}>
-                        {% if field.help_text %}
-                        <div class="form-text">{{ field.help_text }}</div>
-                        {% endif %}
-                    </div>
-                    {% endfor %}
-                </div>
-                {% endif %}
-
-                {% if item.secret_fields %}
-                <div class="row g-3 mb-2">
-                    {% for field in item.secret_fields %}
-                    <div class="col-12 col-md-4">
-                        <label class="form-label" for="provider_secret__{{ item.provider }}__{{ field.name }}">{{ field.label }}</label>
-                        <input type="password" class="form-control"
-                               id="provider_secret__{{ item.provider }}__{{ field.name }}"
-                               name="provider_secret__{{ item.provider }}__{{ field.name }}"
-                               placeholder="{{ field.masked or 'Введите новое значение' }}"
-                               {% if not agent_provider_writes_enabled %}disabled{% endif %}>
-                        <div class="form-text">
-                            {% if field.has_value %}Значение сохранено и скрыто. Оставьте пустым, чтобы не менять.{% else %}Значение ещё не задано.{% endif %}
-                        </div>
-                    </div>
-                    {% endfor %}
-                </div>
-                {% endif %}
-
-                {% if item.last_validation_error %}
-                <div class="alert alert-warning py-2 mb-0">{{ item.last_validation_error }}</div>
-                {% endif %}
-            </div>
-            {% endfor %}
-
-            <button type="submit" class="btn btn-primary" {% if not agent_provider_writes_enabled %}disabled{% endif %}>Сохранить providers</button>
-        </form>
-        {% else %}
-        <p class="text-muted mb-0">Провайдеры deepagents ещё не добавлены.</p>
-        {% endif %}
     </div>
-</div>
-{% endif %}
 
-<div class="card mb-4">
-    <div class="card-header fw-semibold">Фильтры каналов</div>
-    <div class="card-body">
-        <form method="post" action="/settings/save-filters" data-busy>
-            <div class="mb-3">
-                <label for="min_subscribers_filter" class="form-label">Минимальное количество подписчиков</label>
-                <input type="number" class="form-control" id="min_subscribers_filter" name="min_subscribers_filter"
-                       min="0" value="{{ min_subscribers_filter }}"
-                       placeholder="0 — отключено" class="w-auto">
-                <div class="form-text">Каналы с числом подписчиков ниже порога будут помечены флагом &#9995; и пропущены при сборе. Значение 0 — фильтр отключён.</div>
+    <div class="tab-pane fade" id="pane-scheduler" role="tabpanel" aria-labelledby="tab-scheduler">
+        <div class="card shadow-sm">
+            <div class="card-header bg-body-secondary fw-semibold">Планировщик</div>
+            <div class="card-body">
+                {% include "settings/_scheduler.html" %}
             </div>
-            <button type="submit" class="btn btn-primary" class="w-auto">Сохранить</button>
-        </form>
+        </div>
     </div>
-</div>
 
-<div class="card mb-4">
-    <div class="card-header fw-semibold">Уведомления</div>
-    <div class="card-body">
-        <form method="post" action="/settings/save-notification-account" class="mb-3" data-busy>
-            <div class="mb-3">
-                <label for="notification_account_phone" class="form-label">Аккаунт для уведомлений</label>
-                <select id="notification_account_phone" name="notification_account_phone" class="form-select" class="w-auto">
-                    <option value="" {{ 'selected' if not notification_selected_phone else '' }}>Primary (default)</option>
-                    {% for acc in accounts %}
-                    <option value="{{ acc.phone }}" {{ 'selected' if notification_selected_phone == acc.phone else '' }}>
-                        {{ acc.phone }}{% if acc.is_primary %} [primary]{% endif %}{% if not acc.is_active %} [отключён]{% endif %}{% if acc.phone not in connected_phones %} [не подключён]{% endif %}
-                    </option>
-                    {% endfor %}
-                    {% if notification_selected_phone and notification_selected_phone not in account_phones %}
-                    <option value="{{ notification_selected_phone }}" selected>{{ notification_selected_phone }} [удалён]</option>
-                    {% endif %}
-                </select>
-                <div class="form-text">Если значение пустое, используется текущий primary-аккаунт. Автоматического fallback на другие аккаунты нет.</div>
+    <div class="tab-pane fade" id="pane-devmode" role="tabpanel" aria-labelledby="tab-devmode">
+        <div class="card shadow-sm">
+            <div class="card-header bg-body-secondary fw-semibold">
+                Режим разработчика{% if agent_dev_mode_enabled %} & AI Agent{% endif %}
             </div>
-            <button type="submit" class="btn btn-primary" class="w-auto">Сохранить выбор</button>
-        </form>
+            <div class="card-body">
+                {% include "settings/_devmode.html" %}
+            </div>
+        </div>
+    </div>
 
-        {% if notification_target.state == "available" %}
-        <p><span class="badge text-bg-success">Активно</span> {{ notification_target.message }}</p>
-        {% else %}
-        <p><span class="badge text-bg-warning">Недоступно</span> {{ notification_target.message }}</p>
-        {% endif %}
+    <div class="tab-pane fade" id="pane-filters" role="tabpanel" aria-labelledby="tab-filters">
+        <div class="card shadow-sm">
+            <div class="card-header bg-body-secondary fw-semibold">Фильтры каналов</div>
+            <div class="card-body">
+                {% include "settings/_filters.html" %}
+            </div>
+        </div>
+    </div>
 
-        {% if notification_bot %}
-        <p>
-            Notification bot: <code>@{{ notification_bot.bot_username }}</code>
-            {% if notification_bot.bot_id %}(ID {{ notification_bot.bot_id }}){% endif %}
-        </p>
-        <form method="post" action="/settings/notifications/delete" class="d-inline" data-busy>
-            <button type="submit" class="btn btn-outline-danger">Удалить notification bot</button>
-        </form>
-        {% if notification_target.state == "available" %}
-        <form method="post" action="/settings/notifications/test" class="d-inline" data-busy>
-            <button type="submit" class="btn btn-outline-secondary">Тест</button>
-        </form>
-        {% endif %}
-        {% elif notification_bot_error %}
-        <p><small class="text-muted">{{ notification_bot_error }}</small></p>
-        {% else %}
-        <p>Для выбранного аккаунта notification bot ещё не настроен.</p>
-        <form method="post" action="/settings/notifications/setup" class="d-inline" data-busy>
-            <button type="submit" class="btn btn-outline-primary">Создать notification bot</button>
-        </form>
-        {% endif %}
+    <div class="tab-pane fade" id="pane-notifications" role="tabpanel" aria-labelledby="tab-notifications">
+        <div class="card shadow-sm">
+            <div class="card-header bg-body-secondary fw-semibold">Уведомления</div>
+            <div class="card-body">
+                {% include "settings/_notifications.html" %}
+            </div>
+        </div>
     </div>
 </div>
 
 {% endblock %}
 {% block head_scripts %}
-<script>
-const providerProbeTokens = {};
-let bulkTestPollTimer = null;
-const htmlEscapeMap = {
-    '&': '&amp;',
-    '<': '&lt;',
-    '>': '&gt;',
-    '"': '&quot;',
-    "'": '&#39;',
-};
-
-function escapeHtml(value) {
-    return String(value ?? '').replace(/[&<>"']/g, (char) => htmlEscapeMap[char]);
-}
-
-function compatibilityBadgeClass(status) {
-    if (status === 'supported') return 'success';
-    if (status === 'unsupported') return 'danger';
-    return 'warning';
-}
-
-function renderCompatibilityHtml(payload) {
-    if (!payload || !payload.status) {
-        return '<div class="text-muted">Совместимость модели с deepagents ещё не проверялась.</div>';
-    }
-    const lines = [
-        'compatibility: <span class="badge text-bg-' + compatibilityBadgeClass(payload.status) + '">' + payload.status + '</span>'
-    ];
-    if (payload.tested_at) {
-        lines.push('| ' + escapeHtml(payload.tested_at));
-    }
-    let html = '<div>' + lines.join(' ') + '</div>';
-    if (payload.reason) {
-        html += '<div class="text-muted">' + escapeHtml(payload.reason) + '</div>';
-    }
-    return html;
-}
-
-function renderModelMetaHtml(source, fetchedAt) {
-    const badgeClass = source === 'live' ? 'success' : 'secondary';
-    let html = 'source: <span class="badge text-bg-' + badgeClass + '">' + escapeHtml(source || 'static cache') + '</span>';
-    if (fetchedAt) {
-        html += ' | ' + escapeHtml(fetchedAt);
-    }
-    return html;
-}
-
-function applyRefreshedProviderState(provider, payload) {
-    const select = document.getElementById('provider_model__' + provider);
-    const compatBox = document.getElementById('provider_compat__' + provider);
-    const metaBox = document.getElementById('provider_model_meta__' + provider);
-    const errorBox = document.getElementById('provider_model_error__' + provider);
-    const currentModel = select ? select.value : '';
-    const compatibility = payload.compatibility || {};
-    const models = Array.isArray(payload.models) ? payload.models.slice() : [];
-
-    if (currentModel && !models.includes(currentModel)) {
-        models.unshift(currentModel);
-    }
-
-    if (select) {
-        select.innerHTML = '';
-        models.forEach((model) => {
-            const compatPayload = compatibility[model] || {};
-            const option = document.createElement('option');
-            option.value = model;
-            option.dataset.compatStatus = compatPayload.status || '';
-            option.textContent = model + (compatPayload.status ? ' [' + compatPayload.status + ']' : '');
-            select.appendChild(option);
-        });
-        if (currentModel && models.includes(currentModel)) {
-            select.value = currentModel;
-        }
-    }
-
-    if (metaBox) {
-        metaBox.innerHTML = renderModelMetaHtml(payload.source, payload.fetched_at);
-    }
-    if (errorBox) {
-        if (payload.error) {
-            errorBox.textContent = payload.error;
-            errorBox.classList.remove('d-none');
-        } else {
-            errorBox.textContent = '';
-            errorBox.classList.add('d-none');
-        }
-    }
-    if (compatBox && select) {
-        compatBox.innerHTML = renderCompatibilityHtml(compatibility[select.value] || {});
-    }
-}
-
-function updateModelOptionLabel(provider, model, status) {
-    const select = document.getElementById('provider_model__' + provider);
-    if (!select) return;
-    const option = Array.from(select.options).find((item) => item.value === model);
-    if (!option) return;
-    option.dataset.compatStatus = status || '';
-    option.textContent = model + (status ? ' [' + status + ']' : '');
-}
-
-function setAsyncButtonBusy(button, busy, busyLabel) {
-    if (!button) return;
-    if (!button.dataset.defaultLabel) {
-        button.dataset.defaultLabel = button.innerHTML;
-    }
-    if (busy) {
-        button.disabled = true;
-        button.innerHTML =
-            '<span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>' +
-            (busyLabel || 'Выполняется...');
-        return;
-    }
-    button.disabled = false;
-    button.innerHTML = button.dataset.defaultLabel;
-}
-
-function setAgentProviderActionsStatus(level, html) {
-    const box = document.getElementById('agent-provider-actions-status');
-    if (!box) return;
-    if (!html) {
-        box.className = 'small mb-3';
-        box.innerHTML = '';
-        return;
-    }
-    box.className = 'alert alert-' + level + ' py-2 mb-3';
-    box.innerHTML = html;
-}
-
-function renderBulkTestProgress(status) {
-    const summary = status.summary || {};
-    const events = Array.isArray(status.recent_events) ? status.recent_events : [];
-    const lines = [];
-    if (status.running) {
-        lines.push(
-            '<div><strong>Идёт тестирование.</strong> ' +
-            'Проверено ' + (status.completed_probes || 0) + ' из ' + (status.total_probes || 0) + '.</div>'
-        );
-        if (status.current_provider || status.current_model) {
-            lines.push(
-                '<div class="small">Сейчас: <code>' +
-                escapeHtml(status.current_provider || '—') + '</code> / <code>' +
-                escapeHtml(status.current_model || '—') + '</code></div>'
-            );
-        }
-    } else if (status.finished_at) {
-        lines.push('<div><strong>Тестирование завершено.</strong></div>');
-    }
-    lines.push(
-        '<div class="small">supported=' + (summary.supported || 0) +
-        ', unsupported=' + (summary.unsupported || 0) +
-        ', unknown=' + (summary.unknown || 0) + '</div>'
-    );
-    if (status.catalog_path) {
-        lines.push('<div class="small">Каталог: <code>' + escapeHtml(status.catalog_path) + '</code></div>');
-    }
-    if (status.error) {
-        lines.push('<div class="small text-danger">' + escapeHtml(status.error) + '</div>');
-    }
-    if (events.length) {
-        lines.push('<div class="small mt-2">' + events.slice(-4).map((item) => escapeHtml(item)).join('<br>') + '</div>');
-    }
-    return lines.join('');
-}
-
-function applyBulkTestResults(status) {
-    Object.entries(status.providers || {}).forEach(([provider, providerPayload]) => {
-        const select = document.getElementById('provider_model__' + provider);
-        const currentModel = select ? select.value : '';
-        (providerPayload.models || []).forEach((item) => {
-            updateModelOptionLabel(provider, item.model, item.status);
-            if (currentModel && currentModel === item.model) {
-                const compatBox = document.getElementById('provider_compat__' + provider);
-                if (compatBox) {
-                    compatBox.innerHTML = renderCompatibilityHtml(item);
-                }
-            }
-        });
-    });
-}
-
-async function pollBulkTestStatus() {
-    try {
-        const resp = await fetch('/settings/agent-providers/test-all/status');
-        const payload = await resp.json().catch(() => ({}));
-        if (!resp.ok || !payload.ok) {
-            setAgentProviderActionsStatus('danger', payload.error || 'Не удалось получить статус тестирования');
-            clearBulkTestPolling();
-            setAsyncButtonBusy(document.getElementById('bulk-test-agent-providers-btn'), false);
-            return;
-        }
-        applyBulkTestResults(payload);
-        setAgentProviderActionsStatus(payload.error ? 'danger' : (payload.running ? 'secondary' : 'success'), renderBulkTestProgress(payload));
-        if (!payload.running) {
-            clearBulkTestPolling();
-            setAsyncButtonBusy(document.getElementById('bulk-test-agent-providers-btn'), false);
-        }
-    } catch (err) {
-        setAgentProviderActionsStatus('danger', 'Ошибка получения статуса массового тестирования: ' + err.message);
-        clearBulkTestPolling();
-        setAsyncButtonBusy(document.getElementById('bulk-test-agent-providers-btn'), false);
-    }
-}
-
-function clearBulkTestPolling() {
-    if (bulkTestPollTimer) {
-        clearInterval(bulkTestPollTimer);
-        bulkTestPollTimer = null;
-    }
-}
-
-function startBulkTestPolling() {
-    clearBulkTestPolling();
-    pollBulkTestStatus();
-    bulkTestPollTimer = setInterval(pollBulkTestStatus, 1500);
-}
-
-function appendProviderFields(data, root) {
-    if (!root) {
-        return data;
-    }
-    root.querySelectorAll('input, select, textarea').forEach((field) => {
-        if (!field.name || field.disabled) {
-            return;
-        }
-        if ((field.type === 'checkbox' || field.type === 'radio') && !field.checked) {
-            return;
-        }
-        data.append(field.name, field.value);
-    });
-    return data;
-}
-
-function buildProviderFormData(provider) {
-    const card = document.querySelector('[data-provider-card="' + provider + '"]');
-    return appendProviderFields(new FormData(), card);
-}
-
-function buildAllProviderFormData() {
-    const data = new FormData();
-    document.querySelectorAll('[data-provider-card]').forEach((card) => {
-        appendProviderFields(data, card);
-    });
-    return data;
-}
-
-async function probeProviderModel(provider) {
-    const compatBox = document.getElementById('provider_compat__' + provider);
-    if (!compatBox) {
-        return;
-    }
-    const token = Date.now() + Math.random();
-    providerProbeTokens[provider] = token;
-    compatBox.innerHTML = '<div class="text-muted">Проверяю совместимость модели…</div>';
-
-    const resp = await fetch(`/settings/agent-providers/${provider}/probe`, {
-        method: 'POST',
-        body: buildProviderFormData(provider),
-    });
-    const payload = await resp.json().catch(() => ({}));
-    if (providerProbeTokens[provider] !== token) {
-        return;
-    }
-    if (!resp.ok || !payload.ok) {
-        compatBox.innerHTML = '<div class="text-danger">' + escapeHtml(payload.error || 'Не удалось проверить совместимость модели') + '</div>';
-        return;
-    }
-    compatBox.innerHTML = renderCompatibilityHtml(payload);
-    updateModelOptionLabel(provider, payload.model, payload.status);
-}
-
-async function refreshAgentProvider(provider) {
-    const button = document.querySelector('[data-provider-refresh-btn="' + provider + '"]');
-    setAsyncButtonBusy(button, true, 'Обновляю...');
-    try {
-        const resp = await fetch(`/settings/agent-providers/${provider}/refresh`, {
-            method: 'POST',
-            body: buildProviderFormData(provider),
-        });
-        const payload = await resp.json().catch(() => ({}));
-        if (!resp.ok || payload.ok === false) {
-            setAgentProviderActionsStatus('danger', payload.error || ('Не удалось обновить список моделей для ' + provider));
-            return;
-        }
-        applyRefreshedProviderState(provider, payload);
-        setAgentProviderActionsStatus('success', 'Список моделей для <code>' + provider + '</code> обновлён без сброса введённых полей.');
-    } catch (err) {
-        setAgentProviderActionsStatus('danger', 'Ошибка обновления моделей: ' + err.message);
-    } finally {
-        setAsyncButtonBusy(button, false);
-    }
-}
-
-async function refreshAllAgentProviders() {
-    const button = document.getElementById('refresh-all-agent-providers-btn');
-    setAsyncButtonBusy(button, true, 'Обновляю...');
-    setAgentProviderActionsStatus('secondary', 'Обновляю списки моделей у всех провайдеров...');
-    try {
-        const resp = await fetch('/settings/agent-providers/refresh-all', {
-            method: 'POST',
-            body: buildAllProviderFormData(),
-        });
-        const payload = await resp.json().catch(() => ({}));
-        if (!resp.ok || payload.ok === false) {
-            setAgentProviderActionsStatus('danger', payload.error || 'Не удалось обновить списки моделей');
-            return;
-        }
-        Object.entries(payload.providers || {}).forEach(([provider, providerPayload]) => {
-            applyRefreshedProviderState(provider, providerPayload);
-        });
-        setAgentProviderActionsStatus('success', 'Списки моделей обновлены без сброса введённых полей.');
-    } catch (err) {
-        setAgentProviderActionsStatus('danger', 'Ошибка обновления списков моделей: ' + err.message);
-    } finally {
-        setAsyncButtonBusy(button, false);
-    }
-}
-
-async function bulkTestAgentProviders() {
-    const button = document.getElementById('bulk-test-agent-providers-btn');
-    setAsyncButtonBusy(button, true, 'Тестирую...');
-    setAgentProviderActionsStatus(
-        'secondary',
-        'Запущен массовый compat-probe по всем моделям. Это может занять заметное время, особенно для cloud API.'
-    );
-    try {
-        const resp = await fetch('/settings/agent-providers/test-all', {
-            method: 'POST',
-            body: buildAllProviderFormData(),
-        });
-        const payload = await resp.json().catch(() => ({}));
-        if (!resp.ok || !payload.ok) {
-            setAgentProviderActionsStatus('danger', payload.error || 'Не удалось протестировать модели');
-            setAsyncButtonBusy(button, false);
-            return;
-        }
-        startBulkTestPolling();
-    } catch (err) {
-        setAgentProviderActionsStatus('danger', 'Ошибка массового тестирования: ' + err.message);
-        setAsyncButtonBusy(button, false);
-    }
-}
-
-document.addEventListener('DOMContentLoaded', function() {
-    document.querySelectorAll('select[id^="provider_model__"]').forEach(function(select) {
-        const provider = select.id.replace('provider_model__', '');
-        select.addEventListener('change', function() {
-            probeProviderModel(provider);
-        });
-    });
-    pollBulkTestStatus();
-});
-</script>
+<script src="/static/settings.js?v={{ app_version }}" defer></script>
 {% endblock %}

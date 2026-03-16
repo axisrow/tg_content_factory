@@ -1,0 +1,12 @@
+<form method="post" action="/settings/save-filters" data-busy>
+    <div class="mb-3">
+        <label for="min_subscribers_filter" class="form-label">Минимальное количество подписчиков</label>
+        <input type="number" class="form-control w-auto" id="min_subscribers_filter" name="min_subscribers_filter"
+               min="0" value="{{ min_subscribers_filter }}"
+               placeholder="0 — отключено">
+        <div class="form-text">Каналы с числом подписчиков ниже порога будут помечены флагом &#9995; и пропущены при сборе. Значение 0 — фильтр отключён.</div>
+    </div>
+    <div class="d-flex justify-content-end">
+        <button type="submit" class="btn btn-primary">Сохранить</button>
+    </div>
+</form>
