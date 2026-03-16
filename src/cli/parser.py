@@ -21,6 +21,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--channel-id", type=int, default=None,
         help="Collect single channel by channel_id (full mode)",
     )
+    collect_sub = collect_parser.add_subparsers(dest="collect_action")
+    collect_sample = collect_sub.add_parser(
+        "sample", help="Preview last N messages without saving to DB",
+    )
+    collect_sample.add_argument("channel_id", type=int, help="Channel ID (numeric)")
+    collect_sample.add_argument(
+        "--limit", type=int, default=10, help="Number of messages to preview (default: 10)",
+    )
 
     search_parser = sub.add_parser("search", help="Search messages")
     search_parser.add_argument("query", help="Search query")
@@ -141,6 +149,11 @@ def build_parser() -> argparse.ArgumentParser:
     acc_del = acc_sub.add_parser("delete", help="Delete account")
     acc_del.add_argument("id", type=int, help="Account id")
 
+    acc_sub.add_parser("flood-status", help="Show flood wait timers for all accounts")
+
+    acc_flood_clear = acc_sub.add_parser("flood-clear", help="Clear flood wait for an account")
+    acc_flood_clear.add_argument("--phone", required=True, help="Account phone number")
+
     sched_parser = sub.add_parser("scheduler", help="Scheduler control")
     sched_sub = sched_parser.add_subparsers(dest="scheduler_action")
     sched_sub.add_parser("start", help="Start scheduler (foreground)")
@@ -150,6 +163,31 @@ def build_parser() -> argparse.ArgumentParser:
     my_tg_sub = my_tg_parser.add_subparsers(dest="my_telegram_action")
     my_tg_list = my_tg_sub.add_parser("list", help="List all dialogs for an account")
     my_tg_list.add_argument("--phone", default=None, help="Account phone (default: first connected)")  # noqa: E501
+    my_tg_leave = my_tg_sub.add_parser("leave", help="Leave dialogs by ID")
+    my_tg_leave.add_argument(
+        "dialog_ids",
+        nargs="+",
+        help="Dialog IDs to leave (space- or comma-separated)",
+    )
+    my_tg_leave.add_argument(
+        "--phone", default=None, help="Account phone (default: first connected)"
+    )
+    my_tg_leave.add_argument(
+        "--yes", "-y", action="store_true", help="Skip confirmation prompt"
+    )
+
+    my_tg_topics = my_tg_sub.add_parser("topics", help="List forum topics for a channel")
+    my_tg_topics.add_argument(
+        "--channel-id", type=int, required=True, dest="channel_id",
+        help="Channel ID to fetch forum topics for",
+    )
+    my_tg_topics.add_argument(
+        "--phone", default=None, help="Account phone (default: any available)",
+    )
+
+    my_tg_clear = my_tg_sub.add_parser("cache-clear", help="Clear in-memory and DB dialog cache")
+    my_tg_clear.add_argument("--phone", default=None, help="Account phone (default: all accounts)")
+    my_tg_sub.add_parser("cache-status", help="Show dialog cache status (entries, age)")
 
     notif_parser = sub.add_parser("notification", help="Personal notification bot management")
     notif_sub = notif_parser.add_subparsers(dest="notification_action")

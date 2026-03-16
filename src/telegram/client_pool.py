@@ -820,7 +820,16 @@ class ClientPool:
                 timeout=30.0,
             )
             return [
-                {"id": t.id, "title": t.title}
+                {
+                    "id": t.id,
+                    "title": t.title,
+                    "icon_emoji_id": getattr(t, "icon_emoji_id", None),
+                    "date": (
+                        t.date.isoformat()
+                        if getattr(t, "date", None)
+                        else None
+                    ),
+                }
                 for t in response.topics
                 if hasattr(t, "title")
             ]
