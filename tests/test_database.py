@@ -1170,3 +1170,211 @@ async def test_reactions_json_null_when_absent(db):
 
     messages, _ = await db.search_messages(channel_id=-100998)
     assert messages[0].reactions_json is None
+
+
+# ---------------------------------------------------------------------------
+# message_reactions table tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_message_reactions_populated_on_insert(db):
+    """insert_message populates message_reactions from reactions_json."""
+    await db.add_channel(Channel(channel_id=-100111, title="ReactNorm"))
+    msg = Message(
+        channel_id=-100111,
+        message_id=1,
+        text="react test",
+        reactions_json='[{"emoji": "👍", "count": 5}, {"emoji": "❤️", "count": 2}]',
+        date=datetime.now(timezone.utc),
+    )
+    await db.insert_message(msg)
+
+    cur = await db.execute(
+        "SELECT emoji, count FROM message_reactions WHERE channel_id = ? AND message_id = ?",
+        (-100111, 1),
+    )
+    rows = await cur.fetchall()
+    result = {r["emoji"]: r["count"] for r in rows}
+    assert result == {"👍": 5, "❤️": 2}
+
+
+@pytest.mark.asyncio
+async def test_message_reactions_not_populated_when_no_reactions(db):
+    """insert_message does not create message_reactions rows when reactions_json is None."""
+    await db.add_channel(Channel(channel_id=-100112, title="NoReactNorm"))
+    msg = Message(
+        channel_id=-100112,
+        message_id=1,
+        text="no reactions",
+        date=datetime.now(timezone.utc),
+    )
+    await db.insert_message(msg)
+
+    cur = await db.execute(
+        "SELECT COUNT(*) AS cnt FROM message_reactions WHERE channel_id = ?", (-100112,)
+    )
+    row = await cur.fetchone()
+    assert row["cnt"] == 0
+
+
+@pytest.mark.asyncio
+async def test_message_reactions_batch_insert(db):
+    """insert_messages_batch populates message_reactions for all messages with reactions."""
+    await db.add_channel(Channel(channel_id=-100113, title="BatchReact"))
+    messages = [
+        Message(
+            channel_id=-100113,
+            message_id=i,
+            text=f"msg {i}",
+            reactions_json=f'[{{"emoji": "🔥", "count": {i * 10}}}]',
+            date=datetime.now(timezone.utc),
+        )
+        for i in range(1, 4)
+    ]
+    await db.insert_messages_batch(messages)
+
+    cur = await db.execute(
+        "SELECT SUM(count) AS total FROM message_reactions WHERE channel_id = ?",
+        (-100113,),
+    )
+    row = await cur.fetchone()
+    assert row["total"] == 10 + 20 + 30
+
+
+@pytest.mark.asyncio
+async def test_get_trending_emojis(db):
+    """get_trending_emojis returns emojis sorted by total count."""
+    await db.add_channel(Channel(channel_id=-100114, title="Trending"))
+    messages = [
+        Message(
+            channel_id=-100114,
+            message_id=1,
+            text="a",
+            reactions_json='[{"emoji": "👍", "count": 10}, {"emoji": "❤️", "count": 3}]',
+            date=datetime.now(timezone.utc),
+        ),
+        Message(
+            channel_id=-100114,
+            message_id=2,
+            text="b",
+            reactions_json='[{"emoji": "👍", "count": 5}, {"emoji": "🔥", "count": 20}]',
+            date=datetime.now(timezone.utc),
+        ),
+    ]
+    await db.insert_messages_batch(messages)
+
+    trending = await db.get_trending_emojis(limit=3)
+    assert len(trending) == 3
+    emojis = [t["emoji"] for t in trending]
+    # 🔥=20, 👍=15, ❤️=3
+    assert emojis[0] == "🔥"
+    assert emojis[1] == "👍"
+    assert trending[0]["count"] == 20
+    assert trending[1]["count"] == 15
+
+
+@pytest.mark.asyncio
+async def test_get_top_reacted_messages(db):
+    """get_top_reacted_messages returns messages ordered by total reactions."""
+    await db.add_channel(Channel(channel_id=-100115, title="TopReact"))
+    messages = [
+        Message(
+            channel_id=-100115,
+            message_id=1,
+            text="low",
+            reactions_json='[{"emoji": "👍", "count": 2}]',
+            date=datetime.now(timezone.utc),
+        ),
+        Message(
+            channel_id=-100115,
+            message_id=2,
+            text="high",
+            reactions_json='[{"emoji": "🔥", "count": 50}, {"emoji": "❤️", "count": 10}]',
+            date=datetime.now(timezone.utc),
+        ),
+        Message(
+            channel_id=-100115,
+            message_id=3,
+            text="mid",
+            reactions_json='[{"emoji": "😂", "count": 7}]',
+            date=datetime.now(timezone.utc),
+        ),
+    ]
+    await db.insert_messages_batch(messages)
+
+    top = await db.get_top_reacted_messages(limit=2, channel_id=-100115)
+    assert len(top) == 2
+    # message 2 has 60 total, message 3 has 7
+    assert top[0].message_id == 2
+    assert top[1].message_id == 3
+
+
+@pytest.mark.aiosqlite_serial
+@pytest.mark.asyncio
+async def test_migration_backfills_message_reactions(tmp_path):
+    """Migration backfills message_reactions from existing reactions_json data."""
+    db_path = str(tmp_path / "migrate_reactions_norm.db")
+
+    # Build a DB without the message_reactions table but with reactions_json data
+    conn = await aiosqlite.connect(db_path)
+    try:
+        await conn.executescript("""
+            CREATE TABLE IF NOT EXISTS messages (
+                id INTEGER PRIMARY KEY,
+                channel_id INTEGER NOT NULL,
+                message_id INTEGER NOT NULL,
+                sender_id INTEGER,
+                sender_name TEXT,
+                text TEXT,
+                media_type TEXT,
+                topic_id INTEGER,
+                reactions_json TEXT,
+                date TEXT NOT NULL,
+                collected_at TEXT DEFAULT (datetime('now')),
+                UNIQUE(channel_id, message_id)
+            );
+            CREATE TABLE IF NOT EXISTS accounts (
+                id INTEGER PRIMARY KEY,
+                phone TEXT UNIQUE NOT NULL,
+                session_string TEXT NOT NULL,
+                is_primary INTEGER DEFAULT 0,
+                is_active INTEGER DEFAULT 1,
+                flood_wait_until TEXT,
+                created_at TEXT DEFAULT (datetime('now'))
+            );
+            CREATE TABLE IF NOT EXISTS channels (
+                id INTEGER PRIMARY KEY,
+                channel_id INTEGER UNIQUE NOT NULL,
+                title TEXT,
+                username TEXT,
+                is_active INTEGER DEFAULT 1,
+                last_collected_id INTEGER DEFAULT 0,
+                added_at TEXT DEFAULT (datetime('now'))
+            );
+            CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
+        """)
+        await conn.execute(
+            "INSERT INTO messages (channel_id, message_id, text, reactions_json, date) "
+            "VALUES (?, ?, ?, ?, datetime('now'))",
+            (-100200, 1, "backfill test", '[{"emoji": "🎉", "count": 7}]'),
+        )
+        await conn.commit()
+    finally:
+        await conn.close()
+
+    database = Database(db_path)
+    await database.initialize()
+
+    cur = await database.execute(
+        "SELECT emoji, count FROM message_reactions WHERE channel_id = ? AND message_id = ?",
+        (-100200, 1),
+    )
+    rows = await cur.fetchall()
+    result = {r["emoji"]: r["count"] for r in rows}
+    assert result == {"🎉": 7}
+
+    await database.close()

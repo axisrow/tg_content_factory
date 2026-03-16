@@ -317,6 +317,23 @@ class Database:
         self._require()
         return await self._messages.get_stats()
 
+    async def get_trending_emojis(
+        self, limit: int = 10, days: int | None = None
+    ) -> list[dict]:
+        self._require()
+        return await self._messages.get_trending_emojis(limit=limit, days=days)
+
+    async def get_top_reacted_messages(
+        self,
+        limit: int = 10,
+        channel_id: int | None = None,
+        days: int | None = None,
+    ) -> list[Message]:
+        self._require()
+        return await self._messages.get_top_reacted_messages(
+            limit=limit, channel_id=channel_id, days=days
+        )
+
     async def get_notification_queries(
         self, active_only: bool = True
     ) -> list[SearchQuery]:
