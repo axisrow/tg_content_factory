@@ -13,6 +13,10 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+async def _dev_mode_enabled(request: Request) -> bool:
+    return (await deps.get_db(request).get_setting("agent_dev_mode_enabled") or "0") == "1"
+
+
 def _parse_snapshot(values: list[str]) -> list[ChannelFilterResult]:
     deduped: dict[int, list[str]] = {}
     for value in values:
@@ -33,16 +37,111 @@ def _parse_snapshot(values: list[str]) -> list[ChannelFilterResult]:
     ]
 
 
-@router.post("/filter/analyze", response_class=HTMLResponse)
+def _parse_pks(form, field: str = "pks") -> list[int]:
+    pks = []
+    for v in form.getlist(field):
+        try:
+            pks.append(int(v))
+        except (ValueError, TypeError):
+            continue
+    return pks
+
+
+@router.get("/filter/manage", response_class=HTMLResponse)
+async def filter_manage(request: Request):
+    db = deps.get_db(request)
+    channels = await db.get_channels_with_counts(active_only=False, include_filtered=True)
+    filtered = [ch for ch in channels if ch.is_filtered]
+    dev_mode = await _dev_mode_enabled(request)
+    return deps.get_templates(request).TemplateResponse(
+        request,
+        "filter_manage.html",
+        {"channels": filtered, "total": len(filtered), "dev_mode": dev_mode},
+    )
+
+
+@router.post("/filter/purge-selected")
+async def purge_selected_filtered(request: Request):
+    form = await request.form()
+    pks = _parse_pks(form)
+    if not pks:
+        return RedirectResponse(
+            url="/channels/filter/manage?error=no_filtered_channels", status_code=303,
+        )
+    svc = deps.filter_deletion_service(request)
+    await svc.purge_channels_by_pks(pks)
+    return RedirectResponse(
+        url="/channels/filter/manage?msg=purged_selected", status_code=303,
+    )
+
+
+@router.post("/filter/purge-all")
+async def purge_all_filtered(request: Request):
+    svc = deps.filter_deletion_service(request)
+    result = await svc.purge_all_filtered()
+    if result.purged_count == 0:
+        return RedirectResponse(
+            url="/channels/filter/manage?error=no_filtered_channels", status_code=303,
+        )
+    return RedirectResponse(
+        url=(
+            f"/channels/filter/manage?msg=purged_all_filtered"
+            f"&count={result.purged_count}"
+        ),
+        status_code=303,
+    )
+
+
+@router.post("/filter/hard-delete-selected")
+async def hard_delete_selected(request: Request):
+    if not await _dev_mode_enabled(request):
+        return RedirectResponse(
+            url="/channels/filter/manage?error=dev_mode_required_for_hard_delete", status_code=303,
+        )
+    form = await request.form()
+    pks = _parse_pks(form)
+    if not pks:
+        return RedirectResponse(
+            url="/channels/filter/manage?error=no_filtered_channels", status_code=303,
+        )
+    svc = deps.filter_deletion_service(request)
+    result = await svc.hard_delete_channels_by_pks(pks)
+    return RedirectResponse(
+        url=(
+            f"/channels/filter/manage?msg=deleted_filtered"
+            f"&count={result.purged_count}"
+        ),
+        status_code=303,
+    )
+
+
+@router.post("/filter/analyze")
 async def analyze_channels(request: Request):
     db = deps.get_db(request)
     analyzer = ChannelAnalyzer(db)
     report = await analyzer.analyze_all()
     await analyzer.apply_filters(report)
-    return deps.get_templates(request).TemplateResponse(
-        request,
-        "filter_report.html",
-        {"report": report},
+
+    purged_count = 0
+    auto_delete = await db.get_setting("auto_delete_filtered")
+    if auto_delete == "1" and report.filtered_count > 0:
+        channels = await db.get_channels_with_counts(active_only=False, include_filtered=True)
+        pk_map = {ch.channel_id: ch.id for ch in channels if ch.id is not None}
+        filtered_pks = [
+            pk_map[r.channel_id]
+            for r in report.results
+            if r.is_filtered and r.channel_id in pk_map
+        ]
+        if filtered_pks:
+            svc = deps.filter_deletion_service(request)
+            result = await svc.purge_channels_by_pks(filtered_pks)
+            purged_count = result.purged_count
+
+    msg = "filter_applied"
+    if purged_count:
+        msg = "purged_all_filtered"
+    return RedirectResponse(
+        url=f"/channels/filter/manage?msg={msg}", status_code=303,
     )
 
 
@@ -72,7 +171,9 @@ async def precheck_subscriber_ratio(request: Request):
     db = deps.get_db(request)
     analyzer = ChannelAnalyzer(db)
     count = await analyzer.precheck_subscriber_ratio()
-    return RedirectResponse(url=f"/channels?msg=precheck_done&count={count}", status_code=303)
+    return RedirectResponse(
+        url=f"/channels/filter/manage?msg=precheck_done&count={count}", status_code=303,
+    )
 
 
 @router.post("/filter/reset")
@@ -80,7 +181,7 @@ async def reset_filters(request: Request):
     db = deps.get_db(request)
     analyzer = ChannelAnalyzer(db)
     await analyzer.reset_filters()
-    return RedirectResponse(url="/channels?msg=filter_reset", status_code=303)
+    return RedirectResponse(url="/channels/filter/manage?msg=filter_reset", status_code=303)
 
 
 @router.post("/{channel_id}/purge-messages")
