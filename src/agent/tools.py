@@ -8,6 +8,7 @@ from src.services.embedding_service import EmbeddingService
 
 def make_mcp_server(db: Database):
     """Create an in-process MCP server with DB-bound tools."""
+    embedding_service = EmbeddingService(db)
 
     def _render_search_result(
         *,
@@ -57,9 +58,7 @@ def make_mcp_server(db: Database):
     async def semantic_search(args):
         query = args.get("query", "")
         limit = int(args.get("limit", 10))
-        embedding_service = EmbeddingService(db)
         try:
-            await embedding_service.index_pending_messages()
             query_embedding = await embedding_service.embed_query(query)
             messages, total = await db.search_semantic_messages(query_embedding, limit=limit)
             text = _render_search_result(

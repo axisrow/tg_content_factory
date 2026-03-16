@@ -48,7 +48,6 @@ class LocalSearch:
     ) -> SearchResult:
         if self._embedding_service is None:
             raise RuntimeError("Semantic search is unavailable.")
-        await self._embedding_service.index_pending_messages()
         query_embedding = await self._embedding_service.embed_query(query)
         messages, total = await self._search.messages.search_semantic_messages(
             query_embedding,
@@ -76,7 +75,6 @@ class LocalSearch:
     ) -> SearchResult:
         if self._embedding_service is None:
             raise RuntimeError("Hybrid search is unavailable.")
-        await self._embedding_service.index_pending_messages()
         query_embedding = await self._embedding_service.embed_query(query)
         messages, total = await self._search.messages.search_hybrid_messages(
             query=query,
