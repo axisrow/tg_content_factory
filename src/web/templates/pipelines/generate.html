@@ -22,6 +22,10 @@
     <button type="button" id="stream-btn" class="btn btn-outline-secondary">Stream Preview</button>
 </form>
 
+<form method="post" action="/pipelines/{{ pipeline.id }}/run" data-busy class="mt-3">
+    <button type="submit" class="btn btn-success">Run now</button>
+</form>
+
 <pre id="stream-output" style="white-space: pre-wrap; margin-top: 1rem;"></pre>
 
 <script>

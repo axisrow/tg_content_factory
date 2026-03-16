@@ -52,8 +52,24 @@ async def _page_context(request: Request) -> dict:
         refresh = request.query_params.get("refresh") == "1"
         await deps.channel_service(request).get_my_dialogs(selected_phone, refresh=refresh)
     cached_dialogs = await svc.list_cached_dialogs_by_phone()
+    items = await svc.get_with_relations()
+    # gather next_run times for pipelines
+    next_runs = {}
+    try:
+        scheduler = deps.get_scheduler(request)
+        for item in items:
+            pipeline = item.pipeline
+            if pipeline.id is None:
+                continue
+            try:
+                nr = scheduler.get_job_next_run(f"pipeline_run_{pipeline.id}")
+                next_runs[pipeline.id] = nr.isoformat() if nr else None
+            except Exception:
+                next_runs[pipeline.id] = None
+    except Exception:
+        next_runs = {}
     return {
-        "items": await svc.get_with_relations(),
+        "items": items,
         "channels": channels,
         "accounts": accounts,
         "cached_dialogs": cached_dialogs,
@@ -61,6 +77,7 @@ async def _page_context(request: Request) -> dict:
         "prompt_variables": sorted(ALLOWED_TEMPLATE_VARIABLES),
         "publish_modes": list(PipelinePublishMode),
         "generation_backends": list(PipelineGenerationBackend),
+        "next_runs": next_runs,
     }
 
 
@@ -181,6 +198,21 @@ async def delete_pipeline(request: Request, pipeline_id: int):
     except Exception:
         pass
     return _pipeline_redirect("pipeline_deleted")
+
+
+@router.post("/{pipeline_id}/run")
+async def run_pipeline(request: Request, pipeline_id: int):
+    svc = deps.pipeline_service(request)
+    pipeline = await svc.get(pipeline_id)
+    if pipeline is None:
+        return _pipeline_redirect("pipeline_invalid", error=True)
+    try:
+        enqueuer = deps.get_task_enqueuer(request)
+        await enqueuer.enqueue_pipeline_run(pipeline_id)
+    except Exception:
+        # best-effort enqueue
+        pass
+    return _pipeline_redirect("pipeline_run_enqueued")
 
 
 @router.get("/{pipeline_id}/generate", response_class=HTMLResponse)
