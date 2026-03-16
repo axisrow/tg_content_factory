@@ -228,6 +228,17 @@ class SearchResult(BaseModel):
     error: str | None = None
 
 
+class GenerationRun(BaseModel):
+    id: int | None = None
+    pipeline_id: int | None = None
+    status: str = "pending"
+    prompt: str | None = None
+    generated_text: str | None = None
+    metadata: dict | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
 class PhotoSendMode(StrEnum):
     ALBUM = "album"
     SEPARATE = "separate"

@@ -299,6 +299,27 @@ async def run_migrations(db: aiosqlite.Connection, *, vec_available: bool = Fals
         )
         """
     )
+    # Generation runs table for RAG drafts
+    await db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS generation_runs (
+            id INTEGER PRIMARY KEY,
+            pipeline_id INTEGER,
+            status TEXT NOT NULL DEFAULT 'pending',
+            prompt TEXT,
+            generated_text TEXT,
+            metadata TEXT,
+            created_at TEXT DEFAULT (datetime('now')),
+            updated_at TEXT
+        )
+        """
+    )
+    await db.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_generation_runs_pipeline_status
+        ON generation_runs(pipeline_id, status)
+        """
+    )
     await db.execute(
         """
         CREATE TABLE IF NOT EXISTS pipeline_sources (
