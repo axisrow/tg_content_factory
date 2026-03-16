@@ -422,4 +422,56 @@ async def run_migrations(db: aiosqlite.Connection) -> bool:
     )
     await db.commit()
 
+    # Normalized reactions table
+    await db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS message_reactions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            channel_id INTEGER NOT NULL,
+            message_id INTEGER NOT NULL,
+            emoji TEXT NOT NULL,
+            count INTEGER NOT NULL DEFAULT 0,
+            FOREIGN KEY (channel_id, message_id) REFERENCES messages(channel_id, message_id),
+            UNIQUE(channel_id, message_id, emoji)
+        )
+        """
+    )
+    await db.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_message_reactions_channel_msg
+        ON message_reactions(channel_id, message_id)
+        """
+    )
+    await db.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_message_reactions_emoji
+        ON message_reactions(emoji)
+        """
+    )
+    await db.commit()
+
+    # Backfill message_reactions from existing reactions_json data
+    cur = await db.execute(
+        "SELECT COUNT(*) AS cnt FROM message_reactions"
+    )
+    row = await cur.fetchone()
+    if row and row["cnt"] == 0:
+        try:
+            await db.execute(
+                """
+                INSERT OR IGNORE INTO message_reactions (channel_id, message_id, emoji, count)
+                SELECT
+                    m.channel_id,
+                    m.message_id,
+                    json_extract(j.value, '$.emoji'),
+                    CAST(json_extract(j.value, '$.count') AS INTEGER)
+                FROM messages m, json_each(m.reactions_json) j
+                WHERE m.reactions_json IS NOT NULL
+                """
+            )
+            await db.commit()
+            logger.info("Backfilled message_reactions from reactions_json")
+        except Exception as exc:
+            logger.warning("Failed to backfill message_reactions from reactions_json: %s", exc)
+
     return fts_available

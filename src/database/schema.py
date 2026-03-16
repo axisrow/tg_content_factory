@@ -213,4 +213,19 @@ CREATE TABLE IF NOT EXISTS dialog_cache (
 
 CREATE INDEX IF NOT EXISTS idx_dialog_cache_phone
     ON dialog_cache(phone);
+
+CREATE TABLE IF NOT EXISTS message_reactions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    channel_id INTEGER NOT NULL,
+    message_id INTEGER NOT NULL,
+    emoji TEXT NOT NULL,
+    count INTEGER NOT NULL DEFAULT 0,
+    FOREIGN KEY (channel_id, message_id) REFERENCES messages(channel_id, message_id),
+    UNIQUE(channel_id, message_id, emoji)
+);
+
+CREATE INDEX IF NOT EXISTS idx_message_reactions_channel_msg
+    ON message_reactions(channel_id, message_id);
+CREATE INDEX IF NOT EXISTS idx_message_reactions_emoji
+    ON message_reactions(emoji);
 """

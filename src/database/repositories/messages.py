@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import re
 from datetime import date, datetime, timedelta
@@ -10,6 +11,15 @@ from src.models import Message, SearchQuery
 
 logger = logging.getLogger(__name__)
 _DATE_ONLY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def _parse_reactions_json(reactions_json: str) -> list[dict]:
+    """Parse reactions_json string into a list of {emoji, count} dicts."""
+    try:
+        items = json.loads(reactions_json)
+        return [r for r in items if isinstance(r, dict) and "emoji" in r]
+    except (json.JSONDecodeError, TypeError):
+        return []
 
 
 def _normalize_date_to(date_to: str) -> tuple[str, str]:
@@ -61,7 +71,10 @@ class MessagesRepository:
                 ),
             )
             await self._db.commit()
-            return cur.rowcount > 0
+            inserted = cur.rowcount > 0
+            if inserted and msg.reactions_json:
+                await self._upsert_reactions(msg.channel_id, msg.message_id, msg.reactions_json)
+            return inserted
         except Exception:
             logger.exception(
                 "Failed to insert message channel_id=%s message_id=%s",
@@ -69,6 +82,28 @@ class MessagesRepository:
                 msg.message_id,
             )
             return False
+
+    async def _upsert_reactions(
+        self, channel_id: int, message_id: int, reactions_json: str
+    ) -> None:
+        """Parse reactions_json and upsert rows into message_reactions."""
+        items = _parse_reactions_json(reactions_json)
+        if not items:
+            return
+        data = [(channel_id, message_id, r["emoji"], r.get("count", 0)) for r in items]
+        try:
+            await self._db.executemany(
+                """INSERT OR REPLACE INTO message_reactions
+                   (channel_id, message_id, emoji, count) VALUES (?, ?, ?, ?)""",
+                data,
+            )
+            await self._db.commit()
+        except Exception:
+            logger.exception(
+                "Failed to upsert reactions for channel_id=%s message_id=%s",
+                channel_id,
+                message_id,
+            )
 
     async def insert_messages_batch(self, messages: list[Message]) -> int:
         if not messages:
@@ -96,10 +131,29 @@ class MessagesRepository:
                 data,
             )
             await self._db.commit()
-            return cur.rowcount if cur.rowcount >= 0 else len(messages)
+            count = cur.rowcount if cur.rowcount >= 0 else len(messages)
         except Exception as exc:
             logger.error("Failed to insert batch of %d messages: %s", len(messages), exc)
             return 0
+
+        reactions_data = [
+            (m.channel_id, m.message_id, r["emoji"], r.get("count", 0))
+            for m in messages
+            if m.reactions_json
+            for r in _parse_reactions_json(m.reactions_json)
+        ]
+        if reactions_data:
+            try:
+                await self._db.executemany(
+                    """INSERT OR REPLACE INTO message_reactions
+                       (channel_id, message_id, emoji, count) VALUES (?, ?, ?, ?)""",
+                    reactions_data,
+                )
+                await self._db.commit()
+            except Exception as exc:
+                logger.error("Failed to upsert reactions for batch: %s", exc)
+
+        return count
 
     async def search_messages(
         self,
@@ -412,3 +466,88 @@ class MessagesRepository:
             row = await cur.fetchone()
             stats[table] = row["cnt"] if row else 0
         return stats
+
+    async def get_trending_emojis(
+        self, limit: int = 10, days: int | None = None
+    ) -> list[dict]:
+        """Return top emojis by total reaction count across all messages.
+
+        Args:
+            limit: Maximum number of emojis to return.
+            days: If given, restrict to reactions on messages collected within
+                  the last *days* days (based on messages.collected_at).
+
+        Returns:
+            List of ``{"emoji": str, "count": int}`` dicts ordered by count desc.
+        """
+        if days is not None:
+            cur = await self._db.execute(
+                """
+                SELECT mr.emoji, SUM(mr.count) AS total
+                FROM message_reactions mr
+                JOIN messages m ON mr.channel_id = m.channel_id AND mr.message_id = m.message_id
+                WHERE m.collected_at >= datetime('now', ?)
+                GROUP BY mr.emoji
+                ORDER BY total DESC
+                LIMIT ?
+                """,
+                (f"-{days} days", limit),
+            )
+        else:
+            cur = await self._db.execute(
+                """
+                SELECT emoji, SUM(count) AS total
+                FROM message_reactions
+                GROUP BY emoji
+                ORDER BY total DESC
+                LIMIT ?
+                """,
+                (limit,),
+            )
+        rows = await cur.fetchall()
+        return [{"emoji": r["emoji"], "count": r["total"]} for r in rows]
+
+    async def get_top_reacted_messages(
+        self,
+        limit: int = 10,
+        channel_id: int | None = None,
+        days: int | None = None,
+    ) -> list[Message]:
+        """Return messages with the highest total reaction count.
+
+        Args:
+            limit: Maximum number of messages to return.
+            channel_id: If given, restrict to this channel.
+            days: If given, restrict to messages collected within the last
+                  *days* days.
+
+        Returns:
+            List of :class:`Message` objects ordered by total reactions desc.
+        """
+        conditions: list[str] = []
+        params: list = []
+
+        if channel_id is not None:
+            conditions.append("mr.channel_id = ?")
+            params.append(channel_id)
+        if days is not None:
+            conditions.append("m.collected_at >= datetime('now', ?)")
+            params.append(f"-{days} days")
+
+        where = " WHERE " + " AND ".join(conditions) if conditions else ""
+        cur = await self._db.execute(
+            f"""
+            SELECT m.*, c.title as channel_title, c.username as channel_username,
+                   SUM(mr.count) AS total_reactions
+            FROM message_reactions mr
+            JOIN messages m ON mr.channel_id = m.channel_id AND mr.message_id = m.message_id
+            LEFT JOIN channels c ON m.channel_id = c.channel_id
+            {where}
+            GROUP BY mr.channel_id, mr.message_id
+            ORDER BY total_reactions DESC
+            LIMIT ?
+            """,
+            (*params, limit),
+        )
+        rows = await cur.fetchall()
+        return self._rows_to_messages(rows)
