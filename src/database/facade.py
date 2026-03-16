@@ -582,6 +582,10 @@ class Database:
         self._require()
         return await self._tasks.get_pending_channel_tasks()
 
+    async def delete_pending_channel_tasks(self) -> int:
+        self._require()
+        return await self._tasks.delete_pending_channel_tasks()
+
     async def fail_running_collection_tasks_on_startup(self) -> int:
         self._require()
         return await self._tasks.fail_running_collection_tasks_on_startup()
