@@ -15,6 +15,7 @@ from src.database.bundles import (
     CollectionBundle,
     NotificationBundle,
     PhotoLoaderBundle,
+    PipelineBundle,
     SchedulerBundle,
     SearchBundle,
     SearchQueryBundle,
@@ -31,6 +32,7 @@ from src.services.notification_target_service import NotificationTargetService
 from src.services.photo_auto_upload_service import PhotoAutoUploadService
 from src.services.photo_publish_service import PhotoPublishService
 from src.services.photo_task_service import PhotoTaskService
+from src.services.pipeline_service import PipelineService
 from src.services.search_query_service import SearchQueryService
 from src.services.search_service import SearchService
 from src.services.task_enqueuer import TaskEnqueuer
@@ -308,6 +310,14 @@ def filter_deletion_service(request: Request) -> FilterDeletionService:
         request,
         "_filter_deletion_service",
         lambda: FilterDeletionService(get_db(request), channel_service(request)),
+    )
+
+
+def pipeline_service(request: Request) -> PipelineService:
+    return _request_cached(
+        request,
+        "_pipeline_service",
+        lambda: PipelineService(PipelineBundle.from_database(get_db(request))),
     )
 
 

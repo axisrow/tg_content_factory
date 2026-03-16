@@ -37,6 +37,7 @@
                     <li class="nav-item"><a class="nav-link" href="/search-queries">Запросы</a></li>
                     <li class="nav-item"><a class="nav-link" href="/my-telegram">Мой Телеграм</a></li>
                     <li class="nav-item"><a class="nav-link" href="/scheduler">Планировщик</a></li>
+                    <li class="nav-item"><a class="nav-link" href="/pipelines">Пайплайны</a></li>
                     <li class="nav-item"><a class="nav-link" href="/debug">Дебаг</a></li>
                     <li class="nav-item"><a class="nav-link" href="/settings">Настройки</a></li>
                     <li class="nav-item"><a class="nav-link" href="/logout">Выйти</a></li>
@@ -83,6 +84,8 @@
         test_notification_sent: "Тестовое уведомление отправлено.",
         test_notification_failed: "Не удалось отправить уведомление.",
         task_cancelled: "Задача отменена.",
+        pending_collect_tasks_deleted: "Запланированные задачи на загрузку удалены из базы.",
+        pending_collect_tasks_empty: "Запланированных задач на загрузку нет.",
         already_running: "Сбор уже запущен.",
         triggered: "Сбор запущен вручную.",
         filter_toggled: "Фильтр канала изменён.",
@@ -110,7 +113,11 @@
         deleted_filtered: "Каналы полностью удалены из базы.",
         purged_selected: "Сообщения выбранных каналов очищены.",
         purged_all_filtered: "Сообщения всех отфильтрованных каналов очищены.",
-        precheck_done: "Предпроверка подписчиков выполнена."
+        precheck_done: "Предпроверка подписчиков выполнена.",
+        pipeline_added: "Пайплайн добавлен.",
+        pipeline_edited: "Пайплайн обновлён.",
+        pipeline_toggled: "Статус пайплайна изменён.",
+        pipeline_deleted: "Пайплайн удалён."
     };
     var errors = {
         resolve: "Не удалось найти канал. Проверьте username или ссылку.",
@@ -134,6 +141,8 @@
         no_filtered_channels: "Нет отфильтрованных каналов для удаления.",
         dev_mode_required_for_hard_delete: "Для полного удаления каналов включите режим разработчика в настройках.",
         notification_test_failed: "Не удалось отправить тестовое уведомление.",
+        invalid_account: "Выбран неизвестный аккаунт.",
+        not_found: "Объект не найден.",
         photo_send_failed: "Не удалось отправить фото.",
         photo_target_required: "Сначала выберите канал, чат или личный диалог.",
         photo_target_invalid: "Выбранная цель недоступна. Выберите её заново.",

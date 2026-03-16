@@ -13,6 +13,7 @@ from src.database.repositories.filters import FilterRepository
 from src.database.repositories.messages import MessagesRepository
 from src.database.repositories.notification_bots import NotificationBotsRepository
 from src.database.repositories.photo_loader import PhotoLoaderRepository
+from src.database.repositories.pipelines import PipelinesRepository
 from src.database.repositories.search_log import SearchLogRepository
 from src.database.repositories.search_queries import SearchQueriesRepository
 from src.database.repositories.settings import SettingsRepository
@@ -29,6 +30,7 @@ from src.models import (
     PhotoBatchItem,
     PhotoBatchStatus,
     PhotoSendMode,
+    Pipeline,
     SearchQuery,
     SearchQueryDailyStat,
     StatsAllTaskPayload,
@@ -52,6 +54,7 @@ class DatabaseRepositories:
     search_queries: SearchQueriesRepository
     photo_loader: PhotoLoaderRepository
     dialog_cache: DialogCacheRepository
+    pipelines: PipelinesRepository | None = None
 
 
 @dataclass(frozen=True)
@@ -270,6 +273,9 @@ class ChannelBundle:
 
     async def get_pending_channel_tasks(self) -> list[CollectionTask]:
         return await self.tasks.get_pending_channel_tasks()
+
+    async def delete_pending_channel_tasks(self) -> int:
+        return await self.tasks.delete_pending_channel_tasks()
 
     async def fail_running_collection_tasks_on_startup(self) -> int:
         return await self.tasks.fail_running_collection_tasks_on_startup()
@@ -709,3 +715,30 @@ class SearchQueryBundle:
 
     async def get_last_recorded_at_all(self) -> dict[int, str]:
         return await self.search_queries.get_last_recorded_at_all()
+
+
+@dataclass(frozen=True)
+class PipelineBundle:
+    pipelines: PipelinesRepository
+
+    @classmethod
+    def from_database(cls, db: "Database") -> "PipelineBundle":
+        return cls(db.repos.pipelines)
+
+    async def add(self, pipeline: Pipeline) -> int:
+        return await self.pipelines.add(pipeline)
+
+    async def get_all(self, active_only: bool = False) -> list[Pipeline]:
+        return await self.pipelines.get_all(active_only)
+
+    async def get_by_id(self, pipeline_id: int) -> Pipeline | None:
+        return await self.pipelines.get_by_id(pipeline_id)
+
+    async def update(self, pipeline_id: int, pipeline: Pipeline) -> None:
+        await self.pipelines.update(pipeline_id, pipeline)
+
+    async def set_active(self, pipeline_id: int, active: bool) -> None:
+        await self.pipelines.set_active(pipeline_id, active)
+
+    async def delete(self, pipeline_id: int) -> None:
+        await self.pipelines.delete(pipeline_id)
