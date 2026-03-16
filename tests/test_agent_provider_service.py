@@ -413,7 +413,7 @@ async def test_fetch_ollama_models_normalizes_local_api_base_url(db, monkeypatch
 async def test_agent_manager_prefers_db_provider_configs_over_legacy_env(db, monkeypatch):
     config = AppConfig()
     config.security.session_encryption_key = "provider-secret"
-    config.agent.fallback_model = "anthropic:claude-sonnet-4-5-20250929"
+    config.agent.fallback_model = "anthropic:claude-sonnet-4-6"
     config.agent.fallback_api_key = "legacy-key"
 
     service = AgentProviderService(db, config)
@@ -460,7 +460,7 @@ async def test_agent_manager_falls_back_to_legacy_env_when_db_provider_is_unsupp
 ):
     config = AppConfig()
     config.security.session_encryption_key = "provider-secret"
-    config.agent.fallback_model = "anthropic:claude-sonnet-4-5-20250929"
+    config.agent.fallback_model = "anthropic:claude-sonnet-4-6"
     config.agent.fallback_api_key = "legacy-key"
 
     service = AgentProviderService(db, config)
@@ -505,7 +505,7 @@ async def test_agent_manager_falls_back_to_legacy_env_when_db_provider_is_unsupp
     def fake_init_chat_model(*, model, model_provider, **kwargs):
         seen_providers.append(model_provider)
         if model_provider == "anthropic":
-            assert model == "claude-sonnet-4-5-20250929"
+            assert model == "claude-sonnet-4-6"
             assert kwargs["api_key"] == "legacy-key"
         return SimpleNamespace(model_provider=model_provider)
 
@@ -546,7 +546,7 @@ async def test_agent_manager_fails_over_to_next_provider_on_init_error(db, monke
                 provider="anthropic",
                 enabled=True,
                 priority=1,
-                selected_model="claude-sonnet-4-5-20250929",
+                selected_model="claude-sonnet-4-6",
                 secret_fields={"api_key": "anthropic-key"},
             ),
         ]
@@ -762,7 +762,7 @@ async def test_agent_manager_skips_cached_unsupported_provider_and_fails_over(db
         provider="anthropic",
         enabled=True,
         priority=1,
-        selected_model="claude-sonnet-4-5-20250929",
+        selected_model="claude-sonnet-4-6",
         secret_fields={"api_key": "anthropic-key"},
     )
     await service.save_provider_configs([openai_cfg, anthropic_cfg])

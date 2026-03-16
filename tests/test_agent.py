@@ -172,7 +172,7 @@ def test_deepagents_get_channels_tool_returns_friendly_error_on_db_failure(db, m
 
 def test_deepagents_backend_uses_bare_model_for_legacy_fallback(db, monkeypatch):
     config = AppConfig()
-    config.agent.fallback_model = "anthropic:claude-sonnet-4-5-20250929"
+    config.agent.fallback_model = "anthropic:claude-sonnet-4-6"
     config.agent.fallback_api_key = "fallback-key"
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sdk-key")
     monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "oauth-token")
@@ -180,7 +180,7 @@ def test_deepagents_backend_uses_bare_model_for_legacy_fallback(db, monkeypatch)
     create_agent = MagicMock(return_value=MagicMock(run=MagicMock(return_value="ok")))
 
     def fake_init_chat_model(*, model, model_provider, **kwargs):
-        assert model == "claude-sonnet-4-5-20250929"
+        assert model == "claude-sonnet-4-6"
         assert model_provider == "anthropic"
         assert kwargs["api_key"] == "fallback-key"
         return MagicMock()
@@ -194,7 +194,7 @@ def test_deepagents_backend_uses_bare_model_for_legacy_fallback(db, monkeypatch)
 
 def test_deepagents_backend_requires_explicit_key_for_anthropic_fallback(db):
     config = AppConfig()
-    config.agent.fallback_model = "anthropic:claude-sonnet-4-5-20250929"
+    config.agent.fallback_model = "anthropic:claude-sonnet-4-6"
 
     mgr = AgentManager(db, config)
 
@@ -209,7 +209,7 @@ def test_deepagents_backend_requires_explicit_key_for_anthropic_fallback(db):
 async def test_runtime_status_reports_failed_deepagents_initialization(db, monkeypatch):
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
-    monkeypatch.setenv("AGENT_FALLBACK_MODEL", "anthropic:claude-sonnet-4-5-20250929")
+    monkeypatch.setenv("AGENT_FALLBACK_MODEL", "anthropic:claude-sonnet-4-6")
 
     mgr = AgentManager(db)
     mgr.initialize()

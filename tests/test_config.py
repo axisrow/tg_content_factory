@@ -70,13 +70,13 @@ def test_load_config_reads_telegram_credentials_from_env_when_config_missing(mon
 def test_load_config_reads_agent_fallback_directly_from_env_without_placeholders(
     monkeypatch, tmp_path
 ):
-    monkeypatch.setenv("AGENT_MODEL", "claude-sonnet-4-5")
+    monkeypatch.setenv("AGENT_MODEL", "claude-sonnet-4-6")
     monkeypatch.setenv("AGENT_FALLBACK_MODEL", "openai:gpt-4.1-mini")
     monkeypatch.setenv("AGENT_FALLBACK_API_KEY", "fallback-key")
 
     config = load_config(tmp_path / "missing.yaml")
 
-    assert config.agent.model == "claude-sonnet-4-5"
+    assert config.agent.model == "claude-sonnet-4-6"
     assert config.agent.fallback_model == "openai:gpt-4.1-mini"
     assert config.agent.fallback_api_key == "fallback-key"
 

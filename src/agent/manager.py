@@ -13,6 +13,7 @@ from typing import TypeVar
 
 from claude_agent_sdk import AssistantMessage, ClaudeAgentOptions, ResultMessage, TextBlock, query
 
+from src.agent.models import CLAUDE_MODEL_IDS
 from src.agent.provider_registry import ProviderRuntimeConfig
 from src.config import AppConfig
 from src.database import Database
@@ -45,12 +46,6 @@ _SYSTEM_PROMPT = (
 )
 
 _ALLOWED_TOOLS = ["mcp__telegram_db__search_messages", "mcp__telegram_db__get_channels"]
-_CLAUDE_MODELS = {
-    "claude-sonnet-4-5",
-    "claude-opus-4-6",
-    "claude-haiku-4-5",
-    "claude-haiku-4-5-20251001",
-}
 _DEEPAGENTS_PROBE_PROMPT = (
     "Compatibility probe. You must use the tool that lists active Telegram "
     "channels before answering. "
@@ -996,7 +991,7 @@ class AgentManager:
             return
         if backend_name == "claude":
             backend = self._claude_backend
-            if model not in _CLAUDE_MODELS:
+            if model not in CLAUDE_MODEL_IDS:
                 model = None
         elif backend_name == "deepagents":
             backend = self._deepagents_backend
