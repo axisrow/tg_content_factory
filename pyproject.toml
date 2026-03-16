@@ -3,7 +3,7 @@ requires = ["setuptools>=68.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "tg-user-search"
+name = "tg-agent"
 version = "0.1.12"
 description = "Telegram Post Search & Monitoring"
 readme = "README.md"
@@ -60,7 +60,7 @@ Repository = "https://github.com/axisrow/tg_content_factory"
 Issues = "https://github.com/axisrow/tg_content_factory/issues"
 
 [project.scripts]
-tg-search = "src.main:main"
+tg-agent = "src.main:main"
 
 [tool.setuptools]
 include-package-data = true
