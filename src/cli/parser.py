@@ -160,6 +160,18 @@ def build_parser() -> argparse.ArgumentParser:
     my_tg_sub = my_tg_parser.add_subparsers(dest="my_telegram_action")
     my_tg_list = my_tg_sub.add_parser("list", help="List all dialogs for an account")
     my_tg_list.add_argument("--phone", default=None, help="Account phone (default: first connected)")  # noqa: E501
+    my_tg_leave = my_tg_sub.add_parser("leave", help="Leave dialogs by ID")
+    my_tg_leave.add_argument(
+        "dialog_ids",
+        nargs="+",
+        help="Dialog IDs to leave (space- or comma-separated)",
+    )
+    my_tg_leave.add_argument(
+        "--phone", default=None, help="Account phone (default: first connected)"
+    )
+    my_tg_leave.add_argument(
+        "--yes", "-y", action="store_true", help="Skip confirmation prompt"
+    )
 
     my_tg_topics = my_tg_sub.add_parser("topics", help="List forum topics for a channel")
     my_tg_topics.add_argument(
