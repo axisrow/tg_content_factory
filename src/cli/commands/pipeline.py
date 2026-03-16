@@ -4,6 +4,8 @@ import argparse
 import asyncio
 
 from src.cli import runtime
+from src.search.engine import SearchEngine
+from src.services.generation_service import GenerationService
 from src.services.pipeline_service import (
     PipelineService,
     PipelineTargetRef,
@@ -149,6 +151,47 @@ def run(args: argparse.Namespace) -> None:
             elif args.pipeline_action == "delete":
                 await svc.delete(args.id)
                 print(f"Deleted pipeline id={args.id}")
+
+            elif args.pipeline_action == "run":
+                # Run a pipeline generation (preview only by default)
+                pipeline = await svc.get(args.id)
+                if pipeline is None:
+                    print(f"Pipeline id={args.id} not found")
+                    return
+                # Build search engine and generation service
+                engine = SearchEngine(db)
+
+                # Resolve provider callable via AgentProviderService (falls back to default stub)
+                from src.services.provider_service import AgentProviderService
+
+                provider_service = AgentProviderService(db)
+                provider_callable = provider_service.get_provider_callable(pipeline.llm_model)
+
+                gen_svc = GenerationService(engine, provider_callable=provider_callable)
+                # Create generation run record
+                run_id = await db.repos.generation_runs.create_run(pipeline.id, pipeline.prompt_template)
+                await db.repos.generation_runs.set_status(run_id, "running")
+                print(f"Created generation run id={run_id}")
+                retrieval_query = pipeline.prompt_template or pipeline.name or ""
+                try:
+                    result = await gen_svc.generate(
+                        query=retrieval_query,
+                        prompt_template=pipeline.prompt_template,
+                        limit=args.limit,
+                        model=pipeline.llm_model,
+                        max_tokens=args.max_tokens,
+                        temperature=args.temperature,
+                    )
+                    await db.repos.generation_runs.save_result(run_id, result.get("generated_text", ""), {"citations": result.get("citations", [])})
+                    print(f"Generation completed for run id={run_id}")
+                    if args.preview:
+                        print("--- DRAFT PREVIEW ---")
+                        print(result.get("generated_text"))
+                    if args.publish:
+                        print("Publish requested — publishing via targets is not implemented in CLI; use web UI or implement account targets.")
+                except Exception as exc:
+                    await db.repos.generation_runs.set_status(run_id, "failed")
+                    print(f"Generation failed: {exc}")
         finally:
             await db.close()
 

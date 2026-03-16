@@ -17,6 +17,7 @@ from src.database.repositories.photo_loader import PhotoLoaderRepository
 from src.database.repositories.search_log import SearchLogRepository
 from src.database.repositories.search_queries import SearchQueriesRepository
 from src.database.repositories.settings import SettingsRepository
+from src.database.repositories.generation_runs import GenerationRunsRepository
 from src.models import (
     Account,
     Channel,
@@ -36,6 +37,7 @@ from src.models import (
     SearchQuery,
     SearchQueryDailyStat,
     StatsAllTaskPayload,
+    GenerationRun,
 )
 
 if TYPE_CHECKING:
@@ -57,6 +59,7 @@ class DatabaseRepositories:
     photo_loader: PhotoLoaderRepository
     dialog_cache: DialogCacheRepository
     content_pipelines: ContentPipelinesRepository
+    generation_runs: GenerationRunsRepository
 
 
 @dataclass(frozen=True)
@@ -275,6 +278,9 @@ class ChannelBundle:
 
     async def get_pending_channel_tasks(self) -> list[CollectionTask]:
         return await self.tasks.get_pending_channel_tasks()
+
+    async def delete_pending_channel_tasks(self) -> int:
+        return await self.tasks.delete_pending_channel_tasks()
 
     async def fail_running_collection_tasks_on_startup(self) -> int:
         return await self.tasks.fail_running_collection_tasks_on_startup()

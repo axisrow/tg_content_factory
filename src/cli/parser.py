@@ -242,6 +242,14 @@ def build_parser() -> argparse.ArgumentParser:
     pipeline_toggle = pipeline_sub.add_parser("toggle", help="Toggle pipeline active state")
     pipeline_toggle.add_argument("id", type=int, help="Pipeline id")
 
+    pipeline_run = pipeline_sub.add_parser("run", help="Run pipeline generation (preview/publish)")
+    pipeline_run.add_argument("id", type=int, help="Pipeline id")
+    pipeline_run.add_argument("--preview", action="store_true", default=False, help="Only preview generated draft")
+    pipeline_run.add_argument("--publish", action="store_true", default=False, help="Publish generated draft to targets (requires accounts and confirmation)")
+    pipeline_run.add_argument("--limit", type=int, default=8, help="Number of context messages to fetch")
+    pipeline_run.add_argument("--max-tokens", type=int, default=256, help="Max tokens for LLM generation")
+    pipeline_run.add_argument("--temperature", type=float, default=0.0, help="Sampling temperature for generation")
+
     acc_parser = sub.add_parser("account", help="Account management")
     acc_sub = acc_parser.add_subparsers(dest="account_action")
     acc_sub.add_parser("list", help="List accounts")
@@ -396,28 +404,6 @@ def build_parser() -> argparse.ArgumentParser:
     photo_auto_delete.add_argument("id", type=int, help="Job id")
 
     photo_sub.add_parser("run-due", help="Run due photo items and auto jobs now")
-
-    pipe_parser = sub.add_parser("pipeline", help="Pipeline management")
-    pipe_sub = pipe_parser.add_subparsers(dest="pipeline_action")
-    pipe_sub.add_parser("list", help="List pipelines")
-
-    pipe_add = pipe_sub.add_parser("add", help="Add pipeline")
-    pipe_add.add_argument("name", help="Pipeline name")
-    pipe_add.add_argument("--phone", required=True, help="Account phone")
-    pipe_add.add_argument("--prompt-template", default=None, dest="prompt_template")
-    pipe_add.add_argument("--llm-model", default=None, dest="llm_model")
-
-    pipe_edit = pipe_sub.add_parser("edit", help="Edit pipeline")
-    pipe_edit.add_argument("id", type=int, help="Pipeline id")
-    pipe_edit.add_argument("--name", default=None, help="New name")
-    pipe_edit.add_argument("--prompt-template", default=None, dest="prompt_template")
-    pipe_edit.add_argument("--llm-model", default=None, dest="llm_model")
-
-    pipe_del = pipe_sub.add_parser("delete", help="Delete pipeline")
-    pipe_del.add_argument("id", type=int, help="Pipeline id")
-
-    pipe_toggle = pipe_sub.add_parser("toggle", help="Toggle pipeline active state")
-    pipe_toggle.add_argument("id", type=int, help="Pipeline id")
 
     test_parser = sub.add_parser("test", help="Run diagnostic tests")
     test_sub = test_parser.add_subparsers(dest="test_action")
