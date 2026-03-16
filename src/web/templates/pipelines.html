@@ -1,0 +1,187 @@
+{% extends "base.html" %}
+{% block title %}Пайплайны — TG Agent{% endblock %}
+{% block content %}
+<h1>Пайплайны</h1>
+
+<div class="card mb-4">
+    <div class="card-header fw-semibold">Добавить пайплайн</div>
+    <div class="card-body">
+        <form method="post" action="/pipelines/add" data-busy>
+            <div class="row g-3 mb-3">
+                <div class="col-12 col-md-6">
+                    <label class="form-label">Название</label>
+                    <input type="text" class="form-control" name="name" required placeholder="Мой пайплайн">
+                </div>
+                <div class="col-12 col-md-3">
+                    <label class="form-label">Аккаунт</label>
+                    <select class="form-select" name="phone" id="pipeline-phone" required>
+                        {% for acc in accounts %}
+                        <option value="{{ acc }}" {{ "selected" if acc == selected_phone }}>{{ acc }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-12 col-md-3">
+                    <label class="form-label">Режим публикации</label>
+                    <select class="form-select" name="publish_mode">
+                        <option value="draft">Черновик</option>
+                        <option value="auto">Авто</option>
+                    </select>
+                </div>
+            </div>
+            <div class="row g-3 mb-3">
+                <div class="col-12 col-md-6">
+                    <label class="form-label">Каналы-источники</label>
+                    <select class="form-select" name="source_channel_ids" multiple size="4">
+                        {% for ch in channels %}
+                        <option value="{{ ch.channel_id }}">{{ ch.title or ch.username or ch.channel_id }}</option>
+                        {% endfor %}
+                    </select>
+                    <small class="text-muted">Ctrl+Click для множественного выбора</small>
+                </div>
+                <div class="col-12 col-md-6">
+                    <label class="form-label">Целевые диалоги</label>
+                    <select class="form-select" name="target_dialog_ids" multiple size="4">
+                        {% for d in dialogs %}
+                        <option value="{{ d.channel_id }}">{{ d.title or d.channel_id }} ({{ d.channel_type }})</option>
+                        {% endfor %}
+                    </select>
+                    <div class="mt-1">
+                        <a href="#" class="btn btn-sm btn-outline-secondary"
+                           onclick="document.getElementById('refresh-dialogs-form').submit(); return false;">
+                            Обновить диалоги
+                        </a>
+                    </div>
+                </div>
+            </div>
+            <div class="row g-3 mb-3">
+                <div class="col-12 col-md-6">
+                    <label class="form-label">Промпт-шаблон</label>
+                    <textarea class="form-control" name="prompt_template" rows="3" placeholder="Необязательно"></textarea>
+                </div>
+                <div class="col-12 col-md-6">
+                    <label class="form-label">LLM-модель</label>
+                    <input type="text" class="form-control" name="llm_model" placeholder="например, gpt-4o">
+                </div>
+            </div>
+            <button type="submit" class="btn btn-primary">Добавить</button>
+        </form>
+    </div>
+</div>
+
+<form id="refresh-dialogs-form" method="post" action="/pipelines/refresh" class="d-none">
+    <input type="hidden" name="phone" value="{{ selected_phone or '' }}">
+</form>
+
+{% if pipelines %}
+<div class="table-responsive">
+<table class="table table-striped table-sm">
+    <thead>
+        <tr>
+            <th>ID</th>
+            <th>Название</th>
+            <th>Аккаунт</th>
+            <th>Источники</th>
+            <th>Цели</th>
+            <th>Режим</th>
+            <th>Активен</th>
+            <th>Действия</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for p in pipelines %}
+        <tr id="row-{{ p.id }}">
+            <td>{{ p.id }}</td>
+            <td>{{ p.name }}</td>
+            <td><code>{{ p.phone }}</code></td>
+            <td>{{ p.source_channel_ids | length }}</td>
+            <td>{{ p.targets | length }}</td>
+            <td><span class="badge bg-secondary">{{ p.publish_mode.value }}</span></td>
+            <td>{% if p.is_active %}<span class="badge-active">&#9679;</span>{% else %}<span class="badge-inactive">&#9679;</span>{% endif %}</td>
+            <td>
+                <button type="button" class="btn btn-outline-secondary btn-sm emoji-btn" title="Редактировать" onclick="toggleEdit({{ p.id }})">&#9999;&#65039;</button>
+                <form method="post" action="/pipelines/{{ p.id }}/toggle" class="d-inline" data-busy>
+                    <button type="submit" class="btn btn-outline-secondary btn-sm emoji-btn" title="{{ 'Отключить' if p.is_active else 'Включить' }}">
+                        {{ "⏏️" if p.is_active else "🔄" }}
+                    </button>
+                </form>
+                <form method="post" action="/pipelines/{{ p.id }}/delete" class="d-inline" onsubmit="return confirm('Удалить этот пайплайн?')" data-busy>
+                    <button type="submit" class="btn btn-outline-danger btn-sm emoji-btn" title="Удалить">&#128465;&#65039;</button>
+                </form>
+            </td>
+        </tr>
+        <tr id="edit-{{ p.id }}" class="d-none">
+            <td colspan="8">
+                <form method="post" action="/pipelines/{{ p.id }}/edit" data-busy>
+                    <div class="row g-3 mb-3">
+                        <div class="col-12 col-md-6">
+                            <label class="form-label">Название</label>
+                            <input type="text" class="form-control" name="name" value="{{ p.name }}" required>
+                        </div>
+                        <div class="col-12 col-md-3">
+                            <label class="form-label">Аккаунт</label>
+                            <select class="form-select" name="phone" required>
+                                {% for acc in accounts %}
+                                <option value="{{ acc }}" {{ "selected" if acc == p.phone }}>{{ acc }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="col-12 col-md-3">
+                            <label class="form-label">Режим публикации</label>
+                            <select class="form-select" name="publish_mode">
+                                <option value="draft" {{ "selected" if p.publish_mode.value == "draft" }}>Черновик</option>
+                                <option value="auto" {{ "selected" if p.publish_mode.value == "auto" }}>Авто</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="row g-3 mb-3">
+                        <div class="col-12 col-md-6">
+                            <label class="form-label">Каналы-источники</label>
+                            <select class="form-select" name="source_channel_ids" multiple size="4">
+                                {% for ch in channels %}
+                                <option value="{{ ch.channel_id }}" {{ "selected" if ch.channel_id in p.source_channel_ids }}>{{ ch.title or ch.username or ch.channel_id }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="col-12 col-md-6">
+                            <label class="form-label">Целевые диалоги</label>
+                            <select class="form-select" name="target_dialog_ids" multiple size="4">
+                                {% set target_ids = p.targets | map(attribute='dialog_id') | list %}
+                                {% for d in dialogs %}
+                                <option value="{{ d.channel_id }}" {{ "selected" if d.channel_id in target_ids }}>{{ d.title or d.channel_id }} ({{ d.channel_type }})</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                    </div>
+                    <div class="row g-3 mb-3">
+                        <div class="col-12 col-md-6">
+                            <label class="form-label">Промпт-шаблон</label>
+                            <textarea class="form-control" name="prompt_template" rows="3">{{ p.prompt_template or '' }}</textarea>
+                        </div>
+                        <div class="col-12 col-md-6">
+                            <label class="form-label">LLM-модель</label>
+                            <input type="text" class="form-control" name="llm_model" value="{{ p.llm_model or '' }}">
+                        </div>
+                    </div>
+                    <button type="submit" class="btn btn-primary me-2">Сохранить</button>
+                    <button type="button" class="btn btn-secondary" onclick="toggleEdit({{ p.id }})">Отмена</button>
+                </form>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+</div>
+{% else %}
+<p>Нет пайплайнов.</p>
+{% endif %}
+<script>
+function toggleEdit(id) {
+    var editRow = document.getElementById('edit-' + id);
+    if (!editRow.classList.contains('d-none')) {
+        editRow.querySelector('form').reset();
+    }
+    document.getElementById('row-' + id).classList.toggle('d-none');
+    editRow.classList.toggle('d-none');
+}
+</script>
+{% endblock %}
