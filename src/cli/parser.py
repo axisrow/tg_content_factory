@@ -148,6 +148,15 @@ def build_parser() -> argparse.ArgumentParser:
     my_tg_list = my_tg_sub.add_parser("list", help="List all dialogs for an account")
     my_tg_list.add_argument("--phone", default=None, help="Account phone (default: first connected)")  # noqa: E501
 
+    my_tg_topics = my_tg_sub.add_parser("topics", help="List forum topics for a channel")
+    my_tg_topics.add_argument(
+        "--channel-id", type=int, required=True, dest="channel_id",
+        help="Channel ID to fetch forum topics for",
+    )
+    my_tg_topics.add_argument(
+        "--phone", default=None, help="Account phone (default: any available)",
+    )
+
     notif_parser = sub.add_parser("notification", help="Personal notification bot management")
     notif_sub = notif_parser.add_subparsers(dest="notification_action")
     notif_sub.add_parser("setup", help="Create personal notification bot via BotFather")
