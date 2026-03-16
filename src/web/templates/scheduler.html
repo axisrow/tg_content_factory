@@ -35,6 +35,13 @@
             <form method="post" action="/scheduler/trigger" data-busy>
                 <button type="submit" class="btn btn-outline-primary">&#9654; Собрать все каналы</button>
             </form>
+            {% if pending_collect_count > 0 %}
+            <form method="post" action="/scheduler/tasks/clear-pending-collect" data-busy>
+                <button type="submit" class="btn btn-outline-danger">
+                    Очистить очередь загрузки ({{ pending_collect_count }})
+                </button>
+            </form>
+            {% endif %}
             <form method="post" action="/scheduler/test-notification" data-busy>
                 <button type="submit" class="btn btn-outline-secondary"
                         {% if not bot_configured %}disabled title="Подключите бот в Настройках → Уведомления"{% endif %}>
