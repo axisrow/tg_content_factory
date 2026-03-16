@@ -20,6 +20,15 @@ async def run_migrations(db: aiosqlite.Connection) -> bool:
     if "reactions_json" not in msg_columns:
         await db.execute("ALTER TABLE messages ADD COLUMN reactions_json TEXT")
         await db.commit()
+    if "views" not in msg_columns:
+        await db.execute("ALTER TABLE messages ADD COLUMN views INTEGER")
+        await db.commit()
+    if "forwards" not in msg_columns:
+        await db.execute("ALTER TABLE messages ADD COLUMN forwards INTEGER")
+        await db.commit()
+    if "reply_count" not in msg_columns:
+        await db.execute("ALTER TABLE messages ADD COLUMN reply_count INTEGER")
+        await db.commit()
 
     cur = await db.execute("PRAGMA table_info(accounts)")
     acc_columns = {row["name"] for row in await cur.fetchall()}
