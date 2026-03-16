@@ -103,6 +103,81 @@ class TestCLIAccount:
         run(_ns(account_action="delete", id=pk))
         assert "Deleted" in capsys.readouterr().out
 
+    def test_info_shows_table(self, cli_env_with_pool, capsys):
+        """account info: shows table with connected account profile data."""
+        from src.models import TelegramUserInfo
+
+        db = cli_env_with_pool
+        phone = "+10009998877"
+        _add_account(db, phone=phone)
+
+        user_info = TelegramUserInfo(
+            phone=phone,
+            first_name="Alice",
+            last_name="Smith",
+            username="alice",
+            is_primary=True,
+        )
+
+        fake_pool = AsyncMock(
+            clients={phone: MagicMock()},
+            get_users_info=AsyncMock(return_value=[user_info]),
+            disconnect_all=AsyncMock(),
+        )
+        init_pool_mock = AsyncMock(return_value=(MagicMock(), fake_pool))
+        with patch("src.cli.runtime.init_pool", new=init_pool_mock):
+            from src.cli.commands.account import run
+            run(_ns(account_action="info", phone=None))
+
+        out = capsys.readouterr().out
+        assert phone in out
+        assert "Alice Smith" in out
+        assert "@alice" in out
+        assert "Phone" in out
+
+    def test_info_filter_by_phone(self, cli_env_with_pool, capsys):
+        """account info --phone: only shows matching account."""
+        from src.models import TelegramUserInfo
+
+        db = cli_env_with_pool
+        phone1 = "+10009998877"
+        phone2 = "+10001112233"
+        _add_account(db, phone=phone1)
+        _add_account(db, phone=phone2)
+
+        users = [
+            TelegramUserInfo(phone=phone1, first_name="Alice"),
+            TelegramUserInfo(phone=phone2, first_name="Bob"),
+        ]
+
+        fake_pool = AsyncMock(
+            clients={phone1: MagicMock(), phone2: MagicMock()},
+            get_users_info=AsyncMock(return_value=users),
+            disconnect_all=AsyncMock(),
+        )
+        init_pool_mock = AsyncMock(return_value=(MagicMock(), fake_pool))
+        with patch("src.cli.runtime.init_pool", new=init_pool_mock):
+            from src.cli.commands.account import run
+            run(_ns(account_action="info", phone=phone1))
+
+        out = capsys.readouterr().out
+        assert phone1 in out
+        assert phone2 not in out
+
+    def test_info_no_connected_accounts(self, cli_env_with_pool, capsys):
+        """account info: prints message when no accounts are connected."""
+        fake_pool = AsyncMock(
+            clients={},
+            get_users_info=AsyncMock(return_value=[]),
+            disconnect_all=AsyncMock(),
+        )
+        init_pool_mock = AsyncMock(return_value=(MagicMock(), fake_pool))
+        with patch("src.cli.runtime.init_pool", new=init_pool_mock):
+            from src.cli.commands.account import run
+            run(_ns(account_action="info", phone=None))
+
+        assert "No connected accounts found." in capsys.readouterr().out
+
 
 # ---------------------------------------------------------------------------
 # channel (DB-only)
