@@ -167,3 +167,84 @@ async def delete_pipeline(request: Request, pipeline_id: int):
     phone = request.query_params.get("phone")
     await deps.pipeline_service(request).delete(pipeline_id)
     return _pipeline_redirect("pipeline_deleted", phone=phone)
+
+
+@router.get("/{pipeline_id}/generate", response_class=HTMLResponse)
+async def generate_page(request: Request, pipeline_id: int):
+    svc = deps.pipeline_service(request)
+    pipeline = await svc.get(pipeline_id)
+    if pipeline is None:
+        return _pipeline_redirect("pipeline_invalid", error=True)
+    db = deps.get_db(request)
+    runs = await db.repos.generation_runs.list_by_pipeline(pipeline_id)
+    return deps.get_templates(request).TemplateResponse(
+        request,
+        "pipelines/generate.html",
+        {"pipeline": pipeline, "runs": runs, "request": request},
+    )
+
+
+@router.post("/{pipeline_id}/generate")
+async def generate_pipeline(
+    request: Request,
+    pipeline_id: int,
+    model: str = Form(""),
+    max_tokens: int = Form(256),
+    temperature: float = Form(0.0),
+):
+    svc = deps.pipeline_service(request)
+    pipeline = await svc.get(pipeline_id)
+    if pipeline is None:
+        return _pipeline_redirect("pipeline_invalid", error=True)
+    db = deps.get_db(request)
+    engine = deps.get_search_engine(request)
+
+    from src.services.provider_service import AgentProviderService
+
+    provider_service = AgentProviderService(db)
+    provider_callable = provider_service.get_provider_callable(pipeline.llm_model)
+
+    from src.services.generation_service import GenerationService
+
+    gen = GenerationService(engine, provider_callable=provider_callable)
+    run_id = await db.repos.generation_runs.create_run(pipeline_id, pipeline.prompt_template)
+    await db.repos.generation_runs.set_status(run_id, "running")
+    try:
+        result = await gen.generate(
+            query="",
+            prompt_template=pipeline.prompt_template,
+            model=(model or pipeline.llm_model),
+            max_tokens=max_tokens,
+            temperature=temperature,
+        )
+        await db.repos.generation_runs.save_result(run_id, result.get("generated_text", ""), {"citations": result.get("citations", [])})
+    except Exception as exc:
+        await db.repos.generation_runs.set_status(run_id, "failed")
+        return deps.get_templates(request).TemplateResponse(
+            request,
+            "pipelines/generate.html",
+            {"pipeline": pipeline, "error": str(exc), "request": request},
+        )
+    run = await db.repos.generation_runs.get(run_id)
+    return deps.get_templates(request).TemplateResponse(
+        request,
+        "pipelines/generate.html",
+        {"pipeline": pipeline, "run": run, "request": request},
+    )
+
+
+@router.post("/{pipeline_id}/publish")
+async def publish_pipeline(request: Request, pipeline_id: int, run_id: int = Form(...)):
+    db = deps.get_db(request)
+    run = await db.repos.generation_runs.get(run_id)
+    if run is None or run.pipeline_id != pipeline_id:
+        return _pipeline_redirect("pipeline_invalid", error=True)
+    # Mark as published (no external publishing performed here)
+    metadata = run.metadata or {}
+    from datetime import datetime
+
+    metadata["published"] = True
+    metadata["published_at"] = datetime.utcnow().isoformat()
+    await db.repos.generation_runs.save_result(run_id, run.generated_text or "", metadata)
+    await db.repos.generation_runs.set_status(run_id, "published")
+    return _pipeline_redirect("pipeline_published")
