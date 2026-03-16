@@ -18,11 +18,11 @@ def _build_deletion_service(db) -> FilterDeletionService:
 
 def _parse_pks(raw: str) -> list[int]:
     pks = []
-    for v in raw.split(","):
-        v = v.strip()
-        if v:
+    for pk_str in raw.split(","):
+        pk_str = pk_str.strip()
+        if pk_str:
             try:
-                pks.append(int(v))
+                pks.append(int(pk_str))
             except ValueError:
                 continue
     return pks

@@ -378,6 +378,73 @@ class TestMyTelegramCommand:
         called_dialogs = mock_leave.call_args[0][1]
         assert (123456, "dm") in called_dialogs
 
+    def test_cache_clear_all(self, cli_env_with_pool, capsys):
+        """Test cache-clear without phone clears all accounts."""
+        cli_env, fake_pool = cli_env_with_pool
+        fake_pool.invalidate_dialogs_cache = MagicMock()
+        fake_pool._dialogs_cache = {}
+
+        from src.cli.commands.my_telegram import run
+
+        run(_ns(my_telegram_action="cache-clear", phone=None))
+        out = capsys.readouterr().out
+        fake_pool.invalidate_dialogs_cache.assert_called_once_with()
+        assert "all accounts" in out
+
+    def test_cache_clear_specific_phone(self, cli_env_with_pool, capsys):
+        """Test cache-clear with --phone clears only that account."""
+        cli_env, fake_pool = cli_env_with_pool
+        fake_pool.invalidate_dialogs_cache = MagicMock()
+        fake_pool._dialogs_cache = {}
+
+        from src.cli.commands.my_telegram import run
+
+        run(_ns(my_telegram_action="cache-clear", phone="+10001112233"))
+        out = capsys.readouterr().out
+        fake_pool.invalidate_dialogs_cache.assert_called_once_with("+10001112233")
+        assert "+10001112233" in out
+
+    def test_cache_status_no_cache(self, cli_env_with_pool, capsys):
+        """Test cache-status when no dialogs cached."""
+        cli_env, fake_pool = cli_env_with_pool
+        fake_pool._dialogs_cache = {}
+        fake_pool._dialogs_cache_ttl_sec = 60.0
+
+        from src.cli.commands.my_telegram import run
+
+        run(_ns(my_telegram_action="cache-status"))
+        out = capsys.readouterr().out
+        assert "No cached dialogs" in out
+
+    def test_cache_status_with_db_entries(self, cli_env_with_pool, capsys):
+        """Test cache-status shows entries from DB."""
+        import asyncio
+
+        cli_env, fake_pool = cli_env_with_pool
+        fake_pool._dialogs_cache = {}
+        fake_pool._dialogs_cache_ttl_sec = 60.0
+        db = cli_env
+
+        # Seed some dialog cache rows directly via the DB
+        dialogs = [
+            {
+                "channel_id": 100,
+                "title": "Chan A",
+                "username": "chana",
+                "channel_type": "channel",
+                "deactivate": False,
+                "is_own": False,
+            }
+        ]
+        asyncio.run(db.repos.dialog_cache.replace_dialogs("+10001112233", dialogs))
+
+        from src.cli.commands.my_telegram import run
+
+        run(_ns(my_telegram_action="cache-status"))
+        out = capsys.readouterr().out
+        assert "+10001112233" in out
+        assert "1" in out  # 1 DB entry
+
 
 # ---------------------------------------------------------------------------
 # notification command

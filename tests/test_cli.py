@@ -103,6 +103,47 @@ class TestCLIAccount:
         run(_ns(account_action="delete", id=pk))
         assert "Deleted" in capsys.readouterr().out
 
+    def test_flood_status_no_flood(self, cli_env, capsys):
+        _add_account(cli_env, phone="+10001112233")
+        from src.cli.commands.account import run
+        run(_ns(account_action="flood-status"))
+        out = capsys.readouterr().out
+        assert "+10001112233" in out
+        assert "OK" in out
+
+    def test_flood_status_with_flood(self, cli_env, capsys):
+        import re
+        from datetime import datetime, timedelta, timezone
+        phone = "+10001112244"
+        _add_account(cli_env, phone=phone)
+        until = datetime.now(timezone.utc) + timedelta(seconds=300)
+        asyncio.run(cli_env.update_account_flood(phone, until))
+        from src.cli.commands.account import run
+        run(_ns(account_action="flood-status"))
+        out = capsys.readouterr().out
+        assert phone in out
+        assert re.search(r"\d+s", out)
+
+    def test_flood_status_no_accounts(self, cli_env, capsys):
+        from src.cli.commands.account import run
+        run(_ns(account_action="flood-status"))
+        assert "No accounts found." in capsys.readouterr().out
+
+    def test_flood_clear(self, cli_env, capsys):
+        from datetime import datetime, timedelta, timezone
+        phone = "+10001112255"
+        _add_account(cli_env, phone=phone)
+        until = datetime.now(timezone.utc) + timedelta(seconds=120)
+        asyncio.run(cli_env.update_account_flood(phone, until))
+        from src.cli.commands.account import run
+        run(_ns(account_action="flood-clear", phone=phone))
+        assert "cleared" in capsys.readouterr().out
+
+    def test_flood_clear_not_found(self, cli_env, capsys):
+        from src.cli.commands.account import run
+        run(_ns(account_action="flood-clear", phone="+19990000000"))
+        assert "not found" in capsys.readouterr().out
+
 
 # ---------------------------------------------------------------------------
 # channel (DB-only)
@@ -338,6 +379,75 @@ class TestCLICollect:
         from src.cli.commands.collect import run
         run(_ns(channel_id=None))
         assert "No connected accounts" in caplog.text
+
+    def test_sample_no_clients(self, cli_env_with_pool, capsys, caplog):
+        from src.cli.commands.collect import run
+        run(_ns(collect_action="sample", channel_id=-100123, limit=5))
+        assert "No connected accounts" in caplog.text
+
+    def test_sample_returns_previews(self, cli_env_with_pool, capsys):
+        from datetime import datetime, timezone
+        from unittest.mock import AsyncMock, patch
+
+        from src.cli.commands.collect import run
+
+        fake_previews = [
+            {
+                "message_id": 42,
+                "date": datetime(2024, 6, 1, 12, 0, tzinfo=timezone.utc),
+                "text_preview": "Hello world",
+                "media_type": None,
+            },
+            {
+                "message_id": 41,
+                "date": datetime(2024, 6, 1, 11, 0, tzinfo=timezone.utc),
+                "text_preview": None,
+                "media_type": "photo",
+            },
+        ]
+
+        fake_pool = AsyncMock()
+        fake_pool.clients = {"dummy": object()}
+        fake_pool.disconnect_all = AsyncMock()
+
+        async def fake_init_pool(config, db):
+            from src.telegram.auth import TelegramAuth
+            return TelegramAuth(0, ""), fake_pool
+
+        with patch("src.cli.runtime.init_pool", side_effect=fake_init_pool), patch(
+            "src.telegram.collector.Collector.sample_channel",
+            new=AsyncMock(return_value=fake_previews),
+        ):
+            run(_ns(collect_action="sample", channel_id=-100123, limit=2))
+
+        out = capsys.readouterr().out
+        assert "Sampling" in out
+        assert "#42" in out
+        assert "Hello world" in out
+        assert "#41" in out
+        assert "photo" in out
+
+    def test_sample_no_messages(self, cli_env_with_pool, capsys):
+        from unittest.mock import AsyncMock, patch
+
+        from src.cli.commands.collect import run
+
+        fake_pool = AsyncMock()
+        fake_pool.clients = {"dummy": object()}
+        fake_pool.disconnect_all = AsyncMock()
+
+        async def fake_init_pool(config, db):
+            from src.telegram.auth import TelegramAuth
+            return TelegramAuth(0, ""), fake_pool
+
+        with patch("src.cli.runtime.init_pool", side_effect=fake_init_pool), patch(
+            "src.telegram.collector.Collector.sample_channel",
+            new=AsyncMock(return_value=[]),
+        ):
+            run(_ns(collect_action="sample", channel_id=-100123, limit=10))
+
+        out = capsys.readouterr().out
+        assert "No messages found" in out
 
 
 # ---------------------------------------------------------------------------
@@ -825,3 +935,100 @@ class TestCLIAgent:
         args = parser.parse_args(["agent", "chat", "hi", "--model", "claude-haiku-4-5-20251001"])
         assert args.agent_action == "chat"
         assert args.model == "claude-haiku-4-5-20251001"
+
+
+# ---------------------------------------------------------------------------
+# my-telegram topics
+# ---------------------------------------------------------------------------
+
+
+class TestCLIMyTelegramTopics:
+    def test_topics_from_pool(self, cli_env_with_pool, capsys):
+        """Topics fetched from Telegram pool are displayed in a table."""
+        from src.cli.commands.my_telegram import run
+
+        fp = AsyncMock()
+        fp.clients = {}
+        fp.disconnect_all = AsyncMock()
+        fp.get_forum_topics = AsyncMock(return_value=[
+            {
+                "id": 1, "title": "General",
+                "icon_emoji_id": None, "date": "2025-01-01T00:00:00+00:00",
+            },
+            {
+                "id": 2, "title": "Dev",
+                "icon_emoji_id": 12345, "date": "2025-02-01T00:00:00+00:00",
+            },
+        ])
+
+        async def fake_init_pool(config, db):
+            from src.telegram.auth import TelegramAuth
+            return TelegramAuth(0, ""), fp
+
+        with patch("src.cli.runtime.init_pool", side_effect=fake_init_pool):
+            run(_ns(my_telegram_action="topics", channel_id=500, phone=None))
+
+        out = capsys.readouterr().out
+        assert "General" in out
+        assert "Dev" in out
+        assert "12345" in out
+        assert "2025-01-01" in out
+
+    def test_topics_fallback_to_db(self, cli_env_with_pool, capsys):
+        """When pool returns no topics, falls back to DB cache."""
+        from src.cli.commands.my_telegram import run
+
+        _add_channel(cli_env_with_pool, channel_id=501, title="ForumChan")
+        asyncio.run(cli_env_with_pool.upsert_forum_topics(501, [
+            {"id": 10, "title": "Cached Topic"},
+        ]))
+
+        fp = AsyncMock()
+        fp.clients = {}
+        fp.disconnect_all = AsyncMock()
+        fp.get_forum_topics = AsyncMock(return_value=[])  # pool returns nothing
+
+        async def fake_init_pool(config, db):
+            from src.telegram.auth import TelegramAuth
+            return TelegramAuth(0, ""), fp
+
+        with patch("src.cli.runtime.init_pool", side_effect=fake_init_pool):
+            run(_ns(my_telegram_action="topics", channel_id=501, phone=None))
+
+        out = capsys.readouterr().out
+        assert "Cached Topic" in out
+
+    def test_topics_not_forum(self, cli_env_with_pool, capsys):
+        """Channel with no topics prints a descriptive message."""
+        from src.cli.commands.my_telegram import run
+
+        fp = AsyncMock()
+        fp.clients = {}
+        fp.disconnect_all = AsyncMock()
+        fp.get_forum_topics = AsyncMock(return_value=[])
+
+        async def fake_init_pool(config, db):
+            from src.telegram.auth import TelegramAuth
+            return TelegramAuth(0, ""), fp
+
+        with patch("src.cli.runtime.init_pool", side_effect=fake_init_pool):
+            run(_ns(my_telegram_action="topics", channel_id=999, phone=None))
+
+        out = capsys.readouterr().out
+        assert "No forum topics" in out
+
+    def test_parser_topics_subcommand(self):
+        """Parser correctly handles my-telegram topics arguments."""
+        from src.cli.parser import build_parser
+        parser = build_parser()
+
+        args = parser.parse_args(["my-telegram", "topics", "--channel-id", "123"])
+        assert args.my_telegram_action == "topics"
+        assert args.channel_id == 123
+        assert args.phone is None
+
+        args = parser.parse_args(
+            ["my-telegram", "topics", "--channel-id", "456", "--phone", "+10001112233"]
+        )
+        assert args.channel_id == 456
+        assert args.phone == "+10001112233"
