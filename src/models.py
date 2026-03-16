@@ -52,6 +52,9 @@ class Message(BaseModel):
     media_type: str | None = None
     topic_id: int | None = None
     reactions_json: str | None = None
+    views: int | None = None
+    forwards: int | None = None
+    reply_count: int | None = None
     date: datetime
     collected_at: datetime | None = None
     channel_title: str | None = None
