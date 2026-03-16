@@ -73,7 +73,6 @@ class PipelineService:
         generation_backend: PipelineGenerationBackend | str = PipelineGenerationBackend.CHAIN,
         generate_interval_minutes: int = 60,
         is_active: bool = True,
-        last_generated_id: int = 0,
     ) -> bool:
         pipeline = await self._build_pipeline(
             name=name,
@@ -84,7 +83,6 @@ class PipelineService:
             generation_backend=generation_backend,
             generate_interval_minutes=generate_interval_minutes,
             is_active=is_active,
-            last_generated_id=last_generated_id,
         )
         sources = await self._normalize_sources(source_channel_ids)
         targets = await self._normalize_targets(target_refs)

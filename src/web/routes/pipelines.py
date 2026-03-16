@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from urllib.parse import quote
 
 from fastapi import APIRouter, Form, Request
@@ -13,6 +14,8 @@ from src.services.pipeline_service import (
     PipelineValidationError,
 )
 from src.web import deps
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -52,7 +55,7 @@ async def _page_context(request: Request) -> dict:
         try:
             await deps.channel_service(request).get_my_dialogs(selected_phone, refresh=refresh)
         except Exception:
-            pass
+            logger.warning("Failed to refresh dialog cache for %s", selected_phone, exc_info=True)
     cached_dialogs = await svc.list_cached_dialogs_by_phone()
     return {
         "items": await svc.get_with_relations(),
@@ -80,8 +83,8 @@ async def add_pipeline(
     request: Request,
     name: str = Form(...),
     prompt_template: str = Form(...),
-    source_channel_ids: list[int] = Form(...),
-    target_refs: list[str] = Form(...),
+    source_channel_ids: list[int] = Form(default=[]),
+    target_refs: list[str] = Form(default=[]),
     llm_model: str = Form(""),
     image_model: str = Form(""),
     publish_mode: str = Form(PipelinePublishMode.MODERATED.value),
@@ -115,8 +118,8 @@ async def edit_pipeline(
     pipeline_id: int,
     name: str = Form(...),
     prompt_template: str = Form(...),
-    source_channel_ids: list[int] = Form(...),
-    target_refs: list[str] = Form(...),
+    source_channel_ids: list[int] = Form(default=[]),
+    target_refs: list[str] = Form(default=[]),
     llm_model: str = Form(""),
     image_model: str = Form(""),
     publish_mode: str = Form(PipelinePublishMode.MODERATED.value),
@@ -142,7 +145,6 @@ async def edit_pipeline(
             generation_backend=generation_backend,
             generate_interval_minutes=generate_interval_minutes,
             is_active=is_active,
-            last_generated_id=existing.last_generated_id,
         )
     except PipelineValidationError as exc:
         return _pipeline_redirect(str(exc), error=True, phone=phone)

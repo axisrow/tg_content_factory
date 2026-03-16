@@ -130,7 +130,6 @@ def run(args: argparse.Namespace) -> None:
                             else existing.generate_interval_minutes
                         ),
                         is_active=existing.is_active if args.active is None else args.active,
-                        last_generated_id=existing.last_generated_id,
                     )
                 except PipelineValidationError as exc:
                     print(f"Error: {exc}")
