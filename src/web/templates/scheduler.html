@@ -158,7 +158,13 @@
                             {% endif %}
                         {% endif %}
                     </td>
-                    <td>{{ t.messages_collected }}</td>
+                    <td>
+                        {% if t.task_type == 'stats_all' and t.payload and t.payload.channel_ids %}
+                            {{ t.messages_collected }}/{{ t.payload.channel_ids|length }}
+                        {% else %}
+                            {{ t.messages_collected }}
+                        {% endif %}
+                    </td>
                     <td>{{ t.created_at.strftime('%Y-%m-%d %H:%M') if t.created_at else '—' }}</td>
                     <td>{{ t.completed_at.strftime('%Y-%m-%d %H:%M') if t.completed_at else '—' }}</td>
                     <td>
@@ -203,7 +209,11 @@
                         </span>
                     </div>
                     <small class="text-muted">
-                        {{ t.messages_collected }} сообщ.
+                        {% if t.task_type == 'stats_all' and t.payload and t.payload.channel_ids %}
+                            {{ t.messages_collected }}/{{ t.payload.channel_ids|length }}
+                        {% else %}
+                            {{ t.messages_collected }} сообщ.
+                        {% endif %}
                         {% if t.created_at %}&middot; {{ t.created_at.strftime('%m-%d %H:%M') }}{% endif %}
                     </small>
                     {% if t.status == 'running' or t.status == 'pending' %}
