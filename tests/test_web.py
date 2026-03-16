@@ -3,6 +3,7 @@ import base64
 import logging
 import re
 import tomllib
+from datetime import datetime, timezone
 from pathlib import Path
 from types import MethodType, SimpleNamespace
 from unittest.mock import AsyncMock
@@ -15,7 +16,13 @@ from src.agent.provider_registry import ProviderRuntimeConfig
 from src.collection_queue import CollectionQueue
 from src.config import AppConfig
 from src.database import Database
-from src.models import Account, CollectionTaskStatus, CollectionTaskType, StatsAllTaskPayload
+from src.models import (
+    Account,
+    CollectionTaskStatus,
+    CollectionTaskType,
+    Message,
+    StatsAllTaskPayload,
+)
 from src.scheduler.manager import SchedulerManager
 from src.search.ai_search import AISearchEngine
 from src.search.engine import SearchEngine
@@ -24,6 +31,7 @@ from src.services.agent_provider_service import (
     ProviderModelCacheEntry,
     ProviderModelCompatibilityRecord,
 )
+from src.services.embedding_service import EmbeddingService
 from src.telegram.collector import Collector
 from src.web.app import create_app
 from src.web.routes.channel_collection import _COLLECT_ALL_BTN, _COLLECT_ALL_FORM
@@ -199,6 +207,7 @@ async def test_settings_page(client):
     resp = await client.get("/settings/")
     assert resp.status_code == 200
     assert "Аккаунт для уведомлений" in resp.text
+    assert "Semantic Search & Embeddings" in resp.text
     assert "Режим разработчика" in resp.text
     assert "Я понимаю, что включаю потенциально опасные изменения" in resp.text
     assert "Backend override" not in resp.text
@@ -250,6 +259,65 @@ async def test_settings_page_ignores_invalid_persisted_numeric_settings(client):
     assert 'value="0"' in resp.text
     assert 'name="collect_interval_minutes"' in resp.text
     assert 'value="60"' in resp.text
+
+
+@pytest.mark.asyncio
+async def test_settings_save_semantic_persists_values_and_resets_index(client):
+    db = client._transport.app.state.db
+    if db.vec_available:
+        await db.insert_messages_batch(
+            [
+                Message(
+                    channel_id=-100444,
+                    message_id=1,
+                    text="Semantic reset test",
+                    date=datetime.now(timezone.utc),
+                )
+            ]
+        )
+        rows = await db.execute_fetchall("SELECT id FROM messages ORDER BY id")
+        await db.repos.messages.upsert_message_embeddings([(int(rows[0]["id"]), [1.0, 0.0])])
+        await db.set_setting("semantic_last_embedded_id", "1")
+
+    resp = await client.post(
+        "/settings/save-semantic-search",
+        data={
+            "semantic_embeddings_provider": "openai",
+            "semantic_embeddings_model": "text-embedding-3-small",
+            "semantic_embeddings_base_url": "https://api.openai.com/v1",
+            "semantic_embeddings_api_key": "secret-key",
+            "semantic_embeddings_batch_size": "32",
+            "semantic_reset_index": "1",
+        },
+        follow_redirects=False,
+    )
+
+    assert resp.status_code == 303
+    assert await db.get_setting("semantic_embeddings_provider") == "openai"
+    assert await db.get_setting("semantic_embeddings_model") == "text-embedding-3-small"
+    assert await db.get_setting("semantic_embeddings_base_url") == "https://api.openai.com/v1"
+    assert await db.get_setting("semantic_embeddings_api_key") == "secret-key"
+    assert await db.get_setting("semantic_embeddings_batch_size") == "32"
+    assert await db.get_setting("semantic_last_embedded_id") is None
+
+
+@pytest.mark.asyncio
+async def test_settings_semantic_index_runs_embedding_service(client, monkeypatch):
+    db = client._transport.app.state.db
+    if not db.vec_available:
+        pytest.skip("sqlite-vec extension is unavailable in this environment")
+
+    monkeypatch.setattr(
+        EmbeddingService,
+        "index_pending_messages",
+        AsyncMock(return_value=7),
+    )
+
+    resp = await client.post("/settings/semantic-index", data={}, follow_redirects=False)
+
+    assert resp.status_code == 303
+    assert "msg=semantic_indexed" in resp.headers["location"]
+    assert "indexed=7" in resp.headers["location"]
 
 
 @pytest.mark.asyncio
@@ -1222,6 +1290,45 @@ async def test_search_with_invalid_channel_id_returns_error(client):
     resp = await client.get("/search?q=test&mode=channel&channel_id=abc")
     assert resp.status_code == 200
     assert "Некорректный ID канала: abc" in resp.text
+
+
+@pytest.mark.asyncio
+async def test_search_with_semantic_mode(client, monkeypatch):
+    from src.models import Message
+    from src.services.embedding_service import EmbeddingService
+
+    db = client._transport.app.state.db
+    if not db.vec_available:
+        pytest.skip("sqlite-vec extension is unavailable in this environment")
+
+    await db.insert_messages_batch(
+        [
+            Message(
+                channel_id=-100123,
+                message_id=1,
+                text="Bitcoin rebounds strongly",
+                date=datetime.now(timezone.utc),
+            ),
+        ]
+    )
+    rows = await db.execute_fetchall("SELECT id FROM messages ORDER BY id")
+    await db.repos.messages.upsert_message_embeddings([(int(rows[0]["id"]), [1.0, 0.0])])
+    monkeypatch.setattr(
+        EmbeddingService,
+        "index_pending_messages",
+        AsyncMock(return_value=0),
+    )
+    monkeypatch.setattr(
+        EmbeddingService,
+        "embed_query",
+        AsyncMock(return_value=[1.0, 0.0]),
+    )
+
+    resp = await client.get("/search?q=bitcoin&mode=semantic")
+
+    assert resp.status_code == 200
+    assert "Bitcoin rebounds strongly" in resp.text
+    assert "Семантический" in resp.text
 
 
 @pytest.mark.asyncio

@@ -146,6 +146,57 @@ class TestSearchMessagesTool:
         assert "DB connection error" in text
 
 
+class TestSemanticSearchTool:
+    @pytest.mark.asyncio
+    async def test_with_results(self, mock_db):
+        mock_messages = [
+            SimpleNamespace(
+                channel_id=100,
+                message_id=1,
+                text="Semantic result",
+                date="2025-01-01",
+            ),
+        ]
+        mock_db.search_semantic_messages = AsyncMock(return_value=(mock_messages, 1))
+
+        class FakeEmbeddingService:
+            def __init__(self, _db):
+                pass
+
+            async def index_pending_messages(self):
+                return 0
+
+            async def embed_query(self, query):
+                assert query == "semantic"
+                return [1.0, 0.0]
+
+        with patch("src.agent.tools.EmbeddingService", FakeEmbeddingService):
+            handlers = _get_tool_handlers(mock_db)
+            result = await handlers["semantic_search"]({"query": "semantic", "limit": 5})
+
+        text = _text(result)
+        assert "Семантически найдено 1 сообщений" in text
+        assert "Semantic result" in text
+        mock_db.search_semantic_messages.assert_awaited_once_with([1.0, 0.0], limit=5)
+
+    @pytest.mark.asyncio
+    async def test_error_returns_text_not_exception(self, mock_db):
+        class BrokenEmbeddingService:
+            def __init__(self, _db):
+                pass
+
+            async def embed_query(self, query):
+                raise RuntimeError("vec unavailable")
+
+        with patch("src.agent.tools.EmbeddingService", BrokenEmbeddingService):
+            handlers = _get_tool_handlers(mock_db)
+            result = await handlers["semantic_search"]({"query": "semantic", "limit": 5})
+
+        text = _text(result)
+        assert "Ошибка семантического поиска" in text
+        assert "vec unavailable" in text
+
+
 # ---------------------------------------------------------------------------
 # get_channels tool
 # ---------------------------------------------------------------------------

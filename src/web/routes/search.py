@@ -65,14 +65,14 @@ async def _render_search_page(
             channel_id_error = f"Некорректный ID канала: {channel_id}"
 
     fts_query, min_length, max_length = _extract_length(q)
-    if mode != "local":
+    if mode not in {"local", "semantic", "hybrid"}:
         min_length, max_length = None, None
 
     service = deps.search_service(request)
     channels = await db.get_channels()
 
     if q:
-        if channel_id_error and mode in {"local", "channel"}:
+        if channel_id_error and mode in {"local", "semantic", "hybrid", "channel"}:
             result = SearchResult(messages=[], total=0, query=q, error=channel_id_error)
         else:
             try:

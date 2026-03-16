@@ -73,6 +73,7 @@ async def build_container_with_templates(
     db = Database(
         config.database.path,
         session_encryption_secret=resolve_session_encryption_secret(config),
+        sqlite_vec_path=config.database.sqlite_vec_path or None,
     )
     await db.initialize()
 
@@ -95,7 +96,13 @@ async def build_container_with_templates(
     )
     pipeline_bundle = PipelineBundle.from_database(db)
     photo_loader_bundle = PhotoLoaderBundle(repos.photo_loader)
-    search_bundle = SearchBundle(repos.messages, repos.search_log, repos.channels)
+    search_bundle = SearchBundle(
+        repos.messages,
+        repos.search_log,
+        repos.channels,
+        repos.settings,
+        db.vec_available,
+    )
     scheduler_bundle = SchedulerBundle(
         repos.settings,
         repos.search_queries,
@@ -125,7 +132,7 @@ async def build_container_with_templates(
     )
     collector = Collector(pool, db, config.scheduler, notifier)
     collection_queue = CollectionQueue(collector, channel_bundle)
-    search_engine = SearchEngine(search_bundle, pool)
+    search_engine = SearchEngine(search_bundle, pool, config=config)
     ai_search = AISearchEngine(config.llm, search_bundle)
     agent_manager = AgentManager(db, config)
     search_query_bundle = SearchQueryBundle(repos.search_queries, repos.messages)

@@ -576,11 +576,19 @@ class SearchBundle:
     messages: MessagesRepository
     search_log: SearchLogRepository
     channels: ChannelsRepository
+    settings: SettingsRepository
+    vec_available: bool = False
 
     @classmethod
     def from_database(cls, db: "Database") -> "SearchBundle":
         repos = db.repos
-        return cls(repos.messages, repos.search_log, repos.channels)
+        return cls(
+            repos.messages,
+            repos.search_log,
+            repos.channels,
+            repos.settings,
+            db.vec_available,
+        )
 
     async def search_messages(
         self,
@@ -617,6 +625,12 @@ class SearchBundle:
 
     async def get_recent_searches(self, limit: int = 20) -> list[dict]:
         return await self.search_log.get_recent_searches(limit)
+
+    async def get_setting(self, key: str) -> str | None:
+        return await self.settings.get_setting(key)
+
+    async def set_setting(self, key: str, value: str) -> None:
+        await self.settings.set_setting(key, value)
 
 
 @dataclass(frozen=True)

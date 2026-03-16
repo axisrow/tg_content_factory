@@ -2,11 +2,13 @@ from __future__ import annotations
 
 from src.database.bundles import SearchBundle
 from src.models import SearchResult
+from src.services.embedding_service import EmbeddingService
 
 
 class LocalSearch:
-    def __init__(self, search: SearchBundle):
+    def __init__(self, search: SearchBundle, embedding_service: EmbeddingService | None = None):
         self._search = search
+        self._embedding_service = embedding_service
 
     async def search(
         self,
@@ -22,6 +24,61 @@ class LocalSearch:
     ) -> SearchResult:
         messages, total = await self._search.search_messages(
             query=query,
+            channel_id=channel_id,
+            date_from=date_from,
+            date_to=date_to,
+            limit=limit,
+            offset=offset,
+            is_fts=is_fts,
+            min_length=min_length,
+            max_length=max_length,
+        )
+        return SearchResult(messages=messages, total=total, query=query)
+
+    async def search_semantic(
+        self,
+        query: str,
+        channel_id: int | None = None,
+        date_from: str | None = None,
+        date_to: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+        min_length: int | None = None,
+        max_length: int | None = None,
+    ) -> SearchResult:
+        if self._embedding_service is None:
+            raise RuntimeError("Semantic search is unavailable.")
+        query_embedding = await self._embedding_service.embed_query(query)
+        messages, total = await self._search.messages.search_semantic_messages(
+            query_embedding,
+            channel_id=channel_id,
+            date_from=date_from,
+            date_to=date_to,
+            limit=limit,
+            offset=offset,
+            min_length=min_length,
+            max_length=max_length,
+        )
+        return SearchResult(messages=messages, total=total, query=query)
+
+    async def search_hybrid(
+        self,
+        query: str,
+        channel_id: int | None = None,
+        date_from: str | None = None,
+        date_to: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+        is_fts: bool = False,
+        min_length: int | None = None,
+        max_length: int | None = None,
+    ) -> SearchResult:
+        if self._embedding_service is None:
+            raise RuntimeError("Hybrid search is unavailable.")
+        query_embedding = await self._embedding_service.embed_query(query)
+        messages, total = await self._search.messages.search_hybrid_messages(
+            query=query,
+            query_embedding=query_embedding,
             channel_id=channel_id,
             date_from=date_from,
             date_to=date_to,

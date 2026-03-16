@@ -328,6 +328,60 @@ class TestCLISearch:
         assert "Found" in out
         assert "important" in out
 
+    def test_semantic_with_data(self, cli_env, monkeypatch, capsys):
+        if not cli_env.vec_available:
+            pytest.skip("sqlite-vec extension is unavailable in this environment")
+
+        _add_channel(cli_env, channel_id=301, title="SemanticCh")
+        _add_message(cli_env, channel_id=301, message_id=1, text="Bitcoin outlook")
+        rows = asyncio.run(cli_env.execute_fetchall("SELECT id FROM messages ORDER BY id"))
+        asyncio.run(
+            cli_env.repos.messages.upsert_message_embeddings([(int(rows[0]["id"]), [1.0, 0.0])])
+        )
+
+        from src.cli.commands.search import run
+        from src.services.embedding_service import EmbeddingService
+
+        monkeypatch.setattr(
+            EmbeddingService,
+            "index_pending_messages",
+            AsyncMock(return_value=0),
+        )
+        monkeypatch.setattr(
+            EmbeddingService,
+            "embed_query",
+            AsyncMock(return_value=[1.0, 0.0]),
+        )
+
+        ns = _ns(
+            query="bitcoin",
+            limit=20,
+            mode="semantic",
+            channel_id=None,
+            min_length=None,
+            max_length=None,
+            fts=False,
+        )
+        run(ns)
+        out = capsys.readouterr().out
+        assert "Found" in out
+        assert "Bitcoin outlook" in out
+
+    def test_index_now(self, cli_env, monkeypatch, capsys):
+        from src.cli.commands.search import run
+        from src.services.embedding_service import EmbeddingService
+
+        monkeypatch.setattr(
+            EmbeddingService,
+            "index_pending_messages",
+            AsyncMock(return_value=3),
+        )
+
+        ns = _ns(query="", limit=20, mode="local", index_now=True, reset_index=False)
+        run(ns)
+
+        assert "Indexed 3 messages for semantic search." in capsys.readouterr().out
+
 
 class TestCLIAgentDbProviders:
     def test_chat_refreshes_db_backed_provider_cache_before_initialize(self, cli_env, capsys):
