@@ -439,7 +439,7 @@ async def test_settings_save_agent_providers_preserves_priority_order(client):
             "provider_present__anthropic": "1",
             "provider_priority__anthropic": "0",
             "provider_enabled__anthropic": "1",
-            "provider_model__anthropic": "claude-sonnet-4-5-20250929",
+            "provider_model__anthropic": "claude-sonnet-4-6",
             "provider_secret__anthropic__api_key": "anthropic-key",
         },
         follow_redirects=False,
