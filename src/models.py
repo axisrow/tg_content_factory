@@ -75,6 +75,7 @@ class CollectionTaskType(StrEnum):
     SQ_STATS = "sq_stats"
     PHOTO_DUE = "photo_due"
     PHOTO_AUTO = "photo_auto"
+    PIPELINE_RUN = "pipeline_run"
 
 
 class StatsAllTaskPayload(BaseModel):
@@ -102,7 +103,13 @@ class CollectionTask(BaseModel):
     error: str | None = None
     note: str | None = None
     run_after: datetime | None = None
-    payload: dict[str, Any] | StatsAllTaskPayload | SqStatsTaskPayload | None = None
+    payload: (
+        dict[str, Any]
+        | StatsAllTaskPayload
+        | SqStatsTaskPayload
+        | PipelineRunTaskPayload
+        | None
+    ) = None
     parent_task_id: int | None = None
     created_at: datetime | None = None
     started_at: datetime | None = None
@@ -117,6 +124,52 @@ class ChannelStats(BaseModel):
     avg_reactions: float | None = None
     avg_forwards: float | None = None
     collected_at: datetime | None = None
+
+
+class PipelinePublishMode(StrEnum):
+    AUTO = "auto"
+    MODERATED = "moderated"
+
+
+class PipelineGenerationBackend(StrEnum):
+    CHAIN = "chain"
+    AGENT = "agent"
+
+
+class ContentPipeline(BaseModel):
+    id: int | None = None
+    name: str
+    prompt_template: str
+    llm_model: str | None = None
+    image_model: str | None = None
+    publish_mode: PipelinePublishMode = PipelinePublishMode.MODERATED
+    generation_backend: PipelineGenerationBackend = PipelineGenerationBackend.CHAIN
+    is_active: bool = True
+    last_generated_id: int = 0
+    generate_interval_minutes: int = Field(60, ge=1)
+    created_at: datetime | None = None
+
+
+class PipelineSource(BaseModel):
+    id: int | None = None
+    pipeline_id: int
+    channel_id: int
+    created_at: datetime | None = None
+
+
+class PipelineTarget(BaseModel):
+    id: int | None = None
+    pipeline_id: int
+    phone: str
+    dialog_id: int
+    title: str | None = None
+    dialog_type: str | None = None
+    created_at: datetime | None = None
+
+
+class PipelineRunTaskPayload(BaseModel):
+    task_kind: str = CollectionTaskType.PIPELINE_RUN.value
+    pipeline_id: int
 
 
 class NotificationBot(BaseModel):

@@ -8,6 +8,7 @@ from src.database.repositories.accounts import AccountsRepository
 from src.database.repositories.channel_stats import ChannelStatsRepository
 from src.database.repositories.channels import ChannelsRepository
 from src.database.repositories.collection_tasks import CollectionTasksRepository
+from src.database.repositories.content_pipelines import ContentPipelinesRepository
 from src.database.repositories.dialog_cache import DialogCacheRepository
 from src.database.repositories.filters import FilterRepository
 from src.database.repositories.messages import MessagesRepository
@@ -22,6 +23,7 @@ from src.models import (
     ChannelStats,
     CollectionTask,
     CollectionTaskStatus,
+    ContentPipeline,
     Message,
     NotificationBot,
     PhotoAutoUploadJob,
@@ -29,6 +31,8 @@ from src.models import (
     PhotoBatchItem,
     PhotoBatchStatus,
     PhotoSendMode,
+    PipelineSource,
+    PipelineTarget,
     SearchQuery,
     SearchQueryDailyStat,
     StatsAllTaskPayload,
@@ -52,6 +56,7 @@ class DatabaseRepositories:
     search_queries: SearchQueriesRepository
     photo_loader: PhotoLoaderRepository
     dialog_cache: DialogCacheRepository
+    content_pipelines: ContentPipelinesRepository
 
 
 @dataclass(frozen=True)
@@ -709,3 +714,77 @@ class SearchQueryBundle:
 
     async def get_last_recorded_at_all(self) -> dict[int, str]:
         return await self.search_queries.get_last_recorded_at_all()
+
+
+@dataclass(frozen=True)
+class PipelineBundle:
+    content_pipelines: ContentPipelinesRepository
+    channels: ChannelsRepository
+    accounts: AccountsRepository
+    dialog_cache: DialogCacheRepository
+
+    @classmethod
+    def from_database(cls, db: "Database") -> "PipelineBundle":
+        repos = db.repos
+        return cls(
+            repos.content_pipelines,
+            repos.channels,
+            repos.accounts,
+            repos.dialog_cache,
+        )
+
+    async def add(
+        self,
+        pipeline: ContentPipeline,
+        source_channel_ids: list[int],
+        targets: list[PipelineTarget],
+    ) -> int:
+        return await self.content_pipelines.add(pipeline, source_channel_ids, targets)
+
+    async def get_all(self, active_only: bool = False) -> list[ContentPipeline]:
+        return await self.content_pipelines.get_all(active_only)
+
+    async def get_by_id(self, pipeline_id: int) -> ContentPipeline | None:
+        return await self.content_pipelines.get_by_id(pipeline_id)
+
+    async def update(
+        self,
+        pipeline_id: int,
+        pipeline: ContentPipeline,
+        source_channel_ids: list[int],
+        targets: list[PipelineTarget],
+    ) -> bool:
+        return await self.content_pipelines.update(
+            pipeline_id,
+            pipeline,
+            source_channel_ids,
+            targets,
+        )
+
+    async def set_active(self, pipeline_id: int, active: bool) -> None:
+        await self.content_pipelines.set_active(pipeline_id, active)
+
+    async def delete(self, pipeline_id: int) -> None:
+        await self.content_pipelines.delete(pipeline_id)
+
+    async def list_sources(self, pipeline_id: int) -> list[PipelineSource]:
+        return await self.content_pipelines.list_sources(pipeline_id)
+
+    async def list_targets(self, pipeline_id: int) -> list[PipelineTarget]:
+        return await self.content_pipelines.list_targets(pipeline_id)
+
+    async def list_channels(
+        self,
+        active_only: bool = False,
+        include_filtered: bool = True,
+    ):
+        return await self.channels.get_channels(active_only, include_filtered)
+
+    async def list_accounts(self, active_only: bool = False):
+        return await self.accounts.get_accounts(active_only)
+
+    async def get_cached_dialog(self, phone: str, dialog_id: int) -> dict | None:
+        return await self.dialog_cache.get_dialog(phone, dialog_id)
+
+    async def list_cached_dialogs(self, phone: str) -> list[dict]:
+        return await self.dialog_cache.list_dialogs(phone)
