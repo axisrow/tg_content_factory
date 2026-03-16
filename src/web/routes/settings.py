@@ -506,7 +506,6 @@ async def save_semantic_search_settings(request: Request):
     if api_key_raw is not None:
         api_key = str(api_key_raw).strip()
         if api_key and api_key != CREDENTIALS_MASK:
-            changed = changed or current_values[EMBEDDINGS_API_KEY_SETTING] != api_key
             await db.set_setting(EMBEDDINGS_API_KEY_SETTING, api_key)
     if changed or reset_index:
         await db.repos.messages.reset_embeddings_index()
