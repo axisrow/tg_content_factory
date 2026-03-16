@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import sqlite3
 
 from src.database import Database
 from src.filters.criteria import (
@@ -163,7 +164,15 @@ class ChannelAnalyzer:
         updates = [(cid, ",".join(sorted(flags))) for cid, flags in deduped.items()]
         conn = self._database.db
         assert conn is not None
-        await conn.execute("BEGIN")
+        # Rollback any stale transaction left by a prior interrupted operation
+        # (isolation_level=None means autocommit, so rollback is a no-op when clean).
+        try:
+            await conn.execute("BEGIN")
+        except sqlite3.OperationalError as e:
+            if "cannot start a transaction within a transaction" not in str(e):
+                raise
+            await conn.rollback()
+            await conn.execute("BEGIN")
         try:
             await self._database.reset_all_channel_filters(commit=False)
             count = 0
