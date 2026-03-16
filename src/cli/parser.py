@@ -161,6 +161,15 @@ def build_parser() -> argparse.ArgumentParser:
     my_tg_list = my_tg_sub.add_parser("list", help="List all dialogs for an account")
     my_tg_list.add_argument("--phone", default=None, help="Account phone (default: first connected)")  # noqa: E501
 
+    my_tg_topics = my_tg_sub.add_parser("topics", help="List forum topics for a channel")
+    my_tg_topics.add_argument(
+        "--channel-id", type=int, required=True, dest="channel_id",
+        help="Channel ID to fetch forum topics for",
+    )
+    my_tg_topics.add_argument(
+        "--phone", default=None, help="Account phone (default: any available)",
+    )
+
     my_tg_clear = my_tg_sub.add_parser("cache-clear", help="Clear in-memory and DB dialog cache")
     my_tg_clear.add_argument("--phone", default=None, help="Account phone (default: all accounts)")
     my_tg_sub.add_parser("cache-status", help="Show dialog cache status (entries, age)")
