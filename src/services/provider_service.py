@@ -29,6 +29,28 @@ class AgentProviderService:
         if openai_key:
             self.register_provider("openai", self._make_openai_provider(openai_key))
 
+        # optional Context7 provider (user may supply CONTEXT7_API_KEY)
+        context7_key = os.environ.get("CONTEXT7_API_KEY") or os.environ.get("CTX7_API_KEY")
+        if context7_key:
+            self.register_provider("context7", self._make_context7_provider(context7_key))
+
+        # Optional LangChain-backed adapters (enable by setting USE_LANGCHAIN=1).
+        # When enabled, attempt to register LangChain adapters for common providers.
+        if os.environ.get("USE_LANGCHAIN", "").lower() in ("1", "true", "yes"):
+            try:
+                from src.services.langchain_adapters import make_langchain_adapter
+                for _p in ("openai", "anthropic", "ollama", "cohere", "huggingface"):
+                    try:
+                        adapter = make_langchain_adapter(_p, None)
+                        # prefer LangChain adapter: override existing if present
+                        self._registry[_p] = adapter
+                    except Exception:
+                        # ignore provider-specific failures
+                        continue
+            except Exception:
+                # LangChain not available or adapter import failed; continue silently
+                pass
+
     def register_provider(self, name: str, func: Callable[..., Awaitable[str]]) -> None:
         self._registry[name] = func
 
