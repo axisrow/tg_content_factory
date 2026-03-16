@@ -57,7 +57,7 @@ async def client(tmp_path):
     app.state.collection_queue = CollectionQueue(collector, db)
     app.state.search_engine = SearchEngine(db)
     app.state.ai_search = AISearchEngine(config.llm, db)
-    app.state.scheduler = SchedulerManager(collector, config.scheduler)
+    app.state.scheduler = SchedulerManager(config.scheduler)
     app.state.session_secret = "test_secret_key"
     app.state.log_buffer = LogBuffer()
 
@@ -115,7 +115,7 @@ async def client_no_buffer(tmp_path):
     app.state.collection_queue = CollectionQueue(collector, db)
     app.state.search_engine = SearchEngine(db)
     app.state.ai_search = AISearchEngine(config.llm, db)
-    app.state.scheduler = SchedulerManager(collector, config.scheduler)
+    app.state.scheduler = SchedulerManager(config.scheduler)
     app.state.session_secret = "test_secret_key"
     app.state.log_buffer = None  # No buffer
 
