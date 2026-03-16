@@ -359,6 +359,7 @@ const FLASH_TAB_MAP = {
     invalid_api_id: 'credentials',
     invalid_value: 'scheduler',
     agent_dev_mode_required: 'devmode',
+    agent_prompt_template_invalid: 'devmode',
     agent_provider_secret_required: 'devmode',
     agent_provider_invalid: 'devmode',
     notification_account_invalid: 'notifications',
