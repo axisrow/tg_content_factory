@@ -44,9 +44,9 @@ class AgentProviderService:
         try:
             from src.services.provider_adapters import (
                 make_cohere_adapter,
-                make_ollama_adapter,
-                make_huggingface_adapter,
                 make_generic_http_adapter,
+                make_huggingface_adapter,
+                make_ollama_adapter,
             )
 
             cohere_key = os.environ.get("COHERE_API_KEY")
@@ -55,27 +55,37 @@ class AgentProviderService:
 
             ollama_base = os.environ.get("OLLAMA_BASE") or os.environ.get("OLLAMA_URL")
             if ollama_base and "ollama" not in self._registry:
-                self.register_provider("ollama", make_ollama_adapter(ollama_base, os.environ.get("OLLAMA_API_KEY")))
+                self.register_provider(
+                    "ollama", make_ollama_adapter(ollama_base, os.environ.get("OLLAMA_API_KEY"))
+                )
 
             hf_key = os.environ.get("HUGGINGFACE_API_KEY") or os.environ.get("HUGGINGFACE_TOKEN")
             if hf_key and "huggingface" not in self._registry:
                 self.register_provider("huggingface", make_huggingface_adapter(hf_key))
 
             # Generic providers (Fireworks / DeepSeek / Together) via base URL env vars
-            fireworks_base = os.environ.get("FIREWORKS_BASE") or os.environ.get("FIREWORKS_API_BASE")
+            fireworks_base = os.environ.get("FIREWORKS_BASE") or os.environ.get(
+                "FIREWORKS_API_BASE"
+            )
             fireworks_key = os.environ.get("FIREWORKS_API_KEY")
             if fireworks_base and "fireworks" not in self._registry:
-                self.register_provider("fireworks", make_generic_http_adapter(fireworks_base, fireworks_key))
+                self.register_provider(
+                    "fireworks", make_generic_http_adapter(fireworks_base, fireworks_key)
+                )
 
             deepseek_base = os.environ.get("DEEPSEEK_BASE") or os.environ.get("DEEPSEEK_API_BASE")
             deepseek_key = os.environ.get("DEEPSEEK_API_KEY")
             if deepseek_base and "deepseek" not in self._registry:
-                self.register_provider("deepseek", make_generic_http_adapter(deepseek_base, deepseek_key))
+                self.register_provider(
+                    "deepseek", make_generic_http_adapter(deepseek_base, deepseek_key)
+                )
 
             together_base = os.environ.get("TOGETHER_BASE") or os.environ.get("TOGETHER_API_BASE")
             together_key = os.environ.get("TOGETHER_API_KEY")
             if together_base and "together" not in self._registry:
-                self.register_provider("together", make_generic_http_adapter(together_base, together_key))
+                self.register_provider(
+                    "together", make_generic_http_adapter(together_base, together_key)
+                )
         except Exception:
             # provider_adapters import failed — skip lightweight adapter registration
             pass
@@ -85,6 +95,7 @@ class AgentProviderService:
         if os.environ.get("USE_LANGCHAIN", "").lower() in ("1", "true", "yes"):
             try:
                 from src.services.langchain_adapters import make_langchain_adapter
+
                 for _p in ("openai", "anthropic", "ollama", "cohere", "huggingface"):
                     try:
                         adapter = make_langchain_adapter(_p, None)
@@ -143,9 +154,13 @@ class AgentProviderService:
                 "max_tokens": int(max_tokens or 256),
                 "temperature": float(temperature or 0.0),
             }
-            timeout = aiohttp.ClientTimeout(total=int(os.environ.get("OPENAI_TIMEOUT_SECONDS", "60")))
+            timeout = aiohttp.ClientTimeout(
+                total=int(os.environ.get("OPENAI_TIMEOUT_SECONDS", "60"))
+            )
             async with aiohttp.ClientSession() as session:
-                async with session.post(url, json=payload, headers=headers, timeout=timeout) as resp:
+                async with session.post(
+                    url, json=payload, headers=headers, timeout=timeout
+                ) as resp:
                     text = await resp.text()
                     if resp.status != 200:
                         raise RuntimeError(f"OpenAI error {resp.status}: {text}")

@@ -19,14 +19,12 @@ async def _ensure_vec_messages_table(db: aiosqlite.Connection) -> None:
     except (TypeError, ValueError):
         logger.warning("Invalid semantic_embedding_dimensions setting %r", row["value"])
         return
-    await db.execute(
-        f"""
+    await db.execute(f"""
         CREATE VIRTUAL TABLE IF NOT EXISTS vec_messages USING vec0(
             message_id INTEGER PRIMARY KEY,
             embedding FLOAT[{dimensions}] distance_metric=cosine
         )
-        """
-    )
+        """)
     await db.commit()
 
 
@@ -93,8 +91,7 @@ async def run_migrations(db: aiosqlite.Connection, *, vec_available: bool = Fals
     channel_id_row = task_column_meta.get("channel_id")
     channel_id_notnull = bool(channel_id_row["notnull"]) if channel_id_row is not None else False
     if "task_type" not in task_columns or channel_id_notnull:
-        await db.execute(
-            """
+        await db.execute("""
             CREATE TABLE collection_tasks_tmp (
                 id INTEGER PRIMARY KEY,
                 channel_id INTEGER,
@@ -112,10 +109,8 @@ async def run_migrations(db: aiosqlite.Connection, *, vec_available: bool = Fals
                 started_at TEXT,
                 completed_at TEXT
             )
-            """
-        )
-        await db.execute(
-            """
+            """)
+        await db.execute("""
             INSERT INTO collection_tasks_tmp (
                 id,
                 channel_id,
@@ -150,47 +145,39 @@ async def run_migrations(db: aiosqlite.Connection, *, vec_available: bool = Fals
                 started_at,
                 completed_at
             FROM collection_tasks
-            """
-        )
+            """)
         await db.execute("DROP TABLE collection_tasks")
         await db.execute("ALTER TABLE collection_tasks_tmp RENAME TO collection_tasks")
         await db.commit()
-    await db.execute(
-        """
+    await db.execute("""
         CREATE INDEX IF NOT EXISTS idx_collection_tasks_type_status_run_after
         ON collection_tasks(task_type, status, run_after)
-        """
-    )
+        """)
     await db.commit()
 
     # Remove legacy notification_search tasks (path removed in favour of notify_on_collect)
-    await db.execute(
-        """
+    await db.execute("""
         UPDATE collection_tasks
         SET status = 'failed', error = 'removed: NOTIFICATION_SEARCH path deleted'
         WHERE task_type = 'notification_search' AND status IN ('pending', 'running')
-        """
-    )
+        """)
     await db.commit()
 
     await db.execute("UPDATE channels SET channel_type='supergroup' WHERE channel_type='group'")
     await db.execute("UPDATE channels SET channel_type='group' WHERE channel_type='chat'")
     await db.commit()
 
-    await db.execute(
-        """
+    await db.execute("""
         UPDATE channels SET last_collected_id = (
             SELECT COALESCE(MAX(message_id), 0)
             FROM messages WHERE messages.channel_id = channels.channel_id
         ) WHERE last_collected_id = 0 AND EXISTS (
             SELECT 1 FROM messages WHERE messages.channel_id = channels.channel_id
         )
-        """
-    )
+        """)
     await db.commit()
 
-    await db.execute(
-        """
+    await db.execute("""
         CREATE TABLE IF NOT EXISTS notification_bots (
             id INTEGER PRIMARY KEY,
             tg_user_id INTEGER NOT NULL UNIQUE,
@@ -200,16 +187,14 @@ async def run_migrations(db: aiosqlite.Connection, *, vec_available: bool = Fals
             bot_token TEXT NOT NULL,
             created_at TEXT DEFAULT (datetime('now'))
         )
-        """
-    )
+        """)
     await db.commit()
 
     # Migrate existing notification_bots table: drop NOT NULL on bot_id
     cur = await db.execute("PRAGMA table_info(notification_bots)")
     nb_columns = {row["name"]: row for row in await cur.fetchall()}
     if "bot_id" in nb_columns and nb_columns["bot_id"]["notnull"]:
-        await db.execute(
-            """
+        await db.execute("""
             CREATE TABLE notification_bots_tmp (
                 id INTEGER PRIMARY KEY,
                 tg_user_id INTEGER NOT NULL UNIQUE,
@@ -219,23 +204,19 @@ async def run_migrations(db: aiosqlite.Connection, *, vec_available: bool = Fals
                 bot_token TEXT NOT NULL,
                 created_at TEXT DEFAULT (datetime('now'))
             )
-            """
-        )
-        await db.execute(
-            """
+            """)
+        await db.execute("""
             INSERT INTO notification_bots_tmp
                 (id, tg_user_id, tg_username, bot_id, bot_username, bot_token, created_at)
             SELECT id, tg_user_id, tg_username, bot_id, bot_username, bot_token, created_at
             FROM notification_bots
-            """
-        )
+            """)
         await db.execute("DROP TABLE notification_bots")
         await db.execute("ALTER TABLE notification_bots_tmp RENAME TO notification_bots")
         await db.commit()
         logger.info("Migrated notification_bots: removed NOT NULL from bot_id")
 
-    await db.execute(
-        """
+    await db.execute("""
         CREATE TABLE IF NOT EXISTS search_queries (
             id               INTEGER PRIMARY KEY,
             name             TEXT NOT NULL,
@@ -244,10 +225,8 @@ async def run_migrations(db: aiosqlite.Connection, *, vec_available: bool = Fals
             interval_minutes INTEGER NOT NULL DEFAULT 60,
             created_at       TEXT DEFAULT (datetime('now'))
         )
-        """
-    )
-    await db.execute(
-        """
+        """)
+    await db.execute("""
         CREATE TABLE IF NOT EXISTS search_query_stats (
             id          INTEGER PRIMARY KEY,
             query_id    INTEGER NOT NULL,
@@ -255,14 +234,11 @@ async def run_migrations(db: aiosqlite.Connection, *, vec_available: bool = Fals
             recorded_at TEXT DEFAULT (datetime('now')),
             FOREIGN KEY (query_id) REFERENCES search_queries(id)
         )
-        """
-    )
-    await db.execute(
-        """
+        """)
+    await db.execute("""
         CREATE INDEX IF NOT EXISTS idx_sqs_query_date
             ON search_query_stats(query_id, recorded_at)
-        """
-    )
+        """)
     await db.commit()
 
     # Migrate search_queries: add new columns
@@ -282,8 +258,7 @@ async def run_migrations(db: aiosqlite.Connection, *, vec_available: bool = Fals
     if "is_fts" not in sq_columns:
         await db.execute("ALTER TABLE search_queries ADD COLUMN is_fts INTEGER DEFAULT 0")
         await db.commit()
-    await db.execute(
-        """
+    await db.execute("""
         CREATE TABLE IF NOT EXISTS content_pipelines (
             id INTEGER PRIMARY KEY,
             name TEXT NOT NULL,
@@ -297,11 +272,9 @@ async def run_migrations(db: aiosqlite.Connection, *, vec_available: bool = Fals
             generate_interval_minutes INTEGER NOT NULL DEFAULT 60,
             created_at TEXT DEFAULT (datetime('now'))
         )
-        """
-    )
+        """)
     # Generation runs table for RAG drafts
-    await db.execute(
-        """
+    await db.execute("""
         CREATE TABLE IF NOT EXISTS generation_runs (
             id INTEGER PRIMARY KEY,
             pipeline_id INTEGER,
@@ -312,16 +285,12 @@ async def run_migrations(db: aiosqlite.Connection, *, vec_available: bool = Fals
             created_at TEXT DEFAULT (datetime('now')),
             updated_at TEXT
         )
-        """
-    )
-    await db.execute(
-        """
+        """)
+    await db.execute("""
         CREATE INDEX IF NOT EXISTS idx_generation_runs_pipeline_status
         ON generation_runs(pipeline_id, status)
-        """
-    )
-    await db.execute(
-        """
+        """)
+    await db.execute("""
         CREATE TABLE IF NOT EXISTS pipeline_sources (
             id INTEGER PRIMARY KEY,
             pipeline_id INTEGER NOT NULL,
@@ -331,10 +300,8 @@ async def run_migrations(db: aiosqlite.Connection, *, vec_available: bool = Fals
             FOREIGN KEY (pipeline_id) REFERENCES content_pipelines(id) ON DELETE CASCADE,
             FOREIGN KEY (channel_id) REFERENCES channels(channel_id)
         )
-        """
-    )
-    await db.execute(
-        """
+        """)
+    await db.execute("""
         CREATE TABLE IF NOT EXISTS pipeline_targets (
             id INTEGER PRIMARY KEY,
             pipeline_id INTEGER NOT NULL,
@@ -346,26 +313,19 @@ async def run_migrations(db: aiosqlite.Connection, *, vec_available: bool = Fals
             UNIQUE(pipeline_id, phone, target_dialog_id),
             FOREIGN KEY (pipeline_id) REFERENCES content_pipelines(id) ON DELETE CASCADE
         )
-        """
-    )
-    await db.execute(
-        """
+        """)
+    await db.execute("""
         CREATE INDEX IF NOT EXISTS idx_content_pipelines_active
         ON content_pipelines(is_active, id)
-        """
-    )
-    await db.execute(
-        """
+        """)
+    await db.execute("""
         CREATE INDEX IF NOT EXISTS idx_pipeline_sources_pipeline
         ON pipeline_sources(pipeline_id)
-        """
-    )
-    await db.execute(
-        """
+        """)
+    await db.execute("""
         CREATE INDEX IF NOT EXISTS idx_pipeline_targets_pipeline
         ON pipeline_targets(pipeline_id)
-        """
-    )
+        """)
     await db.commit()
 
     cur = await db.execute("PRAGMA table_info(pipeline_targets)")
@@ -377,34 +337,25 @@ async def run_migrations(db: aiosqlite.Connection, *, vec_available: bool = Fals
         await db.execute("ALTER TABLE pipeline_targets ADD COLUMN target_type TEXT")
         await db.commit()
     if "exclude_patterns" not in sq_columns:
-        await db.execute(
-            "ALTER TABLE search_queries ADD COLUMN exclude_patterns TEXT DEFAULT ''"
-        )
+        await db.execute("ALTER TABLE search_queries ADD COLUMN exclude_patterns TEXT DEFAULT ''")
         await db.commit()
     if "max_length" not in sq_columns:
-        await db.execute(
-            "ALTER TABLE search_queries ADD COLUMN max_length INTEGER DEFAULT NULL"
-        )
+        await db.execute("ALTER TABLE search_queries ADD COLUMN max_length INTEGER DEFAULT NULL")
         await db.commit()
 
     # Migrate keywords → search_queries and drop keywords table
-    cur = await db.execute(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name='keywords'"
-    )
+    cur = await db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='keywords'")
     if await cur.fetchone():
-        await db.execute(
-            """
+        await db.execute("""
             INSERT INTO search_queries
                 (name, query, is_regex, is_active, notify_on_collect, track_stats)
             SELECT pattern, pattern, is_regex, is_active, 1, 0 FROM keywords
-            """
-        )
+            """)
         await db.execute("DROP TABLE keywords")
         await db.commit()
         logger.info("Migrated keywords → search_queries and dropped keywords table")
 
-    await db.execute(
-        """
+    await db.execute("""
         CREATE TABLE IF NOT EXISTS photo_batches (
             id INTEGER PRIMARY KEY,
             phone TEXT NOT NULL,
@@ -418,10 +369,8 @@ async def run_migrations(db: aiosqlite.Connection, *, vec_available: bool = Fals
             created_at TEXT DEFAULT (datetime('now')),
             last_run_at TEXT
         )
-        """
-    )
-    await db.execute(
-        """
+        """)
+    await db.execute("""
         CREATE TABLE IF NOT EXISTS photo_batch_items (
             id INTEGER PRIMARY KEY,
             batch_id INTEGER,
@@ -441,22 +390,16 @@ async def run_migrations(db: aiosqlite.Connection, *, vec_available: bool = Fals
             completed_at TEXT,
             FOREIGN KEY (batch_id) REFERENCES photo_batches(id)
         )
-        """
-    )
-    await db.execute(
-        """
+        """)
+    await db.execute("""
         CREATE INDEX IF NOT EXISTS idx_photo_batch_items_status_schedule
         ON photo_batch_items(status, schedule_at)
-        """
-    )
-    await db.execute(
-        """
+        """)
+    await db.execute("""
         CREATE INDEX IF NOT EXISTS idx_photo_batch_items_batch_id
         ON photo_batch_items(batch_id)
-        """
-    )
-    await db.execute(
-        """
+        """)
+    await db.execute("""
         CREATE TABLE IF NOT EXISTS photo_auto_upload_jobs (
             id INTEGER PRIMARY KEY,
             phone TEXT NOT NULL,
@@ -473,10 +416,8 @@ async def run_migrations(db: aiosqlite.Connection, *, vec_available: bool = Fals
             last_seen_marker TEXT,
             created_at TEXT DEFAULT (datetime('now'))
         )
-        """
-    )
-    await db.execute(
-        """
+        """)
+    await db.execute("""
         CREATE TABLE IF NOT EXISTS photo_auto_upload_files (
             id INTEGER PRIMARY KEY,
             job_id INTEGER NOT NULL,
@@ -485,10 +426,8 @@ async def run_migrations(db: aiosqlite.Connection, *, vec_available: bool = Fals
             UNIQUE(job_id, file_path),
             FOREIGN KEY (job_id) REFERENCES photo_auto_upload_jobs(id)
         )
-        """
-    )
-    await db.execute(
-        """
+        """)
+    await db.execute("""
         CREATE TABLE IF NOT EXISTS dialog_cache (
             id INTEGER PRIMARY KEY,
             phone TEXT NOT NULL,
@@ -501,20 +440,15 @@ async def run_migrations(db: aiosqlite.Connection, *, vec_available: bool = Fals
             cached_at TEXT NOT NULL DEFAULT (datetime('now')),
             UNIQUE(phone, dialog_id)
         )
-        """
-    )
-    await db.execute(
-        """
+        """)
+    await db.execute("""
         CREATE INDEX IF NOT EXISTS idx_dialog_cache_phone
         ON dialog_cache(phone)
-        """
-    )
-    await db.execute(
-        """
+        """)
+    await db.execute("""
         CREATE INDEX IF NOT EXISTS idx_channel_stats_lookup
         ON channel_stats(channel_id, collected_at DESC, id DESC)
-        """
-    )
+        """)
     await db.commit()
 
     fts_available = True
@@ -532,17 +466,14 @@ async def run_migrations(db: aiosqlite.Connection, *, vec_available: bool = Fals
             logger.error("FTS5 index build failed — full-text search unavailable: %s", exc)
 
     # Agent chat tables
-    await db.execute(
-        """
+    await db.execute("""
         CREATE TABLE IF NOT EXISTS agent_threads (
             id         INTEGER PRIMARY KEY AUTOINCREMENT,
             title      TEXT NOT NULL DEFAULT 'Новый тред',
             created_at TEXT NOT NULL DEFAULT (datetime('now'))
         )
-        """
-    )
-    await db.execute(
-        """
+        """)
+    await db.execute("""
         CREATE TABLE IF NOT EXISTS agent_messages (
             id         INTEGER PRIMARY KEY AUTOINCREMENT,
             thread_id  INTEGER NOT NULL REFERENCES agent_threads(id) ON DELETE CASCADE,
@@ -550,13 +481,11 @@ async def run_migrations(db: aiosqlite.Connection, *, vec_available: bool = Fals
             content    TEXT NOT NULL,
             created_at TEXT NOT NULL DEFAULT (datetime('now'))
         )
-        """
-    )
+        """)
     await db.commit()
 
     # Normalized reactions table
-    await db.execute(
-        """
+    await db.execute("""
         CREATE TABLE IF NOT EXISTS message_reactions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             channel_id INTEGER NOT NULL,
@@ -567,26 +496,20 @@ async def run_migrations(db: aiosqlite.Connection, *, vec_available: bool = Fals
                 REFERENCES messages(channel_id, message_id) ON DELETE CASCADE,
             UNIQUE(channel_id, message_id, emoji)
         )
-        """
-    )
-    await db.execute(
-        """
+        """)
+    await db.execute("""
         CREATE INDEX IF NOT EXISTS idx_message_reactions_channel_msg
         ON message_reactions(channel_id, message_id)
-        """
-    )
-    await db.execute(
-        """
+        """)
+    await db.execute("""
         CREATE INDEX IF NOT EXISTS idx_message_reactions_emoji
         ON message_reactions(emoji)
-        """
-    )
+        """)
     await db.commit()
 
     # Backfill message_reactions from existing reactions_json data
     try:
-        await db.execute(
-            """
+        await db.execute("""
             INSERT OR IGNORE INTO message_reactions (channel_id, message_id, emoji, count)
             SELECT m.channel_id, m.message_id,
                    json_extract(j.value, '$.emoji'),
@@ -594,8 +517,7 @@ async def run_migrations(db: aiosqlite.Connection, *, vec_available: bool = Fals
             FROM messages m, json_each(m.reactions_json) j
             WHERE m.reactions_json IS NOT NULL
               AND json_valid(m.reactions_json) = 1
-            """
-        )
+            """)
         await db.commit()
         logger.info("Backfilled message_reactions from reactions_json")
     except Exception as exc:

@@ -127,7 +127,8 @@ class Collector:
             deleted = await self._db.delete_messages_for_channel(channel_id)
             logger.info(
                 "Auto-purged %d messages from filtered channel %d during collection",
-                deleted, channel_id,
+                deleted,
+                channel_id,
             )
             return True
         except Exception:
@@ -179,9 +180,7 @@ class Collector:
             stats = {"channels": 0, "messages": 0, "errors": 0}
 
             try:
-                channels = await self._db.get_channels(
-                    active_only=True, include_filtered=False
-                )
+                channels = await self._db.get_channels(active_only=True, include_filtered=False)
                 if not channels:
                     logger.info("No active unfiltered channels to collect")
                     return stats
@@ -335,9 +334,7 @@ class Collector:
                     len(all_messages),
                 )
                 if progress_callback:
-                    await progress_callback(
-                        total_collected + len(all_messages)
-                    )
+                    await progress_callback(total_collected + len(all_messages))
                 return True
 
             try:
@@ -354,9 +351,9 @@ class Collector:
                         return total_collected
                     except (ValueError, UsernameNotOccupiedError, UsernameInvalidError):
                         logger.warning(
-                            "Channel %d (%s): username not found, "
-                            "trying numeric ID fallback",
-                            channel_id, channel.username,
+                            "Channel %d (%s): username not found, " "trying numeric ID fallback",
+                            channel_id,
+                            channel.username,
                         )
                         try:
                             fallback_entity = await asyncio.wait_for(
@@ -365,8 +362,7 @@ class Collector:
                             )
                         except Exception:
                             logger.warning(
-                                "Channel %d: all entity lookups failed, "
-                                "deactivating",
+                                "Channel %d: all entity lookups failed, " "deactivating",
                                 channel_id,
                             )
                             if channel.id:
@@ -383,9 +379,10 @@ class Collector:
                             channel_id, username=new_username, title=new_title
                         )
                         logger.warning(
-                            "Channel %d: username changed %s → %s, "
-                            "marking filtered",
-                            channel_id, channel.username, new_username,
+                            "Channel %d: username changed %s → %s, " "marking filtered",
+                            channel_id,
+                            channel.username,
+                            new_username,
                         )
                         await self._db.set_channels_filtered_bulk(
                             [(channel_id, "username_changed")]
@@ -410,34 +407,31 @@ class Collector:
                 # Пропускается при force=True (ручной запуск не должен менять
                 # фильтр-статус)
                 if not force:
-                    stats_list = await self._db.get_channel_stats(
-                        channel_id, limit=1
-                    )
-                    subscriber_count = (
-                        stats_list[0].subscriber_count if stats_list else None
-                    )
+                    stats_list = await self._db.get_channel_stats(channel_id, limit=1)
+                    subscriber_count = stats_list[0].subscriber_count if stats_list else None
                     if subscriber_count is not None:
                         if min_subs > 0 and subscriber_count < min_subs:
                             await self._db.set_channels_filtered_bulk(
                                 [(channel_id, "low_subscriber_manual")]
                             )
                             logger.info(
-                                "Pre-filter: channel %d subscribers %d < %d,"
-                                " skipping",
-                                channel_id, subscriber_count, min_subs,
+                                "Pre-filter: channel %d subscribers %d < %d," " skipping",
+                                channel_id,
+                                subscriber_count,
+                                min_subs,
                             )
                             await self._maybe_auto_delete(channel_id)
                             return total_collected
                         cur = await self._db.execute(
-                            "SELECT COUNT(*) FROM messages"
-                            " WHERE channel_id = ?",
+                            "SELECT COUNT(*) FROM messages" " WHERE channel_id = ?",
                             (channel_id,),
                         )
                         row = await cur.fetchone()
                         message_count = row[0] if row else 0
                         if message_count > 0:
                             is_broadcast = channel.channel_type in (
-                                "channel", "monoforum",
+                                "channel",
+                                "monoforum",
                             )
                             threshold = (
                                 LOW_SUBSCRIBER_RATIO_THRESHOLD
@@ -450,9 +444,10 @@ class Collector:
                                     [(channel_id, "low_subscriber_ratio")]
                                 )
                                 logger.info(
-                                    "Pre-filter: channel %d ratio %.4f"
-                                    " < %.2f, skipping",
-                                    channel_id, ratio, threshold,
+                                    "Pre-filter: channel %d ratio %.4f" " < %.2f, skipping",
+                                    channel_id,
+                                    ratio,
+                                    threshold,
                                 )
                                 await self._maybe_auto_delete(channel_id)
                                 return total_collected
@@ -461,15 +456,12 @@ class Collector:
                 if is_first_run and not force:
                     try:
                         sample_prefixes = await asyncio.wait_for(
-                            self._precheck_sample(
-                                session, entity, PRECHECK_CROSS_DUPE_SAMPLE
-                            ),
+                            self._precheck_sample(session, entity, PRECHECK_CROSS_DUPE_SAMPLE),
                             timeout=60.0,
                         )
                     except asyncio.TimeoutError:
                         logger.warning(
-                            "Precheck timed out for channel %d, "
-                            "skipping precheck",
+                            "Precheck timed out for channel %d, " "skipping precheck",
                             channel_id,
                         )
                         sample_prefixes = []
@@ -479,16 +471,12 @@ class Collector:
                         matches = await repo.count_matching_prefixes_in_other_channels(
                             channel_id, unique_prefixes
                         )
-                        if (
-                            matches / len(unique_prefixes)
-                            >= PRECHECK_CROSS_DUPE_RATIO
-                        ):
+                        if matches / len(unique_prefixes) >= PRECHECK_CROSS_DUPE_RATIO:
                             await self._db.set_channels_filtered_bulk(
                                 [(channel_id, "cross_channel_spam")]
                             )
                             logger.info(
-                                "Pre-filter: channel %d has %d/%d "
-                                "cross-dupe messages, skipping",
+                                "Pre-filter: channel %d has %d/%d " "cross-dupe messages, skipping",
                                 channel_id,
                                 matches,
                                 len(unique_prefixes),
@@ -526,19 +514,16 @@ class Collector:
                         views=getattr(msg, "views", None),
                         forwards=getattr(msg, "forwards", None),
                         reply_count=getattr(getattr(msg, "replies", None), "replies", None),
-                        date=msg.date.replace(tzinfo=timezone.utc)
-                        if msg.date and msg.date.tzinfo is None
-                        else msg.date,
+                        date=(
+                            msg.date.replace(tzinfo=timezone.utc)
+                            if msg.date and msg.date.tzinfo is None
+                            else msg.date
+                        ),
                     )
                     messages_batch.append(message)
 
-                    if (
-                        len(messages_batch) % 10 == 0
-                        and self._cancel_event.is_set()
-                    ):
-                        logger.info(
-                            "Channel %d collection interrupted", channel_id
-                        )
+                    if len(messages_batch) % 10 == 0 and self._cancel_event.is_set():
+                        logger.info("Channel %d collection interrupted", channel_id)
                         break
 
                     if is_first_run and len(messages_batch) >= 500:
@@ -555,7 +540,8 @@ class Collector:
             except (UsernameNotOccupiedError, UsernameInvalidError):
                 logger.warning(
                     "Channel %d (%s): username not found, deactivating",
-                    channel_id, channel.username,
+                    channel_id,
+                    channel.username,
                 )
                 if channel.id:
                     await self._db.set_channel_active(channel.id, False)
@@ -564,7 +550,9 @@ class Collector:
                 flood_wait_sec = e.seconds
                 logger.warning(
                     "FloodWait %ds for %s on channel %d",
-                    flood_wait_sec, phone, channel_id,
+                    flood_wait_sec,
+                    phone,
+                    channel_id,
                 )
             finally:
                 # Flush remaining messages — each operation is protected
@@ -575,28 +563,25 @@ class Collector:
                         if not await self._channel_still_exists(channel_id):
                             messages_batch = []
                         else:
-                            stop_due_to_persistence_error = (
-                                not await _flush_batch(messages_batch)
-                            )
+                            stop_due_to_persistence_error = not await _flush_batch(messages_batch)
                 except Exception as flush_err:
                     logger.error(
                         "Failed to flush %d messages for channel %d: %s",
-                        len(messages_batch), channel_id, flush_err,
+                        len(messages_batch),
+                        channel_id,
+                        flush_err,
                     )
                     stop_due_to_persistence_error = True
                 try:
-                    if (
-                        persisted_max_msg_id > min_id
-                        and await self._channel_still_exists(channel_id)
+                    if persisted_max_msg_id > min_id and await self._channel_still_exists(
+                        channel_id
                     ):
-                        await self._db.update_channel_last_id(
-                            channel_id, persisted_max_msg_id
-                        )
+                        await self._db.update_channel_last_id(channel_id, persisted_max_msg_id)
                 except Exception as update_err:
                     logger.error(
-                        "Failed to update last_collected_id for "
-                        "channel %d: %s",
-                        channel_id, update_err,
+                        "Failed to update last_collected_id for " "channel %d: %s",
+                        channel_id,
+                        update_err,
                     )
                 await self._pool.release_client(phone)
 
@@ -614,9 +599,7 @@ class Collector:
                     # channel was filtered in the meantime.
                     updated = None
                     if channel.id is not None:
-                        updated = await self._db.get_channel_by_pk(
-                            channel.id
-                        )
+                        updated = await self._db.get_channel_by_pk(channel.id)
                     if updated:
                         total_collected += len(all_messages)
                         progress_offset += len(all_messages)
@@ -635,23 +618,18 @@ class Collector:
 
             # Update forum topics in DB if messages with topic_id
             # were collected
-            if all_messages and any(
-                m.topic_id is not None for m in all_messages
-            ):
+            if all_messages and any(m.topic_id is not None for m in all_messages):
                 cached = await self._db.get_forum_topics(channel_id)
                 if not cached:
                     try:
-                        topics = await self._pool.get_forum_topics(
-                            channel_id
-                        )
+                        topics = await self._pool.get_forum_topics(channel_id)
                         if topics:
-                            await self._db.upsert_forum_topics(
-                                channel_id, topics
-                            )
+                            await self._db.upsert_forum_topics(channel_id, topics)
                     except Exception as e:
                         logger.warning(
                             "Failed to update forum topics for %d: %s",
-                            channel_id, e,
+                            channel_id,
+                            e,
                         )
 
             if is_first_run and not force and len(all_messages) >= 50:
@@ -666,12 +644,9 @@ class Collector:
                 if row and row["total"] >= 50:
                     ratio = row["uniq"] / row["total"] * 100
                     if ratio < LOW_UNIQUENESS_THRESHOLD:
-                        await self._db.set_channels_filtered_bulk(
-                            [(channel_id, "low_uniqueness")]
-                        )
+                        await self._db.set_channels_filtered_bulk([(channel_id, "low_uniqueness")])
                         logger.warning(
-                            "Post-collection: channel %d low_uniqueness"
-                            " %.1f%%, marked filtered",
+                            "Post-collection: channel %d low_uniqueness" " %.1f%%, marked filtered",
                             channel_id,
                             ratio,
                         )
@@ -734,9 +709,7 @@ class Collector:
                     timeout=30.0,
                 )
             except (asyncio.TimeoutError, ValueError, LookupError):
-                logger.warning(
-                    "Could not resolve entity for channel %d", channel_id
-                )
+                logger.warning("Could not resolve entity for channel %d", channel_id)
                 return []
 
             previews: list[dict] = []
@@ -748,18 +721,22 @@ class Collector:
                 if self._cancel_event.is_set():
                     break
                 text = msg.text or ""
-                previews.append({
-                    "message_id": msg.id,
-                    "date": msg.date,
-                    "text_preview": text[:100] if text else None,
-                    "media_type": self._get_media_type(msg),
-                })
+                previews.append(
+                    {
+                        "message_id": msg.id,
+                        "date": msg.date,
+                        "text_preview": text[:100] if text else None,
+                        "media_type": self._get_media_type(msg),
+                    }
+                )
 
             return previews
         except FloodWaitError as e:
             logger.warning(
                 "Flood wait %ds for sample on channel %d via %s",
-                e.seconds, channel_id, phone,
+                e.seconds,
+                channel_id,
+                phone,
             )
             await self._pool.report_flood(phone, e.seconds)
             return []
@@ -835,8 +812,7 @@ class Collector:
                         reactions = getattr(msg, "reactions", None)
                         if reactions:
                             total = sum(
-                                getattr(r, "count", 0)
-                                for r in getattr(reactions, "results", [])
+                                getattr(r, "count", 0) for r in getattr(reactions, "results", [])
                             )
                             reactions_list.append(total)
 
@@ -852,8 +828,7 @@ class Collector:
                     subscriber_count=subscriber_count,
                     avg_views=sum(views_list) / len(views_list) if views_list else None,
                     avg_reactions=(
-                        sum(reactions_list) / len(reactions_list)
-                        if reactions_list else None
+                        sum(reactions_list) / len(reactions_list) if reactions_list else None
                     ),
                     avg_forwards=(
                         sum(forwards_list) / len(forwards_list) if forwards_list else None
@@ -870,7 +845,9 @@ class Collector:
             except FloodWaitError as e:
                 logger.warning(
                     "Flood wait %ds for stats on %s via %s",
-                    e.seconds, channel.channel_id, phone,
+                    e.seconds,
+                    channel.channel_id,
+                    phone,
                 )
                 await self._pool.report_flood(phone, e.seconds)
             finally:
@@ -880,9 +857,7 @@ class Collector:
         async with self._stats_all_lock:
             self._stats_all_running = True
             try:
-                channels = await self._db.get_channels(
-                    active_only=True, include_filtered=False
-                )
+                channels = await self._db.get_channels(active_only=True, include_filtered=False)
                 stats = {"channels": 0, "errors": 0}
                 for idx, channel in enumerate(channels):
                     while True:
@@ -893,22 +868,17 @@ class Collector:
                             break
                         except AllStatsClientsFloodedError as e:
                             logger.warning(
-                                "All clients are flood-waited for stats. "
-                                "Waiting %ds until %s",
+                                "All clients are flood-waited for stats. " "Waiting %ds until %s",
                                 e.retry_after_sec,
                                 e.next_available_at.isoformat(),
                             )
                             await asyncio.sleep(e.retry_after_sec)
                         except NoActiveStatsClientsError:
-                            logger.error(
-                                "No active connected clients for stats collection"
-                            )
+                            logger.error("No active connected clients for stats collection")
                             stats["errors"] += len(channels) - idx
                             return stats
                         except Exception as e:
-                            logger.error(
-                                "Stats error for %s: %s", channel.channel_id, e
-                            )
+                            logger.error("Stats error for %s: %s", channel.channel_id, e)
                             stats["errors"] += 1
                             break
                     if idx < len(channels) - 1:

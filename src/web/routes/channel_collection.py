@@ -15,7 +15,7 @@ _COLLECT_ALL_FORM = (
     '<form method="post" action="/channels/collect-all" class="d-inline"'
     ' hx-post="/channels/collect-all" hx-target="#collect-all-btn" hx-swap="outerHTML">'
     '<button type="submit" class="btn btn-secondary btn-sm">Собрать все каналы</button>'
-    '</form>'
+    "</form>"
 )
 
 # NOTE: _COLLECT_ALL_BTN and _COLLECT_ALL_FORM must stay in sync with the
@@ -26,8 +26,7 @@ _COLLECT_ALL_BTN = f'<span id="collect-all-btn">{_COLLECT_ALL_FORM}</span>'
 
 def _collect_all_result_fragment(result: BulkEnqueueResult) -> str:
     scheduler_link = (
-        '<a href="/scheduler" class="btn btn-outline-secondary btn-sm">'
-        "Открыть планировщик</a>"
+        '<a href="/scheduler" class="btn btn-outline-secondary btn-sm">' "Открыть планировщик</a>"
     )
     if result.total_candidates == 0:
         message = "Нет активных каналов для загрузки."
@@ -88,8 +87,7 @@ async def collect_channel(request: Request, pk: int):
     if getattr(request.app.state, "shutting_down", False):
         if is_htmx:
             return HTMLResponse(
-                f'<span id="collect-btn-{pk}" title="Сервер останавливается">'
-                f'⚠️</span>'
+                f'<span id="collect-btn-{pk}" title="Сервер останавливается">' f"⚠️</span>"
             )
         return RedirectResponse(url="/channels?error=shutting_down", status_code=303)
 
@@ -110,7 +108,7 @@ async def collect_channel(request: Request, pk: int):
             fragment = (
                 f'<span id="collect-btn-{pk}">{btn}</span>'
                 f'<span id="collect-btn-m-{pk}" hx-swap-oob="true">'
-                f'{btn}</span>'
+                f"{btn}</span>"
             )
             return HTMLResponse(fragment)
         collector = deps.get_collector(request)
@@ -124,7 +122,7 @@ async def collect_channel(request: Request, pk: int):
         fragment = (
             f'<span id="collect-btn-{pk}">{btn}{filtered_badge}</span>'
             f'<span id="collect-btn-m-{pk}" hx-swap-oob="true">'
-            f'{btn}{filtered_badge}</span>'
+            f"{btn}{filtered_badge}</span>"
         )
         return HTMLResponse(fragment)
 
@@ -150,12 +148,8 @@ async def collect_all_stats(request: Request):
 
     channels = await db.get_channels(active_only=True, include_filtered=False)
     latest_stats = await db.get_latest_stats_for_all()
-    channels_without_stats = [
-        ch for ch in channels if ch.channel_id not in latest_stats
-    ]
-    channels_with_stats = [
-        ch for ch in channels if ch.channel_id in latest_stats
-    ]
+    channels_without_stats = [ch for ch in channels if ch.channel_id not in latest_stats]
+    channels_with_stats = [ch for ch in channels if ch.channel_id in latest_stats]
     ordered_channels = channels_without_stats + channels_with_stats
     payload = StatsAllTaskPayload(
         channel_ids=[ch.channel_id for ch in ordered_channels],

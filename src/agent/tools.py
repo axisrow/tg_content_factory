@@ -20,8 +20,7 @@ def make_mcp_server(db: Database):
         if not messages:
             return f"{empty_prefix}: {query!r}"
         lines = [
-            f"{found_prefix} {total} сообщений для '{query}'. "
-            f"Показаны первые {len(messages)}:"
+            f"{found_prefix} {total} сообщений для '{query}'. " f"Показаны первые {len(messages)}:"
         ]
         for message in messages:
             preview = (message.text or "")[:300]
@@ -92,15 +91,21 @@ def make_mcp_server(db: Database):
             text = f"Ошибка получения каналов: {e}"
         return {"content": [{"type": "text", "text": text}]}
 
-    @tool("generate_draft", "Generate a draft from a query using RAG (returns draft text and citations)", {"query": str, "pipeline_id": int, "limit": int})
+    @tool(
+        "generate_draft",
+        "Generate a draft from a query using RAG (returns draft text and citations)",
+        {"query": str, "pipeline_id": int, "limit": int},
+    )
     async def generate_draft(args):
         query = args.get("query", "")
         pipeline_id = args.get("pipeline_id")
         limit = int(args.get("limit", 8))
         try:
             from src.search.engine import SearchEngine
+
             engine = SearchEngine(db)
             from src.services.provider_service import AgentProviderService
+
             provider_service = AgentProviderService(db)
             provider_callable = provider_service.get_provider_callable(None)
 
@@ -111,7 +116,9 @@ def make_mcp_server(db: Database):
             final_text = ""
             final_citations = []
             try:
-                async for update in gen.generate_stream(query=query, prompt_template=None, limit=limit):
+                async for update in gen.generate_stream(
+                    query=query, prompt_template=None, limit=limit
+                ):
                     final_text = update.get("generated_text", final_text)
                     final_citations = update.get("citations", final_citations)
             except Exception:

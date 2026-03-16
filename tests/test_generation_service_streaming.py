@@ -43,11 +43,15 @@ async def test_generate_streaming():
     svc = GenerationService(search_engine=engine, provider_callable=streaming_provider)
 
     parts = []
-    async for update in svc.generate_stream(query="q", prompt_template="Use {source_messages}", limit=1):
+    async for update in svc.generate_stream(
+        query="q", prompt_template="Use {source_messages}", limit=1
+    ):
         parts.append(update.get("delta"))
 
     assert "".join(parts) == "part1 part2 end"
 
     # ensure generate(stream=True) returns final concatenated text
-    res = await svc.generate(query="q", prompt_template="Use {source_messages}", limit=1, stream=True)
+    res = await svc.generate(
+        query="q", prompt_template="Use {source_messages}", limit=1, stream=True
+    )
     assert res["generated_text"] == "part1 part2 end"

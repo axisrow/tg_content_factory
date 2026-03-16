@@ -242,8 +242,9 @@ def test_deepagents_backend_uses_bare_model_for_legacy_fallback(db, monkeypatch)
         return MagicMock()
 
     mgr = AgentManager(db, config)
-    with patch("deepagents.create_deep_agent", create_agent), patch(
-        "langchain.chat_models.init_chat_model", fake_init_chat_model
+    with (
+        patch("deepagents.create_deep_agent", create_agent),
+        patch("langchain.chat_models.init_chat_model", fake_init_chat_model),
     ):
         mgr._deepagents_backend.initialize()
 
@@ -300,9 +301,7 @@ async def test_runtime_status_treats_valid_legacy_fallback_as_available(db, monk
 
 
 @pytest.mark.asyncio
-async def test_runtime_status_treats_invalid_legacy_fallback_as_unavailable(
-    db, monkeypatch
-):
+async def test_runtime_status_treats_invalid_legacy_fallback_as_unavailable(db, monkeypatch):
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
     config = AppConfig()
@@ -346,6 +345,7 @@ async def test_claude_backend_uses_model_from_config(db):
 
 # ── DB round-trip tests ───────────────────────────────────────────────────────
 
+
 @pytest.mark.asyncio
 async def test_agent_thread_crud(db):
     tid = await db.create_agent_thread("My Thread")
@@ -382,6 +382,7 @@ async def test_agent_messages_cascade_delete(db):
 
 
 # ── build_prompt tests ────────────────────────────────────────────────────────
+
 
 @pytest.mark.asyncio
 async def test_build_prompt_empty_history(db):
@@ -432,7 +433,7 @@ def test_build_prompt_truncates_over_budget(db):
 
 EDGE_CASES = [
     ("xml_tags", "Привет <user>тег</user> и <assistant>тег</assistant>"),
-    ("quotes", 'Он сказал "привет" и \'пока\''),
+    ("quotes", "Он сказал \"привет\" и 'пока'"),
     ("backslashes", "C:\\Users\\test\\file.txt"),
     ("newlines", "строка 1\nстрока 2\n\nстрока 3"),
     ("json_in_text", '{"key": "value", "arr": [1,2,3]}'),

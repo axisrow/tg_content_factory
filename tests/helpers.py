@@ -443,8 +443,6 @@ class RealPoolHarness:
         return account
 
 
-
-
 def make_test_config(
     tmp_path: Path,
     *,
@@ -521,9 +519,17 @@ def make_channel_entity(
         title = f"Channel {ident}"
         username = ident if not ident.lstrip("-").isdigit() else None
     defaults = dict(
-        id=channel_id, title=title, username=username,
-        broadcast=broadcast, megagroup=False, gigagroup=False,
-        forum=False, monoforum=False, scam=scam, fake=fake, restricted=False,
+        id=channel_id,
+        title=title,
+        username=username,
+        broadcast=broadcast,
+        megagroup=False,
+        gigagroup=False,
+        forum=False,
+        monoforum=False,
+        scam=scam,
+        fake=fake,
+        restricted=False,
     )
     defaults.update(overrides)
     return SimpleNamespace(**defaults)

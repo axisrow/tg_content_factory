@@ -972,11 +972,7 @@ class AgentProviderService:
     ) -> dict[str, str]:
         values: dict[str, str] = {}
         for spec_field in spec.secret_fields:
-            raw = (
-                str(payload.get(spec_field.name, "")).strip()
-                if isinstance(payload, dict)
-                else ""
-            )
+            raw = str(payload.get(spec_field.name, "")).strip() if isinstance(payload, dict) else ""
             if not raw:
                 continue
             if self._cipher is None:

@@ -233,14 +233,12 @@ class MessagesRepository:
                 "Existing vec_messages index uses "
                 f"{existing_dimensions} dimensions; got {dimensions}."
             )
-        await self._db.execute(
-            f"""
+        await self._db.execute(f"""
             CREATE VIRTUAL TABLE IF NOT EXISTS vec_messages USING vec0(
                 message_id INTEGER PRIMARY KEY,
                 embedding FLOAT[{dimensions}] distance_metric=cosine
             )
-            """
-        )
+            """)
         await self._db.commit()
         if existing_dimensions is None:
             await self._set_setting(_EMBEDDING_DIMENSIONS_SETTING, str(dimensions))
@@ -322,9 +320,11 @@ class MessagesRepository:
         if not message_ids:
             return []
         placeholders = ", ".join("?" for _ in message_ids)
-        ordering = "CASE " + " ".join(
-            f"WHEN m.id = ? THEN {index}" for index, _ in enumerate(message_ids)
-        ) + " END"
+        ordering = (
+            "CASE "
+            + " ".join(f"WHEN m.id = ? THEN {index}" for index, _ in enumerate(message_ids))
+            + " END"
+        )
         cur = await self._db.execute(
             f"""
             SELECT m.*, c.title as channel_title, c.username as channel_username
@@ -690,7 +690,9 @@ class MessagesRepository:
     _BASE_FILTER = "(c.is_filtered IS NULL OR c.is_filtered = 0)"
 
     async def search_messages_for_query(
-        self, sq: SearchQuery, limit: int = 1,
+        self,
+        sq: SearchQuery,
+        limit: int = 1,
     ) -> tuple[list[Message], int]:
         """Search messages using all SearchQuery parameters."""
         self._require_fts()
@@ -732,9 +734,7 @@ class MessagesRepository:
         row = await cur.fetchone()
         return row["cnt"] if row else 0
 
-    async def get_fts_daily_stats_for_query(
-        self, sq: SearchQuery, days: int = 30
-    ) -> list:
+    async def get_fts_daily_stats_for_query(self, sq: SearchQuery, days: int = 30) -> list:
         self._require_fts()
         from src.models import SearchQueryDailyStat
 
@@ -772,7 +772,7 @@ class MessagesRepository:
         _chunk = 100
         valid = [sq for sq in queries if sq.id is not None]
         for chunk_start in range(0, len(valid), _chunk):
-            chunk = valid[chunk_start:chunk_start + _chunk]
+            chunk = valid[chunk_start : chunk_start + _chunk]
             union_parts = []
             all_params: list = []
             for sq in chunk:
@@ -799,15 +799,11 @@ class MessagesRepository:
             cur = await self._db.execute(sql, all_params)
             rows = await cur.fetchall()
             for r in rows:
-                result[r["sq_id"]].append(
-                    SearchQueryDailyStat(day=r["day"], count=r["count"])
-                )
+                result[r["sq_id"]].append(SearchQueryDailyStat(day=r["day"], count=r["count"]))
         return result
 
     async def delete_messages_for_channel(self, channel_id: int) -> int:
-        cur = await self._db.execute(
-            "DELETE FROM messages WHERE channel_id = ?", (channel_id,)
-        )
+        cur = await self._db.execute("DELETE FROM messages WHERE channel_id = ?", (channel_id,))
         await self._db.commit()
         return cur.rowcount or 0
 
@@ -825,9 +821,7 @@ class MessagesRepository:
             stats[table] = row["cnt"] if row else 0
         return stats
 
-    async def get_trending_emojis(
-        self, limit: int = 10, days: int | None = None
-    ) -> list[dict]:
+    async def get_trending_emojis(self, limit: int = 10, days: int | None = None) -> list[dict]:
         """Return top emojis by total reaction count across all messages.
 
         Args:

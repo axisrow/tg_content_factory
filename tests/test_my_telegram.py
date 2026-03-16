@@ -8,22 +8,41 @@ import pytest
 
 from src.config import AppConfig
 from src.services.channel_service import ChannelService
-from tests.helpers import (
-    AsyncIterMessages,
-    FakeCliTelethonClient,
-    build_web_app,
-    make_auth_client,
-)
+from tests.helpers import AsyncIterMessages, FakeCliTelethonClient, build_web_app, make_auth_client
 
 _FAKE_DIALOGS = [
-    {"channel_id": -100111, "title": "My Channel", "username": "mychan",
-     "channel_type": "channel", "deactivate": False, "is_own": False},
-    {"channel_id": -100222, "title": "My Group", "username": None,
-     "channel_type": "supergroup", "deactivate": False, "is_own": False},
-    {"channel_id": 999, "title": "Some User", "username": "someuser",
-     "channel_type": "dm", "deactivate": False, "is_own": False},
-    {"channel_id": 888, "title": "My Bot", "username": "mybot",
-     "channel_type": "bot", "deactivate": False, "is_own": False},
+    {
+        "channel_id": -100111,
+        "title": "My Channel",
+        "username": "mychan",
+        "channel_type": "channel",
+        "deactivate": False,
+        "is_own": False,
+    },
+    {
+        "channel_id": -100222,
+        "title": "My Group",
+        "username": None,
+        "channel_type": "supergroup",
+        "deactivate": False,
+        "is_own": False,
+    },
+    {
+        "channel_id": 999,
+        "title": "Some User",
+        "username": "someuser",
+        "channel_type": "dm",
+        "deactivate": False,
+        "is_own": False,
+    },
+    {
+        "channel_id": 888,
+        "title": "My Bot",
+        "username": "mybot",
+        "channel_type": "bot",
+        "deactivate": False,
+        "is_own": False,
+    },
 ]
 
 
@@ -108,7 +127,9 @@ async def _build_my_telegram_app(db, real_pool_harness_factory, *, with_account=
             client=_make_dialog_client(_FAKE_DIALOGS),
         )
         await harness.connect_account(
-            "+1234567890", session_string="test_session", is_primary=True,
+            "+1234567890",
+            session_string="test_session",
+            is_primary=True,
         )
 
     app, db = await build_web_app(config, harness, db=db)
@@ -157,7 +178,9 @@ async def test_my_telegram_page_shows_dialogs(client):
 @pytest.mark.asyncio
 async def test_my_telegram_page_requires_auth(db, real_pool_harness_factory):
     app, db, harness = await _build_my_telegram_app(
-        db, real_pool_harness_factory, with_account=False,
+        db,
+        real_pool_harness_factory,
+        with_account=False,
     )
 
     async with make_auth_client(app, with_auth=False) as c:
@@ -323,13 +346,16 @@ async def test_leave_dialogs_flash_message(client):
 async def test_get_my_dialogs_enriches_already_added(db):
     """get_my_dialogs() marks dialogs already in the channel DB."""
     from src.models import Channel
-    await db.add_channel(Channel(
-        channel_id=-100111,
-        title="My Channel",
-        username="mychan",
-        channel_type="channel",
-        is_active=True,
-    ))
+
+    await db.add_channel(
+        Channel(
+            channel_id=-100111,
+            title="My Channel",
+            username="mychan",
+            channel_type="channel",
+            is_active=True,
+        )
+    )
 
     pool = MagicMock()
     pool.get_dialogs_for_phone = AsyncMock(return_value=list(_FAKE_DIALOGS))
@@ -489,7 +515,9 @@ async def test_my_telegram_page_without_accounts_shows_disabled_photo_loader(
     real_pool_harness_factory,
 ):
     app, db, harness = await _build_my_telegram_app(
-        db, real_pool_harness_factory, with_account=False,
+        db,
+        real_pool_harness_factory,
+        with_account=False,
     )
 
     async with make_auth_client(app) as c:

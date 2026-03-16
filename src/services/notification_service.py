@@ -39,9 +39,7 @@ class NotificationService:
 
             raw_slug = tg_username or str(tg_user_id)
             if len(raw_slug) > 17:
-                logger.warning(
-                    "slug '%s' truncated to 17 characters for bot username", raw_slug
-                )
+                logger.warning("slug '%s' truncated to 17 characters for bot username", raw_slug)
             slug = raw_slug[:17]
             bot_username = f"{self._bot_username_prefix}{slug}_bot"
             bot_name = f"{self._bot_name_prefix} ({slug})"

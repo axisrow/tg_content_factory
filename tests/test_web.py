@@ -47,7 +47,9 @@ async def client(tmp_path, real_pool_harness_factory):
 
     harness = real_pool_harness_factory()
     app, db = await build_web_app(
-        config, harness, add_account="+1234567890",
+        config,
+        harness,
+        add_account="+1234567890",
     )
 
     async def _no_users(self):
@@ -135,7 +137,9 @@ def test_templates_have_actual_app_version():
     app = create_app(AppConfig())
     expected_version = tomllib.loads(
         PYPROJECT_PATH.read_text(encoding="utf-8"),
-    )["project"]["version"]
+    )[
+        "project"
+    ]["version"]
     assert app.state.templates.env.globals["app_version"] == expected_version
     assert get_app_version() == expected_version
 
@@ -171,7 +175,9 @@ def test_agent_available_ignores_invalid_fallback_model(monkeypatch):
 async def test_footer_renders_actual_version(client):
     expected_version = tomllib.loads(
         PYPROJECT_PATH.read_text(encoding="utf-8"),
-    )["project"]["version"]
+    )[
+        "project"
+    ]["version"]
     resp = await client.get("/dashboard/")
     assert resp.status_code == 200
     assert f"TG Agent v{expected_version}" in resp.text
@@ -3024,9 +3030,7 @@ async def test_test_notification_with_public_channel_message(client, monkeypatch
     await db.repos.search_queries.add(
         SearchQuery(query="hello", notify_on_collect=True, is_active=True)
     )
-    await db.add_channel(
-        Channel(channel_id=-100999, username="mychan", title="My Channel")
-    )
+    await db.add_channel(Channel(channel_id=-100999, username="mychan", title="My Channel"))
     await db.insert_message(
         Message(
             channel_id=-100999,
@@ -3064,9 +3068,7 @@ async def test_test_notification_with_private_channel_message(client, monkeypatc
     await db.repos.search_queries.add(
         SearchQuery(query="secret", notify_on_collect=True, is_active=True)
     )
-    await db.add_channel(
-        Channel(channel_id=-100888, username=None, title="Private Chan")
-    )
+    await db.add_channel(Channel(channel_id=-100888, username=None, title="Private Chan"))
     await db.insert_message(
         Message(
             channel_id=-100888,

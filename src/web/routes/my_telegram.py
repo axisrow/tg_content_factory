@@ -40,14 +40,16 @@ async def my_telegram_page(
         elapsed_ms,
     )
     return deps.get_templates(request).TemplateResponse(
-        request, "my_telegram.html", {
+        request,
+        "my_telegram.html",
+        {
             "accounts": accounts,
             "selected_phone": selected_phone,
             "dialogs": dialogs,
             "dialogs_cached_at": dialogs_cached_at,
             "left": left,
             "failed": failed,
-        }
+        },
     )
 
 

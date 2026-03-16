@@ -240,7 +240,8 @@ class BackendRouter:
             except Exception as exc:
                 logger.warning(
                     "Primary backend failed for %s, falling back to native: %s",
-                    account.phone, exc,
+                    account.phone,
+                    exc,
                 )
                 return await self._native.acquire_client(account)
 

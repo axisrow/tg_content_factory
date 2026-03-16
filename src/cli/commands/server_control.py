@@ -4,12 +4,7 @@ import argparse
 import sys
 
 from src.cli.commands import serve
-from src.cli.process_control import (
-    ProcessControlError,
-    StopResult,
-    pid_file_path,
-    stop_server,
-)
+from src.cli.process_control import ProcessControlError, StopResult, pid_file_path, stop_server
 from src.config import load_config
 
 

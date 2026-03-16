@@ -100,14 +100,10 @@ class SearchQueryService:
         logger.info("Search query '%s' (id=%d): %d matches today", sq.query, sq_id, count)
         return count
 
-    async def get_daily_stats(
-        self, sq_id: int, days: int = 30
-    ) -> list[SearchQueryDailyStat]:
+    async def get_daily_stats(self, sq_id: int, days: int = 30) -> list[SearchQueryDailyStat]:
         return await self._bundle.get_daily_stats(sq_id, days)
 
-    async def get_with_stats(
-        self, days: int = 30
-    ) -> list[dict]:
+    async def get_with_stats(self, days: int = 30) -> list[dict]:
         queries = await self._bundle.get_all()
         last_runs = await self._bundle.get_last_recorded_at_all()
         # Regex queries can't be counted via FTS5; exclude them from FTS stats batch
@@ -120,12 +116,14 @@ class SearchQueryService:
             raw = stats_map.get(sq.id, []) if sq.id in tracked_ids else None
             daily = self._fill_missing_days(raw, days)
             total = sum(s.count for s in daily)
-            result.append({
-                "query": sq,
-                "total_30d": total,
-                "last_run": last_runs.get(sq.id),
-                "daily_stats": daily,
-            })
+            result.append(
+                {
+                    "query": sq,
+                    "total_30d": total,
+                    "last_run": last_runs.get(sq.id),
+                    "daily_stats": daily,
+                }
+            )
         return result
 
     @staticmethod

@@ -242,14 +242,16 @@ async def stop_container(container: AppContainer) -> None:
         shutdown_coroutines.append(("collection_queue", container.collection_queue.shutdown()))
     if container.agent_manager is not None:
         shutdown_coroutines.append(("agent_manager", container.agent_manager.close_all()))
-    shutdown_coroutines.extend([
-        ("scheduler", container.scheduler.stop()),
-        ("collector", container.collector.cancel()),
-        ("bg_tasks", _cancel_bg_tasks(container.bg_tasks)),
-        ("pool", container.pool.disconnect_all()),
-        ("auth", container.auth.cleanup()),
-        ("db", container.db.close()),
-    ])
+    shutdown_coroutines.extend(
+        [
+            ("scheduler", container.scheduler.stop()),
+            ("collector", container.collector.cancel()),
+            ("bg_tasks", _cancel_bg_tasks(container.bg_tasks)),
+            ("pool", container.pool.disconnect_all()),
+            ("auth", container.auth.cleanup()),
+            ("db", container.db.close()),
+        ]
+    )
     for name, coro in shutdown_coroutines:
         try:
             await asyncio.wait_for(coro, timeout=5.0)

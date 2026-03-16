@@ -133,4 +133,3 @@ class NotificationTargetService:
             yield client, phone
         finally:
             await self._pool.release_client(phone)
-

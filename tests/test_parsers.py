@@ -1,11 +1,6 @@
 from __future__ import annotations
 
-from src.parsers import (
-    deduplicate_identifiers,
-    extract_identifiers,
-    parse_file,
-    parse_identifiers,
-)
+from src.parsers import deduplicate_identifiers, extract_identifiers, parse_file, parse_identifiers
 
 
 class TestParseIdentifiers:
@@ -48,7 +43,7 @@ class TestParseIdentifiers:
         assert parse_identifiers(text) == ["@ch1", "@ch2"]
 
     def test_quotes_stripped(self):
-        text = '"@ch1", \'@ch2\''
+        text = "\"@ch1\", '@ch2'"
         assert parse_identifiers(text) == ["@ch1", "@ch2"]
 
     def test_empty_input(self):

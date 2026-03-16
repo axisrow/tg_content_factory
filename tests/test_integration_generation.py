@@ -89,7 +89,11 @@ async def test_pipeline_generate_and_publish(pipeline_client, monkeypatch):
     )
 
     # Trigger generation (non-streaming path)
-    gen_resp = await pipeline_client.post(f"/pipelines/{pipeline_id}/generate", data={"model": "", "max_tokens": "256", "temperature": "0.0"}, follow_redirects=True)
+    gen_resp = await pipeline_client.post(
+        f"/pipelines/{pipeline_id}/generate",
+        data={"model": "", "max_tokens": "256", "temperature": "0.0"},
+        follow_redirects=True,
+    )
     assert gen_resp.status_code == 200
     # Preview rendering may be async or paginated; assert result persisted in DB below
 
@@ -109,7 +113,9 @@ async def test_pipeline_generate_and_publish(pipeline_client, monkeypatch):
     assert "INTEGRATION GENERATED" in (run.generated_text or "")
 
     # Publish the run
-    pub = await pipeline_client.post(f"/pipelines/{pipeline_id}/publish", data={"run_id": str(run_id)}, follow_redirects=False)
+    pub = await pipeline_client.post(
+        f"/pipelines/{pipeline_id}/publish", data={"run_id": str(run_id)}, follow_redirects=False
+    )
     assert pub.status_code == 303
     assert "pipeline_published" in pub.headers["location"]
 

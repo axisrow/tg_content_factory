@@ -3,6 +3,7 @@
 Note: /auth/* routes require web panel authentication (not to be confused
 with /login which is for the web panel itself).
 """
+
 from __future__ import annotations
 
 from types import SimpleNamespace
@@ -281,9 +282,7 @@ class TestVerifyCode:
         # Mock pool.get_client_by_phone and release_client
         mock_client = MagicMock()
         mock_client.fetch_me = AsyncMock(return_value=SimpleNamespace(premium=False))
-        app.state.pool.get_client_by_phone = AsyncMock(
-            return_value=(mock_client, "+70001112233")
-        )
+        app.state.pool.get_client_by_phone = AsyncMock(return_value=(mock_client, "+70001112233"))
         app.state.pool.release_client = AsyncMock()
 
         with patch.object(
@@ -445,9 +444,7 @@ class TestVerifyCode:
         app.state.pool.add_client = mock_add_client
         mock_client = MagicMock()
         mock_client.fetch_me = AsyncMock(return_value=SimpleNamespace(premium=True))
-        app.state.pool.get_client_by_phone = AsyncMock(
-            return_value=(mock_client, "+70001112233")
-        )
+        app.state.pool.get_client_by_phone = AsyncMock(return_value=(mock_client, "+70001112233"))
         app.state.pool.release_client = AsyncMock()
 
         with patch.object(
@@ -473,9 +470,7 @@ class TestVerifyCode:
 
         assert response.status_code == 303
         # Verify 2FA password was passed to verify_code
-        mock_verify.assert_awaited_once_with(
-            "+70001112233", "12345", "abc123", "my2fapassword"
-        )
+        mock_verify.assert_awaited_once_with("+70001112233", "12345", "abc123", "my2fapassword")
 
         # Verify premium status was fetched
         accounts = await db.get_accounts()
@@ -483,9 +478,7 @@ class TestVerifyCode:
         assert accounts[0].is_premium is True
 
     @pytest.mark.asyncio
-    async def test_verify_code_existing_account_not_primary(
-        self, db, real_pool_harness_factory
-    ):
+    async def test_verify_code_existing_account_not_primary(self, db, real_pool_harness_factory):
         """Test that subsequent accounts are not marked as primary."""
         config = AppConfig()
         config.web.password = "testpass"
@@ -509,9 +502,7 @@ class TestVerifyCode:
         app.state.pool.add_client = mock_add_client
         mock_client = MagicMock()
         mock_client.fetch_me = AsyncMock(return_value=SimpleNamespace(premium=False))
-        app.state.pool.get_client_by_phone = AsyncMock(
-            return_value=(mock_client, "+70001112233")
-        )
+        app.state.pool.get_client_by_phone = AsyncMock(return_value=(mock_client, "+70001112233"))
         app.state.pool.release_client = AsyncMock()
 
         with patch.object(

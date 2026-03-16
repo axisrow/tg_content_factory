@@ -1,4 +1,5 @@
 """Tests for FilterRepository."""
+
 from __future__ import annotations
 
 import pytest
@@ -8,20 +9,17 @@ from src.database.repositories.filters import FilterRepository, _has_cyrillic_ud
 from src.models import Channel
 
 _INSERT_MSG = (
-    "INSERT INTO messages (channel_id, message_id, text, date)"
-    " VALUES (?, ?, ?, datetime('now'))"
+    "INSERT INTO messages (channel_id, message_id, text, date)" " VALUES (?, ?, ?, datetime('now'))"
 )
 _INSERT_MSG_NO_TEXT = (
-    "INSERT INTO messages (channel_id, message_id, date)"
-    " VALUES (?, ?, datetime('now'))"
+    "INSERT INTO messages (channel_id, message_id, date)" " VALUES (?, ?, datetime('now'))"
 )
 _INSERT_STATS = (
     "INSERT INTO channel_stats (channel_id, subscriber_count, collected_at)"
     " VALUES (?, ?, datetime('now'))"
 )
 _INSERT_STATS_TS = (
-    "INSERT INTO channel_stats (channel_id, subscriber_count, collected_at)"
-    " VALUES (?, ?, ?)"
+    "INSERT INTO channel_stats (channel_id, subscriber_count, collected_at)" " VALUES (?, ?, ?)"
 )
 _INSERT_STATS_NULL = (
     "INSERT INTO channel_stats (channel_id, subscriber_count, collected_at)"
@@ -42,6 +40,7 @@ async def channels_repo(db):
 
 
 # _has_cyrillic_udf tests
+
 
 def test_has_cyrillic_udf_none():
     """Test UDF with None input."""
@@ -80,6 +79,7 @@ def test_has_cyrillic_udf_yo():
 
 
 # fetch_channels_for_analysis tests
+
 
 async def test_fetch_channels_for_analysis_empty(repo, channels_repo):
     """Test fetching when no channels exist."""
@@ -133,6 +133,7 @@ async def test_fetch_channels_for_analysis_nonexistent_id(repo, channels_repo):
 
 
 # fetch_uniqueness_map tests
+
 
 async def test_fetch_uniqueness_map_empty(repo):
     """Test uniqueness map with no messages."""
@@ -199,6 +200,7 @@ async def test_fetch_uniqueness_map_by_channel(repo, channels_repo):
 
 
 # fetch_subscriber_map tests
+
 
 async def test_fetch_subscriber_map_empty(repo):
     """Test subscriber map with no stats."""
@@ -270,6 +272,7 @@ async def test_fetch_subscriber_map_by_channel(repo, channels_repo):
 
 # fetch_short_message_map tests
 
+
 async def test_fetch_short_message_map_empty(repo):
     """Test short message map with no messages."""
     result = await repo.fetch_short_message_map()
@@ -283,9 +286,9 @@ async def test_fetch_short_message_map_basic(repo, channels_repo):
     await repo._db.executemany(
         _INSERT_MSG,
         [
-            (1, 100, "Short"),      # 5 chars <= 10
+            (1, 100, "Short"),  # 5 chars <= 10
             (1, 101, "Long message that is definitely more than ten characters"),
-            (1, 102, "Tiny"),       # 4 chars <= 10
+            (1, 102, "Tiny"),  # 4 chars <= 10
         ],
     )
     await repo._db.commit()
@@ -332,6 +335,7 @@ async def test_fetch_short_message_map_by_channel(repo, channels_repo):
 
 
 # count_matching_prefixes_in_other_channels tests
+
 
 async def test_count_matching_prefixes_empty_list(repo):
     """Test with empty prefixes list."""
@@ -397,6 +401,7 @@ async def test_count_matching_prefixes_multiple(repo, channels_repo):
 
 
 # fetch_cross_dupe_map tests
+
 
 async def test_fetch_cross_dupe_map_empty(repo):
     """Test cross dupe map with no messages."""
@@ -484,6 +489,7 @@ async def test_fetch_cross_dupe_map_by_channel(repo, channels_repo):
 
 
 # fetch_cyrillic_map tests
+
 
 async def test_fetch_cyrillic_map_empty(repo):
     """Test cyrillic map with no messages."""

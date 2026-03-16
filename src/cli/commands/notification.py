@@ -14,7 +14,8 @@ def run(args: argparse.Namespace) -> None:
         _, pool = await runtime.init_pool(config, db)
         target_svc = NotificationTargetService(db, pool)
         svc = NotificationService(
-            db, target_svc,
+            db,
+            target_svc,
             config.notifications.bot_name_prefix,
             config.notifications.bot_username_prefix,
         )

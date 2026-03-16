@@ -31,12 +31,14 @@ def run(args: argparse.Namespace) -> None:
                 print(fmt.format("Type", "Title", "Username", "In DB"))
                 print("-" * 84)
                 for d in dialogs:
-                    print(fmt.format(
-                        d["channel_type"],
-                        d["title"][:40],
-                        ("@" + d["username"]) if d.get("username") else "",
-                        "Yes" if d.get("already_added") else "-",
-                    ))
+                    print(
+                        fmt.format(
+                            d["channel_type"],
+                            d["title"][:40],
+                            ("@" + d["username"]) if d.get("username") else "",
+                            "Yes" if d.get("already_added") else "-",
+                        )
+                    )
             elif args.my_telegram_action == "leave":
                 accounts = sorted(pool.clients.keys())
                 if not accounts:
@@ -67,9 +69,7 @@ def run(args: argparse.Namespace) -> None:
                 type_map: dict[int, str] = {
                     d["channel_id"]: d["channel_type"] for d in dialogs_info
                 }
-                title_map: dict[int, str] = {
-                    d["channel_id"]: d["title"] for d in dialogs_info
-                }
+                title_map: dict[int, str] = {d["channel_id"]: d["title"] for d in dialogs_info}
 
                 dialogs: list[tuple[int, str]] = []
                 for cid in dialog_ids:
@@ -108,12 +108,14 @@ def run(args: argparse.Namespace) -> None:
                 print(fmt.format("ID", "Title", "Icon", "Date"))
                 print("-" * 98)
                 for t in topics:
-                    print(fmt.format(
-                        str(t["id"]),
-                        t["title"][:40],
-                        str(t.get("icon_emoji_id") or "-")[:20],
-                        str(t.get("date") or "-")[:26],
-                    ))
+                    print(
+                        fmt.format(
+                            str(t["id"]),
+                            t["title"][:40],
+                            str(t.get("icon_emoji_id") or "-")[:20],
+                            str(t.get("date") or "-")[:26],
+                        )
+                    )
 
             elif args.my_telegram_action == "cache-clear":
                 phone: str | None = getattr(args, "phone", None)

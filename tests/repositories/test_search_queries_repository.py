@@ -1,4 +1,5 @@
 """Tests for SearchQueriesRepository."""
+
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
@@ -30,6 +31,7 @@ def make_query(query: str = "test query", **kwargs) -> SearchQuery:
 
 
 # add tests
+
 
 async def test_add_basic(repo):
     """Test adding a basic search query."""
@@ -68,6 +70,7 @@ async def test_add_with_all_fields(repo):
 
 
 # get_all tests
+
 
 async def test_get_all_empty(repo):
     """Test getting all queries when none exist."""
@@ -112,6 +115,7 @@ async def test_get_all_ordered_by_id(repo):
 
 # get_by_id tests
 
+
 async def test_get_by_id_found(repo):
     """Test getting query by id."""
     sq = make_query("test query")
@@ -129,6 +133,7 @@ async def test_get_by_id_not_found(repo):
 
 
 # set_active tests
+
 
 async def test_set_active_true(repo):
     """Test activating a query."""
@@ -149,6 +154,7 @@ async def test_set_active_false(repo):
 
 
 # update tests
+
 
 async def test_update_query(repo):
     """Test updating a query."""
@@ -174,6 +180,7 @@ async def test_update_preserves_id(repo):
 
 # delete tests
 
+
 async def test_delete(repo):
     """Test deleting a query."""
     pk = await repo.add(make_query("test"))
@@ -197,6 +204,7 @@ async def test_delete_cascades_stats(repo):
 
 # record_stat tests
 
+
 async def test_record_stat(repo):
     """Test recording a stat."""
     pk = await repo.add(make_query("test"))
@@ -219,6 +227,7 @@ async def test_record_stat_replaces_same_day(repo):
 
 
 # get_daily_stats tests
+
 
 async def test_get_daily_stats_empty(repo):
     """Test getting daily stats when none exist."""
@@ -274,6 +283,7 @@ async def test_get_daily_stats_aggregates_by_day(repo):
 
 # get_stats_for_all tests
 
+
 async def test_get_stats_for_all_empty(repo):
     """Test getting all stats when none exist."""
     stats = await repo.get_stats_for_all()
@@ -303,6 +313,7 @@ async def test_get_stats_for_all_multiple_queries(repo):
 
 
 # get_last_recorded_at tests
+
 
 async def test_get_last_recorded_at_none(repo):
     """Test getting last recorded time when no stats exist."""
@@ -335,6 +346,7 @@ async def test_get_last_recorded_at(repo):
 
 # get_last_recorded_at_all tests
 
+
 async def test_get_last_recorded_at_all_empty(repo):
     """Test getting all last recorded times when no stats exist."""
     result = await repo.get_last_recorded_at_all()
@@ -364,6 +376,7 @@ async def test_get_last_recorded_at_all(repo):
 
 
 # get_notification_queries tests
+
 
 async def test_get_notification_queries_empty(repo):
     """Test getting notification queries when none exist."""
@@ -403,6 +416,7 @@ async def test_get_notification_queries_all(repo):
 
 
 # _row_to_model tests
+
 
 async def test_row_to_model_handles_null_is_fts(repo):
     """Test that null is_fts is handled correctly."""

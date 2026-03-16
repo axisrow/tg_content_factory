@@ -1,4 +1,5 @@
 """Tests for import_channels routes."""
+
 from __future__ import annotations
 
 import base64
@@ -89,6 +90,7 @@ async def client(tmp_path):
 @pytest.fixture
 async def client_no_resolve(client):
     """Client with resolve that raises no_client error."""
+
     async def _resolve_no_client(self, identifier):
         raise RuntimeError("no_client")
 
@@ -277,6 +279,7 @@ async def test_import_no_client_error(client, client_no_resolve):
 @pytest.mark.asyncio
 async def test_import_resolve_failure(client):
     """Test import handles resolve failure."""
+
     async def _resolve_fail(self, identifier):
         raise Exception("Connection error")
 
@@ -309,6 +312,7 @@ async def test_import_mixed_success_failure(client):
 @pytest.mark.asyncio
 async def test_import_scam_channel(client):
     """Test import marks scam/fake channels as inactive."""
+
     async def _resolve_scam(self, identifier):
         return {
             "channel_id": -1001234567890,
@@ -332,11 +336,13 @@ async def test_import_preserves_existing_channels(client):
     """Test import doesn't affect existing channels."""
     # Add a channel
     db = client._transport.app.state.db
-    await db.add_channel(Channel(
-        channel_id=-1001111111111,
-        title="Existing",
-        username="existing",
-    ))
+    await db.add_channel(
+        Channel(
+            channel_id=-1001111111111,
+            title="Existing",
+            username="existing",
+        )
+    )
 
     # Import new channel
     resp = await client.post(
@@ -409,6 +415,7 @@ async def test_import_channel_without_at(client):
 @pytest.mark.asyncio
 async def test_import_negative_id(client):
     """Test import with negative channel ID."""
+
     async def _resolve_id(self, identifier):
         return {
             "channel_id": int(identifier),

@@ -1,4 +1,5 @@
 """Tests for debug routes."""
+
 from __future__ import annotations
 
 import base64
@@ -148,6 +149,7 @@ async def test_debug_page_with_records(client):
     """Test debug page shows log records."""
     # Add some log records
     import logging
+
     logger = logging.getLogger("test_debug")
     handler = client._transport.app.state.log_buffer
     handler.setFormatter(logging.Formatter())
@@ -186,6 +188,7 @@ async def test_debug_logs_partial_without_buffer(client_no_buffer):
 async def test_log_buffer_maxlen():
     """Test LogBuffer respects max length."""
     import logging
+
     buffer = LogBuffer(maxlen=3)
     logger = logging.getLogger("test_maxlen")
     buffer.setFormatter(logging.Formatter())
@@ -205,6 +208,7 @@ async def test_log_buffer_maxlen():
 async def test_log_buffer_record_format():
     """Test LogBuffer record format."""
     import logging
+
     buffer = LogBuffer()
     logger = logging.getLogger("test_format")
     buffer.setFormatter(logging.Formatter())
@@ -227,6 +231,7 @@ async def test_log_buffer_record_format():
 async def test_log_buffer_levels():
     """Test LogBuffer captures different log levels."""
     import logging
+
     buffer = LogBuffer()
     logger = logging.getLogger("test_levels")
     buffer.setFormatter(logging.Formatter())
@@ -251,6 +256,7 @@ async def test_log_buffer_levels():
 async def test_log_buffer_exception():
     """Test LogBuffer handles exceptions in records."""
     import logging
+
     buffer = LogBuffer()
     logger = logging.getLogger("test_exception")
     buffer.setFormatter(logging.Formatter())

@@ -43,22 +43,19 @@ class ChannelStatsRepository:
                 avg_reactions=r["avg_reactions"],
                 avg_forwards=r["avg_forwards"],
                 collected_at=(
-                    datetime.fromisoformat(r["collected_at"])
-                    if r["collected_at"] else None
+                    datetime.fromisoformat(r["collected_at"]) if r["collected_at"] else None
                 ),
             )
             for r in rows
         ]
 
     async def get_latest_stats_for_all(self) -> dict[int, ChannelStats]:
-        cur = await self._db.execute(
-            """WITH ranked AS (
+        cur = await self._db.execute("""WITH ranked AS (
                    SELECT *, ROW_NUMBER() OVER (
                        PARTITION BY channel_id ORDER BY collected_at DESC, id DESC
                    ) AS rn FROM channel_stats
                )
-               SELECT * FROM ranked WHERE rn = 1"""
-        )
+               SELECT * FROM ranked WHERE rn = 1""")
         rows = await cur.fetchall()
         return {
             r["channel_id"]: ChannelStats(
@@ -69,8 +66,7 @@ class ChannelStatsRepository:
                 avg_reactions=r["avg_reactions"],
                 avg_forwards=r["avg_forwards"],
                 collected_at=(
-                    datetime.fromisoformat(r["collected_at"])
-                    if r["collected_at"] else None
+                    datetime.fromisoformat(r["collected_at"]) if r["collected_at"] else None
                 ),
             )
             for r in rows
@@ -81,15 +77,13 @@ class ChannelStatsRepository:
 
         Channels with only one recorded stats entry are not included in the result.
         """
-        cur = await self._db.execute(
-            """WITH ranked AS (
+        cur = await self._db.execute("""WITH ranked AS (
                    SELECT channel_id, subscriber_count,
                           ROW_NUMBER() OVER (
                               PARTITION BY channel_id ORDER BY collected_at DESC, id DESC
                           ) AS rn
                    FROM channel_stats
                )
-               SELECT channel_id, subscriber_count FROM ranked WHERE rn = 2"""
-        )
+               SELECT channel_id, subscriber_count FROM ranked WHERE rn = 2""")
         rows = await cur.fetchall()
         return {r["channel_id"]: r["subscriber_count"] for r in rows}

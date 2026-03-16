@@ -42,13 +42,15 @@ def run(args: argparse.Namespace) -> None:
                 print(fmt.format("ID", "Phone", "Primary", "Active", "Premium"))
                 print("-" * 50)
                 for acc in accounts:
-                    print(fmt.format(
-                        acc.id or 0,
-                        acc.phone,
-                        "Yes" if acc.is_primary else "No",
-                        "Yes" if acc.is_active else "No",
-                        "Yes" if acc.is_premium else "No",
-                    ))
+                    print(
+                        fmt.format(
+                            acc.id or 0,
+                            acc.phone,
+                            "Yes" if acc.is_primary else "No",
+                            "Yes" if acc.is_active else "No",
+                            "Yes" if acc.is_premium else "No",
+                        )
+                    )
             elif args.account_action == "toggle":
                 accounts = await db.get_accounts()
                 acc = next((a for a in accounts if a.id == args.id), None)
