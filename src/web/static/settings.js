@@ -184,7 +184,7 @@ async function pollBulkTestStatus() {
         const resp = await fetch('/settings/agent-providers/test-all/status');
         const payload = await resp.json().catch(() => ({}));
         if (!resp.ok || !payload.ok) {
-            setAgentProviderActionsStatus('danger', payload.error || 'Не удалось получить статус тестирования');
+            setAgentProviderActionsStatus('danger', escapeHtml(payload.error || 'Не удалось получить статус тестирования'));
             clearBulkTestPolling();
             setAsyncButtonBusy(document.getElementById('bulk-test-agent-providers-btn'), false);
             return;
@@ -196,7 +196,7 @@ async function pollBulkTestStatus() {
             setAsyncButtonBusy(document.getElementById('bulk-test-agent-providers-btn'), false);
         }
     } catch (err) {
-        setAgentProviderActionsStatus('danger', 'Ошибка получения статуса массового тестирования: ' + err.message);
+        setAgentProviderActionsStatus('danger', 'Ошибка получения статуса массового тестирования: ' + escapeHtml(err.message));
         clearBulkTestPolling();
         setAsyncButtonBusy(document.getElementById('bulk-test-agent-providers-btn'), false);
     }
@@ -279,13 +279,13 @@ async function refreshAgentProvider(provider) {
         });
         const payload = await resp.json().catch(() => ({}));
         if (!resp.ok || payload.ok === false) {
-            setAgentProviderActionsStatus('danger', payload.error || ('Не удалось обновить список моделей для ' + provider));
+            setAgentProviderActionsStatus('danger', escapeHtml(payload.error || ('Не удалось обновить список моделей для ' + provider)));
             return;
         }
         applyRefreshedProviderState(provider, payload);
-        setAgentProviderActionsStatus('success', 'Список моделей для <code>' + provider + '</code> обновлён без сброса введённых полей.');
+        setAgentProviderActionsStatus('success', 'Список моделей для <code>' + escapeHtml(provider) + '</code> обновлён без сброса введённых полей.');
     } catch (err) {
-        setAgentProviderActionsStatus('danger', 'Ошибка обновления моделей: ' + err.message);
+        setAgentProviderActionsStatus('danger', 'Ошибка обновления моделей: ' + escapeHtml(err.message));
     } finally {
         setAsyncButtonBusy(button, false);
     }
@@ -302,7 +302,7 @@ async function refreshAllAgentProviders() {
         });
         const payload = await resp.json().catch(() => ({}));
         if (!resp.ok || payload.ok === false) {
-            setAgentProviderActionsStatus('danger', payload.error || 'Не удалось обновить списки моделей');
+            setAgentProviderActionsStatus('danger', escapeHtml(payload.error || 'Не удалось обновить списки моделей'));
             return;
         }
         Object.entries(payload.providers || {}).forEach(([provider, providerPayload]) => {
@@ -310,7 +310,7 @@ async function refreshAllAgentProviders() {
         });
         setAgentProviderActionsStatus('success', 'Списки моделей обновлены без сброса введённых полей.');
     } catch (err) {
-        setAgentProviderActionsStatus('danger', 'Ошибка обновления списков моделей: ' + err.message);
+        setAgentProviderActionsStatus('danger', 'Ошибка обновления списков моделей: ' + escapeHtml(err.message));
     } finally {
         setAsyncButtonBusy(button, false);
     }
@@ -330,13 +330,13 @@ async function bulkTestAgentProviders() {
         });
         const payload = await resp.json().catch(() => ({}));
         if (!resp.ok || !payload.ok) {
-            setAgentProviderActionsStatus('danger', payload.error || 'Не удалось протестировать модели');
+            setAgentProviderActionsStatus('danger', escapeHtml(payload.error || 'Не удалось протестировать модели'));
             setAsyncButtonBusy(button, false);
             return;
         }
         startBulkTestPolling();
     } catch (err) {
-        setAgentProviderActionsStatus('danger', 'Ошибка массового тестирования: ' + err.message);
+        setAgentProviderActionsStatus('danger', 'Ошибка массового тестирования: ' + escapeHtml(err.message));
         setAsyncButtonBusy(button, false);
     }
 }
@@ -377,10 +377,11 @@ function activateSettingsTab(tabId) {
 }
 
 function initSettingsTabs() {
-    /* Determine which tab to show */
-    var params = new URLSearchParams(window.location.search);
-    var msg = params.get('msg');
-    var err = params.get('error');
+    /* Determine which tab to show.
+       base.html IIFE saves flash codes to window globals before clearing the URL,
+       so we read from globals (reliable) with URL params as fallback. */
+    var msg = window.__flashMsg || new URLSearchParams(window.location.search).get('msg');
+    var err = window.__flashError || new URLSearchParams(window.location.search).get('error');
     var hash = window.location.hash.replace('#', '');
 
     /* Priority: flash message tab > URL hash > default (accounts) */
