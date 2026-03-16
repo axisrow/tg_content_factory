@@ -73,7 +73,7 @@ async def client(tmp_path):
     app.state.collection_queue = CollectionQueue(collector, db)
     app.state.search_engine = SearchEngine(db)
     app.state.ai_search = AISearchEngine(config.llm, db)
-    app.state.scheduler = SchedulerManager(config.scheduler)
+    app.state.scheduler = SchedulerManager(collector, config.scheduler)
     app.state.session_secret = "test_secret_key"
     app.state.shutting_down = False
 

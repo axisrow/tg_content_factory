@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import base64
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -54,7 +54,7 @@ async def client(tmp_path):
     app.state.search_engine = SearchEngine(db)
     app.state.ai_search = AISearchEngine(config.llm, db)
 
-    scheduler = SchedulerManager(config.scheduler)
+    scheduler = SchedulerManager(collector, config.scheduler)
     app.state.scheduler = scheduler
     app.state.session_secret = "test_secret_key"
     app.state.shutting_down = False
@@ -156,12 +156,39 @@ async def test_trigger_collection_shutting_down(client):
 
 
 @pytest.mark.asyncio
-async def test_trigger_collection_enqueues(client):
-    """Test trigger collection enqueues channels."""
-    resp = await client.post("/scheduler/trigger", follow_redirects=False)
+async def test_trigger_collection_already_running(client):
+    """Test trigger collection when already running."""
+    # Patch the is_running property
+    with patch.object(
+        type(client._transport.app.state.collector),
+        'is_running',
+        new_callable=PropertyMock,
+        return_value=True
+    ):
+        resp = await client.post("/scheduler/trigger", follow_redirects=False)
+        assert resp.status_code == 303
+        location = resp.headers.get("location", "")
+        assert "msg=already_running" in location
+
+
+@pytest.mark.asyncio
+async def test_trigger_search_redirect(client):
+    """Test trigger search redirects."""
+    with patch('src.web.routes.scheduler.deps.scheduler_service') as mock_svc:
+        mock_svc.return_value.trigger_search = AsyncMock()
+        resp = await client.post("/scheduler/trigger-search", follow_redirects=False)
+        assert resp.status_code == 303
+        assert "/scheduler" in resp.headers.get("location", "")
+
+
+@pytest.mark.asyncio
+async def test_trigger_search_shutting_down(client):
+    """Test trigger search when shutting down."""
+    client._transport.app.state.shutting_down = True
+    resp = await client.post("/scheduler/trigger-search", follow_redirects=False)
     assert resp.status_code == 303
     location = resp.headers.get("location", "")
-    assert "/scheduler" in location
+    assert "error=shutting_down" in location
 
 
 @pytest.mark.asyncio
@@ -337,20 +364,24 @@ async def test_stop_scheduler_calls_service(client):
 
 @pytest.mark.asyncio
 async def test_trigger_collection_calls_service(client):
-    """Test trigger collection calls collection service."""
+    """Test trigger collection calls service method."""
     mock_service = MagicMock()
-    mock_result = MagicMock()
-    mock_result.queued_count = 0
-    mock_result.skipped_existing_count = 0
-    mock_result.total_candidates = 0
-    mock_service.enqueue_all_channels = AsyncMock(return_value=mock_result)
+    mock_service.trigger_collection = AsyncMock()
 
-    with patch(
-        'src.web.routes.scheduler.deps.collection_service',
-        return_value=mock_service,
-    ):
+    with patch('src.web.routes.scheduler.deps.scheduler_service', return_value=mock_service):
         await client.post("/scheduler/trigger")
-        mock_service.enqueue_all_channels.assert_called_once()
+        mock_service.trigger_collection.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_trigger_search_calls_service(client):
+    """Test trigger search calls service method."""
+    mock_service = MagicMock()
+    mock_service.trigger_search = AsyncMock()
+
+    with patch('src.web.routes.scheduler.deps.scheduler_service', return_value=mock_service):
+        await client.post("/scheduler/trigger-search")
+        mock_service.trigger_search.assert_called_once()
 
 
 @pytest.mark.asyncio
