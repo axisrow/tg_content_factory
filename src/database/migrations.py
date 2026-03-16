@@ -431,7 +431,8 @@ async def run_migrations(db: aiosqlite.Connection) -> bool:
             message_id INTEGER NOT NULL,
             emoji TEXT NOT NULL,
             count INTEGER NOT NULL DEFAULT 0,
-            FOREIGN KEY (channel_id, message_id) REFERENCES messages(channel_id, message_id),
+            FOREIGN KEY (channel_id, message_id)
+                REFERENCES messages(channel_id, message_id) ON DELETE CASCADE,
             UNIQUE(channel_id, message_id, emoji)
         )
         """
@@ -451,27 +452,26 @@ async def run_migrations(db: aiosqlite.Connection) -> bool:
     await db.commit()
 
     # Backfill message_reactions from existing reactions_json data
-    cur = await db.execute(
-        "SELECT COUNT(*) AS cnt FROM message_reactions"
+    try:
+        await db.execute(
+            """
+            INSERT OR IGNORE INTO message_reactions (channel_id, message_id, emoji, count)
+            SELECT m.channel_id, m.message_id,
+                   json_extract(j.value, '$.emoji'),
+                   json_extract(j.value, '$.count')
+            FROM messages m, json_each(m.reactions_json) j
+            WHERE m.reactions_json IS NOT NULL
+              AND json_valid(m.reactions_json) = 1
+            """
+        )
+        await db.commit()
+        logger.info("Backfilled message_reactions from reactions_json")
+    except Exception as exc:
+        logger.warning("Failed to backfill message_reactions from reactions_json: %s", exc)
+
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_messages_collected_at ON messages(collected_at)"
     )
-    row = await cur.fetchone()
-    if row and row["cnt"] == 0:
-        try:
-            await db.execute(
-                """
-                INSERT OR IGNORE INTO message_reactions (channel_id, message_id, emoji, count)
-                SELECT
-                    m.channel_id,
-                    m.message_id,
-                    json_extract(j.value, '$.emoji'),
-                    CAST(json_extract(j.value, '$.count') AS INTEGER)
-                FROM messages m, json_each(m.reactions_json) j
-                WHERE m.reactions_json IS NOT NULL
-                """
-            )
-            await db.commit()
-            logger.info("Backfilled message_reactions from reactions_json")
-        except Exception as exc:
-            logger.warning("Failed to backfill message_reactions from reactions_json: %s", exc)
+    await db.commit()
 
     return fts_available
