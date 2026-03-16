@@ -83,6 +83,8 @@ CREATE TABLE IF NOT EXISTS channel_stats (
 
 CREATE INDEX IF NOT EXISTS idx_channel_stats_channel_date
     ON channel_stats(channel_id, collected_at);
+CREATE INDEX IF NOT EXISTS idx_channel_stats_lookup
+    ON channel_stats(channel_id, collected_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_messages_text ON messages(text);
 CREATE INDEX IF NOT EXISTS idx_messages_channel_date ON messages(channel_id, date);
 
