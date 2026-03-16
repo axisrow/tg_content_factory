@@ -37,6 +37,27 @@ def run(args: argparse.Namespace) -> None:
                         ("@" + d["username"]) if d.get("username") else "",
                         "Yes" if d.get("already_added") else "-",
                     ))
+            elif args.my_telegram_action == "topics":
+                channel_id = args.channel_id
+                topics = await pool.get_forum_topics(channel_id)
+                if not topics:
+                    topics = await db.get_forum_topics(channel_id)
+                if not topics:
+                    print(
+                        f"No forum topics found for channel {channel_id}."
+                        " The channel may not be a forum or is not accessible."
+                    )
+                    return
+                fmt = "{:<8} {:<40} {:<20} {:<26}"
+                print(fmt.format("ID", "Title", "Icon", "Date"))
+                print("-" * 98)
+                for t in topics:
+                    print(fmt.format(
+                        str(t["id"]),
+                        t["title"][:40],
+                        str(t.get("icon_emoji_id") or "-")[:20],
+                        str(t.get("date") or "-")[:26],
+                    ))
 
             elif args.my_telegram_action == "cache-clear":
                 phone: str | None = getattr(args, "phone", None)
