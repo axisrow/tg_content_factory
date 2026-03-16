@@ -4,7 +4,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from src.database import Database
-from src.models import CollectionTaskType, SqStatsTaskPayload
+from src.models import CollectionTaskType, SqStatsTaskPayload, PipelineRunTaskPayload
 
 if TYPE_CHECKING:
     from src.services.collection_service import CollectionService
@@ -65,4 +65,22 @@ class TaskEnqueuer:
             CollectionTaskType.PHOTO_AUTO,
             title="Автозагрузка фото",
         )
+        return task_id
+
+    async def enqueue_pipeline_run(self, pipeline_id: int) -> int | None:
+        """Create a PIPELINE_RUN task for a specific pipeline with deduplication."""
+        has = await self._db.repos.tasks.has_active_task(
+            CollectionTaskType.PIPELINE_RUN,
+            payload_filter_key="pipeline_id",
+            payload_filter_value=pipeline_id,
+        )
+        if has:
+            logger.debug("PIPELINE_RUN for pipeline_id=%d already active, skipping", pipeline_id)
+            return None
+        task_id = await self._db.repos.tasks.create_generic_task(
+            CollectionTaskType.PIPELINE_RUN,
+            title=f"Pipeline run #{pipeline_id}",
+            payload=PipelineRunTaskPayload(pipeline_id=pipeline_id),
+        )
+        logger.info("Enqueued PIPELINE_RUN task #%d for pipeline_id=%d", task_id, pipeline_id)
         return task_id

@@ -148,12 +148,16 @@ async def build_container_with_templates(
         sq_bundle=search_query_bundle,
         photo_task_service=photo_task_service,
         photo_auto_upload_service=photo_auto_upload_service,
+        search_engine=search_engine,
+        pipeline_bundle=pipeline_bundle,
+        db=db,
     )
     scheduler = SchedulerManager(
         config.scheduler,
         scheduler_bundle=scheduler_bundle,
         search_query_bundle=search_query_bundle,
         task_enqueuer=task_enqueuer,
+        pipeline_bundle=pipeline_bundle,
     )
 
     _templates = configure_template_globals(
