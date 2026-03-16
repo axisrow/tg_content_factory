@@ -348,12 +348,12 @@ async def test_get_active_stats_task_excludes_completed(repo):
     assert task is None
 
 
-# claim_next_due_generic_task tests
+# claim_next_due_stats_task tests
 
 async def test_claim_next_due_stats_task_none_available(repo):
     """Test claiming when no stats tasks available."""
     now = datetime.now(tz=timezone.utc)
-    task = await repo.claim_next_due_generic_task(now, [CollectionTaskType.STATS_ALL.value])
+    task = await repo.claim_next_due_stats_task(now)
     assert task is None
 
 
@@ -363,7 +363,7 @@ async def test_claim_next_due_stats_task_success(repo):
     task_id = await repo.create_stats_task(payload)
 
     now = datetime.now(tz=timezone.utc)
-    claimed = await repo.claim_next_due_generic_task(now, [CollectionTaskType.STATS_ALL.value])
+    claimed = await repo.claim_next_due_stats_task(now)
 
     assert claimed is not None
     assert claimed.id == task_id
@@ -379,7 +379,7 @@ async def test_claim_next_due_stats_task_respects_run_after(repo):
     payload = StatsAllTaskPayload(channel_ids=[1, 2])
     await repo.create_stats_task(payload, run_after=future)
 
-    claimed = await repo.claim_next_due_generic_task(now, [CollectionTaskType.STATS_ALL.value])
+    claimed = await repo.claim_next_due_stats_task(now)
     assert claimed is None
 
 
@@ -391,7 +391,7 @@ async def test_claim_next_due_stats_task_run_after_passed(repo):
     payload = StatsAllTaskPayload(channel_ids=[1, 2])
     task_id = await repo.create_stats_task(payload, run_after=past)
 
-    claimed = await repo.claim_next_due_generic_task(now, [CollectionTaskType.STATS_ALL.value])
+    claimed = await repo.claim_next_due_stats_task(now)
     assert claimed is not None
     assert claimed.id == task_id
 
@@ -403,7 +403,7 @@ async def test_claim_next_due_stats_task_skips_running(repo):
     await repo.update_collection_task(task_id, CollectionTaskStatus.RUNNING)
 
     now = datetime.now(tz=timezone.utc)
-    claimed = await repo.claim_next_due_generic_task(now, [CollectionTaskType.STATS_ALL.value])
+    claimed = await repo.claim_next_due_stats_task(now)
     assert claimed is None
 
 
@@ -472,7 +472,7 @@ async def test_fail_running_collection_tasks_excludes_stats(repo):
     assert task.status == CollectionTaskStatus.RUNNING
 
 
-# requeue_running_generic_tasks_on_startup tests
+# requeue_running_stats_tasks_on_startup tests
 
 async def test_requeue_running_stats_tasks_on_startup(repo):
     """Test requeueing running stats tasks."""
@@ -480,8 +480,7 @@ async def test_requeue_running_stats_tasks_on_startup(repo):
     await repo.update_collection_task(stats_id, CollectionTaskStatus.RUNNING)
 
     now = datetime.now(tz=timezone.utc)
-    handled = [CollectionTaskType.STATS_ALL.value]
-    count = await repo.requeue_running_generic_tasks_on_startup(now, handled)
+    count = await repo.requeue_running_stats_tasks_on_startup(now)
     assert count == 1
 
     task = await repo.get_collection_task(stats_id)
@@ -495,8 +494,7 @@ async def test_requeue_running_stats_tasks_excludes_channel_collect(repo):
     await repo.update_collection_task(channel_id, CollectionTaskStatus.RUNNING)
 
     now = datetime.now(tz=timezone.utc)
-    handled = [CollectionTaskType.STATS_ALL.value]
-    count = await repo.requeue_running_generic_tasks_on_startup(now, handled)
+    count = await repo.requeue_running_stats_tasks_on_startup(now)
     assert count == 0
 
 
@@ -506,8 +504,7 @@ async def test_requeue_running_stats_tasks_sets_run_after(repo):
     await repo.update_collection_task(stats_id, CollectionTaskStatus.RUNNING)
 
     now = datetime.now(tz=timezone.utc)
-    handled = [CollectionTaskType.STATS_ALL.value]
-    await repo.requeue_running_generic_tasks_on_startup(now, handled)
+    await repo.requeue_running_stats_tasks_on_startup(now)
 
     task = await repo.get_collection_task(stats_id)
     assert task.run_after is not None

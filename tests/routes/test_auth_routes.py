@@ -52,8 +52,6 @@ async def client(tmp_path):
             "clients": {},
             "resolve_channel": _resolve_channel,
             "add_client": AsyncMock(),
-            "get_client_by_phone": AsyncMock(return_value=None),
-            "release_client": AsyncMock(),
         },
     )()
 
@@ -63,7 +61,7 @@ async def client(tmp_path):
     app.state.collection_queue = CollectionQueue(collector, db)
     app.state.search_engine = SearchEngine(db)
     app.state.ai_search = AISearchEngine(config.llm, db)
-    app.state.scheduler = SchedulerManager(config.scheduler)
+    app.state.scheduler = SchedulerManager(collector, config.scheduler)
     app.state.session_secret = "test_secret_key"
 
     transport = ASGITransport(app=app)
@@ -105,8 +103,6 @@ async def client_unconfigured(tmp_path):
         {
             "clients": {},
             "add_client": AsyncMock(),
-            "get_client_by_phone": AsyncMock(return_value=None),
-            "release_client": AsyncMock(),
         },
     )()
 
@@ -116,7 +112,7 @@ async def client_unconfigured(tmp_path):
     app.state.collection_queue = CollectionQueue(collector, db)
     app.state.search_engine = SearchEngine(db)
     app.state.ai_search = AISearchEngine(config.llm, db)
-    app.state.scheduler = SchedulerManager(config.scheduler)
+    app.state.scheduler = SchedulerManager(collector, config.scheduler)
     app.state.session_secret = "test_secret_key"
 
     transport = ASGITransport(app=app)
@@ -277,34 +273,29 @@ async def test_verify_code_success(client):
     auth = client._transport.app.state.auth
     pool = client._transport.app.state.pool
 
-    mock_session = MagicMock()
-    mock_session.fetch_me = AsyncMock(return_value=SimpleNamespace(premium=False))
+    mock_client = MagicMock()
+    mock_client.get_me = AsyncMock(return_value=SimpleNamespace(premium=False))
 
     with patch.object(auth, 'verify_code', new_callable=AsyncMock) as mock_verify:
         mock_verify.return_value = "session_string_123"
 
         with patch.object(pool, 'add_client', new_callable=AsyncMock):
-            with patch.object(
-                pool, 'get_client_by_phone',
-                new_callable=AsyncMock,
-                return_value=(mock_session, "+1234567890"),
-            ):
-                with patch.object(pool, 'release_client', new_callable=AsyncMock):
-                    resp = await client.post(
-                        "/auth/verify-code",
-                        data={
-                            "phone": "+1234567890",
-                            "code": "12345",
-                            "phone_code_hash": "hash123",
-                            "password_2fa": "",
-                            "code_type": "sms",
-                            "next_type": "call",
-                            "timeout": "60",
-                        },
-                        follow_redirects=False,
-                    )
-                    assert resp.status_code == 303
-                    assert "/settings" in resp.headers.get("location", "")
+            with patch.object(pool, 'clients', {"+1234567890": mock_client}):
+                resp = await client.post(
+                    "/auth/verify-code",
+                    data={
+                        "phone": "+1234567890",
+                        "code": "12345",
+                        "phone_code_hash": "hash123",
+                        "password_2fa": "",
+                        "code_type": "sms",
+                        "next_type": "call",
+                        "timeout": "60",
+                    },
+                    follow_redirects=False,
+                )
+                assert resp.status_code == 303
+                assert "/settings" in resp.headers.get("location", "")
 
 
 @pytest.mark.asyncio
@@ -335,33 +326,28 @@ async def test_verify_code_with_2fa(client):
     auth = client._transport.app.state.auth
     pool = client._transport.app.state.pool
 
-    mock_session = MagicMock()
-    mock_session.fetch_me = AsyncMock(return_value=SimpleNamespace(premium=True))
+    mock_client = MagicMock()
+    mock_client.get_me = AsyncMock(return_value=SimpleNamespace(premium=True))
 
     with patch.object(auth, 'verify_code', new_callable=AsyncMock) as mock_verify:
         mock_verify.return_value = "session_string_123"
 
         with patch.object(pool, 'add_client', new_callable=AsyncMock):
-            with patch.object(
-                pool, 'get_client_by_phone',
-                new_callable=AsyncMock,
-                return_value=(mock_session, "+1234567890"),
-            ):
-                with patch.object(pool, 'release_client', new_callable=AsyncMock):
-                    await client.post(
-                        "/auth/verify-code",
-                        data={
-                            "phone": "+1234567890",
-                            "code": "12345",
-                            "phone_code_hash": "hash123",
-                            "password_2fa": "mypassword",
-                        },
-                        follow_redirects=False,
-                    )
-                    # Password should be passed to verify_code
-                    mock_verify.assert_called_once()
-                    call_args = mock_verify.call_args[0]
-                    assert call_args[3] == "mypassword"
+            with patch.object(pool, 'clients', {"+1234567890": mock_client}):
+                await client.post(
+                    "/auth/verify-code",
+                    data={
+                        "phone": "+1234567890",
+                        "code": "12345",
+                        "phone_code_hash": "hash123",
+                        "password_2fa": "mypassword",
+                    },
+                    follow_redirects=False,
+                )
+                # Password should be passed to verify_code
+                mock_verify.assert_called_once()
+                call_args = mock_verify.call_args[0]
+                assert call_args[3] == "mypassword"  # password_2fa
 
 
 @pytest.mark.asyncio
@@ -415,34 +401,29 @@ async def test_verify_code_sets_primary(client):
     auth = client._transport.app.state.auth
     pool = client._transport.app.state.pool
 
-    mock_session = MagicMock()
-    mock_session.fetch_me = AsyncMock(return_value=SimpleNamespace(premium=False))
+    mock_client = MagicMock()
+    mock_client.get_me = AsyncMock(return_value=SimpleNamespace(premium=False))
 
     with patch.object(auth, 'verify_code', new_callable=AsyncMock) as mock_verify:
         mock_verify.return_value = "session_string"
 
         with patch.object(pool, 'add_client', new_callable=AsyncMock):
-            with patch.object(
-                pool, 'get_client_by_phone',
-                new_callable=AsyncMock,
-                return_value=(mock_session, "+1234567890"),
-            ):
-                with patch.object(pool, 'release_client', new_callable=AsyncMock):
-                    await client.post(
-                        "/auth/verify-code",
-                        data={
-                            "phone": "+1234567890",
-                            "code": "12345",
-                            "phone_code_hash": "hash",
-                            "password_2fa": "",
-                        },
-                        follow_redirects=False,
-                    )
+            with patch.object(pool, 'clients', {"+1234567890": mock_client}):
+                await client.post(
+                    "/auth/verify-code",
+                    data={
+                        "phone": "+1234567890",
+                        "code": "12345",
+                        "phone_code_hash": "hash",
+                        "password_2fa": "",
+                    },
+                    follow_redirects=False,
+                )
 
-                    # Check account was added
-                    db = client._transport.app.state.db
-                    accounts = await db.get_accounts()
-                    assert len(accounts) >= 1
+                # Check account was added
+                db = client._transport.app.state.db
+                accounts = await db.get_accounts()
+                assert len(accounts) >= 1
 
 
 @pytest.mark.asyncio
@@ -451,35 +432,30 @@ async def test_verify_code_detects_premium(client):
     auth = client._transport.app.state.auth
     pool = client._transport.app.state.pool
 
-    mock_session = MagicMock()
-    mock_session.fetch_me = AsyncMock(return_value=SimpleNamespace(premium=True))
+    mock_client = MagicMock()
+    mock_client.get_me = AsyncMock(return_value=SimpleNamespace(premium=True))
 
     with patch.object(auth, 'verify_code', new_callable=AsyncMock) as mock_verify:
         mock_verify.return_value = "session_string"
 
         with patch.object(pool, 'add_client', new_callable=AsyncMock):
-            with patch.object(
-                pool, 'get_client_by_phone',
-                new_callable=AsyncMock,
-                return_value=(mock_session, "+1234567890"),
-            ):
-                with patch.object(pool, 'release_client', new_callable=AsyncMock):
-                    await client.post(
-                        "/auth/verify-code",
-                        data={
-                            "phone": "+1234567890",
-                            "code": "12345",
-                            "phone_code_hash": "hash",
-                            "password_2fa": "",
-                        },
-                        follow_redirects=False,
-                    )
+            with patch.object(pool, 'clients', {"+1234567890": mock_client}):
+                await client.post(
+                    "/auth/verify-code",
+                    data={
+                        "phone": "+1234567890",
+                        "code": "12345",
+                        "phone_code_hash": "hash",
+                        "password_2fa": "",
+                    },
+                    follow_redirects=False,
+                )
 
-                    # Check premium was detected
-                    db = client._transport.app.state.db
-                    accounts = await db.get_accounts()
-                    if accounts:
-                        assert accounts[-1].is_premium is True
+                # Check premium was detected
+                db = client._transport.app.state.db
+                accounts = await db.get_accounts()
+                if accounts:
+                    assert accounts[-1].is_premium is True
 
 
 @pytest.mark.asyncio
@@ -554,63 +530,53 @@ async def test_verify_code_empty_password(client):
     auth = client._transport.app.state.auth
     pool = client._transport.app.state.pool
 
-    mock_session = MagicMock()
-    mock_session.fetch_me = AsyncMock(return_value=SimpleNamespace(premium=False))
+    mock_client = MagicMock()
+    mock_client.get_me = AsyncMock(return_value=SimpleNamespace(premium=False))
 
     with patch.object(auth, 'verify_code', new_callable=AsyncMock) as mock_verify:
         mock_verify.return_value = "session"
 
         with patch.object(pool, 'add_client', new_callable=AsyncMock):
-            with patch.object(
-                pool, 'get_client_by_phone',
-                new_callable=AsyncMock,
-                return_value=(mock_session, "+1234567890"),
-            ):
-                with patch.object(pool, 'release_client', new_callable=AsyncMock):
-                    await client.post(
-                        "/auth/verify-code",
-                        data={
-                            "phone": "+1234567890",
-                            "code": "12345",
-                            "phone_code_hash": "hash",
-                            "password_2fa": "",  # Empty password
-                        },
-                        follow_redirects=False,
-                    )
+            with patch.object(pool, 'clients', {"+1234567890": mock_client}):
+                await client.post(
+                    "/auth/verify-code",
+                    data={
+                        "phone": "+1234567890",
+                        "code": "12345",
+                        "phone_code_hash": "hash",
+                        "password_2fa": "",  # Empty password
+                    },
+                    follow_redirects=False,
+                )
 
-                    # Empty string should become None
-                    call_args = mock_verify.call_args[0]
-                    assert call_args[3] is None
+                # Empty string should become None
+                call_args = mock_verify.call_args[0]
+                assert call_args[3] is None  # password_2fa should be None
 
 
 @pytest.mark.asyncio
 async def test_verify_code_get_me_error(client):
-    """Test verify code handles fetch_me error gracefully."""
+    """Test verify code handles get_me error gracefully."""
     auth = client._transport.app.state.auth
     pool = client._transport.app.state.pool
 
-    mock_session = MagicMock()
-    mock_session.fetch_me = AsyncMock(side_effect=Exception("API error"))
+    mock_client = MagicMock()
+    mock_client.get_me = AsyncMock(side_effect=Exception("API error"))
 
     with patch.object(auth, 'verify_code', new_callable=AsyncMock) as mock_verify:
         mock_verify.return_value = "session"
 
         with patch.object(pool, 'add_client', new_callable=AsyncMock):
-            with patch.object(
-                pool, 'get_client_by_phone',
-                new_callable=AsyncMock,
-                return_value=(mock_session, "+1234567890"),
-            ):
-                with patch.object(pool, 'release_client', new_callable=AsyncMock):
-                    resp = await client.post(
-                        "/auth/verify-code",
-                        data={
-                            "phone": "+1234567890",
-                            "code": "12345",
-                            "phone_code_hash": "hash",
-                            "password_2fa": "",
-                        },
-                        follow_redirects=False,
-                    )
-                    # Should still succeed even if fetch_me fails
-                    assert resp.status_code == 303
+            with patch.object(pool, 'clients', {"+1234567890": mock_client}):
+                resp = await client.post(
+                    "/auth/verify-code",
+                    data={
+                        "phone": "+1234567890",
+                        "code": "12345",
+                        "phone_code_hash": "hash",
+                        "password_2fa": "",
+                    },
+                    follow_redirects=False,
+                )
+                # Should still succeed even if get_me fails
+                assert resp.status_code == 303
