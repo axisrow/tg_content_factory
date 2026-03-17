@@ -290,6 +290,23 @@ async def run_migrations(db: aiosqlite.Connection, *, vec_available: bool = Fals
         CREATE INDEX IF NOT EXISTS idx_generation_runs_pipeline_status
         ON generation_runs(pipeline_id, status)
         """)
+    # Ensure new columns for moderation and publishing exist (PR #117)
+    cur = await db.execute("PRAGMA table_info(generation_runs)")
+    gr_columns = {row["name"] for row in await cur.fetchall()}
+    if "image_url" not in gr_columns:
+        await db.execute("ALTER TABLE generation_runs ADD COLUMN image_url TEXT")
+        await db.commit()
+    if "moderation_status" not in gr_columns:
+        await db.execute(
+            "ALTER TABLE generation_runs ADD COLUMN moderation_status TEXT DEFAULT 'pending'"
+        )
+        await db.commit()
+    if "published_at" not in gr_columns:
+        await db.execute("ALTER TABLE generation_runs ADD COLUMN published_at TEXT")
+        await db.commit()
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_generation_runs_moderation ON generation_runs(moderation_status, pipeline_id)"
+    )
     await db.execute("""
         CREATE TABLE IF NOT EXISTS pipeline_sources (
             id INTEGER PRIMARY KEY,
