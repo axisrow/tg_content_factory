@@ -36,7 +36,7 @@ class GenerationRunsRepository:
         self, run_id: int, generated_text: str, metadata: dict | None = None
     ) -> None:
         await self._db.execute(
-            ("UPDATE generation_runs SET generated_text = ?, metadata = ?, status = 'completed', "
+            ("UPDATE generation_runs SET generated_text = ?, metadata = ?, "
              "updated_at = datetime('now') WHERE id = ?"),
             (generated_text, json.dumps(metadata or {}, ensure_ascii=False), run_id),
         )

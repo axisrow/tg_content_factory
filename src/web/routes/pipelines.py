@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from urllib.parse import quote
 
 from fastapi import APIRouter, Form, Request
@@ -15,6 +16,7 @@ from src.services.pipeline_service import (
 )
 from src.web import deps
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
@@ -125,7 +127,7 @@ async def add_pipeline(
         scheduler = deps.get_scheduler(request)
         await scheduler.sync_pipeline_jobs()
     except Exception:
-        pass
+        logger.warning("Scheduler sync failed", exc_info=True)
     return _pipeline_redirect("pipeline_added")
 
 
@@ -172,7 +174,7 @@ async def edit_pipeline(
         scheduler = deps.get_scheduler(request)
         await scheduler.sync_pipeline_jobs()
     except Exception:
-        pass
+        logger.warning("Scheduler sync failed", exc_info=True)
     return _pipeline_redirect("pipeline_edited")
 
 
@@ -210,8 +212,7 @@ async def run_pipeline(request: Request, pipeline_id: int):
         enqueuer = deps.get_task_enqueuer(request)
         await enqueuer.enqueue_pipeline_run(pipeline_id)
     except Exception:
-        # best-effort enqueue
-        pass
+        logger.warning("Failed to enqueue pipeline run for pipeline_id=%d", pipeline_id, exc_info=True)
     return _pipeline_redirect("pipeline_run_enqueued")
 
 
@@ -283,9 +284,13 @@ async def generate_stream(
             await db.repos.generation_runs.save_result(run_id, final_text, metadata)
             await db.repos.generation_runs.set_status(run_id, "completed")
             yield f"event: done\ndata: {json.dumps({'run_id': run_id})}\n\n"
-        except Exception as exc:
+        except Exception:
+            logger.exception("Generation stream failed for pipeline_id=%d run_id=%d", pipeline_id, run_id)
             await db.repos.generation_runs.set_status(run_id, "failed")
-            yield f"event: error\ndata: {json.dumps({'error': str(exc)})}\n\n"
+            yield f"event: error\ndata: {json.dumps({'error': 'Generation failed'})}\n\n"
+        except BaseException:
+            await db.repos.generation_runs.set_status(run_id, "failed")
+            raise
 
     return StreamingResponse(event_gen(), media_type="text/event-stream")
 
@@ -327,13 +332,15 @@ async def generate_pipeline(
         await db.repos.generation_runs.save_result(
             run_id, result.get("generated_text", ""), {"citations": result.get("citations", [])}
         )
-    except Exception as exc:
+        await db.repos.generation_runs.set_status(run_id, "completed")
+    except Exception:
+        logger.exception("Generation failed for pipeline_id=%d run_id=%d", pipeline_id, run_id)
         await db.repos.generation_runs.set_status(run_id, "failed")
         runs = await db.repos.generation_runs.list_by_pipeline(pipeline_id)
         return deps.get_templates(request).TemplateResponse(
             request,
             "pipelines/generate.html",
-            {"pipeline": pipeline, "runs": runs, "error": str(exc), "request": request},
+            {"pipeline": pipeline, "runs": runs, "error": "Generation failed", "request": request},
         )
     run = await db.repos.generation_runs.get(run_id)
     return deps.get_templates(request).TemplateResponse(
