@@ -5,6 +5,7 @@ import asyncio
 
 from src.cli import runtime
 from src.search.engine import SearchEngine
+from src.services.content_generation_service import ContentGenerationService
 from src.services.generation_service import GenerationService
 from src.services.pipeline_service import (
     PipelineService,
@@ -69,10 +70,10 @@ def run(args: argparse.Namespace) -> None:
                 print(f"image_model={pipeline.image_model or '—'}")
                 print("sources:")
                 for title in detail["source_titles"]:
-                    print(f"  - {title}")
+                    print(f" - {title}")
                 print("targets:")
                 for target in detail["targets"]:
-                    print(f"  - {target.phone}:{target.dialog_id} ({target.title or '—'})")
+                    print(f" - {target.phone}:{target.dialog_id} ({target.title or '—'})")
 
             elif args.pipeline_action == "add":
                 try:
@@ -149,22 +150,18 @@ def run(args: argparse.Namespace) -> None:
                 print(f"Deleted pipeline id={args.id}")
 
             elif args.pipeline_action == "run":
-                # Run a pipeline generation (preview only by default)
                 pipeline = await svc.get(args.id)
                 if pipeline is None:
                     print(f"Pipeline id={args.id} not found")
                     return
-                # Build search engine and generation service
                 engine = SearchEngine(db)
 
-                # Resolve provider callable via AgentProviderService (falls back to default stub)
                 from src.services.provider_service import AgentProviderService
 
                 provider_service = AgentProviderService(db)
                 provider_callable = provider_service.get_provider_callable(pipeline.llm_model)
 
                 gen_svc = GenerationService(engine, provider_callable=provider_callable)
-                # Create generation run record
                 run_id = await db.repos.generation_runs.create_run(
                     pipeline.id, pipeline.prompt_template
                 )
@@ -197,6 +194,69 @@ def run(args: argparse.Namespace) -> None:
                 except Exception as exc:
                     await db.repos.generation_runs.set_status(run_id, "failed")
                     print(f"Generation failed: {exc}")
+
+            elif args.pipeline_action == "generate":
+                pipeline = await svc.get(args.id)
+                if pipeline is None:
+                    print(f"Pipeline id={args.id} not found")
+                    return
+                engine = SearchEngine(db)
+                gen_svc = ContentGenerationService(db, engine)
+                try:
+                    run = await gen_svc.generate(
+                        pipeline=pipeline,
+                        model=args.model,
+                        max_tokens=args.max_tokens,
+                        temperature=args.temperature,
+                    )
+                    print(f"Created generation run id={run.id}")
+                    if args.preview and run.generated_text:
+                        print("--- DRAFT PREVIEW ---")
+                        print(run.generated_text)
+                except NotImplementedError as exc:
+                    print(f"Error: {exc}")
+                except Exception as exc:
+                    print(f"Generation failed: {exc}")
+
+            elif args.pipeline_action == "runs":
+                pipeline = await svc.get(args.id)
+                if pipeline is None:
+                    print(f"Pipeline id={args.id} not found")
+                    return
+                runs = await db.repos.generation_runs.list_by_pipeline(
+                    args.id, limit=args.limit
+                )
+                if args.status:
+                    runs = [r for r in runs if r.status == args.status]
+                if not runs:
+                    print("No generation runs found.")
+                    return
+                print(f"{'ID':<8} {'Status':<12} {'ModStatus':<12} {'Created':<20}")
+                print("-" * 56)
+                for r in runs:
+                    created = r.created_at.isoformat() if r.created_at else "—"
+                    print(f"{r.id:<8} {r.status:<12} {r.moderation_status:<12} {created:<20}")
+
+            elif args.pipeline_action == "run-show":
+                run = await db.repos.generation_runs.get(args.run_id)
+                if run is None:
+                    print(f"Run id={args.run_id} not found")
+                    return
+                print(f"id={run.id}")
+                print(f"pipeline_id={run.pipeline_id}")
+                print(f"status={run.status}")
+                print(f"moderation_status={run.moderation_status}")
+                print(f"created_at={run.created_at}")
+                if run.generated_text:
+                    print("--- GENERATED TEXT ---")
+                    print(run.generated_text[:500])
+                    if len(run.generated_text) > 500:
+                        print(f"... ({len(run.generated_text) - 500} more chars)")
+                if run.image_url:
+                    print(f"image_url={run.image_url}")
+                if run.published_at:
+                    print(f"published_at={run.published_at}")
+
         finally:
             await db.close()
 

@@ -193,7 +193,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     pipeline_add.add_argument(
         "--generation-backend",
-        choices=["chain", "agent"],
+        choices=["chain", "agent", "deep_agents"],
         default="chain",
         help="Generation backend",
     )
@@ -225,7 +225,7 @@ def build_parser() -> argparse.ArgumentParser:
     pipeline_edit.add_argument("--llm-model", default=None, help="Optional LLM model")
     pipeline_edit.add_argument("--image-model", default=None, help="Optional image model")
     pipeline_edit.add_argument("--publish-mode", choices=["auto", "moderated"], default=None)
-    pipeline_edit.add_argument("--generation-backend", choices=["chain", "agent"], default=None)
+    pipeline_edit.add_argument("--generation-backend", choices=["chain", "agent", "deep_agents"], default=None)
     pipeline_edit.add_argument(
         "--interval",
         type=int,
@@ -274,6 +274,31 @@ def build_parser() -> argparse.ArgumentParser:
     pipeline_run.add_argument(
         "--temperature", type=float, default=0.0, help="Sampling temperature for generation"
     )
+
+    pipeline_generate = pipeline_sub.add_parser(
+        "generate", help="Generate content for a pipeline (uses ContentGenerationService)"
+    )
+    pipeline_generate.add_argument("id", type=int, help="Pipeline id")
+    pipeline_generate.add_argument(
+        "--max-tokens", type=int, default=512, help="Max tokens for LLM generation"
+    )
+    pipeline_generate.add_argument(
+        "--temperature", type=float, default=0.7, help="Sampling temperature for generation"
+    )
+    pipeline_generate.add_argument(
+        "--model", default=None, help="Override LLM model"
+    )
+    pipeline_generate.add_argument(
+        "--preview", action="store_true", default=False, help="Print generated text to stdout"
+    )
+
+    pipeline_runs = pipeline_sub.add_parser("runs", help="List generation runs for a pipeline")
+    pipeline_runs.add_argument("id", type=int, help="Pipeline id")
+    pipeline_runs.add_argument("--limit", type=int, default=20, help="Max runs to show")
+    pipeline_runs.add_argument("--status", default=None, help="Filter by status")
+
+    pipeline_run_show = pipeline_sub.add_parser("run-show", help="Show generation run details")
+    pipeline_run_show.add_argument("run_id", type=int, help="Run id")
 
     acc_parser = sub.add_parser("account", help="Account management")
     acc_sub = acc_parser.add_subparsers(dest="account_action")
