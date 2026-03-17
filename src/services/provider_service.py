@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import logging
 import os
 from typing import Any, Awaitable, Callable, Dict, Optional
 
 import aiohttp
+
+logger = logging.getLogger(__name__)
 
 
 class AgentProviderService:
@@ -138,7 +141,8 @@ class AgentProviderService:
                 return await base(prompt=prompt, model=name, **kwargs)
 
             return _call
-        # fallback
+        # fallback — provider not registered, likely a missing API key
+        logger.warning("Provider %r not registered, falling back to stub default", name)
         return self._registry["default"]
 
     def _make_openai_provider(self, api_key: str) -> Callable[..., Awaitable[str]]:
