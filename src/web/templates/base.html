@@ -105,6 +105,8 @@
          pipeline_deleted: "Pipeline удалён.",
          pipeline_toggled: "Статус pipeline изменён.",
          pipeline_edited: "Pipeline обновлён.",
+         pipeline_run_enqueued: "Запуск pipeline поставлен в очередь.",
+         pipeline_published: "Pipeline опубликован.",
          notification_test_sent: "Тестовое уведомление отправлено.",
         photo_sent: "Фото отправлены.",
         photo_scheduled: "Фото поставлены в отложенную отправку Telegram.",
@@ -160,7 +162,7 @@
          semantic_unavailable: "sqlite-vec недоступен, semantic search выключен.",
          photo_item_cancel_failed: "Не удалось отменить photo task.",
          pipeline_invalid: "Параметры pipeline некорректны или dialog cache не заполнен.",
-         channel_in_pipeline: "Канал используется в pipeline и не может быть удалён."
+         pipeline_run_failed: "Не удалось поставить запуск pipeline в очередь."
      };
     var params = new URLSearchParams(window.location.search);
     var code = params.get("msg");

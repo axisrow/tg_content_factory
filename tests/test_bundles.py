@@ -1,4 +1,5 @@
 """Integration tests for Bundle layer — every public method exercised against real SQLite."""
+
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
@@ -69,6 +70,7 @@ class TestAccountBundle:
         await b.update_flood("+70001112233", until)
         accs = await b.list_accounts()
         assert accs[0].flood_wait_until is not None
+
 
 class TestChannelBundle:
     async def test_set_active(self, db):
@@ -297,6 +299,7 @@ class TestCollectionBundle:
         tid = await b.create_collection_task(1015, "ch1015")
         assert tid > 0
 
+
 # ---------------------------------------------------------------------------
 # SearchBundle
 # ---------------------------------------------------------------------------
@@ -327,7 +330,6 @@ class TestSearchBundle:
         await b.log_search("+70001112233", "test query", 5)
         recent = await b.get_recent_searches()
         assert len(recent) >= 1
-
 
 
 # ---------------------------------------------------------------------------

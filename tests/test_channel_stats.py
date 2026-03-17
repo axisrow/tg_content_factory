@@ -42,9 +42,7 @@ async def test_delete_channel_removes_stats(db):
     channels = await db.get_channels()
     pk = channels[0].id
 
-    await db.save_channel_stats(
-        ChannelStats(channel_id=-100123, subscriber_count=5000)
-    )
+    await db.save_channel_stats(ChannelStats(channel_id=-100123, subscriber_count=5000))
     assert len(await db.get_channel_stats(-100123)) == 1
 
     await db.delete_channel(pk)
@@ -106,9 +104,11 @@ class _AsyncIterMessages:
 
 
 def _make_mock_msg(msg_id, views=100, forwards=5, reactions_count=10):
-    reactions = SimpleNamespace(
-        results=[SimpleNamespace(count=reactions_count)]
-    ) if reactions_count is not None else None
+    reactions = (
+        SimpleNamespace(results=[SimpleNamespace(count=reactions_count)])
+        if reactions_count is not None
+        else None
+    )
     return SimpleNamespace(
         id=msg_id,
         views=views,
@@ -221,9 +221,7 @@ async def test_collect_channel_stats_success(db):
     mock_client.return_value = mock_full
     mock_client.iter_messages = MagicMock(return_value=_AsyncIterMessages(mock_messages))
 
-    pool = make_mock_pool(
-        get_available_client=AsyncMock(return_value=(mock_client, "+7000"))
-    )
+    pool = make_mock_pool(get_available_client=AsyncMock(return_value=(mock_client, "+7000")))
 
     collector = Collector(pool, db, SchedulerConfig())
     stats = await collector.collect_channel_stats(ch)
@@ -260,9 +258,7 @@ async def test_collect_channel_stats_rotates_on_flood_wait(db):
     client2.iter_messages = MagicMock(return_value=_AsyncIterMessages([]))
 
     pool = make_mock_pool(
-        get_available_client=AsyncMock(
-            side_effect=[(client1, "+7001"), (client2, "+7002")]
-        )
+        get_available_client=AsyncMock(side_effect=[(client1, "+7001"), (client2, "+7002")])
     )
 
     collector = Collector(pool, db, SchedulerConfig())
@@ -282,9 +278,7 @@ async def test_collect_channel_stats_releases_client(db):
     mock_client = AsyncMock()
     mock_client.get_entity = AsyncMock(side_effect=ValueError("fail"))
 
-    pool = make_mock_pool(
-        get_available_client=AsyncMock(return_value=(mock_client, "+7000"))
-    )
+    pool = make_mock_pool(get_available_client=AsyncMock(return_value=(mock_client, "+7000")))
 
     collector = Collector(pool, db, SchedulerConfig())
     with pytest.raises(ValueError):
@@ -310,6 +304,7 @@ async def test_stats_web_endpoint(tmp_path):
     import base64
 
     from httpx import ASGITransport, AsyncClient
+
     collector = _FakeRouteStatsCollector(
         result=ChannelStats(channel_id=-100123, subscriber_count=999)
     )
@@ -396,9 +391,7 @@ async def test_collect_all_stats(db):
     mock_client.return_value = mock_full
     mock_client.iter_messages = MagicMock(return_value=_AsyncIterMessages(mock_messages))
 
-    pool = make_mock_pool(
-        get_available_client=AsyncMock(return_value=(mock_client, "+7000"))
-    )
+    pool = make_mock_pool(get_available_client=AsyncMock(return_value=(mock_client, "+7000")))
 
     collector = Collector(pool, db, SchedulerConfig())
     result = await collector.collect_all_stats()

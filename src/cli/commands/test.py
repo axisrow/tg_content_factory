@@ -117,6 +117,7 @@ def _run_pytest_benchmark() -> None:
 # Read checks
 # ---------------------------------------------------------------------------
 
+
 async def _check_get_stats(db) -> CheckResult:
     try:
         stats = await db.get_stats()
@@ -147,9 +148,7 @@ async def _check_notification_queries(db) -> CheckResult:
         queries = await db.get_notification_queries(active_only=False)
         if not queries:
             return CheckResult("notification_queries", Status.SKIP, "No notification queries")
-        return CheckResult(
-            "notification_queries", Status.PASS, f"{len(queries)} queries"
-        )
+        return CheckResult("notification_queries", Status.PASS, f"{len(queries)} queries")
     except Exception as exc:
         return CheckResult("notification_queries", Status.FAIL, str(exc))
 
@@ -183,6 +182,7 @@ async def _check_recent_searches(db) -> CheckResult:
 # ---------------------------------------------------------------------------
 # Write checks (operate on a temporary copy of the DB)
 # ---------------------------------------------------------------------------
+
 
 async def _init_db_copy(config_path: str) -> tuple[Database, str, object]:
     """Copy live DB to a temp file, return (copy_db, tmp_path, config)."""
@@ -237,10 +237,13 @@ async def _run_write_checks(config_path: str) -> list[CheckResult]:
                 toggled = next(a for a in refreshed if a.id == acc.id)
                 if toggled.is_active is not (not original):
                     raise RuntimeError("account active state did not change")
-                results.append(CheckResult(
-                    "account_toggle", Status.PASS,
-                    f"id={acc.id} active: {original} -> {not original}",
-                ))
+                results.append(
+                    CheckResult(
+                        "account_toggle",
+                        Status.PASS,
+                        f"id={acc.id} active: {original} -> {not original}",
+                    )
+                )
         except Exception as exc:
             results.append(CheckResult("account_toggle", Status.FAIL, str(exc)))
 
@@ -255,10 +258,13 @@ async def _run_write_checks(config_path: str) -> list[CheckResult]:
             found = any(q.id == added_sq_id for q in queries)
             if not found:
                 raise RuntimeError("search query not found after add")
-            results.append(CheckResult(
-                "search_query_add", Status.PASS,
-                f'Added id={added_sq_id} query="__test_cli__"',
-            ))
+            results.append(
+                CheckResult(
+                    "search_query_add",
+                    Status.PASS,
+                    f'Added id={added_sq_id} query="__test_cli__"',
+                )
+            )
         except Exception as exc:
             results.append(CheckResult("search_query_add", Status.FAIL, str(exc)))
 
@@ -270,19 +276,18 @@ async def _run_write_checks(config_path: str) -> list[CheckResult]:
                 sq = next(q for q in queries if q.id == added_sq_id)
                 if sq.is_active is not False:
                     raise RuntimeError("search query active state did not change")
-                results.append(CheckResult(
-                    "search_query_toggle", Status.PASS,
-                    f"id={added_sq_id} active: True -> False",
-                ))
-            except Exception as exc:
                 results.append(
-                    CheckResult("search_query_toggle", Status.FAIL, str(exc))
+                    CheckResult(
+                        "search_query_toggle",
+                        Status.PASS,
+                        f"id={added_sq_id} active: True -> False",
+                    )
                 )
+            except Exception as exc:
+                results.append(CheckResult("search_query_toggle", Status.FAIL, str(exc)))
         else:
             results.append(
-                CheckResult(
-                    "search_query_toggle", Status.SKIP, "search_query_add failed"
-                ),
+                CheckResult("search_query_toggle", Status.SKIP, "search_query_add failed"),
             )
 
         # 5. search_query_delete
@@ -293,19 +298,18 @@ async def _run_write_checks(config_path: str) -> list[CheckResult]:
                 found = any(q.id == added_sq_id for q in queries)
                 if found:
                     raise RuntimeError("search query still present after delete")
-                results.append(CheckResult(
-                    "search_query_delete", Status.PASS,
-                    f"id={added_sq_id} deleted, verified absent",
-                ))
-            except Exception as exc:
                 results.append(
-                    CheckResult("search_query_delete", Status.FAIL, str(exc))
+                    CheckResult(
+                        "search_query_delete",
+                        Status.PASS,
+                        f"id={added_sq_id} deleted, verified absent",
+                    )
                 )
+            except Exception as exc:
+                results.append(CheckResult("search_query_delete", Status.FAIL, str(exc)))
         else:
             results.append(
-                CheckResult(
-                    "search_query_delete", Status.SKIP, "search_query_add failed"
-                ),
+                CheckResult("search_query_delete", Status.SKIP, "search_query_add failed"),
             )
 
         # 6. channel_toggle
@@ -323,10 +327,13 @@ async def _run_write_checks(config_path: str) -> list[CheckResult]:
                 toggled = next(c for c in refreshed if c.id == ch.id)
                 if toggled.is_active is not (not original):
                     raise RuntimeError("channel active state did not change")
-                results.append(CheckResult(
-                    "channel_toggle", Status.PASS,
-                    f"id={ch.id} active: {original} -> {not original}",
-                ))
+                results.append(
+                    CheckResult(
+                        "channel_toggle",
+                        Status.PASS,
+                        f"id={ch.id} active: {original} -> {not original}",
+                    )
+                )
         except Exception as exc:
             results.append(CheckResult("channel_toggle", Status.FAIL, str(exc)))
 
@@ -335,9 +342,13 @@ async def _run_write_checks(config_path: str) -> list[CheckResult]:
             analyzer = ChannelAnalyzer(copy_db)
             report = await analyzer.analyze_all()
             count = await analyzer.apply_filters(report)
-            results.append(CheckResult(
-                "filter_apply", Status.PASS, f"{count} channels filtered",
-            ))
+            results.append(
+                CheckResult(
+                    "filter_apply",
+                    Status.PASS,
+                    f"{count} channels filtered",
+                )
+            )
         except Exception as exc:
             results.append(CheckResult("filter_apply", Status.FAIL, str(exc)))
 
@@ -369,6 +380,7 @@ async def _run_write_checks(config_path: str) -> list[CheckResult]:
 # ---------------------------------------------------------------------------
 # Telegram live checks (operate on a temporary copy of the DB)
 # ---------------------------------------------------------------------------
+
 
 async def _tg_call(coro, timeout: int = TELEGRAM_TIMEOUT):
     """Wrap a Telegram API call with a timeout."""
@@ -438,15 +450,21 @@ async def _run_telegram_live_checks(config_path: str) -> list[CheckResult]:
         try:
             entity = await _tg_call(pool.resolve_channel(target_with_username.username))
             if entity:
-                results.append(CheckResult(
-                    "tg_resolve_channel", Status.PASS,
-                    f"@{target_with_username.username} resolved OK",
-                ))
+                results.append(
+                    CheckResult(
+                        "tg_resolve_channel",
+                        Status.PASS,
+                        f"@{target_with_username.username} resolved OK",
+                    )
+                )
             else:
-                results.append(CheckResult(
-                    "tg_resolve_channel", Status.FAIL,
-                    f"@{target_with_username.username} not resolved",
-                ))
+                results.append(
+                    CheckResult(
+                        "tg_resolve_channel",
+                        Status.FAIL,
+                        f"@{target_with_username.username} not resolved",
+                    )
+                )
         except Exception as exc:
             results.append(CheckResult("tg_resolve_channel", Status.FAIL, str(exc)))
 
@@ -492,16 +510,21 @@ async def _run_telegram_live_checks(config_path: str) -> list[CheckResult]:
                                 sender_name=Collector._get_sender_name(msg),
                                 text=msg.text,
                                 media_type=Collector._get_media_type(msg),
-                                date=msg.date.replace(tzinfo=timezone.utc)
-                                if msg.date and msg.date.tzinfo is None
-                                else msg.date,
+                                date=(
+                                    msg.date.replace(tzinfo=timezone.utc)
+                                    if msg.date and msg.date.tzinfo is None
+                                    else msg.date
+                                ),
                             )
                             await copy_db.insert_message(message)
                             msg_count += 1
-                    results.append(CheckResult(
-                        "tg_iter_messages", Status.PASS,
-                        f"{msg_count} msgs from ch={ch.channel_id}",
-                    ))
+                    results.append(
+                        CheckResult(
+                            "tg_iter_messages",
+                            Status.PASS,
+                            f"{msg_count} msgs from ch={ch.channel_id}",
+                        )
+                    )
                 finally:
                     await pool.release_client(phone)
         except Exception as exc:
@@ -518,25 +541,34 @@ async def _run_telegram_live_checks(config_path: str) -> list[CheckResult]:
             collector = Collector(pool, copy_db, config.scheduler)
             stats = await _tg_call(collector.collect_channel_stats(ch))
             if stats:
-                results.append(CheckResult(
-                    "tg_channel_stats", Status.PASS,
-                    f"ch={ch.channel_id} subs={stats.subscriber_count}",
-                ))
+                results.append(
+                    CheckResult(
+                        "tg_channel_stats",
+                        Status.PASS,
+                        f"ch={ch.channel_id} subs={stats.subscriber_count}",
+                    )
+                )
             else:
-                results.append(CheckResult(
-                    "tg_channel_stats", Status.PASS,
-                    f"ch={ch.channel_id} stats=None (no data)",
-                ))
+                results.append(
+                    CheckResult(
+                        "tg_channel_stats",
+                        Status.PASS,
+                        f"ch={ch.channel_id} stats=None (no data)",
+                    )
+                )
         except Exception as exc:
             results.append(CheckResult("tg_channel_stats", Status.FAIL, str(exc)))
 
     # 8. tg_search_my_chats
     try:
         result = await _tg_call(engine.search_my_chats("test", limit=5))
-        results.append(CheckResult(
-            "tg_search_my_chats", Status.PASS,
-            f"{result.total} results",
-        ))
+        results.append(
+            CheckResult(
+                "tg_search_my_chats",
+                Status.PASS,
+                f"{result.total} results",
+            )
+        )
     except Exception as exc:
         results.append(CheckResult("tg_search_my_chats", Status.FAIL, str(exc)))
 
@@ -551,10 +583,13 @@ async def _run_telegram_live_checks(config_path: str) -> list[CheckResult]:
             result = await _tg_call(
                 engine.search_in_channel(ch.channel_id, "test", limit=5),
             )
-            results.append(CheckResult(
-                "tg_search_in_channel", Status.PASS,
-                f"ch={ch.channel_id}: {result.total} results",
-            ))
+            results.append(
+                CheckResult(
+                    "tg_search_in_channel",
+                    Status.PASS,
+                    f"ch={ch.channel_id}: {result.total} results",
+                )
+            )
         except Exception as exc:
             results.append(CheckResult("tg_search_in_channel", Status.FAIL, str(exc)))
 
@@ -566,10 +601,13 @@ async def _run_telegram_live_checks(config_path: str) -> list[CheckResult]:
                 CheckResult("tg_search_premium", Status.SKIP, result.error),
             )
         else:
-            results.append(CheckResult(
-                "tg_search_premium", Status.PASS,
-                result.error or f"{result.total} results",
-            ))
+            results.append(
+                CheckResult(
+                    "tg_search_premium",
+                    Status.PASS,
+                    result.error or f"{result.total} results",
+                )
+            )
     except Exception as exc:
         results.append(CheckResult("tg_search_premium", Status.FAIL, str(exc)))
 
@@ -579,7 +617,8 @@ async def _run_telegram_live_checks(config_path: str) -> list[CheckResult]:
         if quota is None:
             results.append(
                 CheckResult(
-                    "tg_search_quota", Status.SKIP,
+                    "tg_search_quota",
+                    Status.SKIP,
                     "No premium account or quota unavailable",
                 ),
             )
@@ -612,6 +651,7 @@ async def _cleanup_telegram(pool, copy_db, tmp_path, results) -> None:
 # Entry point
 # ---------------------------------------------------------------------------
 
+
 def run(args: argparse.Namespace) -> None:
     if args.test_action == "benchmark":
         _run_pytest_benchmark()
@@ -633,8 +673,7 @@ def run(args: argparse.Namespace) -> None:
                 check_result = CheckResult("db_init", Status.FAIL, f"Cannot init DB: {exc}")
                 _print_result(check_result)
                 print(
-                    "\n--- Test Summary ---\n"
-                    "0 passed, 1 failed, 0 skipped (1 total)",
+                    "\n--- Test Summary ---\n" "0 passed, 1 failed, 0 skipped (1 total)",
                 )
                 sys.exit(1)
 

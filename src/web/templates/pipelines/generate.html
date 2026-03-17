@@ -19,7 +19,40 @@
         </div>
     </div>
     <button type="submit" class="btn btn-primary">Preview</button>
+    <button type="button" id="stream-btn" class="btn btn-outline-secondary">Stream Preview</button>
 </form>
+
+<form method="post" action="/pipelines/{{ pipeline.id }}/run" data-busy class="mt-3">
+    <button type="submit" class="btn btn-success">Run now</button>
+</form>
+
+<pre id="stream-output" style="white-space: pre-wrap; margin-top: 1rem;"></pre>
+
+<script>
+document.addEventListener('DOMContentLoaded', function(){
+  const btn = document.getElementById('stream-btn');
+  if(!btn) return;
+  btn.addEventListener('click', function(){
+    const model = document.querySelector('input[name="model"]').value || '';
+    const max_tokens = document.querySelector('input[name="max_tokens"]').value || '';
+    const temperature = document.querySelector('input[name="temperature"]').value || '';
+    const out = document.getElementById('stream-output');
+    out.textContent = '';
+    const url = `/pipelines/{{ pipeline.id }}/generate-stream?model=${encodeURIComponent(model)}&max_tokens=${encodeURIComponent(max_tokens)}&temperature=${encodeURIComponent(temperature)}`;
+    const es = new EventSource(url);
+    es.onmessage = function(e){
+      try {
+        const d = JSON.parse(e.data);
+        out.textContent = d.text || '';
+      } catch (err) {
+        out.textContent += e.data;
+      }
+    };
+    es.addEventListener('done', function(e){ es.close(); });
+    es.addEventListener('error', function(e){ es.close(); });
+  });
+});
+</script>
 
 {% if error %}
 <div class="alert alert-danger mt-3">Ошибка: {{ error }}</div>

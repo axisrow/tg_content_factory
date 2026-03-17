@@ -66,9 +66,9 @@ def _make_photo_dialog_client(
 ) -> FakeCliTelethonClient:
     prepared = [
         _photo_dialog_from_spec(dialog)
-        for dialog in (dialogs or [
-            {"channel_id": -1001, "title": "Target Channel", "channel_type": "channel"}
-        ])
+        for dialog in (
+            dialogs or [{"channel_id": -1001, "title": "Target Channel", "channel_type": "channel"}]
+        )
     ]
 
     def _iter_dialogs():
@@ -85,7 +85,11 @@ def _make_photo_dialog_client(
 
 
 async def _build_photo_loader_app(
-    tmp_path, telethon_cli_spy, native_auth_spy, dialogs=None, dialogs_error=None,
+    tmp_path,
+    telethon_cli_spy,
+    native_auth_spy,
+    dialogs=None,
+    dialogs_error=None,
 ):
     config = make_test_config(tmp_path)
     config.telegram.api_hash = "hash"
@@ -202,11 +206,13 @@ async def test_photo_task_run_due_processes_pending_items(db, tmp_path, real_poo
     batch_id = await service.create_batch(
         phone="+7000",
         target=PhotoTarget(dialog_id=-1001),
-        entries=[{
-            "at": (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat(),
-            "files": [str(image)],
-            "mode": "album",
-        }],
+        entries=[
+            {
+                "at": (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat(),
+                "files": [str(image)],
+                "mode": "album",
+            }
+        ],
     )
 
     processed = await service.run_due()
@@ -233,7 +239,8 @@ async def test_photo_auto_upload_sends_only_new_files(db, tmp_path, real_pool_ha
                 id=getattr(peer, "channel_id", getattr(peer, "user_id", peer))
             ),
             send_file_side_effect=lambda *args, **kwargs: [
-                SimpleNamespace(id=1), SimpleNamespace(id=2),
+                SimpleNamespace(id=1),
+                SimpleNamespace(id=2),
             ],
         ),
     )
@@ -304,12 +311,14 @@ async def test_photo_loader_page_renders(tmp_path, telethon_cli_spy, native_auth
     await db.initialize()
     app.state.db = db
 
-    telethon_cli_spy.default_client = _make_photo_dialog_client([
-        {"channel_id": -1001, "title": "Target Channel", "channel_type": "channel"},
-        {"channel_id": -1002, "title": "Target Group", "channel_type": "supergroup"},
-        {"channel_id": 42, "title": "Target DM", "channel_type": "dm"},
-        {"channel_id": 99, "title": "Target Bot", "channel_type": "bot"},
-    ])
+    telethon_cli_spy.default_client = _make_photo_dialog_client(
+        [
+            {"channel_id": -1001, "title": "Target Channel", "channel_type": "channel"},
+            {"channel_id": -1002, "title": "Target Group", "channel_type": "supergroup"},
+            {"channel_id": 42, "title": "Target DM", "channel_type": "dm"},
+            {"channel_id": 99, "title": "Target Bot", "channel_type": "bot"},
+        ]
+    )
     harness = RealPoolHarness.build(
         db=db,
         telethon_cli_spy=telethon_cli_spy,
@@ -341,20 +350,20 @@ async def test_photo_loader_page_renders(tmp_path, telethon_cli_spy, native_auth
         assert "Обновить диалоги" in resp.text
         assert "Используется сохранённый список диалогов" in resp.text
         assert resp.text.count('option value="separate" selected') >= 3
-        assert 'data-target-picker' in resp.text
-        assert 'data-target-search' in resp.text
+        assert "data-target-picker" in resp.text
+        assert "data-target-search" in resp.text
         assert 'data-target-filter="channel"' in resp.text
         assert 'data-target-filter="group"' in resp.text
         assert 'data-target-filter="dm"' in resp.text
         assert resp.text.count('name="target_dialog_id"') == 4
         assert 'select name="target_dialog_id"' not in resp.text
-        assert resp.text.count('data-photo-submit-form') >= 4
-        assert resp.text.count('data-photo-submit-button') >= 4
-        assert resp.text.count('data-photo-submit-status') >= 4
+        assert resp.text.count("data-photo-submit-form") >= 4
+        assert resp.text.count("data-photo-submit-button") >= 4
+        assert resp.text.count("data-photo-submit-status") >= 4
         assert "Цель не выбрана" in resp.text
         assert "Выбор сохранится на текущую браузерную сессию." in resp.text
         assert 'data-target-phone="+7000"' in resp.text
-        assert 'data-initial-target-id=' not in resp.text
+        assert "data-initial-target-id=" not in resp.text
         assert 'name="target_title" value="Target Channel"' not in resp.text
         assert 'name="target_type" value="channel"' not in resp.text
         assert "sessionStorage.setItem(storageKey" in resp.text
@@ -493,7 +502,7 @@ async def test_photo_loader_page_feedback_panel_and_highlight_hooks(
     assert resp.status_code == 200
     assert expected_title in resp.text
     assert expected_text in resp.text
-    assert 'data-photo-feedback' in resp.text
+    assert "data-photo-feedback" in resp.text
     assert f'data-highlight-kind="{highlight_kind}"' in resp.text
     assert 'data-photo-result-row="item"' in resp.text
     assert 'data-photo-result-row="batch"' in resp.text
@@ -504,7 +513,9 @@ async def test_photo_loader_page_feedback_panel_and_highlight_hooks(
 
 @pytest.mark.asyncio
 async def test_photo_loader_page_without_phone_selects_first_account(
-    tmp_path, telethon_cli_spy, native_auth_spy,
+    tmp_path,
+    telethon_cli_spy,
+    native_auth_spy,
 ):
     config = AppConfig()
     config.database.path = str(tmp_path / "test.db")
@@ -551,7 +562,7 @@ async def test_photo_loader_page_without_phone_selects_first_account(
         assert 'option value="+7000" selected' in resp.text
         assert "Target +7000" in resp.text
         assert 'data-target-phone="+7000"' in resp.text
-        assert 'data-initial-target-id=' not in resp.text
+        assert "data-initial-target-id=" not in resp.text
         assert 'name="target_title" value="Target +7000"' not in resp.text
         assert 'name="target_type" value="channel"' not in resp.text
         assert "Цель не выбрана" in resp.text
@@ -615,7 +626,9 @@ async def test_photo_loader_page_without_selectable_targets_disables_forms(
 
 @pytest.mark.asyncio
 async def test_photo_loader_page_without_accounts_renders_empty_state(
-    tmp_path, telethon_cli_spy, native_auth_spy,
+    tmp_path,
+    telethon_cli_spy,
+    native_auth_spy,
 ):
     config = AppConfig()
     config.database.path = str(tmp_path / "test.db")
@@ -660,7 +673,9 @@ async def test_photo_loader_page_without_accounts_renders_empty_state(
 
 @pytest.mark.asyncio
 async def test_photo_loader_refresh_warms_dialog_cache(
-    tmp_path, telethon_cli_spy, native_auth_spy,
+    tmp_path,
+    telethon_cli_spy,
+    native_auth_spy,
 ):
     config = AppConfig()
     config.database.path = str(tmp_path / "test.db")
@@ -706,14 +721,16 @@ async def test_photo_loader_refresh_warms_dialog_cache(
         assert "Target Channel" in resp.text
 
     cached = await db.repos.dialog_cache.list_dialogs("+7000")
-    assert cached == [{
-        "channel_id": -1001,
-        "title": "Target Channel",
-        "username": None,
-        "channel_type": "channel",
-        "deactivate": False,
-        "is_own": False,
-    }]
+    assert cached == [
+        {
+            "channel_id": -1001,
+            "title": "Target Channel",
+            "username": None,
+            "channel_type": "channel",
+            "deactivate": False,
+            "is_own": False,
+        }
+    ]
     # With persistent sessions, get_dialogs reuses the connection from connect_account
     assert len(telethon_cli_spy.created) - created_before == 0
     await db.close()
@@ -725,11 +742,17 @@ def test_photo_loader_cli_parser():
         [
             "photo-loader",
             "schedule-send",
-            "--phone", "+7000",
-            "--target", "-1001",
-            "--files", "/tmp/a.jpg", "/tmp/b.jpg",
-            "--mode", "album",
-            "--at", "2026-03-11T18:30:00+00:00",
+            "--phone",
+            "+7000",
+            "--target",
+            "-1001",
+            "--files",
+            "/tmp/a.jpg",
+            "/tmp/b.jpg",
+            "--mode",
+            "album",
+            "--at",
+            "2026-03-11T18:30:00+00:00",
         ]
     )
     assert args.command == "photo-loader"
@@ -746,15 +769,12 @@ def test_photo_loader_cli_send_command(tmp_path, capsys):
     fake_pool = AsyncMock()
     fake_pool.disconnect_all = AsyncMock()
     fake_pool.release_client = AsyncMock()
-    send_client = SimpleNamespace(
-        send_file=AsyncMock(return_value=SimpleNamespace(id=1))
-    )
-    fake_pool.get_client_by_phone = AsyncMock(
-        return_value=(send_client, "+7000")
-    )
+    send_client = SimpleNamespace(send_file=AsyncMock(return_value=SimpleNamespace(id=1)))
+    fake_pool.get_client_by_phone = AsyncMock(return_value=(send_client, "+7000"))
 
     async def fake_init_pool(config, db):
         from src.telegram.auth import TelegramAuth
+
         return TelegramAuth(0, ""), fake_pool
 
     async def fake_init_db(config_path):
@@ -866,7 +886,9 @@ async def test_photo_schedule_redirects_when_target_validation_raises(
 
 @pytest.mark.asyncio
 async def test_photo_schedule_requires_target_selection(
-    tmp_path, telethon_cli_spy, native_auth_spy,
+    tmp_path,
+    telethon_cli_spy,
+    native_auth_spy,
 ):
     app, db = await _build_photo_loader_app(tmp_path, telethon_cli_spy, native_auth_spy)
     app.state.photo_task_service = SimpleNamespace(

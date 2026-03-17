@@ -1,4 +1,5 @@
 """Tests for CollectionTasksRepository."""
+
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
@@ -6,11 +7,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from src.database.repositories.collection_tasks import CollectionTasksRepository
-from src.models import (
-    CollectionTaskStatus,
-    CollectionTaskType,
-    StatsAllTaskPayload,
-)
+from src.models import CollectionTaskStatus, CollectionTaskType, StatsAllTaskPayload
 
 
 @pytest.fixture
@@ -20,6 +17,7 @@ async def repo(db):
 
 
 # _deserialize_payload tests
+
 
 def test_deserialize_payload_none():
     """Test deserializing None payload."""
@@ -62,6 +60,7 @@ def test_deserialize_payload_stats_all():
 
 # _serialize_payload tests
 
+
 def test_serialize_payload_none():
     """Test serializing None payload."""
     result = CollectionTasksRepository._serialize_payload(None)
@@ -83,6 +82,7 @@ def test_serialize_payload_stats_all():
 
 
 # create_collection_task tests
+
 
 async def test_create_collection_task_basic(repo):
     """Test creating a basic collection task."""
@@ -139,6 +139,7 @@ async def test_create_collection_task_run_after_normalization(repo):
 
 # create_stats_task tests
 
+
 async def test_create_stats_task_basic(repo):
     """Test creating a stats task."""
     payload = StatsAllTaskPayload(channel_ids=[1, 2, 3])
@@ -163,6 +164,7 @@ async def test_create_stats_task_with_run_after(repo):
 
 # update_collection_task_progress tests
 
+
 async def test_update_collection_task_progress(repo):
     """Test updating task progress."""
     task_id = await repo.create_collection_task(1, "Test")
@@ -173,6 +175,7 @@ async def test_update_collection_task_progress(repo):
 
 
 # update_collection_task tests
+
 
 async def test_update_collection_task_to_running(repo):
     """Test updating task to running status."""
@@ -228,6 +231,7 @@ async def test_update_collection_task_with_string_status(repo):
 
 # get_collection_task tests
 
+
 async def test_get_collection_task_not_found(repo):
     """Test getting non-existent task."""
     task = await repo.get_collection_task(999)
@@ -235,6 +239,7 @@ async def test_get_collection_task_not_found(repo):
 
 
 # get_collection_tasks tests
+
 
 async def test_get_collection_tasks_empty(repo):
     """Test getting tasks when none exist."""
@@ -266,6 +271,7 @@ async def test_get_collection_tasks_limit(repo):
 
 
 # get_active_collection_tasks_for_channel tests
+
 
 async def test_get_active_collection_tasks_for_channel_empty(repo):
     """Test getting active tasks when none exist."""
@@ -300,6 +306,7 @@ async def test_get_active_collection_tasks_excludes_other_types(repo):
 
 # get_channel_ids_with_active_tasks tests
 
+
 async def test_get_channel_ids_with_active_tasks(repo):
     """Test getting channel IDs with active tasks."""
     await repo.create_collection_task(1, "Channel 1")
@@ -321,6 +328,7 @@ async def test_get_channel_ids_with_active_tasks_empty(repo):
 
 
 # get_active_stats_task tests
+
 
 async def test_get_active_stats_task_none(repo):
     """Test getting active stats task when none exists."""
@@ -349,6 +357,7 @@ async def test_get_active_stats_task_excludes_completed(repo):
 
 
 # claim_next_due_generic_task tests
+
 
 async def test_claim_next_due_stats_task_none_available(repo):
     """Test claiming when no stats tasks available."""
@@ -409,6 +418,7 @@ async def test_claim_next_due_stats_task_skips_running(repo):
 
 # create_stats_continuation_task tests
 
+
 async def test_create_stats_continuation_task(repo):
     """Test creating a continuation task."""
     parent_id = await repo.create_stats_task(StatsAllTaskPayload(channel_ids=[1, 2]))
@@ -428,6 +438,7 @@ async def test_create_stats_continuation_task(repo):
 
 # get_pending_channel_tasks tests
 
+
 async def test_get_pending_channel_tasks(repo):
     """Test getting pending channel tasks."""
     id1 = await repo.create_collection_task(1, "Channel 1")
@@ -441,6 +452,7 @@ async def test_get_pending_channel_tasks(repo):
 
 
 # fail_running_collection_tasks_on_startup tests
+
 
 async def test_fail_running_collection_tasks_on_startup(repo):
     """Test failing running collection tasks."""
@@ -473,6 +485,7 @@ async def test_fail_running_collection_tasks_excludes_stats(repo):
 
 
 # requeue_running_generic_tasks_on_startup tests
+
 
 async def test_requeue_running_stats_tasks_on_startup(repo):
     """Test requeueing running stats tasks."""
@@ -514,6 +527,7 @@ async def test_requeue_running_stats_tasks_sets_run_after(repo):
 
 
 # cancel_collection_task tests
+
 
 async def test_cancel_collection_task_pending(repo):
     """Test cancelling a pending task."""
@@ -581,6 +595,7 @@ async def test_delete_pending_channel_tasks_only_removes_pending_channel_collect
 
 
 # _to_task tests
+
 
 async def test_to_task_deserializes_payload(repo):
     """Test that _to_task properly deserializes payload."""

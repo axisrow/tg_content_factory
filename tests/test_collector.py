@@ -12,12 +12,7 @@ from src.models import Channel, ChannelStats, CollectionTaskStatus, Message, Sta
 from src.telegram.collector import Collector
 from tests.helpers import AsyncIterEmpty as _AsyncIterEmpty
 from tests.helpers import AsyncIterMessages as _AsyncIterMessages
-from tests.helpers import (
-    FakeTelethonClient,
-    make_mock_message,
-    make_mock_pool,
-    make_mock_reactions,
-)
+from tests.helpers import FakeTelethonClient, make_mock_message, make_mock_pool, make_mock_reactions
 
 
 @pytest.mark.asyncio
@@ -76,8 +71,10 @@ async def test_collect_all_invalid_min_subscribers_setting_falls_back_to_zero(db
 async def test_collect_single_channel_skips_filtered(db):
     """collect_single_channel returns 0 immediately for filtered channels."""
     ch = Channel(
-        channel_id=-100130, title="Filtered",
-        is_filtered=True, filter_flags="non_cyrillic",
+        channel_id=-100130,
+        title="Filtered",
+        is_filtered=True,
+        filter_flags="non_cyrillic",
     )
     pool = make_mock_pool(get_available_client=AsyncMock(return_value=None))
     collector = Collector(pool, db, SchedulerConfig())
@@ -207,9 +204,7 @@ async def test_collect_channel_marks_username_changed_when_numeric_fallback_succ
     fallback_entity = SimpleNamespace(username="new_name", title="New Title")
     client = FakeTelethonClient(
         entity_resolver=lambda arg: (
-            UsernameNotOccupiedError(request=None)
-            if arg == "old_name"
-            else fallback_entity
+            UsernameNotOccupiedError(request=None) if arg == "old_name" else fallback_entity
         ),
     )
 
@@ -234,9 +229,7 @@ async def test_collect_channel_no_username_no_cache_reports_error(db):
     await db.add_channel(ch)
 
     mock_client = AsyncMock()
-    mock_client.get_entity = AsyncMock(
-        side_effect=ValueError("Could not find the input entity")
-    )
+    mock_client.get_entity = AsyncMock(side_effect=ValueError("Could not find the input entity"))
 
     pool = make_mock_pool(get_available_client=AsyncMock(return_value=(mock_client, "+7000")))
 
@@ -392,7 +385,7 @@ async def test_collect_channel_collects_media_without_text(db):
     await db.add_channel(ch)
 
     mock_messages = [
-        _make_mock_message(10, text=None),   # media without text
+        _make_mock_message(10, text=None),  # media without text
         _make_mock_message(11, text="hello"),
     ]
 
@@ -609,9 +602,11 @@ async def test_collect_channel_retries_after_short_flood_wait(db):
         idx = call_index["idx"]
         call_index["idx"] += 1
         if idx == 0:
+
             async def _generator():
                 yield _make_mock_message(6, text="msg 6")
                 raise FloodWaitError(request=None, capture=3)
+
             return _generator()
         return _AsyncIterMessages([_make_mock_message(7, text="msg 7")])
 
@@ -923,23 +918,30 @@ async def test_collect_all_stats_skips_filtered(db):
 # Pre-filter: subscriber_ratio tests
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_prefilter_broadcast_low_ratio(db):
     """Broadcast channel with ratio < 1.0 is filtered before iter_messages."""
     ch = Channel(
-        channel_id=-100200, title="Spam Channel",
-        channel_type="channel", last_collected_id=62000,
+        channel_id=-100200,
+        title="Spam Channel",
+        channel_type="channel",
+        last_collected_id=62000,
     )
     await db.add_channel(ch)
     await db.save_channel_stats(ChannelStats(channel_id=-100200, subscriber_count=156))
     # Insert 62000 fake messages so COUNT(*) = 62000, ratio = 156/62000 ≈ 0.0025 < 1.0
-    await db.insert_messages_batch([
-        Message(
-            channel_id=-100200, message_id=i, text="x",
-            date=datetime(2025, 1, 1, tzinfo=timezone.utc),
-        )
-        for i in range(1, 201)
-    ])
+    await db.insert_messages_batch(
+        [
+            Message(
+                channel_id=-100200,
+                message_id=i,
+                text="x",
+                date=datetime(2025, 1, 1, tzinfo=timezone.utc),
+            )
+            for i in range(1, 201)
+        ]
+    )
     # 156 / 200 = 0.78 < 1.0 → should be filtered
 
     mock_client = AsyncMock()
@@ -966,19 +968,25 @@ async def test_prefilter_broadcast_low_ratio(db):
 async def test_prefilter_supergroup_low_ratio(db):
     """Supergroup with ratio < 0.02 is filtered before iter_messages."""
     ch = Channel(
-        channel_id=-100201, title="Noisy Chat",
-        channel_type="supergroup", last_collected_id=10000,
+        channel_id=-100201,
+        title="Noisy Chat",
+        channel_type="supergroup",
+        last_collected_id=10000,
     )
     await db.add_channel(ch)
     await db.save_channel_stats(ChannelStats(channel_id=-100201, subscriber_count=100))
     # Insert 10000 messages so COUNT(*) = 10000, ratio = 100/10000 = 0.01 < 0.02
-    await db.insert_messages_batch([
-        Message(
-            channel_id=-100201, message_id=i, text="x",
-            date=datetime(2025, 1, 1, tzinfo=timezone.utc),
-        )
-        for i in range(1, 10001)
-    ])
+    await db.insert_messages_batch(
+        [
+            Message(
+                channel_id=-100201,
+                message_id=i,
+                text="x",
+                date=datetime(2025, 1, 1, tzinfo=timezone.utc),
+            )
+            for i in range(1, 10001)
+        ]
+    )
 
     mock_client = AsyncMock()
     mock_client.get_entity = AsyncMock(return_value=SimpleNamespace())
@@ -1001,19 +1009,25 @@ async def test_prefilter_supergroup_low_ratio(db):
 async def test_prefilter_supergroup_pass_ratio(db):
     """Supergroup with ratio >= 0.02 continues collection."""
     ch = Channel(
-        channel_id=-100202, title="Good Chat",
-        channel_type="supergroup", last_collected_id=1000,
+        channel_id=-100202,
+        title="Good Chat",
+        channel_type="supergroup",
+        last_collected_id=1000,
     )
     await db.add_channel(ch)
     await db.save_channel_stats(ChannelStats(channel_id=-100202, subscriber_count=50))
     # Insert 1000 messages so COUNT(*) = 1000, ratio = 50/1000 = 0.05 >= 0.02
-    await db.insert_messages_batch([
-        Message(
-            channel_id=-100202, message_id=i, text="x",
-            date=datetime(2025, 1, 1, tzinfo=timezone.utc),
-        )
-        for i in range(1, 1001)
-    ])
+    await db.insert_messages_batch(
+        [
+            Message(
+                channel_id=-100202,
+                message_id=i,
+                text="x",
+                date=datetime(2025, 1, 1, tzinfo=timezone.utc),
+            )
+            for i in range(1, 1001)
+        ]
+    )
 
     mock_client = AsyncMock()
     mock_client.get_entity = AsyncMock(return_value=SimpleNamespace())
@@ -1037,8 +1051,10 @@ async def test_prefilter_supergroup_pass_ratio(db):
 async def test_prefilter_no_stats_skips_check(db):
     """No stats (subscriber_count=None) → collection continues without filtering."""
     ch = Channel(
-        channel_id=-100203, title="Unknown Channel",
-        channel_type="channel", last_collected_id=5000,
+        channel_id=-100203,
+        title="Unknown Channel",
+        channel_type="channel",
+        last_collected_id=5000,
     )
     await db.add_channel(ch)
     # No stats saved
@@ -1065,19 +1081,25 @@ async def test_prefilter_no_stats_skips_check(db):
 async def test_prefilter_uses_message_count(db):
     """Pre-filter uses real COUNT(*) from DB, not last_collected_id."""
     ch = Channel(
-        channel_id=-100204, title="Established Channel",
-        channel_type="supergroup", last_collected_id=500,
+        channel_id=-100204,
+        title="Established Channel",
+        channel_type="supergroup",
+        last_collected_id=500,
     )
     await db.add_channel(ch)
     await db.save_channel_stats(ChannelStats(channel_id=-100204, subscriber_count=5))
     # Insert 500 messages so COUNT(*) = 500, ratio = 5/500 = 0.01 < 0.02 → filtered
-    await db.insert_messages_batch([
-        Message(
-            channel_id=-100204, message_id=i, text="x",
-            date=datetime(2025, 1, 1, tzinfo=timezone.utc),
-        )
-        for i in range(1, 501)
-    ])
+    await db.insert_messages_batch(
+        [
+            Message(
+                channel_id=-100204,
+                message_id=i,
+                text="x",
+                date=datetime(2025, 1, 1, tzinfo=timezone.utc),
+            )
+            for i in range(1, 501)
+        ]
+    )
 
     mock_client = AsyncMock()
     mock_client.get_entity = AsyncMock(return_value=SimpleNamespace())
@@ -1097,8 +1119,10 @@ async def test_prefilter_uses_message_count(db):
 async def test_prefilter_skips_when_no_messages(db):
     """First run (message_count=0) → pre-filter skipped, collection proceeds."""
     ch = Channel(
-        channel_id=-100205, title="New Channel",
-        channel_type="supergroup", last_collected_id=0,
+        channel_id=-100205,
+        title="New Channel",
+        channel_type="supergroup",
+        last_collected_id=0,
     )
     await db.add_channel(ch)
     await db.save_channel_stats(ChannelStats(channel_id=-100205, subscriber_count=1))
@@ -1122,19 +1146,25 @@ async def test_prefilter_skips_when_no_messages(db):
 async def test_prefilter_skipped_when_force(db):
     """force=True → pre-filter skipped; channel filter state not changed."""
     ch = Channel(
-        channel_id=-100206, title="Forced Channel",
-        channel_type="supergroup", last_collected_id=500,
+        channel_id=-100206,
+        title="Forced Channel",
+        channel_type="supergroup",
+        last_collected_id=500,
     )
     await db.add_channel(ch)
     await db.save_channel_stats(ChannelStats(channel_id=-100206, subscriber_count=5))
     # 5 / 500 = 0.01 < 0.02 — would be filtered without force
-    await db.insert_messages_batch([
-        Message(
-            channel_id=-100206, message_id=i, text="x",
-            date=datetime(2025, 1, 1, tzinfo=timezone.utc),
-        )
-        for i in range(1, 501)
-    ])
+    await db.insert_messages_batch(
+        [
+            Message(
+                channel_id=-100206,
+                message_id=i,
+                text="x",
+                date=datetime(2025, 1, 1, tzinfo=timezone.utc),
+            )
+            for i in range(1, 501)
+        ]
+    )
 
     mock_client = AsyncMock()
     mock_client.get_entity = AsyncMock(return_value=SimpleNamespace())
@@ -1158,8 +1188,10 @@ async def test_prefilter_skipped_when_force(db):
 async def test_precheck_skipped_when_force_and_first_run(db):
     """force=True + first_run (last_collected_id=0) → precheck пропускается."""
     ch = Channel(
-        channel_id=-100207, title="Force First Run",
-        channel_type="supergroup", last_collected_id=0,
+        channel_id=-100207,
+        title="Force First Run",
+        channel_type="supergroup",
+        last_collected_id=0,
     )
     await db.add_channel(ch)
 
@@ -1195,8 +1227,9 @@ async def test_get_entity_timeout_returns_zero(db):
 @pytest.mark.asyncio
 async def test_precheck_timeout_skips_check(db):
     """Precheck hanging → TimeoutError → collection continues with 0 precheck sample."""
-    ch = Channel(channel_id=-100401, title="Slow Precheck", username="slow_chan",
-                 last_collected_id=0)
+    ch = Channel(
+        channel_id=-100401, title="Slow Precheck", username="slow_chan", last_collected_id=0
+    )
     await db.add_channel(ch)
 
     mock_client = AsyncMock()
@@ -1257,6 +1290,7 @@ async def test_post_collection_low_uniqueness_marks_filtered(db):
 # Username-changed handling
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_precheck_detects_cross_channel_spam(db):
     """Precheck marks a first-run channel as cross_channel_spam on 80%+ sample overlap."""
@@ -1264,13 +1298,17 @@ async def test_precheck_detects_cross_channel_spam(db):
     existing_ch = Channel(channel_id=-100500, title="Existing Source")
     await db.add_channel(existing_ch)
     spam_texts = [f"Спам-рассылка номер {i}, достаточно длинный текст для теста" for i in range(8)]
-    await db.insert_messages_batch([
-        Message(
-            channel_id=-100500, message_id=i + 1, text=spam_texts[i],
-            date=datetime(2025, 1, 1, tzinfo=timezone.utc),
-        )
-        for i in range(8)
-    ])
+    await db.insert_messages_batch(
+        [
+            Message(
+                channel_id=-100500,
+                message_id=i + 1,
+                text=spam_texts[i],
+                date=datetime(2025, 1, 1, tzinfo=timezone.utc),
+            )
+            for i in range(8)
+        ]
+    )
 
     # New channel (first run)
     ch = Channel(
@@ -1344,9 +1382,7 @@ async def test_username_not_found_deactivates(db):
     ch = (await db.get_channels())[0]
 
     mock_client = AsyncMock()
-    mock_client.get_entity = AsyncMock(
-        side_effect=ValueError("No user has username")
-    )
+    mock_client.get_entity = AsyncMock(side_effect=ValueError("No user has username"))
 
     pool = make_mock_pool(get_available_client=AsyncMock(return_value=(mock_client, "+7000")))
     collector = Collector(pool, db, SchedulerConfig())

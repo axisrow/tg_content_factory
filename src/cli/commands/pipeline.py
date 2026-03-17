@@ -110,14 +110,10 @@ def run(args: argparse.Namespace) -> None:
                         prompt_template=args.prompt_template or existing.prompt_template,
                         source_channel_ids=args.source if args.source else current_sources,
                         target_refs=(
-                            _parse_target_refs(args.target)
-                            if args.target
-                            else current_targets
+                            _parse_target_refs(args.target) if args.target else current_targets
                         ),
                         llm_model=(
-                            args.llm_model
-                            if args.llm_model is not None
-                            else existing.llm_model
+                            args.llm_model if args.llm_model is not None else existing.llm_model
                         ),
                         image_model=(
                             args.image_model
@@ -169,7 +165,9 @@ def run(args: argparse.Namespace) -> None:
 
                 gen_svc = GenerationService(engine, provider_callable=provider_callable)
                 # Create generation run record
-                run_id = await db.repos.generation_runs.create_run(pipeline.id, pipeline.prompt_template)
+                run_id = await db.repos.generation_runs.create_run(
+                    pipeline.id, pipeline.prompt_template
+                )
                 await db.repos.generation_runs.set_status(run_id, "running")
                 print(f"Created generation run id={run_id}")
                 retrieval_query = pipeline.prompt_template or pipeline.name or ""
@@ -182,13 +180,20 @@ def run(args: argparse.Namespace) -> None:
                         max_tokens=args.max_tokens,
                         temperature=args.temperature,
                     )
-                    await db.repos.generation_runs.save_result(run_id, result.get("generated_text", ""), {"citations": result.get("citations", [])})
+                    await db.repos.generation_runs.save_result(
+                        run_id,
+                        result.get("generated_text", ""),
+                        {"citations": result.get("citations", [])},
+                    )
                     print(f"Generation completed for run id={run_id}")
                     if args.preview:
                         print("--- DRAFT PREVIEW ---")
                         print(result.get("generated_text"))
                     if args.publish:
-                        print("Publish requested — publishing via targets is not implemented in CLI; use web UI or implement account targets.")
+                        print(
+                            "Publish requested — publishing via targets is not implemented in CLI; "
+                            "Use the web UI or implement account targets."
+                        )
                 except Exception as exc:
                     await db.repos.generation_runs.set_status(run_id, "failed")
                     print(f"Generation failed: {exc}")

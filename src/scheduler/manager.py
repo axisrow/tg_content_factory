@@ -8,7 +8,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 
 from src.config import SchedulerConfig
-from src.database.bundles import SchedulerBundle, SearchQueryBundle
+from src.database.bundles import PipelineBundle, SchedulerBundle, SearchQueryBundle
 from src.settings_utils import parse_int_setting
 
 if TYPE_CHECKING:
@@ -25,6 +25,7 @@ class SchedulerManager:
         scheduler_bundle: SchedulerBundle | None = None,
         search_query_bundle: SearchQueryBundle | None = None,
         task_enqueuer: TaskEnqueuer | None = None,
+        pipeline_bundle: PipelineBundle | None = None,
     ):
         if config is None:
             config = SchedulerConfig()
@@ -32,6 +33,7 @@ class SchedulerManager:
         self._task_enqueuer = task_enqueuer
         self._scheduler_bundle = scheduler_bundle
         self._sq_bundle = search_query_bundle
+        self._pipeline_bundle = pipeline_bundle
         self._scheduler: AsyncIOScheduler | None = None
         self._job_id = "collect_all"
         self._photo_due_job_id = "photo_due"
@@ -80,6 +82,9 @@ class SchedulerManager:
         if self._sq_bundle:
             await self.sync_search_query_jobs()
 
+        if self._pipeline_bundle:
+            await self.sync_pipeline_jobs()
+
         if self._task_enqueuer is not None:
             self._scheduler.add_job(
                 self._run_photo_due,
@@ -117,6 +122,26 @@ class SchedulerManager:
         if self._scheduler and self._scheduler.running:
             self._scheduler.reschedule_job(self._job_id, trigger=IntervalTrigger(minutes=minutes))
             logger.info("Collection interval updated to %d minutes", minutes)
+
+    def get_job_next_run(self, job_id: str):
+        """Return next_run_time for a scheduled job, or None if missing."""
+        if self._scheduler is None:
+            return None
+        # Prefer scheduler.get_job if available
+        try:
+            job = self._scheduler.get_job(job_id)
+            if job is None:
+                return None
+            return getattr(job, "next_run_time", None)
+        except Exception:
+            # Fallback: scan jobs list for compatibility with fake schedulers in tests
+            try:
+                for job in self._scheduler.get_jobs():
+                    if getattr(job, "id", None) == job_id:
+                        return getattr(job, "next_run_time", None)
+            except Exception:
+                return None
+            return None
 
     async def trigger_now(self) -> dict:
         return await self._run_collection()
@@ -170,6 +195,47 @@ class SchedulerManager:
                 args=[sq.id],
             )
         logger.info("Synced %d search query jobs", len(active_queries))
+
+    async def sync_pipeline_jobs(self) -> None:
+        """Sync scheduler jobs with active content pipelines.
+
+        Ensures there is a periodic job for each enabled pipeline and removes jobs
+        for pipelines that are no longer active.
+        """
+        if not self._pipeline_bundle or not self._scheduler:
+            return
+
+        all_active = await self._pipeline_bundle.get_all(active_only=True)
+        active_pipelines = [p for p in all_active if p.is_active]
+        active_ids = {f"pipeline_run_{p.id}" for p in active_pipelines if p.id is not None}
+
+        existing_jobs = self._scheduler.get_jobs()
+        for job in existing_jobs:
+            if job.id.startswith("pipeline_run_") and job.id not in active_ids:
+                self._scheduler.remove_job(job.id)
+                logger.info("Removed pipeline job %s", job.id)
+
+        for p in active_pipelines:
+            if p.id is None:
+                continue
+            job_id = f"pipeline_run_{p.id}"
+            self._scheduler.add_job(
+                self._run_pipeline_job,
+                IntervalTrigger(minutes=p.generate_interval_minutes),
+                id=job_id,
+                replace_existing=True,
+                args=[p.id],
+            )
+        logger.info("Synced %d pipeline jobs", len(active_pipelines))
+
+    async def _run_pipeline_job(self, pipeline_id: int) -> None:
+        """Enqueue a pipeline run task for the given pipeline id."""
+        if not self._task_enqueuer:
+            return
+        try:
+            await self._task_enqueuer.enqueue_pipeline_run(pipeline_id)
+        except Exception:
+            logger.exception("Error enqueuing pipeline run for pipeline_id=%d", pipeline_id)
 
     async def _run_search_query(self, sq_id: int) -> None:
         """Enqueue SQ_STATS task for a search query."""

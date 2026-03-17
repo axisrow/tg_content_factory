@@ -42,9 +42,7 @@ class ChannelsRepository:
             is_active=bool(row["is_active"]),
             is_filtered=bool(row["is_filtered"]) if "is_filtered" in keys else False,
             filter_flags=(
-                row["filter_flags"]
-                if "filter_flags" in keys and row["filter_flags"]
-                else ""
+                row["filter_flags"] if "filter_flags" in keys and row["filter_flags"] else ""
             ),
             last_collected_id=row["last_collected_id"],
             added_at=datetime.fromisoformat(row["added_at"]) if row["added_at"] else None,
@@ -118,9 +116,7 @@ class ChannelsRepository:
         await self._db.commit()
 
     async def set_channel_active(self, pk: int, active: bool) -> None:
-        await self._db.execute(
-            "UPDATE channels SET is_active = ? WHERE id = ?", (int(active), pk)
-        )
+        await self._db.execute("UPDATE channels SET is_active = ? WHERE id = ?", (int(active), pk))
         await self._db.commit()
 
     async def set_channel_filtered(self, pk: int, filtered: bool) -> None:
@@ -155,9 +151,7 @@ class ChannelsRepository:
         return updated_rows
 
     async def reset_all_filters(self, *, commit: bool = True) -> int:
-        cur = await self._db.execute(
-            "UPDATE channels SET is_filtered = 0, filter_flags = ''"
-        )
+        cur = await self._db.execute("UPDATE channels SET is_filtered = 0, filter_flags = ''")
         if commit:
             await self._db.commit()
         rowcount = cur.rowcount if cur.rowcount is not None else 0
@@ -188,9 +182,7 @@ class ChannelsRepository:
         return [{"id": row["topic_id"], "title": row["title"]} for row in rows]
 
     async def upsert_forum_topics(self, channel_id: int, topics: list[dict]) -> None:
-        await self._db.execute(
-            "DELETE FROM forum_topics WHERE channel_id = ?", (channel_id,)
-        )
+        await self._db.execute("DELETE FROM forum_topics WHERE channel_id = ?", (channel_id,))
         if topics:
             await self._db.executemany(
                 "INSERT INTO forum_topics (channel_id, topic_id, title, updated_at)"

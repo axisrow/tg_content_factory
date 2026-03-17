@@ -66,12 +66,14 @@ async def purge_selected_filtered(request: Request):
     pks = _parse_pks(form)
     if not pks:
         return RedirectResponse(
-            url="/channels/filter/manage?error=no_filtered_channels", status_code=303,
+            url="/channels/filter/manage?error=no_filtered_channels",
+            status_code=303,
         )
     svc = deps.filter_deletion_service(request)
     await svc.purge_channels_by_pks(pks)
     return RedirectResponse(
-        url="/channels/filter/manage?msg=purged_selected", status_code=303,
+        url="/channels/filter/manage?msg=purged_selected",
+        status_code=303,
     )
 
 
@@ -81,13 +83,11 @@ async def purge_all_filtered(request: Request):
     result = await svc.purge_all_filtered()
     if result.purged_count == 0:
         return RedirectResponse(
-            url="/channels/filter/manage?error=no_filtered_channels", status_code=303,
+            url="/channels/filter/manage?error=no_filtered_channels",
+            status_code=303,
         )
     return RedirectResponse(
-        url=(
-            f"/channels/filter/manage?msg=purged_all_filtered"
-            f"&count={result.purged_count}"
-        ),
+        url=(f"/channels/filter/manage?msg=purged_all_filtered" f"&count={result.purged_count}"),
         status_code=303,
     )
 
@@ -96,21 +96,20 @@ async def purge_all_filtered(request: Request):
 async def hard_delete_selected(request: Request):
     if not await _dev_mode_enabled(request):
         return RedirectResponse(
-            url="/channels/filter/manage?error=dev_mode_required_for_hard_delete", status_code=303,
+            url="/channels/filter/manage?error=dev_mode_required_for_hard_delete",
+            status_code=303,
         )
     form = await request.form()
     pks = _parse_pks(form)
     if not pks:
         return RedirectResponse(
-            url="/channels/filter/manage?error=no_filtered_channels", status_code=303,
+            url="/channels/filter/manage?error=no_filtered_channels",
+            status_code=303,
         )
     svc = deps.filter_deletion_service(request)
     result = await svc.hard_delete_channels_by_pks(pks)
     return RedirectResponse(
-        url=(
-            f"/channels/filter/manage?msg=deleted_filtered"
-            f"&count={result.purged_count}"
-        ),
+        url=(f"/channels/filter/manage?msg=deleted_filtered" f"&count={result.purged_count}"),
         status_code=303,
     )
 
@@ -128,9 +127,7 @@ async def analyze_channels(request: Request):
         channels = await db.get_channels_with_counts(active_only=False, include_filtered=True)
         pk_map = {ch.channel_id: ch.id for ch in channels if ch.id is not None}
         filtered_pks = [
-            pk_map[r.channel_id]
-            for r in report.results
-            if r.is_filtered and r.channel_id in pk_map
+            pk_map[r.channel_id] for r in report.results if r.is_filtered and r.channel_id in pk_map
         ]
         if filtered_pks:
             svc = deps.filter_deletion_service(request)
@@ -141,7 +138,8 @@ async def analyze_channels(request: Request):
     if purged_count:
         msg = "purged_all_filtered"
     return RedirectResponse(
-        url=f"/channels/filter/manage?msg={msg}", status_code=303,
+        url=f"/channels/filter/manage?msg={msg}",
+        status_code=303,
     )
 
 
@@ -161,9 +159,7 @@ async def apply_filters(request: Request):
     )
 
     count = await analyzer.apply_filters(report)
-    return RedirectResponse(
-        url=f"/channels?msg=filter_applied&count={count}", status_code=303
-    )
+    return RedirectResponse(url=f"/channels?msg=filter_applied&count={count}", status_code=303)
 
 
 @router.post("/filter/precheck")
@@ -172,7 +168,8 @@ async def precheck_subscriber_ratio(request: Request):
     analyzer = ChannelAnalyzer(db)
     count = await analyzer.precheck_subscriber_ratio()
     return RedirectResponse(
-        url=f"/channels/filter/manage?msg=precheck_done&count={count}", status_code=303,
+        url=f"/channels/filter/manage?msg=precheck_done&count={count}",
+        status_code=303,
     )
 
 

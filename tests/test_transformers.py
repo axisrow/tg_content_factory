@@ -27,9 +27,11 @@ def test_media_type_none():
     msg = MagicMock(media=None)
     assert TelegramMessageTransformer.media_type_from_message(msg) is None
 
+
 def test_media_type_photo():
     msg = MagicMock(media=MagicMock(spec=MessageMediaPhoto))
     assert TelegramMessageTransformer.media_type_from_message(msg) == "photo"
+
 
 def test_media_type_sticker():
     doc = MagicMock(spec=Document)
@@ -37,11 +39,13 @@ def test_media_type_sticker():
     msg = MagicMock(media=MessageMediaDocument(document=doc, ttl_seconds=None))
     assert TelegramMessageTransformer.media_type_from_message(msg) == "sticker"
 
+
 def test_media_type_video():
     doc = MagicMock(spec=Document)
     doc.attributes = [DocumentAttributeVideo(duration=1, w=1, h=1)]
     msg = MagicMock(media=MessageMediaDocument(document=doc, ttl_seconds=None))
     assert TelegramMessageTransformer.media_type_from_message(msg) == "video"
+
 
 def test_media_type_video_note():
     doc = MagicMock(spec=Document)
@@ -49,11 +53,13 @@ def test_media_type_video_note():
     msg = MagicMock(media=MessageMediaDocument(document=doc, ttl_seconds=None))
     assert TelegramMessageTransformer.media_type_from_message(msg) == "video_note"
 
+
 def test_media_type_voice():
     doc = MagicMock(spec=Document)
     doc.attributes = [DocumentAttributeAudio(duration=1, voice=True)]
     msg = MagicMock(media=MessageMediaDocument(document=doc, ttl_seconds=None))
     assert TelegramMessageTransformer.media_type_from_message(msg) == "voice"
+
 
 def test_media_type_audio():
     doc = MagicMock(spec=Document)
@@ -61,11 +67,13 @@ def test_media_type_audio():
     msg = MagicMock(media=MessageMediaDocument(document=doc, ttl_seconds=None))
     assert TelegramMessageTransformer.media_type_from_message(msg) == "audio"
 
+
 def test_media_type_gif():
     doc = MagicMock(spec=Document)
     doc.attributes = [DocumentAttributeAnimated()]
     msg = MagicMock(media=MessageMediaDocument(document=doc, ttl_seconds=None))
     assert TelegramMessageTransformer.media_type_from_message(msg) == "gif"
+
 
 def test_media_type_simple_types():
     mt = TelegramMessageTransformer.media_type_from_message
@@ -76,6 +84,7 @@ def test_media_type_simple_types():
     assert mt(MagicMock(media=MagicMock(spec=MessageMediaPoll))) == "poll"
     assert mt(MagicMock(media=MagicMock(spec=MessageMediaDice))) == "dice"
     assert mt(MagicMock(media=MagicMock(spec=MessageMediaGame))) == "game"
+
 
 def test_convert_telethon_message_basic():
     msg = MagicMock()
@@ -95,9 +104,11 @@ def test_convert_telethon_message_basic():
     assert res.sender_name == "John Doe"
     assert res.date.tzinfo == timezone.utc
 
+
 def test_convert_telethon_message_no_chat():
     msg = MagicMock(chat=None)
     assert TelegramMessageTransformer.convert_telethon_message(msg) is None
+
 
 def test_resolve_sender_user():
     msg = MagicMock(from_id=PeerUser(user_id=1))
@@ -105,6 +116,7 @@ def test_resolve_sender_user():
     res_id, res_name = TelegramMessageTransformer.resolve_sender(msg, {}, {1: user})
     assert res_id == 1
     assert res_name == "First Last"
+
 
 def test_resolve_sender_channel():
     msg = MagicMock(from_id=PeerChannel(channel_id=2))

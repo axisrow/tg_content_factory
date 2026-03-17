@@ -14,6 +14,7 @@ from src.search.ai_search import AISearchEngine
 def llm_config():
     return LLMConfig(enabled=True, api_key="test_key", provider="anthropic", model="claude-3")
 
+
 @pytest.fixture
 def mock_search_bundle():
     bundle = MagicMock()
@@ -28,6 +29,7 @@ def fake_deepagents():
     with patch.dict(sys.modules, {"deepagents": module}):
         yield create_deep_agent
 
+
 @pytest.mark.asyncio
 async def test_ai_search_disabled(mock_search_bundle):
     config = LLMConfig(enabled=False)
@@ -37,6 +39,7 @@ async def test_ai_search_disabled(mock_search_bundle):
 
     res = await engine.search("test")
     assert "AI search is not available" in res.ai_summary
+
 
 @pytest.mark.asyncio
 async def test_ai_search_initialization_success(llm_config, mock_search_bundle):
@@ -52,12 +55,14 @@ async def test_ai_search_initialization_success(llm_config, mock_search_bundle):
     assert engine._agent == mock_agent
     mock_create.assert_called_once()
 
+
 @pytest.mark.asyncio
 async def test_ai_search_initialization_import_error(llm_config, mock_search_bundle):
     with patch.dict(sys.modules, {"deepagents": None}):
         engine = AISearchEngine(llm_config, mock_search_bundle)
         engine.initialize()
         assert engine._agent is None
+
 
 @pytest.mark.asyncio
 async def test_ai_search_initialization_general_error(llm_config, mock_search_bundle):
@@ -70,14 +75,16 @@ async def test_ai_search_initialization_general_error(llm_config, mock_search_bu
 
     assert engine._agent is None
 
+
 @pytest.mark.asyncio
 async def test_ai_search_run_success(llm_config, mock_search_bundle, fake_deepagents):
     mock_agent = MagicMock()
     mock_agent.run.return_value = "AI Summary Result"
 
-    mock_search_bundle.search_messages.return_value = ([
-        Message(channel_id=1, message_id=1, text="hello", date=datetime.now())
-    ], 1)
+    mock_search_bundle.search_messages.return_value = (
+        [Message(channel_id=1, message_id=1, text="hello", date=datetime.now())],
+        1,
+    )
 
     fake_deepagents.return_value = mock_agent
     engine = AISearchEngine(llm_config, mock_search_bundle)
@@ -86,6 +93,7 @@ async def test_ai_search_run_success(llm_config, mock_search_bundle, fake_deepag
     res = await engine.search("hello")
     assert res.ai_summary == "AI Summary Result"
     assert res.total == 1
+
 
 @pytest.mark.asyncio
 async def test_ai_search_run_error(llm_config, mock_search_bundle, fake_deepagents):
@@ -99,12 +107,14 @@ async def test_ai_search_run_error(llm_config, mock_search_bundle, fake_deepagen
     res = await engine.search("hello")
     assert "AI search error: AI Fail" in res.ai_summary
 
+
 @pytest.mark.asyncio
 async def test_search_posts_tool_logic(llm_config, mock_search_bundle, fake_deepagents):
     # This tests the tool function defined inside initialize
-    mock_search_bundle.search_messages.return_value = ([
-        Message(channel_id=1, message_id=1, text="content", date=datetime.now())
-    ], 1)
+    mock_search_bundle.search_messages.return_value = (
+        [Message(channel_id=1, message_id=1, text="content", date=datetime.now())],
+        1,
+    )
 
     engine = AISearchEngine(llm_config, mock_search_bundle)
     engine.initialize()
@@ -119,10 +129,9 @@ async def test_search_posts_tool_logic(llm_config, mock_search_bundle, fake_deep
     assert "Found 1 results" in result
     assert "content" in result
 
+
 @pytest.mark.asyncio
-async def test_search_posts_tool_no_results(
-    llm_config, mock_search_bundle, fake_deepagents
-):
+async def test_search_posts_tool_no_results(llm_config, mock_search_bundle, fake_deepagents):
     mock_search_bundle.search_messages.return_value = ([], 0)
 
     engine = AISearchEngine(llm_config, mock_search_bundle)

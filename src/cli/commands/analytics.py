@@ -31,14 +31,10 @@ def run(args: argparse.Namespace) -> None:
                     )
                     text = (row.get("text") or "")[:60].replace("\n", " ")
                     date = str(row.get("date", ""))[:16]
-                    print(
-                        f"{i:<4} {row['total_reactions']:<10} {date:<18} {channel:<30} {text}"
-                    )
+                    print(f"{i:<4} {row['total_reactions']:<10} {date:<18} {channel:<30} {text}")
 
             elif action == "content-types":
-                rows = await db.get_engagement_by_media_type(
-                    date_from=date_from, date_to=date_to
-                )
+                rows = await db.get_engagement_by_media_type(date_from=date_from, date_to=date_to)
                 if not rows:
                     print("No data.")
                     return

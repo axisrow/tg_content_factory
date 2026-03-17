@@ -65,11 +65,13 @@ async def import_channels(
                 )
                 no_client = True
                 for remaining in identifiers[i:]:
-                    details.append({
-                        "identifier": remaining,
-                        "status": "failed",
-                        "detail": "Нет доступных аккаунтов Telegram",
-                    })
+                    details.append(
+                        {
+                            "identifier": remaining,
+                            "status": "failed",
+                            "detail": "Нет доступных аккаунтов Telegram",
+                        }
+                    )
                     failed += 1
                 break
             logger.warning("Failed to resolve '%s': %s", ident, exc)
@@ -87,11 +89,13 @@ async def import_channels(
             continue
 
         if info["channel_id"] in existing_ids:
-            details.append({
-                "identifier": ident,
-                "status": "skipped",
-                "detail": f"Уже добавлен ({info.get('title', '')})",
-            })
+            details.append(
+                {
+                    "identifier": ident,
+                    "status": "skipped",
+                    "detail": f"Уже добавлен ({info.get('title', '')})",
+                }
+            )
             skipped += 1
             continue
 
@@ -108,11 +112,13 @@ async def import_channels(
         detail_text = f"{info.get('title', '')} ({info['channel_id']})"
         if deactivate:
             detail_text += " [неактивен: scam/fake/restricted]"
-        details.append({
-            "identifier": ident,
-            "status": "added",
-            "detail": detail_text,
-        })
+        details.append(
+            {
+                "identifier": ident,
+                "status": "added",
+                "detail": detail_text,
+            }
+        )
         added += 1
 
     results = {

@@ -5,18 +5,21 @@ import logging
 from datetime import date, datetime, timezone
 from typing import TYPE_CHECKING
 
-from src.database.bundles import ChannelBundle, SearchQueryBundle
+from src.database.bundles import ChannelBundle, PipelineBundle, SearchQueryBundle
 from src.database.repositories.collection_tasks import CollectionTasksRepository
 from src.models import (
     CollectionTask,
     CollectionTaskStatus,
     CollectionTaskType,
+    PipelineRunTaskPayload,
     SqStatsTaskPayload,
     StatsAllTaskPayload,
 )
 from src.telegram.collector import Collector
 
 if TYPE_CHECKING:
+    from src.database import Database
+    from src.search.engine import SearchEngine
     from src.services.photo_auto_upload_service import PhotoAutoUploadService
     from src.services.photo_task_service import PhotoTaskService
 
@@ -27,6 +30,7 @@ HANDLED_TYPES = [
     CollectionTaskType.SQ_STATS.value,
     CollectionTaskType.PHOTO_DUE.value,
     CollectionTaskType.PHOTO_AUTO.value,
+    CollectionTaskType.PIPELINE_RUN.value,
 ]
 
 
@@ -45,7 +49,11 @@ class UnifiedDispatcher:
         default_batch_size: int = 20,
         poll_interval_sec: float = 1.0,
         channel_timeout_sec: float = 120.0,
+        search_engine: "SearchEngine" | None = None,
+        pipeline_bundle: PipelineBundle | None = None,
+        db: "Database" | None = None,
     ):
+
         self._collector = collector
         self._channel_bundle = channel_bundle
         self._tasks = tasks_repo
@@ -55,6 +63,9 @@ class UnifiedDispatcher:
         self._default_batch_size = default_batch_size
         self._poll_interval_sec = poll_interval_sec
         self._channel_timeout_sec = channel_timeout_sec
+        self._search_engine = search_engine
+        self._pipeline_bundle = pipeline_bundle
+        self._db = db
         self._task: asyncio.Task | None = None
         self._stop_event = asyncio.Event()
 
@@ -114,6 +125,7 @@ class UnifiedDispatcher:
             CollectionTaskType.SQ_STATS: self._handle_sq_stats,
             CollectionTaskType.PHOTO_DUE: self._handle_photo_due,
             CollectionTaskType.PHOTO_AUTO: self._handle_photo_auto,
+            CollectionTaskType.PIPELINE_RUN: self._handle_pipeline_run,
         }.get(task.task_type)
         if handler is None:
             await self._tasks.update_collection_task(
@@ -145,12 +157,17 @@ class UnifiedDispatcher:
 
         logger.info(
             "Running stats task #%s: next_index=%d batch_size=%d total=%d",
-            task.id, next_index, batch_size, len(channel_ids),
+            task.id,
+            next_index,
+            batch_size,
+            len(channel_ids),
         )
 
         if next_index >= len(channel_ids):
             await self._tasks.update_collection_task(
-                task.id, CollectionTaskStatus.COMPLETED, messages_collected=channels_ok,
+                task.id,
+                CollectionTaskStatus.COMPLETED,
+                messages_collected=channels_ok,
             )
             return
 
@@ -166,7 +183,8 @@ class UnifiedDispatcher:
                 collector_wait_sec += self._poll_interval_sec
                 if collector_wait_sec >= self._channel_timeout_sec:
                     await self._tasks.update_collection_task(
-                        task.id, CollectionTaskStatus.FAILED,
+                        task.id,
+                        CollectionTaskStatus.FAILED,
                         messages_collected=channels_ok,
                         error="Timed out waiting for collector to finish",
                     )
@@ -201,8 +219,10 @@ class UnifiedDispatcher:
                         and availability.next_available_at_utc is not None
                     ):
                         continuation_payload = StatsAllTaskPayload(
-                            channel_ids=channel_ids, next_index=cursor,
-                            batch_size=batch_size, channels_ok=channels_ok,
+                            channel_ids=channel_ids,
+                            next_index=cursor,
+                            batch_size=batch_size,
+                            channels_ok=channels_ok,
                             channels_err=channels_err,
                         )
                         continuation_id = await self._tasks.create_stats_continuation_task(
@@ -211,7 +231,8 @@ class UnifiedDispatcher:
                             parent_task_id=task.id,
                         )
                         await self._tasks.update_collection_task(
-                            task.id, CollectionTaskStatus.FAILED,
+                            task.id,
+                            CollectionTaskStatus.FAILED,
                             messages_collected=channels_ok,
                             error=(
                                 f"Deferred to task #{continuation_id} until "
@@ -222,7 +243,8 @@ class UnifiedDispatcher:
                         return
 
                     await self._tasks.update_collection_task(
-                        task.id, CollectionTaskStatus.FAILED,
+                        task.id,
+                        CollectionTaskStatus.FAILED,
                         messages_collected=channels_ok,
                         error="No active connected Telegram accounts",
                     )
@@ -237,8 +259,10 @@ class UnifiedDispatcher:
 
         if cursor < len(channel_ids):
             continuation_payload = StatsAllTaskPayload(
-                channel_ids=channel_ids, next_index=cursor,
-                batch_size=batch_size, channels_ok=channels_ok,
+                channel_ids=channel_ids,
+                next_index=cursor,
+                batch_size=batch_size,
+                channels_ok=channels_ok,
                 channels_err=channels_err,
             )
             await self._tasks.create_stats_continuation_task(
@@ -247,12 +271,16 @@ class UnifiedDispatcher:
                 parent_task_id=task.id,
             )
             await self._tasks.update_collection_task(
-                task.id, CollectionTaskStatus.COMPLETED, messages_collected=channels_ok,
+                task.id,
+                CollectionTaskStatus.COMPLETED,
+                messages_collected=channels_ok,
             )
             return
 
         await self._tasks.update_collection_task(
-            task.id, CollectionTaskStatus.COMPLETED, messages_collected=channels_ok,
+            task.id,
+            CollectionTaskStatus.COMPLETED,
+            messages_collected=channels_ok,
         )
 
     # ── SQ_STATS ──
@@ -263,7 +291,8 @@ class UnifiedDispatcher:
 
         if not self._sq_bundle:
             await self._tasks.update_collection_task(
-                task.id, CollectionTaskStatus.COMPLETED,
+                task.id,
+                CollectionTaskStatus.COMPLETED,
                 note="No search query bundle configured",
             )
             return
@@ -271,14 +300,17 @@ class UnifiedDispatcher:
         payload = task.payload
         if not isinstance(payload, SqStatsTaskPayload):
             await self._tasks.update_collection_task(
-                task.id, CollectionTaskStatus.FAILED, error="Invalid SQ_STATS payload",
+                task.id,
+                CollectionTaskStatus.FAILED,
+                error="Invalid SQ_STATS payload",
             )
             return
 
         sq = await self._sq_bundle.get_by_id(payload.sq_id)
         if not sq:
             await self._tasks.update_collection_task(
-                task.id, CollectionTaskStatus.COMPLETED,
+                task.id,
+                CollectionTaskStatus.COMPLETED,
                 note=f"Search query id={payload.sq_id} not found",
             )
             return
@@ -293,13 +325,15 @@ class UnifiedDispatcher:
                     break
             await self._sq_bundle.record_stat(payload.sq_id, today_count)
             await self._tasks.update_collection_task(
-                task.id, CollectionTaskStatus.COMPLETED,
+                task.id,
+                CollectionTaskStatus.COMPLETED,
                 messages_collected=today_count,
                 note=f"sq={sq.query}",
             )
         except Exception as exc:
             await self._tasks.update_collection_task(
-                task.id, CollectionTaskStatus.FAILED,
+                task.id,
+                CollectionTaskStatus.FAILED,
                 error=str(exc)[:500],
             )
 
@@ -311,18 +345,23 @@ class UnifiedDispatcher:
 
         if not self._photo_task_service:
             await self._tasks.update_collection_task(
-                task.id, CollectionTaskStatus.COMPLETED, note="No photo service",
+                task.id,
+                CollectionTaskStatus.COMPLETED,
+                note="No photo service",
             )
             return
         try:
             processed = await self._photo_task_service.run_due()
             await self._tasks.update_collection_task(
-                task.id, CollectionTaskStatus.COMPLETED,
+                task.id,
+                CollectionTaskStatus.COMPLETED,
                 messages_collected=processed,
             )
         except Exception as exc:
             await self._tasks.update_collection_task(
-                task.id, CollectionTaskStatus.FAILED, error=str(exc)[:500],
+                task.id,
+                CollectionTaskStatus.FAILED,
+                error=str(exc)[:500],
             )
 
     # ── PHOTO_AUTO ──
@@ -333,16 +372,113 @@ class UnifiedDispatcher:
 
         if not self._photo_auto_upload_service:
             await self._tasks.update_collection_task(
-                task.id, CollectionTaskStatus.COMPLETED, note="No photo auto service",
+                task.id,
+                CollectionTaskStatus.COMPLETED,
+                note="No photo auto service",
             )
             return
         try:
             jobs = await self._photo_auto_upload_service.run_due()
             await self._tasks.update_collection_task(
-                task.id, CollectionTaskStatus.COMPLETED,
+                task.id,
+                CollectionTaskStatus.COMPLETED,
                 messages_collected=jobs,
             )
         except Exception as exc:
             await self._tasks.update_collection_task(
-                task.id, CollectionTaskStatus.FAILED, error=str(exc)[:500],
+                task.id,
+                CollectionTaskStatus.FAILED,
+                error=str(exc)[:500],
+            )
+
+    async def _handle_pipeline_run(self, task: CollectionTask) -> None:
+        """Handle a PIPELINE_RUN generic task by executing the pipeline generation.
+
+        This will create a generation_run record and run the pipeline generation
+        using the configured SearchEngine and provider. The task is marked as
+        completed on success or failed otherwise.
+        """
+        if task.id is None:
+            return
+
+        payload = task.payload
+        if not isinstance(payload, PipelineRunTaskPayload):
+            await self._tasks.update_collection_task(
+                task.id,
+                CollectionTaskStatus.FAILED,
+                error="Invalid PIPELINE_RUN payload",
+            )
+            return
+
+        if not self._pipeline_bundle or not self._search_engine or not self._db:
+            await self._tasks.update_collection_task(
+                task.id,
+                CollectionTaskStatus.FAILED,
+                error="Pipeline execution environment not configured",
+            )
+            return
+
+        pipeline_id = payload.pipeline_id
+        run_id: int | None = None
+        try:
+            # Import lazily to avoid circular imports during module load
+            from src.services.generation_service import GenerationService
+            from src.services.pipeline_service import PipelineService
+            from src.services.provider_service import AgentProviderService
+
+            svc = PipelineService(self._pipeline_bundle)
+            pipeline = await svc.get(pipeline_id)
+            if pipeline is None:
+                await self._tasks.update_collection_task(
+                    task.id,
+                    CollectionTaskStatus.COMPLETED,
+                    note=f"Pipeline id={pipeline_id} not found",
+                )
+                return
+
+            provider_service = AgentProviderService(self._db)
+            provider_callable = provider_service.get_provider_callable(pipeline.llm_model)
+            gen = GenerationService(self._search_engine, provider_callable=provider_callable)
+
+            # create generation run
+            db = self._db
+            run_id = await db.repos.generation_runs.create_run(
+                pipeline.id, pipeline.prompt_template
+            )
+            await db.repos.generation_runs.set_status(run_id, "running")
+            retrieval_query = pipeline.prompt_template or pipeline.name or ""
+            try:
+                result = await gen.generate(
+                    query=retrieval_query,
+                    prompt_template=pipeline.prompt_template,
+                    model=pipeline.llm_model,
+                )
+                await db.repos.generation_runs.save_result(
+                    run_id,
+                    result.get("generated_text", ""),
+                    {"citations": result.get("citations", [])},
+                )
+                await db.repos.generation_runs.set_status(run_id, "completed")
+                await self._tasks.update_collection_task(
+                    task.id,
+                    CollectionTaskStatus.COMPLETED,
+                    messages_collected=1,
+                    note=f"Pipeline run id={run_id}",
+                )
+            except Exception as exc:
+                logger.exception("Pipeline run failed for pipeline_id=%d run_id=%d", pipeline_id, run_id)
+                await db.repos.generation_runs.set_status(run_id, "failed")
+                await self._tasks.update_collection_task(
+                    task.id,
+                    CollectionTaskStatus.FAILED,
+                    error=str(exc)[:500],
+                )
+        except Exception as exc:
+            logger.exception("Pipeline run handler failed for pipeline_id=%d", pipeline_id)
+            if run_id is not None:
+                await self._db.repos.generation_runs.set_status(run_id, "failed")
+            await self._tasks.update_collection_task(
+                task.id,
+                CollectionTaskStatus.FAILED,
+                error=str(exc)[:500],
             )

@@ -15,7 +15,7 @@ from src.models import (
     StatsAllTaskPayload,
 )
 
-_ALLOWED_PAYLOAD_FILTER_KEYS = frozenset({"sq_id"})
+_ALLOWED_PAYLOAD_FILTER_KEYS = frozenset({"sq_id", "pipeline_id"})
 
 
 def _safe_task_type(raw: str) -> CollectionTaskType:
@@ -84,9 +84,7 @@ class CollectionTasksRepository:
             created_at=(datetime.fromisoformat(row["created_at"]) if row["created_at"] else None),
             started_at=(datetime.fromisoformat(row["started_at"]) if row["started_at"] else None),
             completed_at=(
-                datetime.fromisoformat(row["completed_at"])
-                if row["completed_at"]
-                else None
+                datetime.fromisoformat(row["completed_at"]) if row["completed_at"] else None
             ),
         )
 
@@ -100,9 +98,7 @@ class CollectionTasksRepository:
         payload: dict[str, Any] | None = None,
         parent_task_id: int | None = None,
     ) -> int:
-        run_after_iso = (
-            run_after.astimezone(timezone.utc).isoformat() if run_after else None
-        )
+        run_after_iso = run_after.astimezone(timezone.utc).isoformat() if run_after else None
         payload_json = self._serialize_payload(payload)
         cur = await self._db.execute(
             "INSERT INTO collection_tasks "
@@ -136,9 +132,7 @@ class CollectionTasksRepository:
 
         Returns the new task ID, or ``None`` if an active task already exists.
         """
-        run_after_iso = (
-            run_after.astimezone(timezone.utc).isoformat() if run_after else None
-        )
+        run_after_iso = run_after.astimezone(timezone.utc).isoformat() if run_after else None
         payload_json = self._serialize_payload(payload)
         cur = await self._db.execute(
             "INSERT INTO collection_tasks "
@@ -237,9 +231,7 @@ class CollectionTasksRepository:
         await self._db.commit()
 
     async def get_collection_task(self, task_id: int) -> CollectionTask | None:
-        cur = await self._db.execute(
-            "SELECT * FROM collection_tasks WHERE id = ?", (task_id,)
-        )
+        cur = await self._db.execute("SELECT * FROM collection_tasks WHERE id = ?", (task_id,))
         row = await cur.fetchone()
         if row is None:
             return None
@@ -271,9 +263,7 @@ class CollectionTasksRepository:
     async def count_collection_tasks(self, status_filter: str | None = None) -> int:
         """Count tasks matching the given status filter."""
         where, params = self._status_where(status_filter)
-        cur = await self._db.execute(
-            f"SELECT COUNT(*) as cnt FROM collection_tasks{where}", params
-        )
+        cur = await self._db.execute(f"SELECT COUNT(*) as cnt FROM collection_tasks{where}", params)
         row = await cur.fetchone()
         return row["cnt"] if row else 0
 
@@ -526,8 +516,7 @@ class CollectionTasksRepository:
             params.append(note)
         params.append(task_id)
         cur = await self._db.execute(
-            f"UPDATE collection_tasks SET {', '.join(sets)} "
-            "WHERE id = ? AND status IN (?, ?)",
+            f"UPDATE collection_tasks SET {', '.join(sets)} " "WHERE id = ? AND status IN (?, ?)",
             (
                 *params,
                 CollectionTaskStatus.PENDING.value,

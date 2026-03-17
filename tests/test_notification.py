@@ -159,7 +159,9 @@ async def test_delete_bot_success():
     done_msg = MagicMock(text="Bot deleted!")
 
     mock_conv = _make_conv(
-        bot_msg, confirm_msg, done_msg,
+        bot_msg,
+        confirm_msg,
+        done_msg,
         get_edit_value=options_msg,
     )
     mock_client = MagicMock()

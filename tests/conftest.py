@@ -297,6 +297,7 @@ def _enforce_cli_transport(
     )
 
     if not request.node.get_closest_marker("real_materializer"):
+
         def _fake_materialize(self: SessionMaterializer, phone: str, session_string: str) -> str:
             safe_phone = phone.lstrip("+") or "account"
             target = Path(tmp_path) / "materialized_sessions" / safe_phone
@@ -306,6 +307,7 @@ def _enforce_cli_transport(
         monkeypatch.setattr(SessionMaterializer, "materialize", _fake_materialize)
 
     if request.node.get_closest_marker("native_backend_allowed"):
+
         async def _fake_native_transport(self, session_string: str):
             if native_auth_spy.queued_clients:
                 client = native_auth_spy.queued_clients.pop(0)

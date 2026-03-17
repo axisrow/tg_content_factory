@@ -1,4 +1,5 @@
 """Tests for auth routes."""
+
 from __future__ import annotations
 
 import base64
@@ -189,7 +190,7 @@ async def test_send_code_success(client):
     """Test send code success."""
     auth = client._transport.app.state.auth
 
-    with patch.object(auth, 'send_code', new_callable=AsyncMock) as mock_send:
+    with patch.object(auth, "send_code", new_callable=AsyncMock) as mock_send:
         mock_send.return_value = {
             "phone_code_hash": "abc123",
             "code_type": "sms",
@@ -222,7 +223,7 @@ async def test_send_code_error(client):
     """Test send code handles error."""
     auth = client._transport.app.state.auth
 
-    with patch.object(auth, 'send_code', new_callable=AsyncMock) as mock_send:
+    with patch.object(auth, "send_code", new_callable=AsyncMock) as mock_send:
         mock_send.side_effect = Exception("Network error")
 
         resp = await client.post(
@@ -239,7 +240,7 @@ async def test_resend_code_success(client):
     """Test resend code success."""
     auth = client._transport.app.state.auth
 
-    with patch.object(auth, 'resend_code', new_callable=AsyncMock) as mock_resend:
+    with patch.object(auth, "resend_code", new_callable=AsyncMock) as mock_resend:
         mock_resend.return_value = {
             "phone_code_hash": "xyz789",
             "code_type": "call",
@@ -259,7 +260,7 @@ async def test_resend_code_error(client):
     """Test resend code handles error."""
     auth = client._transport.app.state.auth
 
-    with patch.object(auth, 'resend_code', new_callable=AsyncMock) as mock_resend:
+    with patch.object(auth, "resend_code", new_callable=AsyncMock) as mock_resend:
         mock_resend.side_effect = Exception("Flood wait")
 
         resp = await client.post(
@@ -280,16 +281,17 @@ async def test_verify_code_success(client):
     mock_session = MagicMock()
     mock_session.fetch_me = AsyncMock(return_value=SimpleNamespace(premium=False))
 
-    with patch.object(auth, 'verify_code', new_callable=AsyncMock) as mock_verify:
+    with patch.object(auth, "verify_code", new_callable=AsyncMock) as mock_verify:
         mock_verify.return_value = "session_string_123"
 
-        with patch.object(pool, 'add_client', new_callable=AsyncMock):
+        with patch.object(pool, "add_client", new_callable=AsyncMock):
             with patch.object(
-                pool, 'get_client_by_phone',
+                pool,
+                "get_client_by_phone",
                 new_callable=AsyncMock,
                 return_value=(mock_session, "+1234567890"),
             ):
-                with patch.object(pool, 'release_client', new_callable=AsyncMock):
+                with patch.object(pool, "release_client", new_callable=AsyncMock):
                     resp = await client.post(
                         "/auth/verify-code",
                         data={
@@ -312,7 +314,7 @@ async def test_verify_code_2fa_required(client):
     """Test verify code shows 2FA form when needed."""
     auth = client._transport.app.state.auth
 
-    with patch.object(auth, 'verify_code', new_callable=AsyncMock) as mock_verify:
+    with patch.object(auth, "verify_code", new_callable=AsyncMock) as mock_verify:
         mock_verify.side_effect = ValueError("2FA password required")
 
         resp = await client.post(
@@ -338,16 +340,17 @@ async def test_verify_code_with_2fa(client):
     mock_session = MagicMock()
     mock_session.fetch_me = AsyncMock(return_value=SimpleNamespace(premium=True))
 
-    with patch.object(auth, 'verify_code', new_callable=AsyncMock) as mock_verify:
+    with patch.object(auth, "verify_code", new_callable=AsyncMock) as mock_verify:
         mock_verify.return_value = "session_string_123"
 
-        with patch.object(pool, 'add_client', new_callable=AsyncMock):
+        with patch.object(pool, "add_client", new_callable=AsyncMock):
             with patch.object(
-                pool, 'get_client_by_phone',
+                pool,
+                "get_client_by_phone",
                 new_callable=AsyncMock,
                 return_value=(mock_session, "+1234567890"),
             ):
-                with patch.object(pool, 'release_client', new_callable=AsyncMock):
+                with patch.object(pool, "release_client", new_callable=AsyncMock):
                     await client.post(
                         "/auth/verify-code",
                         data={
@@ -369,7 +372,7 @@ async def test_verify_code_invalid_code(client):
     """Test verify code with invalid code."""
     auth = client._transport.app.state.auth
 
-    with patch.object(auth, 'verify_code', new_callable=AsyncMock) as mock_verify:
+    with patch.object(auth, "verify_code", new_callable=AsyncMock) as mock_verify:
         mock_verify.side_effect = ValueError("Invalid code")
 
         resp = await client.post(
@@ -394,7 +397,7 @@ async def test_verify_code_generic_error(client):
     """Test verify code handles generic error."""
     auth = client._transport.app.state.auth
 
-    with patch.object(auth, 'verify_code', new_callable=AsyncMock) as mock_verify:
+    with patch.object(auth, "verify_code", new_callable=AsyncMock) as mock_verify:
         mock_verify.side_effect = Exception("Connection lost")
 
         resp = await client.post(
@@ -418,16 +421,17 @@ async def test_verify_code_sets_primary(client):
     mock_session = MagicMock()
     mock_session.fetch_me = AsyncMock(return_value=SimpleNamespace(premium=False))
 
-    with patch.object(auth, 'verify_code', new_callable=AsyncMock) as mock_verify:
+    with patch.object(auth, "verify_code", new_callable=AsyncMock) as mock_verify:
         mock_verify.return_value = "session_string"
 
-        with patch.object(pool, 'add_client', new_callable=AsyncMock):
+        with patch.object(pool, "add_client", new_callable=AsyncMock):
             with patch.object(
-                pool, 'get_client_by_phone',
+                pool,
+                "get_client_by_phone",
                 new_callable=AsyncMock,
                 return_value=(mock_session, "+1234567890"),
             ):
-                with patch.object(pool, 'release_client', new_callable=AsyncMock):
+                with patch.object(pool, "release_client", new_callable=AsyncMock):
                     await client.post(
                         "/auth/verify-code",
                         data={
@@ -454,16 +458,17 @@ async def test_verify_code_detects_premium(client):
     mock_session = MagicMock()
     mock_session.fetch_me = AsyncMock(return_value=SimpleNamespace(premium=True))
 
-    with patch.object(auth, 'verify_code', new_callable=AsyncMock) as mock_verify:
+    with patch.object(auth, "verify_code", new_callable=AsyncMock) as mock_verify:
         mock_verify.return_value = "session_string"
 
-        with patch.object(pool, 'add_client', new_callable=AsyncMock):
+        with patch.object(pool, "add_client", new_callable=AsyncMock):
             with patch.object(
-                pool, 'get_client_by_phone',
+                pool,
+                "get_client_by_phone",
                 new_callable=AsyncMock,
                 return_value=(mock_session, "+1234567890"),
             ):
-                with patch.object(pool, 'release_client', new_callable=AsyncMock):
+                with patch.object(pool, "release_client", new_callable=AsyncMock):
                     await client.post(
                         "/auth/verify-code",
                         data={
@@ -487,7 +492,7 @@ async def test_verify_code_timeout_parsing(client):
     """Test verify code handles timeout parsing."""
     auth = client._transport.app.state.auth
 
-    with patch.object(auth, 'verify_code', new_callable=AsyncMock) as mock_verify:
+    with patch.object(auth, "verify_code", new_callable=AsyncMock) as mock_verify:
         mock_verify.side_effect = ValueError("Code expired")
 
         resp = await client.post(
@@ -509,7 +514,7 @@ async def test_send_code_returns_code_info(client):
     """Test send code returns all code info."""
     auth = client._transport.app.state.auth
 
-    with patch.object(auth, 'send_code', new_callable=AsyncMock) as mock_send:
+    with patch.object(auth, "send_code", new_callable=AsyncMock) as mock_send:
         mock_send.return_value = {
             "phone_code_hash": "hash123",
             "code_type": "app",
@@ -557,16 +562,17 @@ async def test_verify_code_empty_password(client):
     mock_session = MagicMock()
     mock_session.fetch_me = AsyncMock(return_value=SimpleNamespace(premium=False))
 
-    with patch.object(auth, 'verify_code', new_callable=AsyncMock) as mock_verify:
+    with patch.object(auth, "verify_code", new_callable=AsyncMock) as mock_verify:
         mock_verify.return_value = "session"
 
-        with patch.object(pool, 'add_client', new_callable=AsyncMock):
+        with patch.object(pool, "add_client", new_callable=AsyncMock):
             with patch.object(
-                pool, 'get_client_by_phone',
+                pool,
+                "get_client_by_phone",
                 new_callable=AsyncMock,
                 return_value=(mock_session, "+1234567890"),
             ):
-                with patch.object(pool, 'release_client', new_callable=AsyncMock):
+                with patch.object(pool, "release_client", new_callable=AsyncMock):
                     await client.post(
                         "/auth/verify-code",
                         data={
@@ -592,16 +598,17 @@ async def test_verify_code_get_me_error(client):
     mock_session = MagicMock()
     mock_session.fetch_me = AsyncMock(side_effect=Exception("API error"))
 
-    with patch.object(auth, 'verify_code', new_callable=AsyncMock) as mock_verify:
+    with patch.object(auth, "verify_code", new_callable=AsyncMock) as mock_verify:
         mock_verify.return_value = "session"
 
-        with patch.object(pool, 'add_client', new_callable=AsyncMock):
+        with patch.object(pool, "add_client", new_callable=AsyncMock):
             with patch.object(
-                pool, 'get_client_by_phone',
+                pool,
+                "get_client_by_phone",
                 new_callable=AsyncMock,
                 return_value=(mock_session, "+1234567890"),
             ):
-                with patch.object(pool, 'release_client', new_callable=AsyncMock):
+                with patch.object(pool, "release_client", new_callable=AsyncMock):
                     resp = await client.post(
                         "/auth/verify-code",
                         data={

@@ -148,12 +148,16 @@ async def build_container_with_templates(
         sq_bundle=search_query_bundle,
         photo_task_service=photo_task_service,
         photo_auto_upload_service=photo_auto_upload_service,
+        search_engine=search_engine,
+        pipeline_bundle=pipeline_bundle,
+        db=db,
     )
     scheduler = SchedulerManager(
         config.scheduler,
         scheduler_bundle=scheduler_bundle,
         search_query_bundle=search_query_bundle,
         task_enqueuer=task_enqueuer,
+        pipeline_bundle=pipeline_bundle,
     )
 
     _templates = configure_template_globals(
@@ -204,6 +208,9 @@ async def start_container(container: AppContainer) -> None:
     photo_recovered = await container.photo_task_service.recover_running()
     if photo_recovered:
         logger.warning("Requeued %d interrupted photo tasks on startup", photo_recovered)
+    gr_recovered = await container.db.repos.generation_runs.reset_running_on_startup()
+    if gr_recovered:
+        logger.warning("Reset %d stuck generation_runs to 'failed' on startup", gr_recovered)
 
     if container.auth.is_configured:
         await container.pool.initialize()
@@ -238,14 +245,16 @@ async def stop_container(container: AppContainer) -> None:
         shutdown_coroutines.append(("collection_queue", container.collection_queue.shutdown()))
     if container.agent_manager is not None:
         shutdown_coroutines.append(("agent_manager", container.agent_manager.close_all()))
-    shutdown_coroutines.extend([
-        ("scheduler", container.scheduler.stop()),
-        ("collector", container.collector.cancel()),
-        ("bg_tasks", _cancel_bg_tasks(container.bg_tasks)),
-        ("pool", container.pool.disconnect_all()),
-        ("auth", container.auth.cleanup()),
-        ("db", container.db.close()),
-    ])
+    shutdown_coroutines.extend(
+        [
+            ("scheduler", container.scheduler.stop()),
+            ("collector", container.collector.cancel()),
+            ("bg_tasks", _cancel_bg_tasks(container.bg_tasks)),
+            ("pool", container.pool.disconnect_all()),
+            ("auth", container.auth.cleanup()),
+            ("db", container.db.close()),
+        ]
+    )
     for name, coro in shutdown_coroutines:
         try:
             await asyncio.wait_for(coro, timeout=5.0)

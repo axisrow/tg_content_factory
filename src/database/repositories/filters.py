@@ -22,9 +22,7 @@ class FilterRepository:
 
     async def _ensure_udf(self) -> None:
         if not self._udf_registered:
-            await self._db.create_function(
-                "has_cyrillic", 1, _has_cyrillic_udf, deterministic=True
-            )
+            await self._db.create_function("has_cyrillic", 1, _has_cyrillic_udf, deterministic=True)
             self._udf_registered = True
 
     async def fetch_channels_for_analysis(
@@ -72,9 +70,7 @@ class FilterRepository:
         rows = await cur.fetchall()
         return {row["channel_id"]: (row["total"], row["uniq"]) for row in rows}
 
-    async def fetch_subscriber_map(
-        self, channel_id: int | None = None
-    ) -> dict[int, int]:
+    async def fetch_subscriber_map(self, channel_id: int | None = None) -> dict[int, int]:
         sql = """
             SELECT channel_id, subscriber_count
             FROM (
@@ -169,9 +165,7 @@ class FilterRepository:
         rows = await cur.fetchall()
         return {row["channel_id"]: (row["uniq_total"], row["duped"] or 0) for row in rows}
 
-    async def fetch_cyrillic_map(
-        self, channel_id: int | None = None
-    ) -> dict[int, tuple[int, int]]:
+    async def fetch_cyrillic_map(self, channel_id: int | None = None) -> dict[int, tuple[int, int]]:
         await self._ensure_udf()
         sql = """
             SELECT

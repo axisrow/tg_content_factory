@@ -171,9 +171,7 @@ def stop_server(
             f"Removed stale PID file: {path}.",
         )
     except PermissionError as exc:
-        raise ProcessControlError(
-            f"Permission denied sending signal to PID {pid}"
-        ) from exc
+        raise ProcessControlError(f"Permission denied sending signal to PID {pid}") from exc
 
     deadline = time.monotonic() + timeout_sec
     while time.monotonic() < deadline:
@@ -194,9 +192,7 @@ def stop_server(
             f"Server stopped (PID {pid}).",
         )
     except PermissionError as exc:
-        raise ProcessControlError(
-            f"Permission denied sending signal to PID {pid}"
-        ) from exc
+        raise ProcessControlError(f"Permission denied sending signal to PID {pid}") from exc
 
     if not is_process_alive(pid):
         remove_pid_file(path)

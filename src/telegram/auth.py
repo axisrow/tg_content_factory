@@ -130,10 +130,12 @@ class TelegramAuth:
         if phone not in self._pending:
             raise ValueError(f"No pending auth for {phone}. Send code first.")
         client, phone_code_hash = self._pending[phone]
-        result = await client(ResendCodeRequest(
-            phone_number=phone,
-            phone_code_hash=phone_code_hash,
-        ))
+        result = await client(
+            ResendCodeRequest(
+                phone_number=phone,
+                phone_code_hash=phone_code_hash,
+            )
+        )
         new_hash = result.phone_code_hash
         self._pending[phone] = (client, new_hash)
         logger.info(

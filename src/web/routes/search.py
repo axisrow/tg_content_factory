@@ -127,6 +127,7 @@ async def _render_search_page(
         },
     )
 
+
 @router.get("/search", response_class=HTMLResponse)
 async def search_page(
     request: Request,
