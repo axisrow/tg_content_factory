@@ -208,12 +208,16 @@ class SchedulerManager:
         all_active = await self._pipeline_bundle.get_all(active_only=True)
         active_pipelines = [p for p in all_active if p.is_active]
         active_ids = {f"pipeline_run_{p.id}" for p in active_pipelines if p.id is not None}
+        active_gen_ids = {f"content_generate_{p.id}" for p in active_pipelines if p.id is not None}
 
         existing_jobs = self._scheduler.get_jobs()
         for job in existing_jobs:
             if job.id.startswith("pipeline_run_") and job.id not in active_ids:
                 self._scheduler.remove_job(job.id)
                 logger.info("Removed pipeline job %s", job.id)
+            if job.id.startswith("content_generate_") and job.id not in active_gen_ids:
+                self._scheduler.remove_job(job.id)
+                logger.info("Removed content_generate job %s", job.id)
 
         for p in active_pipelines:
             if p.id is None:
@@ -223,6 +227,15 @@ class SchedulerManager:
                 self._run_pipeline_job,
                 IntervalTrigger(minutes=p.generate_interval_minutes),
                 id=job_id,
+                replace_existing=True,
+                args=[p.id],
+            )
+            # Also add content_generate job
+            gen_job_id = f"content_generate_{p.id}"
+            self._scheduler.add_job(
+                self._run_content_generate_job,
+                IntervalTrigger(minutes=p.generate_interval_minutes),
+                id=gen_job_id,
                 replace_existing=True,
                 args=[p.id],
             )
@@ -236,6 +249,15 @@ class SchedulerManager:
             await self._task_enqueuer.enqueue_pipeline_run(pipeline_id)
         except Exception:
             logger.exception("Error enqueuing pipeline run for pipeline_id=%d", pipeline_id)
+
+    async def _run_content_generate_job(self, pipeline_id: int) -> None:
+        """Enqueue a CONTENT_GENERATE task for the given pipeline id."""
+        if not self._task_enqueuer:
+            return
+        try:
+            await self._task_enqueuer.enqueue_content_generate(pipeline_id)
+        except Exception:
+            logger.exception("Error enqueuing CONTENT_GENERATE for pipeline_id=%d", pipeline_id)
 
     async def _run_search_query(self, sq_id: int) -> None:
         """Enqueue SQ_STATS task for a search query."""

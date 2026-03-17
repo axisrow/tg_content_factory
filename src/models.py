@@ -76,6 +76,18 @@ class CollectionTaskType(StrEnum):
     PHOTO_DUE = "photo_due"
     PHOTO_AUTO = "photo_auto"
     PIPELINE_RUN = "pipeline_run"
+    CONTENT_GENERATE = "content_generate"
+    CONTENT_PUBLISH = "content_publish"
+
+
+class ContentGenerateTaskPayload(BaseModel):
+    task_kind: str = "content_generate"
+    pipeline_id: int
+
+
+class ContentPublishTaskPayload(BaseModel):
+    task_kind: str = "content_publish"
+    pipeline_id: int | None = None
 
 
 class StatsAllTaskPayload(BaseModel):

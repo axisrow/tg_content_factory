@@ -11,6 +11,8 @@ from src.models import (
     CollectionTask,
     CollectionTaskStatus,
     CollectionTaskType,
+    ContentGenerateTaskPayload,
+    ContentPublishTaskPayload,
     PipelineRunTaskPayload,
     SqStatsTaskPayload,
     StatsAllTaskPayload,
@@ -31,6 +33,8 @@ HANDLED_TYPES = [
     CollectionTaskType.PHOTO_DUE.value,
     CollectionTaskType.PHOTO_AUTO.value,
     CollectionTaskType.PIPELINE_RUN.value,
+    CollectionTaskType.CONTENT_GENERATE.value,
+    CollectionTaskType.CONTENT_PUBLISH.value,
 ]
 
 
@@ -126,6 +130,8 @@ class UnifiedDispatcher:
             CollectionTaskType.PHOTO_DUE: self._handle_photo_due,
             CollectionTaskType.PHOTO_AUTO: self._handle_photo_auto,
             CollectionTaskType.PIPELINE_RUN: self._handle_pipeline_run,
+            CollectionTaskType.CONTENT_GENERATE: self._handle_content_generate,
+            CollectionTaskType.CONTENT_PUBLISH: self._handle_content_publish,
         }.get(task.task_type)
         if handler is None:
             await self._tasks.update_collection_task(
