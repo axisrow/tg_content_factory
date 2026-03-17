@@ -24,6 +24,7 @@ from src.database.repositories.photo_loader import PhotoLoaderRepository
 from src.database.repositories.search_log import SearchLogRepository
 from src.database.repositories.search_queries import SearchQueriesRepository
 from src.database.repositories.settings import SettingsRepository
+from src.database.repositories.generation_runs import GenerationRunsRepository
 from src.database.schema import SCHEMA_SQL
 from src.models import (
     Account,
@@ -577,6 +578,10 @@ class Database:
     async def get_pending_channel_tasks(self) -> list[CollectionTask]:
         self._require()
         return await self._tasks.get_pending_channel_tasks()
+
+    async def delete_pending_channel_tasks(self) -> int:
+        self._require()
+        return await self._tasks.delete_pending_channel_tasks()
 
     async def fail_running_collection_tasks_on_startup(self) -> int:
         self._require()

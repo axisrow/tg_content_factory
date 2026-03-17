@@ -48,6 +48,27 @@ class CollectionQueue:
             await self._collector.cancel()
         return await self._channels.cancel_collection_task(task_id, note=note)
 
+    async def clear_pending_tasks(self) -> int:
+        # Delete from DB first, then drain in-memory queue.
+        # Items removed from DB but still in the asyncio.Queue are safe:
+        # _run_worker re-fetches the task from DB and skips if it's gone (task is None check).
+        deleted = await self._channels.delete_pending_channel_tasks()
+        removed_from_memory = 0
+        while True:
+            try:
+                self._queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+            else:
+                self._queue.task_done()
+                removed_from_memory += 1
+        logger.info(
+            "Cleared %d pending collection tasks from DB and %d queued items from memory",
+            deleted,
+            removed_from_memory,
+        )
+        return deleted
+
     def _ensure_worker(self) -> None:
         if self._worker is None or self._worker.done():
             self._worker = asyncio.create_task(self._run_worker())
@@ -67,6 +88,10 @@ class CollectionQueue:
 
             # Check if task was cancelled while waiting in queue
             task = await self._channels.get_collection_task(task_id)
+            if task is None:
+                logger.info("Task %d skipped: task was deleted before collection", task_id)
+                self._queue.task_done()
+                continue
             if task and task.status == CollectionTaskStatus.CANCELLED:
                 self._queue.task_done()
                 continue
