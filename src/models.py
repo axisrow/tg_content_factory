@@ -130,6 +130,7 @@ class PipelinePublishMode(StrEnum):
 class PipelineGenerationBackend(StrEnum):
     CHAIN = "chain"
     AGENT = "agent"
+    DEEP_AGENTS = "deep_agents"
 
 
 class ContentPipeline(BaseModel):
@@ -231,6 +232,9 @@ class GenerationRun(BaseModel):
     prompt: str | None = None
     generated_text: str | None = None
     metadata: dict | None = None
+    image_url: str | None = None
+    moderation_status: str = "pending"
+    published_at: datetime | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
 

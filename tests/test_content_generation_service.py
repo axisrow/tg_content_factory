@@ -18,41 +18,48 @@ async def fake_provider(**kwargs):
     return "GENERATED: " + (kwargs.get("prompt") or "")[:40]
 
 
-class FakeDB:
-    def __init__(self):
-        self.repos = FakeRepos()
-
-
-class FakeRepos:
+class FakeGenerationRunsRepo:
     def __init__(self):
         self._runs = {}
         self._next_id = 1
 
     async def create_run(self, pipeline_id, prompt):
+        from src.models import GenerationRun
         run_id = self._next_id
         self._next_id += 1
-        self._runs[run_id] = {
-            "id": run_id,
-            "pipeline_id": pipeline_id,
-            "prompt": prompt,
-            "status": "pending",
-            "generated_text": None,
-            "metadata": None,
-            "moderation_status": "pending",
-        }
+        run = GenerationRun(
+            id=run_id,
+            pipeline_id=pipeline_id,
+            prompt=prompt,
+            status="pending",
+            generated_text=None,
+            metadata=None,
+            moderation_status="pending",
+        )
+        self._runs[run_id] = run
         return run_id
 
     async def set_status(self, run_id, status):
         if run_id in self._runs:
-            self._runs[run_id]["status"] = status
+            self._runs[run_id].status = status
 
     async def save_result(self, run_id, generated_text, metadata=None):
         if run_id in self._runs:
-            self._runs[run_id]["generated_text"] = generated_text
-            self._runs[run_id]["metadata"] = metadata
+            self._runs[run_id].generated_text = generated_text
+            self._runs[run_id].metadata = metadata
 
     async def get(self, run_id):
         return self._runs.get(run_id)
+
+
+class FakeRepos:
+    def __init__(self):
+        self.generation_runs = FakeGenerationRunsRepo()
+
+
+class FakeDB:
+    def __init__(self):
+        self.repos = FakeRepos()
 
 
 async def test_content_generation_service_rag():
