@@ -57,6 +57,17 @@ class GenerationRunsRepository:
         )
         await self._db.commit()
 
+    async def set_quality_score(
+        self, run_id: int, score: float, issues: list[str] | None = None
+    ) -> None:
+        issues_json = json.dumps(issues, ensure_ascii=False) if issues else None
+        await self._db.execute(
+            ("UPDATE generation_runs SET quality_score = ?, quality_issues = ?, "
+             "updated_at = datetime('now') WHERE id = ?"),
+            (score, issues_json, run_id),
+        )
+        await self._db.commit()
+
     async def list_pending_moderation(self, pipeline_id: int | None = None, limit: int = 50, offset: int = 0) -> list[GenerationRun]:
         if pipeline_id is None:
             cur = await self._db.execute(
