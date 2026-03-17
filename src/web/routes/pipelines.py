@@ -187,7 +187,7 @@ async def toggle_pipeline(request: Request, pipeline_id: int):
         scheduler = deps.get_scheduler(request)
         await scheduler.sync_pipeline_jobs()
     except Exception:
-        pass
+        logger.warning("Scheduler sync failed", exc_info=True)
     return _pipeline_redirect("pipeline_toggled")
 
 
@@ -198,7 +198,7 @@ async def delete_pipeline(request: Request, pipeline_id: int):
         scheduler = deps.get_scheduler(request)
         await scheduler.sync_pipeline_jobs()
     except Exception:
-        pass
+        logger.warning("Scheduler sync failed", exc_info=True)
     return _pipeline_redirect("pipeline_deleted")
 
 

@@ -208,6 +208,9 @@ async def start_container(container: AppContainer) -> None:
     photo_recovered = await container.photo_task_service.recover_running()
     if photo_recovered:
         logger.warning("Requeued %d interrupted photo tasks on startup", photo_recovered)
+    gr_recovered = await container.db.repos.generation_runs.reset_running_on_startup()
+    if gr_recovered:
+        logger.warning("Reset %d stuck generation_runs to 'failed' on startup", gr_recovered)
 
     if container.auth.is_configured:
         await container.pool.initialize()
