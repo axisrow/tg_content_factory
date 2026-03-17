@@ -21,9 +21,7 @@ from src.cli.commands import analytics as analytics_cmd
 from src.cli.commands import filter as filter_cmd
 from src.cli.commands import my_telegram as my_telegram_cmd
 from src.cli.commands import pipeline as pipeline_cmd
-from src.cli.commands import (
-    test as test_cmd,
-)
+from src.cli.commands import test as test_cmd
 from src.cli.parser import build_parser
 from src.cli.runtime import setup_logging
 

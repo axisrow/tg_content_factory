@@ -54,7 +54,8 @@ class FilterDeletionService:
 
     async def purge_all_filtered(self) -> PurgeResult:
         channels = await self._db.get_channels_with_counts(
-            active_only=False, include_filtered=True,
+            active_only=False,
+            include_filtered=True,
         )
         pks = [ch.id for ch in channels if ch.is_filtered and ch.id is not None]
         if not pks:

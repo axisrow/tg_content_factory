@@ -127,9 +127,11 @@ class PipelineService:
             "source_ids": [source.channel_id for source in sources],
             "target_refs": [f"{target.phone}|{target.dialog_id}" for target in targets],
             "source_titles": [
-                (ch.title or str(source.channel_id))
-                if (ch := channels_by_id.get(source.channel_id))
-                else str(source.channel_id)
+                (
+                    channels_by_id.get(source.channel_id).title or str(source.channel_id)
+                    if channels_by_id.get(source.channel_id)
+                    else str(source.channel_id)
+                )
                 for source in sources
             ],
         }
@@ -139,10 +141,7 @@ class PipelineService:
         channels = await self._bundle.list_channels(include_filtered=True)
         channels_by_id = {channel.channel_id: channel for channel in channels}
         relation_rows = await asyncio.gather(
-            *[
-                self._get_relation_row(pipeline, channels_by_id)
-                for pipeline in pipelines
-            ]
+            *[self._get_relation_row(pipeline, channels_by_id) for pipeline in pipelines]
         )
         return relation_rows
 
@@ -154,10 +153,7 @@ class PipelineService:
         dialogs = await asyncio.gather(
             *[self._bundle.list_cached_dialogs(account.phone) for account in accounts]
         )
-        return {
-            account.phone: rows
-            for account, rows in zip(accounts, dialogs, strict=False)
-        }
+        return {account.phone: rows for account, rows in zip(accounts, dialogs, strict=False)}
 
     async def _get_relation_row(
         self,
@@ -176,9 +172,11 @@ class PipelineService:
             "source_ids": [source.channel_id for source in sources],
             "target_refs": [f"{target.phone}|{target.dialog_id}" for target in targets],
             "source_titles": [
-                (ch.title or str(source.channel_id))
-                if (ch := channels_by_id.get(source.channel_id))
-                else str(source.channel_id)
+                (
+                    channels_by_id.get(source.channel_id).title or str(source.channel_id)
+                    if channels_by_id.get(source.channel_id)
+                    else str(source.channel_id)
+                )
                 for source in sources
             ],
         }

@@ -124,4 +124,3 @@ class AccountLeasePool:
         now = now or datetime.now(timezone.utc)
         flood_until = normalize_utc(account.flood_wait_until)
         return flood_until is not None and flood_until > now
-

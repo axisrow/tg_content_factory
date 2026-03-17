@@ -79,7 +79,9 @@ class TelegramSearch:
     async def search_telegram(self, query: str, limit: int = 50) -> SearchResult:
         if not self._pool:
             return SearchResult(
-                messages=[], total=0, query=query,
+                messages=[],
+                total=0,
+                query=query,
                 error="Нет подключённых Telegram-аккаунтов.",
             )
 
@@ -119,7 +121,10 @@ class TelegramSearch:
             await self._pool.release_client(phone)
 
     async def _search_posts_global(
-        self, session, query: str, limit: int,
+        self,
+        session,
+        query: str,
+        limit: int,
     ) -> tuple[list[Message], dict[int, Channel]]:
         from telethon.tl.types import InputPeerEmpty, PeerChannel
         from telethon.utils import get_input_peer
@@ -164,7 +169,9 @@ class TelegramSearch:
                     )
 
                 sender_id, sender_name = TelegramMessageTransformer.resolve_sender(
-                    msg, chats_map, users_map,
+                    msg,
+                    chats_map,
+                    users_map,
                 )
 
                 messages.append(
@@ -175,9 +182,11 @@ class TelegramSearch:
                         sender_name=sender_name,
                         text=getattr(msg, "message", None),
                         media_type=TelegramMessageTransformer.media_type_from_message(msg),
-                        date=msg.date.replace(tzinfo=timezone.utc)
-                        if msg.date and msg.date.tzinfo is None
-                        else msg.date,
+                        date=(
+                            msg.date.replace(tzinfo=timezone.utc)
+                            if msg.date and msg.date.tzinfo is None
+                            else msg.date
+                        ),
                         channel_title=chat_title,
                         channel_username=chat_username,
                     )
@@ -204,7 +213,9 @@ class TelegramSearch:
     async def search_my_chats(self, query: str, limit: int = 50) -> SearchResult:
         if not self._pool:
             return SearchResult(
-                messages=[], total=0, query=query,
+                messages=[],
+                total=0,
+                query=query,
                 error="Нет подключённых Telegram-аккаунтов.",
             )
 
@@ -258,11 +269,16 @@ class TelegramSearch:
             await self._pool.release_client(phone)
 
     async def search_in_channel(
-        self, channel_id: int | None, query: str, limit: int = 50,
+        self,
+        channel_id: int | None,
+        query: str,
+        limit: int = 50,
     ) -> SearchResult:
         if not self._pool:
             return SearchResult(
-                messages=[], total=0, query=query,
+                messages=[],
+                total=0,
+                query=query,
                 error="Нет подключённых Telegram-аккаунтов.",
             )
 
@@ -292,8 +308,9 @@ class TelegramSearch:
                         "PeerChannel(%s) not in cache, trying username fallback",
                         channel_id,
                     )
-                    ch_record = await self._persistence._search.channels \
-                        .get_channel_by_channel_id(channel_id)
+                    ch_record = await self._persistence._search.channels.get_channel_by_channel_id(
+                        channel_id
+                    )
                     username = ch_record.username if ch_record else None
                     if username:
                         try:
@@ -304,15 +321,21 @@ class TelegramSearch:
                         except Exception as exc2:
                             logger.warning(
                                 "Cannot resolve channel %s (@%s): %s",
-                                channel_id, username, exc2,
+                                channel_id,
+                                username,
+                                exc2,
                             )
                             return SearchResult(
-                                messages=[], total=0, query=query,
+                                messages=[],
+                                total=0,
+                                query=query,
                                 error=f"Не удалось найти канал {channel_id}: {exc2}",
                             )
                     else:
                         return SearchResult(
-                            messages=[], total=0, query=query,
+                            messages=[],
+                            total=0,
+                            query=query,
                             error=(
                                 f"Не удалось найти канал {channel_id}"
                                 " (нет username для fallback)"

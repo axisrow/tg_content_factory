@@ -1,4 +1,5 @@
 """Extra CLI tests for commands with low coverage."""
+
 from __future__ import annotations
 
 import argparse
@@ -43,6 +44,7 @@ def cli_env_with_pool(cli_env):
 
     async def fake_init_pool(config, db):
         from src.telegram.auth import TelegramAuth
+
         return TelegramAuth(0, ""), fake_pool
 
     with patch("src.cli.runtime.init_pool", side_effect=fake_init_pool):
@@ -192,8 +194,14 @@ class TestMyTelegramCommand:
         ):
             from src.cli.commands.my_telegram import run
 
-            run(_ns(my_telegram_action="leave", phone="+10001112233",
-                    dialog_ids=["notanid"], yes=True))
+            run(
+                _ns(
+                    my_telegram_action="leave",
+                    phone="+10001112233",
+                    dialog_ids=["notanid"],
+                    yes=True,
+                )
+            )
 
         out = capsys.readouterr().out
         assert "Invalid dialog ID" in out
@@ -208,8 +216,10 @@ class TestMyTelegramCommand:
 
         dialogs_info = [
             {
-                "channel_id": -100123456, "channel_type": "channel",
-                "title": "Chan", "username": None,
+                "channel_id": -100123456,
+                "channel_type": "channel",
+                "title": "Chan",
+                "username": None,
             },
         ]
 
@@ -226,8 +236,14 @@ class TestMyTelegramCommand:
         ):
             from src.cli.commands.my_telegram import run
 
-            run(_ns(my_telegram_action="leave", phone="+10001112233",
-                    dialog_ids=["-100123456"], yes=True))
+            run(
+                _ns(
+                    my_telegram_action="leave",
+                    phone="+10001112233",
+                    dialog_ids=["-100123456"],
+                    yes=True,
+                )
+            )
 
         out = capsys.readouterr().out
         assert "left" in out
@@ -241,9 +257,7 @@ class TestMyTelegramCommand:
         from src.services.channel_service import ChannelService
 
         with (
-            patch.object(
-                ChannelService, "get_my_dialogs", new_callable=AsyncMock, return_value=[]
-            ),
+            patch.object(ChannelService, "get_my_dialogs", new_callable=AsyncMock, return_value=[]),
             patch.object(
                 ChannelService,
                 "leave_dialogs",
@@ -253,8 +267,14 @@ class TestMyTelegramCommand:
         ):
             from src.cli.commands.my_telegram import run
 
-            run(_ns(my_telegram_action="leave", phone="+10001112233",
-                    dialog_ids=["-100111,-100222"], yes=True))
+            run(
+                _ns(
+                    my_telegram_action="leave",
+                    phone="+10001112233",
+                    dialog_ids=["-100111,-100222"],
+                    yes=True,
+                )
+            )
 
         called_dialogs = mock_leave.call_args[0][1]
         assert (-100111, "channel") in called_dialogs
@@ -269,8 +289,10 @@ class TestMyTelegramCommand:
 
         dialogs_info = [
             {
-                "channel_id": -100123456, "channel_type": "channel",
-                "title": "Chan", "username": None,
+                "channel_id": -100123456,
+                "channel_type": "channel",
+                "title": "Chan",
+                "username": None,
             },
         ]
 
@@ -282,8 +304,14 @@ class TestMyTelegramCommand:
         ):
             from src.cli.commands.my_telegram import run
 
-            run(_ns(my_telegram_action="leave", phone="+10001112233",
-                    dialog_ids=["-100123456"], yes=False))
+            run(
+                _ns(
+                    my_telegram_action="leave",
+                    phone="+10001112233",
+                    dialog_ids=["-100123456"],
+                    yes=False,
+                )
+            )
 
         out = capsys.readouterr().out
         assert "Aborted" in out
@@ -297,8 +325,10 @@ class TestMyTelegramCommand:
 
         dialogs_info = [
             {
-                "channel_id": -100123456, "channel_type": "channel",
-                "title": "Chan", "username": None,
+                "channel_id": -100123456,
+                "channel_type": "channel",
+                "title": "Chan",
+                "username": None,
             },
         ]
 
@@ -316,8 +346,14 @@ class TestMyTelegramCommand:
         ):
             from src.cli.commands.my_telegram import run
 
-            run(_ns(my_telegram_action="leave", phone="+10001112233",
-                    dialog_ids=["-100123456"], yes=False))
+            run(
+                _ns(
+                    my_telegram_action="leave",
+                    phone="+10001112233",
+                    dialog_ids=["-100123456"],
+                    yes=False,
+                )
+            )
 
         out = capsys.readouterr().out
         assert "Done:" in out
@@ -333,9 +369,7 @@ class TestMyTelegramCommand:
         from src.services.channel_service import ChannelService
 
         with (
-            patch.object(
-                ChannelService, "get_my_dialogs", new_callable=AsyncMock, return_value=[]
-            ),
+            patch.object(ChannelService, "get_my_dialogs", new_callable=AsyncMock, return_value=[]),
             patch.object(
                 ChannelService,
                 "leave_dialogs",
@@ -360,9 +394,7 @@ class TestMyTelegramCommand:
         from src.services.channel_service import ChannelService
 
         with (
-            patch.object(
-                ChannelService, "get_my_dialogs", new_callable=AsyncMock, return_value=[]
-            ),
+            patch.object(ChannelService, "get_my_dialogs", new_callable=AsyncMock, return_value=[]),
             patch.object(
                 ChannelService,
                 "leave_dialogs",
@@ -372,8 +404,14 @@ class TestMyTelegramCommand:
         ):
             from src.cli.commands.my_telegram import run
 
-            run(_ns(my_telegram_action="leave", phone="+10001112233",
-                    dialog_ids=["123456"], yes=True))
+            run(
+                _ns(
+                    my_telegram_action="leave",
+                    phone="+10001112233",
+                    dialog_ids=["123456"],
+                    yes=True,
+                )
+            )
 
         called_dialogs = mock_leave.call_args[0][1]
         assert (123456, "dm") in called_dialogs
@@ -531,9 +569,7 @@ class TestNotificationCommand:
 
         from src.services.notification_service import NotificationService
 
-        with patch.object(
-            NotificationService, "teardown_bot", new_callable=AsyncMock
-        ):
+        with patch.object(NotificationService, "teardown_bot", new_callable=AsyncMock):
             from src.cli.commands.notification import run
 
             run(_ns(notification_action="delete"))
@@ -583,7 +619,6 @@ class TestSchedulerCommand:
         assert "enqueued" in out.lower()
 
 
-
 # ---------------------------------------------------------------------------
 # serve command
 # ---------------------------------------------------------------------------
@@ -608,15 +643,14 @@ class TestServeCommand:
         """Test serve uses web_pass from command line."""
         from src.cli.commands.serve import run
 
-        with patch("src.cli.commands.serve.load_config") as mock_load, patch(
-            "src.cli.commands.serve.create_app"
-        ) as mock_create, patch(
-            "src.cli.commands.serve.pid_file_path"
-        ) as mock_pid_path, patch(
-            "src.cli.commands.serve.register_current_process"
-        ), patch("src.cli.commands.serve.unregister_current_process"), patch(
-            "src.cli.commands.serve.uvicorn.run"
-        ) as mock_uvicorn:
+        with (
+            patch("src.cli.commands.serve.load_config") as mock_load,
+            patch("src.cli.commands.serve.create_app") as mock_create,
+            patch("src.cli.commands.serve.pid_file_path") as mock_pid_path,
+            patch("src.cli.commands.serve.register_current_process"),
+            patch("src.cli.commands.serve.unregister_current_process"),
+            patch("src.cli.commands.serve.uvicorn.run") as mock_uvicorn,
+        ):
 
             config = AppConfig()
             config.web.password = ""  # Empty by default
@@ -634,15 +668,14 @@ class TestServeCommand:
         """Test serve registers and unregisters PID file."""
         from src.cli.commands.serve import run
 
-        with patch("src.cli.commands.serve.load_config") as mock_load, patch(
-            "src.cli.commands.serve.create_app"
-        ) as mock_create, patch(
-            "src.cli.commands.serve.pid_file_path"
-        ) as mock_pid_path, patch(
-            "src.cli.commands.serve.register_current_process"
-        ) as mock_register, patch(
-            "src.cli.commands.serve.unregister_current_process"
-        ) as mock_unregister, patch("src.cli.commands.serve.uvicorn.run"):
+        with (
+            patch("src.cli.commands.serve.load_config") as mock_load,
+            patch("src.cli.commands.serve.create_app") as mock_create,
+            patch("src.cli.commands.serve.pid_file_path") as mock_pid_path,
+            patch("src.cli.commands.serve.register_current_process") as mock_register,
+            patch("src.cli.commands.serve.unregister_current_process") as mock_unregister,
+            patch("src.cli.commands.serve.uvicorn.run"),
+        ):
 
             config = AppConfig()
             config.web.password = "testpass"
@@ -659,11 +692,12 @@ class TestServeCommand:
         """Test serve exits when PID registration fails."""
         from src.cli.commands.serve import run
 
-        with patch("src.cli.commands.serve.load_config") as mock_load, patch(
-            "src.cli.commands.serve.create_app"
-        ), patch("src.cli.commands.serve.pid_file_path") as mock_pid_path, patch(
-            "src.cli.commands.serve.register_current_process"
-        ) as mock_register:
+        with (
+            patch("src.cli.commands.serve.load_config") as mock_load,
+            patch("src.cli.commands.serve.create_app"),
+            patch("src.cli.commands.serve.pid_file_path") as mock_pid_path,
+            patch("src.cli.commands.serve.register_current_process") as mock_register,
+        ):
 
             config = AppConfig()
             config.web.password = "testpass"

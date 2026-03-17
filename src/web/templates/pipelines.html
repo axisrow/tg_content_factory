@@ -130,11 +130,22 @@
                 </td>
                 <td>{{ pipeline.generation_backend.value }}</td>
                 <td>{{ pipeline.publish_mode.value }}</td>
-                <td>{{ pipeline.generate_interval_minutes }} мин</td>
+                <td>
+                    {{ pipeline.generate_interval_minutes }} мин
+                    {% set nr = next_runs.get(pipeline.id) %}
+                    {% if nr %}
+                    <div class="small text-muted">Next: {{ nr }}</div>
+                    {% else %}
+                    <div class="small text-muted">Не запланировано</div>
+                    {% endif %}
+                </td>
                 <td class="text-nowrap">
                     <button type="button" class="btn btn-outline-secondary btn-sm" onclick="togglePipelineEdit({{ pipeline.id }})">Редактировать</button>
                     <a class="btn btn-outline-primary btn-sm" href="/pipelines/{{ pipeline.id }}/generate">Generate</a>
-                    <form method="post" action="/pipelines/{{ pipeline.id }}/toggle{% if selected_phone %}?phone={{ selected_phone|urlencode }}{% endif %}" class="d-inline" data-busy>
+                    <form method="post" action="/pipelines/{{ pipeline.id }}/run" class="d-inline" data-busy>
+                        <button type="submit" class="btn btn-outline-success btn-sm">Run now</button>
+                    </form>
+                    <form method="post" action="/pipelines/{{ pipeline.id }}/toggle" class="d-inline" data-busy>
                         <button type="submit" class="btn btn-outline-secondary btn-sm">{{ "Выключить" if pipeline.is_active else "Включить" }}</button>
                     </form>
                     <form method="post" action="/pipelines/{{ pipeline.id }}/delete{% if selected_phone %}?phone={{ selected_phone|urlencode }}{% endif %}" class="d-inline" data-busy onsubmit="return confirm('Удалить pipeline?')">

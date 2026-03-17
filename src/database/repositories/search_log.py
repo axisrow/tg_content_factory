@@ -15,9 +15,7 @@ class SearchLogRepository:
         await self._db.commit()
 
     async def get_recent_searches(self, limit: int = 20) -> list[dict]:
-        cur = await self._db.execute(
-            "SELECT * FROM search_log ORDER BY id DESC LIMIT ?", (limit,)
-        )
+        cur = await self._db.execute("SELECT * FROM search_log ORDER BY id DESC LIMIT ?", (limit,))
         rows = await cur.fetchall()
         return [
             {

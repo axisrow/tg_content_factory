@@ -26,18 +26,19 @@ def run(args: argparse.Namespace) -> None:
                 print("-" * 90)
                 for item in items:
                     sq = item["query"]
-                    print(fmt.format(
-                        sq.id or 0,
-                        sq.query[:40],
-                        f"{sq.interval_minutes}m",
-                        item["total_30d"],
-                        (item["last_run"] or "—")[:20],
-                    ))
+                    print(
+                        fmt.format(
+                            sq.id or 0,
+                            sq.query[:40],
+                            f"{sq.interval_minutes}m",
+                            item["total_30d"],
+                            (item["last_run"] or "—")[:20],
+                        )
+                    )
 
             elif args.search_query_action == "add":
                 exclude = (
-                    args.exclude_patterns.replace("\\n", "\n")
-                    if args.exclude_patterns else ""
+                    args.exclude_patterns.replace("\\n", "\n") if args.exclude_patterns else ""
                 )
                 try:
                     sq_id = await svc.add(
@@ -60,14 +61,8 @@ def run(args: argparse.Namespace) -> None:
                 if not sq:
                     print(f"Search query id={args.id} not found")
                     return
-                notify = (
-                    args.notify if args.notify is not None
-                    else sq.notify_on_collect
-                )
-                tstats = (
-                    args.track_stats if args.track_stats is not None
-                    else sq.track_stats
-                )
+                notify = args.notify if args.notify is not None else sq.notify_on_collect
+                tstats = args.track_stats if args.track_stats is not None else sq.track_stats
                 is_fts = args.fts if args.fts is not None else sq.is_fts
                 exclude = (
                     args.exclude_patterns.replace("\\n", "\n")
@@ -75,9 +70,9 @@ def run(args: argparse.Namespace) -> None:
                     else sq.exclude_patterns
                 )
                 max_len = (
-                    None if args.max_length == -1
-                    else args.max_length if args.max_length is not None
-                    else sq.max_length
+                    None
+                    if args.max_length == -1
+                    else args.max_length if args.max_length is not None else sq.max_length
                 )
                 try:
                     await svc.update(

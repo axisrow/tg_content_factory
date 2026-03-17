@@ -123,11 +123,13 @@ async def test_fts_daily_stats_groups_by_day(bundle, db):
     ch = Channel(channel_id=200, title="ch")
     await db.repos.channels.add_channel(ch)
     # 2 messages today, 1 yesterday
-    for i, (text, dt) in enumerate([
-        ("alpha one", now),
-        ("alpha two", now),
-        ("alpha old", yesterday),
-    ]):
+    for i, (text, dt) in enumerate(
+        [
+            ("alpha one", now),
+            ("alpha two", now),
+            ("alpha old", yesterday),
+        ]
+    ):
         msg = Message(channel_id=200, message_id=i + 1, text=text, date=dt)
         await db.repos.messages.insert_message(msg)
 
@@ -160,8 +162,12 @@ async def test_run_once_counts_today_only(svc, db):
 async def test_update_query(svc):
     sq_id = await svc.add("original", 60)
     result = await svc.update(
-        sq_id, "updated", 30,
-        is_regex=True, notify_on_collect=True, track_stats=False,
+        sq_id,
+        "updated",
+        30,
+        is_regex=True,
+        notify_on_collect=True,
+        track_stats=False,
     )
     assert result is True
 
@@ -182,12 +188,15 @@ async def test_update_nonexistent(svc):
 @pytest.mark.asyncio
 async def test_fts_boolean_query(bundle, db):
     """FTS5 boolean query with OR/AND should match correctly."""
-    await _insert_messages(db, [
-        "аренда мотобайк на месяц",
-        "продажа скутер недорого",
-        "снять байк в Пхукете",
-        "ремонт велосипеда",
-    ])
+    await _insert_messages(
+        db,
+        [
+            "аренда мотобайк на месяц",
+            "продажа скутер недорого",
+            "снять байк в Пхукете",
+            "ремонт велосипеда",
+        ],
+    )
     sq = SearchQuery(query="(байк OR мотобайк OR скутер) AND (аренда OR снять)", is_fts=True)
     sq_id = await bundle.add(sq)
     sq = await bundle.get_by_id(sq_id)
@@ -199,11 +208,14 @@ async def test_fts_boolean_query(bundle, db):
 @pytest.mark.asyncio
 async def test_exclude_patterns(bundle, db):
     """Exclude patterns should filter out matching messages."""
-    await _insert_messages(db, [
-        "аренда байка дешево",
-        "аренда байка СПАМ реклама",
-        "аренда байка нормальное объявление",
-    ])
+    await _insert_messages(
+        db,
+        [
+            "аренда байка дешево",
+            "аренда байка СПАМ реклама",
+            "аренда байка нормальное объявление",
+        ],
+    )
     sq = SearchQuery(query="аренда", exclude_patterns="СПАМ\nреклама")
     sq_id = await bundle.add(sq)
     sq = await bundle.get_by_id(sq_id)
@@ -215,10 +227,13 @@ async def test_exclude_patterns(bundle, db):
 @pytest.mark.asyncio
 async def test_max_length_filter(bundle, db):
     """max_length should filter out messages with text >= max_length."""
-    await _insert_messages(db, [
-        "short",
-        "a" * 500,
-    ])
+    await _insert_messages(
+        db,
+        [
+            "short",
+            "a" * 500,
+        ],
+    )
     sq = SearchQuery(query="short OR " + "a" * 10, is_fts=True, max_length=100)
     sq_id = await bundle.add(sq)
     sq = await bundle.get_by_id(sq_id)

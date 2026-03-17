@@ -86,9 +86,9 @@ async def _semantic_settings_context(request: Request) -> dict[str, object]:
         "semantic_embeddings_model": (
             await db.get_setting(EMBEDDINGS_MODEL_SETTING) or DEFAULT_EMBEDDINGS_MODEL
         ),
-        "semantic_embeddings_api_key": CREDENTIALS_MASK
-        if await db.get_setting(EMBEDDINGS_API_KEY_SETTING)
-        else "",
+        "semantic_embeddings_api_key": (
+            CREDENTIALS_MASK if await db.get_setting(EMBEDDINGS_API_KEY_SETTING) else ""
+        ),
         "semantic_embeddings_base_url": await db.get_setting(EMBEDDINGS_BASE_URL_SETTING) or "",
         "semantic_embeddings_batch_size": batch_size,
         "semantic_last_embedded_id": last_embedded_id,
@@ -872,10 +872,12 @@ async def save_filters(request: Request):
         return RedirectResponse(url="/settings?error=invalid_value", status_code=303)
     await db.set_setting("min_subscribers_filter", min_subs)
     await db.set_setting(
-        "auto_delete_filtered", "1" if form.get("auto_delete_filtered") else "0",
+        "auto_delete_filtered",
+        "1" if form.get("auto_delete_filtered") else "0",
     )
     await db.set_setting(
-        "auto_delete_on_collect", "1" if form.get("auto_delete_on_collect") else "0",
+        "auto_delete_on_collect",
+        "1" if form.get("auto_delete_on_collect") else "0",
     )
     if int(min_subs) > 0:
         all_stats = await db.get_latest_stats_for_all()

@@ -140,9 +140,7 @@ async def verify_code(
     pool = request.app.state.pool
 
     try:
-        session_string = await auth.verify_code(
-            phone, code, phone_code_hash, password_2fa or None
-        )
+        session_string = await auth.verify_code(phone, code, phone_code_hash, password_2fa or None)
 
         existing = await db.get_accounts()
         is_primary = len(existing) == 0

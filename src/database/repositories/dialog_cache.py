@@ -113,9 +113,7 @@ class DialogCacheRepository:
 
     async def get_all_phones(self) -> list[str]:
         """Return all distinct phone numbers that have entries in dialog_cache."""
-        cur = await self._db.execute(
-            "SELECT DISTINCT phone FROM dialog_cache ORDER BY phone ASC"
-        )
+        cur = await self._db.execute("SELECT DISTINCT phone FROM dialog_cache ORDER BY phone ASC")
         rows = await cur.fetchall()
         return [row["phone"] for row in rows]
 

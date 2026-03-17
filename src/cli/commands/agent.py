@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 _ESCAPING_CASES = [
     ("xml_tags", "Привет <user>тег</user> и <assistant>тег</assistant>"),
-    ("quotes", 'Он сказал "привет" и \'пока\''),
+    ("quotes", "Он сказал \"привет\" и 'пока'"),
     ("backslashes", "C:\\Users\\test\\file.txt"),
     ("newlines", "строка 1\nстрока 2\n\nстрока 3"),
     ("json_in_text", '{"key": "value", "arr": [1,2,3]}'),
@@ -140,7 +140,7 @@ def run(args: argparse.Namespace) -> None:
             elif action == "messages":
                 msgs = await db.get_agent_messages(args.thread_id)
                 if args.limit:
-                    msgs = msgs[-args.limit:]
+                    msgs = msgs[-args.limit :]
                 if not msgs:
                     print("Нет сообщений.")
                 else:
@@ -171,18 +171,19 @@ def run(args: argparse.Namespace) -> None:
 
                 content = format_context(messages, title, args.topic_id, topics_map)
 
-                await db.save_agent_message(
-                    thread_id=args.thread_id, role="user", content=content
-                )
+                await db.save_agent_message(thread_id=args.thread_id, role="user", content=content)
                 logger.info(
                     "Context loaded for thread %d: %d messages, %d chars",
-                    args.thread_id, len(messages), len(content),
+                    args.thread_id,
+                    len(messages),
+                    len(content),
                 )
                 if len(content) > 200_000:
                     logger.warning(
                         "Large context for thread %d: %d chars (>200K)"
                         " — may cause prompt overflow",
-                        args.thread_id, len(content),
+                        args.thread_id,
+                        len(content),
                     )
                 print(content[:500])
                 if len(content) > 500:

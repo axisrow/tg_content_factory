@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-import aiosqlite
 import json
 from datetime import datetime
+
+import aiosqlite
 
 from src.models import GenerationRun
 
@@ -17,7 +18,8 @@ class GenerationRunsRepository:
 
     async def create_run(self, pipeline_id: int | None, prompt: str) -> int:
         cur = await self._db.execute(
-            "INSERT INTO generation_runs (pipeline_id, status, prompt, created_at) VALUES (?, 'pending', ?, datetime('now'))",
+            ("INSERT INTO generation_runs (pipeline_id, status, prompt, created_at) "
+             "VALUES (?, 'pending', ?, datetime('now'))"),
             (pipeline_id, prompt),
         )
         await self._db.commit()
@@ -30,12 +32,23 @@ class GenerationRunsRepository:
         )
         await self._db.commit()
 
-    async def save_result(self, run_id: int, generated_text: str, metadata: dict | None = None) -> None:
+    async def save_result(
+        self, run_id: int, generated_text: str, metadata: dict | None = None
+    ) -> None:
         await self._db.execute(
-            "UPDATE generation_runs SET generated_text = ?, metadata = ?, status = 'completed', updated_at = datetime('now') WHERE id = ?",
+            ("UPDATE generation_runs SET generated_text = ?, metadata = ?, "
+             "updated_at = datetime('now') WHERE id = ?"),
             (generated_text, json.dumps(metadata or {}, ensure_ascii=False), run_id),
         )
         await self._db.commit()
+
+    async def reset_running_on_startup(self) -> int:
+        """Reset generation_runs stuck in 'running' state to 'failed' on server startup."""
+        cur = await self._db.execute(
+            "UPDATE generation_runs SET status = 'failed', updated_at = datetime('now') WHERE status = 'running'",
+        )
+        await self._db.commit()
+        return cur.rowcount or 0
 
     async def get(self, run_id: int) -> GenerationRun | None:
         cur = await self._db.execute("SELECT * FROM generation_runs WHERE id = ?", (run_id,))
@@ -59,7 +72,9 @@ class GenerationRunsRepository:
             updated_at=_dt(row["updated_at"]),
         )
 
-    async def list_by_pipeline(self, pipeline_id: int, limit: int = 20, offset: int = 0) -> list[GenerationRun]:
+    async def list_by_pipeline(
+        self, pipeline_id: int, limit: int = 20, offset: int = 0
+    ) -> list[GenerationRun]:
         cur = await self._db.execute(
             "SELECT * FROM generation_runs WHERE pipeline_id = ? ORDER BY id DESC LIMIT ? OFFSET ?",
             (pipeline_id, limit, offset),

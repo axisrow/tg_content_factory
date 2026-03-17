@@ -21,9 +21,7 @@ class CollectionQueue:
         self._worker: asyncio.Task | None = None
         self._current_task_id: int | None = None
 
-    async def enqueue(
-        self, channel: Channel, force: bool = False, full: bool = True
-    ) -> int | None:
+    async def enqueue(self, channel: Channel, force: bool = False, full: bool = True) -> int | None:
         """Enqueue a channel for collection, atomically skipping duplicates.
 
         Returns the new task ID, or ``None`` if an active task already exists.
@@ -34,7 +32,9 @@ class CollectionQueue:
         if not full:
             payload["full"] = False
         task_id = await self._channels.create_collection_task_if_not_active(
-            channel.channel_id, channel.title, channel_username=channel.username,
+            channel.channel_id,
+            channel.title,
+            channel_username=channel.username,
             payload=payload or None,
         )
         if task_id is None:
@@ -159,18 +159,14 @@ class CollectionQueue:
                         messages_collected=count,
                         note=note,
                     )
-                    logger.info(
-                        "Collected %d messages from channel %d", count, channel.channel_id
-                    )
+                    logger.info("Collected %d messages from channel %d", count, channel.channel_id)
             except Exception as exc:
                 await self._channels.update_collection_task(
                     task_id,
                     CollectionTaskStatus.FAILED,
                     error=str(exc)[:500],
                 )
-                logger.exception(
-                    "Collection failed for channel %d", channel.channel_id
-                )
+                logger.exception("Collection failed for channel %d", channel.channel_id)
             finally:
                 self._current_task_id = None
                 self._queue.task_done()
@@ -188,7 +184,8 @@ class CollectionQueue:
                 await self._channels.cancel_collection_task(task.id)
                 logger.warning(
                     "Cancelled orphaned task %d: channel %d not found",
-                    task.id, task.channel_id,
+                    task.id,
+                    task.channel_id,
                 )
                 continue
             force = bool((task.payload or {}).get("force", False))

@@ -1,0 +1,28 @@
+name: LangChain Tests (manual)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  langchain-tests:
+    runs-on: ubuntu-latest
+    env:
+      USE_LANGCHAIN: "1"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Ruff
+        run: ruff check src tests conftest.py
+
+      - name: Pytest (LangChain enabled)
+        run: pytest tests -q -m "not aiosqlite_serial" -n auto && pytest tests -q -m aiosqlite_serial

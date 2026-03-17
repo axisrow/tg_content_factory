@@ -51,7 +51,8 @@ class CollectionService:
             if not full:
                 payload["full"] = False
             task_id = await self._channels.create_collection_task_if_not_active(
-                channel.channel_id, channel.title,
+                channel.channel_id,
+                channel.title,
                 channel_username=channel.username,
                 payload=payload or None,
             )

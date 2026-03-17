@@ -30,9 +30,7 @@ from tests.helpers import (
     make_auth_client,
     make_channel_entity,
 )
-from tests.helpers import (
-    make_mock_pool as _make_pool,
-)
+from tests.helpers import make_mock_pool as _make_pool
 
 
 def _resolved_channel_entity(identifier: object) -> SimpleNamespace:
@@ -46,6 +44,7 @@ def _resolved_channel_entity(identifier: object) -> SimpleNamespace:
         title="Resolved Channel",
         username=username,
     )
+
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -137,8 +136,13 @@ class TestAuthFlow:
     @pytest.mark.asyncio
     async def test_all_protected_pages_require_auth(self, noauth_client):
         for path in [
-            "/settings/", "/channels/", "/dashboard/",
-            "/scheduler/", "/search-queries/", "/my-telegram/", "/debug/",
+            "/settings/",
+            "/channels/",
+            "/dashboard/",
+            "/scheduler/",
+            "/search-queries/",
+            "/my-telegram/",
+            "/debug/",
         ]:
             resp = await noauth_client.get(path, follow_redirects=False)
             assert resp.status_code == 401, f"{path} should require auth"
@@ -363,9 +367,7 @@ class TestConfigEnvChain:
 
         config_file = tmp_path / "config.yaml"
         config_file.write_text(
-            "telegram:\n"
-            "  api_id: ${TG_API_ID}\n"
-            "  api_hash: ${TG_API_HASH}\n"
+            "telegram:\n" "  api_id: ${TG_API_ID}\n" "  api_hash: ${TG_API_HASH}\n"
         )
         config = load_config(config_file)
 
@@ -465,7 +467,8 @@ class TestCollectorIncremental:
         from tests.helpers import AsyncIterEmpty as _AsyncIterEmpty
 
         ch = Channel(
-            channel_id=-100500, title="Incremental Test",
+            channel_id=-100500,
+            title="Incremental Test",
             username="inc_test",
         )
         await test_db.add_channel(ch)
@@ -613,9 +616,13 @@ class TestNotificationQueryMatch:
     @pytest.mark.asyncio
     async def test_plain_query_case_insensitive(self, test_db):
         repo = test_db.repos.search_queries
-        await repo.add(SearchQuery(
-            name="bitcoin", query="bitcoin", notify_on_collect=True,
-        ))
+        await repo.add(
+            SearchQuery(
+                name="bitcoin",
+                query="bitcoin",
+                notify_on_collect=True,
+            )
+        )
 
         notifier = AsyncMock()
         notifier.notify = AsyncMock()
@@ -648,10 +655,14 @@ class TestNotificationQueryMatch:
     @pytest.mark.asyncio
     async def test_regex_query_matches(self, test_db):
         repo = test_db.repos.search_queries
-        await repo.add(SearchQuery(
-            name="crypto", query=r"\b(BTC|ETH)\b",
-            is_regex=True, notify_on_collect=True,
-        ))
+        await repo.add(
+            SearchQuery(
+                name="crypto",
+                query=r"\b(BTC|ETH)\b",
+                is_regex=True,
+                notify_on_collect=True,
+            )
+        )
 
         notifier = AsyncMock()
         notifier.notify = AsyncMock()
@@ -690,10 +701,14 @@ class TestNotificationQueryMatch:
     @pytest.mark.asyncio
     async def test_invalid_regex_does_not_crash(self, test_db):
         repo = test_db.repos.search_queries
-        await repo.add(SearchQuery(
-            name="bad", query=r"[invalid(",
-            is_regex=True, notify_on_collect=True,
-        ))
+        await repo.add(
+            SearchQuery(
+                name="bad",
+                query=r"[invalid(",
+                is_regex=True,
+                notify_on_collect=True,
+            )
+        )
 
         notifier = AsyncMock()
         notifier.notify = AsyncMock()

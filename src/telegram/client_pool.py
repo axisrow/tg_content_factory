@@ -174,11 +174,7 @@ class ClientPool:
         target_type: str | None = None,
     ):
         session = adapt_transport_session(session, disconnect_on_close=False)
-        peer = (
-            PeerUser(dialog_id)
-            if target_type in ("dm", "bot")
-            else PeerChannel(abs(dialog_id))
-        )
+        peer = PeerUser(dialog_id) if target_type in ("dm", "bot") else PeerChannel(abs(dialog_id))
         try:
             return await asyncio.wait_for(session.resolve_input_entity(peer), timeout=30.0)
         except (ValueError, TypeError):
@@ -466,7 +462,6 @@ class ClientPool:
         lease.disconnect_on_release = False
         return lease
 
-
     async def get_users_info(self, include_avatar: bool = True) -> list[TelegramUserInfo]:
         """Get info about all connected Telegram accounts.
 
@@ -509,15 +504,17 @@ class ClientPool:
                     except Exception:
                         logger.debug("Failed to download avatar for %s", phone)
 
-                result.append(TelegramUserInfo(
-                    phone=phone,
-                    first_name=me.first_name or "",
-                    last_name=me.last_name or "",
-                    username=me.username,
-                    is_primary=phone in primary_phones,
-                    is_premium=getattr(me, "premium", False) or False,
-                    avatar_base64=avatar_base64,
-                ))
+                result.append(
+                    TelegramUserInfo(
+                        phone=phone,
+                        first_name=me.first_name or "",
+                        last_name=me.last_name or "",
+                        username=me.username,
+                        is_primary=phone in primary_phones,
+                        is_premium=getattr(me, "premium", False) or False,
+                        avatar_base64=avatar_base64,
+                    )
+                )
             except Exception as e:
                 logger.error("Failed to get info for %s: %s", phone, e)
             finally:
@@ -553,9 +550,7 @@ class ClientPool:
             try:
                 entity = await asyncio.wait_for(session.resolve_entity(peer), timeout=30.0)
                 if not hasattr(entity, "title"):
-                    logger.info(
-                        "resolve_channel: '%s' is a user, not a channel/group", identifier
-                    )
+                    logger.info("resolve_channel: '%s' is a user, not a channel/group", identifier)
                     return None
                 if isinstance(entity, ChannelForbidden):
                     return None
@@ -576,7 +571,8 @@ class ClientPool:
                 await self.report_flood(phone, e.seconds)
                 logger.warning(
                     "resolve_channel: flood wait %ds for '%s', rotating client",
-                    e.seconds, identifier,
+                    e.seconds,
+                    identifier,
                 )
                 continue
             except (UsernameNotOccupiedError, UsernameInvalidError) as e:
@@ -671,33 +667,41 @@ class ClientPool:
                     if dialog.is_channel or dialog.is_group:
                         channel_type, deactivate = self._classify_entity(entity)
                         if channel_type in (
-                            "channel", "monoforum", "scam", "fake", "restricted",
+                            "channel",
+                            "monoforum",
+                            "scam",
+                            "fake",
+                            "restricted",
                         ):
                             stats.channels += 1
                         if channel_type in ("supergroup", "group", "gigagroup", "forum"):
                             stats.groups += 1
-                        items.append({
-                            "channel_id": entity.id,
-                            "title": dialog.title,
-                            "username": getattr(entity, "username", None),
-                            "channel_type": channel_type,
-                            "deactivate": deactivate,
-                            "is_own": getattr(entity, "creator", False),
-                        })
+                        items.append(
+                            {
+                                "channel_id": entity.id,
+                                "title": dialog.title,
+                                "username": getattr(entity, "username", None),
+                                "channel_type": channel_type,
+                                "deactivate": deactivate,
+                                "is_own": getattr(entity, "creator", False),
+                            }
+                        )
                     elif include_dm or mode == "full":
                         is_bot = getattr(entity, "bot", False)
                         if is_bot:
                             stats.bots += 1
                         else:
                             stats.dms += 1
-                        items.append({
-                            "channel_id": entity.id,
-                            "title": dialog.title,
-                            "username": getattr(entity, "username", None),
-                            "channel_type": "bot" if is_bot else "dm",
-                            "deactivate": False,
-                            "is_own": False,
-                        })
+                        items.append(
+                            {
+                                "channel_id": entity.id,
+                                "title": dialog.title,
+                                "username": getattr(entity, "username", None),
+                                "channel_type": "bot" if is_bot else "dm",
+                                "deactivate": False,
+                                "is_own": False,
+                            }
+                        )
 
             iter_coro = _iter()
             try:
@@ -737,9 +741,7 @@ class ClientPool:
         finally:
             await self.release_client(phone)
 
-    async def leave_channels(
-        self, phone: str, dialogs: list[tuple[int, str]]
-    ) -> dict[int, bool]:
+    async def leave_channels(self, phone: str, dialogs: list[tuple[int, str]]) -> dict[int, bool]:
         """Leave/unsubscribe from a list of dialogs for the given account.
 
         dialogs: list of (channel_id, channel_type) where channel_type comes from
@@ -829,11 +831,7 @@ class ClientPool:
                     "id": t.id,
                     "title": t.title,
                     "icon_emoji_id": getattr(t, "icon_emoji_id", None),
-                    "date": (
-                        t.date.isoformat()
-                        if getattr(t, "date", None)
-                        else None
-                    ),
+                    "date": (t.date.isoformat() if getattr(t, "date", None) else None),
                 }
                 for t in response.topics
                 if hasattr(t, "title")

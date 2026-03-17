@@ -6,12 +6,7 @@ from fastapi import Request
 from starlette.responses import Response
 
 from src.web.csrf import is_same_origin_url, is_secure_request
-from src.web.session import (
-    COOKIE_MAX_AGE,
-    COOKIE_NAME,
-    create_session_token,
-    verify_session_token,
-)
+from src.web.session import COOKIE_MAX_AGE, COOKIE_NAME, create_session_token, verify_session_token
 
 LOGIN_PATH = "/login"
 PANEL_USERNAME = "admin"

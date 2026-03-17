@@ -4,6 +4,7 @@ These tests call the actual tool handler functions via the @tool decorator's
 .handler attribute, ensuring argument parsing, formatting, and error handling
 are all exercised.
 """
+
 from __future__ import annotations
 
 from types import SimpleNamespace
@@ -64,12 +65,16 @@ class TestSearchMessagesTool:
     async def test_with_results(self, mock_db):
         mock_messages = [
             SimpleNamespace(
-                channel_id=100, message_id=1,
-                text="Test message one", date="2025-01-01",
+                channel_id=100,
+                message_id=1,
+                text="Test message one",
+                date="2025-01-01",
             ),
             SimpleNamespace(
-                channel_id=200, message_id=2,
-                text="Another test message", date="2025-01-02",
+                channel_id=200,
+                message_id=2,
+                text="Another test message",
+                date="2025-01-02",
             ),
         ]
         mock_db.search_messages = AsyncMock(return_value=(mock_messages, 2))
@@ -218,12 +223,18 @@ class TestGetChannelsTool:
     async def test_with_channels(self, mock_db):
         mock_channels = [
             SimpleNamespace(
-                channel_id=100, title="Active Channel",
-                username="active_ch", is_active=True, is_filtered=False,
+                channel_id=100,
+                title="Active Channel",
+                username="active_ch",
+                is_active=True,
+                is_filtered=False,
             ),
             SimpleNamespace(
-                channel_id=200, title="Inactive Channel",
-                username="inactive_ch", is_active=False, is_filtered=True,
+                channel_id=200,
+                title="Inactive Channel",
+                username="inactive_ch",
+                is_active=False,
+                is_filtered=True,
             ),
         ]
         mock_db.get_channels = AsyncMock(return_value=mock_channels)
@@ -243,8 +254,11 @@ class TestGetChannelsTool:
         """Channel with username=None renders @None (known pre-existing issue)."""
         mock_channels = [
             SimpleNamespace(
-                channel_id=100, title="Private Channel",
-                username=None, is_active=True, is_filtered=False,
+                channel_id=100,
+                title="Private Channel",
+                username=None,
+                is_active=True,
+                is_filtered=False,
             ),
         ]
         mock_db.get_channels = AsyncMock(return_value=mock_channels)

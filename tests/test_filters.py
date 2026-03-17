@@ -159,9 +159,7 @@ class TestAnalyzerNonCyrillic:
 
     async def test_non_cyrillic_channel(self, db, raw_db):
         await _insert_channel(raw_db, 401)
-        texts = ["hello world", "test message", "no cyrillic here"] + [
-            "another eng text"
-        ] * 7
+        texts = ["hello world", "test message", "no cyrillic here"] + ["another eng text"] * 7
         await _insert_messages(raw_db, 401, texts)
         analyzer = ChannelAnalyzer(db)
         result = await analyzer.analyze_channel(401)
@@ -198,7 +196,8 @@ class TestAnalyzerChatNoise:
     async def test_clean_group(self, db, raw_db):
         await _insert_channel(raw_db, 502, channel_type="group")
         await _insert_messages(
-            raw_db, 502,
+            raw_db,
+            502,
             ["This is a normal length message"] * 10,
         )
         analyzer = ChannelAnalyzer(db)
@@ -446,9 +445,7 @@ class TestChannelAnalyzer:
         analyzer = ChannelAnalyzer(db)
         count = await analyzer.precheck_subscriber_ratio()
         assert count == 0
-        cur = await raw_db.execute(
-            "SELECT is_filtered FROM channels WHERE channel_id = 1003"
-        )
+        cur = await raw_db.execute("SELECT is_filtered FROM channels WHERE channel_id = 1003")
         row = await cur.fetchone()
         assert row["is_filtered"] == 0
 

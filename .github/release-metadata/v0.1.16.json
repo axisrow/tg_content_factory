@@ -1,0 +1,18 @@
+{
+  "tag": "v0.1.16",
+  "title": "Provider adapters & streaming",
+  "highlights": [
+    {
+      "title": "Provider adapters and streaming",
+      "description": "Add provider-agnostic GenerationService, HTTP provider adapters (including a Context7 shim), and SSE streaming preview for progressive generation."
+    },
+    {
+      "title": "LangChain adapter (opt-in)",
+      "description": "Optional LangChain adapter implemented with lazy imports; LangChain tests are gated behind a manual CI workflow (USE_LANGCHAIN=1)."
+    },
+    {
+      "title": "Integration tests & CI",
+      "description": "Add an integration test for pipeline generation persistence and a manual GitHub Actions workflow to run the suite with LangChain enabled."
+    }
+  ]
+}

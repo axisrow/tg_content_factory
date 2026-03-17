@@ -91,7 +91,11 @@ def make_mcp_server(db: Database):
             text = f"Ошибка получения каналов: {e}"
         return {"content": [{"type": "text", "text": text}]}
 
-    @tool("generate_draft", "Generate a draft from a query using RAG (returns draft text and citations)", {"query": str, "pipeline_id": int, "limit": int})
+    @tool(
+        "generate_draft",
+        "Generate a draft from a query using RAG (returns draft text and citations)",
+        {"query": str, "pipeline_id": int, "limit": int},
+    )
     async def generate_draft(args):
         query = args.get("query", "")
         pipeline_id = args.get("pipeline_id")

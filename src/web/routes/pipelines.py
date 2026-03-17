@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import json
 import logging
 from urllib.parse import quote
 
 from fastapi import APIRouter, Form, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 
 from src.agent.prompt_template import ALLOWED_TEMPLATE_VARIABLES
 from src.models import PipelineGenerationBackend, PipelinePublishMode
@@ -16,7 +17,6 @@ from src.services.pipeline_service import (
 from src.web import deps
 
 logger = logging.getLogger(__name__)
-
 router = APIRouter()
 
 
@@ -57,8 +57,24 @@ async def _page_context(request: Request) -> dict:
         except Exception:
             logger.warning("Failed to refresh dialog cache for %s", selected_phone, exc_info=True)
     cached_dialogs = await svc.list_cached_dialogs_by_phone()
+    items = await svc.get_with_relations()
+    # gather next_run times for pipelines
+    next_runs = {}
+    try:
+        scheduler = deps.get_scheduler(request)
+        for item in items:
+            pipeline = item.pipeline
+            if pipeline.id is None:
+                continue
+            try:
+                nr = scheduler.get_job_next_run(f"pipeline_run_{pipeline.id}")
+                next_runs[pipeline.id] = nr.isoformat() if nr else None
+            except Exception:
+                next_runs[pipeline.id] = None
+    except Exception:
+        next_runs = {}
     return {
-        "items": await svc.get_with_relations(),
+        "items": items,
         "channels": channels,
         "accounts": accounts,
         "cached_dialogs": cached_dialogs,
@@ -66,6 +82,7 @@ async def _page_context(request: Request) -> dict:
         "prompt_variables": sorted(ALLOWED_TEMPLATE_VARIABLES),
         "publish_modes": list(PipelinePublishMode),
         "generation_backends": list(PipelineGenerationBackend),
+        "next_runs": next_runs,
     }
 
 
@@ -93,7 +110,6 @@ async def add_pipeline(
     is_active: bool = Form(False),
 ):
     svc: PipelineService = deps.pipeline_service(request)
-    phone = request.query_params.get("phone")
     try:
         await svc.add(
             name=name,
@@ -107,9 +123,15 @@ async def add_pipeline(
             generate_interval_minutes=generate_interval_minutes,
             is_active=is_active,
         )
-    except PipelineValidationError as exc:
-        return _pipeline_redirect(str(exc), error=True, phone=phone)
-    return _pipeline_redirect("pipeline_added", phone=phone)
+    except PipelineValidationError:
+        return _pipeline_redirect("pipeline_invalid", error=True)
+    # sync scheduler jobs
+    try:
+        scheduler = deps.get_scheduler(request)
+        await scheduler.sync_pipeline_jobs()
+    except Exception:
+        logger.warning("Scheduler sync failed", exc_info=True)
+    return _pipeline_redirect("pipeline_added")
 
 
 @router.post("/{pipeline_id}/edit")
@@ -149,24 +171,53 @@ async def edit_pipeline(
     except PipelineValidationError as exc:
         return _pipeline_redirect(str(exc), error=True, phone=phone)
     if not ok:
-        return _pipeline_redirect("pipeline_invalid", error=True, phone=phone)
-    return _pipeline_redirect("pipeline_edited", phone=phone)
+        return _pipeline_redirect("pipeline_invalid", error=True)
+    # sync scheduler jobs
+    try:
+        scheduler = deps.get_scheduler(request)
+        await scheduler.sync_pipeline_jobs()
+    except Exception:
+        logger.warning("Scheduler sync failed", exc_info=True)
+    return _pipeline_redirect("pipeline_edited")
 
 
 @router.post("/{pipeline_id}/toggle")
 async def toggle_pipeline(request: Request, pipeline_id: int):
-    phone = request.query_params.get("phone")
     ok = await deps.pipeline_service(request).toggle(pipeline_id)
     if not ok:
-        return _pipeline_redirect("pipeline_invalid", error=True, phone=phone)
-    return _pipeline_redirect("pipeline_toggled", phone=phone)
+        return _pipeline_redirect("pipeline_invalid", error=True)
+    try:
+        scheduler = deps.get_scheduler(request)
+        await scheduler.sync_pipeline_jobs()
+    except Exception:
+        logger.warning("Scheduler sync failed", exc_info=True)
+    return _pipeline_redirect("pipeline_toggled")
 
 
 @router.post("/{pipeline_id}/delete")
 async def delete_pipeline(request: Request, pipeline_id: int):
-    phone = request.query_params.get("phone")
     await deps.pipeline_service(request).delete(pipeline_id)
-    return _pipeline_redirect("pipeline_deleted", phone=phone)
+    try:
+        scheduler = deps.get_scheduler(request)
+        await scheduler.sync_pipeline_jobs()
+    except Exception:
+        logger.warning("Scheduler sync failed", exc_info=True)
+    return _pipeline_redirect("pipeline_deleted")
+
+
+@router.post("/{pipeline_id}/run")
+async def run_pipeline(request: Request, pipeline_id: int):
+    svc = deps.pipeline_service(request)
+    pipeline = await svc.get(pipeline_id)
+    if pipeline is None:
+        return _pipeline_redirect("pipeline_invalid", error=True)
+    try:
+        enqueuer = deps.get_task_enqueuer(request)
+        await enqueuer.enqueue_pipeline_run(pipeline_id)
+    except Exception:
+        logger.warning("Failed to enqueue pipeline run for pipeline_id=%d", pipeline_id, exc_info=True)
+        return _pipeline_redirect("pipeline_run_failed", error=True)
+    return _pipeline_redirect("pipeline_run_enqueued")
 
 
 @router.get("/{pipeline_id}/generate", response_class=HTMLResponse)
@@ -182,6 +233,74 @@ async def generate_page(request: Request, pipeline_id: int):
         "pipelines/generate.html",
         {"pipeline": pipeline, "runs": runs, "request": request},
     )
+
+
+@router.get("/{pipeline_id}/generate-stream")
+async def generate_stream(
+    request: Request,
+    pipeline_id: int,
+    model: str = "",
+    max_tokens: int = 256,
+    temperature: float = 0.0,
+):
+    svc = deps.pipeline_service(request)
+    pipeline = await svc.get(pipeline_id)
+    if pipeline is None:
+        return _pipeline_redirect("pipeline_invalid", error=True)
+    db = deps.get_db(request)
+    engine = deps.get_search_engine(request)
+
+    from src.services.provider_service import AgentProviderService
+
+    provider_service = AgentProviderService(db)
+    provider_callable = provider_service.get_provider_callable(pipeline.llm_model)
+
+    from src.services.generation_service import GenerationService
+
+    gen = GenerationService(engine, provider_callable=provider_callable)
+
+    # persist run
+    run_id = await db.repos.generation_runs.create_run(pipeline_id, pipeline.prompt_template)
+    try:
+        await db.repos.generation_runs.set_status(run_id, "running")
+    except Exception:
+        await db.repos.generation_runs.set_status(run_id, "failed")
+        raise
+    retrieval_query = pipeline.prompt_template or pipeline.name or ""
+
+    async def event_gen():
+        last = None
+        try:
+            async for update in gen.generate_stream(
+                query=retrieval_query,
+                prompt_template=pipeline.prompt_template,
+                model=(model or pipeline.llm_model),
+                max_tokens=max_tokens,
+                temperature=temperature,
+            ):
+                last = update
+                data = {
+                    "delta": update.get("delta"),
+                    "text": update.get("generated_text"),
+                    "citations": update.get("citations"),
+                }
+                yield f"data: {json.dumps(data)}\n\n"
+
+            # finished successfully
+            final_text = last.get("generated_text") if last else ""
+            metadata = {"citations": last.get("citations", []) if last else []}
+            await db.repos.generation_runs.save_result(run_id, final_text, metadata)
+            await db.repos.generation_runs.set_status(run_id, "completed")
+            yield f"event: done\ndata: {json.dumps({'run_id': run_id})}\n\n"
+        except Exception:
+            logger.exception("Generation stream failed for pipeline_id=%d run_id=%d", pipeline_id, run_id)
+            await db.repos.generation_runs.set_status(run_id, "failed")
+            yield f"event: error\ndata: {json.dumps({'error': 'Generation failed'})}\n\n"
+        except BaseException:
+            await db.repos.generation_runs.set_status(run_id, "failed")
+            raise
+
+    return StreamingResponse(event_gen(), media_type="text/event-stream")
 
 
 @router.post("/{pipeline_id}/generate")
@@ -208,7 +327,11 @@ async def generate_pipeline(
 
     gen = GenerationService(engine, provider_callable=provider_callable)
     run_id = await db.repos.generation_runs.create_run(pipeline_id, pipeline.prompt_template)
-    await db.repos.generation_runs.set_status(run_id, "running")
+    try:
+        await db.repos.generation_runs.set_status(run_id, "running")
+    except Exception:
+        await db.repos.generation_runs.set_status(run_id, "failed")
+        raise
     retrieval_query = pipeline.prompt_template or pipeline.name or ""
     try:
         result = await gen.generate(
@@ -218,14 +341,18 @@ async def generate_pipeline(
             max_tokens=max_tokens,
             temperature=temperature,
         )
-        await db.repos.generation_runs.save_result(run_id, result.get("generated_text", ""), {"citations": result.get("citations", [])})
-    except Exception as exc:
+        await db.repos.generation_runs.save_result(
+            run_id, result.get("generated_text", ""), {"citations": result.get("citations", [])}
+        )
+        await db.repos.generation_runs.set_status(run_id, "completed")
+    except Exception:
+        logger.exception("Generation failed for pipeline_id=%d run_id=%d", pipeline_id, run_id)
         await db.repos.generation_runs.set_status(run_id, "failed")
         runs = await db.repos.generation_runs.list_by_pipeline(pipeline_id)
         return deps.get_templates(request).TemplateResponse(
             request,
             "pipelines/generate.html",
-            {"pipeline": pipeline, "runs": runs, "error": str(exc), "request": request},
+            {"pipeline": pipeline, "runs": runs, "error": "Generation failed", "request": request},
         )
     run = await db.repos.generation_runs.get(run_id)
     return deps.get_templates(request).TemplateResponse(

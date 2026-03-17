@@ -76,8 +76,8 @@ async def scheduler_page(
     except Exception:
         bot = None
     bot_configured = (
-        (notifier is not None and notifier.admin_chat_id is not None) or bot is not None
-    )
+        notifier is not None and notifier.admin_chat_id is not None
+    ) or bot is not None
     return deps.get_templates(request).TemplateResponse(
         request,
         "scheduler.html",
@@ -165,4 +165,3 @@ async def test_notification(request: Request):
     ok = await test_notifier.notify(text)
     msg = "test_notification_sent" if ok else "test_notification_failed"
     return RedirectResponse(url=f"/scheduler?msg={msg}", status_code=303)
-

@@ -538,9 +538,7 @@ class DeepagentsBackend:
                 return
             self._preflight_available = False
             self._init_error = (
-                "; ".join(errors)
-                if errors
-                else "Deepagents providers are not configured."
+                "; ".join(errors) if errors else "Deepagents providers are not configured."
             )
             raise RuntimeError(self._init_error)
 
@@ -598,13 +596,11 @@ class DeepagentsBackend:
         # - `.run(prompt_str)` agents receive history embedded as XML tags in a single string
         # - `.invoke({"messages": [...]})` agents receive history as a structured message list
         if hasattr(agent, "run"):
-            run_prompt = (
-                _embed_history_in_prompt(history_msgs, prompt) if history_msgs else prompt
-            )
+            run_prompt = _embed_history_in_prompt(history_msgs, prompt) if history_msgs else prompt
             result = agent.run(run_prompt)
         else:
             messages: list[dict] = []
-            for msg in (history_msgs or []):
+            for msg in history_msgs or []:
                 messages.append({"role": msg["role"], "content": msg["content"]})
             messages.append({"role": "user", "content": prompt})
             result = agent.invoke({"messages": messages})
@@ -927,10 +923,7 @@ class AgentManager:
             elif selected_backend == "deepagents" and not deepagents_available:
                 error = deepagents_error or "deepagents fallback не сконфигурирован."
         else:
-            if (
-                deepagents_available
-                and self._deepagents_backend.has_usable_db_provider_configs
-            ):
+            if deepagents_available and self._deepagents_backend.has_usable_db_provider_configs:
                 selected_backend = "deepagents"
             elif claude_available:
                 selected_backend = "claude"
@@ -971,11 +964,11 @@ class AgentManager:
         self, thread_id: int, message: str, model: str | None = None
     ) -> AsyncGenerator[str, None]:
         history = await self._db.get_agent_messages(thread_id)
-        assert not history or history[-1]["role"] == "user", (
-            "Expected last DB message to be the user message just saved"
-        )
+        assert (
+            not history or history[-1]["role"] == "user"
+        ), "Expected last DB message to be the user message just saved"
         stats = self._build_prompt_stats_only(history[:-1], message)
-        history_for_backend = history[:-1][-stats["kept_msgs"]:] if stats["kept_msgs"] else []
+        history_for_backend = history[:-1][-stats["kept_msgs"] :] if stats["kept_msgs"] else []
         prompt = message
         # stats["prompt_chars"] estimates total context size formatted as XML.
         # Not the actual prompt sent to backend (which is just `message`).
@@ -1047,9 +1040,13 @@ class AgentManager:
                 logger.exception("Agent chat error for thread %d", thread_id)
                 error_text = str(exc)
                 lowered_error = error_text.lower()
-                if "ollama" in lowered_error and "500" in lowered_error and any(
-                    marker in lowered_error
-                    for marker in ("internal server error", "server error", "status code")
+                if (
+                    "ollama" in lowered_error
+                    and "500" in lowered_error
+                    and any(
+                        marker in lowered_error
+                        for marker in ("internal server error", "server error", "status code")
+                    )
                 ):
                     error_text = (
                         "Внутренняя ошибка сервиса Ollama (500). "

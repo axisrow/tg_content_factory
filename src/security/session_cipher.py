@@ -66,10 +66,10 @@ class SessionCipher:
             return value
 
         if version == 1:
-            token = value[len(_ENCRYPTED_PREFIX_V1):]
+            token = value[len(_ENCRYPTED_PREFIX_V1) :]
             fernet = self._fernet_v1
         else:
-            token = value[len(_ENCRYPTED_PREFIX_V2):]
+            token = value[len(_ENCRYPTED_PREFIX_V2) :]
             fernet = self._fernet_v2
 
         try:

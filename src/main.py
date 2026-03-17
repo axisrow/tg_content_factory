@@ -14,13 +14,12 @@ from src.cli.commands import (
     search_query,
     serve,
 )
-from src.cli.commands import (
-    test as test_cmd,
-)
+from src.cli.commands import test as test_cmd
 from src.cli.main import main
 
 _init_db = runtime.init_db
 _init_pool = runtime.init_pool
+
 
 def setup_logging() -> None:
     runtime.setup_logging()
