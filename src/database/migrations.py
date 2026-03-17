@@ -307,6 +307,12 @@ async def run_migrations(db: aiosqlite.Connection, *, vec_available: bool = Fals
     await db.execute(
         "CREATE INDEX IF NOT EXISTS idx_generation_runs_moderation ON generation_runs(moderation_status, pipeline_id)"
     )
+    # Ensure publish_times column exists in content_pipelines (PR #125)
+    cur = await db.execute("PRAGMA table_info(content_pipelines)")
+    cp_columns = {row["name"] for row in await cur.fetchall()}
+    if "publish_times" not in cp_columns:
+        await db.execute("ALTER TABLE content_pipelines ADD COLUMN publish_times TEXT")
+        await db.commit()
     await db.execute("""
         CREATE TABLE IF NOT EXISTS pipeline_sources (
             id INTEGER PRIMARY KEY,

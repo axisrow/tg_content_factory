@@ -144,6 +144,7 @@ class ContentPipeline(BaseModel):
     is_active: bool = True
     last_generated_id: int = 0
     generate_interval_minutes: int = Field(60, ge=1)
+    publish_times: str | None = None  # JSON array of "HH:MM" times, e.g. '["09:00", "18:00"]'
     created_at: datetime | None = None
 
 

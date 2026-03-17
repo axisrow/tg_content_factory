@@ -34,6 +34,7 @@ class ContentPipelinesRepository:
             is_active=bool(row["is_active"]),
             last_generated_id=row["last_generated_id"],
             generate_interval_minutes=row["generate_interval_minutes"],
+            publish_times=row.get("publish_times"),
             created_at=_dt(row["created_at"]),
         )
 
@@ -70,8 +71,9 @@ class ContentPipelinesRepository:
                 """
                 INSERT INTO content_pipelines (
                     name, prompt_template, llm_model, image_model, publish_mode,
-                    generation_backend, is_active, last_generated_id, generate_interval_minutes
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    generation_backend, is_active, last_generated_id, generate_interval_minutes,
+                    publish_times
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     pipeline.name,
@@ -83,6 +85,7 @@ class ContentPipelinesRepository:
                     int(pipeline.is_active),
                     pipeline.last_generated_id,
                     pipeline.generate_interval_minutes,
+                    pipeline.publish_times,
                 ),
             )
             pipeline_id = cur.lastrowid or 0
@@ -125,7 +128,7 @@ class ContentPipelinesRepository:
                 UPDATE content_pipelines
                 SET name = ?, prompt_template = ?, llm_model = ?, image_model = ?,
                     publish_mode = ?, generation_backend = ?, is_active = ?,
-                    generate_interval_minutes = ?
+                    generate_interval_minutes = ?, publish_times = ?
                 WHERE id = ?
                 """,
                 (
@@ -137,6 +140,7 @@ class ContentPipelinesRepository:
                     pipeline.generation_backend.value,
                     int(pipeline.is_active),
                     pipeline.generate_interval_minutes,
+                    pipeline.publish_times,
                     pipeline_id,
                 ),
             )
