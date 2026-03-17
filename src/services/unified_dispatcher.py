@@ -419,6 +419,7 @@ class UnifiedDispatcher:
             return
 
         pipeline_id = payload.pipeline_id
+        run_id: int | None = None
         try:
             # Import lazily to avoid circular imports during module load
             from src.services.generation_service import GenerationService
@@ -474,6 +475,8 @@ class UnifiedDispatcher:
                 )
         except Exception as exc:
             logger.exception("Pipeline run handler failed for pipeline_id=%d", pipeline_id)
+            if run_id is not None:
+                await self._db.repos.generation_runs.set_status(run_id, "failed")
             await self._tasks.update_collection_task(
                 task.id,
                 CollectionTaskStatus.FAILED,
