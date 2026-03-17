@@ -8,7 +8,7 @@ from telethon.errors import FloodWaitError, UsernameNotOccupiedError
 from telethon.tl.types import PeerChannel
 
 from src.config import SchedulerConfig
-from src.models import Channel, ChannelStats, Message
+from src.models import Channel, ChannelStats, CollectionTaskStatus, Message, StatsAllTaskPayload
 from src.telegram.collector import Collector
 from tests.helpers import AsyncIterEmpty as _AsyncIterEmpty
 from tests.helpers import AsyncIterMessages as _AsyncIterMessages
@@ -835,6 +835,65 @@ async def test_collection_queue_cancels_deleted_channel(db):
     assert task.status == "cancelled"
     assert task.note == "Канал удалён до начала сбора."
     assert total == 0
+
+    await queue.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_collection_queue_clear_pending_tasks_removes_db_rows_and_queue_items(db):
+    from src.collection_queue import CollectionQueue
+
+    await db.add_channel(Channel(channel_id=-100171, title="Queued One", username="queued_one"))
+    await db.add_channel(Channel(channel_id=-100172, title="Queued Two", username="queued_two"))
+
+    pool = make_mock_pool(get_available_client=AsyncMock(return_value=None))
+    collector = Collector(pool, db, SchedulerConfig())
+    queue = CollectionQueue(collector, db)
+    queue._ensure_worker = lambda: None
+
+    channels = await db.get_channels()
+    first = next(ch for ch in channels if ch.channel_id == -100171)
+    second = next(ch for ch in channels if ch.channel_id == -100172)
+    first_task_id = await queue.enqueue(first)
+    second_task_id = await queue.enqueue(second, force=True)
+
+    running_id = await db.create_collection_task(-100173, "Running")
+    await db.update_collection_task(running_id, CollectionTaskStatus.RUNNING)
+    await db.create_stats_task(StatsAllTaskPayload(channel_ids=[-100171]))
+
+    deleted = await queue.clear_pending_tasks()
+
+    assert deleted == 2
+    assert queue._queue.empty()
+    assert await db.get_collection_task(first_task_id) is None
+    assert await db.get_collection_task(second_task_id) is None
+    assert (await db.get_collection_task(running_id)).status == CollectionTaskStatus.RUNNING
+
+    await queue.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_collection_queue_skips_task_deleted_after_dequeue(db):
+    from src.collection_queue import CollectionQueue
+
+    await db.add_channel(
+        Channel(channel_id=-100174, title="Deleted After Dequeue", username="deleted")
+    )
+
+    pool = make_mock_pool(get_available_client=AsyncMock(return_value=None))
+    collector = Collector(pool, db, SchedulerConfig())
+    collector.collect_single_channel = AsyncMock(return_value=1)
+    queue = CollectionQueue(collector, db)
+    queue._ensure_worker = lambda: None
+
+    stored = next(ch for ch in await db.get_channels() if ch.channel_id == -100174)
+    task_id = await queue.enqueue(stored)
+    await db.delete_pending_channel_tasks()
+
+    await queue._run_worker()
+
+    collector.collect_single_channel.assert_not_called()
+    assert await db.get_collection_task(task_id) is None
 
     await queue.shutdown()
 

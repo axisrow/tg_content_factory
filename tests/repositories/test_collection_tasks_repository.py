@@ -574,6 +574,26 @@ async def test_cancel_collection_task_not_found(repo):
     assert result is False
 
 
+async def test_delete_pending_channel_tasks_only_removes_pending_channel_collect(repo):
+    pending_id = await repo.create_collection_task(1, "Pending")
+
+    running_id = await repo.create_collection_task(2, "Running")
+    await repo.update_collection_task(running_id, CollectionTaskStatus.RUNNING)
+
+    completed_id = await repo.create_collection_task(3, "Completed")
+    await repo.update_collection_task(completed_id, CollectionTaskStatus.COMPLETED)
+
+    stats_id = await repo.create_stats_task(StatsAllTaskPayload(channel_ids=[1, 2]))
+
+    deleted = await repo.delete_pending_channel_tasks()
+
+    assert deleted == 1
+    assert await repo.get_collection_task(pending_id) is None
+    assert (await repo.get_collection_task(running_id)).status == CollectionTaskStatus.RUNNING
+    assert (await repo.get_collection_task(completed_id)).status == CollectionTaskStatus.COMPLETED
+    assert (await repo.get_collection_task(stats_id)).task_type == CollectionTaskType.STATS_ALL
+
+
 # _to_task tests
 
 

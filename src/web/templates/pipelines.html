@@ -6,7 +6,7 @@
 <div class="card mb-4">
     <div class="card-header fw-semibold">Новый pipeline</div>
     <div class="card-body">
-        <form method="post" action="/pipelines/add" data-busy>
+        <form method="post" action="/pipelines/add{% if selected_phone %}?phone={{ selected_phone|urlencode }}{% endif %}" data-busy>
             <div class="row g-3 mb-3">
                 <div class="col-12 col-lg-6">
                     <label class="form-label">Название</label>
@@ -148,14 +148,14 @@
                     <form method="post" action="/pipelines/{{ pipeline.id }}/toggle" class="d-inline" data-busy>
                         <button type="submit" class="btn btn-outline-secondary btn-sm">{{ "Выключить" if pipeline.is_active else "Включить" }}</button>
                     </form>
-                    <form method="post" action="/pipelines/{{ pipeline.id }}/delete" class="d-inline" data-busy onsubmit="return confirm('Удалить pipeline?')">
+                    <form method="post" action="/pipelines/{{ pipeline.id }}/delete{% if selected_phone %}?phone={{ selected_phone|urlencode }}{% endif %}" class="d-inline" data-busy onsubmit="return confirm('Удалить pipeline?')">
                         <button type="submit" class="btn btn-outline-danger btn-sm">Удалить</button>
                     </form>
                 </td>
             </tr>
             <tr id="pipeline-edit-{{ pipeline.id }}" class="d-none">
                 <td colspan="8">
-                    <form method="post" action="/pipelines/{{ pipeline.id }}/edit" data-busy>
+                    <form method="post" action="/pipelines/{{ pipeline.id }}/edit{% if selected_phone %}?phone={{ selected_phone|urlencode }}{% endif %}" data-busy>
                         <div class="row g-3 mb-3">
                             <div class="col-12 col-lg-6">
                                 <label class="form-label">Название</label>

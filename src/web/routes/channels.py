@@ -76,5 +76,10 @@ async def toggle_channel(request: Request, pk: int):
 
 @router.post("/{pk}/delete")
 async def delete_channel(request: Request, pk: int):
-    await deps.channel_service(request).delete(pk)
+    try:
+        await deps.channel_service(request).delete(pk)
+    except Exception as exc:
+        if "FOREIGN KEY constraint failed" in str(exc):
+            return RedirectResponse(url="/channels?error=channel_in_pipeline", status_code=303)
+        raise
     return RedirectResponse(url="/channels?msg=channel_deleted", status_code=303)

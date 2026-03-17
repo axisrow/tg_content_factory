@@ -298,7 +298,7 @@ async def run_migrations(db: aiosqlite.Connection, *, vec_available: bool = Fals
             created_at TEXT DEFAULT (datetime('now')),
             UNIQUE(pipeline_id, channel_id),
             FOREIGN KEY (pipeline_id) REFERENCES content_pipelines(id) ON DELETE CASCADE,
-            FOREIGN KEY (channel_id) REFERENCES channels(channel_id)
+            FOREIGN KEY (channel_id) REFERENCES channels(channel_id) ON DELETE RESTRICT
         )
         """)
     await db.execute("""
