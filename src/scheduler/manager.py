@@ -141,7 +141,17 @@ class SchedulerManager:
                         return getattr(job, "next_run_time", None)
             except Exception:
                 return None
-            return None
+        return None
+
+    def get_all_jobs_next_run(self) -> dict[str, object]:
+        """Return dict of job_id -> next_run_time for all scheduled jobs."""
+        if self._scheduler is None:
+            return {}
+        try:
+            jobs = self._scheduler.get_jobs()
+            return {job.id: getattr(job, "next_run_time", None) for job in jobs}
+        except Exception:
+            return {}
 
     async def trigger_now(self) -> dict:
         return await self._run_collection()
