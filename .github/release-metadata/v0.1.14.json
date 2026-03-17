@@ -1,0 +1,22 @@
+{
+  "tag": "v0.1.14",
+  "title": "Content Pipelines Foundation",
+  "highlights": [
+    {
+      "title": "Content Pipelines DB Schema",
+      "description": "Add content_pipelines, pipeline_sources and pipeline_targets tables with source channels, target dialogs, LLM/image model config, publish mode and scheduling interval."
+    },
+    {
+      "title": "Pipeline Web UI",
+      "description": "Full CRUD for content pipelines at /pipelines: create, edit, delete, toggle active state, configure source channels and target dialogs."
+    },
+    {
+      "title": "Pipeline CLI",
+      "description": "pipeline list|add|edit|delete|toggle subcommands for full CLI parity with the web interface."
+    },
+    {
+      "title": "Prompt Template Engine",
+      "description": "Validated template variables ({source_messages}, {channel_title}, {topic}, {date}) with configurable agent prompt templates via Web UI and CLI."
+    }
+  ]
+}
