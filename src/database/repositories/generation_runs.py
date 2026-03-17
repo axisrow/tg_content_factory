@@ -42,6 +42,58 @@ class GenerationRunsRepository:
         )
         await self._db.commit()
 
+    async def set_moderation_status(self, run_id: int, status: str) -> None:
+        await self._db.execute(
+            "UPDATE generation_runs SET moderation_status = ?, updated_at = datetime('now') WHERE id = ?",
+            (status, run_id),
+        )
+        await self._db.commit()
+
+    async def set_published_at(self, run_id: int) -> None:
+        await self._db.execute(
+            ("UPDATE generation_runs SET published_at = datetime('now'), "
+             "moderation_status = 'published', updated_at = datetime('now') WHERE id = ?"),
+            (run_id,),
+        )
+        await self._db.commit()
+
+    async def list_pending_moderation(self, pipeline_id: int | None = None, limit: int = 50, offset: int = 0) -> list[GenerationRun]:
+        if pipeline_id is None:
+            cur = await self._db.execute(
+                "SELECT * FROM generation_runs WHERE moderation_status = 'pending' ORDER BY id DESC LIMIT ? OFFSET ?",
+                (limit, offset),
+            )
+        else:
+            cur = await self._db.execute(
+                "SELECT * FROM generation_runs WHERE moderation_status = 'pending' AND pipeline_id = ? ORDER BY id DESC LIMIT ? OFFSET ?",
+                (pipeline_id, limit, offset),
+            )
+        rows = await cur.fetchall()
+        results: list[GenerationRun] = []
+        for row in rows:
+            metadata = None
+            if row["metadata"]:
+                try:
+                    metadata = json.loads(row["metadata"])
+                except Exception:
+                    metadata = None
+            results.append(
+                GenerationRun(
+                    id=row["id"],
+                    pipeline_id=row["pipeline_id"],
+                    status=row["status"],
+                    prompt=row["prompt"],
+                    generated_text=row["generated_text"],
+                    metadata=metadata,
+                    image_url=row.get("image_url"),
+                    moderation_status=row.get("moderation_status") or "pending",
+                    published_at=_dt(row.get("published_at")),
+                    created_at=_dt(row["created_at"]),
+                    updated_at=_dt(row["updated_at"]),
+                )
+            )
+        return results
+
     async def reset_running_on_startup(self) -> int:
         """Reset generation_runs stuck in 'running' state to 'failed' on server startup."""
         cur = await self._db.execute(
