@@ -258,7 +258,11 @@ async def generate_stream(
 
     # persist run
     run_id = await db.repos.generation_runs.create_run(pipeline_id, pipeline.prompt_template)
-    await db.repos.generation_runs.set_status(run_id, "running")
+    try:
+        await db.repos.generation_runs.set_status(run_id, "running")
+    except Exception:
+        await db.repos.generation_runs.set_status(run_id, "failed")
+        raise
     retrieval_query = pipeline.prompt_template or pipeline.name or ""
 
     async def event_gen():
@@ -320,7 +324,11 @@ async def generate_pipeline(
 
     gen = GenerationService(engine, provider_callable=provider_callable)
     run_id = await db.repos.generation_runs.create_run(pipeline_id, pipeline.prompt_template)
-    await db.repos.generation_runs.set_status(run_id, "running")
+    try:
+        await db.repos.generation_runs.set_status(run_id, "running")
+    except Exception:
+        await db.repos.generation_runs.set_status(run_id, "failed")
+        raise
     retrieval_query = pipeline.prompt_template or pipeline.name or ""
     try:
         result = await gen.generate(
