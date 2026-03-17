@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 
 from src.models import Message, SearchResult
 from src.services.generation_service import GenerationService
@@ -25,7 +25,7 @@ async def test_generation_service_basic():
         sender_id=None,
         sender_name="Alice",
         text="Hello world from test",
-        date=datetime.utcnow(),
+        date=datetime.now(timezone.utc),
         collected_at=None,
         channel_title="TestChannel",
         channel_username="testchan",

@@ -103,19 +103,27 @@ class Database:
         extension_path = self._resolve_sqlite_vec_path()
         if not extension_path:
             return False
+        enabled = False
         try:
             await self._db.enable_load_extension(True)
+            enabled = True
             await self._db.load_extension(extension_path)
             logger.info("Loaded sqlite-vec extension from %s", extension_path)
             return True
+        except AttributeError:
+            logger.warning(
+                "sqlite3 extension loading is not supported in this Python build; sqlite-vec disabled"
+            )
+            return False
         except Exception:
             logger.exception("Failed to load sqlite-vec extension from %s", extension_path)
             return False
         finally:
-            try:
-                await self._db.enable_load_extension(False)
-            except Exception:
-                logger.exception("Failed to disable SQLite extension loading")
+            if enabled:
+                try:
+                    await self._db.enable_load_extension(False)
+                except Exception:
+                    logger.exception("Failed to disable SQLite extension loading")
 
     async def initialize(self) -> None:
         self._db = await self._connection.connect()

@@ -370,10 +370,10 @@ async def publish_pipeline(request: Request, pipeline_id: int, run_id: int = For
         return _pipeline_redirect("pipeline_invalid", error=True)
     # Mark as published (no external publishing performed here)
     metadata = run.metadata or {}
-    from datetime import datetime
+    from datetime import datetime, timezone
 
     metadata["published"] = True
-    metadata["published_at"] = datetime.utcnow().isoformat()
+    metadata["published_at"] = datetime.now(timezone.utc).isoformat()
     await db.repos.generation_runs.save_result(run_id, run.generated_text or "", metadata)
     await db.repos.generation_runs.set_status(run_id, "published")
     return _pipeline_redirect("pipeline_published")

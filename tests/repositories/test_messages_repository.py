@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -35,7 +35,7 @@ def make_message(
         channel_id=channel_id,
         message_id=message_id,
         text=text,
-        date=date or datetime.utcnow(),
+        date=date or datetime.now(timezone.utc),
         **kwargs,
     )
 
@@ -454,7 +454,7 @@ async def test_get_fts_daily_stats_for_query(repo):
     """Test getting daily FTS stats for a query."""
     sq = SearchQuery(query="test", is_fts=True)
 
-    today = datetime.utcnow()
+    today = datetime.now(timezone.utc)
     yesterday = today - timedelta(days=1)
 
     await repo.insert_messages_batch(
