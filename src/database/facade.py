@@ -24,7 +24,6 @@ from src.database.repositories.photo_loader import PhotoLoaderRepository
 from src.database.repositories.search_log import SearchLogRepository
 from src.database.repositories.search_queries import SearchQueriesRepository
 from src.database.repositories.settings import SettingsRepository
-from src.database.repositories.generation_runs import GenerationRunsRepository
 from src.database.schema import SCHEMA_SQL
 from src.models import (
     Account,

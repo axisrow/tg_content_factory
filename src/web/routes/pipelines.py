@@ -110,7 +110,6 @@ async def add_pipeline(
     is_active: bool = Form(False),
 ):
     svc: PipelineService = deps.pipeline_service(request)
-    phone = request.query_params.get("phone")
     try:
         await svc.add(
             name=name,
@@ -184,7 +183,6 @@ async def edit_pipeline(
 
 @router.post("/{pipeline_id}/toggle")
 async def toggle_pipeline(request: Request, pipeline_id: int):
-    phone = request.query_params.get("phone")
     ok = await deps.pipeline_service(request).toggle(pipeline_id)
     if not ok:
         return _pipeline_redirect("pipeline_invalid", error=True)
@@ -198,7 +196,6 @@ async def toggle_pipeline(request: Request, pipeline_id: int):
 
 @router.post("/{pipeline_id}/delete")
 async def delete_pipeline(request: Request, pipeline_id: int):
-    phone = request.query_params.get("phone")
     await deps.pipeline_service(request).delete(pipeline_id)
     try:
         scheduler = deps.get_scheduler(request)
