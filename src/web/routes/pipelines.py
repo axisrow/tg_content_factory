@@ -213,6 +213,7 @@ async def run_pipeline(request: Request, pipeline_id: int):
         await enqueuer.enqueue_pipeline_run(pipeline_id)
     except Exception:
         logger.warning("Failed to enqueue pipeline run for pipeline_id=%d", pipeline_id, exc_info=True)
+        return _pipeline_redirect("pipeline_run_failed", error=True)
     return _pipeline_redirect("pipeline_run_enqueued")
 
 

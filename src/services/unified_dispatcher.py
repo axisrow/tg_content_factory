@@ -465,6 +465,7 @@ class UnifiedDispatcher:
                     note=f"Pipeline run id={run_id}",
                 )
             except Exception as exc:
+                logger.exception("Pipeline run failed for pipeline_id=%d run_id=%d", pipeline_id, run_id)
                 await db.repos.generation_runs.set_status(run_id, "failed")
                 await self._tasks.update_collection_task(
                     task.id,
@@ -472,6 +473,7 @@ class UnifiedDispatcher:
                     error=str(exc)[:500],
                 )
         except Exception as exc:
+            logger.exception("Pipeline run handler failed for pipeline_id=%d", pipeline_id)
             await self._tasks.update_collection_task(
                 task.id,
                 CollectionTaskStatus.FAILED,
