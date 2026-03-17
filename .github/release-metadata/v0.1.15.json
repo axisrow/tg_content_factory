@@ -1,0 +1,22 @@
+{
+  "tag": "v0.1.15",
+  "title": "Semantic Search & Vector Embeddings",
+  "highlights": [
+    {
+      "title": "sqlite-vec Integration",
+      "description": "Load sqlite-vec extension at runtime, create vec_messages virtual table (cosine distance) and add KNN search via MATCH operator to the local search engine."
+    },
+    {
+      "title": "EmbeddingService",
+      "description": "Provider-agnostic embedding abstraction supporting OpenAI text-embedding-3-small, Ollama nomic-embed-text and Cohere with incremental batch vectorization."
+    },
+    {
+      "title": "Hybrid FTS5 + Vector Search",
+      "description": "Combine keyword (FTS5) and semantic (KNN) results with Reciprocal Rank Fusion for relevance-ranked hybrid queries."
+    },
+    {
+      "title": "semantic_search MCP Tool",
+      "description": "Add semantic_search tool to the AI agent MCP server for meaning-based queries — foundation for RAG in content generation pipelines."
+    }
+  ]
+}

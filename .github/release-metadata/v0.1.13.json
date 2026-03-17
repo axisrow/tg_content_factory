@@ -1,0 +1,22 @@
+{
+  "tag": "v0.1.13",
+  "title": "Analytics, Engagement Stats & CLI Commands",
+  "highlights": [
+    {
+      "title": "Message Analytics Dashboard",
+      "description": "Add top-posts ranking, engagement breakdown by content type, and hourly activity patterns to the web dashboard."
+    },
+    {
+      "title": "Channel & Per-Message Engagement Stats",
+      "description": "Track views, forwards, reply_count and store per-reaction data in a dedicated message_reactions table; surface averages in Web UI and CLI channel list."
+    },
+    {
+      "title": "CLI Account & Channel Commands",
+      "description": "Add account auth/info/flood-status/flood-clear and channel resolve subcommands for full Telegram account management from the terminal."
+    },
+    {
+      "title": "CLI my-telegram & collect Commands",
+      "description": "Add my-telegram leave/topics/cache-status/cache-clear and collect sample — read-only message preview without DB writes."
+    }
+  ]
+}
