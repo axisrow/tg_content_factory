@@ -117,10 +117,10 @@ def make_langchain_adapter(
                 )
 
         # Build message payload using schema.HumanMessage when available
-        HumanMessage = getattr(schema, "HumanMessage", None)
+        human_message_cls = getattr(schema, "HumanMessage", None)
         messages = (
-            [HumanMessage(content=prompt)]
-            if HumanMessage is not None
+            [human_message_cls(content=prompt)]
+            if human_message_cls is not None
             else [{"role": "user", "content": prompt}]
         )
 

@@ -7,6 +7,7 @@ from src.models import (
     PipelineRunTaskPayload,
 )
 from src.scheduler.manager import SchedulerManager
+from src.services.unified_dispatcher import UnifiedDispatcher
 
 
 class FakePipeline:
@@ -68,10 +69,8 @@ async def test_sync_pipeline_jobs_adds_and_removes():
     assert "pipeline_run_3" in scheduler.removed
 
 
+
 # --- UnifiedDispatcher pipeline run handling (missing env) ---
-from src.services.unified_dispatcher import UnifiedDispatcher
-
-
 class FakeTasksRepo:
     def __init__(self):
         self.calls = []
