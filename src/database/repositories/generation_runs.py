@@ -42,6 +42,14 @@ class GenerationRunsRepository:
         )
         await self._db.commit()
 
+    async def reset_running_on_startup(self) -> int:
+        """Reset generation_runs stuck in 'running' state to 'failed' on server startup."""
+        cur = await self._db.execute(
+            "UPDATE generation_runs SET status = 'failed', updated_at = datetime('now') WHERE status = 'running'",
+        )
+        await self._db.commit()
+        return cur.rowcount or 0
+
     async def get(self, run_id: int) -> GenerationRun | None:
         cur = await self._db.execute("SELECT * FROM generation_runs WHERE id = ?", (run_id,))
         row = await cur.fetchone()
