@@ -151,6 +151,7 @@ async def build_container_with_templates(
         search_engine=search_engine,
         pipeline_bundle=pipeline_bundle,
         db=db,
+        client_pool=pool,
     )
     scheduler = SchedulerManager(
         config.scheduler,
