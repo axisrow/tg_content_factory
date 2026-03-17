@@ -425,7 +425,7 @@ class UnifiedDispatcher:
             from src.services.pipeline_service import PipelineService
             from src.services.provider_service import AgentProviderService
 
-            svc = PipelineService(self._pipeline_bundle or self._db)
+            svc = PipelineService(self._pipeline_bundle)
             pipeline = await svc.get(pipeline_id)
             if pipeline is None:
                 await self._tasks.update_collection_task(
