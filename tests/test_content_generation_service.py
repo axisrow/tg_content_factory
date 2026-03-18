@@ -59,6 +59,9 @@ class FakeDB:
     def __init__(self):
         self.repos = FakeRepos()
 
+    async def execute(self, sql, params=()):
+        return None
+
 
 async def test_content_generation_service_rag():
     msg = Message(
@@ -178,6 +181,97 @@ async def test_content_generation_service_skips_image_generation_without_service
         run = await service.generate(pipeline)
         assert run is not None
         assert "GENERATED:" in (run.generated_text or "")
+    finally:
+        if original_get:
+            provider_service.AgentProviderService.get_provider_callable = original_get
+
+
+class FakeDraftNotificationService:
+    def __init__(self):
+        self.calls = []
+
+    async def notify_new_draft(self, run, pipeline):
+        self.calls.append((run, pipeline))
+        return True
+
+
+async def test_content_generation_service_notifies_for_moderated_drafts():
+    msg = Message(
+        id=1,
+        channel_id=10,
+        message_id=42,
+        sender_id=None,
+        sender_name="Alice",
+        text="Hello world from test",
+        date=datetime.now(timezone.utc),
+        collected_at=None,
+        channel_title="TestChannel",
+        channel_username="testchan",
+    )
+
+    engine = DummySearchEngine([msg])
+    db = FakeDB()
+    notifications = FakeDraftNotificationService()
+    service = ContentGenerationService(db, engine, notification_service=notifications)
+
+    pipeline = ContentPipeline(
+        id=1,
+        name="Test Pipeline",
+        prompt_template="Use {source_messages}",
+        llm_model="test-model",
+        generation_backend=PipelineGenerationBackend.CHAIN,
+        publish_mode=PipelinePublishMode.MODERATED,
+    )
+
+    from src.services import provider_service
+
+    original_get = getattr(provider_service.AgentProviderService, "get_provider_callable", None)
+    provider_service.AgentProviderService.get_provider_callable = lambda self, model: fake_provider
+    try:
+        run = await service.generate(pipeline)
+        assert run is not None
+        assert len(notifications.calls) == 1
+        assert notifications.calls[0][0].id == run.id
+    finally:
+        if original_get:
+            provider_service.AgentProviderService.get_provider_callable = original_get
+
+
+async def test_content_generation_service_skips_notification_for_auto_publish():
+    msg = Message(
+        id=1,
+        channel_id=10,
+        message_id=42,
+        sender_id=None,
+        sender_name="Alice",
+        text="Hello world from test",
+        date=datetime.now(timezone.utc),
+        collected_at=None,
+        channel_title="TestChannel",
+        channel_username="testchan",
+    )
+
+    engine = DummySearchEngine([msg])
+    db = FakeDB()
+    notifications = FakeDraftNotificationService()
+    service = ContentGenerationService(db, engine, notification_service=notifications)
+
+    pipeline = ContentPipeline(
+        id=1,
+        name="Test Pipeline",
+        prompt_template="Use {source_messages}",
+        llm_model="test-model",
+        generation_backend=PipelineGenerationBackend.CHAIN,
+        publish_mode=PipelinePublishMode.AUTO,
+    )
+
+    from src.services import provider_service
+
+    original_get = getattr(provider_service.AgentProviderService, "get_provider_callable", None)
+    provider_service.AgentProviderService.get_provider_callable = lambda self, model: fake_provider
+    try:
+        await service.generate(pipeline)
+        assert notifications.calls == []
     finally:
         if original_get:
             provider_service.AgentProviderService.get_provider_callable = original_get
