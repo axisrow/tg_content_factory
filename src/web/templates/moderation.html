@@ -1,0 +1,117 @@
+{% extends "base.html" %}
+
+{% block title %}Очередь модерации{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <h1 class="h3 mb-4">Очередь модерации</h1>
+
+    <div class="card mb-4">
+        <div class="card-body">
+            <form method="get" class="row g-3">
+                <div class="col-md-4">
+                    <label class="form-label">Пайплайн</label>
+                    <select name="pipeline_id" class="form-select">
+                        <option value="">Все пайплайны</option>
+                        {% for item in pipelines %}
+                        <option value="{{ item.pipeline.id }}" {% if selected_pipeline_id == item.pipeline.id %}selected{% endif %}>
+                            {{ item.pipeline.name }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label">Лимит</label>
+                    <input type="number" name="limit" value="{{ limit }}" class="form-control" min="1" max="200">
+                </div>
+                <div class="col-md-2 d-flex align-items-end">
+                    <button type="submit" class="btn btn-primary">Фильтр</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    {% if pending_runs %}
+    <form method="post" action="/moderation/bulk-approve">
+        <div class="mb-3">
+            <button type="submit" class="btn btn-success btn-sm">Одобрить выбранные</button>
+            <button type="submit" formaction="/moderation/bulk-reject" class="btn btn-danger btn-sm">Отклонить выбранные</button>
+        </div>
+
+        <div class="table-responsive">
+            <table class="table table-hover">
+                <thead>
+                    <tr>
+                        <th><input type="checkbox" id="select-all"></th>
+                        <th>ID</th>
+                        <th>Пайплайн</th>
+                        <th>Статус</th>
+                        <th>Создан</th>
+                        <th>Превью</th>
+                        <th>Действия</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for run in pending_runs %}
+                    <tr>
+                        <td>
+                            <input type="checkbox" name="run_ids" value="{{ run.id }}" class="run-checkbox">
+                        </td>
+                        <td>{{ run.id }}</td>
+                        <td>{{ run.pipeline_id }}</td>
+                        <td>
+                            <span class="badge bg-{% if run.moderation_status == 'pending' %}secondary{% elif run.moderation_status == 'approved' %}success{% elif run.moderation_status == 'rejected' %}danger{% else %}primary{% endif %}">
+                                {{ run.moderation_status }}
+                            </span>
+                        </td>
+                        <td>{{ run.created_at.strftime('%Y-%m-%d %H:%M') if run.created_at else '—' }}</td>
+                        <td>
+                            {% if run.generated_text %}
+                            <span class="text-muted">{{ run.generated_text[:100] }}{% if run.generated_text|length > 100 %}...{% endif %}</span>
+                            {% else %}
+                            <span class="text-muted">Нет текста</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            <div class="btn-group btn-group-sm">
+                                <a href="/moderation/{{ run.id }}/view" class="btn btn-outline-primary">Просмотр</a>
+                                <button type="submit" name="run_id" value="{{ run.id }}" formaction="/moderation/{{ run.id }}/approve" class="btn btn-outline-success">Одобрить</button>
+                                <button type="submit" name="run_id" value="{{ run.id }}" formaction="/moderation/{{ run.id }}/reject" class="btn btn-outline-danger">Отклонить</button>
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </form>
+
+    <nav>
+        <ul class="pagination">
+            {% if offset > 0 %}
+            <li class="page-item">
+                <a class="page-link" href="?pipeline_id={{ selected_pipeline_id }}&limit={{ limit }}&offset={{ offset - limit }}">Назад</a>
+            </li>
+            {% endif %}
+            {% if pending_runs|length == limit %}
+            <li class="page-item">
+                <a class="page-link" href="?pipeline_id={{ selected_pipeline_id }}&limit={{ limit }}&offset={{ offset + limit }}">Вперёд</a>
+            </li>
+            {% endif %}
+        </ul>
+    </nav>
+    {% else %}
+    <div class="alert alert-info">Нет черновиков на модерации.</div>
+    {% endif %}
+</div>
+
+<script>
+const selectAll = document.getElementById('select-all');
+if (selectAll) {
+    selectAll.addEventListener('change', function() {
+        const checkboxes = document.querySelectorAll('.run-checkbox');
+        checkboxes.forEach(cb => cb.checked = this.checked);
+    });
+}
+</script>
+{% endblock %}
