@@ -234,8 +234,10 @@ class GenerationRun(BaseModel):
     metadata: dict | None = None
     image_url: str | None = None
     moderation_status: str = "pending"
-    variants: str | None = None  # JSON array of variant texts
-    selected_variant: int | None = None  # Index of selected variant
+    quality_score: float | None = None
+    quality_issues: list[str] | None = None
+    variants: list[str] | None = None
+    selected_variant: int | None = None
     published_at: datetime | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None

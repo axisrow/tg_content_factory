@@ -390,6 +390,25 @@ class CollectionTasksRepository:
         await self._db.commit()
         return cur.rowcount or 0
 
+    async def reset_orphaned_running_tasks(self) -> int:
+        """Reset orphaned RUNNING channel tasks to PENDING status.
+
+        Called on startup to recover from ungraceful shutdowns where RUNNING
+        tasks were not properly completed or failed.
+        """
+        cur = await self._db.execute(
+            "UPDATE collection_tasks "
+            "SET status = ?, started_at = NULL "
+            "WHERE task_type = ? AND status = ?",
+            (
+                CollectionTaskStatus.PENDING.value,
+                CollectionTaskType.CHANNEL_COLLECT.value,
+                CollectionTaskStatus.RUNNING.value,
+            ),
+        )
+        await self._db.commit()
+        return cur.rowcount or 0
+
     async def create_generic_task(
         self,
         task_type: CollectionTaskType | str,
