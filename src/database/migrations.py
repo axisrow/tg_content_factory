@@ -314,6 +314,13 @@ async def run_migrations(db: aiosqlite.Connection, *, vec_available: bool = Fals
     if "quality_issues" not in gr_columns:
         await db.execute("ALTER TABLE generation_runs ADD COLUMN quality_issues TEXT")
         await db.commit()
+    # Ensure A/B testing columns exist (PR #129)
+    if "variants" not in gr_columns:
+        await db.execute("ALTER TABLE generation_runs ADD COLUMN variants TEXT")
+        await db.commit()
+    if "selected_variant" not in gr_columns:
+        await db.execute("ALTER TABLE generation_runs ADD COLUMN selected_variant INTEGER")
+        await db.commit()
     await db.execute("""
         CREATE TABLE IF NOT EXISTS pipeline_sources (
             id INTEGER PRIMARY KEY,

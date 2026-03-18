@@ -32,6 +32,13 @@ class GenerationRunsRepository:
             except Exception:
                 quality_issues = None
 
+        variants = None
+        if "variants" in row.keys() and row["variants"]:
+            try:
+                variants = json.loads(row["variants"])
+            except Exception:
+                variants = None
+
         return GenerationRun(
             id=row["id"],
             pipeline_id=row["pipeline_id"],
@@ -46,6 +53,8 @@ class GenerationRunsRepository:
             or "pending",
             quality_score=row["quality_score"] if "quality_score" in row.keys() else None,
             quality_issues=quality_issues,
+            variants=variants,
+            selected_variant=row["selected_variant"] if "selected_variant" in row.keys() else None,
             published_at=_dt(row["published_at"] if "published_at" in row.keys() else None),
             created_at=_dt(row["created_at"]),
             updated_at=_dt(row["updated_at"]),
@@ -100,6 +109,21 @@ class GenerationRunsRepository:
             ("UPDATE generation_runs SET quality_score = ?, quality_issues = ?, "
              "updated_at = datetime('now') WHERE id = ?"),
             (score, issues_json, run_id),
+        )
+        await self._db.commit()
+
+    async def set_variants(self, run_id: int, variants: list[str]) -> None:
+        await self._db.execute(
+            "UPDATE generation_runs SET variants = ?, updated_at = datetime('now') WHERE id = ?",
+            (json.dumps(variants, ensure_ascii=False), run_id),
+        )
+        await self._db.commit()
+
+    async def select_variant(self, run_id: int, variant_index: int, generated_text: str) -> None:
+        await self._db.execute(
+            ("UPDATE generation_runs SET generated_text = ?, selected_variant = ?, "
+             "updated_at = datetime('now') WHERE id = ?"),
+            (generated_text, variant_index, run_id),
         )
         await self._db.commit()
 

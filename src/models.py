@@ -236,6 +236,8 @@ class GenerationRun(BaseModel):
     moderation_status: str = "pending"
     quality_score: float | None = None
     quality_issues: list[str] | None = None
+    variants: list[str] | None = None
+    selected_variant: int | None = None
     published_at: datetime | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
