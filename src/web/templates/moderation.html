@@ -6,14 +6,6 @@
 <div class="container-fluid">
     <h1 class="h3 mb-4">Очередь модерации</h1>
 
-    {% if request.query_params.get("msg") %}
-    <div class="alert alert-success">{{ request.query_params.get("msg") }}</div>
-    {% endif %}
-
-    {% if request.query_params.get("error") %}
-    <div class="alert alert-danger">{{ request.query_params.get("error") }}</div>
-    {% endif %}
-
     <div class="card mb-4">
         <div class="card-body">
             <form method="get" class="row g-3">
@@ -114,9 +106,12 @@
 </div>
 
 <script>
-document.getElementById('select-all').addEventListener('change', function() {
-    const checkboxes = document.querySelectorAll('.run-checkbox');
-    checkboxes.forEach(cb => cb.checked = this.checked);
-});
+const selectAll = document.getElementById('select-all');
+if (selectAll) {
+    selectAll.addEventListener('change', function() {
+        const checkboxes = document.querySelectorAll('.run-checkbox');
+        checkboxes.forEach(cb => cb.checked = this.checked);
+    });
+}
 </script>
 {% endblock %}
