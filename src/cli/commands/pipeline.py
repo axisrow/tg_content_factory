@@ -11,6 +11,7 @@ from src.services.pipeline_service import (
     PipelineTargetRef,
     PipelineValidationError,
 )
+from src.services.publish_service import PublishService
 
 
 def _parse_target_refs(values: list[str]) -> list[PipelineTargetRef]:
@@ -27,9 +28,19 @@ def _parse_target_refs(values: list[str]) -> list[PipelineTargetRef]:
     return refs
 
 
+def _preview_text(value: str | None, limit: int = 60) -> str:
+    if not value:
+        return "—"
+    compact = " ".join(value.split())
+    if len(compact) <= limit:
+        return compact
+    return f"{compact[: limit - 3]}..."
+
+
 def run(args: argparse.Namespace) -> None:
     async def _run() -> None:
-        _, db = await runtime.init_db(args.config)
+        config, db = await runtime.init_db(args.config)
+        pool = None
         try:
             svc = PipelineService(db)
 
@@ -197,7 +208,80 @@ def run(args: argparse.Namespace) -> None:
                 except Exception as exc:
                     await db.repos.generation_runs.set_status(run_id, "failed")
                     print(f"Generation failed: {exc}")
+
+            elif args.pipeline_action == "queue":
+                pipeline = await svc.get(args.id)
+                if pipeline is None:
+                    print(f"Pipeline id={args.id} not found")
+                    return
+                runs = await db.repos.generation_runs.list_pending_moderation(
+                    pipeline_id=args.id,
+                    limit=args.limit,
+                )
+                if not runs:
+                    print(f"No pending moderation runs for pipeline id={args.id}")
+                    return
+                print(f"{'Run ID':<8} {'Status':<12} {'Created':<19} Preview")
+                print("-" * 80)
+                for run in runs:
+                    created_at = (
+                        run.created_at.strftime("%Y-%m-%d %H:%M:%S") if run.created_at else "—"
+                    )
+                    print(
+                        f"{run.id or 0:<8} {run.moderation_status:<12} "
+                        f"{created_at:<19} {_preview_text(run.generated_text)}"
+                    )
+
+            elif args.pipeline_action == "approve":
+                run = await db.repos.generation_runs.get(args.run_id)
+                if run is None:
+                    print(f"Run id={args.run_id} not found")
+                    return
+                await db.repos.generation_runs.set_moderation_status(args.run_id, "approved")
+                print(f"Approved run id={args.run_id}")
+
+            elif args.pipeline_action == "reject":
+                run = await db.repos.generation_runs.get(args.run_id)
+                if run is None:
+                    print(f"Run id={args.run_id} not found")
+                    return
+                await db.repos.generation_runs.set_moderation_status(args.run_id, "rejected")
+                print(f"Rejected run id={args.run_id}")
+
+            elif args.pipeline_action == "publish":
+                run = await db.repos.generation_runs.get(args.run_id)
+                if run is None:
+                    print(f"Run id={args.run_id} not found")
+                    return
+                if run.pipeline_id is None:
+                    print(f"Run id={args.run_id} has no pipeline")
+                    return
+
+                pipeline = await svc.get(run.pipeline_id)
+                if pipeline is None:
+                    print(f"Pipeline id={run.pipeline_id} not found")
+                    return
+
+                _, pool = await runtime.init_pool(config, db)
+                if not pool.clients:
+                    print("ERROR: Нет доступных аккаунтов Telegram.")
+                    return
+
+                publish_service = PublishService(db, pool)
+                results = await publish_service.publish_run(run, pipeline)
+                if not results or not all(result.success for result in results):
+                    print(f"Failed to publish run id={args.run_id}")
+                    for result in results:
+                        if not result.success:
+                            print(f"  - {result.error or 'Unknown publish error'}")
+                    return
+
+                print(
+                    f"Published run id={args.run_id} to {len(results)} target(s)"
+                )
         finally:
+            if pool is not None:
+                await pool.disconnect_all()
             await db.close()
 
     asyncio.run(_run())
