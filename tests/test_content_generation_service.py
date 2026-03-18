@@ -1,9 +1,7 @@
 from datetime import datetime, timezone
 
-from src.models import ContentPipeline, PipelineGenerationBackend, PipelinePublishMode
+from src.models import ContentPipeline, Message, PipelineGenerationBackend, PipelinePublishMode, SearchResult
 from src.services.content_generation_service import ContentGenerationService
-from src.models import Message, SearchResult
-from src.services.generation_service import GenerationService
 
 
 class DummySearchEngine:
@@ -139,6 +137,47 @@ async def test_content_generation_service_deep_agents_stub():
             assert False, "Expected RuntimeError"
         except RuntimeError as e:
             assert "AgentManager" in str(e) or "not configured" in str(e)
+    finally:
+        if original_get:
+            provider_service.AgentProviderService.get_provider_callable = original_get
+
+
+async def test_content_generation_service_skips_image_generation_without_service():
+    msg = Message(
+        id=1,
+        channel_id=10,
+        message_id=42,
+        sender_id=None,
+        sender_name="Alice",
+        text="Hello world from test",
+        date=datetime.now(timezone.utc),
+        collected_at=None,
+        channel_title="TestChannel",
+        channel_username="testchan",
+    )
+
+    engine = DummySearchEngine([msg])
+    db = FakeDB()
+    service = ContentGenerationService(db, engine)
+
+    pipeline = ContentPipeline(
+        id=1,
+        name="Test Pipeline",
+        prompt_template="Use {source_messages}",
+        llm_model="test-model",
+        image_model="stub-image-model",
+        generation_backend=PipelineGenerationBackend.CHAIN,
+        publish_mode=PipelinePublishMode.MODERATED,
+    )
+
+    from src.services import provider_service
+
+    original_get = getattr(provider_service.AgentProviderService, "get_provider_callable", None)
+    provider_service.AgentProviderService.get_provider_callable = lambda self, model: fake_provider
+    try:
+        run = await service.generate(pipeline)
+        assert run is not None
+        assert "GENERATED:" in (run.generated_text or "")
     finally:
         if original_get:
             provider_service.AgentProviderService.get_provider_callable = original_get
