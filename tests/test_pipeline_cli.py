@@ -4,10 +4,11 @@ import argparse
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from src.services.publish_service import PublishResult
+
 from src.config import AppConfig
 from src.database import Database
 from src.models import Account, Channel, ContentPipeline, PipelineTarget
-from src.services.publish_service import PublishResult
 
 
 def _ns(**kwargs) -> argparse.Namespace:
