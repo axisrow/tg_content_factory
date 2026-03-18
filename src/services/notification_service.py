@@ -49,16 +49,16 @@ class NotificationService:
             # Send /start to the new bot so it gets initialised
             try:
                 await asyncio.wait_for(client.send_message(bot_username, "/start"), timeout=30.0)
-            except Exception as exc:
-                logger.warning("Could not send /start to @%s: %s", bot_username, exc)
+            except Exception:
+                logger.warning("Could not send /start to @%s", bot_username, exc_info=True)
 
             # Resolve the bot's Telegram ID
             bot_id: int | None = None
             try:
                 entity = await asyncio.wait_for(client.get_entity(bot_username), timeout=30.0)
                 bot_id = entity.id
-            except Exception as exc:
-                logger.warning("Could not resolve bot entity for @%s: %s", bot_username, exc)
+            except Exception:
+                logger.warning("Could not resolve bot entity for @%s", bot_username, exc_info=True)
 
         bot = NotificationBot(
             tg_user_id=tg_user_id,
