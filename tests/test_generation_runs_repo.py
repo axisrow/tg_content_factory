@@ -22,3 +22,36 @@ async def test_generation_runs_repo(db):
 
     rows = await repo.list_by_pipeline(42)
     assert any(r.id == run_id for r in rows)
+
+
+@pytest.mark.asyncio
+async def test_generation_runs_repo_hydrates_moderation_fields(db):
+    repo = db.repos.generation_runs
+    run_id = await repo.create_run(42, "prompt-template")
+
+    await repo.set_status(run_id, "completed")
+    await repo.set_moderation_status(run_id, "approved")
+    await repo.set_published_at(run_id)
+
+    run = await repo.get(run_id)
+    assert run is not None
+    assert run.moderation_status == "published"
+    assert run.published_at is not None
+
+    rows = await repo.list_by_pipeline(42)
+    assert rows[0].moderation_status == "published"
+    assert rows[0].published_at is not None
+
+
+@pytest.mark.asyncio
+async def test_list_pending_moderation_returns_runs(db):
+    repo = db.repos.generation_runs
+    pending_id = await repo.create_run(42, "pending-prompt")
+    approved_id = await repo.create_run(42, "approved-prompt")
+
+    await repo.set_moderation_status(approved_id, "approved")
+
+    pending = await repo.list_pending_moderation(42)
+
+    assert [run.id for run in pending] == [pending_id]
+    assert pending[0].moderation_status == "pending"
