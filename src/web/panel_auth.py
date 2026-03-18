@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from urllib.parse import unquote, urlencode, urlparse
 
 from fastapi import Request
@@ -9,7 +10,7 @@ from src.web.csrf import is_same_origin_url, is_secure_request
 from src.web.session import COOKIE_MAX_AGE, COOKIE_NAME, create_session_token, verify_session_token
 
 LOGIN_PATH = "/login"
-PANEL_USERNAME = "admin"
+PANEL_USERNAME = os.environ.get("WEB_USER", "admin")
 
 
 def get_session_secret(request: Request) -> str | None:
