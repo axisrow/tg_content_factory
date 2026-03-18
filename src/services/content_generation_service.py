@@ -10,6 +10,7 @@ from src.services.generation_service import GenerationService
 
 if TYPE_CHECKING:
     from src.services.draft_notification_service import DraftNotificationService
+    from src.services.quality_scoring_service import QualityScoringService
 
 logger = logging.getLogger(__name__)
 
@@ -32,12 +33,14 @@ class ContentGenerationService:
         agent_manager: Any | None = None,
         image_service: Any | None = None,
         notification_service: "DraftNotificationService | None" = None,
+        quality_service: "QualityScoringService | None" = None,
     ) -> None:
         self._db = db
         self._search = search_engine
         self._agent_manager = agent_manager
         self._image_service = image_service
         self._notification_service = notification_service
+        self._quality_service = quality_service
 
     async def generate(
         self,
@@ -86,6 +89,16 @@ class ContentGenerationService:
                     )
 
             await self._db.repos.generation_runs.save_result(run_id, generated_text, metadata)
+            if self._quality_service and generated_text:
+                quality = await self._quality_service.score_content(
+                    generated_text,
+                    model=pipeline.llm_model,
+                )
+                await self._db.repos.generation_runs.set_quality_score(
+                    run_id,
+                    quality.overall,
+                    quality.issues,
+                )
             run = await self._db.repos.generation_runs.get(run_id)
             if run is None:
                 raise RuntimeError(f"Generation run {run_id} not found after save")

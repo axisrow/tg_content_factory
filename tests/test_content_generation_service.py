@@ -49,6 +49,11 @@ class FakeGenerationRunsRepo:
     async def get(self, run_id):
         return self._runs.get(run_id)
 
+    async def set_quality_score(self, run_id, score, issues=None):
+        if run_id in self._runs:
+            self._runs[run_id].quality_score = score
+            self._runs[run_id].quality_issues = issues
+
 
 class FakeRepos:
     def __init__(self):
@@ -195,6 +200,26 @@ class FakeDraftNotificationService:
         return True
 
 
+class FakeQualityService:
+    def __init__(self, overall=0.81, issues=None):
+        self.overall = overall
+        self.issues = issues or ["weak hook"]
+        self.calls = []
+
+    async def score_content(self, text, model=None):
+        from src.services.quality_scoring_service import QualityScore
+
+        self.calls.append((text, model))
+        return QualityScore(
+            relevance=self.overall,
+            language_quality=self.overall,
+            informativeness=self.overall,
+            structure=self.overall,
+            overall=self.overall,
+            issues=self.issues,
+        )
+
+
 async def test_content_generation_service_notifies_for_moderated_drafts():
     msg = Message(
         id=1,
@@ -272,6 +297,48 @@ async def test_content_generation_service_skips_notification_for_auto_publish():
     try:
         await service.generate(pipeline)
         assert notifications.calls == []
+    finally:
+        if original_get:
+            provider_service.AgentProviderService.get_provider_callable = original_get
+
+
+async def test_content_generation_service_records_quality_score():
+    msg = Message(
+        id=1,
+        channel_id=10,
+        message_id=42,
+        sender_id=None,
+        sender_name="Alice",
+        text="Hello world from test",
+        date=datetime.now(timezone.utc),
+        collected_at=None,
+        channel_title="TestChannel",
+        channel_username="testchan",
+    )
+
+    engine = DummySearchEngine([msg])
+    db = FakeDB()
+    quality = FakeQualityService(overall=0.91, issues=["missing CTA"])
+    service = ContentGenerationService(db, engine, quality_service=quality)
+
+    pipeline = ContentPipeline(
+        id=1,
+        name="Test Pipeline",
+        prompt_template="Use {source_messages}",
+        llm_model="test-model",
+        generation_backend=PipelineGenerationBackend.CHAIN,
+        publish_mode=PipelinePublishMode.MODERATED,
+    )
+
+    from src.services import provider_service
+
+    original_get = getattr(provider_service.AgentProviderService, "get_provider_callable", None)
+    provider_service.AgentProviderService.get_provider_callable = lambda self, model: fake_provider
+    try:
+        run = await service.generate(pipeline)
+        assert run.quality_score == 0.91
+        assert run.quality_issues == ["missing CTA"]
+        assert quality.calls == [(run.generated_text, "test-model")]
     finally:
         if original_get:
             provider_service.AgentProviderService.get_provider_callable = original_get

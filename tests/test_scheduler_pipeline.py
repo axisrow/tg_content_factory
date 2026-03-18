@@ -129,9 +129,21 @@ async def test_pipeline_run_handler_uses_content_generation_service(monkeypatch)
         def __init__(self, db, notifier):
             captured["notification_notifier"] = notifier
 
+    class FakeQualityScoringService:
+        def __init__(self, db):
+            captured["quality_db"] = db
+
     class FakeContentGenerationService:
-        def __init__(self, db, search_engine, notification_service=None, **kwargs):
+        def __init__(
+            self,
+            db,
+            search_engine,
+            notification_service=None,
+            quality_service=None,
+            **kwargs,
+        ):
             captured["notification_service"] = notification_service
+            captured["quality_service"] = quality_service
 
         async def generate(self, pipeline, model=None):
             from src.models import GenerationRun
@@ -151,6 +163,11 @@ async def test_pipeline_run_handler_uses_content_generation_service(monkeypatch)
     monkeypatch.setattr(
         "src.services.draft_notification_service.DraftNotificationService",
         FakeDraftNotificationService,
+        raising=True,
+    )
+    monkeypatch.setattr(
+        "src.services.quality_scoring_service.QualityScoringService",
+        FakeQualityScoringService,
         raising=True,
     )
     monkeypatch.setattr(
@@ -175,5 +192,6 @@ async def test_pipeline_run_handler_uses_content_generation_service(monkeypatch)
     await ud._handle_pipeline_run(task)
 
     assert captured["notification_service"] is not None
+    assert captured["quality_service"] is not None
     assert fake_tasks.calls[-1]["status"] == CollectionTaskStatus.COMPLETED
     assert fake_tasks.calls[-1]["note"] == "Pipeline run id=77"
