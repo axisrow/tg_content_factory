@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
-from typing import Callable, Generic, TypeVar
+from typing import Awaitable, Callable, TypeVar
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +33,7 @@ class CircuitState:
     failure_count: int = 0
     last_failure_time: float = 0.0
     state: str = "closed"  # closed, open, half_open
+    half_open_calls: int = 0
 
 
 @dataclass
@@ -114,8 +116,14 @@ class CircuitBreaker:
             if self._state.state == "open":
                 if now - self._state.last_failure_time >= self._config.recovery_timeout:
                     self._state.state = "half_open"
-                    return True, "half_open"
-                return False, "open"
+                    self._state.half_open_calls = 0
+                else:
+                    return False, "open"
+
+            if self._state.state == "half_open":
+                if self._state.half_open_calls >= self._config.half_open_max_calls:
+                    return False, "half_open_limit"
+                self._state.half_open_calls += 1
 
             return True, self._state.state
 
@@ -124,6 +132,7 @@ class CircuitBreaker:
         async with self._lock:
             if self._state.state == "half_open":
                 self._state.failure_count = 0
+                self._state.half_open_calls = 0
                 self._state.state = "closed"
 
     async def record_failure(self) -> None:
@@ -132,7 +141,8 @@ class CircuitBreaker:
             self._state.failure_count += 1
             self._state.last_failure_time = time.time()
 
-            if self._state.failure_count >= self._config.failure_threshold:
+            if self._state.state == "half_open" or self._state.failure_count >= self._config.failure_threshold:
+                self._state.half_open_calls = 0
                 self._state.state = "open"
 
     def get_state(self) -> dict:
@@ -141,6 +151,7 @@ class CircuitBreaker:
             "state": self._state.state,
             "failure_count": self._state.failure_count,
             "last_failure_time": self._state.last_failure_time,
+            "half_open_calls": self._state.half_open_calls,
         }
 
 
@@ -182,10 +193,19 @@ class ErrorRecoveryService:
         if len(self._error_history) > self._max_history:
             self._error_history = self._error_history[-self._max_history :]
 
+    async def _run_fallback(
+        self,
+        fallback: Callable[[], T | Awaitable[T]],
+    ) -> T:
+        result = fallback()
+        if inspect.isawaitable(result):
+            return await result
+        return result
+
     async def execute_with_recovery(
         self,
-        func: Callable[[], T],
-        fallback: Callable[[], T] | None = None,
+        func: Callable[[], Awaitable[T]],
+        fallback: Callable[[], T | Awaitable[T]] | None = None,
     ) -> T:
         """Execute a function with error recovery.
 
@@ -202,12 +222,12 @@ class ErrorRecoveryService:
         last_error: Exception | None = None
 
         for attempt in range(self._retry_policy.max_retries + 1):
-            can_execute, state = await self._circuit_breaker.can_execute()
+            can_execute, _state = await self._circuit_breaker.can_execute()
 
             if not can_execute:
                 logger.warning("Circuit breaker is open, using fallback")
                 if fallback:
-                    return fallback()
+                    return await self._run_fallback(fallback)
                 raise RuntimeError("Circuit breaker is open")
 
             try:
@@ -224,7 +244,7 @@ class ErrorRecoveryService:
                     logger.error("Fatal error: %s", str(e)[:100])
                     await self._circuit_breaker.record_failure()
                     if fallback:
-                        return fallback()
+                        return await self._run_fallback(fallback)
                     raise
 
                 await self._circuit_breaker.record_failure()
@@ -243,7 +263,7 @@ class ErrorRecoveryService:
 
         if fallback:
             logger.info("All retries failed, using fallback")
-            return fallback()
+            return await self._run_fallback(fallback)
 
         raise last_error or RuntimeError("Unknown error")
 
