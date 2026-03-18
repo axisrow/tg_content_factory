@@ -5,7 +5,8 @@ import logging
 from dataclasses import dataclass
 
 from src.database import Database
-from src.models import ContentPipeline, GenerationRun, PipelineTarget
+from src.models import ContentPipeline, GenerationRun, PipelinePublishMode, PipelineTarget
+from src.telegram.backends import adapt_transport_session
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +20,7 @@ class PublishResult:
 
 class PublishService:
     """Service for publishing generated content to Telegram targets.
-    
+
     Handles:
     - Fetching pipeline targets (phone + dialog_id pairs)
     - Sending text and optional image to each target
@@ -35,18 +36,25 @@ class PublishService:
         run: GenerationRun,
         pipeline: ContentPipeline,
     ) -> list[PublishResult]:
-        """Publish a generation run to all pipeline targets.
-        
-        Args:
-            run: The generation run to publish
-            pipeline: The pipeline with target definitions
-            
-        Returns:
-            List of PublishResult for each target
-        """
-        if not run.generated_text:
+        """Publish a generation run to all pipeline targets."""
+        if run.id is None or pipeline.id is None:
+            return [PublishResult(success=False, error="Missing run or pipeline id")]
+
+        if not (run.generated_text or "").strip():
             logger.warning("Run %s has no generated_text, skipping publish", run.id)
             return [PublishResult(success=False, error="No generated text")]
+
+        if (
+            pipeline.publish_mode == PipelinePublishMode.MODERATED
+            and run.moderation_status not in {"approved", "published"}
+        ):
+            logger.warning(
+                "Run %s is not eligible for publish: moderation_status=%s publish_mode=%s",
+                run.id,
+                run.moderation_status,
+                pipeline.publish_mode.value,
+            )
+            return [PublishResult(success=False, error="Run is not approved for publish")]
 
         targets = await self._db.repos.content_pipelines.list_targets(pipeline.id)
         if not targets:
@@ -70,10 +78,8 @@ class PublishService:
         target: PipelineTarget,
     ) -> PublishResult:
         """Publish to a single target."""
-        from src.telegram.client_pool import ClientPool
-
-        pool: ClientPool = self._client_pool
-
+        pool = self._client_pool
+        acquired_phone: str | None = None
         try:
             result = await pool.get_client_by_phone(target.phone)
             if result is None:
@@ -81,29 +87,28 @@ class PublishService:
                     success=False,
                     error=f"No client for phone {target.phone}",
                 )
-            client, _phone = result
+            client, acquired_phone = result
+            session = adapt_transport_session(client, disconnect_on_close=False)
 
-            entity = await self._resolve_entity(client, target.dialog_id)
+            entity = await self._resolve_entity(session, acquired_phone, target)
             if entity is None:
                 return PublishResult(
                     success=False,
                     error=f"Could not resolve dialog_id={target.dialog_id}",
                 )
 
-            raw_client = client.raw_client
-
             if run.image_url:
                 msg = await asyncio.wait_for(
-                    raw_client.send_message(
+                    session.publish_files(
                         entity,
-                        run.generated_text,
-                        file=run.image_url,
+                        run.image_url,
+                        caption=run.generated_text,
                     ),
                     timeout=60.0,
                 )
             else:
                 msg = await asyncio.wait_for(
-                    raw_client.send_message(entity, run.generated_text),
+                    session.send_message(entity, run.generated_text),
                     timeout=60.0,
                 )
 
@@ -118,35 +123,37 @@ class PublishService:
         except Exception as e:
             logger.exception("Failed to publish to %s:%s", target.phone, target.dialog_id)
             return PublishResult(success=False, error=str(e))
+        finally:
+            if acquired_phone is not None:
+                await pool.release_client(acquired_phone)
 
-    async def _resolve_entity(self, client, dialog_id: int):
+    async def _resolve_entity(
+        self,
+        session,
+        phone: str,
+        target: PipelineTarget,
+    ):
         """Resolve dialog_id to entity."""
         try:
-            from telethon.tl.types import PeerChannel, PeerChat, PeerUser
+            resolver = getattr(self._client_pool, "resolve_dialog_entity", None)
+            if callable(resolver):
+                resolved = resolver(session, phone, target.dialog_id, target.dialog_type)
+                return await asyncio.wait_for(resolved, timeout=30.0)
 
-            if dialog_id < 0:
-                if dialog_id < -1000000000:
-                    peer = PeerChannel(channel_id=-1000000000000 - dialog_id)
-                else:
-                    peer = PeerChannel(channel_id=-dialog_id)
-            else:
-                peer = PeerUser(user_id=dialog_id)
-
-            entity = await asyncio.wait_for(client.get_entity(peer), timeout=30.0)
-            return entity
+            return await asyncio.wait_for(session.resolve_input_entity(target.dialog_id), timeout=30.0)
         except Exception as e:
-            logger.warning("Could not resolve dialog_id %s: %s", dialog_id, e)
+            logger.warning("Could not resolve dialog_id %s: %s", target.dialog_id, e)
             return None
 
     async def preview_targets(self, pipeline_id: int) -> list[dict]:
         """Get preview info about pipeline targets."""
         targets = await self._db.repos.content_pipelines.list_targets(pipeline_id)
-        result = []
-        for t in targets:
-            result.append({
-                "phone": t.phone,
-                "dialog_id": t.dialog_id,
-                "title": t.title,
-                "type": t.dialog_type,
-            })
-        return result
+        return [
+            {
+                "phone": target.phone,
+                "dialog_id": target.dialog_id,
+                "title": target.title,
+                "type": target.dialog_type,
+            }
+            for target in targets
+        ]
