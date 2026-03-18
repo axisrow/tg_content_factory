@@ -317,7 +317,7 @@ async def test_stats_web_endpoint(tmp_path):
             transport=transport,
             base_url="http://test",
             follow_redirects=False,
-            headers={"Authorization": f"Basic {auth_header}"},
+            headers={"Authorization": f"Basic {auth_header}", "Origin": "http://test"},
         ) as c:
             resp = await c.post(f"/channels/{pk}/stats")
             assert resp.status_code == 303
@@ -354,7 +354,7 @@ async def test_stats_web_endpoint_marks_task_failed(tmp_path):
             transport=transport,
             base_url="http://test",
             follow_redirects=False,
-            headers={"Authorization": f"Basic {auth_header}"},
+            headers={"Authorization": f"Basic {auth_header}", "Origin": "http://test"},
         ) as c:
             resp = await c.post(f"/channels/{pk}/stats")
             assert resp.status_code == 303

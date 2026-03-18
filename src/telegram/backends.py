@@ -72,6 +72,9 @@ class TelegramTransportSession:
     ) -> Any:
         return await self._client.send_file(entity, files, caption=caption, schedule=schedule)
 
+    async def send_message(self, entity: Any, message: Any, **kwargs: Any) -> Any:
+        return await self._client.send_message(entity, message, **kwargs)
+
     async def remove_dialog(self, entity: Any) -> None:
         await self._client.delete_dialog(entity)
 
