@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from src.database import Database
-from src.models import ContentPipeline, GenerationRun, PipelineGenerationBackend
+from src.models import ContentPipeline, GenerationRun, PipelineGenerationBackend, PipelinePublishMode
 from src.search.engine import SearchEngine
 from src.services.generation_service import GenerationService
+
+if TYPE_CHECKING:
+    from src.services.draft_notification_service import DraftNotificationService
 
 logger = logging.getLogger(__name__)
 
@@ -28,11 +31,13 @@ class ContentGenerationService:
         search_engine: SearchEngine,
         agent_manager: Any | None = None,
         image_service: Any | None = None,
+        notification_service: "DraftNotificationService | None" = None,
     ) -> None:
         self._db = db
         self._search = search_engine
         self._agent_manager = agent_manager
         self._image_service = image_service
+        self._notification_service = notification_service
 
     async def generate(
         self,
@@ -84,6 +89,16 @@ class ContentGenerationService:
             run = await self._db.repos.generation_runs.get(run_id)
             if run is None:
                 raise RuntimeError(f"Generation run {run_id} not found after save")
+
+            if (
+                self._notification_service
+                and run.moderation_status == "pending"
+                and pipeline.publish_mode == PipelinePublishMode.MODERATED
+            ):
+                try:
+                    await self._notification_service.notify_new_draft(run, pipeline)
+                except Exception:
+                    logger.warning("Failed to send draft notification", exc_info=True)
             return run
         except Exception:
             logger.exception(
@@ -184,5 +199,4 @@ class ContentGenerationService:
                 pipeline.id,
             )
             return None
-
         return await self._image_service.generate(pipeline.image_model, text)
