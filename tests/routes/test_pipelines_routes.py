@@ -71,7 +71,7 @@ async def client(tmp_path):
         transport=transport,
         base_url="http://test",
         follow_redirects=True,
-        headers={"Authorization": f"Basic {auth_header}"},
+        headers={"Authorization": f"Basic {auth_header}", "Origin": "http://test"},
     ) as c:
         yield c
 

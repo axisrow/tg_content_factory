@@ -172,7 +172,15 @@ class CollectionQueue:
                 self._queue.task_done()
 
     async def requeue_startup_tasks(self) -> int:
-        """Re-enqueue pending collection tasks that survived a server restart."""
+        """Re-enqueue pending collection tasks that survived a server restart.
+
+        Also resets orphaned RUNNING tasks (left from ungraceful shutdown) to PENDING.
+        """
+        # Reset orphaned RUNNING tasks from previous ungraceful shutdown
+        reset_count = await self._channels.reset_orphaned_running_tasks()
+        if reset_count:
+            logger.info("Reset %d orphaned RUNNING tasks to PENDING", reset_count)
+
         pending = await self._channels.get_pending_channel_tasks()
         count = 0
         for task in pending:

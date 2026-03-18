@@ -275,6 +275,19 @@ def build_parser() -> argparse.ArgumentParser:
         "--temperature", type=float, default=0.0, help="Sampling temperature for generation"
     )
 
+    pipeline_queue = pipeline_sub.add_parser("queue", help="Show moderation queue")
+    pipeline_queue.add_argument("id", type=int, help="Pipeline id")
+    pipeline_queue.add_argument("--limit", type=int, default=20, help="Max runs to show")
+
+    pipeline_publish = pipeline_sub.add_parser("publish", help="Publish a generation run")
+    pipeline_publish.add_argument("run_id", type=int, help="Run id to publish")
+
+    pipeline_approve = pipeline_sub.add_parser("approve", help="Approve a generation run")
+    pipeline_approve.add_argument("run_id", type=int, help="Run id to approve")
+
+    pipeline_reject = pipeline_sub.add_parser("reject", help="Reject a generation run")
+    pipeline_reject.add_argument("run_id", type=int, help="Run id to reject")
+
     acc_parser = sub.add_parser("account", help="Account management")
     acc_sub = acc_parser.add_subparsers(dest="account_action")
     acc_sub.add_parser("list", help="List accounts")
