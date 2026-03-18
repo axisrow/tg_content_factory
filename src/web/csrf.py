@@ -7,8 +7,9 @@ from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
 
+from src.web.session import COOKIE_NAME
+
 _SAFE_METHODS = {"GET", "HEAD", "OPTIONS", "TRACE"}
-_CSRF_FALLBACK_TOKEN = os.environ.get("CSRF_FALLBACK_TOKEN")
 _CSRF_EXEMPT_PATHS = {"/login", "/logout", "/health"}
 
 
@@ -116,12 +117,9 @@ class OriginCSRFMiddleware(BaseHTTPMiddleware):
         if referer:
             return await call_next(request)
 
-        # Neither Origin nor Referer is present for an unsafe method.
-        # Require CSRF token fallback if configured, otherwise reject.
-        if _CSRF_FALLBACK_TOKEN:
-            csrf_token = request.headers.get("x-csrf-token") or request.cookies.get("csrf_token")
-            if csrf_token == _CSRF_FALLBACK_TOKEN:
-                return await call_next(request)
-            return Response("CSRF token required", status_code=403)
+        # Missing Origin/Referer is expected for many non-browser clients.
+        # Enforce the stricter check only for session-cookie authenticated requests.
+        if request.cookies.get(COOKIE_NAME):
+            return Response("CSRF validation failed: missing Origin/Referer", status_code=403)
 
-        return Response("CSRF validation failed: missing Origin/Referer", status_code=403)
+        return await call_next(request)
