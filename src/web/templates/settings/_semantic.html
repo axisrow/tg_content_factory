@@ -1,12 +1,16 @@
 <div class="mb-4">
     {% if semantic_vec_available %}
-    <div class="alert alert-success mb-3">
-        sqlite-vec доступен. Семантический и гибридный поиск активны.
+    <div class="alert alert-info mb-3">
+        Текущая инсталляция умеет загружать legacy `sqlite-vec` backend. Roadmap
+        переводит semantic search на portable SQLite-first backend без
+        зависимости от runtime-загрузки SQLite extensions.
     </div>
     {% else %}
     <div class="alert alert-warning mb-3">
-        sqlite-vec недоступен. Семантический и гибридный поиск будут показывать ошибку, пока
-        расширение не станет доступно.
+        Текущий legacy `sqlite-vec` backend недоступен в этой сборке Python/SQLite.
+        Одного `pip install sqlite-vec` недостаточно: нужен Python с поддержкой
+        `enable_load_extension`. Roadmap переводит semantic search на portable
+        backend без этого требования.
     </div>
     {% endif %}
 
@@ -17,6 +21,8 @@
     {% endif %}
 
     <dl class="row small mb-0">
+        <dt class="col-sm-4">Текущий backend</dt>
+        <dd class="col-sm-8">{{ "legacy sqlite-vec" if semantic_vec_available else "legacy backend unavailable" }}</dd>
         <dt class="col-sm-4">Индексированных сообщений</dt>
         <dd class="col-sm-8">{{ semantic_embeddings_count }}</dd>
         <dt class="col-sm-4">Размерность embeddings</dt>
@@ -84,7 +90,7 @@
     <div class="form-check mt-3">
         <input class="form-check-input" type="checkbox" value="1" id="semantic_reset_index" name="semantic_reset_index">
         <label class="form-check-label" for="semantic_reset_index">
-            Сбросить текущий vector index при сохранении
+            Сбросить текущий semantic index при сохранении
         </label>
     </div>
     <div class="mt-3">
@@ -96,10 +102,10 @@
     <div class="form-check mb-3">
         <input class="form-check-input" type="checkbox" value="1" id="semantic_index_reset" name="semantic_reset_index">
         <label class="form-check-label" for="semantic_index_reset">
-            Перед запуском пересоздать индекс embeddings
+            Перед запуском пересоздать индекс текущего backend
         </label>
     </div>
     <button type="submit" class="btn btn-outline-primary" {% if not semantic_vec_available %}disabled{% endif %}>
-        Запустить индексацию сейчас
+        Запустить индексацию текущего backend
     </button>
 </form>
