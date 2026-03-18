@@ -235,7 +235,7 @@ class GenerationRun(BaseModel):
     image_url: str | None = None
     moderation_status: str = "pending"
     quality_score: float | None = None
-    quality_issues: str | None = None  # JSON array of issues
+    quality_issues: list[str] | None = None
     published_at: datetime | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None

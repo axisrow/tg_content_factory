@@ -340,7 +340,7 @@ async def test_photo_loader_page_renders(tmp_path, telethon_cli_spy, native_auth
         transport=transport,
         base_url="http://test",
         follow_redirects=True,
-        headers={"Authorization": f"Basic {auth_header}"},
+        headers={"Authorization": f"Basic {auth_header}", "Origin": "http://test"},
     ) as client:
         resp = await client.get("/my-telegram/photos?phone=%2B7000")
         assert resp.status_code == 200
@@ -495,7 +495,7 @@ async def test_photo_loader_page_feedback_panel_and_highlight_hooks(
         transport=transport,
         base_url="http://test",
         follow_redirects=True,
-        headers={"Authorization": f"Basic {auth_header}"},
+        headers={"Authorization": f"Basic {auth_header}", "Origin": "http://test"},
     ) as client:
         resp = await client.get(f"/my-telegram/photos?phone=%2B7000&{query}")
 
@@ -554,7 +554,7 @@ async def test_photo_loader_page_without_phone_selects_first_account(
         transport=transport,
         base_url="http://test",
         follow_redirects=True,
-        headers={"Authorization": f"Basic {auth_header}"},
+        headers={"Authorization": f"Basic {auth_header}", "Origin": "http://test"},
     ) as client:
         resp = await client.get("/my-telegram/photos")
         assert resp.status_code == 200
@@ -613,7 +613,7 @@ async def test_photo_loader_page_without_selectable_targets_disables_forms(
         transport=transport,
         base_url="http://test",
         follow_redirects=True,
-        headers={"Authorization": f"Basic {auth_header}"},
+        headers={"Authorization": f"Basic {auth_header}", "Origin": "http://test"},
     ) as client:
         resp = await client.get("/my-telegram/photos?phone=%2B7000")
         assert resp.status_code == 200
@@ -661,7 +661,7 @@ async def test_photo_loader_page_without_accounts_renders_empty_state(
         transport=transport,
         base_url="http://test",
         follow_redirects=True,
-        headers={"Authorization": f"Basic {auth_header}"},
+        headers={"Authorization": f"Basic {auth_header}", "Origin": "http://test"},
     ) as client:
         resp = await client.get("/my-telegram/photos")
         assert resp.status_code == 200
@@ -713,7 +713,7 @@ async def test_photo_loader_refresh_warms_dialog_cache(
         transport=transport,
         base_url="http://test",
         follow_redirects=True,
-        headers={"Authorization": f"Basic {auth_header}"},
+        headers={"Authorization": f"Basic {auth_header}", "Origin": "http://test"},
     ) as client:
         resp = await client.post("/my-telegram/photos/refresh", data={"phone": "+7000"})
         assert resp.status_code == 200
@@ -813,7 +813,7 @@ async def test_photo_schedule_logs_exception(tmp_path, caplog, telethon_cli_spy,
     async with AsyncClient(
         transport=transport,
         base_url="http://test",
-        headers={"Authorization": f"Basic {auth_header}"},
+        headers={"Authorization": f"Basic {auth_header}", "Origin": "http://test"},
     ) as client:
         with caplog.at_level(logging.ERROR, logger="src.web.routes.photo_loader"):
             resp = await client.post(
@@ -859,7 +859,7 @@ async def test_photo_schedule_redirects_when_target_validation_raises(
     async with AsyncClient(
         transport=transport,
         base_url="http://test",
-        headers={"Authorization": f"Basic {auth_header}"},
+        headers={"Authorization": f"Basic {auth_header}", "Origin": "http://test"},
     ) as client:
         with caplog.at_level(logging.ERROR, logger="src.web.routes.photo_loader"):
             resp = await client.post(
@@ -900,7 +900,7 @@ async def test_photo_schedule_requires_target_selection(
     async with AsyncClient(
         transport=transport,
         base_url="http://test",
-        headers={"Authorization": f"Basic {auth_header}"},
+        headers={"Authorization": f"Basic {auth_header}", "Origin": "http://test"},
     ) as client:
         resp = await client.post(
             "/my-telegram/photos/schedule",
@@ -935,7 +935,7 @@ async def test_photo_schedule_rejects_unknown_target(tmp_path, telethon_cli_spy,
     async with AsyncClient(
         transport=transport,
         base_url="http://test",
-        headers={"Authorization": f"Basic {auth_header}"},
+        headers={"Authorization": f"Basic {auth_header}", "Origin": "http://test"},
     ) as client:
         resp = await client.post(
             "/my-telegram/photos/schedule",
@@ -970,7 +970,7 @@ async def test_photo_send_logs_exception(tmp_path, caplog, telethon_cli_spy, nat
     async with AsyncClient(
         transport=transport,
         base_url="http://test",
-        headers={"Authorization": f"Basic {auth_header}"},
+        headers={"Authorization": f"Basic {auth_header}", "Origin": "http://test"},
     ) as client:
         with caplog.at_level(logging.ERROR, logger="src.web.routes.photo_loader"):
             resp = await client.post(
@@ -1015,7 +1015,7 @@ async def test_photo_send_redirects_when_target_validation_raises(
     async with AsyncClient(
         transport=transport,
         base_url="http://test",
-        headers={"Authorization": f"Basic {auth_header}"},
+        headers={"Authorization": f"Basic {auth_header}", "Origin": "http://test"},
     ) as client:
         with caplog.at_level(logging.ERROR, logger="src.web.routes.photo_loader"):
             resp = await client.post(
@@ -1051,7 +1051,7 @@ async def test_photo_send_requires_target_selection(tmp_path, telethon_cli_spy, 
     async with AsyncClient(
         transport=transport,
         base_url="http://test",
-        headers={"Authorization": f"Basic {auth_header}"},
+        headers={"Authorization": f"Basic {auth_header}", "Origin": "http://test"},
     ) as client:
         resp = await client.post(
             "/my-telegram/photos/send",
@@ -1085,7 +1085,7 @@ async def test_photo_batch_logs_exception(tmp_path, caplog, telethon_cli_spy, na
     async with AsyncClient(
         transport=transport,
         base_url="http://test",
-        headers={"Authorization": f"Basic {auth_header}"},
+        headers={"Authorization": f"Basic {auth_header}", "Origin": "http://test"},
     ) as client:
         with caplog.at_level(logging.ERROR, logger="src.web.routes.photo_loader"):
             resp = await client.post(
@@ -1129,7 +1129,7 @@ async def test_photo_batch_redirects_when_target_validation_raises(
     async with AsyncClient(
         transport=transport,
         base_url="http://test",
-        headers={"Authorization": f"Basic {auth_header}"},
+        headers={"Authorization": f"Basic {auth_header}", "Origin": "http://test"},
     ) as client:
         with caplog.at_level(logging.ERROR, logger="src.web.routes.photo_loader"):
             resp = await client.post(
@@ -1164,7 +1164,7 @@ async def test_photo_batch_rejects_unknown_target(tmp_path, telethon_cli_spy, na
     async with AsyncClient(
         transport=transport,
         base_url="http://test",
-        headers={"Authorization": f"Basic {auth_header}"},
+        headers={"Authorization": f"Basic {auth_header}", "Origin": "http://test"},
     ) as client:
         resp = await client.post(
             "/my-telegram/photos/batch",
@@ -1205,7 +1205,7 @@ async def test_photo_send_rejects_bot_target(tmp_path, telethon_cli_spy, native_
     async with AsyncClient(
         transport=transport,
         base_url="http://test",
-        headers={"Authorization": f"Basic {auth_header}"},
+        headers={"Authorization": f"Basic {auth_header}", "Origin": "http://test"},
     ) as client:
         resp = await client.post(
             "/my-telegram/photos/send",
@@ -1239,7 +1239,7 @@ async def test_photo_auto_logs_exception(tmp_path, caplog, telethon_cli_spy, nat
     async with AsyncClient(
         transport=transport,
         base_url="http://test",
-        headers={"Authorization": f"Basic {auth_header}"},
+        headers={"Authorization": f"Basic {auth_header}", "Origin": "http://test"},
     ) as client:
         with caplog.at_level(logging.ERROR, logger="src.web.routes.photo_loader"):
             resp = await client.post(
@@ -1285,7 +1285,7 @@ async def test_photo_auto_redirects_when_target_validation_raises(
     async with AsyncClient(
         transport=transport,
         base_url="http://test",
-        headers={"Authorization": f"Basic {auth_header}"},
+        headers={"Authorization": f"Basic {auth_header}", "Origin": "http://test"},
     ) as client:
         with caplog.at_level(logging.ERROR, logger="src.web.routes.photo_loader"):
             resp = await client.post(
@@ -1322,7 +1322,7 @@ async def test_photo_auto_requires_target_selection(tmp_path, telethon_cli_spy, 
     async with AsyncClient(
         transport=transport,
         base_url="http://test",
-        headers={"Authorization": f"Basic {auth_header}"},
+        headers={"Authorization": f"Basic {auth_header}", "Origin": "http://test"},
     ) as client:
         resp = await client.post(
             "/my-telegram/photos/auto",
@@ -1360,7 +1360,7 @@ async def test_photo_run_due_logs_exception(tmp_path, caplog, telethon_cli_spy, 
     async with AsyncClient(
         transport=transport,
         base_url="http://test",
-        headers={"Authorization": f"Basic {auth_header}"},
+        headers={"Authorization": f"Basic {auth_header}", "Origin": "http://test"},
     ) as client:
         with caplog.at_level(logging.ERROR, logger="src.web.routes.photo_loader"):
             resp = await client.post(

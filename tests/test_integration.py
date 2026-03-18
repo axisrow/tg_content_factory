@@ -128,7 +128,7 @@ class TestAuthFlow:
         async with AsyncClient(
             transport=transport,
             base_url="http://test",
-            headers={"Authorization": f"Basic {bad_auth}"},
+            headers={"Authorization": f"Basic {bad_auth}", "Origin": "http://test"},
         ) as c:
             resp = await c.get("/")
             assert resp.status_code == 401
@@ -431,7 +431,7 @@ class TestSchedulerStartStop:
             transport=transport,
             base_url="http://test",
             follow_redirects=False,
-            headers={"Authorization": f"Basic {auth_header}"},
+            headers={"Authorization": f"Basic {auth_header}", "Origin": "http://test"},
         ) as c:
             resp = await c.post("/scheduler/trigger")
             assert resp.status_code == 303
@@ -452,7 +452,7 @@ class TestSchedulerStartStop:
             transport=transport,
             base_url="http://test",
             follow_redirects=False,
-            headers={"Authorization": f"Basic {auth_header}"},
+            headers={"Authorization": f"Basic {auth_header}", "Origin": "http://test"},
         ) as c:
             resp = await c.post("/scheduler/trigger")
             assert resp.status_code == 303

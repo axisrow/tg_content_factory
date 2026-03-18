@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+
+{% block title %}Просмотр черновика #{{ run.id }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h1 class="h3">Черновик #{{ run.id }}</h1>
+        <div>
+            <a href="/moderation" class="btn btn-outline-secondary">← Назад к очереди</a>
+        </div>
+    </div>
+
+    <div class="row">
+        <div class="col-md-8">
+            <div class="card mb-4">
+                <div class="card-header">
+                    <span class="badge bg-{% if run.moderation_status == 'pending' %}secondary{% elif run.moderation_status == 'approved' %}success{% elif run.moderation_status == 'rejected' %}danger{% else %}primary{% endif %}">
+                        {{ run.moderation_status }}
+                    </span>
+                    <span class="ms-2 text-muted">Pipeline #{{ run.pipeline_id }}</span>
+                </div>
+                <div class="card-body">
+                    {% if run.generated_text %}
+                    <div class="mb-4">
+                        <h5>Сгенерированный текст</h5>
+                        <div class="border rounded p-3 bg-light" style="white-space: pre-wrap;">{{ run.generated_text }}</div>
+                    </div>
+                    {% else %}
+                    <div class="alert alert-warning">Текст отсутствует</div>
+                    {% endif %}
+
+                    {% if run.image_url %}
+                    <div class="mb-4">
+                        <h5>Изображение</h5>
+                        <img src="{{ run.image_url }}" class="img-fluid rounded" alt="Generated image">
+                    </div>
+                    {% endif %}
+
+                    {% if run.prompt %}
+                    <div class="mb-4">
+                        <h5>Промпт</h5>
+                        <div class="text-muted small">{{ run.prompt }}</div>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-4">
+            <div class="card mb-4">
+                <div class="card-header">Информация</div>
+                <div class="card-body">
+                    <dl class="row">
+                        <dt class="col-sm-5">ID</dt>
+                        <dd class="col-sm-7">{{ run.id }}</dd>
+
+                        <dt class="col-sm-5">Pipeline</dt>
+                        <dd class="col-sm-7">{{ run.pipeline_id }}</dd>
+
+                        <dt class="col-sm-5">Статус</dt>
+                        <dd class="col-sm-7">{{ run.status }}</dd>
+
+                        <dt class="col-sm-5">Модерация</dt>
+                        <dd class="col-sm-7">{{ run.moderation_status }}</dd>
+
+                        <dt class="col-sm-5">Создан</dt>
+                        <dd class="col-sm-7">{{ run.created_at.strftime('%Y-%m-%d %H:%M') if run.created_at else '—' }}</dd>
+
+                        {% if run.published_at %}
+                        <dt class="col-sm-5">Опубликован</dt>
+                        <dd class="col-sm-7">{{ run.published_at.strftime('%Y-%m-%d %H:%M') }}</dd>
+                        {% endif %}
+                    </dl>
+                </div>
+            </div>
+
+            {% if run.moderation_status == "pending" %}
+            <div class="card">
+                <div class="card-header">Действия</div>
+                <div class="card-body">
+                    <form method="post" action="/moderation/{{ run.id }}/approve" class="mb-2">
+                        <button type="submit" class="btn btn-success w-100">Одобрить</button>
+                    </form>
+                    <form method="post" action="/moderation/{{ run.id }}/reject">
+                        <button type="submit" class="btn btn-danger w-100">Отклонить</button>
+                    </form>
+                </div>
+            </div>
+            {% elif run.moderation_status == "approved" and not run.published_at %}
+            <div class="card">
+                <div class="card-header">Публикация</div>
+                <div class="card-body">
+                    <form method="post" action="/moderation/{{ run.id }}/publish">
+                        <button type="submit" class="btn btn-primary w-100">Опубликовать</button>
+                    </form>
+                </div>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}
