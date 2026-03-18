@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from urllib.parse import urlparse
 
 from fastapi import Request
@@ -7,6 +8,8 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
 
 _SAFE_METHODS = {"GET", "HEAD", "OPTIONS", "TRACE"}
+_CSRF_FALLBACK_TOKEN = os.environ.get("CSRF_FALLBACK_TOKEN")
+_CSRF_EXEMPT_PATHS = {"/login", "/logout", "/health"}
 
 
 def _normalize_port(scheme: str, port: int | None) -> int:
@@ -96,6 +99,10 @@ class OriginCSRFMiddleware(BaseHTTPMiddleware):
         if request.method.upper() in _SAFE_METHODS:
             return await call_next(request)
 
+        # Exempt public paths that don't require CSRF (login, logout, health)
+        if request.url.path in _CSRF_EXEMPT_PATHS or request.url.path.startswith("/static/"):
+            return await call_next(request)
+
         origin = request.headers.get("origin")
         if origin:
             if origin == "null" or not _is_same_origin(origin, request):
@@ -106,7 +113,15 @@ class OriginCSRFMiddleware(BaseHTTPMiddleware):
         if referer and not _is_same_origin(referer, request):
             return Response("CSRF validation failed", status_code=403)
 
-        # If neither Origin nor Referer is present, allow the request.
-        # This matches Django's Origin-based CSRF approach — some HTTP clients
-        # and older browsers omit these headers entirely.
-        return await call_next(request)
+        if referer:
+            return await call_next(request)
+
+        # Neither Origin nor Referer is present for an unsafe method.
+        # Require CSRF token fallback if configured, otherwise reject.
+        if _CSRF_FALLBACK_TOKEN:
+            csrf_token = request.headers.get("x-csrf-token") or request.cookies.get("csrf_token")
+            if csrf_token == _CSRF_FALLBACK_TOKEN:
+                return await call_next(request)
+            return Response("CSRF token required", status_code=403)
+
+        return Response("CSRF validation failed: missing Origin/Referer", status_code=403)

@@ -1205,7 +1205,7 @@ async def test_settings_page_blocks_agent_provider_writes_without_encryption_sec
         transport=transport,
         base_url="http://test",
         follow_redirects=True,
-        headers={"Authorization": f"Basic {auth_header}"},
+        headers={"Authorization": f"Basic {auth_header}", "Origin": "http://test"},
     ) as client:
         page = await client.get("/settings/")
         assert "SESSION_ENCRYPTION_KEY" in page.text
@@ -1530,7 +1530,7 @@ async def test_cookie_secure_on_https(client):
         transport=transport,
         base_url="https://test",
         follow_redirects=False,
-        headers={"Authorization": f"Basic {auth_header}"},
+        headers={"Authorization": f"Basic {auth_header}", "Origin": "https://test"},
     ) as c:
         resp = await c.get("/")
         cookie_header = resp.headers.get("set-cookie", "")
@@ -1591,7 +1591,7 @@ async def test_settings_shows_accounts(tmp_path):
         transport=transport,
         base_url="http://test",
         follow_redirects=True,
-        headers={"Authorization": f"Basic {auth_header}"},
+        headers={"Authorization": f"Basic {auth_header}", "Origin": "http://test"},
     ) as c:
         resp = await c.get("/settings/")
         assert resp.status_code == 200
@@ -1711,21 +1711,22 @@ async def test_csrf_blocks_null_origin(client):
 
 
 @pytest.mark.asyncio
-async def test_csrf_allows_post_without_origin_or_referer(client):
-    """POST without Origin/Referer headers is allowed (matches Django behavior)."""
+async def test_csrf_blocks_post_without_origin_or_referer(client):
+    """POST without Origin/Referer headers is blocked (stricter than Django)."""
     transport = client._transport
     auth_header = base64.b64encode(b":testpass").decode()
     async with AsyncClient(
         transport=transport,
         base_url="http://test",
-        headers={"Authorization": f"Basic {auth_header}"},
+        headers={"Authorization": f"Basic {auth_header}"},  # No Origin header
     ) as c:
         resp = await c.post(
             "/channels/add",
             data={"identifier": "@testchan"},
             follow_redirects=False,
         )
-        assert resp.status_code == 303
+        assert resp.status_code == 403
+        assert "CSRF" in resp.text
 
 
 @pytest.mark.asyncio
@@ -1804,7 +1805,7 @@ async def test_resolve_channel_fail(tmp_path):
         transport=transport,
         base_url="http://test",
         follow_redirects=True,
-        headers={"Authorization": f"Basic {auth_header}"},
+        headers={"Authorization": f"Basic {auth_header}", "Origin": "http://test"},
     ) as c:
         resp = await c.post("/channels/add", data={"identifier": "@nonexistent"})
         assert resp.status_code == 200
@@ -1963,7 +1964,7 @@ async def test_add_scam_channel_is_inactive(tmp_path):
         transport=transport,
         base_url="http://test",
         follow_redirects=True,
-        headers={"Authorization": f"Basic {auth_header}"},
+        headers={"Authorization": f"Basic {auth_header}", "Origin": "http://test"},
     ) as c:
         resp = await c.post("/channels/add", data={"identifier": "@scamchan"})
         assert resp.status_code == 200
@@ -2033,7 +2034,7 @@ async def test_bulk_add_scam_dialog_is_inactive(tmp_path):
         transport=transport,
         base_url="http://test",
         follow_redirects=True,
-        headers={"Authorization": f"Basic {auth_header}"},
+        headers={"Authorization": f"Basic {auth_header}", "Origin": "http://test"},
     ) as c:
         resp = await c.post("/channels/add-bulk", data={"channel_ids": ["-100777"]})
         assert resp.status_code == 200
@@ -3125,7 +3126,7 @@ async def error_client(client):
     async with AsyncClient(
         transport=transport,
         base_url="http://test",
-        headers={"Authorization": f"Basic {auth_header}"},
+        headers={"Authorization": f"Basic {auth_header}", "Origin": "http://test"},
     ) as c:
         yield c
 

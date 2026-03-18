@@ -118,10 +118,12 @@ class SchedulerManager:
         logger.info("Scheduler stopped")
 
     def update_interval(self, minutes: int) -> None:
-        self._current_interval_minutes = minutes
         if self._scheduler and self._scheduler.running:
             self._scheduler.reschedule_job(self._job_id, trigger=IntervalTrigger(minutes=minutes))
+            self._current_interval_minutes = minutes
             logger.info("Collection interval updated to %d minutes", minutes)
+        else:
+            self._current_interval_minutes = minutes
 
     def get_job_next_run(self, job_id: str):
         """Return next_run_time for a scheduled job, or None if missing."""
