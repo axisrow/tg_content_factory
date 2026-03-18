@@ -4,9 +4,9 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from src.database import Database
-from src.models import ContentPipeline, GenerationRun, PipelineGenerationBackend
-from src.services.generation_service import GenerationService
+from src.models import ContentPipeline, GenerationRun, PipelineGenerationBackend, PipelinePublishMode
 from src.search.engine import SearchEngine
+from src.services.generation_service import GenerationService
 
 if TYPE_CHECKING:
     from src.services.draft_notification_service import DraftNotificationService
@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 class ContentGenerationService:
     """Orchestrates content generation from pipeline configuration.
-    
+
     This service coordinates:
     - Creating generation_runs records
     - Invoking GenerationService (RAG) or AgentManager (deep agents)
@@ -47,7 +47,7 @@ class ContentGenerationService:
         temperature: float = 0.7,
     ) -> GenerationRun:
         """Generate content for a pipeline and return the generation run.
-        
+
         Steps:
         1. Create generation_runs record (status='running')
         2. Retrieve context messages from pipeline sources
@@ -76,28 +76,29 @@ class ContentGenerationService:
             )
             generated_text = result.get("generated_text", "")
             metadata: dict[str, Any] = {"citations": result.get("citations", [])}
-            
+
             if pipeline.image_model:
                 image_url = await self._generate_image(pipeline, generated_text)
                 if image_url:
-                    await self._db.repos.generation_runs._db.execute(
+                    await self._db.execute(
                         "UPDATE generation_runs SET image_url = ? WHERE id = ?",
                         (image_url, run_id),
                     )
-                    await self._db.repos.generation_runs._db.commit()
-            
+
             await self._db.repos.generation_runs.save_result(run_id, generated_text, metadata)
             run = await self._db.repos.generation_runs.get(run_id)
             if run is None:
                 raise RuntimeError(f"Generation run {run_id} not found after save")
-            
-            # Send notification for moderated pipelines
-            if self._notification_service and run.moderation_status == "pending":
+
+            if (
+                self._notification_service
+                and run.moderation_status == "pending"
+                and pipeline.publish_mode == PipelinePublishMode.MODERATED
+            ):
                 try:
                     await self._notification_service.notify_new_draft(run, pipeline)
                 except Exception:
                     logger.warning("Failed to send draft notification", exc_info=True)
-            
             return run
         except Exception:
             logger.exception(
@@ -118,7 +119,7 @@ class ContentGenerationService:
         """Execute the generation backend."""
         if pipeline.generation_backend == PipelineGenerationBackend.DEEP_AGENTS:
             return await self._run_deep_agents(pipeline, model, max_tokens, temperature)
-        
+
         return await self._run_rag(pipeline, model, max_tokens, temperature)
 
     async def _run_rag(
@@ -130,14 +131,14 @@ class ContentGenerationService:
     ) -> dict[str, Any]:
         """Run RAG-based generation using GenerationService."""
         from src.services.provider_service import AgentProviderService
-        
+
         provider_service = AgentProviderService(self._db)
         provider_callable = provider_service.get_provider_callable(pipeline.llm_model)
-        
+
         gen = GenerationService(self._search, provider_callable=provider_callable)
-        
+
         query = pipeline.prompt_template or pipeline.name or ""
-        
+
         return await gen.generate(
             query=query,
             prompt_template=pipeline.prompt_template,
@@ -156,15 +157,12 @@ class ContentGenerationService:
         """Run generation using AgentManager deep agents backend."""
         if self._agent_manager is None:
             raise RuntimeError("AgentManager not configured for deep_agents generation")
-        
-        import asyncio
+
         import json
-        
+
         prompt = pipeline.prompt_template or pipeline.name or ""
-        
-        queue: asyncio.Queue[str | None] = asyncio.Queue()
         full_text = ""
-        
+
         async def collect():
             nonlocal full_text
             async for chunk in self._agent_manager.chat_stream(
@@ -181,17 +179,24 @@ class ContentGenerationService:
                             full_text = data["full_text"]
                     except json.JSONDecodeError:
                         pass
-        
+
         await collect()
-        
+
         return {
             "generated_text": full_text,
             "citations": [],
         }
 
     async def _generate_image(self, pipeline: ContentPipeline, text: str) -> str | None:
-        """Generate image for the content. Stub that raises NotImplementedError."""
+        """Generate image for the content.
+
+        Until the real image-generation service is wired, image generation should
+        degrade gracefully instead of failing an otherwise valid text run.
+        """
         if self._image_service is None:
-            raise NotImplementedError("Image generation is not yet implemented")
-        
+            logger.info(
+                "Skipping image generation for pipeline_id=%s because no image service is configured",
+                pipeline.id,
+            )
+            return None
         return await self._image_service.generate(pipeline.image_model, text)

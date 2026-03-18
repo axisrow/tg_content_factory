@@ -6,15 +6,15 @@ from typing import TYPE_CHECKING
 from src.models import ContentPipeline, GenerationRun, PipelinePublishMode
 
 if TYPE_CHECKING:
-    from src.telegram.notifier import Notifier
     from src.database import Database
+    from src.telegram.notifier import Notifier
 
 logger = logging.getLogger(__name__)
 
 
 class DraftNotificationService:
     """Service for sending notifications about new generated drafts.
-    
+
     Sends push notifications via Notifier when new content is generated
     for pipelines with publish_mode=MODERATED.
     """
@@ -29,11 +29,11 @@ class DraftNotificationService:
         pipeline: ContentPipeline,
     ) -> bool:
         """Send notification about a new draft that needs moderation.
-        
+
         Args:
             run: The generation run with new content
             pipeline: The pipeline that generated this content
-            
+
         Returns:
             True if notification was sent successfully, False otherwise
         """
@@ -77,11 +77,11 @@ class DraftNotificationService:
         pipeline: ContentPipeline,
     ) -> int:
         """Send notification about multiple new drafts.
-        
+
         Args:
             runs: List of generation runs
             pipeline: The pipeline that generated these runs
-            
+
         Returns:
             Number of successful notifications
         """
@@ -103,7 +103,7 @@ class DraftNotificationService:
         if len(runs) > 10:
             message += f"\n... и ещё {len(runs) - 10}"
 
-        message += f"\n\nПроверить: /moderation"
+        message += "\n\nПроверить: /moderation"
 
         try:
             success = await self._notifier.notify(message)

@@ -115,6 +115,7 @@ def register_routes(app: FastAPI) -> None:
     from src.web.routes.debug import router as debug_router
     from src.web.routes.filter import router as filter_router
     from src.web.routes.import_channels import router as import_router
+    from src.web.routes.moderation import router as moderation_router
     from src.web.routes.my_telegram import router as my_telegram_router
     from src.web.routes.photo_loader import router as photo_loader_router
     from src.web.routes.pipelines import router as pipelines_router
@@ -125,6 +126,7 @@ def register_routes(app: FastAPI) -> None:
 
     app.include_router(agent_router, prefix="/agent")
     app.include_router(analytics_router, prefix="/analytics")
+    app.include_router(moderation_router, prefix="/moderation")
     app.include_router(search_router)
     app.include_router(dashboard_router, prefix="/dashboard")
     app.include_router(auth_router, prefix="/auth")
