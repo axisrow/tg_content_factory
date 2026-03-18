@@ -44,10 +44,10 @@ async def content_analytics_page(request: Request):
     """Render content analytics dashboard page."""
     db = deps.get_db(request)
     analytics = ContentAnalyticsService(db)
-    
+
     summary = await analytics.get_summary()
     pipeline_stats = await analytics.get_pipeline_stats()
-    
+
     return deps.get_templates(request).TemplateResponse(
         request,
         "analytics/content.html",
