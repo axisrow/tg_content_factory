@@ -284,6 +284,9 @@ class ChannelBundle:
     async def fail_running_collection_tasks_on_startup(self) -> int:
         return await self.tasks.fail_running_collection_tasks_on_startup()
 
+    async def reset_orphaned_running_tasks(self) -> int:
+        return await self.tasks.reset_orphaned_running_tasks()
+
     async def cancel_collection_task(self, task_id: int, note: str | None = None) -> bool:
         return await self.tasks.cancel_collection_task(task_id, note=note)
 
