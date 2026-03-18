@@ -488,7 +488,7 @@ async def build_web_app(
 @asynccontextmanager
 async def make_auth_client(app, *, password: str = "testpass", with_auth: bool = True):
     transport = ASGITransport(app=app)
-    headers = {}
+    headers = {"Origin": "http://test"}
     if with_auth:
         auth_header = base64.b64encode(f":{password}".encode()).decode()
         headers["Authorization"] = f"Basic {auth_header}"

@@ -89,6 +89,14 @@ class FakeTasksRepo:
         )
 
 
+class FakePipelineService:
+    def __init__(self, pipeline_bundle):
+        self._pipeline = pipeline_bundle
+
+    async def get(self, pipeline_id):
+        return self._pipeline
+
+
 @pytest.mark.asyncio
 async def test_pipeline_run_handler_without_env_marks_failed():
     fake_tasks = FakeTasksRepo()
@@ -105,3 +113,85 @@ async def test_pipeline_run_handler_without_env_marks_failed():
     assert last["status"] == CollectionTaskStatus.FAILED
     assert last["error"] is not None
     assert "Pipeline execution environment not configured" in last["error"]
+
+
+@pytest.mark.asyncio
+async def test_pipeline_run_handler_uses_content_generation_service(monkeypatch):
+    fake_tasks = FakeTasksRepo()
+    pipeline = FakePipeline(1, 10, is_active=True)
+    pipeline.prompt_template = "Summarize"
+    pipeline.name = "Digest"
+    pipeline.llm_model = "test-model"
+
+    captured = {}
+
+    class FakeDraftNotificationService:
+        def __init__(self, db, notifier):
+            captured["notification_notifier"] = notifier
+
+    class FakeQualityScoringService:
+        def __init__(self, db):
+            captured["quality_db"] = db
+
+    class FakeContentGenerationService:
+        def __init__(
+            self,
+            db,
+            search_engine,
+            notification_service=None,
+            quality_service=None,
+            **kwargs,
+        ):
+            captured["notification_service"] = notification_service
+            captured["quality_service"] = quality_service
+
+        async def generate(self, pipeline, model=None):
+            from src.models import GenerationRun
+
+            return GenerationRun(id=77, pipeline_id=pipeline.id, status="completed")
+
+    monkeypatch.setattr(
+        "src.services.unified_dispatcher.PipelineService",
+        FakePipelineService,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "src.services.pipeline_service.PipelineService",
+        FakePipelineService,
+        raising=True,
+    )
+    monkeypatch.setattr(
+        "src.services.draft_notification_service.DraftNotificationService",
+        FakeDraftNotificationService,
+        raising=True,
+    )
+    monkeypatch.setattr(
+        "src.services.quality_scoring_service.QualityScoringService",
+        FakeQualityScoringService,
+        raising=True,
+    )
+    monkeypatch.setattr(
+        "src.services.content_generation_service.ContentGenerationService",
+        FakeContentGenerationService,
+        raising=True,
+    )
+
+    ud = UnifiedDispatcher(
+        collector=None,
+        channel_bundle=None,
+        tasks_repo=fake_tasks,
+        search_engine=object(),
+        pipeline_bundle=pipeline,
+        db=object(),
+        notifier=object(),
+    )
+
+    payload = PipelineRunTaskPayload(pipeline_id=1)
+    task = CollectionTask(id=100, task_type=CollectionTaskType.PIPELINE_RUN, payload=payload)
+
+    await ud._handle_pipeline_run(task)
+
+    assert captured["notification_service"] is not None
+    assert captured["quality_service"] is not None
+    assert fake_tasks.calls[-1]["status"] == CollectionTaskStatus.COMPLETED
+    assert fake_tasks.calls[-1]["note"] == "Pipeline run id=77"
