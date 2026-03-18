@@ -4,12 +4,14 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Awaitable, Callable, TypeVar
 
 if TYPE_CHECKING:
     from src.database import Database
 
 logger = logging.getLogger(__name__)
+
+T = TypeVar("T")
 
 
 @dataclass
@@ -37,7 +39,7 @@ class UsageStats:
 
 class RateLimiter:
     """Rate limiter for API calls with sliding window.
-    
+
     Enforces:
     - Requests per minute
     - Tokens per minute
@@ -56,36 +58,36 @@ class RateLimiter:
         is_image: bool = False,
     ) -> tuple[bool, float]:
         """Check if request is allowed and acquire if so.
-        
+
         Args:
             tokens: Number of tokens for this request
             is_image: Whether this is an image generation request
-            
+
         Returns:
             Tuple of (allowed, wait_time_seconds)
         """
         async with self._lock:
             now = time.time()
-            
+
             # Reset windows if needed
             if now - self._minute_stats.window_start >= 60:
                 self._minute_stats = UsageStats(window_start=now)
             if now - self._day_stats.window_start >= 86400:
                 self._day_stats = UsageStats(window_start=now)
-            
+
             # Check limits
             if self._minute_stats.request_count >= self._config.requests_per_minute:
                 wait_time = 60 - (now - self._minute_stats.window_start)
                 return False, wait_time
-            
+
             if self._minute_stats.token_count + tokens > self._config.tokens_per_minute:
                 wait_time = 60 - (now - self._minute_stats.window_start)
                 return False, wait_time
-            
+
             if self._day_stats.token_count + tokens > self._config.tokens_per_day:
                 wait_time = 86400 - (now - self._day_stats.window_start)
                 return False, wait_time
-            
+
             # Acquire
             self._minute_stats.request_count += 1
             self._minute_stats.token_count += tokens
@@ -93,7 +95,7 @@ class RateLimiter:
             if is_image:
                 self._minute_stats.image_count += 1
                 self._day_stats.image_count += 1
-            
+
             return True, 0.0
 
     async def wait_and_acquire(
@@ -103,12 +105,12 @@ class RateLimiter:
         max_wait: float = 300.0,
     ) -> bool:
         """Wait if necessary and acquire when available.
-        
+
         Args:
             tokens: Number of tokens for this request
             is_image: Whether this is an image generation request
             max_wait: Maximum time to wait in seconds
-            
+
         Returns:
             True if acquired, False if timed out
         """
@@ -157,11 +159,11 @@ class CostTracker:
         is_image: bool = False,
     ) -> float:
         """Estimate cost for a request.
-        
+
         Args:
             tokens: Number of tokens
             is_image: Whether this is an image generation
-            
+
         Returns:
             Estimated cost in dollars
         """
@@ -175,11 +177,11 @@ class CostTracker:
         is_image: bool = False,
     ) -> tuple[bool, float]:
         """Check if request is within cost cap.
-        
+
         Args:
             tokens: Number of tokens
             is_image: Whether this is an image generation
-            
+
         Returns:
             Tuple of (allowed, estimated_cost)
         """
@@ -188,14 +190,25 @@ class CostTracker:
             if now - self._day_start >= 86400:
                 self._daily_cost = 0.0
                 self._day_start = now
-            
+
             estimated = await self.estimate_cost(tokens, is_image)
-            
+
             if self._daily_cost + estimated > self._config.daily_cost_cap:
                 return False, estimated
-            
-            self._daily_cost += estimated
+
             return True, estimated
+
+    async def record_cost(self, tokens: int = 0, is_image: bool = False) -> float:
+        """Record cost for a request after it actually executes."""
+        async with self._lock:
+            now = time.time()
+            if now - self._day_start >= 86400:
+                self._daily_cost = 0.0
+                self._day_start = now
+
+            estimated = await self.estimate_cost(tokens, is_image)
+            self._daily_cost += estimated
+            return estimated
 
     def get_daily_cost(self) -> float:
         """Get current daily cost."""
@@ -208,7 +221,7 @@ class CostTracker:
 
 class ProductionLimitsService:
     """Combined service for rate limiting and cost tracking.
-    
+
     Provides:
     - Rate limiting (requests, tokens per minute/day)
     - Cost tracking and caps
@@ -232,12 +245,12 @@ class ProductionLimitsService:
         max_wait: float = 300.0,
     ) -> tuple[bool, str | None]:
         """Acquire permission for an API call.
-        
+
         Args:
             tokens: Number of tokens
             is_image: Whether this is an image generation
             max_wait: Maximum wait time in seconds
-            
+
         Returns:
             Tuple of (allowed, error_message)
         """
@@ -259,15 +272,15 @@ class ProductionLimitsService:
 
     async def execute_with_retry(
         self,
-        func,
+        func: Callable[[], Awaitable[T]],
         tokens: int = 0,
         is_image: bool = False,
         max_retries: int = 3,
         base_delay: float = 1.0,
         max_delay: float = 60.0,
-    ):
+    ) -> T:
         """Execute a function with retry logic.
-        
+
         Args:
             func: Async function to execute
             tokens: Number of tokens for rate limiting
@@ -275,10 +288,10 @@ class ProductionLimitsService:
             max_retries: Maximum number of retries
             base_delay: Base delay for exponential backoff
             max_delay: Maximum delay between retries
-            
+
         Returns:
             Result of the function
-            
+
         Raises:
             Exception: After max retries exceeded
         """
@@ -289,7 +302,9 @@ class ProductionLimitsService:
                 raise RuntimeError(error or "Rate limit exceeded")
 
             try:
-                return await func()
+                result = await func()
+                await self._cost_tracker.record_cost(tokens, is_image)
+                return result
             except Exception as e:
                 last_error = e
                 if attempt < max_retries:
