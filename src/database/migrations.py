@@ -307,6 +307,13 @@ async def run_migrations(db: aiosqlite.Connection, *, vec_available: bool = Fals
     await db.execute(
         "CREATE INDEX IF NOT EXISTS idx_generation_runs_moderation ON generation_runs(moderation_status, pipeline_id)"
     )
+    # Ensure quality scoring columns exist (PR #128)
+    if "quality_score" not in gr_columns:
+        await db.execute("ALTER TABLE generation_runs ADD COLUMN quality_score REAL")
+        await db.commit()
+    if "quality_issues" not in gr_columns:
+        await db.execute("ALTER TABLE generation_runs ADD COLUMN quality_issues TEXT")
+        await db.commit()
     await db.execute("""
         CREATE TABLE IF NOT EXISTS pipeline_sources (
             id INTEGER PRIMARY KEY,

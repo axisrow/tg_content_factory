@@ -217,7 +217,14 @@ def run(args: argparse.Namespace) -> None:
                     from src.agent.manager import AgentManager
 
                     agent_manager = AgentManager(db, config)
-                gen_svc = ContentGenerationService(db, engine, agent_manager=agent_manager)
+                from src.services.quality_scoring_service import QualityScoringService
+
+                gen_svc = ContentGenerationService(
+                    db,
+                    engine,
+                    agent_manager=agent_manager,
+                    quality_service=QualityScoringService(db),
+                )
                 try:
                     run = await gen_svc.generate(
                         pipeline=pipeline,

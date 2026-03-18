@@ -428,6 +428,7 @@ class UnifiedDispatcher:
             from src.services.content_generation_service import ContentGenerationService
             from src.services.draft_notification_service import DraftNotificationService
             from src.services.pipeline_service import PipelineService
+            from src.services.quality_scoring_service import QualityScoringService
 
             svc = PipelineService(self._pipeline_bundle)
             pipeline = await svc.get(pipeline_id)
@@ -441,10 +442,12 @@ class UnifiedDispatcher:
 
             db = self._db
             notification_service = DraftNotificationService(db, self._notifier)
+            quality_service = QualityScoringService(db)
             gen = ContentGenerationService(
                 db,
                 self._search_engine,
                 notification_service=notification_service,
+                quality_service=quality_service,
             )
             try:
                 run = await gen.generate(
