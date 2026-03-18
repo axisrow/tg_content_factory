@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -28,9 +27,8 @@ class ABTestResult:
 
 class ABTestingService:
     """Service for A/B testing generated content variants.
-    
+
     Generates multiple variants and allows selection of the best one.
-    Variants are stored in-memory (JSON field) for simplicity.
     """
 
     def __init__(self, db: Database, default_variants: int = 3):
@@ -44,12 +42,12 @@ class ABTestingService:
         num_variants: int | None = None,
     ) -> list[str]:
         """Generate multiple content variants.
-        
+
         Args:
             pipeline: The pipeline configuration
             base_text: The base generated text to create variants from
             num_variants: Number of variants (default from config)
-            
+
         Returns:
             List of variant texts
         """
@@ -60,20 +58,20 @@ class ABTestingService:
             from src.services.provider_service import AgentProviderService
 
             provider_service = AgentProviderService(self._db)
-            
+
             for i in range(1, num_variants):
                 prompt = (
                     f"Перепиши следующий текст, сохраняя смысл, но изменив стиль и формулировки. "
                     f"Вариант {i + 1}:\n\n{base_text}"
                 )
-                
+
                 provider_callable = provider_service.get_provider_callable(pipeline.llm_model)
                 result = await provider_callable(
                     prompt=prompt,
                     max_tokens=1000,
                     temperature=0.8,
                 )
-                
+
                 variant_text = result if isinstance(result, str) else str(result)
                 variants.append(variant_text)
 
@@ -88,17 +86,12 @@ class ABTestingService:
         variants: list[str],
     ) -> None:
         """Save variants to a generation run.
-        
+
         Args:
             run_id: The generation run ID
             variants: List of variant texts
         """
-        variants_json = json.dumps(variants, ensure_ascii=False)
-        await self._db.repos.generation_runs._db.execute(
-            "UPDATE generation_runs SET variants = ?, updated_at = datetime('now') WHERE id = ?",
-            (variants_json, run_id),
-        )
-        await self._db.repos.generation_runs._db.commit()
+        await self._db.repos.generation_runs.set_variants(run_id, variants)
 
     async def select_variant(
         self,
@@ -106,7 +99,7 @@ class ABTestingService:
         variant_index: int,
     ) -> None:
         """Select a specific variant as the final content.
-        
+
         Args:
             run_id: The generation run ID
             variant_index: Index of the selected variant
@@ -115,29 +108,23 @@ class ABTestingService:
         if run is None:
             raise ValueError(f"Run {run_id} not found")
 
-        variants_json = run.variants
-        if not variants_json:
+        variants = run.variants
+        if not variants:
             raise ValueError(f"Run {run_id} has no variants")
 
-        variants = json.loads(variants_json)
         if variant_index < 0 or variant_index >= len(variants):
             raise ValueError(f"Invalid variant index {variant_index}")
 
         selected_text = variants[variant_index]
-        
-        await self._db.repos.generation_runs._db.execute(
-            ("UPDATE generation_runs SET generated_text = ?, selected_variant = ?, "
-             "updated_at = datetime('now') WHERE id = ?"),
-            (selected_text, variant_index, run_id),
-        )
-        await self._db.repos.generation_runs._db.commit()
+
+        await self._db.repos.generation_runs.select_variant(run_id, variant_index, selected_text)
 
     async def get_variants(self, run_id: int) -> ABTestResult | None:
         """Get variants for a generation run.
-        
+
         Args:
             run_id: The generation run ID
-            
+
         Returns:
             ABTestResult with variants, or None if not found
         """
@@ -145,11 +132,13 @@ class ABTestingService:
         if run is None:
             return None
 
-        variants_json = run.variants
-        if not variants_json:
-            return ABTestResult(run_id=run_id, variants=[Variant(index=0, text=run.generated_text or "")])
+        variants_data = run.variants
+        if not variants_data:
+            return ABTestResult(
+                run_id=run_id,
+                variants=[Variant(index=0, text=run.generated_text or "")],
+            )
 
-        variants_data = json.loads(variants_json)
         variants = [
             Variant(index=i, text=text)
             for i, text in enumerate(variants_data)
@@ -167,11 +156,11 @@ class ABTestingService:
         scoring_service=None,
     ) -> int:
         """Automatically select the best variant based on quality scoring.
-        
+
         Args:
             run_id: The generation run ID
             scoring_service: Optional QualityScoringService for scoring
-            
+
         Returns:
             Index of the selected variant
         """
