@@ -151,6 +151,11 @@
         notification_test_failed: "Не удалось отправить тестовое уведомление.",
         invalid_account: "Выбран неизвестный аккаунт.",
         not_found: "Объект не найден.",
+        run_approved: "Черновик одобрен.",
+        run_rejected: "Черновик отклонён.",
+        runs_approved: "Выбранные черновики одобрены.",
+        runs_rejected: "Выбранные черновики отклонены.",
+        run_published: "Черновик опубликован.",
         photo_send_failed: "Не удалось отправить фото.",
         photo_target_required: "Сначала выберите канал, чат или личный диалог.",
         photo_target_invalid: "Выбранная цель недоступна. Выберите её заново.",
@@ -162,7 +167,8 @@
          semantic_unavailable: "sqlite-vec недоступен, semantic search выключен.",
          photo_item_cancel_failed: "Не удалось отменить photo task.",
          pipeline_invalid: "Параметры pipeline некорректны или dialog cache не заполнен.",
-         pipeline_run_failed: "Не удалось поставить запуск pipeline в очередь."
+         pipeline_run_failed: "Не удалось поставить запуск pipeline в очередь.",
+         run_not_approved: "Сначала одобрите черновик перед публикацией."
      };
     var params = new URLSearchParams(window.location.search);
     var code = params.get("msg");

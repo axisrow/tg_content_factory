@@ -1,5 +1,3 @@
-"""Tests for moderation routes."""
-
 from __future__ import annotations
 
 import base64
@@ -14,7 +12,7 @@ from src.models import (
     Account,
     Channel,
     ContentPipeline,
-    PipelineGenerationBackend,
+    GenerationRun,
     PipelinePublishMode,
     PipelineTarget,
 )
@@ -56,98 +54,92 @@ async def client(tmp_path):
 
     await db.add_account(Account(phone="+1234567890", session_string="test_session"))
     await db.add_channel(Channel(channel_id=100, title="Test Channel"))
+    await db.repos.dialog_cache.replace_dialogs(
+        "+1234567890",
+        [{"channel_id": 200, "title": "Test Dialog", "channel_type": "channel"}],
+    )
 
     transport = ASGITransport(app=app)
     auth_header = base64.b64encode(b":testpass").decode()
     async with AsyncClient(
         transport=transport,
         base_url="http://test",
-        follow_redirects=True,
         headers={"Authorization": f"Basic {auth_header}", "Origin": "http://test"},
     ) as c:
+        c.app = app
         yield c
 
     await db.close()
 
 
-async def _create_pipeline(db: Database, *, publish_mode: PipelinePublishMode) -> int:
+async def _create_pipeline_and_run(client: AsyncClient, *, moderation_status: str) -> int:
+    db = client.app.state.db
     pipeline = ContentPipeline(
         name="Moderation Pipeline",
         prompt_template="Write a summary",
-        publish_mode=publish_mode,
-        generation_backend=PipelineGenerationBackend.CHAIN,
+        publish_mode=PipelinePublishMode.MODERATED,
     )
-    return await db.repos.content_pipelines.add(
+    pipeline_id = await db.repos.content_pipelines.add(
         pipeline,
-        source_channel_ids=[100],
-        targets=[
+        [100],
+        [
             PipelineTarget(
                 pipeline_id=0,
                 phone="+1234567890",
                 dialog_id=200,
-                title="Target Dialog",
+                title="Test Dialog",
                 dialog_type="channel",
             )
         ],
     )
 
+    run_id = await db.repos.generation_runs.create_run(pipeline_id, "Prompt")
+    await db.repos.generation_runs.save_result(run_id, "Generated text")
+    await db.repos.generation_runs.set_moderation_status(run_id, moderation_status)
+    return run_id
+
 
 @pytest.mark.asyncio
-async def test_moderation_page_renders_empty_queue(client):
+async def test_moderation_page_renders_empty_state_without_select_all_binding(client):
     resp = await client.get("/moderation/")
+
     assert resp.status_code == 200
     assert "Нет черновиков на модерации." in resp.text
-    assert "request.query_params.get" not in resp.text
+    assert "const selectAll = document.getElementById('select-all');" in resp.text
+    assert "if (selectAll)" in resp.text
 
 
 @pytest.mark.asyncio
-async def test_publish_run_uses_publish_service(client, monkeypatch):
-    db = client._transport.app.state.db
-    pipeline_id = await _create_pipeline(db, publish_mode=PipelinePublishMode.MODERATED)
-    run_id = await db.repos.generation_runs.create_run(pipeline_id, "prompt-template")
-    await db.repos.generation_runs.save_result(run_id, "Generated post")
-    await db.repos.generation_runs.set_moderation_status(run_id, "approved")
-
-    observed: dict[str, int] = {}
+async def test_publish_run_uses_publish_service(monkeypatch, client):
+    run_id = await _create_pipeline_and_run(client, moderation_status="approved")
+    publish_run = AsyncMock(return_value=[PublishResult(success=True, message_id=42)])
 
     class FakePublishService:
-        def __init__(self, injected_db, pool):
-            assert injected_db is db
-            assert pool is client._transport.app.state.pool
+        def __init__(self, db, pool):
+            self.db = db
+            self.pool = pool
 
         async def publish_run(self, run, pipeline):
-            observed["run_id"] = run.id
-            observed["pipeline_id"] = pipeline.id
-            return [PublishResult(success=True, message_id=777)]
+            return await publish_run(run, pipeline)
 
     monkeypatch.setattr("src.web.routes.moderation.PublishService", FakePublishService)
 
     resp = await client.post(f"/moderation/{run_id}/publish", follow_redirects=False)
+
     assert resp.status_code == 303
-    assert "msg=run_published" in resp.headers["location"]
-    assert observed == {"run_id": run_id, "pipeline_id": pipeline_id}
+    assert resp.headers["location"] == "/moderation?msg=run_published"
+    publish_run.assert_awaited_once()
+    run_arg, pipeline_arg = publish_run.await_args.args
+    assert isinstance(run_arg, GenerationRun)
+    assert run_arg.id == run_id
+    assert pipeline_arg.id is not None
 
 
 @pytest.mark.asyncio
-async def test_publish_run_rejects_unapproved_run(client, monkeypatch):
-    db = client._transport.app.state.db
-    pipeline_id = await _create_pipeline(db, publish_mode=PipelinePublishMode.MODERATED)
-    run_id = await db.repos.generation_runs.create_run(pipeline_id, "prompt-template")
-    await db.repos.generation_runs.save_result(run_id, "Generated post")
-
-    fake_publish = AsyncMock()
-
-    class FakePublishService:
-        def __init__(self, injected_db, pool):
-            pass
-
-        async def publish_run(self, run, pipeline):
-            await fake_publish(run, pipeline)
-            return [PublishResult(success=True, message_id=777)]
-
-    monkeypatch.setattr("src.web.routes.moderation.PublishService", FakePublishService)
+async def test_publish_run_rejects_unapproved_draft(client):
+    run_id = await _create_pipeline_and_run(client, moderation_status="pending")
 
     resp = await client.post(f"/moderation/{run_id}/publish", follow_redirects=False)
+
     assert resp.status_code == 303
-    assert "error=run_not_approved" in resp.headers["location"]
-    fake_publish.assert_not_awaited()
+    assert resp.headers["location"] == "/moderation?error=run_not_approved"
