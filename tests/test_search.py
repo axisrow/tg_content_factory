@@ -290,6 +290,41 @@ async def test_search_telegram_no_premium(db, real_pool_harness_factory):
 
 
 @pytest.mark.asyncio
+async def test_search_telegram_flood_wait_does_not_mark_generic_account_flood(
+    db,
+    real_pool_harness_factory,
+):
+    def _raise_flood(_request):
+        err = FloodWaitError(request=None, capture=0)
+        err.seconds = 45
+        raise err
+
+    harness = real_pool_harness_factory()
+    phone = "+1234567890"
+    await _connect_search_account(
+        harness,
+        phone=phone,
+        session_string="premium-session",
+        is_premium=True,
+        client=FakeCliTelethonClient(
+            me=SimpleNamespace(premium=True),
+            invoke_side_effect=_raise_flood,
+        ),
+    )
+
+    engine = SearchEngine(db, pool=harness.pool)
+    result = await engine.search_telegram("query")
+
+    assert result.total == 0
+    assert result.flood_wait is not None
+    accounts = await db.get_accounts(active_only=True)
+    flooded = next(account for account in accounts if account.phone == phone)
+    assert flooded.flood_wait_until is None
+    unavailable_reason = await harness.pool.get_premium_unavailability_reason()
+    assert "Flood Wait" in unavailable_reason
+
+
+@pytest.mark.asyncio
 async def test_search_my_chats_runtime_error_returns_search_result(
     db,
     real_pool_harness_factory,

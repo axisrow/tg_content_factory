@@ -106,6 +106,35 @@ async def test_get_premium_client_unavailable(mock_db, mock_auth):
 
 
 @pytest.mark.asyncio
+async def test_get_premium_client_skips_premium_flood_waited(mock_db, mock_auth):
+    acc1 = Account(phone="+7001", is_active=True, is_premium=True, session_string="s1")
+    acc2 = Account(phone="+7002", is_active=True, is_premium=True, session_string="s2")
+    mock_db.get_accounts.return_value = [acc1, acc2]
+
+    pool = ClientPool(mock_auth, mock_db)
+    pool.clients = {"+7001": MagicMock(), "+7002": MagicMock()}
+    await pool.report_premium_flood("+7001", 120)
+
+    res = await pool.get_premium_client()
+    assert res is not None
+    assert res[1] == "+7002"
+    mock_db.update_account_flood.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_get_premium_unavailability_reason_reports_premium_flood(mock_db, mock_auth):
+    acc = Account(phone="+7001", is_active=True, is_premium=True, session_string="s1")
+    mock_db.get_accounts.return_value = [acc]
+
+    pool = ClientPool(mock_auth, mock_db)
+    pool.clients = {"+7001": MagicMock()}
+    await pool.report_premium_flood("+7001", 120)
+
+    reason = await pool.get_premium_unavailability_reason()
+    assert "Flood Wait" in reason
+
+
+@pytest.mark.asyncio
 async def test_get_stats_availability_all_flooded(mock_db, mock_auth):
     future = datetime.now(timezone.utc) + timedelta(seconds=100)
     acc = Account(phone="+7001", is_active=True, session_string="s1", flood_wait_until=future)
