@@ -91,6 +91,7 @@ class ClientPool:
         self._dialogs_fetched: set[str] = set()
         self._dialogs_cache: dict[tuple[str, str], DialogCacheEntry] = {}
         self._dialogs_cache_ttl_sec = 60.0
+        self._premium_flood_wait_until: dict[str, datetime] = {}
 
     def is_dialogs_fetched(self, phone: str) -> bool:
         """Return True if get_dialogs() was already called for this phone in this process."""
@@ -299,10 +300,14 @@ class ClientPool:
     async def get_premium_client(self) -> tuple[TelegramTransportSession, str] | None:
         """Get first available premium client.
 
-        Flood wait is ignored because premium search uses a different API method.
+        Premium-only flood waits are tracked separately from generic account flood waits.
         """
+        blocked_phones = self._premium_flooded_phones()
         for _ in range(max(1, len(self.clients))):
-            lease = await self._lease_pool.acquire_premium(self._connected_phones())
+            lease = await self._lease_pool.acquire_premium(
+                self._connected_phones(),
+                blocked_phones=blocked_phones,
+            )
             if lease is None:
                 return None
             result = await self._acquire_from_lease(lease)
@@ -318,6 +323,14 @@ class ClientPool:
         connected = [acc for acc in premium if acc.phone in self.clients]
         if not connected:
             return "Premium-аккаунт не подключён. Перезапустите сервер."
+        now = datetime.now(timezone.utc)
+        blocked = [
+            phone
+            for phone, until in self._premium_flood_wait_until.items()
+            if phone in {acc.phone for acc in connected} and until > now
+        ]
+        if blocked and len(blocked) == len(connected):
+            return "Premium-аккаунты временно недоступны из-за Flood Wait."
         return "Premium-аккаунт недоступен."
 
     async def get_stats_availability(self) -> StatsClientAvailability:
@@ -352,8 +365,22 @@ class ClientPool:
         await self._db.update_account_flood(phone, until)
         logger.warning("Flood wait for %s: %d seconds (until %s)", phone, wait_seconds, until)
 
+    async def report_premium_flood(self, phone: str, wait_seconds: int) -> None:
+        """Mark account as premium-search flood-waited without touching generic account state."""
+        until = datetime.now(timezone.utc) + timedelta(seconds=wait_seconds)
+        self._premium_flood_wait_until[phone] = until
+        logger.warning(
+            "Premium flood wait for %s: %d seconds (until %s)",
+            phone,
+            wait_seconds,
+            until,
+        )
+
     async def clear_flood(self, phone: str) -> None:
         await self._db.update_account_flood(phone, None)
+
+    def clear_premium_flood(self, phone: str) -> None:
+        self._premium_flood_wait_until.pop(phone, None)
 
     async def add_client(self, phone: str, session_string: str) -> None:
         """Register a new account as connected and validate its stored session."""
@@ -381,6 +408,18 @@ class ClientPool:
         self._in_use.discard(phone)
         self._dialogs_fetched.discard(phone)
         self.invalidate_dialogs_cache(phone)
+        self.clear_premium_flood(phone)
+
+    def _premium_flooded_phones(self) -> set[str]:
+        now = datetime.now(timezone.utc)
+        expired = [
+            phone
+            for phone, until in self._premium_flood_wait_until.items()
+            if until <= now
+        ]
+        for phone in expired:
+            self._premium_flood_wait_until.pop(phone, None)
+        return set(self._premium_flood_wait_until)
 
     async def disconnect_all(self) -> None:
         for phone in list(self.clients):

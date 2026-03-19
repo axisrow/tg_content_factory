@@ -62,10 +62,13 @@ class TelegramSearch:
                 self._check_search_quota_with_client(session, query),
                 operation="check_search_quota",
                 phone=phone,
-                pool=self._pool,
+                pool=None,
                 logger_=logger,
             )
-        except HandledFloodWaitError:
+        except HandledFloodWaitError as exc:
+            reporter = getattr(self._pool, "report_premium_flood", None)
+            if callable(reporter):
+                await reporter(phone, exc.info.wait_seconds)
             raise
         except Exception as exc:
             logger.debug("checkSearchPostsFlood unavailable: %s", exc)
@@ -125,7 +128,7 @@ class TelegramSearch:
                 self._check_search_quota_with_client(session, query),
                 operation="search_telegram_check_quota",
                 phone=phone,
-                pool=self._pool,
+                pool=None,
                 logger_=logger,
             )
             if quota and quota.get("remains") == 0 and not quota.get("query_is_free"):
@@ -143,12 +146,20 @@ class TelegramSearch:
                 self._search_posts_global(session, query, limit),
                 operation="search_telegram",
                 phone=phone,
-                pool=self._pool,
+                pool=None,
                 logger_=logger,
             )
+            clearer = getattr(self._pool, "clear_premium_flood", None)
+            if callable(clearer):
+                result = clearer(phone)
+                if inspect.isawaitable(result):
+                    await result
             await self._persistence.cache_search_results(seen_channels, messages, phone, query)
             return SearchResult(messages=messages, total=len(messages), query=query)
         except HandledFloodWaitError as exc:
+            reporter = getattr(self._pool, "report_premium_flood", None)
+            if callable(reporter):
+                await reporter(phone, exc.info.wait_seconds)
             return SearchResult(
                 messages=[],
                 total=0,
