@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from telethon.errors import FloodWaitError
 
 from src.models import Message
 from src.search.engine import SearchEngine
@@ -336,6 +337,68 @@ async def test_search_my_chats_returns_results(db, real_pool_harness_factory):
     assert result.messages[0].message_id == 42
     assert result.messages[0].text == "resolved message"
     assert result.messages[0].channel_title == "My Chat"
+
+
+@pytest.mark.asyncio
+async def test_search_my_chats_skips_warm_dialog_cache_when_already_fetched(
+    db,
+    real_pool_harness_factory,
+):
+    mock_msg = _make_resolved_message()
+    harness = real_pool_harness_factory()
+    phone = "+1234567890"
+    client = FakeCliTelethonClient(
+        dialogs=[],
+        iter_messages_factory=lambda *args, **kwargs: AsyncIterMessages([mock_msg]),
+    )
+    await _connect_search_account(
+        harness,
+        phone=phone,
+        session_string="session-1",
+        client=client,
+    )
+    harness.pool.mark_dialogs_fetched(phone)
+
+    engine = SearchEngine(db, pool=harness.pool)
+    result = await engine.search_my_chats("resolved", limit=10)
+
+    assert result.total == 1
+    client.get_dialogs.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_search_my_chats_reports_flood_wait_and_marks_account(
+    db,
+    real_pool_harness_factory,
+):
+    async def _flood_iter(*args, **kwargs):
+        err = FloodWaitError(request=None, capture=0)
+        err.seconds = 33
+        raise err
+        yield
+
+    harness = real_pool_harness_factory()
+    phone = "+1234567890"
+    await _connect_search_account(
+        harness,
+        phone=phone,
+        session_string="session-1",
+        client=FakeCliTelethonClient(
+            dialogs=[],
+            iter_messages_factory=_flood_iter,
+        ),
+    )
+
+    engine = SearchEngine(db, pool=harness.pool)
+    result = await engine.search_my_chats("query")
+
+    assert result.total == 0
+    assert result.flood_wait is not None
+    assert result.flood_wait.wait_seconds == 33
+    assert "Flood wait 33s" in (result.error or "")
+    accounts = await db.get_accounts(active_only=True)
+    flooded = next(account for account in accounts if account.phone == phone)
+    assert flooded.flood_wait_until is not None
 
 
 @pytest.mark.asyncio

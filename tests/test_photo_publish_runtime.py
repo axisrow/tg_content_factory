@@ -7,6 +7,7 @@ from telethon.errors import FloodWaitError
 
 from src.models import PhotoSendMode
 from src.services.photo_publish_service import PhotoPublishService
+from src.telegram.flood_wait import HandledFloodWaitError
 from tests.helpers import FakeCliTelethonClient
 
 
@@ -65,7 +66,7 @@ async def test_photo_publish_service_reports_flood_from_transport_session(
     await harness.initialize_connected_accounts()
 
     service = PhotoPublishService(harness.pool)
-    with pytest.raises(FloodWaitError):
+    with pytest.raises(HandledFloodWaitError) as exc_info:
         await service.send_now(
             phone="+7000",
             target_dialog_id=-1001,
@@ -74,5 +75,6 @@ async def test_photo_publish_service_reports_flood_from_transport_session(
             send_mode=PhotoSendMode.SEPARATE,
         )
 
+    assert exc_info.value.info.wait_seconds == 33
     accounts = await harness.db.get_accounts()
     assert accounts[0].flood_wait_until is not None

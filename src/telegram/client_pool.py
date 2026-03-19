@@ -10,7 +10,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
-from telethon.errors import FloodWaitError, UsernameInvalidError, UsernameNotOccupiedError
+from telethon.errors import UsernameInvalidError, UsernameNotOccupiedError
 from telethon.tl.types import ChannelForbidden, PeerChannel, PeerUser
 
 from src.config import TelegramRuntimeConfig
@@ -26,6 +26,7 @@ from src.telegram.backends import (
     TelethonCliBackend,
     adapt_transport_session,
 )
+from src.telegram.flood_wait import HandledFloodWaitError, run_with_flood_wait
 from src.telegram.session_materializer import SessionMaterializer
 from src.telegram.utils import normalize_utc
 
@@ -176,23 +177,58 @@ class ClientPool:
         session = adapt_transport_session(session, disconnect_on_close=False)
         peer = PeerUser(dialog_id) if target_type in ("dm", "bot") else PeerChannel(abs(dialog_id))
         try:
-            return await asyncio.wait_for(session.resolve_input_entity(peer), timeout=30.0)
+            return await run_with_flood_wait(
+                session.resolve_input_entity(peer),
+                operation="resolve_dialog_entity_peer",
+                phone=phone,
+                pool=self,
+                logger_=logger,
+                timeout=30.0,
+            )
         except (ValueError, TypeError):
             pass
 
         try:
-            await asyncio.wait_for(session.warm_dialog_cache(), timeout=60.0)
+            await run_with_flood_wait(
+                session.warm_dialog_cache(),
+                operation="resolve_dialog_entity_warm_dialog_cache",
+                phone=phone,
+                pool=self,
+                logger_=logger,
+                timeout=60.0,
+            )
             self.mark_dialogs_fetched(phone)
-            return await asyncio.wait_for(session.resolve_input_entity(peer), timeout=30.0)
+            return await run_with_flood_wait(
+                session.resolve_input_entity(peer),
+                operation="resolve_dialog_entity_peer_after_warm",
+                phone=phone,
+                pool=self,
+                logger_=logger,
+                timeout=30.0,
+            )
         except (ValueError, TypeError):
             pass
 
         dialog = await self._get_cached_dialog(phone, dialog_id)
         username = dialog.get("username") if dialog else None
         if username:
-            return await asyncio.wait_for(session.resolve_input_entity(username), timeout=30.0)
+            return await run_with_flood_wait(
+                session.resolve_input_entity(username),
+                operation="resolve_dialog_entity_username",
+                phone=phone,
+                pool=self,
+                logger_=logger,
+                timeout=30.0,
+            )
 
-        return await asyncio.wait_for(session.resolve_input_entity(peer), timeout=30.0)
+        return await run_with_flood_wait(
+            session.resolve_input_entity(peer),
+            operation="resolve_dialog_entity_peer_fallback",
+            phone=phone,
+            pool=self,
+            logger_=logger,
+            timeout=30.0,
+        )
 
     async def initialize(self) -> None:
         """Load active accounts and validate that their sessions are usable."""
@@ -206,7 +242,14 @@ class ClientPool:
                 session = lease.session
                 logger.info("Connected account: %s (primary=%s)", acc.phone, acc.is_primary)
                 try:
-                    me = await asyncio.wait_for(session.fetch_me(), timeout=15.0)
+                    me = await run_with_flood_wait(
+                        session.fetch_me(),
+                        operation="initialize_fetch_me",
+                        phone=acc.phone,
+                        pool=self,
+                        logger_=logger,
+                        timeout=15.0,
+                    )
                     is_premium = bool(getattr(me, "premium", False))
                     if is_premium != acc.is_premium:
                         await self._db.update_account_premium(acc.phone, is_premium)
@@ -488,13 +531,24 @@ class ClientPool:
                     lease = await self._backend_router.acquire_client(account)
                     session = lease.session
 
-                me = await asyncio.wait_for(session.fetch_me(), timeout=15.0)
+                me = await run_with_flood_wait(
+                    session.fetch_me(),
+                    operation="get_users_info_fetch_me",
+                    phone=phone,
+                    pool=self,
+                    logger_=logger,
+                    timeout=15.0,
+                )
                 avatar_base64 = None
                 if include_avatar:
                     try:
                         buf = io.BytesIO()
-                        downloaded = await asyncio.wait_for(
+                        downloaded = await run_with_flood_wait(
                             session.fetch_profile_photo("me", file=buf),
+                            operation="get_users_info_fetch_profile_photo",
+                            phone=phone,
+                            pool=self,
+                            logger_=logger,
                             timeout=15.0,
                         )
                         if downloaded:
@@ -539,16 +593,25 @@ class ClientPool:
         else:
             peer = identifier
 
+        last_flood_error: HandledFloodWaitError | None = None
         for _attempt in range(3):
             result = await self.get_available_client()
             if not result:
+                if last_flood_error is not None:
+                    raise last_flood_error
                 logger.warning("resolve_channel: no available client for '%s'", identifier)
                 raise RuntimeError("no_client")
             session, phone = result
             session = adapt_transport_session(session, disconnect_on_close=False)
-            released = False
             try:
-                entity = await asyncio.wait_for(session.resolve_entity(peer), timeout=30.0)
+                entity = await run_with_flood_wait(
+                    session.resolve_entity(peer),
+                    operation="resolve_channel",
+                    phone=phone,
+                    pool=self,
+                    logger_=logger,
+                    timeout=30.0,
+                )
                 if not hasattr(entity, "title"):
                     logger.info("resolve_channel: '%s' is a user, not a channel/group", identifier)
                     return None
@@ -565,14 +628,12 @@ class ClientPool:
             except asyncio.TimeoutError:
                 logger.warning("resolve_channel: get_entity timed out for '%s'", identifier)
                 return None
-            except FloodWaitError as e:
-                await self.release_client(phone)
-                released = True
-                await self.report_flood(phone, e.seconds)
-                logger.warning(
-                    "resolve_channel: flood wait %ds for '%s', rotating client",
-                    e.seconds,
+            except HandledFloodWaitError as exc:
+                last_flood_error = exc
+                logger.info(
+                    "resolve_channel: rotating client after flood wait for '%s': %s",
                     identifier,
+                    exc.info.detail,
                 )
                 continue
             except (UsernameNotOccupiedError, UsernameInvalidError) as e:
@@ -582,8 +643,10 @@ class ClientPool:
                 logger.warning("resolve_channel: failed to resolve '%s': %s", identifier, e)
                 return None
             finally:
-                if not released:
-                    await self.release_client(phone)
+                await self.release_client(phone)
+        if last_flood_error is not None:
+            logger.warning("resolve_channel: all clients flood-waited for '%s'", identifier)
+            raise last_flood_error
         logger.warning("resolve_channel: all clients flood-waited for '%s'", identifier)
         return None
 
@@ -705,7 +768,14 @@ class ClientPool:
 
             iter_coro = _iter()
             try:
-                await asyncio.wait_for(iter_coro, timeout=60.0)
+                await run_with_flood_wait(
+                    iter_coro,
+                    operation="get_dialogs_for_phone",
+                    phone=phone,
+                    pool=self,
+                    logger_=logger,
+                    timeout=60.0,
+                )
             except asyncio.TimeoutError:
                 iter_coro.close()
                 stats.partial = True
@@ -757,13 +827,20 @@ class ClientPool:
             for cid, ctype in dialogs:
                 try:
                     peer = PeerUser(cid) if ctype in ("dm", "bot") else PeerChannel(abs(cid))
-                    entity = await session.resolve_entity(peer)
-                    await session.remove_dialog(entity)
+                    async def _remove_dialog() -> None:
+                        entity = await session.resolve_entity(peer)
+                        await session.remove_dialog(entity)
+
+                    await run_with_flood_wait(
+                        _remove_dialog(),
+                        operation=f"leave_channels:{cid}",
+                        phone=phone,
+                        pool=self,
+                        logger_=logger,
+                    )
                     outcomes[cid] = True
                     await asyncio.sleep(0.3)
-                except FloodWaitError as e:
-                    logger.warning("leave_channels: flood wait %ds for %d", e.seconds, cid)
-                    await self.report_flood(phone, e.seconds)
+                except HandledFloodWaitError:
                     outcomes[cid] = False
                     for remaining_cid, _ in dialogs:
                         if remaining_cid not in outcomes:
@@ -793,17 +870,34 @@ class ClientPool:
         try:
             # Try direct entity lookup first (works when entity is already cached)
             try:
-                entity = await asyncio.wait_for(
-                    session.resolve_entity(PeerChannel(channel_id)), timeout=10.0
+                entity = await run_with_flood_wait(
+                    session.resolve_entity(PeerChannel(channel_id)),
+                    operation="get_forum_topics_resolve_channel_id",
+                    phone=phone,
+                    pool=self,
+                    logger_=logger,
+                    timeout=10.0,
                 )
             except (ValueError, asyncio.TimeoutError):
                 # Cache miss — populate cache via get_dialogs and retry
                 if not self.is_dialogs_fetched(phone):
-                    await asyncio.wait_for(session.warm_dialog_cache(), timeout=60.0)
+                    await run_with_flood_wait(
+                        session.warm_dialog_cache(),
+                        operation="get_forum_topics_warm_dialog_cache",
+                        phone=phone,
+                        pool=self,
+                        logger_=logger,
+                        timeout=60.0,
+                    )
                     self.mark_dialogs_fetched(phone)
                     try:
-                        entity = await asyncio.wait_for(
-                            session.resolve_entity(PeerChannel(channel_id)), timeout=10.0
+                        entity = await run_with_flood_wait(
+                            session.resolve_entity(PeerChannel(channel_id)),
+                            operation="get_forum_topics_resolve_channel_id_after_warm",
+                            phone=phone,
+                            pool=self,
+                            logger_=logger,
+                            timeout=10.0,
                         )
                     except (ValueError, asyncio.TimeoutError):
                         entity = None
@@ -814,16 +908,25 @@ class ClientPool:
                 if entity is None:
                     channel = await self._db.get_channel_by_channel_id(channel_id)
                     if channel and channel.username:
-                        entity = await asyncio.wait_for(
-                            session.resolve_entity(channel.username), timeout=10.0
+                        entity = await run_with_flood_wait(
+                            session.resolve_entity(channel.username),
+                            operation="get_forum_topics_resolve_username",
+                            phone=phone,
+                            pool=self,
+                            logger_=logger,
+                            timeout=10.0,
                         )
                     else:
                         raise LookupError(
                             f"Cannot resolve entity for channel {channel_id}: "
                             "not in cache and no username in DB"
                         )
-            response = await asyncio.wait_for(
+            response = await run_with_flood_wait(
                 session.fetch_forum_topics(entity, limit=100),
+                operation="get_forum_topics_fetch_topics",
+                phone=phone,
+                pool=self,
+                logger_=logger,
                 timeout=30.0,
             )
             return [
