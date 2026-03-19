@@ -4,11 +4,10 @@ import inspect
 import logging
 from datetime import datetime
 
-from telethon.errors import FloodWaitError
-
 from src.models import PhotoSendMode
 from src.telegram.backends import adapt_transport_session
 from src.telegram.client_pool import ClientPool
+from src.telegram.flood_wait import run_with_flood_wait
 
 logger = logging.getLogger(__name__)
 
@@ -45,28 +44,35 @@ class PhotoPublishService:
                 )
                 entity = await resolved if inspect.isawaitable(resolved) else resolved
             if send_mode == PhotoSendMode.ALBUM and len(file_paths) > 1:
-                sent = await session.publish_files(
-                    entity,
-                    file_paths,
-                    caption=caption,
-                    schedule=schedule_at,
+                sent = await run_with_flood_wait(
+                    session.publish_files(
+                        entity,
+                        file_paths,
+                        caption=caption,
+                        schedule=schedule_at,
+                    ),
+                    operation="photo_publish_album",
+                    phone=acquired_phone,
+                    pool=self._pool,
+                    logger_=logger,
                 )
                 return [int(msg.id) for msg in sent]
 
             message_ids: list[int] = []
             for path in file_paths:
-                sent = await session.publish_files(
-                    entity,
-                    path,
-                    caption=caption,
-                    schedule=schedule_at,
+                sent = await run_with_flood_wait(
+                    session.publish_files(
+                        entity,
+                        path,
+                        caption=caption,
+                        schedule=schedule_at,
+                    ),
+                    operation="photo_publish_single",
+                    phone=acquired_phone,
+                    pool=self._pool,
+                    logger_=logger,
                 )
                 message_ids.append(int(sent.id))
             return message_ids
-        except FloodWaitError as exc:
-            wait_for = max(1, int(getattr(exc, "seconds", 0) or 0))
-            await self._pool.report_flood(acquired_phone, wait_for)
-            logger.warning("Photo send flood wait for %s: %s", acquired_phone, wait_for)
-            raise
         finally:
             await self._pool.release_client(acquired_phone)

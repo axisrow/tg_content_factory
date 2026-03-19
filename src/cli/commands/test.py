@@ -11,7 +11,7 @@ import sys
 import tempfile
 import time
 from dataclasses import dataclass
-from datetime import timezone
+from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 
@@ -20,10 +20,13 @@ from src.database import Database
 from src.filters.analyzer import ChannelAnalyzer
 from src.models import Message, SearchQuery
 from src.telegram.backends import adapt_transport_session
+from src.telegram.flood_wait import FloodWaitInfo, HandledFloodWaitError, run_with_flood_wait
 
 logger = logging.getLogger(__name__)
 
 TELEGRAM_TIMEOUT = 30
+TELEGRAM_SEARCH_TIMEOUT = 120
+SHORT_FLOOD_WAIT_RETRY_SEC = 30
 # src/cli/commands/test.py → src/cli/commands → src/cli → src → repo root
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SERIAL_PYTEST_COMMAND = (sys.executable, "-m", "pytest", "tests", "-q")
@@ -66,6 +69,18 @@ class CheckResult:
 class BenchmarkStep:
     name: str
     command: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class TelegramLiveFloodDecision:
+    action: str
+    detail: str
+    retry_after_sec: int | None = None
+    next_available_at_utc: datetime | None = None
+
+
+class TelegramLiveStepSkipError(RuntimeError):
+    """Internal control-flow exception used to stop live checks on long flood waits."""
 
 
 def _print_result(result: CheckResult) -> None:
@@ -111,6 +126,126 @@ def _run_pytest_benchmark() -> None:
     print(f"aiosqlite_serial_suite: {aiosqlite_serial_elapsed:.2f}s")
     print(f"two_pass_total: {two_pass_total:.2f}s")
     print(f"speedup_vs_serial: {speedup:.2f}x")
+
+
+def _format_exception(exc: BaseException) -> str:
+    detail = str(exc).strip()
+    return detail or exc.__class__.__name__
+
+
+async def _disable_flood_auto_sleep(pool) -> None:
+    clients = getattr(pool, "clients", None) or {}
+    for phone, client in clients.items():
+        session = adapt_transport_session(client, disconnect_on_close=False)
+        raw_client = getattr(session, "raw_client", None)
+        if raw_client is None or not hasattr(raw_client, "flood_sleep_threshold"):
+            continue
+        raw_client.flood_sleep_threshold = 0
+        logger.info(
+            "Telegram live checks: disabled flood auto-sleep for %s; flood waits will surface immediately",
+            phone,
+        )
+
+
+def _format_all_flooded_detail(
+    base_detail: str,
+    *,
+    retry_after_sec: int | None,
+    next_available_at_utc: datetime | None,
+) -> str:
+    if retry_after_sec is None:
+        return f"{base_detail}; all clients are flood-waited"
+    if next_available_at_utc is None:
+        return f"{base_detail}; all clients are flood-waited, retry after about {retry_after_sec}s"
+    return (
+        f"{base_detail}; all clients are flood-waited, retry after about {retry_after_sec}s "
+        f"until {next_available_at_utc.isoformat()}"
+    )
+
+
+def _is_premium_flood(info: FloodWaitInfo) -> bool:
+    return info.operation in {
+        "check_search_quota",
+        "search_telegram_check_quota",
+        "search_telegram",
+    }
+
+
+async def _get_live_flood_availability(pool, info: FloodWaitInfo):
+    if _is_premium_flood(info):
+        availability_getter = getattr(pool, "get_premium_stats_availability", None)
+        if callable(availability_getter):
+            return await availability_getter()
+    availability_getter = getattr(pool, "get_stats_availability", None)
+    if callable(availability_getter):
+        return await availability_getter()
+    return None
+
+
+async def _decide_live_test_flood_action(
+    pool,
+    info: FloodWaitInfo,
+) -> TelegramLiveFloodDecision:
+    availability = await _get_live_flood_availability(pool, info)
+    if availability is None:
+        return TelegramLiveFloodDecision(action="skip", detail=info.detail)
+    if availability.state != "all_flooded":
+        return TelegramLiveFloodDecision(action="rotate", detail=info.detail)
+
+    detail = _format_all_flooded_detail(
+        info.detail,
+        retry_after_sec=availability.retry_after_sec,
+        next_available_at_utc=availability.next_available_at_utc,
+    )
+    if (
+        availability.retry_after_sec is not None
+        and availability.retry_after_sec <= SHORT_FLOOD_WAIT_RETRY_SEC
+    ):
+        return TelegramLiveFloodDecision(
+            action="wait_retry",
+            detail=detail,
+            retry_after_sec=availability.retry_after_sec,
+            next_available_at_utc=availability.next_available_at_utc,
+        )
+    return TelegramLiveFloodDecision(
+        action="skip",
+        detail=detail,
+        retry_after_sec=availability.retry_after_sec,
+        next_available_at_utc=availability.next_available_at_utc,
+    )
+
+
+async def _handle_live_flood_wait(pool, check_name: str, info: FloodWaitInfo) -> None:
+    decision = await _decide_live_test_flood_action(pool, info)
+    if decision.action == "rotate":
+        logger.info(
+            "%s: %s flooded for %ss; retrying with another available account",
+            check_name,
+            info.phone or "<unknown>",
+            info.wait_seconds,
+        )
+        return
+    if decision.action == "wait_retry" and decision.retry_after_sec is not None:
+        until = (
+            decision.next_available_at_utc.isoformat()
+            if decision.next_available_at_utc is not None
+            else "unknown"
+        )
+        logger.info(
+            "%s: all clients flood-waited; waiting %ss until %s before retry",
+            check_name,
+            decision.retry_after_sec,
+            until,
+        )
+        await asyncio.sleep(decision.retry_after_sec + 1)
+        return
+    logger.warning("Skipping %s: %s", check_name, decision.detail)
+    raise TelegramLiveStepSkipError(decision.detail)
+
+
+def _get_search_result_flood_wait(result) -> FloodWaitInfo | None:
+    flood_wait = getattr(result, "flood_wait", None)
+    return flood_wait if isinstance(flood_wait, FloodWaitInfo) else None
 
 
 # ---------------------------------------------------------------------------
@@ -382,9 +517,167 @@ async def _run_write_checks(config_path: str) -> list[CheckResult]:
 # ---------------------------------------------------------------------------
 
 
-async def _tg_call(coro, timeout: int = TELEGRAM_TIMEOUT):
-    """Wrap a Telegram API call with a timeout."""
-    return await asyncio.wait_for(coro, timeout=timeout)
+async def _tg_call(
+    coro,
+    timeout: int = TELEGRAM_TIMEOUT,
+    *,
+    pool=None,
+    phone: str | None = None,
+    check_name: str | None = None,
+):
+    """Wrap a Telegram API call with timeout and centralized flood-wait handling."""
+    try:
+        return await run_with_flood_wait(
+            coro,
+            operation=check_name or "telegram_call",
+            phone=phone,
+            pool=pool,
+            logger_=logger,
+            timeout=float(timeout),
+        )
+    except asyncio.TimeoutError as exc:
+        raise TimeoutError(f"Timed out after {timeout}s") from exc
+
+
+async def _wait_for_available_client_window(
+    pool,
+    check_name: str,
+    *,
+    premium: bool = False,
+    base_detail: str | None = None,
+) -> str | None:
+    availability_method = (
+        "get_premium_stats_availability" if premium else "get_stats_availability"
+    )
+    availability_getter = getattr(pool, availability_method, None)
+    if not callable(availability_getter):
+        return base_detail or "No available client"
+
+    availability = await availability_getter()
+    if getattr(availability, "state", None) != "all_flooded":
+        return base_detail or "No available client"
+
+    detail = _format_all_flooded_detail(
+        base_detail or f"{check_name}: no available client",
+        retry_after_sec=getattr(availability, "retry_after_sec", None),
+        next_available_at_utc=getattr(availability, "next_available_at_utc", None),
+    )
+    if (
+        getattr(availability, "retry_after_sec", None) is not None
+        and availability.retry_after_sec <= SHORT_FLOOD_WAIT_RETRY_SEC
+    ):
+        until = (
+            availability.next_available_at_utc.isoformat()
+            if availability.next_available_at_utc is not None
+            else "unknown"
+        )
+        logger.info(
+            "%s: all clients flood-waited; waiting %ss until %s before retry",
+            check_name,
+            availability.retry_after_sec,
+            until,
+        )
+        await asyncio.sleep(availability.retry_after_sec + 1)
+        return None
+    return detail
+
+
+def _is_regular_search_client_unavailable_error(detail: str | None) -> bool:
+    return detail == "Нет доступных Telegram-аккаунтов. Проверьте подключение."
+
+
+def _is_premium_flood_unavailable_error(detail: str | None) -> bool:
+    return detail == "Premium-аккаунты временно недоступны из-за Flood Wait."
+
+
+async def _run_operation_with_flood_policy(
+    operation_factory,
+    *,
+    pool,
+    check_name: str,
+    timeout: int = TELEGRAM_TIMEOUT,
+):
+    while True:
+        try:
+            return await asyncio.wait_for(operation_factory(), timeout=timeout)
+        except HandledFloodWaitError as exc:
+            await _handle_live_flood_wait(pool, check_name, exc.info)
+
+
+async def _run_search_operation(
+    operation_factory,
+    *,
+    pool,
+    check_name: str,
+    success_detail_factory,
+    timeout: int = TELEGRAM_SEARCH_TIMEOUT,
+    premium_error_is_skip: bool = False,
+) -> CheckResult:
+    while True:
+        result = await asyncio.wait_for(operation_factory(), timeout=timeout)
+        flood_wait = _get_search_result_flood_wait(result)
+        if flood_wait is not None:
+            await _handle_live_flood_wait(pool, check_name, flood_wait)
+            continue
+        if result.error:
+            if _is_regular_search_client_unavailable_error(result.error):
+                detail = await _wait_for_available_client_window(
+                    pool,
+                    check_name,
+                    base_detail=result.error,
+                )
+                if detail is None:
+                    continue
+                return CheckResult(check_name, Status.SKIP, detail)
+            if _is_premium_flood_unavailable_error(result.error):
+                detail = await _wait_for_available_client_window(
+                    pool,
+                    check_name,
+                    premium=True,
+                    base_detail=result.error,
+                )
+                if detail is None:
+                    continue
+                return CheckResult(check_name, Status.SKIP, detail)
+            if premium_error_is_skip and "Premium" in result.error:
+                return CheckResult(check_name, Status.SKIP, result.error)
+            return CheckResult(check_name, Status.FAIL, result.error)
+        return CheckResult(check_name, Status.PASS, success_detail_factory(result))
+
+
+async def _run_warm_dialog_cache_step(pool) -> CheckResult:
+    check_name = "tg_warm_dialog_cache"
+    while True:
+        client_tuple = await pool.get_available_client()
+        if not client_tuple:
+            detail = await _wait_for_available_client_window(pool, check_name)
+            if detail is None:
+                continue
+            return CheckResult(check_name, Status.SKIP, detail)
+
+        session, phone = client_tuple
+        session = adapt_transport_session(session, disconnect_on_close=False)
+        try:
+            await _tg_call(
+                session.warm_dialog_cache(),
+                pool=pool,
+                phone=phone,
+                check_name=check_name,
+            )
+            marker = getattr(pool, "mark_dialogs_fetched", None)
+            if callable(marker):
+                marker_result = marker(phone)
+                if asyncio.iscoroutine(marker_result):
+                    await marker_result
+            return CheckResult(check_name, Status.PASS, f"OK via {phone}")
+        except HandledFloodWaitError as exc:
+            try:
+                await _handle_live_flood_wait(pool, check_name, exc.info)
+            except TelegramLiveStepSkipError as stop_exc:
+                return CheckResult(check_name, Status.SKIP, str(stop_exc))
+            continue
+        finally:
+            await pool.release_client(phone)
 
 
 async def _run_telegram_live_checks(config_path: str) -> list[CheckResult]:
@@ -406,17 +699,25 @@ async def _run_telegram_live_checks(config_path: str) -> list[CheckResult]:
 
     # 2. tg_pool_init
     try:
-        _, pool = await _tg_call(runtime.init_pool(config, copy_db))
+        _, pool = await _tg_call(
+            runtime.init_pool(config, copy_db),
+            check_name="tg_pool_init",
+        )
         clients = pool.clients if hasattr(pool, "clients") else {}
         if not clients:
             results.append(CheckResult("tg_pool_init", Status.SKIP, "No accounts connected"))
             await _cleanup_telegram(pool, copy_db, tmp_path, results)
             return results
+        await _disable_flood_auto_sleep(pool)
         results.append(
             CheckResult("tg_pool_init", Status.PASS, f"{len(clients)} clients connected"),
         )
+    except HandledFloodWaitError as exc:
+        results.append(CheckResult("tg_pool_init", Status.SKIP, exc.info.detail))
+        await _cleanup_telegram(pool, copy_db, tmp_path, results)
+        return results
     except Exception as exc:
-        results.append(CheckResult("tg_pool_init", Status.FAIL, str(exc)))
+        results.append(CheckResult("tg_pool_init", Status.FAIL, _format_exception(exc)))
         await _cleanup_telegram(pool, copy_db, tmp_path, results)
         return results
 
@@ -424,20 +725,36 @@ async def _run_telegram_live_checks(config_path: str) -> list[CheckResult]:
 
     # 3. tg_users_info
     try:
-        users = await _tg_call(pool.get_users_info())
+        users = await _run_operation_with_flood_policy(
+            lambda: pool.get_users_info(),
+            pool=pool,
+            check_name="tg_users_info",
+        )
         names = ", ".join(u.phone for u in users)
         results.append(CheckResult("tg_users_info", Status.PASS, names))
+    except TelegramLiveStepSkipError as exc:
+        results.append(CheckResult("tg_users_info", Status.SKIP, str(exc)))
+        await _cleanup_telegram(pool, copy_db, tmp_path, results)
+        return results
     except Exception as exc:
-        results.append(CheckResult("tg_users_info", Status.FAIL, str(exc)))
+        results.append(CheckResult("tg_users_info", Status.FAIL, _format_exception(exc)))
 
     # 4. tg_get_dialogs
     try:
-        dialogs = await _tg_call(pool.get_dialogs())
+        dialogs = await _run_operation_with_flood_policy(
+            lambda: pool.get_dialogs(),
+            pool=pool,
+            check_name="tg_get_dialogs",
+        )
         results.append(
             CheckResult("tg_get_dialogs", Status.PASS, f"{len(dialogs)} dialogs"),
         )
+    except TelegramLiveStepSkipError as exc:
+        results.append(CheckResult("tg_get_dialogs", Status.SKIP, str(exc)))
+        await _cleanup_telegram(pool, copy_db, tmp_path, results)
+        return results
     except Exception as exc:
-        results.append(CheckResult("tg_get_dialogs", Status.FAIL, str(exc)))
+        results.append(CheckResult("tg_get_dialogs", Status.FAIL, _format_exception(exc)))
 
     # 5. tg_resolve_channel
     channels = await copy_db.get_channels(active_only=True)
@@ -448,7 +765,11 @@ async def _run_telegram_live_checks(config_path: str) -> list[CheckResult]:
         )
     else:
         try:
-            entity = await _tg_call(pool.resolve_channel(target_with_username.username))
+            entity = await _run_operation_with_flood_policy(
+                lambda: pool.resolve_channel(target_with_username.username),
+                pool=pool,
+                check_name="tg_resolve_channel",
+            )
             if entity:
                 results.append(
                     CheckResult(
@@ -465,21 +786,19 @@ async def _run_telegram_live_checks(config_path: str) -> list[CheckResult]:
                         f"@{target_with_username.username} not resolved",
                     )
                 )
+        except TelegramLiveStepSkipError as exc:
+            results.append(CheckResult("tg_resolve_channel", Status.SKIP, str(exc)))
+            await _cleanup_telegram(pool, copy_db, tmp_path, results)
+            return results
         except Exception as exc:
-            results.append(CheckResult("tg_resolve_channel", Status.FAIL, str(exc)))
+            results.append(CheckResult("tg_resolve_channel", Status.FAIL, _format_exception(exc)))
 
     # Refresh entity cache (StringSession loses it between restarts)
-    try:
-        client_tuple = await pool.get_available_client()
-        if client_tuple:
-            session, phone = client_tuple
-            session = adapt_transport_session(session, disconnect_on_close=False)
-            try:
-                await _tg_call(session.warm_dialog_cache())
-            finally:
-                await pool.release_client(phone)
-    except Exception:
-        pass  # non-critical, best effort
+    warm_result = await _run_warm_dialog_cache_step(pool)
+    results.append(warm_result)
+    if warm_result.status == Status.SKIP:
+        await _cleanup_telegram(pool, copy_db, tmp_path, results)
+        return results
 
     # 6. tg_iter_messages — single channel, 10 messages
     active_channels = [ch for ch in channels if ch.is_active]
@@ -488,18 +807,28 @@ async def _run_telegram_live_checks(config_path: str) -> list[CheckResult]:
             CheckResult("tg_iter_messages", Status.SKIP, "No active channels"),
         )
     else:
-        try:
-            ch = active_channels[0]
+        ch = active_channels[0]
+        while True:
             client_tuple = await pool.get_available_client()
             if not client_tuple:
-                results.append(
-                    CheckResult("tg_iter_messages", Status.SKIP, "No available client"),
+                detail = await _wait_for_available_client_window(pool, "tg_iter_messages")
+                if detail is None:
+                    continue
+                results.append(CheckResult("tg_iter_messages", Status.SKIP, detail))
+                await _cleanup_telegram(pool, copy_db, tmp_path, results)
+                return results
+
+            session, phone = client_tuple
+            session = adapt_transport_session(session, disconnect_on_close=False)
+            try:
+                entity = await _tg_call(
+                    session.resolve_entity(ch.channel_id),
+                    pool=pool,
+                    phone=phone,
+                    check_name="tg_iter_messages",
                 )
-            else:
-                session, phone = client_tuple
-                session = adapt_transport_session(session, disconnect_on_close=False)
-                try:
-                    entity = await _tg_call(session.resolve_entity(ch.channel_id))
+
+                async def _collect_messages() -> int:
                     msg_count = 0
                     async for msg in session.stream_messages(entity, limit=10):
                         if msg.text or msg.media:
@@ -518,17 +847,35 @@ async def _run_telegram_live_checks(config_path: str) -> list[CheckResult]:
                             )
                             await copy_db.insert_message(message)
                             msg_count += 1
-                    results.append(
-                        CheckResult(
-                            "tg_iter_messages",
-                            Status.PASS,
-                            f"{msg_count} msgs from ch={ch.channel_id}",
-                        )
+                    return msg_count
+
+                msg_count = await _tg_call(
+                    _collect_messages(),
+                    pool=pool,
+                    phone=phone,
+                    check_name="tg_iter_messages",
+                )
+                results.append(
+                    CheckResult(
+                        "tg_iter_messages",
+                        Status.PASS,
+                        f"{msg_count} msgs from ch={ch.channel_id}",
                     )
-                finally:
-                    await pool.release_client(phone)
-        except Exception as exc:
-            results.append(CheckResult("tg_iter_messages", Status.FAIL, str(exc)))
+                )
+                break
+            except HandledFloodWaitError as exc:
+                try:
+                    await _handle_live_flood_wait(pool, "tg_iter_messages", exc.info)
+                except TelegramLiveStepSkipError as stop_exc:
+                    results.append(CheckResult("tg_iter_messages", Status.SKIP, str(stop_exc)))
+                    await _cleanup_telegram(pool, copy_db, tmp_path, results)
+                    return results
+                continue
+            except Exception as exc:
+                results.append(CheckResult("tg_iter_messages", Status.FAIL, _format_exception(exc)))
+                break
+            finally:
+                await pool.release_client(phone)
 
     # 7. tg_channel_stats
     if not active_channels:
@@ -539,7 +886,11 @@ async def _run_telegram_live_checks(config_path: str) -> list[CheckResult]:
         try:
             ch = active_channels[0]
             collector = Collector(pool, copy_db, config.scheduler)
-            stats = await _tg_call(collector.collect_channel_stats(ch))
+            stats = await _run_operation_with_flood_policy(
+                lambda: collector.collect_channel_stats(ch),
+                pool=pool,
+                check_name="tg_channel_stats",
+            )
             if stats:
                 results.append(
                     CheckResult(
@@ -556,21 +907,29 @@ async def _run_telegram_live_checks(config_path: str) -> list[CheckResult]:
                         f"ch={ch.channel_id} stats=None (no data)",
                     )
                 )
+        except TelegramLiveStepSkipError as exc:
+            results.append(CheckResult("tg_channel_stats", Status.SKIP, str(exc)))
+            await _cleanup_telegram(pool, copy_db, tmp_path, results)
+            return results
         except Exception as exc:
-            results.append(CheckResult("tg_channel_stats", Status.FAIL, str(exc)))
+            results.append(CheckResult("tg_channel_stats", Status.FAIL, _format_exception(exc)))
 
     # 8. tg_search_my_chats
     try:
-        result = await _tg_call(engine.search_my_chats("test", limit=5))
         results.append(
-            CheckResult(
-                "tg_search_my_chats",
-                Status.PASS,
-                f"{result.total} results",
+            await _run_search_operation(
+                lambda: engine.search_my_chats("test", limit=5),
+                pool=pool,
+                check_name="tg_search_my_chats",
+                success_detail_factory=lambda result: f"{result.total} results",
             )
         )
+    except TelegramLiveStepSkipError as exc:
+        results.append(CheckResult("tg_search_my_chats", Status.SKIP, str(exc)))
+        await _cleanup_telegram(pool, copy_db, tmp_path, results)
+        return results
     except Exception as exc:
-        results.append(CheckResult("tg_search_my_chats", Status.FAIL, str(exc)))
+        results.append(CheckResult("tg_search_my_chats", Status.FAIL, _format_exception(exc)))
 
     # 9. tg_search_in_channel
     if not channels:
@@ -580,53 +939,68 @@ async def _run_telegram_live_checks(config_path: str) -> list[CheckResult]:
     else:
         try:
             ch = channels[0]
-            result = await _tg_call(
-                engine.search_in_channel(ch.channel_id, "test", limit=5),
-            )
             results.append(
-                CheckResult(
-                    "tg_search_in_channel",
-                    Status.PASS,
-                    f"ch={ch.channel_id}: {result.total} results",
+                await _run_search_operation(
+                    lambda: engine.search_in_channel(ch.channel_id, "test", limit=5),
+                    pool=pool,
+                    check_name="tg_search_in_channel",
+                    success_detail_factory=lambda result: f"ch={ch.channel_id}: {result.total} results",
                 )
             )
+        except TelegramLiveStepSkipError as exc:
+            results.append(CheckResult("tg_search_in_channel", Status.SKIP, str(exc)))
+            await _cleanup_telegram(pool, copy_db, tmp_path, results)
+            return results
         except Exception as exc:
-            results.append(CheckResult("tg_search_in_channel", Status.FAIL, str(exc)))
+            results.append(CheckResult("tg_search_in_channel", Status.FAIL, _format_exception(exc)))
 
     # 10. tg_search_premium
     try:
-        result = await _tg_call(engine.search_telegram("test", limit=5))
-        if result.error and "Premium" in result.error:
-            results.append(
-                CheckResult("tg_search_premium", Status.SKIP, result.error),
+        results.append(
+            await _run_search_operation(
+                lambda: engine.search_telegram("test", limit=5),
+                pool=pool,
+                check_name="tg_search_premium",
+                success_detail_factory=lambda result: f"{result.total} results",
+                premium_error_is_skip=True,
             )
-        else:
-            results.append(
-                CheckResult(
-                    "tg_search_premium",
-                    Status.PASS,
-                    result.error or f"{result.total} results",
-                )
-            )
+        )
+    except TelegramLiveStepSkipError as exc:
+        results.append(CheckResult("tg_search_premium", Status.SKIP, str(exc)))
+        await _cleanup_telegram(pool, copy_db, tmp_path, results)
+        return results
     except Exception as exc:
-        results.append(CheckResult("tg_search_premium", Status.FAIL, str(exc)))
+        results.append(CheckResult("tg_search_premium", Status.FAIL, _format_exception(exc)))
 
     # 11. tg_search_quota
     try:
-        quota = await _tg_call(engine.check_search_quota("test"))
-        if quota is None:
-            results.append(
-                CheckResult(
-                    "tg_search_quota",
-                    Status.SKIP,
-                    "No premium account or quota unavailable",
-                ),
+        while True:
+            quota = await _run_operation_with_flood_policy(
+                lambda: engine.check_search_quota("test"),
+                pool=pool,
+                check_name="tg_search_quota",
             )
-        else:
-            detail = str(quota) if quota else "No quota info"
-            results.append(CheckResult("tg_search_quota", Status.PASS, detail))
+            if quota is not None:
+                detail = str(quota) if quota else "No quota info"
+                results.append(CheckResult("tg_search_quota", Status.PASS, detail))
+                break
+
+            detail = await _wait_for_available_client_window(
+                pool,
+                "tg_search_quota",
+                premium=True,
+                base_detail="No premium account or quota unavailable",
+            )
+            if detail is None:
+                continue
+            results.append(CheckResult("tg_search_quota", Status.SKIP, detail))
+            break
+    except TelegramLiveStepSkipError as exc:
+        results.append(CheckResult("tg_search_quota", Status.SKIP, str(exc)))
+        await _cleanup_telegram(pool, copy_db, tmp_path, results)
+        return results
     except Exception as exc:
-        results.append(CheckResult("tg_search_quota", Status.FAIL, str(exc)))
+        results.append(CheckResult("tg_search_quota", Status.FAIL, _format_exception(exc)))
 
     # 12. tg_cleanup
     await _cleanup_telegram(pool, copy_db, tmp_path, results)

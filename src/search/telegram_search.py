@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import inspect
 import logging
 from datetime import timezone
@@ -10,6 +9,7 @@ from src.search.persistence import SearchPersistence
 from src.search.transformers import TelegramMessageTransformer
 from src.telegram.backends import adapt_transport_session
 from src.telegram.client_pool import ClientPool
+from src.telegram.flood_wait import HandledFloodWaitError, run_with_flood_wait
 
 try:
     from telethon.tl.types import PeerChannel
@@ -24,6 +24,54 @@ class TelegramSearch:
         self._pool = pool
         self._persistence = persistence
 
+    async def _warm_dialog_cache_if_needed(self, session, phone: str) -> None:
+        cache_ready = False
+        cache_checker = getattr(self._pool, "is_dialogs_fetched", None)
+        if callable(cache_checker):
+            cache_ready = bool(cache_checker(phone))
+        if cache_ready:
+            return
+
+        await run_with_flood_wait(
+            session.warm_dialog_cache(),
+            operation="search_warm_dialog_cache",
+            phone=phone,
+            pool=self._pool,
+            logger_=logger,
+            timeout=30.0,
+        )
+
+        marker = getattr(self._pool, "mark_dialogs_fetched", None)
+        if callable(marker):
+            result = marker(phone)
+            if inspect.isawaitable(result):
+                await result
+
+    async def _load_search_quota_with_flood_handling(
+        self,
+        session,
+        phone: str,
+        *,
+        query: str,
+        operation: str,
+    ) -> dict | None:
+        try:
+            return await run_with_flood_wait(
+                self._check_search_quota_with_client(session, query),
+                operation=operation,
+                phone=phone,
+                pool=None,
+                logger_=logger,
+            )
+        except HandledFloodWaitError as exc:
+            reporter = getattr(self._pool, "report_premium_flood", None)
+            if callable(reporter):
+                await reporter(phone, exc.info.wait_seconds)
+            raise
+        except Exception as exc:
+            logger.debug("checkSearchPostsFlood unavailable: %s", exc)
+            return None
+
     async def check_search_quota(self, query: str = "") -> dict | None:
         if not self._pool:
             return None
@@ -35,26 +83,24 @@ class TelegramSearch:
         session, phone = result
         session = adapt_transport_session(session, disconnect_on_close=False)
         try:
-            return await self._check_search_quota_with_client(session, query)
-        except Exception as exc:
-            logger.debug("checkSearchPostsFlood unavailable: %s", exc)
-            return None
+            return await self._load_search_quota_with_flood_handling(
+                session,
+                phone,
+                query=query,
+                operation="check_search_quota",
+            )
         finally:
             await self._pool.release_client(phone)
 
     async def _check_search_quota_with_client(self, session, query: str = "") -> dict | None:
-        try:
-            quota_response = await session.lookup_search_posts_flood(query)
-            return {
-                "total_daily": getattr(quota_response, "total_daily", None),
-                "remains": getattr(quota_response, "remains", None),
-                "wait_till": getattr(quota_response, "wait_till", None),
-                "query_is_free": getattr(quota_response, "query_is_free", False),
-                "stars_amount": getattr(quota_response, "stars_amount", None),
-            }
-        except Exception as exc:
-            logger.debug("checkSearchPostsFlood unavailable: %s", exc)
-            return None
+        quota_response = await session.lookup_search_posts_flood(query)
+        return {
+            "total_daily": getattr(quota_response, "total_daily", None),
+            "remains": getattr(quota_response, "remains", None),
+            "wait_till": getattr(quota_response, "wait_till", None),
+            "query_is_free": getattr(quota_response, "query_is_free", False),
+            "stars_amount": getattr(quota_response, "stars_amount", None),
+        }
 
     async def _get_premium_unavailability_reason(self) -> str:
         if not self._pool:
@@ -94,7 +140,12 @@ class TelegramSearch:
         session, phone = result
         session = adapt_transport_session(session, disconnect_on_close=False)
         try:
-            quota = await self._check_search_quota_with_client(session, query)
+            quota = await self._load_search_quota_with_flood_handling(
+                session,
+                phone,
+                query=query,
+                operation="search_telegram_check_quota",
+            )
             if quota and quota.get("remains") == 0 and not quota.get("query_is_free"):
                 return SearchResult(
                     messages=[],
@@ -106,9 +157,31 @@ class TelegramSearch:
                     ),
                 )
 
-            messages, seen_channels = await self._search_posts_global(session, query, limit)
+            messages, seen_channels = await run_with_flood_wait(
+                self._search_posts_global(session, query, limit),
+                operation="search_telegram",
+                phone=phone,
+                pool=None,
+                logger_=logger,
+            )
+            clearer = getattr(self._pool, "clear_premium_flood", None)
+            if callable(clearer):
+                result = clearer(phone)
+                if inspect.isawaitable(result):
+                    await result
             await self._persistence.cache_search_results(seen_channels, messages, phone, query)
             return SearchResult(messages=messages, total=len(messages), query=query)
+        except HandledFloodWaitError as exc:
+            reporter = getattr(self._pool, "report_premium_flood", None)
+            if callable(reporter):
+                await reporter(phone, exc.info.wait_seconds)
+            return SearchResult(
+                messages=[],
+                total=0,
+                query=query,
+                error=exc.info.detail,
+                flood_wait=exc.info,
+            )
         except Exception as exc:
             logger.exception("Telegram global search failed for query=%r", query)
             return SearchResult(
@@ -231,7 +304,7 @@ class TelegramSearch:
         session, phone = result
         session = adapt_transport_session(session, disconnect_on_close=False)
         try:
-            await asyncio.wait_for(session.warm_dialog_cache(), timeout=30.0)
+            await self._warm_dialog_cache_if_needed(session, phone)
 
             async def _collect_my_chats() -> tuple[list[Message], dict[int, Channel]]:
                 collected: list[Message] = []
@@ -253,10 +326,25 @@ class TelegramSearch:
                         )
                 return collected, seen
 
-            messages, seen_channels = await asyncio.wait_for(_collect_my_chats(), timeout=90.0)
+            messages, seen_channels = await run_with_flood_wait(
+                _collect_my_chats(),
+                operation="search_my_chats",
+                phone=phone,
+                pool=self._pool,
+                logger_=logger,
+                timeout=90.0,
+            )
 
             await self._persistence.cache_messages_and_channels(seen_channels, messages)
             return SearchResult(messages=messages, total=len(messages), query=query)
+        except HandledFloodWaitError as exc:
+            return SearchResult(
+                messages=[],
+                total=0,
+                query=query,
+                error=exc.info.detail,
+                flood_wait=exc.info,
+            )
         except Exception as exc:
             logger.exception("Telegram my_chats search failed for query=%r", query)
             return SearchResult(
@@ -294,15 +382,21 @@ class TelegramSearch:
         session, phone = result
         session = adapt_transport_session(session, disconnect_on_close=False)
         try:
-            await asyncio.wait_for(session.warm_dialog_cache(), timeout=30.0)
+            await self._warm_dialog_cache_if_needed(session, phone)
 
             entity = None
             if channel_id:
                 try:
-                    entity = await asyncio.wait_for(
+                    entity = await run_with_flood_wait(
                         session.resolve_entity(PeerChannel(channel_id)),
+                        operation="search_in_channel_resolve_entity",
+                        phone=phone,
+                        pool=self._pool,
+                        logger_=logger,
                         timeout=30.0,
                     )
+                except HandledFloodWaitError:
+                    raise
                 except Exception:
                     logger.debug(
                         "PeerChannel(%s) not in cache, trying username fallback",
@@ -314,10 +408,16 @@ class TelegramSearch:
                     username = ch_record.username if ch_record else None
                     if username:
                         try:
-                            entity = await asyncio.wait_for(
+                            entity = await run_with_flood_wait(
                                 session.resolve_entity(username),
+                                operation="search_in_channel_resolve_username",
+                                phone=phone,
+                                pool=self._pool,
+                                logger_=logger,
                                 timeout=30.0,
                             )
+                        except HandledFloodWaitError:
+                            raise
                         except Exception as exc2:
                             logger.warning(
                                 "Cannot resolve channel %s (@%s): %s",
@@ -362,10 +462,25 @@ class TelegramSearch:
                         )
                 return collected, seen
 
-            messages, seen_channels = await asyncio.wait_for(_collect_in_channel(), timeout=90.0)
+            messages, seen_channels = await run_with_flood_wait(
+                _collect_in_channel(),
+                operation="search_in_channel",
+                phone=phone,
+                pool=self._pool,
+                logger_=logger,
+                timeout=90.0,
+            )
 
             await self._persistence.cache_messages_and_channels(seen_channels, messages)
             return SearchResult(messages=messages, total=len(messages), query=query)
+        except HandledFloodWaitError as exc:
+            return SearchResult(
+                messages=[],
+                total=0,
+                query=query,
+                error=exc.info.detail,
+                flood_wait=exc.info,
+            )
         except Exception as exc:
             logger.exception(
                 "Telegram channel search failed for channel_id=%s query=%r",

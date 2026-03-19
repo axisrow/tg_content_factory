@@ -6,6 +6,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field, model_validator
 
+from src.telegram.flood_wait import FloodWaitInfo
+
 
 class Account(BaseModel):
     id: int | None = None
@@ -223,6 +225,7 @@ class SearchResult(BaseModel):
     query: str
     ai_summary: str | None = None
     error: str | None = None
+    flood_wait: FloodWaitInfo | None = None
 
 
 class GenerationRun(BaseModel):
