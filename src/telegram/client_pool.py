@@ -586,7 +586,7 @@ class ClientPool:
                             session.fetch_profile_photo("me", file=buf),
                             operation="get_users_info_fetch_profile_photo",
                             phone=phone,
-                            pool=self,
+                            pool=None,
                             logger_=logger,
                             timeout=15.0,
                         )

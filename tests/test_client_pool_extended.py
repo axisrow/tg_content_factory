@@ -210,6 +210,27 @@ async def test_get_users_info_with_avatar(mock_db, mock_auth):
 
 
 @pytest.mark.asyncio
+async def test_get_users_info_avatar_flood_does_not_mark_generic_account(mock_db, mock_auth):
+    acc = Account(phone="+7001", is_active=True, is_primary=True, session_string="s1")
+    mock_db.get_accounts.return_value = [acc]
+    client = AsyncMock()
+    client.get_me.return_value = MagicMock(first_name="F", last_name="L", username="u")
+    flood = FloodWaitError(request=None, capture=0)
+    flood.seconds = 33
+    client.download_profile_photo.side_effect = flood
+
+    pool = ClientPool(mock_auth, mock_db)
+    pool.clients = {"+7001": TelegramTransportSession(client, disconnect_on_close=False)}
+
+    info = await pool.get_users_info()
+
+    assert len(info) == 1
+    assert info[0].phone == "+7001"
+    assert info[0].avatar_base64 is None
+    mock_db.update_account_flood.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_leave_channels_flood(mock_db, mock_auth):
     acc = Account(phone="+7001", is_active=True, session_string="s1")
     mock_db.get_accounts.return_value = [acc]

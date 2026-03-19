@@ -47,20 +47,18 @@ class TelegramSearch:
             if inspect.isawaitable(result):
                 await result
 
-    async def check_search_quota(self, query: str = "") -> dict | None:
-        if not self._pool:
-            return None
-
-        result = await self._pool.get_premium_client()
-        if result is None:
-            return None
-
-        session, phone = result
-        session = adapt_transport_session(session, disconnect_on_close=False)
+    async def _load_search_quota_with_flood_handling(
+        self,
+        session,
+        phone: str,
+        *,
+        query: str,
+        operation: str,
+    ) -> dict | None:
         try:
             return await run_with_flood_wait(
                 self._check_search_quota_with_client(session, query),
-                operation="check_search_quota",
+                operation=operation,
                 phone=phone,
                 pool=None,
                 logger_=logger,
@@ -73,6 +71,24 @@ class TelegramSearch:
         except Exception as exc:
             logger.debug("checkSearchPostsFlood unavailable: %s", exc)
             return None
+
+    async def check_search_quota(self, query: str = "") -> dict | None:
+        if not self._pool:
+            return None
+
+        result = await self._pool.get_premium_client()
+        if result is None:
+            return None
+
+        session, phone = result
+        session = adapt_transport_session(session, disconnect_on_close=False)
+        try:
+            return await self._load_search_quota_with_flood_handling(
+                session,
+                phone,
+                query=query,
+                operation="check_search_quota",
+            )
         finally:
             await self._pool.release_client(phone)
 
@@ -124,12 +140,11 @@ class TelegramSearch:
         session, phone = result
         session = adapt_transport_session(session, disconnect_on_close=False)
         try:
-            quota = await run_with_flood_wait(
-                self._check_search_quota_with_client(session, query),
+            quota = await self._load_search_quota_with_flood_handling(
+                session,
+                phone,
+                query=query,
                 operation="search_telegram_check_quota",
-                phone=phone,
-                pool=None,
-                logger_=logger,
             )
             if quota and quota.get("remains") == 0 and not quota.get("query_is_free"):
                 return SearchResult(
