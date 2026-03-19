@@ -89,6 +89,9 @@ class TelegramSearch:
                 query=query,
                 operation="check_search_quota",
             )
+        except HandledFloodWaitError as exc:
+            logger.debug("checkSearchPostsFlood flood-waited for %s: %s", phone, exc.info.detail)
+            return None
         finally:
             await self._pool.release_client(phone)
 
