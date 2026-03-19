@@ -230,7 +230,7 @@ def test_pipeline_generate_prints_draft_preview(tmp_path, capsys):
         return config, database
 
     class FakeContentGenerationService:
-        def __init__(self, db, engine, agent_manager=None):
+        def __init__(self, db, engine, agent_manager=None, **kwargs):
             self.db = db
             self.engine = engine
             self.agent_manager = agent_manager
@@ -308,7 +308,7 @@ def test_pipeline_generate_wires_agent_manager_for_deep_agents(tmp_path, capsys)
             captured["config"] = config
 
     class FakeContentGenerationService:
-        def __init__(self, db, engine, agent_manager=None):
+        def __init__(self, db, engine, agent_manager=None, **kwargs):
             captured["agent_manager"] = agent_manager
 
         async def generate(self, pipeline, model=None, max_tokens=512, temperature=0.7):

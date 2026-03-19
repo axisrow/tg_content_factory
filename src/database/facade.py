@@ -79,7 +79,10 @@ class Database:
                OR session_string LIKE 'enc:v2:%'
             LIMIT 1
             """)
-        return bool(await cur.fetchone())
+        try:
+            return bool(await cur.fetchone())
+        finally:
+            await cur.close()
 
     def _resolve_sqlite_vec_path(self) -> str | None:
         if self._sqlite_vec_path:
