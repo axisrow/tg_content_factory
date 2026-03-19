@@ -42,17 +42,7 @@ class PhotoPublishService:
                     target_dialog_id,
                     target_type,
                 )
-                if inspect.isawaitable(resolved):
-                    entity = await run_with_flood_wait(
-                        resolved,
-                        operation="photo_publish_resolve_dialog_entity",
-                        phone=acquired_phone,
-                        pool=self._pool,
-                        logger_=logger,
-                        timeout=30.0,
-                    )
-                else:
-                    entity = resolved
+                entity = await resolved if inspect.isawaitable(resolved) else resolved
             if send_mode == PhotoSendMode.ALBUM and len(file_paths) > 1:
                 sent = await run_with_flood_wait(
                     session.publish_files(

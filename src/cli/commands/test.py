@@ -542,22 +542,28 @@ async def _tg_call(
 async def _wait_for_available_client_window(
     pool,
     check_name: str,
+    *,
+    premium: bool = False,
+    base_detail: str | None = None,
 ) -> str | None:
-    availability_getter = getattr(pool, "get_stats_availability", None)
+    availability_method = (
+        "get_premium_stats_availability" if premium else "get_stats_availability"
+    )
+    availability_getter = getattr(pool, availability_method, None)
     if not callable(availability_getter):
-        return "No available client"
+        return base_detail or "No available client"
 
     availability = await availability_getter()
-    if availability.state != "all_flooded":
-        return "No available client"
+    if getattr(availability, "state", None) != "all_flooded":
+        return base_detail or "No available client"
 
     detail = _format_all_flooded_detail(
-        f"{check_name}: no available client",
-        retry_after_sec=availability.retry_after_sec,
-        next_available_at_utc=availability.next_available_at_utc,
+        base_detail or f"{check_name}: no available client",
+        retry_after_sec=getattr(availability, "retry_after_sec", None),
+        next_available_at_utc=getattr(availability, "next_available_at_utc", None),
     )
     if (
-        availability.retry_after_sec is not None
+        getattr(availability, "retry_after_sec", None) is not None
         and availability.retry_after_sec <= SHORT_FLOOD_WAIT_RETRY_SEC
     ):
         until = (
@@ -574,6 +580,14 @@ async def _wait_for_available_client_window(
         await asyncio.sleep(availability.retry_after_sec + 1)
         return None
     return detail
+
+
+def _is_regular_search_client_unavailable_error(detail: str | None) -> bool:
+    return detail == "Нет доступных Telegram-аккаунтов. Проверьте подключение."
+
+
+def _is_premium_flood_unavailable_error(detail: str | None) -> bool:
+    return detail == "Premium-аккаунты временно недоступны из-за Flood Wait."
 
 
 async def _run_operation_with_flood_policy(
@@ -606,6 +620,25 @@ async def _run_search_operation(
             await _handle_live_flood_wait(pool, check_name, flood_wait)
             continue
         if result.error:
+            if _is_regular_search_client_unavailable_error(result.error):
+                detail = await _wait_for_available_client_window(
+                    pool,
+                    check_name,
+                    base_detail=result.error,
+                )
+                if detail is None:
+                    continue
+                return CheckResult(check_name, Status.SKIP, detail)
+            if _is_premium_flood_unavailable_error(result.error):
+                detail = await _wait_for_available_client_window(
+                    pool,
+                    check_name,
+                    premium=True,
+                    base_detail=result.error,
+                )
+                if detail is None:
+                    continue
+                return CheckResult(check_name, Status.SKIP, detail)
             if premium_error_is_skip and "Premium" in result.error:
                 return CheckResult(check_name, Status.SKIP, result.error)
             return CheckResult(check_name, Status.FAIL, result.error)
@@ -941,22 +974,27 @@ async def _run_telegram_live_checks(config_path: str) -> list[CheckResult]:
 
     # 11. tg_search_quota
     try:
-        quota = await _run_operation_with_flood_policy(
-            lambda: engine.check_search_quota("test"),
-            pool=pool,
-            check_name="tg_search_quota",
-        )
-        if quota is None:
-            results.append(
-                CheckResult(
-                    "tg_search_quota",
-                    Status.SKIP,
-                    "No premium account or quota unavailable",
-                ),
+        while True:
+            quota = await _run_operation_with_flood_policy(
+                lambda: engine.check_search_quota("test"),
+                pool=pool,
+                check_name="tg_search_quota",
             )
-        else:
-            detail = str(quota) if quota else "No quota info"
-            results.append(CheckResult("tg_search_quota", Status.PASS, detail))
+            if quota is not None:
+                detail = str(quota) if quota else "No quota info"
+                results.append(CheckResult("tg_search_quota", Status.PASS, detail))
+                break
+
+            detail = await _wait_for_available_client_window(
+                pool,
+                "tg_search_quota",
+                premium=True,
+                base_detail="No premium account or quota unavailable",
+            )
+            if detail is None:
+                continue
+            results.append(CheckResult("tg_search_quota", Status.SKIP, detail))
+            break
     except TelegramLiveStepSkipError as exc:
         results.append(CheckResult("tg_search_quota", Status.SKIP, str(exc)))
         await _cleanup_telegram(pool, copy_db, tmp_path, results)
