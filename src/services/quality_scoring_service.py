@@ -42,7 +42,7 @@ class QualityScore:
 
 class QualityScoringService:
     """Service for LLM-based content quality assessment.
-    
+
     Uses rubric-based scoring to evaluate generated content before publication.
     Threshold can be configured per pipeline.
     """
@@ -61,11 +61,11 @@ class QualityScoringService:
         model: str | None = None,
     ) -> QualityScore:
         """Score content quality using LLM.
-        
+
         Args:
             text: The generated text to evaluate
             model: Optional model override
-            
+
         Returns:
             QualityScore with rubric scores and overall rating
         """
@@ -114,11 +114,11 @@ class QualityScoringService:
 
     def passes_threshold(self, score: QualityScore, threshold: float | None = None) -> bool:
         """Check if score passes the quality threshold.
-        
+
         Args:
             score: The quality score to check
             threshold: Optional threshold override, or use default
-            
+
         Returns:
             True if overall score >= threshold
         """
@@ -132,12 +132,12 @@ class QualityScoringService:
         model: str | None = None,
     ) -> tuple[QualityScore, bool]:
         """Score content and check if it passes threshold.
-        
+
         Args:
             text: The generated text to evaluate
             threshold: Optional threshold override
             model: Optional model override
-            
+
         Returns:
             Tuple of (QualityScore, passes_threshold)
         """

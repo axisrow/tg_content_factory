@@ -150,7 +150,6 @@ async def test_get_stats_availability_all_flooded(mock_db, mock_auth):
 
 @pytest.mark.asyncio
 async def test_get_premium_stats_availability_all_flooded(mock_db, mock_auth):
-    future = datetime.now(timezone.utc) + timedelta(seconds=25)
     premium = Account(phone="+7001", is_active=True, is_premium=True, session_string="s1")
     regular = Account(phone="+7002", is_active=True, is_premium=False, session_string="s2")
     mock_db.get_accounts.return_value = [premium, regular]

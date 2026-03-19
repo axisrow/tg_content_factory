@@ -549,9 +549,17 @@ async def test_settings_add_agent_provider_persists_provider_in_db(client):
 
 
 @pytest.mark.asyncio
-async def test_settings_save_agent_providers_preserves_priority_order(client):
+async def test_settings_save_agent_providers_preserves_priority_order(client, monkeypatch):
     db = client._transport.app.state.db
     await db.set_setting("agent_dev_mode_enabled", "1")
+    from src.web.routes import settings as settings_routes
+
+    probe_mock = AsyncMock()
+    fake_manager = SimpleNamespace(refresh_settings_cache=AsyncMock())
+    monkeypatch.setattr(settings_routes, "_probe_provider_config", probe_mock)
+    monkeypatch.setattr(
+        settings_routes, "_settings_agent_manager", lambda request: (fake_manager, False)
+    )
 
     await client.post(
         "/settings/agent-providers/add", data={"provider": "openai"}, follow_redirects=False
