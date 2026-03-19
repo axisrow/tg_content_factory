@@ -55,3 +55,39 @@ async def test_list_pending_moderation_returns_runs(db):
 
     assert [run.id for run in pending] == [pending_id]
     assert pending[0].moderation_status == "pending"
+
+
+@pytest.mark.asyncio
+async def test_generation_runs_repo_hydrates_quality_fields(db):
+    repo = db.repos.generation_runs
+    run_id = await repo.create_run(42, "quality-prompt")
+
+    await repo.set_quality_score(run_id, 0.82, ["too long", "weak ending"])
+
+    run = await repo.get(run_id)
+    assert run is not None
+    assert run.quality_score == 0.82
+    assert run.quality_issues == ["too long", "weak ending"]
+
+    rows = await repo.list_by_pipeline(42)
+    assert rows[0].quality_score == 0.82
+    assert rows[0].quality_issues == ["too long", "weak ending"]
+
+
+@pytest.mark.asyncio
+async def test_generation_runs_repo_hydrates_variant_fields(db):
+    repo = db.repos.generation_runs
+    run_id = await repo.create_run(42, "variant-prompt")
+
+    await repo.save_result(run_id, "base")
+    await repo.set_variants(run_id, ["base", "variant 2"])
+    await repo.select_variant(run_id, 1, "variant 2")
+
+    run = await repo.get(run_id)
+    assert run is not None
+    assert run.variants == ["base", "variant 2"]
+    assert run.selected_variant == 1
+
+    rows = await repo.list_by_pipeline(42)
+    assert rows[0].variants == ["base", "variant 2"]
+    assert rows[0].selected_variant == 1
