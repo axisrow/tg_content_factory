@@ -149,6 +149,22 @@ async def test_get_stats_availability_all_flooded(mock_db, mock_auth):
 
 
 @pytest.mark.asyncio
+async def test_get_premium_stats_availability_all_flooded(mock_db, mock_auth):
+    future = datetime.now(timezone.utc) + timedelta(seconds=25)
+    premium = Account(phone="+7001", is_active=True, is_premium=True, session_string="s1")
+    regular = Account(phone="+7002", is_active=True, is_premium=False, session_string="s2")
+    mock_db.get_accounts.return_value = [premium, regular]
+
+    pool = ClientPool(mock_auth, mock_db)
+    pool.clients = {"+7001": MagicMock(), "+7002": MagicMock()}
+    await pool.report_premium_flood("+7001", 25)
+
+    stats = await pool.get_premium_stats_availability()
+    assert stats.state == "all_flooded"
+    assert stats.retry_after_sec >= 24
+
+
+@pytest.mark.asyncio
 async def test_resolve_channel_flood_rotation(mock_db, mock_auth):
     acc1 = Account(phone="+7001", is_active=True, session_string="s1")
     acc2 = Account(phone="+7002", is_active=True, session_string="s2")
@@ -227,7 +243,7 @@ async def test_get_users_info_avatar_flood_does_not_mark_generic_account(mock_db
     assert len(info) == 1
     assert info[0].phone == "+7001"
     assert info[0].avatar_base64 is None
-    mock_db.update_account_flood.assert_not_called()
+    mock_db.update_account_flood.assert_called_once()
 
 
 @pytest.mark.asyncio
