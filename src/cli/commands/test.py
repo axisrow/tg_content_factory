@@ -163,15 +163,32 @@ def _format_all_flooded_detail(
     )
 
 
+def _is_premium_flood(info: FloodWaitInfo) -> bool:
+    return info.operation in {
+        "check_search_quota",
+        "search_telegram_check_quota",
+        "search_telegram",
+    }
+
+
+async def _get_live_flood_availability(pool, info: FloodWaitInfo):
+    if _is_premium_flood(info):
+        availability_getter = getattr(pool, "get_premium_stats_availability", None)
+        if callable(availability_getter):
+            return await availability_getter()
+    availability_getter = getattr(pool, "get_stats_availability", None)
+    if callable(availability_getter):
+        return await availability_getter()
+    return None
+
+
 async def _decide_live_test_flood_action(
     pool,
     info: FloodWaitInfo,
 ) -> TelegramLiveFloodDecision:
-    availability_getter = getattr(pool, "get_stats_availability", None)
-    if not callable(availability_getter):
+    availability = await _get_live_flood_availability(pool, info)
+    if availability is None:
         return TelegramLiveFloodDecision(action="skip", detail=info.detail)
-
-    availability = await availability_getter()
     if availability.state != "all_flooded":
         return TelegramLiveFloodDecision(action="rotate", detail=info.detail)
 

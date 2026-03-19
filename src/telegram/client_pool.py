@@ -344,6 +344,36 @@ class ClientPool:
             next_available_at_utc=next_available_at_utc,
         )
 
+    async def get_premium_stats_availability(self) -> StatsClientAvailability:
+        """Describe premium client availability including premium-only flood waits."""
+        accounts = await self._db.get_accounts(active_only=True)
+        now = datetime.now(timezone.utc)
+        connected_premium = [
+            acc
+            for acc in accounts
+            if acc.is_premium and acc.phone in self.clients
+        ]
+        if not connected_premium:
+            return StatsClientAvailability(state="no_connected_active")
+
+        earliest: datetime | None = None
+        for account in connected_premium:
+            premium_until = self._premium_flood_wait_until.get(account.phone)
+            if premium_until is None or premium_until <= now:
+                return StatsClientAvailability(state="available")
+            if earliest is None or premium_until < earliest:
+                earliest = premium_until
+
+        if earliest is None:
+            return StatsClientAvailability(state="no_connected_active")
+
+        retry_after_sec = max(1, int((earliest - now).total_seconds()))
+        return StatsClientAvailability(
+            state="all_flooded",
+            retry_after_sec=retry_after_sec,
+            next_available_at_utc=earliest,
+        )
+
     async def release_client(self, phone: str) -> None:
         """Mark client as no longer in active use."""
         async with self._lock:
@@ -586,7 +616,7 @@ class ClientPool:
                             session.fetch_profile_photo("me", file=buf),
                             operation="get_users_info_fetch_profile_photo",
                             phone=phone,
-                            pool=None,
+                            pool=self,
                             logger_=logger,
                             timeout=15.0,
                         )
