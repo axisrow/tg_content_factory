@@ -239,6 +239,44 @@ async def test_search_telegram_returns_results(db, real_pool_harness_factory):
 
 
 @pytest.mark.asyncio
+async def test_search_telegram_ignores_quota_probe_failure_when_search_succeeds(
+    db,
+    real_pool_harness_factory,
+):
+    mock_msg = _make_mock_api_message()
+    mock_chat = MagicMock()
+    mock_chat.id = 100123
+    mock_chat.title = "Test Channel"
+    mock_chat.username = "test_channel"
+
+    response = _make_search_response([mock_msg], chats=[mock_chat])
+
+    def _invoke(request):
+        if request.__class__.__name__ == "CheckSearchPostsFloodRequest":
+            raise RuntimeError("quota unavailable")
+        return response
+
+    harness = real_pool_harness_factory()
+    await _connect_search_account(
+        harness,
+        phone="+1234567890",
+        session_string="premium-session",
+        is_premium=True,
+        client=FakeCliTelethonClient(
+            me=SimpleNamespace(premium=True),
+            invoke_side_effect=_invoke,
+        ),
+    )
+
+    engine = SearchEngine(db, pool=harness.pool)
+    result = await engine.search_telegram("AI", limit=10)
+
+    assert result.total == 1
+    assert result.error is None
+    assert result.messages[0].message_id == 42
+
+
+@pytest.mark.asyncio
 async def test_search_telegram_caches_to_db(db, real_pool_harness_factory):
     mock_msg = _make_mock_api_message(channel_id=100456, msg_id=7, text="cached search result")
     mock_chat = MagicMock()
