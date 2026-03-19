@@ -6,7 +6,7 @@ import logging
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 
-from telethon.errors import FloodWaitError, UsernameInvalidError, UsernameNotOccupiedError
+from telethon.errors import UsernameInvalidError, UsernameNotOccupiedError
 from telethon.tl.types import (
     DocumentAttributeAnimated,
     DocumentAttributeAudio,
@@ -38,6 +38,7 @@ from src.models import Channel, ChannelStats, Message
 from src.settings_utils import parse_int_setting
 from src.telegram.backends import adapt_transport_session
 from src.telegram.client_pool import ClientPool
+from src.telegram.flood_wait import HandledFloodWaitError, run_with_flood_wait
 from src.telegram.notifier import Notifier
 
 logger = logging.getLogger(__name__)
@@ -276,8 +277,19 @@ class Collector:
             # the in-memory cache persists.
             if not channel.username and not self._pool.is_dialogs_fetched(phone):
                 try:
-                    await asyncio.wait_for(session.warm_dialog_cache(), timeout=30)
+                    await run_with_flood_wait(
+                        session.warm_dialog_cache(),
+                        operation="collect_channel_warm_dialog_cache",
+                        phone=phone,
+                        pool=self._pool,
+                        logger_=logger,
+                        timeout=30.0,
+                    )
                     self._pool.mark_dialogs_fetched(phone)
+                except HandledFloodWaitError as exc:
+                    logger.warning("Failed to prefetch dialogs for %s: %s", phone, exc.info.detail)
+                    await self._pool.release_client(phone)
+                    continue
                 except Exception as e:
                     logger.warning("Failed to prefetch dialogs for %s: %s", phone, e)
             messages_batch: list[Message] = []
@@ -340,8 +352,13 @@ class Collector:
             try:
                 if channel.username:
                     try:
-                        entity = await asyncio.wait_for(
-                            session.resolve_entity(channel.username), timeout=30.0
+                        entity = await run_with_flood_wait(
+                            session.resolve_entity(channel.username),
+                            operation="collect_channel_resolve_username",
+                            phone=phone,
+                            pool=self._pool,
+                            logger_=logger,
+                            timeout=30.0,
                         )
                     except asyncio.TimeoutError:
                         logger.warning(
@@ -349,6 +366,9 @@ class Collector:
                             channel_id,
                         )
                         return total_collected
+                    except HandledFloodWaitError as exc:
+                        flood_wait_sec = exc.info.wait_seconds
+                        raise
                     except (ValueError, UsernameNotOccupiedError, UsernameInvalidError):
                         logger.warning(
                             "Channel %d (%s): username not found, " "trying numeric ID fallback",
@@ -356,10 +376,17 @@ class Collector:
                             channel.username,
                         )
                         try:
-                            fallback_entity = await asyncio.wait_for(
+                            fallback_entity = await run_with_flood_wait(
                                 session.resolve_entity(PeerChannel(channel_id)),
+                                operation="collect_channel_resolve_channel_id",
+                                phone=phone,
+                                pool=self._pool,
+                                logger_=logger,
                                 timeout=30.0,
                             )
+                        except HandledFloodWaitError as exc:
+                            flood_wait_sec = exc.info.wait_seconds
+                            raise
                         except Exception:
                             logger.warning(
                                 "Channel %d: all entity lookups failed, " "deactivating",
@@ -391,8 +418,12 @@ class Collector:
                         return total_collected
                 else:
                     try:
-                        entity = await asyncio.wait_for(
+                        entity = await run_with_flood_wait(
                             session.resolve_entity(PeerChannel(channel_id)),
+                            operation="collect_channel_resolve_numeric",
+                            phone=phone,
+                            pool=self._pool,
+                            logger_=logger,
                             timeout=30.0,
                         )
                     except asyncio.TimeoutError:
@@ -401,6 +432,9 @@ class Collector:
                             channel_id,
                         )
                         return total_collected
+                    except HandledFloodWaitError as exc:
+                        flood_wait_sec = exc.info.wait_seconds
+                        raise
 
                 # Превентивная фильтрация по subscriber_ratio до загрузки
                 # сообщений.
@@ -455,8 +489,12 @@ class Collector:
                 # Pre-check: sample 10 posts to detect cross-channel duplicates
                 if is_first_run and not force:
                     try:
-                        sample_prefixes = await asyncio.wait_for(
+                        sample_prefixes = await run_with_flood_wait(
                             self._precheck_sample(session, entity, PRECHECK_CROSS_DUPE_SAMPLE),
+                            operation="collect_channel_precheck_sample",
+                            phone=phone,
+                            pool=self._pool,
+                            logger_=logger,
                             timeout=60.0,
                         )
                     except asyncio.TimeoutError:
@@ -465,6 +503,9 @@ class Collector:
                             channel_id,
                         )
                         sample_prefixes = []
+                    except HandledFloodWaitError as exc:
+                        flood_wait_sec = exc.info.wait_seconds
+                        raise
                     unique_prefixes = list(dict.fromkeys(sample_prefixes))
                     if len(unique_prefixes) >= PRECHECK_CROSS_DUPE_MIN_SAMPLE:
                         repo = self._db.filter_repo
@@ -484,58 +525,67 @@ class Collector:
                             await self._maybe_auto_delete(channel_id)
                             return total_collected
 
-                async for msg in session.stream_messages(
-                    entity,
-                    min_id=min_id,
-                    limit=limit,
-                    reverse=True,
-                    wait_time=self._config.delay_between_requests_sec,
-                ):
-                    topic_id = None
-                    reply_to = getattr(msg, "reply_to", None)
-                    if reply_to and getattr(reply_to, "forum_topic", False):
-                        topic_id = (
-                            getattr(reply_to, "reply_to_top_id", None)
-                            or getattr(reply_to, "reply_to_msg_id", None)
-                            or 1
+                async def _collect_messages() -> None:
+                    nonlocal stop_due_to_persistence_error, messages_batch
+                    async for msg in session.stream_messages(
+                        entity,
+                        min_id=min_id,
+                        limit=limit,
+                        reverse=True,
+                        wait_time=self._config.delay_between_requests_sec,
+                    ):
+                        topic_id = None
+                        reply_to = getattr(msg, "reply_to", None)
+                        if reply_to and getattr(reply_to, "forum_topic", False):
+                            topic_id = (
+                                getattr(reply_to, "reply_to_top_id", None)
+                                or getattr(reply_to, "reply_to_msg_id", None)
+                                or 1
+                            )
+                        elif reply_to:
+                            pass
+                        message = Message(
+                            channel_id=channel_id,
+                            message_id=msg.id,
+                            sender_id=msg.sender_id,
+                            sender_name=self._get_sender_name(msg),
+                            text=msg.text,
+                            media_type=self._get_media_type(msg),
+                            topic_id=topic_id,
+                            reactions_json=self._extract_reactions(msg),
+                            views=getattr(msg, "views", None),
+                            forwards=getattr(msg, "forwards", None),
+                            reply_count=getattr(getattr(msg, "replies", None), "replies", None),
+                            date=(
+                                msg.date.replace(tzinfo=timezone.utc)
+                                if msg.date and msg.date.tzinfo is None
+                                else msg.date
+                            ),
                         )
-                    elif reply_to:
-                        # Обычный reply (не форум) — topic_id не нужен
-                        pass
-                    message = Message(
-                        channel_id=channel_id,
-                        message_id=msg.id,
-                        sender_id=msg.sender_id,
-                        sender_name=self._get_sender_name(msg),
-                        text=msg.text,
-                        media_type=self._get_media_type(msg),
-                        topic_id=topic_id,
-                        reactions_json=self._extract_reactions(msg),
-                        views=getattr(msg, "views", None),
-                        forwards=getattr(msg, "forwards", None),
-                        reply_count=getattr(getattr(msg, "replies", None), "replies", None),
-                        date=(
-                            msg.date.replace(tzinfo=timezone.utc)
-                            if msg.date and msg.date.tzinfo is None
-                            else msg.date
-                        ),
-                    )
-                    messages_batch.append(message)
+                        messages_batch.append(message)
 
-                    if len(messages_batch) % 10 == 0 and self._cancel_event.is_set():
-                        logger.info("Channel %d collection interrupted", channel_id)
-                        break
+                        if len(messages_batch) % 10 == 0 and self._cancel_event.is_set():
+                            logger.info("Channel %d collection interrupted", channel_id)
+                            break
 
-                    if is_first_run and len(messages_batch) >= 500:
-                        if not await self._channel_still_exists(channel_id):
+                        if is_first_run and len(messages_batch) >= 500:
+                            if not await self._channel_still_exists(channel_id):
+                                messages_batch = []
+                                break
+                            if not await _flush_batch(messages_batch):
+                                stop_due_to_persistence_error = True
+                                break
                             messages_batch = []
-                            break
-                        if not await _flush_batch(messages_batch):
-                            stop_due_to_persistence_error = True
-                            break
-                        messages_batch = []
-                        if self._cancel_event.is_set():
-                            break
+                            if self._cancel_event.is_set():
+                                break
+
+                await run_with_flood_wait(
+                    _collect_messages(),
+                    operation="collect_channel_stream_messages",
+                    phone=phone,
+                    pool=self._pool,
+                    logger_=logger,
+                )
 
             except (UsernameNotOccupiedError, UsernameInvalidError):
                 logger.warning(
@@ -546,14 +596,8 @@ class Collector:
                 if channel.id:
                     await self._db.set_channel_active(channel.id, False)
                 raise
-            except FloodWaitError as e:
-                flood_wait_sec = e.seconds
-                logger.warning(
-                    "FloodWait %ds for %s on channel %d",
-                    flood_wait_sec,
-                    phone,
-                    channel_id,
-                )
+            except HandledFloodWaitError as exc:
+                flood_wait_sec = exc.info.wait_seconds
             finally:
                 # Flush remaining messages — each operation is protected
                 # independently so a failure in one doesn't prevent the
@@ -590,7 +634,6 @@ class Collector:
 
             # Handle FloodWait AFTER finally has flushed progress
             if flood_wait_sec is not None:
-                await self._pool.report_flood(phone, flood_wait_sec)
                 if flood_wait_sec <= self._config.max_flood_wait_sec:
                     # Re-read channel from DB to get updated
                     # last_collected_id.
@@ -698,47 +741,64 @@ class Collector:
         try:
             if not self._pool.is_dialogs_fetched(phone):
                 try:
-                    await asyncio.wait_for(session.warm_dialog_cache(), timeout=30)
+                    await run_with_flood_wait(
+                        session.warm_dialog_cache(),
+                        operation="sample_channel_warm_dialog_cache",
+                        phone=phone,
+                        pool=self._pool,
+                        logger_=logger,
+                        timeout=30.0,
+                    )
                     self._pool.mark_dialogs_fetched(phone)
+                except HandledFloodWaitError:
+                    return []
                 except Exception as e:
                     logger.warning("Failed to prefetch dialogs for %s: %s", phone, e)
 
             try:
-                entity = await asyncio.wait_for(
+                entity = await run_with_flood_wait(
                     session.resolve_entity(PeerChannel(channel_id)),
+                    operation="sample_channel_resolve_entity",
+                    phone=phone,
+                    pool=self._pool,
+                    logger_=logger,
                     timeout=30.0,
                 )
             except (asyncio.TimeoutError, ValueError, LookupError):
                 logger.warning("Could not resolve entity for channel %d", channel_id)
                 return []
+            except HandledFloodWaitError:
+                return []
 
             previews: list[dict] = []
-            async for msg in session.stream_messages(
-                entity,
-                limit=limit,
-                wait_time=self._config.delay_between_requests_sec,
-            ):
-                if self._cancel_event.is_set():
-                    break
-                text = msg.text or ""
-                previews.append(
-                    {
-                        "message_id": msg.id,
-                        "date": msg.date,
-                        "text_preview": text[:100] if text else None,
-                        "media_type": self._get_media_type(msg),
-                    }
-                )
+            async def _collect_previews() -> None:
+                async for msg in session.stream_messages(
+                    entity,
+                    limit=limit,
+                    wait_time=self._config.delay_between_requests_sec,
+                ):
+                    if self._cancel_event.is_set():
+                        break
+                    text = msg.text or ""
+                    previews.append(
+                        {
+                            "message_id": msg.id,
+                            "date": msg.date,
+                            "text_preview": text[:100] if text else None,
+                            "media_type": self._get_media_type(msg),
+                        }
+                    )
+
+            await run_with_flood_wait(
+                _collect_previews(),
+                operation="sample_channel_stream_messages",
+                phone=phone,
+                pool=self._pool,
+                logger_=logger,
+            )
 
             return previews
-        except FloodWaitError as e:
-            logger.warning(
-                "Flood wait %ds for sample on channel %d via %s",
-                e.seconds,
-                channel_id,
-                phone,
-            )
-            await self._pool.report_flood(phone, e.seconds)
+        except HandledFloodWaitError:
             return []
         finally:
             await self._pool.release_client(phone)
@@ -780,17 +840,30 @@ class Collector:
             session = adapt_transport_session(session, disconnect_on_close=False)
             try:
                 if channel.username:
-                    entity = await asyncio.wait_for(
-                        session.resolve_entity(channel.username), timeout=30.0
+                    entity = await run_with_flood_wait(
+                        session.resolve_entity(channel.username),
+                        operation="collect_channel_stats_resolve_username",
+                        phone=phone,
+                        pool=self._pool,
+                        logger_=logger,
+                        timeout=30.0,
                     )
                 else:
-                    entity = await asyncio.wait_for(
+                    entity = await run_with_flood_wait(
                         session.resolve_entity(PeerChannel(channel.channel_id)),
+                        operation="collect_channel_stats_resolve_channel_id",
+                        phone=phone,
+                        pool=self._pool,
+                        logger_=logger,
                         timeout=30.0,
                     )
 
-                full = await asyncio.wait_for(
+                full = await run_with_flood_wait(
                     session.fetch_full_channel(entity),
+                    operation="collect_channel_stats_fetch_full_channel",
+                    phone=phone,
+                    pool=self._pool,
+                    logger_=logger,
                     timeout=30.0,
                 )
                 subscriber_count = getattr(full.full_chat, "participants_count", None)
@@ -817,7 +890,14 @@ class Collector:
                             reactions_list.append(total)
 
                 try:
-                    await asyncio.wait_for(_collect_stats_messages(), timeout=90.0)
+                    await run_with_flood_wait(
+                        _collect_stats_messages(),
+                        operation="collect_channel_stats_stream_messages",
+                        phone=phone,
+                        pool=self._pool,
+                        logger_=logger,
+                        timeout=90.0,
+                    )
                 except asyncio.TimeoutError:
                     logger.warning(
                         "iter_messages timed out for stats on channel %d", channel.channel_id
@@ -842,14 +922,8 @@ class Collector:
                     await self._db.set_channel_type(channel.channel_id, channel_type)
 
                 return stats
-            except FloodWaitError as e:
-                logger.warning(
-                    "Flood wait %ds for stats on %s via %s",
-                    e.seconds,
-                    channel.channel_id,
-                    phone,
-                )
-                await self._pool.report_flood(phone, e.seconds)
+            except HandledFloodWaitError:
+                pass
             finally:
                 await self._pool.release_client(phone)
 
