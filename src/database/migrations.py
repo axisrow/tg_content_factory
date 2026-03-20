@@ -562,4 +562,14 @@ async def run_migrations(db: aiosqlite.Connection, *, vec_available: bool = Fals
     if vec_available:
         await _ensure_vec_messages_table(db)
 
+    # Portable semantic backend: JSON-serialised embeddings table (issue #173)
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS message_embeddings_json (
+            message_id INTEGER PRIMARY KEY,
+            embedding  TEXT NOT NULL,
+            dims       INTEGER NOT NULL
+        )
+        """)
+    await db.commit()
+
     return fts_available
