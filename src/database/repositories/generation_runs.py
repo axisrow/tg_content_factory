@@ -57,15 +57,19 @@ class GenerationRunsRepository:
         )
         await self._db.commit()
 
-    async def list_pending_moderation(self, pipeline_id: int | None = None, limit: int = 50, offset: int = 0) -> list[GenerationRun]:
+    async def list_pending_moderation(
+        self, pipeline_id: int | None = None, limit: int = 50, offset: int = 0
+    ) -> list[GenerationRun]:
         if pipeline_id is None:
             cur = await self._db.execute(
-                "SELECT * FROM generation_runs WHERE moderation_status = 'pending' ORDER BY id DESC LIMIT ? OFFSET ?",
+                "SELECT * FROM generation_runs WHERE moderation_status = 'pending'"
+                " ORDER BY id DESC LIMIT ? OFFSET ?",
                 (limit, offset),
             )
         else:
             cur = await self._db.execute(
-                "SELECT * FROM generation_runs WHERE moderation_status = 'pending' AND pipeline_id = ? ORDER BY id DESC LIMIT ? OFFSET ?",
+                "SELECT * FROM generation_runs WHERE moderation_status = 'pending'"
+                " AND pipeline_id = ? ORDER BY id DESC LIMIT ? OFFSET ?",
                 (pipeline_id, limit, offset),
             )
         rows = await cur.fetchall()
@@ -123,6 +127,37 @@ class GenerationRunsRepository:
             created_at=_dt(row["created_at"]),
             updated_at=_dt(row["updated_at"]),
         )
+
+    async def list_runs_for_calendar(self, days: int = 30) -> list[GenerationRun]:
+        cur = await self._db.execute(
+            "SELECT * FROM generation_runs WHERE created_at >= date('now', ?) ORDER BY created_at DESC",
+            (f"-{days} days",),
+        )
+        rows = await cur.fetchall()
+        results: list[GenerationRun] = []
+        for row in rows:
+            metadata = None
+            if row["metadata"]:
+                try:
+                    metadata = json.loads(row["metadata"])
+                except Exception:
+                    metadata = None
+            results.append(
+                GenerationRun(
+                    id=row["id"],
+                    pipeline_id=row["pipeline_id"],
+                    status=row["status"],
+                    prompt=row["prompt"],
+                    generated_text=row["generated_text"],
+                    metadata=metadata,
+                    image_url=row.get("image_url"),
+                    moderation_status=row.get("moderation_status") or "pending",
+                    published_at=_dt(row.get("published_at")),
+                    created_at=_dt(row["created_at"]),
+                    updated_at=_dt(row["updated_at"]),
+                )
+            )
+        return results
 
     async def list_by_pipeline(
         self, pipeline_id: int, limit: int = 20, offset: int = 0

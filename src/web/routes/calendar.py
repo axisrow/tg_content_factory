@@ -14,13 +14,13 @@ async def calendar_page(request: Request, days: int = 7, pipeline_id: int | None
     """Render content calendar page."""
     db = deps.get_db(request)
     calendar = ContentCalendarService(db)
-    
+
     calendar_days = await calendar.get_calendar(days=days, pipeline_id=pipeline_id)
     stats = await calendar.get_stats()
     upcoming = await calendar.get_upcoming(limit=10, pipeline_id=pipeline_id)
-    
+
     pipelines = await db.repos.content_pipelines.get_all()
-    
+
     return deps.get_templates(request).TemplateResponse(
         request,
         "calendar.html",
@@ -40,9 +40,9 @@ async def api_calendar(request: Request, days: int = 7, pipeline_id: int | None 
     """Get calendar data as JSON."""
     db = deps.get_db(request)
     calendar = ContentCalendarService(db)
-    
+
     calendar_days = await calendar.get_calendar(days=days, pipeline_id=pipeline_id)
-    
+
     return JSONResponse([
         {
             "date": day.date,
@@ -68,9 +68,9 @@ async def api_upcoming(request: Request, limit: int = 20, pipeline_id: int | Non
     """Get upcoming events as JSON."""
     db = deps.get_db(request)
     calendar = ContentCalendarService(db)
-    
+
     events = await calendar.get_upcoming(limit=limit, pipeline_id=pipeline_id)
-    
+
     return JSONResponse([
         {
             "run_id": e.run_id,

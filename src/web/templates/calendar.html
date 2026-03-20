@@ -1,143 +1,163 @@
 {% extends "base.html" %}
 
-{% block title %}Content Calendar{% endblock %}
+{% block title %}Календарь контента{% endblock %}
 
 {% block content %}
-<div class="container-fluid">
-    <div class="d-flex justify-content-between align-items-center mb-4">
-        <h1 class="h3">Content Calendar</h1>
-        <div>
-            <a href="/moderation" class="btn btn-outline-primary">Moderation Queue</a>
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h4 class="mb-0">Календарь контента</h4>
+    <a href="/pipelines" class="btn btn-sm btn-outline-secondary">Пайплайны</a>
+</div>
+
+<div class="row g-2 mb-3">
+    <div class="col-4">
+        <div class="card text-center py-2">
+            <span class="fs-4 fw-bold text-warning">{{ stats.pending }}</span>
+            <small class="text-muted">На модерации</small>
         </div>
     </div>
-
-    <div class="row mb-4">
-        <div class="col-md-4">
-            <div class="card">
-                <div class="card-body text-center">
-                    <h3 class="text-warning">{{ stats.pending }}</h3>
-                    <p class="text-muted mb-0">Pending Review</p>
-                </div>
-            </div>
-        </div>
-        <div class="col-md-4">
-            <div class="card">
-                <div class="card-body text-center">
-                    <h3 class="text-success">{{ stats.approved }}</h3>
-                    <p class="text-muted mb-0">Approved</p>
-                </div>
-            </div>
-        </div>
-        <div class="col-md-4">
-            <div class="card">
-                <div class="card-body text-center">
-                    <h3 class="text-primary">{{ stats.scheduled }}</h3>
-                    <p class="text-muted mb-0">Scheduled</p>
-                </div>
-            </div>
+    <div class="col-4">
+        <div class="card text-center py-2">
+            <span class="fs-4 fw-bold text-success">{{ stats.approved }}</span>
+            <small class="text-muted">Одобрено</small>
         </div>
     </div>
-
-    <div class="card mb-4">
-        <div class="card-body">
-            <form method="get" class="row g-3">
-                <div class="col-md-4">
-                    <label class="form-label">Pipeline</label>
-                    <select name="pipeline_id" class="form-select">
-                        <option value="">All Pipelines</option>
-                        {% for p in pipelines %}
-                        <option value="{{ p.id }}" {% if selected_pipeline_id == p.id %}selected{% endif %}>
-                            {{ p.name }}
-                        </option>
-                        {% endfor %}
-                    </select>
-                </div>
-                <div class="col-md-3">
-                    <label class="form-label">Days</label>
-                    <select name="days" class="form-select">
-                        <option value="7" {% if days == 7 %}selected{% endif %}>7 days</option>
-                        <option value="14" {% if days == 14 %}selected{% endif %}>14 days</option>
-                        <option value="30" {% if days == 30 %}selected{% endif %}>30 days</option>
-                    </select>
-                </div>
-                <div class="col-md-2 d-flex align-items-end">
-                    <button type="submit" class="btn btn-primary">Filter</button>
-                </div>
-            </form>
+    <div class="col-4">
+        <div class="card text-center py-2">
+            <span class="fs-4 fw-bold text-primary">{{ stats.scheduled }}</span>
+            <small class="text-muted">Опубликовано</small>
         </div>
     </div>
+</div>
 
-    <div class="row">
-        {% for day in calendar_days %}
-        <div class="col-md{% if days <= 7 %}-12{% else %}-6{% endif %} mb-3">
-            <div class="card">
-                <div class="card-header">
-                    <strong>{{ day.date }}</strong>
-                    <span class="badge bg-secondary float-end">{{ day.events|length }} events</span>
-                </div>
-                <div class="card-body" style="max-height: 300px; overflow-y: auto;">
-                    {% if day.events %}
-                        {% for event in day.events %}
-                        <div class="border-bottom pb-2 mb-2">
-                            <div class="d-flex justify-content-between">
-                                <small class="text-muted">{{ event.pipeline_name }}</small>
-                                <span class="badge bg-{% if event.moderation_status == 'approved' %}success{% elif event.moderation_status == 'pending' %}warning{% else %}secondary{% endif %}">
-                                    {{ event.moderation_status }}
-                                </span>
-                            </div>
-                            <p class="mb-1 small">{{ event.preview }}</p>
-                            <a href="/moderation/{{ event.run_id }}/view" class="btn btn-sm btn-outline-primary">View</a>
-                        </div>
-                        {% endfor %}
-                    {% else %}
-                        <p class="text-muted small mb-0">No events scheduled</p>
+<div class="card mb-3">
+    <div class="card-body py-2">
+        <form method="get" class="row g-2 align-items-end">
+            <div class="col-auto">
+                <label class="form-label mb-1 small">Пайплайн</label>
+                <select name="pipeline_id" class="form-select form-select-sm">
+                    <option value="">Все</option>
+                    {% for p in pipelines %}
+                    <option value="{{ p.id }}" {% if selected_pipeline_id == p.id %}selected{% endif %}>{{ p.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-auto">
+                <label class="form-label mb-1 small">Период</label>
+                <select name="days" class="form-select form-select-sm">
+                    <option value="7" {% if days == 7 %}selected{% endif %}>7 дней</option>
+                    <option value="14" {% if days == 14 %}selected{% endif %}>14 дней</option>
+                    <option value="30" {% if days == 30 %}selected{% endif %}>30 дней</option>
+                </select>
+            </div>
+            <div class="col-auto">
+                <button type="submit" class="btn btn-sm btn-primary">Применить</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+{% if days <= 7 %}
+{# 7-column weekly grid #}
+<div class="row g-2 mb-4">
+    {% for day in calendar_days %}
+    <div class="col">
+        <div class="card h-100">
+            <div class="card-header p-2 text-center">
+                <div class="fw-semibold small">{{ day.date[8:] }}.{{ day.date[5:7] }}</div>
+                {% if day.events %}
+                <span class="badge bg-secondary">{{ day.events|length }}</span>
+                {% endif %}
+            </div>
+            <div class="card-body p-2" style="min-height:120px;max-height:280px;overflow-y:auto;">
+                {% for event in day.events %}
+                <div class="mb-2 border-bottom pb-1">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <small class="text-muted text-truncate me-1" style="max-width:70%">{{ event.pipeline_name }}</small>
+                        <span class="badge badge-sm bg-{% if event.moderation_status == 'approved' %}success{% elif event.moderation_status == 'pending' %}warning{% elif event.moderation_status == 'published' %}primary{% else %}secondary{% endif %}" style="font-size:.65rem">
+                            {{ event.moderation_status }}
+                        </span>
+                    </div>
+                    {% if event.preview %}
+                    <div class="small text-truncate" title="{{ event.preview }}">{{ event.preview[:60] }}</div>
                     {% endif %}
+                    <a href="/pipelines/runs/{{ event.run_id }}" class="btn btn-sm btn-outline-primary mt-1" style="font-size:.7rem;padding:.1rem .3rem">Открыть</a>
                 </div>
+                {% else %}
+                <p class="text-muted small mb-0 text-center mt-3">—</p>
+                {% endfor %}
             </div>
         </div>
-        {% endfor %}
     </div>
-
-    <div class="card mt-4">
-        <div class="card-header">
-            <h5 class="mb-0">Upcoming Drafts</h5>
-        </div>
-        <div class="card-body">
-            {% if upcoming %}
-            <div class="table-responsive">
-                <table class="table table-hover">
-                    <thead>
-                        <tr>
-                            <th>Run ID</th>
-                            <th>Pipeline</th>
-                            <th>Status</th>
-                            <th>Preview</th>
-                            <th>Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% for event in upcoming %}
-                        <tr>
-                            <td>{{ event.run_id }}</td>
-                            <td>{{ event.pipeline_name }}</td>
-                            <td>
-                                <span class="badge bg-{% if event.moderation_status == 'approved' %}success{% elif event.moderation_status == 'pending' %}warning{% else %}secondary{% endif %}">
-                                    {{ event.moderation_status }}
-                                </span>
-                            </td>
-                            <td><small>{{ event.preview }}</small></td>
-                            <td>
-                                <a href="/moderation/{{ event.run_id }}/view" class="btn btn-sm btn-outline-primary">View</a>
-                            </td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
+    {% endfor %}
+</div>
+{% else %}
+{# Multi-row grid for 14/30 days #}
+<div class="row g-2 mb-4">
+    {% for day in calendar_days %}
+    <div class="col-md-3 col-sm-4 col-6">
+        <div class="card h-100">
+            <div class="card-header p-2 d-flex justify-content-between align-items-center">
+                <span class="fw-semibold small">{{ day.date }}</span>
+                {% if day.events %}<span class="badge bg-secondary">{{ day.events|length }}</span>{% endif %}
             </div>
-            {% else %}
-            <p class="text-muted">No upcoming drafts.</p>
-            {% endif %}
+            <div class="card-body p-2" style="max-height:200px;overflow-y:auto;">
+                {% for event in day.events %}
+                <div class="mb-1 border-bottom pb-1">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <small class="text-muted text-truncate me-1" style="max-width:65%">{{ event.pipeline_name }}</small>
+                        <span class="badge bg-{% if event.moderation_status == 'approved' %}success{% elif event.moderation_status == 'pending' %}warning{% elif event.moderation_status == 'published' %}primary{% else %}secondary{% endif %}" style="font-size:.65rem">
+                            {{ event.moderation_status }}
+                        </span>
+                    </div>
+                    <a href="/pipelines/runs/{{ event.run_id }}" class="btn btn-sm btn-outline-primary mt-1" style="font-size:.7rem;padding:.1rem .3rem">Открыть</a>
+                </div>
+                {% else %}
+                <p class="text-muted small mb-0">—</p>
+                {% endfor %}
+            </div>
         </div>
+    </div>
+    {% endfor %}
+</div>
+{% endif %}
+
+<div class="card">
+    <div class="card-header py-2">
+        <h6 class="mb-0">Предстоящие черновики</h6>
+    </div>
+    <div class="card-body p-0">
+        {% if upcoming %}
+        <div class="table-responsive">
+            <table class="table table-hover table-sm mb-0">
+                <thead>
+                    <tr>
+                        <th>#</th>
+                        <th>Пайплайн</th>
+                        <th>Статус</th>
+                        <th>Превью</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for event in upcoming %}
+                    <tr>
+                        <td class="text-muted small">{{ event.run_id }}</td>
+                        <td class="small">{{ event.pipeline_name }}</td>
+                        <td>
+                            <span class="badge bg-{% if event.moderation_status == 'approved' %}success{% elif event.moderation_status == 'pending' %}warning{% elif event.moderation_status == 'published' %}primary{% else %}secondary{% endif %}">
+                                {{ event.moderation_status }}
+                            </span>
+                        </td>
+                        <td class="small text-muted">{{ event.preview[:80] }}</td>
+                        <td><a href="/pipelines/runs/{{ event.run_id }}" class="btn btn-sm btn-outline-primary">Открыть</a></td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <p class="text-muted p-3 mb-0">Нет черновиков.</p>
+        {% endif %}
     </div>
 </div>
 {% endblock %}

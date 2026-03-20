@@ -31,7 +31,7 @@ class CalendarDay:
 
 class ContentCalendarService:
     """Service for content calendar functionality.
-    
+
     Provides:
     - Scheduled publications by day/week
     - Visual timeline of upcoming posts
@@ -47,54 +47,54 @@ class ContentCalendarService:
         pipeline_id: int | None = None,
     ) -> list[CalendarDay]:
         """Get calendar events for the next N days.
-        
+
         Args:
             days: Number of days to show
             pipeline_id: Optional filter by pipeline
-            
+
         Returns:
             List of CalendarDay objects
         """
         results: list[CalendarDay] = []
         now = datetime.now(timezone.utc)
-        
+
         pipelines = await self._db.repos.content_pipelines.get_all()
         pipelines_by_id = {p.id: p for p in pipelines if p.id is not None}
-        
+
         for i in range(days):
             day_start = (now + timedelta(days=i)).replace(
                 hour=0, minute=0, second=0, microsecond=0
             )
             day_end = day_start + timedelta(days=1)
             day_str = day_start.strftime("%Y-%m-%d")
-            
+
             events: list[CalendarEvent] = []
-            
-            # Get runs with scheduled publications for this day
+
+            # Get runs for this day — use all runs in the period, not just pending
             if pipeline_id is not None:
                 runs = await self._db.repos.generation_runs.list_by_pipeline(
                     pipeline_id, limit=1000
                 )
             else:
-                runs = await self._db.repos.generation_runs.list_pending_moderation(
-                    limit=10000
+                runs = await self._db.repos.generation_runs.list_runs_for_calendar(
+                    days=days
                 )
-            
+
             for run in runs:
                 if run.pipeline_id is None:
                     continue
-                    
+
                 pipeline = pipelines_by_id.get(run.pipeline_id)
                 if pipeline is None:
                     continue
-                
+
                 # Check if scheduled for this day
                 scheduled = run.published_at or run.created_at
                 if scheduled and day_start <= scheduled < day_end:
                     preview = (run.generated_text or "")[:100]
                     if len(preview) == 100:
                         preview += "..."
-                    
+
                     events.append(CalendarEvent(
                         run_id=run.id,
                         pipeline_id=run.pipeline_id,
@@ -105,9 +105,9 @@ class ContentCalendarService:
                         created_at=run.created_at or now,
                         preview=preview,
                     ))
-            
+
             results.append(CalendarDay(date=day_str, events=events))
-        
+
         return results
 
     async def get_upcoming(
@@ -116,36 +116,36 @@ class ContentCalendarService:
         pipeline_id: int | None = None,
     ) -> list[CalendarEvent]:
         """Get upcoming scheduled publications.
-        
+
         Args:
             limit: Maximum number of events
             pipeline_id: Optional filter by pipeline
-            
+
         Returns:
             List of CalendarEvent sorted by time
         """
         pipelines = await self._db.repos.content_pipelines.get_all()
         pipelines_by_id = {p.id: p for p in pipelines if p.id is not None}
-        
+
         runs = await self._db.repos.generation_runs.list_pending_moderation(
             pipeline_id=pipeline_id,
             limit=limit * 2,
         )
-        
+
         events: list[CalendarEvent] = []
         for run in runs:
             if run.pipeline_id is None:
                 continue
-            
+
             pipeline = pipelines_by_id.get(run.pipeline_id)
             if pipeline is None:
                 continue
-            
+
             if run.moderation_status in ("pending", "approved"):
                 preview = (run.generated_text or "")[:100]
                 if len(preview) == 100:
                     preview += "..."
-                
+
                 events.append(CalendarEvent(
                     run_id=run.id,
                     pipeline_id=run.pipeline_id,
@@ -156,22 +156,22 @@ class ContentCalendarService:
                     created_at=run.created_at or datetime.now(timezone.utc),
                     preview=preview,
                 ))
-        
+
         events.sort(key=lambda e: e.created_at)
         return events[:limit]
 
     async def get_stats(self) -> dict:
         """Get calendar statistics.
-        
+
         Returns:
             Dict with pending, approved, scheduled counts
         """
         pending = await self._db.repos.generation_runs.list_pending_moderation(limit=10000)
-        
+
         pending_count = sum(1 for r in pending if r.moderation_status == "pending")
         approved_count = sum(1 for r in pending if r.moderation_status == "approved")
         scheduled_count = sum(1 for r in pending if r.published_at is not None)
-        
+
         return {
             "pending": pending_count,
             "approved": approved_count,
