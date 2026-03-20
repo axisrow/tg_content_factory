@@ -488,3 +488,145 @@ class UnifiedDispatcher:
                 CollectionTaskStatus.FAILED,
                 error=str(exc)[:500],
             )
+
+    # ── CONTENT_GENERATE ──
+
+    async def _handle_content_generate(self, task: CollectionTask) -> None:
+        if task.id is None:
+            return
+
+        payload = task.payload
+        if not isinstance(payload, ContentGenerateTaskPayload):
+            await self._tasks.update_collection_task(
+                task.id, CollectionTaskStatus.FAILED, error="Invalid CONTENT_GENERATE payload"
+            )
+            return
+
+        if not self._db or not self._search_engine or not self._pipeline_bundle:
+            await self._tasks.update_collection_task(
+                task.id,
+                CollectionTaskStatus.FAILED,
+                error="Pipeline execution environment not configured",
+            )
+            return
+
+        pipeline_id = payload.pipeline_id
+        try:
+            from src.models import PipelinePublishMode
+            from src.services.content_generation_service import ContentGenerationService
+            from src.services.draft_notification_service import DraftNotificationService
+            from src.services.pipeline_service import PipelineService
+            from src.services.quality_scoring_service import QualityScoringService
+
+            svc = PipelineService(self._pipeline_bundle)
+            pipeline = await svc.get(pipeline_id)
+            if pipeline is None:
+                await self._tasks.update_collection_task(
+                    task.id,
+                    CollectionTaskStatus.COMPLETED,
+                    note=f"Pipeline id={pipeline_id} not found",
+                )
+                return
+
+            db = self._db
+            notification_service = DraftNotificationService(db, self._notifier)
+            quality_service = QualityScoringService(db)
+            gen = ContentGenerationService(
+                db,
+                self._search_engine,
+                notification_service=notification_service,
+                quality_service=quality_service,
+            )
+            run = await gen.generate(pipeline=pipeline, model=pipeline.llm_model)
+
+            if pipeline.publish_mode == PipelinePublishMode.AUTO and run is not None:
+                from src.services.publish_service import PublishService
+
+                pool = self._collector._pool
+                publish_svc = PublishService(db, pool)
+                await publish_svc.publish_run(run, pipeline)
+
+            await self._tasks.update_collection_task(
+                task.id,
+                CollectionTaskStatus.COMPLETED,
+                messages_collected=1,
+                note=f"Generated run id={run.id}",
+            )
+        except Exception as exc:
+            logger.exception("Content generate handler failed for pipeline_id=%d", pipeline_id)
+            await self._tasks.update_collection_task(
+                task.id,
+                CollectionTaskStatus.FAILED,
+                error=str(exc)[:500],
+            )
+
+    # ── CONTENT_PUBLISH ──
+
+    async def _handle_content_publish(self, task: CollectionTask) -> None:
+        if task.id is None:
+            return
+
+        payload = task.payload
+        if not isinstance(payload, ContentPublishTaskPayload):
+            await self._tasks.update_collection_task(
+                task.id, CollectionTaskStatus.FAILED, error="Invalid CONTENT_PUBLISH payload"
+            )
+            return
+
+        if not self._db:
+            await self._tasks.update_collection_task(
+                task.id, CollectionTaskStatus.COMPLETED, note="No DB configured"
+            )
+            return
+
+        pipeline_id = payload.pipeline_id
+        try:
+            from src.services.pipeline_service import PipelineService
+            from src.services.publish_service import PublishService
+
+            db = self._db
+            pool = self._collector._pool
+            publish_svc = PublishService(db, pool)
+
+            filter_sql = "AND pipeline_id = ?" if pipeline_id is not None else ""
+            params: tuple = (pipeline_id,) if pipeline_id is not None else ()
+            cur = await db.execute(
+                f"SELECT * FROM generation_runs WHERE moderation_status = 'approved' {filter_sql} ORDER BY id ASC",
+                params,
+            )
+            rows = await cur.fetchall()
+            if not rows:
+                await self._tasks.update_collection_task(
+                    task.id, CollectionTaskStatus.COMPLETED, note="No approved runs to publish"
+                )
+                return
+
+            from src.database.repositories.generation_runs import GenerationRunsRepository
+
+            runs = [GenerationRunsRepository._to_generation_run(row) for row in rows]
+
+            pipeline_svc = PipelineService(self._pipeline_bundle) if self._pipeline_bundle else None
+            published = 0
+            for run in runs:
+                if run.pipeline_id is None:
+                    continue
+                pipeline = await pipeline_svc.get(run.pipeline_id) if pipeline_svc else None
+                if pipeline is None:
+                    continue
+                results = await publish_svc.publish_run(run, pipeline)
+                if any(r.success for r in results):
+                    published += 1
+
+            await self._tasks.update_collection_task(
+                task.id,
+                CollectionTaskStatus.COMPLETED,
+                messages_collected=published,
+                note=f"Published {published}/{len(runs)} runs",
+            )
+        except Exception as exc:
+            logger.exception("Content publish handler failed")
+            await self._tasks.update_collection_task(
+                task.id,
+                CollectionTaskStatus.FAILED,
+                error=str(exc)[:500],
+            )
