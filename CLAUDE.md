@@ -41,11 +41,19 @@ python -m src.main account list|toggle|delete
 python -m src.main scheduler start|trigger|search
 python -m src.main notification setup|status|delete
 python -m src.main test all|read|write|telegram|benchmark
+
+python -m src.main stop|restart
+python -m src.main search-query list|add|delete|toggle
+python -m src.main pipeline list|add|delete|run|runs
+python -m src.main photo-loader list|upload|schedule|cancel
+python -m src.main my-telegram leave|export
+python -m src.main agent chat
+python -m src.main analytics summary|export
 ```
 
 ## Architecture
 
-Three layers: **CLI/Web** → **Telegram + Search + Scheduler** → **SQLite**
+Three layers: **CLI/Web** → **Telegram + Search + Scheduler + Agent/Pipeline** → **SQLite**
 
 - CLI (`src/main.py`) and Web (`src/web/`) are parallel entry points to the same logic
 - Telegram layer: `ClientPool` manages multi-account connections, `Collector` fetches messages, `Notifier` sends alerts
@@ -56,6 +64,11 @@ Three layers: **CLI/Web** → **Telegram + Search + Scheduler** → **SQLite**
 - Collection service (`src/services/collection_service.py`): orchestration layer between web/CLI and Collector/Queue — handles enqueue logic, stats collection
 - Parsers (`src/parsers.py`): identifier extraction for channel import — t.me links, @usernames, negative IDs; file parsing (txt/csv/xlsx)
 - Notification bot: personal bot created via BotFather through a connected account (`src/telegram/notifier.py`)
+- **Agent system**: `AgentProviderService` selects backend — `claude-agent-sdk` when `ANTHROPIC_API_KEY` / `CLAUDE_CODE_OAUTH_TOKEN` is set, otherwise falls back to `deepagents` with provider adapters; developer override available in Settings UI
+- **Provider system**: `ProviderService` auto-registers LLM providers from env vars (`OPENAI_API_KEY`, `COHERE_API_KEY`, `OLLAMA_BASE`, etc.); provider adapters in `src/services/provider_adapters.py` are lightweight HTTP wrappers (no heavy SDK deps)
+- **Content pipelines**: `PipelineService` + `ContentGenerationService` orchestrate generate → draft → notify → publish flow; tracked via `generation_runs` DB table
+- **Photo publishing**: `PhotoAutoUploadService` / `PhotoPublishService` / `PhotoTaskService` — separate upload, schedule, publish tasks tracked in DB
+- **LangChain integration**: optional, lazy-loaded via `src/services/langchain_adapters.py`; enabled with `USE_LANGCHAIN=1`
 
 ## Key Patterns
 
@@ -86,7 +99,7 @@ Three layers: **CLI/Web** → **Telegram + Search + Scheduler** → **SQLite**
 - Pydantic v2 models (`model_validate`, not `parse_obj`)
 - Config via `config.yaml` with `${ENV_VAR}` substitution
 - Web auth: HTTP Basic Auth (password only via `WEB_PASS`, username hardcoded as "admin")
-- ruff for linting: line-length=100, target py311, rules E/F/I/N/W
+- ruff for linting: line-length=120, target py311, rules E/F/I/N/W
 - Tests: pytest-asyncio with `asyncio_mode="auto"`
 - Session strings stored as `enc:v2:*` when `SESSION_ENCRYPTION_KEY` is set; legacy `enc:v1:*` auto-migrated; startup fails fast if encrypted rows exist without key
 
@@ -96,3 +109,12 @@ Three layers: **CLI/Web** → **Telegram + Search + Scheduler** → **SQLite**
 - Policy document: `docs/testing/real-telegram.md`
 - Any live Telegram pytest must use `real_telegram_sandbox` plus `@pytest.mark.real_tg_safe` or `@pytest.mark.real_tg_manual`
 - Mutating flows such as BotFather, photo send, auth, and `leave_channels` must not be converted to generic live pytest cases
+
+### pytest markers
+- `aiosqlite_serial` — auto-applied by conftest; runs serially (raw aiosqlite or `cli_db` fixture)
+- `native_backend_allowed` — explicitly exercises native Telethon allowlist flows
+- `real_tg_safe` — opt-in read-only sandbox; gate: `RUN_REAL_TELEGRAM_SAFE=1`
+- `real_tg_manual` — opt-in mutating sandbox, manual only; gate: `RUN_REAL_TELEGRAM_MANUAL=1`
+- `real_tg_never` — must never request a real Telegram client
+- `telegram_unit` — pure unit test, no transport wiring
+- `real_materializer` — uses real `SessionMaterializer` instead of stub
