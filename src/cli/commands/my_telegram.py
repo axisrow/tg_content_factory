@@ -128,6 +128,42 @@ def run(args: argparse.Namespace) -> None:
                     await db.repos.dialog_cache.clear_all_dialogs()
                     print("Cache cleared for all accounts.")
 
+            elif args.my_telegram_action == "create-channel":
+                accounts = sorted(pool.clients.keys())
+                if not accounts:
+                    print("No connected accounts.")
+                    return
+                phone = args.phone or accounts[0]
+                if phone not in pool.clients:
+                    print(f"Account {phone} not connected.")
+                    return
+                client = pool.clients[phone]
+                from telethon.tl.functions.channels import CreateChannelRequest
+
+                result = await client(
+                    CreateChannelRequest(
+                        title=args.title,
+                        about=args.about or "",
+                        broadcast=True,
+                        megagroup=False,
+                    )
+                )
+                channel = result.chats[0] if result.chats else None
+                channel_id = getattr(channel, "id", None)
+                channel_username = getattr(channel, "username", None) or ""
+                print(f"Created channel id={channel_id} title={args.title!r}")
+                if args.username and channel_id:
+                    try:
+                        from telethon.tl.functions.channels import UpdateUsernameRequest
+
+                        await client(UpdateUsernameRequest(channel, args.username))
+                        channel_username = args.username
+                        print(f"Username set: @{channel_username}")
+                    except Exception as exc:
+                        print(f"Could not set username: {exc}")
+                if channel_username:
+                    print(f"Channel link: https://t.me/{channel_username}")
+
             elif args.my_telegram_action == "cache-status":
                 phones = await db.repos.dialog_cache.get_all_phones()
                 now_monotonic = time.monotonic()

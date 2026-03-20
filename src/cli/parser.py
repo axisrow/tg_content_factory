@@ -371,6 +371,12 @@ def build_parser() -> argparse.ArgumentParser:
     my_tg_clear.add_argument("--phone", default=None, help="Account phone (default: all accounts)")
     my_tg_sub.add_parser("cache-status", help="Show dialog cache status (entries, age)")
 
+    my_tg_create = my_tg_sub.add_parser("create-channel", help="Create a new Telegram broadcast channel")
+    my_tg_create.add_argument("--phone", default=None, help="Account phone (default: first connected)")
+    my_tg_create.add_argument("--title", required=True, help="Channel title")
+    my_tg_create.add_argument("--about", default="", help="Channel description")
+    my_tg_create.add_argument("--username", default="", help="Public username (leave empty for private)")
+
     notif_parser = sub.add_parser("notification", help="Personal notification bot management")
     notif_sub = notif_parser.add_subparsers(dest="notification_action")
     notif_sub.add_parser("setup", help="Create personal notification bot via BotFather")

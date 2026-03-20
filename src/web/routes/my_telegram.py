@@ -78,3 +78,81 @@ async def leave_dialogs(request: Request):
         url=f"/my-telegram/?phone={quote(phone, safe='')}&left={left}&failed={failed}",
         status_code=303,
     )
+
+
+@router.get("/create-channel", response_class=HTMLResponse)
+async def create_channel_page(request: Request):
+    pool = deps.get_pool(request)
+    accounts = sorted(pool.clients.keys())
+    return deps.get_templates(request).TemplateResponse(
+        request,
+        "my_telegram_create_channel.html",
+        {"accounts": accounts},
+    )
+
+
+@router.post("/create-channel")
+async def create_channel(
+    request: Request,
+    phone: str = Form(...),
+    title: str = Form(...),
+    about: str = Form(""),
+    username: str = Form(""),
+):
+    pool = deps.get_pool(request)
+    client = pool.clients.get(phone)
+    if client is None:
+        return RedirectResponse(
+            url="/my-telegram/create-channel?error=no_client",
+            status_code=303,
+        )
+    try:
+        from telethon.tl.functions.channels import CreateChannelRequest
+
+        result = await client(
+            CreateChannelRequest(
+                title=title.strip(),
+                about=about.strip(),
+                broadcast=True,
+                megagroup=False,
+            )
+        )
+        channel = result.chats[0] if result.chats else None
+        channel_id = getattr(channel, "id", None)
+        channel_username = getattr(channel, "username", None) or ""
+
+        if username.strip() and channel_id:
+            try:
+                from telethon.tl.functions.channels import UpdateUsernameRequest
+
+                await client(UpdateUsernameRequest(channel, username.strip()))
+                channel_username = username.strip()
+            except Exception:
+                logger.warning(
+                    "Could not set username %r for new channel id=%s", username, channel_id
+                )
+
+        logger.info("Created channel id=%s title=%r by %s", channel_id, title, phone)
+        invite_link = f"https://t.me/{channel_username}" if channel_username else ""
+        return deps.get_templates(request).TemplateResponse(
+            request,
+            "my_telegram_create_channel.html",
+            {
+                "accounts": sorted(pool.clients.keys()),
+                "created": True,
+                "channel_id": channel_id,
+                "channel_title": title,
+                "channel_username": channel_username,
+                "invite_link": invite_link,
+            },
+        )
+    except Exception as exc:
+        logger.exception("Failed to create channel: %s", exc)
+        return deps.get_templates(request).TemplateResponse(
+            request,
+            "my_telegram_create_channel.html",
+            {
+                "accounts": sorted(pool.clients.keys()),
+                "error": str(exc)[:200],
+            },
+        )
