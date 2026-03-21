@@ -3,9 +3,11 @@ from __future__ import annotations
 import json
 import logging
 import re
+import struct
 from datetime import date, datetime, timedelta
 
 import aiosqlite
+import numpy as np
 
 from src.models import Message, SearchQuery
 
@@ -38,11 +40,9 @@ class MessagesRepository:
         db: aiosqlite.Connection,
         *,
         fts_available: bool = True,
-        vec_available: bool = False,
     ):
         self._db = db
         self._fts_available = fts_available
-        self._vec_available = vec_available
 
     @staticmethod
     def _normalize_date_from(value: str | None) -> str | None:
@@ -58,10 +58,6 @@ class MessagesRepository:
             next_day = date.fromisoformat(value) + timedelta(days=1)
             return next_day.isoformat(), "<"
         return value, "<="
-
-    @property
-    def vec_available(self) -> bool:
-        return self._vec_available
 
     async def _get_setting(self, key: str) -> str | None:
         cur = await self._db.execute("SELECT value FROM settings WHERE key = ?", (key,))
@@ -90,18 +86,15 @@ class MessagesRepository:
             return None
 
     async def count_embeddings(self) -> int:
-        if not self._vec_available:
-            return 0
         try:
-            cur = await self._db.execute("SELECT COUNT(*) AS cnt FROM vec_messages")
+            cur = await self._db.execute("SELECT COUNT(*) AS cnt FROM message_embeddings")
         except Exception:
             return 0
         row = await cur.fetchone()
         return int(row["cnt"]) if row else 0
 
     async def reset_embeddings_index(self) -> None:
-        if self._vec_available:
-            await self._db.execute("DROP TABLE IF EXISTS vec_messages")
+        await self._db.execute("DELETE FROM message_embeddings")
         await self._db.execute(
             "DELETE FROM settings WHERE key IN (?, ?)",
             (_EMBEDDING_DIMENSIONS_SETTING, "semantic_last_embedded_id"),
@@ -220,26 +213,15 @@ class MessagesRepository:
 
         return count
 
-    async def ensure_vec_table(self, dimensions: int) -> None:
-        if not self._vec_available:
-            raise RuntimeError(
-                "Semantic search is unavailable: sqlite-vec extension is not loaded."
-            )
+    async def ensure_embeddings_table(self, dimensions: int) -> None:
         if dimensions < 1:
             raise ValueError("Embedding dimensions must be positive.")
         existing_dimensions = await self.get_embedding_dimensions()
         if existing_dimensions is not None and existing_dimensions != dimensions:
             raise RuntimeError(
-                "Existing vec_messages index uses "
+                "Existing embeddings index uses "
                 f"{existing_dimensions} dimensions; got {dimensions}."
             )
-        await self._db.execute(f"""
-            CREATE VIRTUAL TABLE IF NOT EXISTS vec_messages USING vec0(
-                message_id INTEGER PRIMARY KEY,
-                embedding FLOAT[{dimensions}] distance_metric=cosine
-            )
-            """)
-        await self._db.commit()
         if existing_dimensions is None:
             await self._set_setting(_EMBEDDING_DIMENSIONS_SETTING, str(dimensions))
 
@@ -271,10 +253,13 @@ class MessagesRepository:
             raise ValueError("Embeddings payload is empty.")
         if any(len(vector) != dimensions for _, vector in embeddings):
             raise ValueError("All embedding vectors must use the same dimensions.")
-        await self.ensure_vec_table(dimensions)
-        payload = [(message_id, json.dumps(vector)) for message_id, vector in embeddings]
+        await self.ensure_embeddings_table(dimensions)
+        payload = [
+            (message_id, struct.pack(f"{dimensions}f", *vector))
+            for message_id, vector in embeddings
+        ]
         cur = await self._db.executemany(
-            "INSERT OR REPLACE INTO vec_messages(message_id, embedding) VALUES (?, ?)",
+            "INSERT OR REPLACE INTO message_embeddings(message_id, embedding) VALUES (?, ?)",
             payload,
         )
         await self._db.commit()
@@ -493,10 +478,6 @@ class MessagesRepository:
         topic_id: int | None = None,
         limit: int = 100,
     ) -> list[tuple[int, float]]:
-        if not self._vec_available:
-            raise RuntimeError(
-                "Semantic search is unavailable: sqlite-vec extension is not loaded."
-            )
         dimensions = await self.get_embedding_dimensions()
         if dimensions is None:
             return []
@@ -516,19 +497,40 @@ class MessagesRepository:
         where = " AND ".join(conditions)
         cur = await self._db.execute(
             f"""
-            SELECT m.id, v.distance
-            FROM vec_messages v
-            JOIN messages m ON m.id = v.message_id
+            SELECT e.message_id, e.embedding
+            FROM message_embeddings e
+            JOIN messages m ON m.id = e.message_id
             LEFT JOIN channels c ON m.channel_id = c.channel_id
-            WHERE v.embedding MATCH ?
-              AND k = ?
-              AND {where}
-            ORDER BY v.distance ASC
+            WHERE {where}
             """,
-            (json.dumps(query_embedding), limit, *params),
+            params,
         )
         rows = await cur.fetchall()
-        return [(int(row["id"]), float(row["distance"])) for row in rows]
+        if not rows:
+            return []
+
+        ids = [int(row["message_id"]) for row in rows]
+        matrix = np.array(
+            [np.frombuffer(row["embedding"], dtype=np.float32) for row in rows]
+        )
+        query_vec = np.array(query_embedding, dtype=np.float32)
+
+        norms = np.linalg.norm(matrix, axis=1, keepdims=True)
+        norms[norms == 0] = 1.0
+        matrix_normed = matrix / norms
+        q_norm = np.linalg.norm(query_vec)
+        query_normed = query_vec / q_norm if q_norm > 0 else query_vec
+
+        distances = 1.0 - (matrix_normed @ query_normed)
+
+        k = min(limit, len(ids))
+        if k >= len(ids):
+            top_indices = np.argsort(distances)[:k]
+        else:
+            top_indices = np.argpartition(distances, k)[:k]
+            top_indices = top_indices[np.argsort(distances[top_indices])]
+
+        return [(ids[i], float(distances[i])) for i in top_indices]
 
     async def search_semantic_messages(
         self,

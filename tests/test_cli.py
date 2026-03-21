@@ -421,9 +421,6 @@ class TestCLISearch:
         assert "important" in out
 
     def test_semantic_with_data(self, cli_env, monkeypatch, capsys):
-        if not cli_env.vec_available:
-            pytest.skip("sqlite-vec extension is unavailable in this environment")
-
         _add_channel(cli_env, channel_id=301, title="SemanticCh")
         _add_message(cli_env, channel_id=301, message_id=1, text="Bitcoin outlook")
         rows = asyncio.run(cli_env.execute_fetchall("SELECT id FROM messages ORDER BY id"))
