@@ -67,7 +67,8 @@ async def test_migrate_vec_skips_when_no_vec_table(tmp_path):
 
 @pytest.mark.asyncio
 @pytest.mark.aiosqlite_serial
-async def test_migrate_vec_skips_when_destination_populated(tmp_path):
+async def test_migrate_vec_is_idempotent_with_existing_data(tmp_path):
+    """Migration adds missing rows from vec_messages even if message_embeddings already has data."""
     db_path = str(tmp_path / "test.db")
     conn = await aiosqlite.connect(db_path)
     conn.row_factory = aiosqlite.Row
@@ -95,7 +96,7 @@ async def test_migrate_vec_skips_when_destination_populated(tmp_path):
 
         cur = await conn.execute("SELECT COUNT(*) AS cnt FROM message_embeddings")
         row = await cur.fetchone()
-        assert row["cnt"] == 1  # only the pre-existing row
+        assert row["cnt"] == 2  # pre-existing + migrated
     finally:
         await conn.close()
 

@@ -46,9 +46,6 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-accelerator = [
-    "sqlite-vec>=0.1.6",
-]
 dev = [
     "pytest==9.0.2",
     "pytest-asyncio==1.3.0",

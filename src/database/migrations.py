@@ -18,11 +18,6 @@ async def _migrate_vec_to_portable(db: aiosqlite.Connection) -> None:
     if not await cur.fetchone():
         return
 
-    cur = await db.execute("SELECT COUNT(*) AS cnt FROM message_embeddings")
-    row = await cur.fetchone()
-    if row and row["cnt"] > 0:
-        return
-
     cur = await db.execute(
         "SELECT value FROM settings WHERE key = 'semantic_embedding_dimensions' LIMIT 1"
     )
@@ -32,7 +27,7 @@ async def _migrate_vec_to_portable(db: aiosqlite.Connection) -> None:
     try:
         int(dim_row["value"])
     except (TypeError, ValueError):
-        logger.warning("Invalid semantic_embedding_dimensions setting %r; skipping migration")
+        logger.warning("Invalid semantic_embedding_dimensions setting %r; skipping migration", dim_row["value"])
         return
 
     cur = await db.execute("SELECT message_id, embedding FROM vec_messages")
