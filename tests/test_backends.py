@@ -383,3 +383,15 @@ async def test_end_takeout():
     session = _session(end_takeout_side_effect=lambda s: None)
     await session.end_takeout(True)
     session.raw_client.end_takeout.assert_awaited_once_with(True)
+
+
+# --- stats (invoke_request) ---
+
+
+@pytest.mark.asyncio
+async def test_get_broadcast_stats():
+    stats = SimpleNamespace(period=SimpleNamespace(min_date=0, max_date=0))
+    session = _session(invoke_side_effect=lambda req: stats)
+    result = await session.get_broadcast_stats("channel")
+    assert result is stats
+    session.raw_client.invoke.assert_awaited_once()

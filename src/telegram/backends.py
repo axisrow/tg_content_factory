@@ -108,7 +108,9 @@ class TelegramTransportSession:
         return await self._client.edit_admin(entity, user, **kwargs)
 
     async def edit_permissions(self, entity: Any, user: Any, until_date: Any = None, **kwargs: Any) -> Any:
-        return await self._client.edit_permissions(entity, user, until_date, **kwargs)
+        if until_date is not None:
+            kwargs["until_date"] = until_date
+        return await self._client.edit_permissions(entity, user, **kwargs)
 
     async def kick_participant(self, entity: Any, user: Any) -> Any:
         return await self._client.kick_participant(entity, user)
