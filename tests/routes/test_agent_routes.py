@@ -3,11 +3,9 @@
 from __future__ import annotations
 
 import json
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-
-from src.agent.manager import AgentManager
 
 
 @pytest.fixture
@@ -197,9 +195,6 @@ async def test_chat_no_agent_manager(client, db):
         headers={"Content-Type": "application/json"},
     )
     assert resp.status_code == 503
-    client._transport_app.state.agent_manager = client._transport_app.state.agent_manager or MagicMock(
-        spec=AgentManager
-    )
 
 
 @pytest.mark.asyncio

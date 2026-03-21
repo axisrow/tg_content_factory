@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from datetime import datetime, timedelta, timezone
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -70,7 +71,7 @@ async def test_photo_send_missing_target(client):
     ):
         # Create a minimal fake file upload
         from io import BytesIO
-        from fastapi import UploadFile
+
 
         file_content = BytesIO(b"fake image")
         resp = await client.post(
@@ -142,12 +143,13 @@ async def test_photo_schedule_missing_target(client):
     from io import BytesIO
 
     # Schedule requires photos as File(...)
+    future_date = (datetime.now(tz=timezone.utc) + timedelta(days=30)).strftime("%Y-%m-%dT%H:%M:%S")
     file_content = BytesIO(b"fake image")
     resp = await client.post(
         "/my-telegram/photos/schedule",
         data={
             "phone": "+1234567890",
-            "schedule_at": "2025-12-31T12:00:00",
+            "schedule_at": future_date,
         },
         files={"photos": ("test.jpg", file_content, "image/jpeg")},
         follow_redirects=False,

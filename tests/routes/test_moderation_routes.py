@@ -65,6 +65,7 @@ async def client(tmp_path):
         follow_redirects=True,
         headers={"Authorization": f"Basic {auth_header}", "Origin": "http://test"},
     ) as c:
+        c._transport_app = app
         yield c
 
     await db.close()
@@ -102,7 +103,7 @@ async def test_moderation_page_renders_empty_queue(client):
 
 @pytest.mark.asyncio
 async def test_publish_run_uses_publish_service(client, monkeypatch):
-    db = client._transport.app.state.db
+    db = client._transport_app.state.db
     pipeline_id = await _create_pipeline(db, publish_mode=PipelinePublishMode.MODERATED)
     run_id = await db.repos.generation_runs.create_run(pipeline_id, "prompt-template")
     await db.repos.generation_runs.save_result(run_id, "Generated post")
@@ -113,7 +114,7 @@ async def test_publish_run_uses_publish_service(client, monkeypatch):
     class FakePublishService:
         def __init__(self, injected_db, pool):
             assert injected_db is db
-            assert pool is client._transport.app.state.pool
+            assert pool is client._transport_app.state.pool
 
         async def publish_run(self, run, pipeline):
             observed["run_id"] = run.id
@@ -130,7 +131,7 @@ async def test_publish_run_uses_publish_service(client, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_publish_run_rejects_unapproved_run(client, monkeypatch):
-    db = client._transport.app.state.db
+    db = client._transport_app.state.db
     pipeline_id = await _create_pipeline(db, publish_mode=PipelinePublishMode.MODERATED)
     run_id = await db.repos.generation_runs.create_run(pipeline_id, "prompt-template")
     await db.repos.generation_runs.save_result(run_id, "Generated post")
@@ -169,7 +170,7 @@ async def _create_pipeline_and_run(
 @pytest.mark.asyncio
 async def test_view_run_renders(client):
     """Test view run renders page."""
-    db = client._transport.app.state.db
+    db = client._transport_app.state.db
     _, run_id = await _create_pipeline_and_run(db)
 
     resp = await client.get(f"/moderation/{run_id}/view")
@@ -188,7 +189,7 @@ async def test_view_run_not_found(client):
 @pytest.mark.asyncio
 async def test_approve_run(client):
     """Test approve run sets status."""
-    db = client._transport.app.state.db
+    db = client._transport_app.state.db
     _, run_id = await _create_pipeline_and_run(db)
 
     resp = await client.post(f"/moderation/{run_id}/approve", follow_redirects=False)
@@ -210,7 +211,7 @@ async def test_approve_run_not_found(client):
 @pytest.mark.asyncio
 async def test_reject_run(client):
     """Test reject run sets status."""
-    db = client._transport.app.state.db
+    db = client._transport_app.state.db
     _, run_id = await _create_pipeline_and_run(db)
 
     resp = await client.post(f"/moderation/{run_id}/reject", follow_redirects=False)
@@ -232,7 +233,7 @@ async def test_reject_run_not_found(client):
 @pytest.mark.asyncio
 async def test_bulk_approve(client):
     """Test bulk approve sets status for multiple runs."""
-    db = client._transport.app.state.db
+    db = client._transport_app.state.db
     _, run_id_1 = await _create_pipeline_and_run(db)
     _, run_id_2 = await _create_pipeline_and_run(db)
 
@@ -253,7 +254,7 @@ async def test_bulk_approve(client):
 @pytest.mark.asyncio
 async def test_bulk_reject(client):
     """Test bulk reject sets status for multiple runs."""
-    db = client._transport.app.state.db
+    db = client._transport_app.state.db
     _, run_id_1 = await _create_pipeline_and_run(db)
     _, run_id_2 = await _create_pipeline_and_run(db)
 
