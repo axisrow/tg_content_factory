@@ -28,6 +28,7 @@ TELEGRAM_TIMEOUT = 30
 TELEGRAM_DIALOG_TIMEOUT = 120
 TELEGRAM_SEARCH_TIMEOUT = 120
 SHORT_FLOOD_WAIT_RETRY_SEC = 30
+# keep in sync with _run_telegram_live_checks check ordering
 _TG_CHECKS_AFTER_POOL = [
     "tg_users_info",
     "tg_get_dialogs",
@@ -337,7 +338,7 @@ async def _check_pipeline_list(db: Database) -> CheckResult:
 
 async def _check_notification_bot(db: Database) -> CheckResult:
     try:
-        cur = await db.repos.notification_bots._db.execute("SELECT COUNT(*) FROM notification_bots")
+        cur = await db._db.execute("SELECT COUNT(*) FROM notification_bots")
         row = await cur.fetchone()
         count = row[0] if row else 0
         detail = f"{count} configured" if count else "none configured"

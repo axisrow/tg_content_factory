@@ -18,28 +18,6 @@ NOW = datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
 
 
 @pytest.fixture
-def cli_db(tmp_path):
-    """Sync fixture: real SQLite for CLI tests."""
-    db_path = str(tmp_path / "cli_test.db")
-    database = Database(db_path)
-    asyncio.run(database.initialize())
-    yield database
-    asyncio.run(database.close())
-
-
-@pytest.fixture
-def cli_env(cli_db):
-    """Patch runtime.init_db to return real db without loading config.yaml."""
-    config = AppConfig()
-
-    async def fake_init_db(config_path: str):
-        return config, cli_db
-
-    with patch("src.cli.runtime.init_db", side_effect=fake_init_db):
-        yield cli_db
-
-
-@pytest.fixture
 def cli_env_with_pool(cli_env):
     """Additionally patch runtime.init_pool to return a pool with no clients."""
     fake_pool = AsyncMock()
@@ -352,10 +330,10 @@ class TestCLIFilter:
         assert "FilteredCh" in out
 
         rows = _query_db(cli_env, "SELECT COUNT(*) AS cnt FROM messages WHERE channel_id=?", (999,))
-        assert rows[0]["cnt"] == 0  # сообщения удалены
+        assert rows[0]["cnt"] == 0  # messages deleted
 
         rows = _query_db(cli_env, "SELECT COUNT(*) AS cnt FROM channels WHERE channel_id=?", (999,))
-        assert rows[0]["cnt"] == 1  # канал остался
+        assert rows[0]["cnt"] == 1  # channel row retained
 
     def test_purge_with_pks(self, cli_env, capsys):
         ch1_pk = _add_channel(cli_env, channel_id=990, title="PurgeCh1")
@@ -373,10 +351,10 @@ class TestCLIFilter:
         assert "PurgeCh2" not in out
 
         rows = _query_db(cli_env, "SELECT COUNT(*) AS cnt FROM messages WHERE channel_id=?", (990,))
-        assert rows[0]["cnt"] == 0  # сообщения ch1 удалены
+        assert rows[0]["cnt"] == 0  # ch1 messages deleted
 
         rows = _query_db(cli_env, "SELECT COUNT(*) AS cnt FROM messages WHERE channel_id=?", (991,))
-        assert rows[0]["cnt"] == 1  # сообщения ch2 остались
+        assert rows[0]["cnt"] == 1  # ch2 messages untouched
 
     def test_hard_delete_requires_dev_mode(self, cli_env, capsys):
         from src.cli.commands.filter import run

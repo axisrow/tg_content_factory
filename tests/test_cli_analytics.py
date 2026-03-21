@@ -5,39 +5,11 @@ from __future__ import annotations
 import argparse
 import asyncio
 from datetime import datetime, timezone
-from unittest.mock import patch
 
-import pytest
-
-pytestmark = pytest.mark.aiosqlite_serial
-
-from src.config import AppConfig
 from src.database import Database
 from src.models import Channel, Message
 
 NOW = datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
-
-
-@pytest.fixture
-def cli_db(tmp_path):
-    """Sync fixture: real SQLite for CLI tests."""
-    db_path = str(tmp_path / "cli_analytics_test.db")
-    database = Database(db_path)
-    asyncio.run(database.initialize())
-    yield database
-    asyncio.run(database.close())
-
-
-@pytest.fixture
-def cli_env(cli_db):
-    """Patch runtime.init_db to return real db without loading config.yaml."""
-    config = AppConfig()
-
-    async def fake_init_db(config_path: str):
-        return config, cli_db
-
-    with patch("src.cli.runtime.init_db", side_effect=fake_init_db):
-        yield cli_db
 
 
 def _ns(**kwargs) -> argparse.Namespace:
