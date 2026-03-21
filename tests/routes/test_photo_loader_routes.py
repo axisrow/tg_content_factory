@@ -1,0 +1,253 @@
+"""Tests for photo_loader routes."""
+
+from __future__ import annotations
+
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
+
+@pytest.fixture
+async def client(route_client):
+    """Use shared route_client fixture."""
+    return route_client
+
+
+@pytest.fixture
+async def db(base_app):
+    """Get db from base_app."""
+    _, db, _ = base_app
+    return db
+
+
+@pytest.fixture
+async def pool_mock(base_app):
+    """Get pool_mock from base_app."""
+    _, _, pool_mock = base_app
+    return pool_mock
+
+
+@pytest.mark.asyncio
+async def test_photo_loader_page_no_phone(client):
+    """Test photo loader page without phone param."""
+    resp = await client.get("/my-telegram/photos")
+    assert resp.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_photo_loader_page_with_phone(client):
+    """Test photo loader page with phone param."""
+    resp = await client.get("/my-telegram/photos?phone=%2B1234567890")
+    assert resp.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_photo_loader_page_shows_no_jobs(client, db):
+    """Test photo loader page shows no auto jobs."""
+    resp = await client.get("/my-telegram/photos?phone=%2B1234567890")
+    assert resp.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_photo_refresh_redirects(client):
+    """Test photo refresh redirects."""
+    with patch("src.web.routes.photo_loader.deps.channel_service") as mock_svc:
+        mock_svc.return_value.get_my_dialogs = AsyncMock(return_value=[])
+        resp = await client.post(
+            "/my-telegram/photos/refresh",
+            data={"phone": "+1234567890"},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+
+
+@pytest.mark.asyncio
+async def test_photo_send_missing_target(client):
+    """Test photo send with missing target."""
+    with patch(
+        "src.web.routes.photo_loader._persist_uploads",
+        AsyncMock(return_value=[]),
+    ):
+        # Create a minimal fake file upload
+        from io import BytesIO
+        from fastapi import UploadFile
+
+        file_content = BytesIO(b"fake image")
+        resp = await client.post(
+            "/my-telegram/photos/send",
+            data={"phone": "+1234567890"},
+            files={"photos": ("test.jpg", file_content, "image/jpeg")},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        assert "error=photo_target_required" in resp.headers["location"]
+
+
+@pytest.mark.asyncio
+async def test_photo_send_invalid_target_id(client):
+    """Test photo send with invalid target ID."""
+    from io import BytesIO
+
+    with patch(
+        "src.web.routes.photo_loader._persist_uploads",
+        AsyncMock(return_value=[]),
+    ), patch("src.web.routes.photo_loader.deps.channel_service") as mock_svc:
+        mock_svc.return_value.get_my_dialogs = AsyncMock(return_value=[])
+        file_content = BytesIO(b"fake image")
+        resp = await client.post(
+            "/my-telegram/photos/send",
+            data={
+                "phone": "+1234567890",
+                "target_dialog_id": "not_a_number",
+            },
+            files={"photos": ("test.jpg", file_content, "image/jpeg")},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        assert "error=photo_target_invalid" in resp.headers["location"]
+
+
+@pytest.mark.asyncio
+async def test_photo_send_no_files(client):
+    """Test photo send with empty persisted files."""
+    from io import BytesIO
+
+    with patch(
+        "src.web.routes.photo_loader._persist_uploads",
+        AsyncMock(return_value=[]),
+    ), patch("src.web.routes.photo_loader.deps.channel_service") as mock_svc, patch(
+        "src.web.routes.photo_loader.deps.get_photo_task_service"
+    ) as mock_task_svc:
+        mock_svc.return_value.get_my_dialogs = AsyncMock(
+            return_value=[{"channel_id": 200, "title": "Dialog", "channel_type": "channel"}]
+        )
+        mock_task_svc.return_value.send_now = AsyncMock()
+        file_content = BytesIO(b"fake image")
+        resp = await client.post(
+            "/my-telegram/photos/send",
+            data={
+                "phone": "+1234567890",
+                "target_dialog_id": "200",
+            },
+            files={"photos": ("test.jpg", file_content, "image/jpeg")},
+            follow_redirects=False,
+        )
+        # Should succeed (files are persisted as empty list)
+        assert resp.status_code == 303
+
+
+@pytest.mark.asyncio
+async def test_photo_schedule_missing_target(client):
+    """Test photo schedule with missing target."""
+    from io import BytesIO
+
+    # Schedule requires photos as File(...)
+    file_content = BytesIO(b"fake image")
+    resp = await client.post(
+        "/my-telegram/photos/schedule",
+        data={
+            "phone": "+1234567890",
+            "schedule_at": "2025-12-31T12:00:00",
+        },
+        files={"photos": ("test.jpg", file_content, "image/jpeg")},
+        follow_redirects=False,
+    )
+    # Missing target_dialog_id returns photo_target_required
+    assert resp.status_code == 303
+    assert "error=photo_target_required" in resp.headers["location"]
+
+
+@pytest.mark.asyncio
+async def test_photo_run_due_redirects(client):
+    """Test photo run due redirects."""
+    with patch(
+        "src.web.routes.photo_loader.deps.get_photo_task_service"
+    ) as mock_task_svc, patch(
+        "src.web.routes.photo_loader.deps.get_photo_auto_upload_service"
+    ) as mock_auto_svc:
+        mock_task_svc.return_value.run_due = AsyncMock()
+        mock_auto_svc.return_value.run_due = AsyncMock()
+        resp = await client.post(
+            "/my-telegram/photos/run-due",
+            data={"phone": "+1234567890"},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+
+
+@pytest.mark.asyncio
+async def test_photo_cancel_item_not_found(client):
+    """Test photo cancel item not found."""
+    with patch(
+        "src.web.routes.photo_loader.deps.get_photo_task_service"
+    ) as mock_svc:
+        mock_svc.return_value.cancel_item = AsyncMock(return_value=False)
+        resp = await client.post(
+            "/my-telegram/photos/items/999999/cancel",
+            data={"phone": "+1234567890"},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+
+
+@pytest.mark.asyncio
+async def test_photo_toggle_auto_not_found(client):
+    """Test photo toggle auto job not found."""
+    with patch(
+        "src.web.routes.photo_loader.deps.get_photo_auto_upload_service"
+    ) as mock_svc:
+        mock_svc.return_value.get_job = AsyncMock(return_value=None)
+        resp = await client.post(
+            "/my-telegram/photos/auto/999999/toggle",
+            data={"phone": "+1234567890"},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        assert "error=photo_auto_failed" in resp.headers["location"]
+
+
+@pytest.mark.asyncio
+async def test_photo_delete_auto(client):
+    """Test photo delete auto job."""
+    with patch(
+        "src.web.routes.photo_loader.deps.get_photo_auto_upload_service"
+    ) as mock_svc:
+        mock_svc.return_value.delete_job = AsyncMock()
+        resp = await client.post(
+            "/my-telegram/photos/auto/1/delete",
+            data={"phone": "+1234567890"},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        assert "msg=photo_auto_deleted" in resp.headers["location"]
+
+
+@pytest.mark.asyncio
+async def test_photo_batch_missing_target(client):
+    """Test photo batch with missing target."""
+    resp = await client.post(
+        "/my-telegram/photos/batch",
+        data={
+            "phone": "+1234567890",
+            "manifest_text": "[]",
+        },
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    assert "error=photo_target_required" in resp.headers["location"]
+
+
+@pytest.mark.asyncio
+async def test_photo_auto_missing_target(client):
+    """Test photo auto with missing target."""
+    resp = await client.post(
+        "/my-telegram/photos/auto",
+        data={
+            "phone": "+1234567890",
+            "folder_path": "/tmp/photos",
+            "interval_minutes": "60",
+        },
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    assert "error=photo_target_required" in resp.headers["location"]
