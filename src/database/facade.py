@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
-from importlib import import_module
 from typing import Any
 
 import aiosqlite
@@ -46,15 +45,12 @@ class Database:
         self,
         db_path: str = "data/tg_search.db",
         session_encryption_secret: str | None = None,
-        sqlite_vec_path: str | None = None,
     ):
         self._db_path = db_path
         self._session_encryption_secret = session_encryption_secret
-        self._sqlite_vec_path = sqlite_vec_path or None
         self._connection = DBConnection(db_path)
         self._db: aiosqlite.Connection | None = None
         self._fts_available: bool = True
-        self._vec_available: bool = False
         self._accounts: AccountsRepository | None = None
         self._channels: ChannelsRepository | None = None
         self._messages: MessagesRepository | None = None
@@ -84,63 +80,14 @@ class Database:
         finally:
             await cur.close()
 
-    def _resolve_sqlite_vec_path(self) -> str | None:
-        if self._sqlite_vec_path:
-            return self._sqlite_vec_path
-        try:
-            sqlite_vec = import_module("sqlite_vec")
-        except ImportError:
-            return None
-        loadable_path = getattr(sqlite_vec, "loadable_path", None)
-        if callable(loadable_path):
-            try:
-                resolved = loadable_path()
-            except Exception:
-                logger.exception("Failed to resolve sqlite-vec loadable path")
-                return None
-            return str(resolved) if resolved else None
-        return None
-
-    async def _load_sqlite_vec_extension(self) -> bool:
-        assert self._db is not None
-        extension_path = self._resolve_sqlite_vec_path()
-        if not extension_path:
-            return False
-        enabled = False
-        try:
-            await self._db.enable_load_extension(True)
-            enabled = True
-            await self._db.load_extension(extension_path)
-            logger.info("Loaded sqlite-vec extension from %s", extension_path)
-            return True
-        except AttributeError:
-            logger.warning(
-                "sqlite3 extension loading is not supported in this Python build; sqlite-vec disabled"
-            )
-            return False
-        except Exception:
-            logger.exception("Failed to load sqlite-vec extension from %s", extension_path)
-            return False
-        finally:
-            if enabled:
-                try:
-                    await self._db.enable_load_extension(False)
-                except Exception:
-                    logger.exception("Failed to disable SQLite extension loading")
-
     async def initialize(self) -> None:
         self._db = await self._connection.connect()
-        self._vec_available = await self._load_sqlite_vec_extension()
         await self._db.executescript(SCHEMA_SQL)
         await self._db.commit()
-        self._fts_available = await run_migrations(self._db, vec_available=self._vec_available)
+        self._fts_available = await run_migrations(self._db)
         if not self._fts_available:
             logger.warning(
                 "FTS5 full-text search is unavailable; text queries will use LIKE fallback"
-            )
-        if not self._vec_available:
-            logger.info(
-                "sqlite-vec extension is unavailable; semantic and hybrid search stay disabled"
             )
 
         if not self._session_encryption_secret and await self._has_encrypted_sessions():
@@ -160,7 +107,6 @@ class Database:
         self._messages = MessagesRepository(
             self._db,
             fts_available=self._fts_available,
-            vec_available=self._vec_available,
         )
         self._tasks = CollectionTasksRepository(self._db)
         self._search_log = SearchLogRepository(self._db)
@@ -208,10 +154,6 @@ class Database:
     @property
     def fts_available(self) -> bool:
         return self._fts_available
-
-    @property
-    def vec_available(self) -> bool:
-        return self._vec_available
 
     @property
     def filter_repo(self) -> FilterRepository:

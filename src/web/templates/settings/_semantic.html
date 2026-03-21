@@ -1,19 +1,4 @@
 <div class="mb-4">
-    {% if semantic_vec_available %}
-    <div class="alert alert-info mb-3">
-        Текущая инсталляция умеет загружать legacy `sqlite-vec` backend. Roadmap
-        переводит semantic search на portable SQLite-first backend без
-        зависимости от runtime-загрузки SQLite extensions.
-    </div>
-    {% else %}
-    <div class="alert alert-warning mb-3">
-        Текущий legacy `sqlite-vec` backend недоступен в этой сборке Python/SQLite.
-        Одного `pip install sqlite-vec` недостаточно: нужен Python с поддержкой
-        `enable_load_extension`. Roadmap переводит semantic search на portable
-        backend без этого требования.
-    </div>
-    {% endif %}
-
     {% if request.query_params.get("indexed") %}
     <div class="alert alert-info">
         Проиндексировано сообщений: <strong>{{ request.query_params.get("indexed") }}</strong>
@@ -22,7 +7,7 @@
 
     <dl class="row small mb-0">
         <dt class="col-sm-4">Текущий backend</dt>
-        <dd class="col-sm-8">{{ "legacy sqlite-vec" if semantic_vec_available else "legacy backend unavailable" }}</dd>
+        <dd class="col-sm-8">portable NumPy</dd>
         <dt class="col-sm-4">Индексированных сообщений</dt>
         <dd class="col-sm-8">{{ semantic_embeddings_count }}</dd>
         <dt class="col-sm-4">Размерность embeddings</dt>
@@ -105,7 +90,7 @@
             Перед запуском пересоздать индекс текущего backend
         </label>
     </div>
-    <button type="submit" class="btn btn-outline-primary" {% if not semantic_vec_available %}disabled{% endif %}>
-        Запустить индексацию текущего backend
+    <button type="submit" class="btn btn-outline-primary">
+        Запустить индексацию
     </button>
 </form>

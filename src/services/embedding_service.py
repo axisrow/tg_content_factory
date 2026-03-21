@@ -75,10 +75,6 @@ class EmbeddingService:
         )
 
     async def _get_embeddings(self):
-        if not self._search.vec_available:
-            raise RuntimeError(
-                "Semantic search is unavailable: sqlite-vec extension is not loaded."
-            )
         cfg = await self._runtime_config()
         cache_key = (cfg.provider, cfg.model, cfg.api_key, cfg.base_url)
         if self._embeddings is not None and self._embeddings_key == cache_key:

@@ -583,7 +583,6 @@ class SearchBundle:
     search_log: SearchLogRepository
     channels: ChannelsRepository
     settings: SettingsRepository
-    vec_available: bool = False
 
     @classmethod
     def from_database(cls, db: "Database") -> "SearchBundle":
@@ -593,7 +592,6 @@ class SearchBundle:
             repos.search_log,
             repos.channels,
             repos.settings,
-            db.vec_available,
         )
 
     async def search_messages(

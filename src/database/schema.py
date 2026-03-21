@@ -294,4 +294,9 @@ CREATE TABLE IF NOT EXISTS pipelines (
     is_active INTEGER NOT NULL DEFAULT 1,
     created_at TEXT DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS message_embeddings (
+    message_id INTEGER PRIMARY KEY,
+    embedding  BLOB NOT NULL
+);
 """

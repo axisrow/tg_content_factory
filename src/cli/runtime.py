@@ -22,7 +22,6 @@ async def init_db(config_path: str):
     db = Database(
         config.database.path,
         session_encryption_secret=resolve_session_encryption_secret(config),
-        sqlite_vec_path=config.database.sqlite_vec_path or None,
     )
     await db.initialize()
     return config, db
