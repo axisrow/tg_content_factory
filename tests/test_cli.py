@@ -78,6 +78,18 @@ def _add_message(db: Database, channel_id: int = 100, message_id: int = 1, text:
     )
 
 
+def _query_db(db, sql: str, params: tuple = ()) -> list[dict]:
+    """Read DB state after cli run() has closed the aiosqlite connection."""
+    import sqlite3
+
+    conn = sqlite3.connect(db._db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        return [dict(r) for r in conn.execute(sql, params).fetchall()]
+    finally:
+        conn.close()
+
+
 # ---------------------------------------------------------------------------
 # account
 # ---------------------------------------------------------------------------
@@ -321,6 +333,82 @@ class TestCLIFilter:
         run(_ns(filter_action="precheck"))
         assert "Pre-filter applied" in capsys.readouterr().out
 
+    def test_purge_no_filtered(self, cli_env, capsys):
+        from src.cli.commands.filter import run
+
+        run(_ns(filter_action="purge", pks=None))
+        assert "No filtered channels affected." in capsys.readouterr().out
+
+    def test_purge_filtered_channel(self, cli_env, capsys):
+        ch_pk = _add_channel(cli_env, channel_id=999, title="FilteredCh")
+        asyncio.run(cli_env.set_channel_filtered(ch_pk, True))
+        _add_message(cli_env, channel_id=999, message_id=1, text="to be deleted")
+
+        from src.cli.commands.filter import run
+
+        run(_ns(filter_action="purge", pks=None))
+        out = capsys.readouterr().out
+        assert "1 channels" in out
+        assert "FilteredCh" in out
+
+        rows = _query_db(cli_env, "SELECT COUNT(*) AS cnt FROM messages WHERE channel_id=?", (999,))
+        assert rows[0]["cnt"] == 0  # сообщения удалены
+
+        rows = _query_db(cli_env, "SELECT COUNT(*) AS cnt FROM channels WHERE channel_id=?", (999,))
+        assert rows[0]["cnt"] == 1  # канал остался
+
+    def test_purge_with_pks(self, cli_env, capsys):
+        ch1_pk = _add_channel(cli_env, channel_id=990, title="PurgeCh1")
+        ch2_pk = _add_channel(cli_env, channel_id=991, title="PurgeCh2")
+        asyncio.run(cli_env.set_channel_filtered(ch1_pk, True))
+        asyncio.run(cli_env.set_channel_filtered(ch2_pk, True))
+        _add_message(cli_env, channel_id=990, message_id=1)
+        _add_message(cli_env, channel_id=991, message_id=1)
+
+        from src.cli.commands.filter import run
+
+        run(_ns(filter_action="purge", pks=str(ch1_pk)))
+        out = capsys.readouterr().out
+        assert "PurgeCh1" in out
+        assert "PurgeCh2" not in out
+
+        rows = _query_db(cli_env, "SELECT COUNT(*) AS cnt FROM messages WHERE channel_id=?", (990,))
+        assert rows[0]["cnt"] == 0  # сообщения ch1 удалены
+
+        rows = _query_db(cli_env, "SELECT COUNT(*) AS cnt FROM messages WHERE channel_id=?", (991,))
+        assert rows[0]["cnt"] == 1  # сообщения ch2 остались
+
+    def test_hard_delete_requires_dev_mode(self, cli_env, capsys):
+        from src.cli.commands.filter import run
+
+        run(_ns(filter_action="hard-delete", pks=None, yes=True))
+        assert "dev" in capsys.readouterr().out.lower()
+
+    def test_hard_delete_removes_channel(self, cli_env, capsys):
+        asyncio.run(cli_env.set_setting("agent_dev_mode_enabled", "1"))
+        ch_pk = _add_channel(cli_env, channel_id=888, title="ToDelete")
+        asyncio.run(cli_env.set_channel_filtered(ch_pk, True))
+
+        from src.cli.commands.filter import run
+
+        run(_ns(filter_action="hard-delete", pks=None, yes=True))
+        out = capsys.readouterr().out
+        # _print_result prints channel title when deletion succeeds
+        assert "ToDelete" in out
+        assert "1 channels" in out
+
+        rows = _query_db(cli_env, "SELECT COUNT(*) AS cnt FROM channels WHERE channel_id=?", (888,))
+        assert rows[0]["cnt"] == 0  # канал удалён
+
+    def test_hard_delete_no_filtered(self, cli_env, capsys):
+        asyncio.run(cli_env.set_setting("agent_dev_mode_enabled", "1"))
+        _add_channel(cli_env, channel_id=887, title="NotFiltered")
+
+        from src.cli.commands.filter import run
+
+        run(_ns(filter_action="hard-delete", pks=None, yes=True))
+        assert "No filtered channels to delete." in capsys.readouterr().out
+
 
 # ---------------------------------------------------------------------------
 # search
@@ -562,6 +650,29 @@ class TestCLISearchQuery:
 
         run(_sq_ns(search_query_action="delete", id=sq_id))
         assert "Deleted search query" in capsys.readouterr().out
+
+    def test_stats_no_data(self, cli_env, capsys):
+        sq_id = _add_search_query(cli_env, query="bitcoin")
+        from src.cli.commands.search_query import run
+
+        run(_sq_ns(search_query_action="stats", id=sq_id, days=30))
+        assert "No stats found." in capsys.readouterr().out
+
+    def test_stats_with_data(self, cli_env, capsys):
+        from src.database.bundles import SearchQueryBundle
+
+        sq_id = _add_search_query(cli_env, query="bitcoin")
+
+        async def _record():
+            bundle = SearchQueryBundle.from_database(cli_env)
+            await bundle.record_stat(sq_id, 42)
+
+        asyncio.run(_record())
+
+        from src.cli.commands.search_query import run
+
+        run(_sq_ns(search_query_action="stats", id=sq_id, days=30))
+        assert "42" in capsys.readouterr().out
 
 
 # ---------------------------------------------------------------------------
