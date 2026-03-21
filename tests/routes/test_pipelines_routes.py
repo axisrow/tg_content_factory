@@ -133,3 +133,69 @@ async def test_edit_pipeline(client):
     )
     assert resp.status_code == 303
     assert "msg=pipeline_edited" in resp.headers["location"]
+
+
+# === New tests ===
+
+
+@pytest.mark.asyncio
+async def test_run_pipeline_not_found(client):
+    """Test run pipeline with invalid ID."""
+    resp = await client.post("/pipelines/999999/run", follow_redirects=False)
+    assert resp.status_code == 303
+    assert "error=pipeline_invalid" in resp.headers["location"]
+
+
+@pytest.mark.asyncio
+async def test_run_pipeline_enqueues(client):
+    """Test run pipeline enqueues generation."""
+    from unittest.mock import patch
+
+    await client.post("/pipelines/add", data=_ADD_DATA)
+
+    with patch("src.web.routes.pipelines.deps.pipeline_service") as mock_svc:
+        mock_svc.return_value.get = AsyncMock(
+            return_value=MagicMock(id=1, is_active=True)
+        )
+        with patch("src.web.routes.pipelines.deps.get_task_enqueuer") as mock_enq:
+            mock_enq.return_value.enqueue_pipeline_run = AsyncMock()
+            resp = await client.post("/pipelines/1/run", follow_redirects=False)
+            assert resp.status_code == 303
+            assert "msg=pipeline_run_enqueued" in resp.headers["location"]
+
+
+@pytest.mark.asyncio
+async def test_run_pipeline_failure(client):
+    """Test run pipeline handles failure."""
+    from unittest.mock import patch
+
+    await client.post("/pipelines/add", data=_ADD_DATA)
+
+    with patch("src.web.routes.pipelines.deps.pipeline_service") as mock_svc:
+        mock_svc.return_value.get = AsyncMock(
+            return_value=MagicMock(id=1, is_active=True)
+        )
+        with patch("src.web.routes.pipelines.deps.get_task_enqueuer") as mock_enq:
+            mock_enq.return_value.enqueue_pipeline_run = AsyncMock(
+                side_effect=Exception("Queue error")
+            )
+            resp = await client.post("/pipelines/1/run", follow_redirects=False)
+            assert resp.status_code == 303
+            assert "error=pipeline_run_failed" in resp.headers["location"]
+
+
+@pytest.mark.asyncio
+async def test_generate_page_renders(client):
+    """Test generate page renders."""
+    await client.post("/pipelines/add", data=_ADD_DATA)
+
+    resp = await client.get("/pipelines/1/generate")
+    assert resp.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_generate_page_not_found(client):
+    """Test generate page with invalid pipeline."""
+    resp = await client.get("/pipelines/999999/generate", follow_redirects=False)
+    assert resp.status_code == 303
+    assert "error=pipeline_invalid" in resp.headers["location"]

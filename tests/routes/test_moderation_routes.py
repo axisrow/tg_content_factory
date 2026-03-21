@@ -65,6 +65,7 @@ async def client(tmp_path):
         follow_redirects=True,
         headers={"Authorization": f"Basic {auth_header}", "Origin": "http://test"},
     ) as c:
+        c._transport_app = app
         yield c
 
     await db.close()
@@ -102,7 +103,7 @@ async def test_moderation_page_renders_empty_queue(client):
 
 @pytest.mark.asyncio
 async def test_publish_run_uses_publish_service(client, monkeypatch):
-    db = client._transport.app.state.db
+    db = client._transport_app.state.db
     pipeline_id = await _create_pipeline(db, publish_mode=PipelinePublishMode.MODERATED)
     run_id = await db.repos.generation_runs.create_run(pipeline_id, "prompt-template")
     await db.repos.generation_runs.save_result(run_id, "Generated post")
@@ -113,7 +114,7 @@ async def test_publish_run_uses_publish_service(client, monkeypatch):
     class FakePublishService:
         def __init__(self, injected_db, pool):
             assert injected_db is db
-            assert pool is client._transport.app.state.pool
+            assert pool is client._transport_app.state.pool
 
         async def publish_run(self, run, pipeline):
             observed["run_id"] = run.id
@@ -130,7 +131,7 @@ async def test_publish_run_uses_publish_service(client, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_publish_run_rejects_unapproved_run(client, monkeypatch):
-    db = client._transport.app.state.db
+    db = client._transport_app.state.db
     pipeline_id = await _create_pipeline(db, publish_mode=PipelinePublishMode.MODERATED)
     run_id = await db.repos.generation_runs.create_run(pipeline_id, "prompt-template")
     await db.repos.generation_runs.save_result(run_id, "Generated post")
@@ -151,3 +152,136 @@ async def test_publish_run_rejects_unapproved_run(client, monkeypatch):
     assert resp.status_code == 303
     assert "error=run_not_approved" in resp.headers["location"]
     fake_publish.assert_not_awaited()
+
+
+# === New tests ===
+
+
+async def _create_pipeline_and_run(
+    db: Database, publish_mode: PipelinePublishMode = PipelinePublishMode.MODERATED
+) -> tuple[int, int]:
+    """Create pipeline and run, return (pipeline_id, run_id)."""
+    pipeline_id = await _create_pipeline(db, publish_mode=publish_mode)
+    run_id = await db.repos.generation_runs.create_run(pipeline_id, "template")
+    await db.repos.generation_runs.save_result(run_id, "Generated content")
+    return pipeline_id, run_id
+
+
+@pytest.mark.asyncio
+async def test_view_run_renders(client):
+    """Test view run renders page."""
+    db = client._transport_app.state.db
+    _, run_id = await _create_pipeline_and_run(db)
+
+    resp = await client.get(f"/moderation/{run_id}/view")
+    assert resp.status_code == 200
+    assert "Generated content" in resp.text
+
+
+@pytest.mark.asyncio
+async def test_view_run_not_found(client):
+    """Test view run with invalid ID redirects."""
+    resp = await client.get("/moderation/999999/view", follow_redirects=False)
+    assert resp.status_code == 303
+    assert "error=run_not_found" in resp.headers["location"]
+
+
+@pytest.mark.asyncio
+async def test_approve_run(client):
+    """Test approve run sets status."""
+    db = client._transport_app.state.db
+    _, run_id = await _create_pipeline_and_run(db)
+
+    resp = await client.post(f"/moderation/{run_id}/approve", follow_redirects=False)
+    assert resp.status_code == 303
+    assert "msg=run_approved" in resp.headers["location"]
+
+    run = await db.repos.generation_runs.get(run_id)
+    assert run.moderation_status == "approved"
+
+
+@pytest.mark.asyncio
+async def test_approve_run_not_found(client):
+    """Test approve run with invalid ID redirects."""
+    resp = await client.post("/moderation/999999/approve", follow_redirects=False)
+    assert resp.status_code == 303
+    assert "error=run_not_found" in resp.headers["location"]
+
+
+@pytest.mark.asyncio
+async def test_reject_run(client):
+    """Test reject run sets status."""
+    db = client._transport_app.state.db
+    _, run_id = await _create_pipeline_and_run(db)
+
+    resp = await client.post(f"/moderation/{run_id}/reject", follow_redirects=False)
+    assert resp.status_code == 303
+    assert "msg=run_rejected" in resp.headers["location"]
+
+    run = await db.repos.generation_runs.get(run_id)
+    assert run.moderation_status == "rejected"
+
+
+@pytest.mark.asyncio
+async def test_reject_run_not_found(client):
+    """Test reject run with invalid ID redirects."""
+    resp = await client.post("/moderation/999999/reject", follow_redirects=False)
+    assert resp.status_code == 303
+    assert "error=run_not_found" in resp.headers["location"]
+
+
+@pytest.mark.asyncio
+async def test_bulk_approve(client):
+    """Test bulk approve sets status for multiple runs."""
+    db = client._transport_app.state.db
+    _, run_id_1 = await _create_pipeline_and_run(db)
+    _, run_id_2 = await _create_pipeline_and_run(db)
+
+    resp = await client.post(
+        "/moderation/bulk-approve",
+        data={"run_ids": [str(run_id_1), str(run_id_2)]},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    assert "msg=runs_approved" in resp.headers["location"]
+
+    run_1 = await db.repos.generation_runs.get(run_id_1)
+    run_2 = await db.repos.generation_runs.get(run_id_2)
+    assert run_1.moderation_status == "approved"
+    assert run_2.moderation_status == "approved"
+
+
+@pytest.mark.asyncio
+async def test_bulk_reject(client):
+    """Test bulk reject sets status for multiple runs."""
+    db = client._transport_app.state.db
+    _, run_id_1 = await _create_pipeline_and_run(db)
+    _, run_id_2 = await _create_pipeline_and_run(db)
+
+    resp = await client.post(
+        "/moderation/bulk-reject",
+        data={"run_ids": [str(run_id_1), str(run_id_2)]},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    assert "msg=runs_rejected" in resp.headers["location"]
+
+    run_1 = await db.repos.generation_runs.get(run_id_1)
+    run_2 = await db.repos.generation_runs.get(run_id_2)
+    assert run_1.moderation_status == "rejected"
+    assert run_2.moderation_status == "rejected"
+
+
+@pytest.mark.asyncio
+async def test_bulk_approve_empty(client):
+    """Test bulk approve with no IDs doesn't crash."""
+    resp = await client.post("/moderation/bulk-approve", follow_redirects=False)
+    assert resp.status_code == 303
+    assert "msg=runs_approved" in resp.headers["location"]
+
+
+@pytest.mark.asyncio
+async def test_moderation_page_with_pipeline_filter(client):
+    """Test moderation page with pipeline filter."""
+    resp = await client.get("/moderation/?pipeline_id=1")
+    assert resp.status_code == 200
