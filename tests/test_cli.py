@@ -12,7 +12,9 @@ import pytest
 
 from src.config import AppConfig
 from src.database import Database
-from src.models import Account, Channel, Message
+from src.models import Account, Message
+from tests.helpers import cli_add_channel as _add_channel
+from tests.helpers import cli_ns as _ns
 
 NOW = datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
 
@@ -33,19 +35,9 @@ def cli_env_with_pool(cli_env):
         yield cli_env
 
 
-def _ns(**kwargs) -> argparse.Namespace:
-    """Build Namespace with defaults."""
-    defaults = {"config": "config.yaml"}
-    defaults.update(kwargs)
-    return argparse.Namespace(**defaults)
-
-
 def _add_account(db: Database, phone: str = "+70001112233") -> int:
     return asyncio.run(db.add_account(Account(phone=phone, session_string="sess")))
 
-
-def _add_channel(db: Database, channel_id: int = 100, title: str = "TestCh") -> int:
-    return asyncio.run(db.add_channel(Channel(channel_id=channel_id, title=title)))
 
 
 def _add_message(db: Database, channel_id: int = 100, message_id: int = 1, text: str = "hello"):
@@ -376,7 +368,7 @@ class TestCLIFilter:
         assert "1 channels" in out
 
         rows = _query_db(cli_env, "SELECT COUNT(*) AS cnt FROM channels WHERE channel_id=?", (888,))
-        assert rows[0]["cnt"] == 0  # канал удалён
+        assert rows[0]["cnt"] == 0  # channel deleted
 
     def test_hard_delete_no_filtered(self, cli_env, capsys):
         asyncio.run(cli_env.set_setting("agent_dev_mode_enabled", "1"))

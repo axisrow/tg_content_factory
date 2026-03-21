@@ -2,24 +2,15 @@
 
 from __future__ import annotations
 
-import argparse
 import asyncio
 from datetime import datetime, timezone
 
 from src.database import Database
-from src.models import Channel, Message
+from src.models import Message
+from tests.helpers import cli_add_channel as _add_channel
+from tests.helpers import cli_ns as _ns
 
 NOW = datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
-
-
-def _ns(**kwargs) -> argparse.Namespace:
-    defaults = {"config": "config.yaml"}
-    defaults.update(kwargs)
-    return argparse.Namespace(**defaults)
-
-
-def _add_channel(db: Database, channel_id: int = 100, title: str = "TestCh") -> int:
-    return asyncio.run(db.add_channel(Channel(channel_id=channel_id, title=title)))
 
 
 def _insert_message(db: Database, msg: Message) -> None:

@@ -338,9 +338,7 @@ async def _check_pipeline_list(db: Database) -> CheckResult:
 
 async def _check_notification_bot(db: Database) -> CheckResult:
     try:
-        cur = await db._db.execute("SELECT COUNT(*) FROM notification_bots")
-        row = await cur.fetchone()
-        count = row[0] if row else 0
+        count = await db.repos.notification_bots.count()
         detail = f"{count} configured" if count else "none configured"
         return CheckResult("notification_bot", Status.PASS, detail)
     except Exception as exc:
