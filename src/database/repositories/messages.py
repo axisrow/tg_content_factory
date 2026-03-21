@@ -477,6 +477,7 @@ class MessagesRepository:
         max_length: int | None = None,
         topic_id: int | None = None,
         limit: int = 100,
+        max_candidates: int = 50_000,
     ) -> list[tuple[int, float]]:
         dimensions = await self.get_embedding_dimensions()
         if dimensions is None:
@@ -502,8 +503,9 @@ class MessagesRepository:
             JOIN messages m ON m.id = e.message_id
             LEFT JOIN channels c ON m.channel_id = c.channel_id
             WHERE {where}
+            LIMIT ?
             """,
-            params,
+            (*params, max_candidates),
         )
         rows = await cur.fetchall()
         if not rows:
