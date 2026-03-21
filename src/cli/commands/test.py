@@ -717,8 +717,6 @@ async def _run_warm_dialog_cache_step(pool) -> CheckResult:
             except TelegramLiveStepSkipError as stop_exc:
                 return CheckResult(check_name, Status.SKIP, str(stop_exc))
             continue
-        except TimeoutError as exc:
-            return CheckResult(check_name, Status.FAIL, _format_exception(exc))
         except Exception as exc:
             return CheckResult(check_name, Status.FAIL, _format_exception(exc))
         finally:

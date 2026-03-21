@@ -9,6 +9,8 @@ from unittest.mock import patch
 
 import pytest
 
+pytestmark = pytest.mark.aiosqlite_serial
+
 from src.config import AppConfig
 from src.database import Database
 from src.models import Channel, Message
