@@ -90,9 +90,6 @@ async def test_search_local_maps_channel_title(db):
 
 @pytest.mark.asyncio
 async def test_search_semantic_with_results(db, monkeypatch):
-    if not db.vec_available:
-        pytest.skip("sqlite-vec extension is unavailable in this environment")
-
     await db.insert_messages_batch(
         [
             Message(

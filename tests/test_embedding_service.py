@@ -28,8 +28,6 @@ class FakeEmbeddings:
 
 @pytest.mark.asyncio
 async def test_embedding_service_indexes_pending_messages_incrementally(db, monkeypatch):
-    if not db.vec_available:
-        pytest.skip("sqlite-vec extension is unavailable in this environment")
 
     await db.insert_messages_batch(
         [
@@ -78,8 +76,6 @@ async def test_embedding_service_indexes_pending_messages_incrementally(db, monk
 
 @pytest.mark.asyncio
 async def test_hybrid_search_fuses_keyword_and_semantic_candidates(db):
-    if not db.vec_available:
-        pytest.skip("sqlite-vec extension is unavailable in this environment")
 
     await db.insert_messages_batch(
         [
