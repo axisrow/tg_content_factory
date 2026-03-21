@@ -25,8 +25,22 @@ from src.telegram.flood_wait import FloodWaitInfo, HandledFloodWaitError, run_wi
 logger = logging.getLogger(__name__)
 
 TELEGRAM_TIMEOUT = 30
+TELEGRAM_DIALOG_TIMEOUT = 120
 TELEGRAM_SEARCH_TIMEOUT = 120
 SHORT_FLOOD_WAIT_RETRY_SEC = 30
+# keep in sync with _run_telegram_live_checks check ordering
+_TG_CHECKS_AFTER_POOL = [
+    "tg_users_info",
+    "tg_get_dialogs",
+    "tg_resolve_channel",
+    "tg_warm_dialog_cache",
+    "tg_iter_messages",
+    "tg_channel_stats",
+    "tg_search_my_chats",
+    "tg_search_in_channel",
+    "tg_search_premium",
+    "tg_search_quota",
+]
 # src/cli/commands/test.py → src/cli/commands → src/cli → src → repo root
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SERIAL_PYTEST_COMMAND = (sys.executable, "-m", "pytest", "tests", "-q")
@@ -312,6 +326,31 @@ async def _check_recent_searches(db) -> CheckResult:
         return CheckResult("recent_searches", Status.PASS, f"{len(searches)} entries")
     except Exception as exc:
         return CheckResult("recent_searches", Status.FAIL, str(exc))
+
+
+async def _check_pipeline_list(db: Database) -> CheckResult:
+    try:
+        pipelines = await db.repos.content_pipelines.get_all()
+        return CheckResult("pipeline_list", Status.PASS, f"{len(pipelines)} pipelines")
+    except Exception as exc:
+        return CheckResult("pipeline_list", Status.FAIL, str(exc))
+
+
+async def _check_notification_bot(db: Database) -> CheckResult:
+    try:
+        count = await db.repos.notification_bots.count()
+        detail = f"{count} configured" if count else "none configured"
+        return CheckResult("notification_bot", Status.PASS, detail)
+    except Exception as exc:
+        return CheckResult("notification_bot", Status.FAIL, str(exc))
+
+
+async def _check_photo_tasks(db: Database) -> CheckResult:
+    try:
+        batches = await db.repos.photo_loader.list_batches()
+        return CheckResult("photo_tasks", Status.PASS, f"{len(batches)} batches")
+    except Exception as exc:
+        return CheckResult("photo_tasks", Status.FAIL, str(exc))
 
 
 # ---------------------------------------------------------------------------
@@ -660,6 +699,7 @@ async def _run_warm_dialog_cache_step(pool) -> CheckResult:
         try:
             await _tg_call(
                 session.warm_dialog_cache(),
+                TELEGRAM_DIALOG_TIMEOUT,
                 pool=pool,
                 phone=phone,
                 check_name=check_name,
@@ -676,8 +716,15 @@ async def _run_warm_dialog_cache_step(pool) -> CheckResult:
             except TelegramLiveStepSkipError as stop_exc:
                 return CheckResult(check_name, Status.SKIP, str(stop_exc))
             continue
+        except Exception as exc:
+            return CheckResult(check_name, Status.FAIL, _format_exception(exc))
         finally:
             await pool.release_client(phone)
+
+
+def _skip_remaining_tg_checks(results: list, reason: str, names: list[str]) -> None:
+    for name in names:
+        results.append(CheckResult(name, Status.SKIP, reason))
 
 
 async def _run_telegram_live_checks(config_path: str) -> list[CheckResult]:
@@ -706,6 +753,7 @@ async def _run_telegram_live_checks(config_path: str) -> list[CheckResult]:
         clients = pool.clients if hasattr(pool, "clients") else {}
         if not clients:
             results.append(CheckResult("tg_pool_init", Status.SKIP, "No accounts connected"))
+            _skip_remaining_tg_checks(results, "pool init skipped", _TG_CHECKS_AFTER_POOL)
             await _cleanup_telegram(pool, copy_db, tmp_path, results)
             return results
         await _disable_flood_auto_sleep(pool)
@@ -714,10 +762,12 @@ async def _run_telegram_live_checks(config_path: str) -> list[CheckResult]:
         )
     except HandledFloodWaitError as exc:
         results.append(CheckResult("tg_pool_init", Status.SKIP, exc.info.detail))
+        _skip_remaining_tg_checks(results, "pool init skipped", _TG_CHECKS_AFTER_POOL)
         await _cleanup_telegram(pool, copy_db, tmp_path, results)
         return results
     except Exception as exc:
         results.append(CheckResult("tg_pool_init", Status.FAIL, _format_exception(exc)))
+        _skip_remaining_tg_checks(results, "pool init failed", _TG_CHECKS_AFTER_POOL)
         await _cleanup_telegram(pool, copy_db, tmp_path, results)
         return results
 
@@ -1063,6 +1113,9 @@ def run(args: argparse.Namespace) -> None:
                     _check_local_search(db),
                     _check_collection_tasks(db),
                     _check_recent_searches(db),
+                    _check_pipeline_list(db),
+                    _check_notification_bot(db),
+                    _check_photo_tasks(db),
                 ]
                 for coro in db_checks:
                     check_result = await coro

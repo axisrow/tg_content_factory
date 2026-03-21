@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import argparse
+import asyncio
 import base64
 import hashlib
 from contextlib import asynccontextmanager
@@ -18,7 +20,7 @@ from httpx import ASGITransport, AsyncClient
 from src.collection_queue import CollectionQueue
 from src.config import AppConfig, TelegramRuntimeConfig
 from src.database import Database
-from src.models import Account
+from src.models import Account, Channel
 from src.scheduler.manager import SchedulerManager
 from src.search.ai_search import AISearchEngine
 from src.search.engine import SearchEngine
@@ -26,6 +28,18 @@ from src.telegram.auth import TelegramAuth
 from src.telegram.client_pool import ClientPool
 from src.telegram.collector import Collector
 from src.web.app import create_app
+
+
+def cli_ns(**kwargs) -> argparse.Namespace:
+    """Build a CLI Namespace with config default for use in CLI tests."""
+    defaults = {"config": "config.yaml"}
+    defaults.update(kwargs)
+    return argparse.Namespace(**defaults)
+
+
+def cli_add_channel(db: Database, channel_id: int = 100, title: str = "TestCh") -> int:
+    """Synchronously insert a channel row and return its PK."""
+    return asyncio.run(db.add_channel(Channel(channel_id=channel_id, title=title)))
 
 
 class AsyncIterEmpty:
