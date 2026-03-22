@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import time
 from collections import deque
 from typing import TypedDict
 
@@ -22,7 +21,3 @@ class TimingBuffer:
 
     def get_records(self) -> list[TimingRecord]:
         return list(self._records)
-
-    @staticmethod
-    def now() -> str:
-        return time.strftime("%H:%M:%S")
