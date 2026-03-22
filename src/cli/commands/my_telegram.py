@@ -149,7 +149,10 @@ def run(args: argparse.Namespace) -> None:
                     )
                 )
                 channel = result.chats[0] if result.chats else None
-                channel_id = getattr(channel, "id", None)
+                if channel is None:
+                    print("Error: Telegram returned empty response — channel may not have been created.")
+                    return
+                channel_id = channel.id
                 channel_username = getattr(channel, "username", None) or ""
                 print(f"Created channel id={channel_id} title={args.title!r}")
                 if args.username and channel_id:

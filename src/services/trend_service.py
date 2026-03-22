@@ -52,27 +52,37 @@ class TrendService:
 
         Uses a simple word-frequency approach on the messages table so it works
         even without FTS5.  Short words (<4 chars) and stop-words are skipped.
+        Processes rows in batches to avoid loading all texts into memory at once.
         """
-        rows = await self._db.execute_fetchall(
-            """
-            SELECT text FROM messages
-            WHERE date >= date('now', ?)
-              AND COALESCE(TRIM(text), '') <> ''
-            """,
-            (f"-{days} days",),
-        )
+        batch_size = 5000
+        offset = 0
         word_counts: dict[str, int] = {}
         stop_words = {
             "и", "в", "на", "с", "по", "не", "это", "то", "что",
             "как", "из", "за", "от", "для", "или", "но", "а",
             "the", "and", "is", "in", "to", "of", "a", "for",
         }
-        for row in rows:
-            text = row["text"] or ""
-            for word in text.split():
-                w = word.lower().strip(".,!?:;\"'()[]{}–—")
-                if len(w) >= 4 and w not in stop_words and w.isalpha():
-                    word_counts[w] = word_counts.get(w, 0) + 1
+        while True:
+            rows = await self._db.execute_fetchall(
+                """
+                SELECT text FROM messages
+                WHERE date >= date('now', ?)
+                  AND COALESCE(TRIM(text), '') <> ''
+                LIMIT ? OFFSET ?
+                """,
+                (f"-{days} days", batch_size, offset),
+            )
+            if not rows:
+                break
+            for row in rows:
+                text = row["text"] or ""
+                for word in text.split():
+                    w = word.lower().strip(".,!?:;\"'()[]{}–—")
+                    if len(w) >= 4 and w not in stop_words and w.isalpha():
+                        word_counts[w] = word_counts.get(w, 0) + 1
+            if len(rows) < batch_size:
+                break
+            offset += batch_size
         sorted_words = sorted(word_counts.items(), key=lambda x: x[1], reverse=True)
         return [TrendingTopic(keyword=w, count=c) for w, c in sorted_words[:limit]]
 

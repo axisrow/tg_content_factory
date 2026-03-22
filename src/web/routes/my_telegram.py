@@ -118,7 +118,9 @@ async def create_channel(
             )
         )
         channel = result.chats[0] if result.chats else None
-        channel_id = getattr(channel, "id", None)
+        if channel is None:
+            raise RuntimeError("Telegram returned empty response — channel may not have been created")
+        channel_id = channel.id
         channel_username = getattr(channel, "username", None) or ""
 
         if username.strip() and channel_id:
