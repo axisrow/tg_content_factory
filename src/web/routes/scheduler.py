@@ -159,12 +159,14 @@ async def start_scheduler(request: Request):
     if getattr(request.app.state, "shutting_down", False):
         return RedirectResponse(url="/scheduler?error=shutting_down", status_code=303)
     await deps.scheduler_service(request).start()
+    await deps.get_db(request).set_setting("scheduler_autostart", "1")
     return RedirectResponse(url="/scheduler?msg=scheduler_started", status_code=303)
 
 
 @router.post("/stop")
 async def stop_scheduler(request: Request):
     await deps.scheduler_service(request).stop()
+    await deps.get_db(request).set_setting("scheduler_autostart", "0")
     return RedirectResponse(url="/scheduler?msg=scheduler_stopped", status_code=303)
 
 
