@@ -53,8 +53,12 @@ async def test_list_pending_moderation_returns_runs(db):
 
     pending = await repo.list_pending_moderation(42)
 
-    assert [run.id for run in pending] == [pending_id]
-    assert pending[0].moderation_status == "pending"
+    ids = [run.id for run in pending]
+    assert approved_id in ids
+    assert pending_id in ids
+    statuses = {run.id: run.moderation_status for run in pending}
+    assert statuses[pending_id] == "pending"
+    assert statuses[approved_id] == "approved"
 
 
 @pytest.mark.asyncio

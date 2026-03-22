@@ -109,6 +109,7 @@ def register_routes(app: FastAPI) -> None:
     from src.web.routes.agent import router as agent_router
     from src.web.routes.analytics import router as analytics_router
     from src.web.routes.auth import router as auth_router
+    from src.web.routes.calendar import router as calendar_router
     from src.web.routes.channel_collection import router as channel_collection_router
     from src.web.routes.channels import router as channels_router
     from src.web.routes.dashboard import router as dashboard_router
@@ -125,6 +126,7 @@ def register_routes(app: FastAPI) -> None:
     from src.web.routes.settings import router as settings_router
 
     app.include_router(agent_router, prefix="/agent")
+    app.include_router(calendar_router, prefix="/calendar")
     app.include_router(analytics_router, prefix="/analytics")
     app.include_router(moderation_router, prefix="/moderation")
     app.include_router(search_router)
