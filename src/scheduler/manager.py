@@ -270,7 +270,9 @@ class SchedulerManager:
 
         existing_jobs = self._scheduler.get_jobs()
         for job in existing_jobs:
-            if job.id.startswith("sq_") and job.id not in active_ids:
+            if job.id.startswith("sq_") and (
+                job.id not in active_ids or not await self.is_job_enabled(job.id)
+            ):
                 self._scheduler.remove_job(job.id)
                 logger.info("Removed search query job %s", job.id)
 
@@ -303,10 +305,14 @@ class SchedulerManager:
 
         existing_jobs = self._scheduler.get_jobs()
         for job in existing_jobs:
-            if job.id.startswith("pipeline_run_") and job.id not in active_ids:
+            if job.id.startswith("pipeline_run_") and (
+                job.id not in active_ids or not await self.is_job_enabled(job.id)
+            ):
                 self._scheduler.remove_job(job.id)
                 logger.info("Removed pipeline job %s", job.id)
-            if job.id.startswith("content_generate_") and job.id not in active_gen_ids:
+            if job.id.startswith("content_generate_") and (
+                job.id not in active_gen_ids or not await self.is_job_enabled(job.id)
+            ):
                 self._scheduler.remove_job(job.id)
                 logger.info("Removed content_generate job %s", job.id)
 

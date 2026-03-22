@@ -201,6 +201,8 @@ async def set_job_interval(request: Request, job_id: str):
         return RedirectResponse(url="/scheduler?error=shutting_down", status_code=303)
     if not _VALID_JOB_ID_RE.match(job_id):
         return RedirectResponse(url="/scheduler?error=invalid_job", status_code=303)
+    if job_id in ("photo_due", "photo_auto"):
+        return RedirectResponse(url="/scheduler?error=invalid_job", status_code=303)
     form = await request.form()
     try:
         minutes = int(form["interval_minutes"])
@@ -222,9 +224,11 @@ async def set_job_interval(request: Request, job_id: str):
     elif job_id.startswith(("pipeline_run_", "content_generate_")):
         pid_str = job_id.removeprefix("pipeline_run_").removeprefix("content_generate_")
         pid = int(pid_str)
-        await db.repos.content_pipelines.update_generate_interval(pid, minutes)
-        if sched.is_running:
-            await sched.sync_pipeline_jobs()
+        pipeline = await db.repos.content_pipelines.get_by_id(pid)
+        if pipeline:
+            await db.repos.content_pipelines.update_generate_interval(pid, minutes)
+            if sched.is_running:
+                await sched.sync_pipeline_jobs()
     return RedirectResponse(url="/scheduler?msg=interval_updated", status_code=303)
 
 
