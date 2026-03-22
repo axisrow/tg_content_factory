@@ -1,0 +1,38 @@
+{
+  "tag": "v0.1.17",
+  "title": "Content Pipelines, Image Generation & Auto-Publish",
+  "highlights": [
+    {
+      "title": "Image Generation Adapters",
+      "description": "HTTP adapters for Together AI (FLUX), HuggingFace (SDXL), OpenAI (DALL-E), and Replicate with auto-registration from env vars and provider:model_id routing."
+    },
+    {
+      "title": "ContentGenerationService",
+      "description": "Orchestration layer for pipeline-driven LLM text generation: resolve prompt template, fetch RAG source messages, call provider, and persist results."
+    },
+    {
+      "title": "Auto-Publish Mode",
+      "description": "Pipelines can now auto-publish generated content to target channels without manual moderation approval."
+    },
+    {
+      "title": "PublishService",
+      "description": "Transport layer to send text and media to Telegram target channels via the client pool."
+    },
+    {
+      "title": "Moderation Queue UI",
+      "description": "Web UI for reviewing, editing, approving and rejecting generated drafts before publishing."
+    },
+    {
+      "title": "DeepAgents Backend",
+      "description": "Researcher-writer agent backend for content generation using multi-step reasoning pipeline."
+    },
+    {
+      "title": "CLI Pipeline Commands",
+      "description": "Full CLI coverage for pipeline operations: generate, publish, queue management."
+    },
+    {
+      "title": "Scheduler Cache",
+      "description": "Cache scheduler jobs list with 5s TTL to eliminate N+1 queries in page context."
+    }
+  ]
+}
