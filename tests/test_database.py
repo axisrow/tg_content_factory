@@ -175,8 +175,11 @@ async def test_migrate_sessions_rollback_on_bad_row(tmp_path):
     await db.close()
 
     encrypted_db = Database(db_path, session_encryption_secret="some-key")
-    with pytest.raises(RuntimeError, match="Failed to migrate session"):
-        await encrypted_db.initialize()
+    try:
+        with pytest.raises(RuntimeError, match="Failed to migrate session"):
+            await encrypted_db.initialize()
+    finally:
+        await encrypted_db.close()
 
     # Verify rollback: both rows should be unchanged
     conn = await aiosqlite.connect(db_path)

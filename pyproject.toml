@@ -91,6 +91,8 @@ timeout = 30
 addopts = "--dist=loadgroup"
 filterwarnings = [
     "ignore:Exception ignored in.*_SyncHttpxClientWrapper:pytest.PytestUnraisableExceptionWarning",
+    "ignore:unclosed event loop:ResourceWarning",
+    "ignore:Exception in thread.*_connection_worker_thread:pytest.PytestUnhandledThreadExceptionWarning",
 ]
 markers = [
     "native_backend_allowed: test intentionally exercises explicit native Telethon allowlist flows",
