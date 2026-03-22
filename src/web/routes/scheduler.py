@@ -1,4 +1,5 @@
 import logging
+from datetime import timezone
 
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -227,7 +228,8 @@ async def dry_run_notifications(request: Request):
     # Find the last completed channel_collect task to determine the time window
     last_task = await db.repos.tasks.get_last_completed_collect_task()
     if last_task and last_task.completed_at:
-        since = last_task.completed_at.isoformat()
+        # SQLite datetime('now') stores as 'YYYY-MM-DD HH:MM:SS' (no T, no tz)
+        since = last_task.completed_at.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
     else:
         since = None
 
