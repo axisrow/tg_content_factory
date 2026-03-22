@@ -1,9 +1,15 @@
 from __future__ import annotations
 
+import asyncio
 import os
+import uuid
+from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, Optional
 
 import aiohttp
+
+# Type alias for image generation adapters
+ImageAdapter = Callable[[str, str], Awaitable[Optional[str]]]
 
 
 async def _parse_json_for_text(data: Any) -> str:
@@ -232,3 +238,136 @@ def make_ollama(
 
 def make_huggingface(api_token: str) -> Callable[..., Awaitable[str]]:
     return make_huggingface_adapter(api_token)
+
+
+# ── Image generation adapters ──────────────────────────────────────────
+
+
+def make_together_image_adapter(api_key: str) -> ImageAdapter:
+    """Together AI image generation via FLUX models."""
+
+    async def adapter(prompt: str, model: str = "") -> Optional[str]:
+        url = "https://api.together.xyz/v1/images/generations"
+        headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+        payload: Dict[str, Any] = {
+            "model": model or "black-forest-labs/FLUX.1-schnell",
+            "prompt": prompt,
+            "n": 1,
+            "steps": 4,
+        }
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, json=payload, headers=headers) as resp:
+                if resp.status != 200:
+                    text = await resp.text()
+                    raise RuntimeError(f"Together image error {resp.status}: {text}")
+                data = await resp.json()
+                items = data.get("data")
+                if not items:
+                    raise RuntimeError(f"Together image: empty 'data' in response: {data}")
+                return items[0].get("url") or items[0].get("b64_json")
+
+    return adapter
+
+
+def make_huggingface_image_adapter(api_token: str, output_dir: str = "data/images") -> ImageAdapter:
+    """HuggingFace Inference API — returns binary image, saved to local file."""
+
+    async def adapter(prompt: str, model: str = "") -> Optional[str]:
+        model_id = model or "stabilityai/stable-diffusion-xl-base-1.0"
+        url = f"https://api-inference.huggingface.co/models/{model_id}"
+        headers = {"Authorization": f"Bearer {api_token}"}
+        payload = {"inputs": prompt}
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, json=payload, headers=headers) as resp:
+                if resp.status != 200:
+                    text = await resp.text()
+                    raise RuntimeError(f"HuggingFace image error {resp.status}: {text}")
+                content_type = resp.content_type or ""
+                if not content_type.startswith("image/"):
+                    body_preview = (await resp.text())[:200]
+                    raise RuntimeError(
+                        f"HuggingFace image: expected image/* content-type, got {content_type}: {body_preview}"
+                    )
+                image_bytes = await resp.read()
+                out = Path(output_dir)
+                out.mkdir(parents=True, exist_ok=True)
+                filename = f"{uuid.uuid4().hex}.png"
+                filepath = out / filename
+                filepath.write_bytes(image_bytes)
+                return str(filepath)
+
+    return adapter
+
+
+def make_openai_image_adapter(api_key: str) -> ImageAdapter:
+    """OpenAI DALL-E image generation."""
+
+    async def adapter(prompt: str, model: str = "") -> Optional[str]:
+        base = os.environ.get("OPENAI_API_BASE", "https://api.openai.com/v1")
+        url = f"{base.rstrip('/')}/images/generations"
+        headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+        payload: Dict[str, Any] = {
+            "model": model or "dall-e-3",
+            "prompt": prompt,
+            "n": 1,
+            "size": "1024x1024",
+        }
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, json=payload, headers=headers) as resp:
+                if resp.status != 200:
+                    text = await resp.text()
+                    raise RuntimeError(f"OpenAI image error {resp.status}: {text}")
+                data = await resp.json()
+                items = data.get("data")
+                if not items:
+                    raise RuntimeError(f"OpenAI image: empty 'data' in response: {data}")
+                return items[0].get("url") or items[0].get("b64_json")
+
+    return adapter
+
+
+def make_replicate_image_adapter(api_token: str, timeout: float = 60.0) -> ImageAdapter:
+    """Replicate async prediction API with polling."""
+
+    async def adapter(prompt: str, model: str = "") -> Optional[str]:
+        model_id = model or "black-forest-labs/flux-schnell"
+        # Use the model route: POST /v1/models/{owner}/{name}/predictions
+        url = f"https://api.replicate.com/v1/models/{model_id}/predictions"
+        headers = {"Authorization": f"Bearer {api_token}", "Content-Type": "application/json"}
+        payload: Dict[str, Any] = {
+            "input": {"prompt": prompt},
+        }
+        async with aiohttp.ClientSession() as session:
+            # Create prediction
+            async with session.post(url, json=payload, headers=headers) as resp:
+                if resp.status not in (200, 201):
+                    text = await resp.text()
+                    raise RuntimeError(f"Replicate create error {resp.status}: {text}")
+                prediction = await resp.json()
+
+            # Poll for completion
+            poll_url = prediction.get("urls", {}).get("get")
+            if not poll_url:
+                raise RuntimeError(f"Replicate: missing poll URL in response: {prediction}")
+            elapsed = 0.0
+            while elapsed < timeout:
+                await asyncio.sleep(1.0)
+                elapsed += 1.0
+                async with session.get(poll_url, headers=headers) as resp:
+                    if resp.status != 200:
+                        continue
+                    result = await resp.json()
+                    status = result.get("status")
+                    if status == "succeeded":
+                        output = result.get("output")
+                        if isinstance(output, list) and output:
+                            return output[0]
+                        if isinstance(output, str):
+                            return output
+                        return None
+                    if status in ("failed", "canceled"):
+                        error = result.get("error", "unknown error")
+                        raise RuntimeError(f"Replicate prediction failed: {error}")
+            raise RuntimeError(f"Replicate prediction timed out after {timeout}s")
+
+    return adapter
