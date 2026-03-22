@@ -38,7 +38,14 @@
                 </div>
                 <div class="col-12 col-md-6 col-lg-3">
                     <label class="form-label">Image model</label>
-                    <input class="form-control" type="text" name="image_model" placeholder="optional">
+                    <input class="form-control" type="text" name="image_model" placeholder="optional" list="image-model-list">
+                    <datalist id="image-model-list">
+                        <option value="together:black-forest-labs/FLUX.1-schnell">
+                        <option value="together:black-forest-labs/FLUX.1-dev">
+                        <option value="openai:dall-e-3">
+                        <option value="huggingface:stabilityai/stable-diffusion-xl-base-1.0">
+                        <option value="replicate:black-forest-labs/flux-schnell">
+                    </datalist>
                 </div>
             </div>
             <div class="mb-3">
@@ -187,7 +194,7 @@
                             </div>
                             <div class="col-12 col-md-6">
                                 <label class="form-label">Image model</label>
-                                <input class="form-control" type="text" name="image_model" value="{{ pipeline.image_model or '' }}">
+                                <input class="form-control" type="text" name="image_model" value="{{ pipeline.image_model or '' }}" list="image-model-list">
                             </div>
                         </div>
                         <div class="mb-3">

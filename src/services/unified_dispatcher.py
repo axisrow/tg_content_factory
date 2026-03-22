@@ -451,9 +451,14 @@ class UnifiedDispatcher:
             db = self._db
             notification_service = DraftNotificationService(db, self._notifier)
             quality_service = QualityScoringService(db)
+
+            from src.services.image_generation_service import ImageGenerationService
+
+            image_service = ImageGenerationService()
             gen = ContentGenerationService(
                 db,
                 self._search_engine,
+                image_service=image_service,
                 notification_service=notification_service,
                 quality_service=quality_service,
             )
@@ -470,8 +475,9 @@ class UnifiedDispatcher:
                     note=f"Pipeline run id={run_id}",
                 )
             except Exception as exc:
-                logger.exception("Pipeline run failed for pipeline_id=%d run_id=%d", pipeline_id, run_id)
-                await db.repos.generation_runs.set_status(run_id, "failed")
+                logger.exception("Pipeline run failed for pipeline_id=%d run_id=%s", pipeline_id, run_id)
+                if run_id is not None:
+                    await db.repos.generation_runs.set_status(run_id, "failed")
                 await self._tasks.update_collection_task(
                     task.id,
                     CollectionTaskStatus.FAILED,
@@ -529,9 +535,14 @@ class UnifiedDispatcher:
             db = self._db
             notification_service = DraftNotificationService(db, self._notifier)
             quality_service = QualityScoringService(db)
+
+            from src.services.image_generation_service import ImageGenerationService
+
+            image_service = ImageGenerationService()
             gen = ContentGenerationService(
                 db,
                 self._search_engine,
+                image_service=image_service,
                 notification_service=notification_service,
                 quality_service=quality_service,
             )
