@@ -72,6 +72,7 @@
         <table class="table table-sm table-striped mb-0">
             <thead>
                 <tr>
+                    <th>Вкл.</th>
                     <th>Джоб</th>
                     <th>Интервал</th>
                     <th>Следующий запуск</th>
@@ -80,9 +81,23 @@
             <tbody>
                 {% for j in scheduler_jobs %}
                 <tr>
-                    <td>{{ j.label }}</td>
                     <td>
-                        {% if j.interval_minutes %}
+                        <form method="post" action="/scheduler/jobs/{{ j.job_id }}/toggle" class="mb-0">
+                            <input type="checkbox" onchange="this.form.submit()"
+                                   {% if j.enabled %}checked{% endif %}
+                                   title="{{ 'Отключить' if j.enabled else 'Включить' }}">
+                        </form>
+                    </td>
+                    <td class="{% if not j.enabled %}text-muted{% endif %}">{{ j.label }}</td>
+                    <td>
+                        {% if j.interval_editable and j.interval_minutes is not none %}
+                            <form method="post" action="/scheduler/jobs/{{ j.job_id }}/set-interval"
+                                  class="d-flex gap-1 mb-0">
+                                <input type="number" name="interval_minutes" value="{{ j.interval_minutes }}"
+                                       min="1" max="1440" class="form-control form-control-sm" style="width:75px">
+                                <button type="submit" class="btn btn-sm btn-outline-secondary">✓</button>
+                            </form>
+                        {% elif j.interval_minutes %}
                             {{ j.interval_minutes }} мин.
                         {% else %}
                             —
@@ -91,8 +106,10 @@
                     <td>
                         {% if j.next_run %}
                             {{ j.next_run.strftime('%H:%M:%S') }}
-                        {% elif is_running %}
+                        {% elif is_running and j.enabled %}
                             —
+                        {% elif not j.enabled %}
+                            <span class="text-muted">отключён</span>
                         {% else %}
                             <span class="text-muted">остановлен</span>
                         {% endif %}
