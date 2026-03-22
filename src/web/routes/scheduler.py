@@ -180,6 +180,8 @@ async def scheduler_page(
 
 @router.post("/jobs/{job_id}/toggle")
 async def toggle_scheduler_job(request: Request, job_id: str):
+    if getattr(request.app.state, "shutting_down", False):
+        return RedirectResponse(url="/scheduler?error=shutting_down", status_code=303)
     if not _VALID_JOB_ID_RE.match(job_id):
         return RedirectResponse(url="/scheduler?error=invalid_job", status_code=303)
     db = deps.get_db(request)
@@ -195,6 +197,8 @@ async def toggle_scheduler_job(request: Request, job_id: str):
 
 @router.post("/jobs/{job_id}/set-interval")
 async def set_job_interval(request: Request, job_id: str):
+    if getattr(request.app.state, "shutting_down", False):
+        return RedirectResponse(url="/scheduler?error=shutting_down", status_code=303)
     if not _VALID_JOB_ID_RE.match(job_id):
         return RedirectResponse(url="/scheduler?error=invalid_job", status_code=303)
     form = await request.form()
