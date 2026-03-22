@@ -79,7 +79,6 @@ async def _semantic_settings_context(request: Request) -> dict[str, object]:
     embedding_dimensions = await db.repos.messages.get_embedding_dimensions()
     embeddings_count = await db.repos.messages.count_embeddings()
     return {
-        "semantic_vec_available": db.vec_available,
         "semantic_embeddings_provider": (
             await db.get_setting(EMBEDDINGS_PROVIDER_SETTING) or DEFAULT_EMBEDDINGS_PROVIDER
         ),

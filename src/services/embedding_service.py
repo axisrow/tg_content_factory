@@ -145,10 +145,9 @@ class EmbeddingService:
             message_ids = [message_id for message_id, _text in pending]
             texts = [text for _message_id, text in pending]
             vectors = await self._embed_documents(texts)
-            if self._search.vec_available:
-                await self._search.messages.upsert_message_embeddings(
-                    list(zip(message_ids, vectors))
-                )
+            await self._search.messages.upsert_message_embeddings(
+                list(zip(message_ids, vectors))
+            )
             await self._search.messages.upsert_message_embedding_json(
                 list(zip(message_ids, vectors))
             )

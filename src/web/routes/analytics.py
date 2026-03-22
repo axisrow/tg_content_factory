@@ -4,6 +4,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
 from src.services.content_analytics_service import ContentAnalyticsService
+from src.services.trend_service import TrendService
 from src.web import deps
 
 router = APIRouter()
@@ -84,3 +85,24 @@ async def api_pipeline_stats(request: Request, pipeline_id: int | None = None):
         }
         for s in stats
     ])
+
+
+@router.get("/trends", response_class=HTMLResponse)
+async def trends_page(request: Request, days: int = 7):
+    """Render trending topics and channels page."""
+    days = days if days in (7, 14, 30) else 7
+    db = deps.get_db(request)
+    trend = TrendService(db)
+    topics = await trend.get_trending_topics(days=days, limit=20)
+    channels = await trend.get_trending_channels(days=days, limit=10)
+    emojis = await trend.get_trending_emojis(days=days, limit=15)
+    return deps.get_templates(request).TemplateResponse(
+        request,
+        "analytics/trends.html",
+        {
+            "topics": topics,
+            "channels": channels,
+            "emojis": emojis,
+            "days": days,
+        },
+    )

@@ -1,7 +1,10 @@
 {% extends "base.html" %}
 {% block title %}Мой Телеграм — TG Agent{% endblock %}
 {% block content %}
-<h1>Мой Телеграм</h1>
+<div class="d-flex align-items-center gap-3 mb-1">
+    <h1 class="mb-0">Мой Телеграм</h1>
+    <a href="/my-telegram/create-channel" class="btn btn-outline-primary btn-sm">+ Создать канал</a>
+</div>
 
 <div class="d-flex flex-column flex-md-row align-items-md-start gap-3 mb-4">
     {% if accounts %}

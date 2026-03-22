@@ -599,8 +599,8 @@ class SearchBundle:
             repos.search_log,
             repos.channels,
             repos.settings,
-            db.vec_available,
-            numpy_ok,
+            vec_available=getattr(db, "vec_available", False),
+            numpy_available=numpy_ok,
         )
 
     async def search_messages(
