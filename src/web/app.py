@@ -32,6 +32,17 @@ from src.web.template_globals import configure_template_globals
 logger = logging.getLogger(__name__)
 
 
+_action_logger = logging.getLogger("src.web.actions")
+_LOG_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
+
+
+class ActionLogMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        if request.method in _LOG_METHODS:
+            _action_logger.info("%s %s", request.method, request.url.path)
+        return await call_next(request)
+
+
 class BasicAuthMiddleware(BaseHTTPMiddleware):
     def __init__(self, app, password: str):
         super().__init__(app)
@@ -110,6 +121,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
     if config.web.password:
         app.add_middleware(BasicAuthMiddleware, password=config.web.password)
     app.add_middleware(OriginCSRFMiddleware)
+    app.add_middleware(ActionLogMiddleware)
 
     @app.exception_handler(Exception)
     async def unhandled_exception_handler(request: Request, exc: Exception):
