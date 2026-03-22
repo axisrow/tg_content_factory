@@ -238,6 +238,22 @@
         var label = btn.getAttribute('data-busy-label') || btn.textContent.trim();
         btn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> ' + label;
     });
+    // Reusable spinner helper for fetch-based (non-form) buttons
+    window.setAsyncButtonBusy = function(button, busy, busyLabel) {
+        if (!button) return;
+        if (!button.dataset.defaultLabel) {
+            button.dataset.defaultLabel = button.innerHTML;
+        }
+        if (busy) {
+            button.disabled = true;
+            button.innerHTML =
+                '<span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>' +
+                (busyLabel || 'Выполняется...');
+            return;
+        }
+        button.disabled = false;
+        button.innerHTML = button.dataset.defaultLabel;
+    };
 })();
 </script>
 </body>
