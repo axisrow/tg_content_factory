@@ -227,6 +227,11 @@ async def start_container(container: AppContainer) -> None:
         await container.agent_manager.refresh_settings_cache(preflight=True)
         container.agent_manager.initialize()
 
+    autostart = await container.db.get_setting("scheduler_autostart")
+    if autostart == "1":
+        logger.info("Auto-starting scheduler (scheduler_autostart=1)")
+        await container.scheduler.start()
+
 
 async def _cancel_bg_tasks(tasks: set[asyncio.Task]) -> None:
     for task in list(tasks):
