@@ -296,6 +296,15 @@ class Database:
         self._require()
         return await self._messages.search_messages_for_query(sq, limit)
 
+    async def search_messages_for_query_since(
+        self,
+        sq: "SearchQuery",
+        since: str,
+        limit: int = 3,
+    ) -> tuple[int, list[Message]]:
+        self._require()
+        return await self._messages.search_messages_for_query_since(sq, since, limit)
+
     async def search_messages(
         self,
         query: str = "",

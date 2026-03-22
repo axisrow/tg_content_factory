@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
@@ -5,7 +7,27 @@ from src.telegram.notifier import Notifier
 from src.web import deps
 from src.web.routes.channel_collection import bulk_enqueue_msg
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter()
+
+JOB_LABELS = {
+    "collect_all": "Сбор всех каналов",
+    "photo_due": "Фото по расписанию",
+    "photo_auto": "Автозагрузка фото",
+}
+
+
+def _job_label(job_id: str) -> str:
+    if job_id in JOB_LABELS:
+        return JOB_LABELS[job_id]
+    if job_id.startswith("sq_"):
+        return f"Стат. запроса #{job_id.removeprefix('sq_')}"
+    if job_id.startswith("pipeline_run_"):
+        return f"Пайплайн #{job_id.removeprefix('pipeline_run_')}"
+    if job_id.startswith("content_generate_"):
+        return f"Генерация #{job_id.removeprefix('content_generate_')}"
+    return job_id
 
 
 @router.post("/tasks/{task_id}/cancel")
@@ -28,6 +50,32 @@ async def clear_pending_collect_tasks(request: Request):
 
 
 VALID_STATUS_FILTERS = {"all", "active", "completed"}
+
+
+async def _build_jobs_context(sched) -> list[dict]:
+    """Build a list of job dicts for the scheduler page template."""
+    if sched.is_running:
+        raw = sched.get_all_jobs_next_run()
+        jobs = []
+        for job_id, next_run in raw.items():
+            jobs.append({
+                "job_id": job_id,
+                "label": _job_label(job_id),
+                "next_run": next_run,
+                "interval_minutes": None,
+            })
+        return jobs
+
+    potential = await sched.get_potential_jobs()
+    return [
+        {
+            "job_id": j["job_id"],
+            "label": _job_label(j["job_id"]),
+            "next_run": None,
+            "interval_minutes": j["interval_minutes"],
+        }
+        for j in potential
+    ]
 
 
 @router.get("/", response_class=HTMLResponse)
@@ -78,6 +126,9 @@ async def scheduler_page(
     bot_configured = (
         notifier is not None and notifier.admin_chat_id is not None
     ) or bot is not None
+
+    scheduler_jobs = await _build_jobs_context(sched)
+
     return deps.get_templates(request).TemplateResponse(
         request,
         "scheduler.html",
@@ -97,6 +148,7 @@ async def scheduler_page(
             "search_log": search_log,
             "bot_configured": bot_configured,
             "pending_collect_count": pending_collect_count,
+            "scheduler_jobs": scheduler_jobs,
         },
     )
 
@@ -165,3 +217,46 @@ async def test_notification(request: Request):
     ok = await test_notifier.notify(text)
     msg = "test_notification_sent" if ok else "test_notification_failed"
     return RedirectResponse(url=f"/scheduler?msg={msg}", status_code=303)
+
+
+@router.post("/dry-run-notifications", response_class=HTMLResponse)
+async def dry_run_notifications(request: Request):
+    """Count notification matches from the last collection cycle without sending."""
+    db = deps.get_db(request)
+
+    # Find the last completed channel_collect task to determine the time window
+    last_task = await db.repos.tasks.get_last_completed_collect_task()
+    if last_task and last_task.completed_at:
+        since = last_task.completed_at.isoformat()
+    else:
+        since = None
+
+    queries = await db.get_notification_queries(active_only=True)
+    if not queries:
+        return deps.get_templates(request).TemplateResponse(
+            request,
+            "_dry_run_results.html",
+            {"results": [], "since": since, "no_queries": True},
+        )
+
+    results = []
+    for sq in queries:
+        if since:
+            try:
+                total, previews = await db.search_messages_for_query_since(sq, since, limit=2)
+            except Exception:
+                logger.exception("Dry-run match error for sq_id=%s", sq.id)
+                total, previews = 0, []
+        else:
+            total, previews = 0, []
+        results.append({
+            "query": sq.name or sq.query,
+            "count": total,
+            "previews": [(m.text or "")[:150] for m in previews],
+        })
+
+    return deps.get_templates(request).TemplateResponse(
+        request,
+        "_dry_run_results.html",
+        {"results": results, "since": since, "no_queries": False},
+    )

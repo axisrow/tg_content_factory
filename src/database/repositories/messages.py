@@ -778,6 +778,39 @@ class MessagesRepository:
         messages = self._rows_to_messages(rows)
         return messages, total
 
+    async def search_messages_for_query_since(
+        self,
+        sq: SearchQuery,
+        since: str,
+        limit: int = 3,
+    ) -> tuple[int, list[Message]]:
+        """Count + preview matches for sq among messages collected since `since`."""
+        self._require_fts()
+        fts_query, extra_conds, extra_params = self._build_sq_parts(sq)
+        where_parts = [self._BASE_FILTER, "m.collected_at >= ?", *extra_conds]
+        where_clause = " AND ".join(where_parts)
+        params = (fts_query, since, *extra_params)
+
+        count_cur = await self._db.execute(
+            f"SELECT COUNT(*) AS cnt FROM messages m"
+            f"{self._FTS_JOIN}{self._CHANNEL_JOIN}"
+            f" WHERE {where_clause}",
+            params,
+        )
+        row = await count_cur.fetchone()
+        total = row["cnt"] if row else 0
+
+        cur = await self._db.execute(
+            f"SELECT m.*, c.title as channel_title, c.username as channel_username"
+            f" FROM messages m{self._FTS_JOIN}{self._CHANNEL_JOIN}"
+            f" WHERE {where_clause}"
+            f" ORDER BY m.date DESC LIMIT ?",
+            (*params, limit),
+        )
+        rows = await cur.fetchall()
+        messages = self._rows_to_messages(rows)
+        return total, messages
+
     async def count_fts_matches_for_query(self, sq: SearchQuery) -> int:
         self._require_fts()
         fts_query, extra_conds, extra_params = self._build_sq_parts(sq)
