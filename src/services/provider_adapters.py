@@ -261,7 +261,10 @@ def make_together_image_adapter(api_key: str) -> ImageAdapter:
                     text = await resp.text()
                     raise RuntimeError(f"Together image error {resp.status}: {text}")
                 data = await resp.json()
-                return data["data"][0]["url"]
+                items = data.get("data")
+                if not items:
+                    raise RuntimeError(f"Together image: empty 'data' in response: {data}")
+                return items[0]["url"]
 
     return adapter
 
@@ -279,6 +282,12 @@ def make_huggingface_image_adapter(api_token: str, output_dir: str = "data/image
                 if resp.status != 200:
                     text = await resp.text()
                     raise RuntimeError(f"HuggingFace image error {resp.status}: {text}")
+                content_type = resp.content_type or ""
+                if not content_type.startswith("image/"):
+                    body_preview = (await resp.text())[:200]
+                    raise RuntimeError(
+                        f"HuggingFace image: expected image/* content-type, got {content_type}: {body_preview}"
+                    )
                 image_bytes = await resp.read()
                 out = Path(output_dir)
                 out.mkdir(parents=True, exist_ok=True)
@@ -309,7 +318,10 @@ def make_openai_image_adapter(api_key: str) -> ImageAdapter:
                     text = await resp.text()
                     raise RuntimeError(f"OpenAI image error {resp.status}: {text}")
                 data = await resp.json()
-                return data["data"][0]["url"]
+                items = data.get("data")
+                if not items:
+                    raise RuntimeError(f"OpenAI image: empty 'data' in response: {data}")
+                return items[0]["url"]
 
     return adapter
 
@@ -319,10 +331,10 @@ def make_replicate_image_adapter(api_token: str, timeout: float = 60.0) -> Image
 
     async def adapter(prompt: str, model: str = "") -> Optional[str]:
         model_id = model or "black-forest-labs/flux-schnell"
-        url = "https://api.replicate.com/v1/predictions"
+        # Use the model route: POST /v1/models/{owner}/{name}/predictions
+        url = f"https://api.replicate.com/v1/models/{model_id}/predictions"
         headers = {"Authorization": f"Bearer {api_token}", "Content-Type": "application/json"}
         payload: Dict[str, Any] = {
-            "version": model_id,
             "input": {"prompt": prompt},
         }
         async with aiohttp.ClientSession() as session:

@@ -16,10 +16,13 @@ from src.services.provider_adapters import (
 )
 
 
-def _mock_response(*, status: int = 200, json_data: dict | None = None, content: bytes = b""):
+def _mock_response(
+    *, status: int = 200, json_data: dict | None = None, content: bytes = b"", content_type: str = ""
+):
     """Build a mock aiohttp response."""
     resp = AsyncMock()
     resp.status = status
+    resp.content_type = content_type
     resp.text = AsyncMock(return_value=json.dumps(json_data) if json_data else "")
     resp.json = AsyncMock(return_value=json_data)
     resp.read = AsyncMock(return_value=content)
@@ -78,7 +81,7 @@ async def test_together_image_adapter_error():
 async def test_huggingface_image_adapter_saves_binary(tmp_path):
     adapter = make_huggingface_image_adapter("test-token", output_dir=str(tmp_path))
     fake_png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 100
-    resp = _mock_response(status=200, content=fake_png)
+    resp = _mock_response(status=200, content=fake_png, content_type="image/png")
     session = _mock_session([resp])
 
     with patch.object(aiohttp, "ClientSession", return_value=session):
