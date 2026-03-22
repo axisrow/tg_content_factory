@@ -379,7 +379,7 @@
                             <td>{{ item.schedule_at or item.created_at }}</td>
                             <td>{{ item.status }}</td>
                             <td>
-                                <form method="post" action="/my-telegram/photos/items/{{ item.id }}/cancel">
+                                <form method="post" action="/my-telegram/photos/items/{{ item.id }}/cancel" data-busy>
                                     <input type="hidden" name="phone" value="{{ selected_phone }}">
                                     <button class="btn btn-sm btn-outline-danger" type="submit">Cancel</button>
                                 </form>

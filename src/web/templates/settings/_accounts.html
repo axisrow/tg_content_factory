@@ -27,13 +27,13 @@
             <td>{{ acc.flood_wait_until.strftime('%H:%M:%S') if acc.flood_wait_until else "\u2014" }}</td>
             <td>{{ acc.created_at.strftime('%Y-%m-%d') if acc.created_at else "\u2014" }}</td>
             <td class="text-nowrap">
-                <form method="post" action="/settings/{{ acc.id }}/toggle" class="d-inline">
+                <form method="post" action="/settings/{{ acc.id }}/toggle" class="d-inline" data-busy>
                     <button type="submit" class="btn btn-outline-secondary btn-sm"
                             aria-label="{{ 'Отключить' if acc.is_active else 'Включить' }}" title="{{ 'Отключить' if acc.is_active else 'Включить' }}">
                         <i class="bi {{ 'bi-pause-circle' if acc.is_active else 'bi-play-circle' }}" aria-hidden="true"></i>
                     </button>
                 </form>
-                <form method="post" action="/settings/{{ acc.id }}/delete" class="d-inline" onsubmit="return confirm('Вы уверены, что хотите удалить этот аккаунт?')">
+                <form method="post" action="/settings/{{ acc.id }}/delete" class="d-inline" data-busy onsubmit="return confirm('Вы уверены, что хотите удалить этот аккаунт?')">
                     <button type="submit" class="btn btn-outline-danger btn-sm" aria-label="Удалить" title="Удалить">
                         <i class="bi bi-trash" aria-hidden="true"></i>
                     </button>
@@ -62,13 +62,13 @@
                 {% if acc.created_at %}&middot; {{ acc.created_at.strftime('%Y-%m-%d') }}{% endif %}
             </small>
             <div class="card-actions">
-                <form method="post" action="/settings/{{ acc.id }}/toggle" class="d-inline">
+                <form method="post" action="/settings/{{ acc.id }}/toggle" class="d-inline" data-busy>
                     <button type="submit" class="btn btn-outline-secondary btn-sm"
                             aria-label="{{ 'Отключить' if acc.is_active else 'Включить' }}" title="{{ 'Отключить' if acc.is_active else 'Включить' }}">
                         <i class="bi {{ 'bi-pause-circle' if acc.is_active else 'bi-play-circle' }}" aria-hidden="true"></i>
                     </button>
                 </form>
-                <form method="post" action="/settings/{{ acc.id }}/delete" class="d-inline" onsubmit="return confirm('Вы уверены, что хотите удалить этот аккаунт?')">
+                <form method="post" action="/settings/{{ acc.id }}/delete" class="d-inline" data-busy onsubmit="return confirm('Вы уверены, что хотите удалить этот аккаунт?')">
                     <button type="submit" class="btn btn-outline-danger btn-sm" aria-label="Удалить" title="Удалить">
                         <i class="bi bi-trash" aria-hidden="true"></i>
                     </button>
