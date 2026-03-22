@@ -451,9 +451,14 @@ class UnifiedDispatcher:
             db = self._db
             notification_service = DraftNotificationService(db, self._notifier)
             quality_service = QualityScoringService(db)
+
+            from src.services.image_generation_service import ImageGenerationService
+
+            image_service = ImageGenerationService()
             gen = ContentGenerationService(
                 db,
                 self._search_engine,
+                image_service=image_service,
                 notification_service=notification_service,
                 quality_service=quality_service,
             )
@@ -529,9 +534,14 @@ class UnifiedDispatcher:
             db = self._db
             notification_service = DraftNotificationService(db, self._notifier)
             quality_service = QualityScoringService(db)
+
+            from src.services.image_generation_service import ImageGenerationService
+
+            image_service = ImageGenerationService()
             gen = ContentGenerationService(
                 db,
                 self._search_engine,
+                image_service=image_service,
                 notification_service=notification_service,
                 quality_service=quality_service,
             )
