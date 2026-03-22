@@ -26,6 +26,10 @@ class SearchEngine:
         self._local = LocalSearch(search, embedding_service=embedding_service)
         self._telegram = TelegramSearch(pool, SearchPersistence(search))
 
+    def invalidate_numpy_index(self) -> None:
+        """Invalidate the cached numpy semantic index after new embeddings are indexed."""
+        self._local.invalidate_numpy_index()
+
     async def search_local(
         self,
         query: str,

@@ -522,6 +522,8 @@ async def run_semantic_index(request: Request):
     if reset_index:
         await db.repos.messages.reset_embeddings_index()
     indexed = await EmbeddingService(db, request.app.state.config).index_pending_messages()
+    if indexed > 0 or reset_index:
+        deps.get_search_engine(request).invalidate_numpy_index()
     return RedirectResponse(
         url=f"/settings?msg=semantic_indexed&indexed={indexed}",
         status_code=303,

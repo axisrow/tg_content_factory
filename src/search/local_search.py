@@ -13,6 +13,11 @@ class LocalSearch:
         self._numpy_index: NumpySemanticIndex | None = None
         self._numpy_index_loaded: bool = False
 
+    def invalidate_numpy_index(self) -> None:
+        """Reset the cached numpy index so it is rebuilt on the next search."""
+        self._numpy_index = None
+        self._numpy_index_loaded = False
+
     async def search(
         self,
         query: str,

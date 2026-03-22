@@ -102,6 +102,7 @@ class MessagesRepository:
     async def reset_embeddings_index(self) -> None:
         if self._vec_available:
             await self._db.execute("DROP TABLE IF EXISTS vec_messages")
+        await self._db.execute("DELETE FROM message_embeddings_json")
         await self._db.execute(
             "DELETE FROM settings WHERE key IN (?, ?)",
             (_EMBEDDING_DIMENSIONS_SETTING, "semantic_last_embedded_id"),
@@ -851,6 +852,11 @@ class MessagesRepository:
         return result
 
     async def delete_messages_for_channel(self, channel_id: int) -> int:
+        await self._db.execute(
+            "DELETE FROM message_embeddings_json WHERE message_id IN "
+            "(SELECT id FROM messages WHERE channel_id = ?)",
+            (channel_id,),
+        )
         cur = await self._db.execute("DELETE FROM messages WHERE channel_id = ?", (channel_id,))
         await self._db.commit()
         return cur.rowcount or 0
