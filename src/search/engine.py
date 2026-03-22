@@ -22,9 +22,15 @@ class SearchEngine:
     ):
         if isinstance(search, Database):
             search = SearchBundle.from_database(search)
+        self._search_bundle = search
         embedding_service = EmbeddingService(search, config=config)
         self._local = LocalSearch(search, embedding_service=embedding_service)
         self._telegram = TelegramSearch(pool, SearchPersistence(search))
+
+    @property
+    def semantic_available(self) -> bool:
+        """Return True if any semantic backend (vec or numpy) is available."""
+        return self._search_bundle.vec_available or self._search_bundle.numpy_available
 
     def invalidate_numpy_index(self) -> None:
         """Invalidate the cached numpy semantic index after new embeddings are indexed."""
