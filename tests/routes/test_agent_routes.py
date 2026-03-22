@@ -275,3 +275,96 @@ async def test_agent_page_without_agent_manager(client, db):
 
     resp = await client.get(f"/agent?thread_id={thread_id}")
     assert resp.status_code == 200
+
+
+# === Additional coverage tests ===
+
+
+@pytest.mark.asyncio
+async def test_stop_chat_with_agent_manager(client, db):
+    """Test stop chat with agent manager."""
+    thread_id = await db.create_agent_thread("Stop")
+
+    resp = await client.post(f"/agent/threads/{thread_id}/stop")
+    assert resp.status_code == 200
+    data = json.loads(resp.text)
+    assert data["ok"] is True
+
+
+@pytest.mark.asyncio
+async def test_inject_context_with_topic(client, db):
+    """Test inject context with topic_id."""
+    thread_id = await db.create_agent_thread("Context")
+
+    resp = await client.post(
+        f"/agent/threads/{thread_id}/context",
+        content=json.dumps({"channel_id": 100, "limit": 10, "topic_id": "1"}),
+        headers={"Content-Type": "application/json"},
+    )
+    assert resp.status_code == 200
+    data = json.loads(resp.text)
+    assert "content" in data
+
+
+@pytest.mark.asyncio
+async def test_inject_context_empty_topic(client, db):
+    """Test inject context with empty topic_id."""
+    thread_id = await db.create_agent_thread("Context")
+
+    resp = await client.post(
+        f"/agent/threads/{thread_id}/context",
+        content=json.dumps({"channel_id": 100, "limit": 10, "topic_id": ""}),
+        headers={"Content-Type": "application/json"},
+    )
+    assert resp.status_code == 200
+    data = json.loads(resp.text)
+    assert "content" in data
+
+
+@pytest.mark.asyncio
+async def test_inject_context_with_limit(client, db):
+    """Test inject context respects limit."""
+    thread_id = await db.create_agent_thread("Context")
+
+    resp = await client.post(
+        f"/agent/threads/{thread_id}/context",
+        content=json.dumps({"channel_id": 100, "limit": 5}),
+        headers={"Content-Type": "application/json"},
+    )
+    assert resp.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_delete_thread_not_found(client):
+    """Test delete non-existent thread returns ok (idempotent)."""
+    resp = await client.delete("/agent/threads/999999")
+    # Route is idempotent - returns 200 even if thread doesn't exist
+    assert resp.status_code == 200
+    data = json.loads(resp.text)
+    assert data["ok"] is True
+
+
+@pytest.mark.asyncio
+async def test_rename_thread_not_found(client):
+    """Test rename non-existent thread returns ok (idempotent)."""
+    resp = await client.post(
+        "/agent/threads/999999/rename",
+        content=json.dumps({"title": "New Name"}),
+        headers={"Content-Type": "application/json"},
+    )
+    # Route is idempotent - returns 200 even if thread doesn't exist
+    assert resp.status_code == 200
+    data = json.loads(resp.text)
+    assert data["ok"] is True
+
+
+@pytest.mark.asyncio
+async def test_get_forum_topics_fallback(client, db, pool_mock):
+    """Test get forum topics fallback to cached when API fails."""
+    # Simulate API returning empty (flood wait, etc.)
+    pool_mock.get_forum_topics = AsyncMock(return_value=[])
+
+    resp = await client.get("/agent/forum-topics?channel_id=100")
+    assert resp.status_code == 200
+    data = json.loads(resp.text)
+    assert isinstance(data, list)

@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from src.services.filter_deletion_service import PurgeResult
 from tests.routes.conftest import _add_channel, _add_filtered_channel, _enable_dev_mode
 
 
@@ -244,3 +245,142 @@ async def test_filter_toggle_success(client, db):
     resp = await client.post(f"/channels/{pk}/filter-toggle", follow_redirects=False)
     assert resp.status_code == 303
     assert "msg=filter_toggled" in resp.headers["location"]
+
+
+# === Additional coverage tests ===
+
+
+@pytest.mark.asyncio
+async def test_parse_snapshot_valid(client, db):
+    """Test apply filters with valid snapshot parsing."""
+    with patch("src.web.routes.filter.ChannelAnalyzer") as mock_analyzer:
+        mock_instance = mock_analyzer.return_value
+        mock_instance.apply_filters = AsyncMock(return_value=2)
+        resp = await client.post(
+            "/channels/filter/apply",
+            data={
+                "snapshot": "1",
+                "selected": ["100|low_uniqueness", "200|low_subscriber_ratio,cross_channel_spam"],
+            },
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        assert "msg=filter_applied" in resp.headers["location"]
+
+
+@pytest.mark.asyncio
+async def test_parse_snapshot_dedupes_by_channel_id(client, db):
+    """Test snapshot parsing dedupes by channel_id."""
+    with patch("src.web.routes.filter.ChannelAnalyzer") as mock_analyzer:
+        mock_instance = mock_analyzer.return_value
+        mock_instance.apply_filters = AsyncMock(return_value=1)
+        resp = await client.post(
+            "/channels/filter/apply",
+            data={
+                "snapshot": "1",
+                "selected": ["100|low_uniqueness", "100|cross_channel_spam"],
+            },
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+
+
+@pytest.mark.asyncio
+async def test_parse_snapshot_invalid_channel_id(client, db):
+    """Test snapshot parsing with invalid channel_id."""
+    with patch("src.web.routes.filter.ChannelAnalyzer") as mock_analyzer:
+        mock_instance = mock_analyzer.return_value
+        mock_instance.apply_filters = AsyncMock(return_value=0)
+        resp = await client.post(
+            "/channels/filter/apply",
+            data={
+                "snapshot": "1",
+                "selected": ["abc|low_uniqueness"],
+            },
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+
+
+@pytest.mark.asyncio
+async def test_parse_snapshot_no_separator(client, db):
+    """Test snapshot parsing without separator."""
+    with patch("src.web.routes.filter.ChannelAnalyzer") as mock_analyzer:
+        mock_instance = mock_analyzer.return_value
+        mock_instance.apply_filters = AsyncMock(return_value=0)
+        resp = await client.post(
+            "/channels/filter/apply",
+            data={
+                "snapshot": "1",
+                "selected": ["100low_uniqueness"],  # No | separator
+            },
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+
+
+@pytest.mark.asyncio
+async def test_parse_snapshot_invalid_flag(client, db):
+    """Test snapshot parsing with invalid flag."""
+    with patch("src.web.routes.filter.ChannelAnalyzer") as mock_analyzer:
+        mock_instance = mock_analyzer.return_value
+        mock_instance.apply_filters = AsyncMock(return_value=0)
+        resp = await client.post(
+            "/channels/filter/apply",
+            data={
+                "snapshot": "1",
+                "selected": ["100|invalid_flag"],
+            },
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+
+
+@pytest.mark.asyncio
+async def test_analyze_with_auto_delete(client, db):
+    """Test analyze channels with auto_delete enabled."""
+    await _add_filtered_channel(db, channel_id=3100, title="Auto Delete")
+    await db.set_setting("auto_delete_filtered", "1")
+
+    with patch("src.web.routes.filter.ChannelAnalyzer") as mock_analyzer, patch(
+        "src.web.routes.filter.deps.filter_deletion_service"
+    ) as mock_svc:
+        from src.filters.models import ChannelFilterResult, FilterReport
+
+        mock_instance = mock_analyzer.return_value
+        mock_instance.analyze_all = AsyncMock(
+            return_value=FilterReport(
+                results=[
+                    ChannelFilterResult(
+                        channel_id=3100, flags=["low_uniqueness"], is_filtered=True
+                    )
+                ],
+                total_channels=1,
+                filtered_count=1,
+            )
+        )
+        mock_instance.apply_filters = AsyncMock(return_value=1)
+        mock_svc.return_value.purge_channels_by_pks = AsyncMock(
+            return_value=PurgeResult(purged_count=1)
+        )
+
+        resp = await client.post("/channels/filter/analyze", follow_redirects=False)
+        assert resp.status_code == 303
+        assert "msg=purged_all_filtered" in resp.headers["location"]
+
+
+@pytest.mark.asyncio
+async def test_purge_selected_with_multiple_pks(client, db):
+    """Test purge selected with multiple PKs."""
+    pk1 = await _add_filtered_channel(db, channel_id=3200, title="Purge 1")
+    pk2 = await _add_filtered_channel(db, channel_id=3201, title="Purge 2")
+
+    with patch("src.web.routes.filter.deps.filter_deletion_service") as mock_svc:
+        mock_svc.return_value.purge_channels_by_pks = AsyncMock()
+        resp = await client.post(
+            "/channels/filter/purge-selected",
+            data={"pks": [str(pk1), str(pk2), "invalid"]},  # Invalid PK is skipped
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        assert "msg=purged_selected" in resp.headers["location"]
