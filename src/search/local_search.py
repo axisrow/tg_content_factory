@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta
+
 from src.database.bundles import SearchBundle
 from src.models import SearchResult
 from src.search.numpy_semantic import NumpySemanticIndex
@@ -111,8 +113,14 @@ class LocalSearch:
                 continue
             if date_from and msg.date and str(msg.date) < date_from:
                 continue
-            if date_to and msg.date and str(msg.date) > date_to:
-                continue
+            if date_to and msg.date:
+                # Normalize date-only strings to be inclusive (match SQL path behavior)
+                effective_to = date_to
+                if len(date_to) == 10:  # "YYYY-MM-DD" without time
+                    next_day = datetime.strptime(date_to, "%Y-%m-%d") + timedelta(days=1)
+                    effective_to = next_day.strftime("%Y-%m-%d")
+                if str(msg.date) >= effective_to:
+                    continue
             text_len = len(msg.text) if msg.text else 0
             if min_length is not None and text_len < min_length:
                 continue
