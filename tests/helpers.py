@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import argparse
+import asyncio
 import base64
 import hashlib
 from contextlib import asynccontextmanager
@@ -18,7 +20,7 @@ from httpx import ASGITransport, AsyncClient
 from src.collection_queue import CollectionQueue
 from src.config import AppConfig, TelegramRuntimeConfig
 from src.database import Database
-from src.models import Account
+from src.models import Account, Channel
 from src.scheduler.manager import SchedulerManager
 from src.search.ai_search import AISearchEngine
 from src.search.engine import SearchEngine
@@ -26,6 +28,18 @@ from src.telegram.auth import TelegramAuth
 from src.telegram.client_pool import ClientPool
 from src.telegram.collector import Collector
 from src.web.app import create_app
+
+
+def cli_ns(**kwargs) -> argparse.Namespace:
+    """Build a CLI Namespace with config default for use in CLI tests."""
+    defaults = {"config": "config.yaml"}
+    defaults.update(kwargs)
+    return argparse.Namespace(**defaults)
+
+
+def cli_add_channel(db: Database, channel_id: int = 100, title: str = "TestCh") -> int:
+    """Synchronously insert a channel row and return its PK."""
+    return asyncio.run(db.add_channel(Channel(channel_id=channel_id, title=title)))
 
 
 class AsyncIterEmpty:
@@ -136,6 +150,39 @@ class FakeCliTelethonClient:
         send_message_side_effect=None,
         send_file_side_effect=None,
         delete_dialog_side_effect=None,
+        forward_messages_side_effect=None,
+        edit_message_side_effect=None,
+        pin_message_side_effect=None,
+        unpin_message_side_effect=None,
+        delete_messages_side_effect=None,
+        download_media_side_effect=None,
+        get_participants_side_effect=None,
+        iter_participants_factory=None,
+        edit_admin_side_effect=None,
+        edit_permissions_side_effect=None,
+        kick_participant_side_effect=None,
+        edit_folder_side_effect=None,
+        send_read_acknowledge_side_effect=None,
+        upload_file_side_effect=None,
+        download_file_side_effect=None,
+        iter_download_factory=None,
+        iter_drafts_factory=None,
+        get_drafts_side_effect=None,
+        is_bot_result=False,
+        get_peer_id_side_effect=None,
+        iter_admin_log_factory=None,
+        get_admin_log_side_effect=None,
+        iter_profile_photos_factory=None,
+        get_profile_photos_side_effect=None,
+        action_side_effect=None,
+        get_permissions_side_effect=None,
+        set_receive_updates_side_effect=None,
+        run_until_disconnected_side_effect=None,
+        catch_up_side_effect=None,
+        inline_query_side_effect=None,
+        build_reply_markup_side_effect=None,
+        takeout_side_effect=None,
+        end_takeout_side_effect=None,
         authorized=True,
     ):
         self._me = me or SimpleNamespace(
@@ -155,6 +202,39 @@ class FakeCliTelethonClient:
         self._send_message_side_effect = send_message_side_effect
         self._send_file_side_effect = send_file_side_effect
         self._delete_dialog_side_effect = delete_dialog_side_effect
+        self._forward_messages_side_effect = forward_messages_side_effect
+        self._edit_message_side_effect = edit_message_side_effect
+        self._pin_message_side_effect = pin_message_side_effect
+        self._unpin_message_side_effect = unpin_message_side_effect
+        self._delete_messages_side_effect = delete_messages_side_effect
+        self._download_media_side_effect = download_media_side_effect
+        self._get_participants_side_effect = get_participants_side_effect
+        self._iter_participants_factory = iter_participants_factory or (lambda *a, **kw: AsyncIterEmpty())
+        self._edit_admin_side_effect = edit_admin_side_effect
+        self._edit_permissions_side_effect = edit_permissions_side_effect
+        self._kick_participant_side_effect = kick_participant_side_effect
+        self._edit_folder_side_effect = edit_folder_side_effect
+        self._send_read_acknowledge_side_effect = send_read_acknowledge_side_effect
+        self._upload_file_side_effect = upload_file_side_effect
+        self._download_file_side_effect = download_file_side_effect
+        self._iter_download_factory = iter_download_factory or (lambda *a, **kw: AsyncIterEmpty())
+        self._iter_drafts_factory = iter_drafts_factory or (lambda: AsyncIterEmpty())
+        self._get_drafts_side_effect = get_drafts_side_effect
+        self._is_bot_result = is_bot_result
+        self._get_peer_id_side_effect = get_peer_id_side_effect
+        self._iter_admin_log_factory = iter_admin_log_factory or (lambda *a, **kw: AsyncIterEmpty())
+        self._get_admin_log_side_effect = get_admin_log_side_effect
+        self._iter_profile_photos_factory = iter_profile_photos_factory or (lambda *a, **kw: AsyncIterEmpty())
+        self._get_profile_photos_side_effect = get_profile_photos_side_effect
+        self._action_side_effect = action_side_effect
+        self._get_permissions_side_effect = get_permissions_side_effect
+        self._set_receive_updates_side_effect = set_receive_updates_side_effect
+        self._run_until_disconnected_side_effect = run_until_disconnected_side_effect
+        self._catch_up_side_effect = catch_up_side_effect
+        self._inline_query_side_effect = inline_query_side_effect
+        self._build_reply_markup_side_effect = build_reply_markup_side_effect
+        self._takeout_side_effect = takeout_side_effect
+        self._end_takeout_side_effect = end_takeout_side_effect
 
         self.flood_sleep_threshold = 60
         self.connect = AsyncMock()
@@ -172,6 +252,44 @@ class FakeCliTelethonClient:
         self.delete_dialog = AsyncMock(side_effect=self._delete_dialog)
         self.conversation = MagicMock(side_effect=self._conversation)
         self.invoke = AsyncMock(side_effect=self._invoke)
+        self.forward_messages = AsyncMock(side_effect=self._forward_messages_side_effect)
+        self.edit_message = AsyncMock(side_effect=self._edit_message_side_effect)
+        self.pin_message = AsyncMock(side_effect=self._pin_message_side_effect)
+        self.unpin_message = AsyncMock(side_effect=self._unpin_message_side_effect)
+        self.delete_messages = AsyncMock(side_effect=self._delete_messages_side_effect)
+        self.download_media = AsyncMock(side_effect=self._download_media_side_effect)
+        self.get_participants = AsyncMock(side_effect=self._get_participants_side_effect)
+        self.iter_participants = MagicMock(side_effect=self._iter_participants_factory)
+        self.edit_admin = AsyncMock(side_effect=self._edit_admin_side_effect)
+        self.edit_permissions = AsyncMock(side_effect=self._edit_permissions_side_effect)
+        self.kick_participant = AsyncMock(side_effect=self._kick_participant_side_effect)
+        self.edit_folder = AsyncMock(side_effect=self._edit_folder_side_effect)
+        self.send_read_acknowledge = AsyncMock(side_effect=self._send_read_acknowledge_side_effect)
+        self.set_proxy = MagicMock()
+        self.upload_file = AsyncMock(side_effect=self._upload_file_side_effect)
+        self.download_file = AsyncMock(side_effect=self._download_file_side_effect)
+        self.iter_download = MagicMock(side_effect=self._iter_download_factory)
+        self.iter_drafts = MagicMock(side_effect=self._iter_drafts_factory)
+        self.get_drafts = AsyncMock(side_effect=self._get_drafts_side_effect)
+        self.is_bot = AsyncMock(return_value=self._is_bot_result)
+        self.get_peer_id = AsyncMock(side_effect=self._get_peer_id_side_effect)
+        self.iter_admin_log = MagicMock(side_effect=self._iter_admin_log_factory)
+        self.get_admin_log = AsyncMock(side_effect=self._get_admin_log_side_effect)
+        self.iter_profile_photos = MagicMock(side_effect=self._iter_profile_photos_factory)
+        self.get_profile_photos = AsyncMock(side_effect=self._get_profile_photos_side_effect)
+        self.action = MagicMock(side_effect=self._action_side_effect)
+        self.get_permissions = AsyncMock(side_effect=self._get_permissions_side_effect)
+        self.set_receive_updates = AsyncMock(side_effect=self._set_receive_updates_side_effect)
+        self.run_until_disconnected = AsyncMock(side_effect=self._run_until_disconnected_side_effect)
+        self.on = MagicMock()
+        self.add_event_handler = MagicMock()
+        self.remove_event_handler = MagicMock(return_value=True)
+        self.list_event_handlers = MagicMock(return_value=[])
+        self.catch_up = AsyncMock(side_effect=self._catch_up_side_effect)
+        self.inline_query = AsyncMock(side_effect=self._inline_query_side_effect)
+        self.build_reply_markup = MagicMock(side_effect=self._build_reply_markup_side_effect)
+        self.takeout = MagicMock(side_effect=self._takeout_side_effect)
+        self.end_takeout = AsyncMock(side_effect=self._end_takeout_side_effect)
 
     async def _get_me(self):
         return self._me
@@ -488,7 +606,7 @@ async def build_web_app(
 @asynccontextmanager
 async def make_auth_client(app, *, password: str = "testpass", with_auth: bool = True):
     transport = ASGITransport(app=app)
-    headers = {}
+    headers = {"Origin": "http://test"}
     if with_auth:
         auth_header = base64.b64encode(f":{password}".encode()).decode()
         headers["Authorization"] = f"Basic {auth_header}"

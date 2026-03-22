@@ -11,6 +11,8 @@ from src.models import (
     CollectionTask,
     CollectionTaskStatus,
     CollectionTaskType,
+    ContentGenerateTaskPayload,
+    ContentPublishTaskPayload,
     PipelineRunTaskPayload,
     SqStatsTaskPayload,
     StatsAllTaskPayload,
@@ -22,6 +24,7 @@ if TYPE_CHECKING:
     from src.search.engine import SearchEngine
     from src.services.photo_auto_upload_service import PhotoAutoUploadService
     from src.services.photo_task_service import PhotoTaskService
+    from src.telegram.notifier import Notifier
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +34,8 @@ HANDLED_TYPES = [
     CollectionTaskType.PHOTO_DUE.value,
     CollectionTaskType.PHOTO_AUTO.value,
     CollectionTaskType.PIPELINE_RUN.value,
+    CollectionTaskType.CONTENT_GENERATE.value,
+    CollectionTaskType.CONTENT_PUBLISH.value,
 ]
 
 
@@ -52,6 +57,8 @@ class UnifiedDispatcher:
         search_engine: "SearchEngine" | None = None,
         pipeline_bundle: PipelineBundle | None = None,
         db: "Database" | None = None,
+        client_pool: object | None = None,
+        notifier: "Notifier | None" = None,
     ):
 
         self._collector = collector
@@ -66,6 +73,8 @@ class UnifiedDispatcher:
         self._search_engine = search_engine
         self._pipeline_bundle = pipeline_bundle
         self._db = db
+        self._client_pool = client_pool
+        self._notifier = notifier
         self._task: asyncio.Task | None = None
         self._stop_event = asyncio.Event()
 
@@ -126,6 +135,8 @@ class UnifiedDispatcher:
             CollectionTaskType.PHOTO_DUE: self._handle_photo_due,
             CollectionTaskType.PHOTO_AUTO: self._handle_photo_auto,
             CollectionTaskType.PIPELINE_RUN: self._handle_pipeline_run,
+            CollectionTaskType.CONTENT_GENERATE: self._handle_content_generate,
+            CollectionTaskType.CONTENT_PUBLISH: self._handle_content_publish,
         }.get(task.task_type)
         if handler is None:
             await self._tasks.update_collection_task(
@@ -422,9 +433,10 @@ class UnifiedDispatcher:
         run_id: int | None = None
         try:
             # Import lazily to avoid circular imports during module load
-            from src.services.generation_service import GenerationService
+            from src.services.content_generation_service import ContentGenerationService
+            from src.services.draft_notification_service import DraftNotificationService
             from src.services.pipeline_service import PipelineService
-            from src.services.provider_service import AgentProviderService
+            from src.services.quality_scoring_service import QualityScoringService
 
             svc = PipelineService(self._pipeline_bundle)
             pipeline = await svc.get(pipeline_id)
@@ -436,29 +448,21 @@ class UnifiedDispatcher:
                 )
                 return
 
-            provider_service = AgentProviderService(self._db)
-            provider_callable = provider_service.get_provider_callable(pipeline.llm_model)
-            gen = GenerationService(self._search_engine, provider_callable=provider_callable)
-
-            # create generation run
             db = self._db
-            run_id = await db.repos.generation_runs.create_run(
-                pipeline.id, pipeline.prompt_template
+            notification_service = DraftNotificationService(db, self._notifier)
+            quality_service = QualityScoringService(db)
+            gen = ContentGenerationService(
+                db,
+                self._search_engine,
+                notification_service=notification_service,
+                quality_service=quality_service,
             )
-            await db.repos.generation_runs.set_status(run_id, "running")
-            retrieval_query = pipeline.prompt_template or pipeline.name or ""
             try:
-                result = await gen.generate(
-                    query=retrieval_query,
-                    prompt_template=pipeline.prompt_template,
+                run = await gen.generate(
+                    pipeline=pipeline,
                     model=pipeline.llm_model,
                 )
-                await db.repos.generation_runs.save_result(
-                    run_id,
-                    result.get("generated_text", ""),
-                    {"citations": result.get("citations", [])},
-                )
-                await db.repos.generation_runs.set_status(run_id, "completed")
+                run_id = run.id
                 await self._tasks.update_collection_task(
                     task.id,
                     CollectionTaskStatus.COMPLETED,
@@ -477,6 +481,148 @@ class UnifiedDispatcher:
             logger.exception("Pipeline run handler failed for pipeline_id=%d", pipeline_id)
             if run_id is not None:
                 await self._db.repos.generation_runs.set_status(run_id, "failed")
+            await self._tasks.update_collection_task(
+                task.id,
+                CollectionTaskStatus.FAILED,
+                error=str(exc)[:500],
+            )
+
+    # ── CONTENT_GENERATE ──
+
+    async def _handle_content_generate(self, task: CollectionTask) -> None:
+        if task.id is None:
+            return
+
+        payload = task.payload
+        if not isinstance(payload, ContentGenerateTaskPayload):
+            await self._tasks.update_collection_task(
+                task.id, CollectionTaskStatus.FAILED, error="Invalid CONTENT_GENERATE payload"
+            )
+            return
+
+        if not self._db or not self._search_engine or not self._pipeline_bundle:
+            await self._tasks.update_collection_task(
+                task.id,
+                CollectionTaskStatus.FAILED,
+                error="Pipeline execution environment not configured",
+            )
+            return
+
+        pipeline_id = payload.pipeline_id
+        try:
+            from src.models import PipelinePublishMode
+            from src.services.content_generation_service import ContentGenerationService
+            from src.services.draft_notification_service import DraftNotificationService
+            from src.services.pipeline_service import PipelineService
+            from src.services.quality_scoring_service import QualityScoringService
+
+            svc = PipelineService(self._pipeline_bundle)
+            pipeline = await svc.get(pipeline_id)
+            if pipeline is None:
+                await self._tasks.update_collection_task(
+                    task.id,
+                    CollectionTaskStatus.COMPLETED,
+                    note=f"Pipeline id={pipeline_id} not found",
+                )
+                return
+
+            db = self._db
+            notification_service = DraftNotificationService(db, self._notifier)
+            quality_service = QualityScoringService(db)
+            gen = ContentGenerationService(
+                db,
+                self._search_engine,
+                notification_service=notification_service,
+                quality_service=quality_service,
+            )
+            run = await gen.generate(pipeline=pipeline, model=pipeline.llm_model)
+
+            if pipeline.publish_mode == PipelinePublishMode.AUTO and run is not None:
+                from src.services.publish_service import PublishService
+
+                pool = self._collector._pool
+                publish_svc = PublishService(db, pool)
+                await publish_svc.publish_run(run, pipeline)
+
+            await self._tasks.update_collection_task(
+                task.id,
+                CollectionTaskStatus.COMPLETED,
+                messages_collected=1 if run is not None else 0,
+                note=f"Generated run id={run.id}" if run is not None else "Generation returned no result",
+            )
+        except Exception as exc:
+            logger.exception("Content generate handler failed for pipeline_id=%d", pipeline_id)
+            await self._tasks.update_collection_task(
+                task.id,
+                CollectionTaskStatus.FAILED,
+                error=str(exc)[:500],
+            )
+
+    # ── CONTENT_PUBLISH ──
+
+    async def _handle_content_publish(self, task: CollectionTask) -> None:
+        if task.id is None:
+            return
+
+        payload = task.payload
+        if not isinstance(payload, ContentPublishTaskPayload):
+            await self._tasks.update_collection_task(
+                task.id, CollectionTaskStatus.FAILED, error="Invalid CONTENT_PUBLISH payload"
+            )
+            return
+
+        if not self._db:
+            await self._tasks.update_collection_task(
+                task.id, CollectionTaskStatus.COMPLETED, note="No DB configured"
+            )
+            return
+
+        pipeline_id = payload.pipeline_id
+        try:
+            from src.services.pipeline_service import PipelineService
+            from src.services.publish_service import PublishService
+
+            db = self._db
+            pool = self._collector._pool
+            publish_svc = PublishService(db, pool)
+
+            filter_sql = "AND pipeline_id = ?" if pipeline_id is not None else ""
+            params: tuple = (pipeline_id,) if pipeline_id is not None else ()
+            cur = await db.execute(
+                f"SELECT * FROM generation_runs WHERE moderation_status = 'approved' {filter_sql} ORDER BY id ASC",
+                params,
+            )
+            rows = await cur.fetchall()
+            if not rows:
+                await self._tasks.update_collection_task(
+                    task.id, CollectionTaskStatus.COMPLETED, note="No approved runs to publish"
+                )
+                return
+
+            from src.database.repositories.generation_runs import GenerationRunsRepository
+
+            runs = [GenerationRunsRepository._to_generation_run(row) for row in rows]
+
+            pipeline_svc = PipelineService(self._pipeline_bundle) if self._pipeline_bundle else None
+            published = 0
+            for run in runs:
+                if run.pipeline_id is None:
+                    continue
+                pipeline = await pipeline_svc.get(run.pipeline_id) if pipeline_svc else None
+                if pipeline is None:
+                    continue
+                results = await publish_svc.publish_run(run, pipeline)
+                if any(r.success for r in results):
+                    published += 1
+
+            await self._tasks.update_collection_task(
+                task.id,
+                CollectionTaskStatus.COMPLETED,
+                messages_collected=published,
+                note=f"Published {published}/{len(runs)} runs",
+            )
+        except Exception as exc:
+            logger.exception("Content publish handler failed")
             await self._tasks.update_collection_task(
                 task.id,
                 CollectionTaskStatus.FAILED,

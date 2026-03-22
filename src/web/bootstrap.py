@@ -73,7 +73,6 @@ async def build_container_with_templates(
     db = Database(
         config.database.path,
         session_encryption_secret=resolve_session_encryption_secret(config),
-        sqlite_vec_path=config.database.sqlite_vec_path or None,
     )
     await db.initialize()
 
@@ -101,7 +100,6 @@ async def build_container_with_templates(
         repos.search_log,
         repos.channels,
         repos.settings,
-        db.vec_available,
     )
     scheduler_bundle = SchedulerBundle(
         repos.settings,
@@ -151,6 +149,8 @@ async def build_container_with_templates(
         search_engine=search_engine,
         pipeline_bundle=pipeline_bundle,
         db=db,
+        client_pool=pool,
+        notifier=notifier,
     )
     scheduler = SchedulerManager(
         config.scheduler,

@@ -56,9 +56,10 @@ class ChannelAnalyzer:
             low_uniqueness = False
             if channel_id_value in uniqueness_map:
                 total, uniq = uniqueness_map[channel_id_value]
-                raw_uniqueness = uniq / total * 100
-                uniqueness_pct = round(raw_uniqueness, 1)
-                low_uniqueness = raw_uniqueness < LOW_UNIQUENESS_THRESHOLD
+                if total > 0:
+                    raw_uniqueness = uniq / total * 100
+                    uniqueness_pct = round(raw_uniqueness, 1)
+                    low_uniqueness = raw_uniqueness < LOW_UNIQUENESS_THRESHOLD
             if low_uniqueness:
                 flags.append("low_uniqueness")
 
