@@ -234,6 +234,7 @@ def test_pipeline_generate_prints_draft_preview(tmp_path, capsys):
             self.db = db
             self.engine = engine
             self.agent_manager = agent_manager
+            self.quality_service = kwargs.get("quality_service")
 
         async def generate(self, pipeline, model=None, max_tokens=512, temperature=0.7):
             return GenerationRun(
@@ -310,6 +311,7 @@ def test_pipeline_generate_wires_agent_manager_for_deep_agents(tmp_path, capsys)
     class FakeContentGenerationService:
         def __init__(self, db, engine, agent_manager=None, **kwargs):
             captured["agent_manager"] = agent_manager
+            captured["quality_service"] = kwargs.get("quality_service")
 
         async def generate(self, pipeline, model=None, max_tokens=512, temperature=0.7):
             return GenerationRun(
@@ -339,6 +341,7 @@ def test_pipeline_generate_wires_agent_manager_for_deep_agents(tmp_path, capsys)
         )
 
     assert captured["agent_manager"] is not None
+    assert captured["quality_service"] is not None
     out = capsys.readouterr().out
     assert "Created generation run id=124" in out
 

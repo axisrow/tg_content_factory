@@ -226,6 +226,15 @@ telethon-cli users get-me --output json
  # Benchmark serial vs safe mixed-mode suite execution
  python -m src.main test benchmark
 
- # Lint
- ruff check src/ tests/ conftest.py
- ```
+  # Lint
+  ruff check src/ tests/ conftest.py
+  ```
+
+### CI Note
+
+- `push` workflow checks the branch head only.
+- `pull_request` workflow checks the merge result against `main`.
+- A branch can therefore be green on `push` and red on `pull_request` if `main`
+  introduced a lint/test failure that is pulled into the PR merge ref.
+- Before rerunning PR checks, fetch and sync with `origin/main` so local
+  verification matches CI.

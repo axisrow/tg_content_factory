@@ -63,10 +63,7 @@ class TelegramSearch:
                 pool=None,
                 logger_=logger,
             )
-        except HandledFloodWaitError as exc:
-            reporter = getattr(self._pool, "report_premium_flood", None)
-            if callable(reporter):
-                await reporter(phone, exc.info.wait_seconds)
+        except HandledFloodWaitError:
             raise
         except Exception as exc:
             logger.debug("checkSearchPostsFlood unavailable: %s", exc)
@@ -89,6 +86,12 @@ class TelegramSearch:
                 query=query,
                 operation="check_search_quota",
             )
+        except HandledFloodWaitError as exc:
+            reporter = getattr(self._pool, "report_premium_flood", None)
+            if callable(reporter):
+                await reporter(phone, exc.info.wait_seconds)
+            logger.debug("checkSearchPostsFlood flood-waited for %s: %s", phone, exc.info.detail)
+            return None
         finally:
             await self._pool.release_client(phone)
 

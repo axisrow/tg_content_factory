@@ -220,6 +220,15 @@ telethon-cli users get-me --output json
  ruff check src/ tests/ conftest.py
  ```
 
+### Важное замечание по CI
+
+- `push` workflow проверяет только head текущей ветки.
+- `pull_request` workflow проверяет результат merge с `main`.
+- Поэтому ветка может быть зелёной на `push` и красной на `pull_request`, если
+  в `main` уже есть lint/test-проблема, которая попадает в merge ref PR.
+- Перед повторным запуском PR-checks подтягивайте и синхронизируйте
+  `origin/main`, чтобы локальная проверка совпадала с CI.
+
 ### Политика real Telegram testing
 
 Правила для безопасных automated/live/manual прогонов против настоящего Telegram API описаны в [docs/testing/real-telegram.md](docs/testing/real-telegram.md).
