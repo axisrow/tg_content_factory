@@ -4,7 +4,13 @@ import logging
 from typing import TYPE_CHECKING
 
 from src.database import Database
-from src.models import CollectionTaskType, PipelineRunTaskPayload, SqStatsTaskPayload
+from src.models import (
+    CollectionTaskType,
+    ContentGenerateTaskPayload,
+    ContentPublishTaskPayload,
+    PipelineRunTaskPayload,
+    SqStatsTaskPayload,
+)
 
 if TYPE_CHECKING:
     from src.services.collection_service import CollectionService
@@ -83,4 +89,36 @@ class TaskEnqueuer:
             payload=PipelineRunTaskPayload(pipeline_id=pipeline_id),
         )
         logger.info("Enqueued PIPELINE_RUN task #%d for pipeline_id=%d", task_id, pipeline_id)
+        return task_id
+
+    async def enqueue_content_generate(self, pipeline_id: int) -> int | None:
+        """Create a CONTENT_GENERATE task for a specific pipeline with deduplication."""
+        has = await self._db.repos.tasks.has_active_task(
+            CollectionTaskType.CONTENT_GENERATE,
+            payload_filter_key="pipeline_id",
+            payload_filter_value=pipeline_id,
+        )
+        if has:
+            logger.debug("CONTENT_GENERATE for pipeline_id=%d already active, skipping", pipeline_id)
+            return None
+        task_id = await self._db.repos.tasks.create_generic_task(
+            CollectionTaskType.CONTENT_GENERATE,
+            title=f"Content generate #{pipeline_id}",
+            payload=ContentGenerateTaskPayload(pipeline_id=pipeline_id),
+        )
+        logger.info("Enqueued CONTENT_GENERATE task #%d for pipeline_id=%d", task_id, pipeline_id)
+        return task_id
+
+    async def enqueue_content_publish(self, pipeline_id: int | None = None) -> int | None:
+        """Create a CONTENT_PUBLISH task for publishing approved drafts."""
+        has = await self._db.repos.tasks.has_active_task(CollectionTaskType.CONTENT_PUBLISH)
+        if has:
+            logger.debug("CONTENT_PUBLISH task already active, skipping")
+            return None
+        task_id = await self._db.repos.tasks.create_generic_task(
+            CollectionTaskType.CONTENT_PUBLISH,
+            title="Content publish",
+            payload=ContentPublishTaskPayload(pipeline_id=pipeline_id),
+        )
+        logger.info("Enqueued CONTENT_PUBLISH task #%d", task_id)
         return task_id
