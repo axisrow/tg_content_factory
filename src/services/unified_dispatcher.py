@@ -545,8 +545,8 @@ class UnifiedDispatcher:
             await self._tasks.update_collection_task(
                 task.id,
                 CollectionTaskStatus.COMPLETED,
-                messages_collected=1,
-                note=f"Generated run id={run.id}",
+                messages_collected=1 if run is not None else 0,
+                note=f"Generated run id={run.id}" if run is not None else "Generation returned no result",
             )
         except Exception as exc:
             logger.exception("Content generate handler failed for pipeline_id=%d", pipeline_id)
