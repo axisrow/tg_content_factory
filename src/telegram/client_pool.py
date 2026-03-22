@@ -716,7 +716,7 @@ class ClientPool:
         if last_flood_error is not None:
             logger.warning("resolve_channel: all clients flood-waited for '%s'", identifier)
             raise last_flood_error
-        logger.warning("resolve_channel: all clients flood-waited for '%s'", identifier)
+        logger.warning("resolve_channel: all attempts failed for '%s' (no available clients)", identifier)
         return None
 
     @staticmethod
