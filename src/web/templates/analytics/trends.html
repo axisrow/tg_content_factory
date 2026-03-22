@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+{% block title %}Тренды — TG Agent{% endblock %}
+{% block content %}
+<div class="d-flex align-items-center gap-3 mb-3">
+    <h1 class="mb-0">Тренды</h1>
+    <a href="/analytics" class="btn btn-outline-secondary btn-sm">← Аналитика</a>
+</div>
+
+<div class="mb-3">
+    <div class="btn-group btn-group-sm" role="group" aria-label="Период">
+        <a href="/analytics/trends?days=7" class="btn btn-{% if days == 7 %}primary{% else %}outline-secondary{% endif %}">7 дней</a>
+        <a href="/analytics/trends?days=14" class="btn btn-{% if days == 14 %}primary{% else %}outline-secondary{% endif %}">14 дней</a>
+        <a href="/analytics/trends?days=30" class="btn btn-{% if days == 30 %}primary{% else %}outline-secondary{% endif %}">30 дней</a>
+    </div>
+</div>
+
+<div class="row g-4">
+    <div class="col-12 col-lg-5">
+        <div class="card h-100">
+            <div class="card-header fw-semibold">Топ тем ({{ topics|length }})</div>
+            <div class="card-body p-0">
+                {% if topics %}
+                <table class="table table-sm table-hover mb-0">
+                    <thead><tr><th>Слово</th><th class="text-end">Упоминания</th></tr></thead>
+                    <tbody>
+                    {% for t in topics %}
+                    <tr>
+                        <td>{{ t.keyword }}</td>
+                        <td class="text-end">{{ t.count }}</td>
+                    </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+                {% else %}
+                <p class="text-muted p-3 mb-0">Нет данных за выбранный период.</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <div class="col-12 col-lg-7">
+        <div class="card mb-4">
+            <div class="card-header fw-semibold">Топ каналов по просмотрам ({{ channels|length }})</div>
+            <div class="card-body p-0">
+                {% if channels %}
+                <table class="table table-sm table-hover mb-0">
+                    <thead><tr><th>Канал</th><th class="text-end">Avg views</th><th class="text-end">Сообщений</th></tr></thead>
+                    <tbody>
+                    {% for ch in channels %}
+                    <tr>
+                        <td>
+                            {% if ch.username %}
+                            <a href="https://t.me/{{ ch.username }}" target="_blank" rel="noopener noreferrer">
+                                {{ ch.title or ch.username }}
+                            </a>
+                            {% else %}
+                            {{ ch.title or ch.channel_id }}
+                            {% endif %}
+                        </td>
+                        <td class="text-end">{{ "%.0f"|format(ch.avg_views) }}</td>
+                        <td class="text-end">{{ ch.message_count }}</td>
+                    </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+                {% else %}
+                <p class="text-muted p-3 mb-0">Нет данных за выбранный период.</p>
+                {% endif %}
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header fw-semibold">Топ реакций</div>
+            <div class="card-body">
+                {% if emojis %}
+                <div class="d-flex flex-wrap gap-2">
+                    {% for e in emojis %}
+                    <span class="badge bg-secondary fs-6" title="{{ e.count }} реакций">
+                        {{ e.emoji }} <span class="fw-normal text-white-50">{{ e.count }}</span>
+                    </span>
+                    {% endfor %}
+                </div>
+                {% else %}
+                <p class="text-muted mb-0">Нет данных за выбранный период.</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
