@@ -133,3 +133,287 @@ async def test_edit_pipeline(client):
     )
     assert resp.status_code == 303
     assert "msg=pipeline_edited" in resp.headers["location"]
+
+
+# === New tests ===
+
+
+@pytest.mark.asyncio
+async def test_run_pipeline_not_found(client):
+    """Test run pipeline with invalid ID."""
+    resp = await client.post("/pipelines/999999/run", follow_redirects=False)
+    assert resp.status_code == 303
+    assert "error=pipeline_invalid" in resp.headers["location"]
+
+
+@pytest.mark.asyncio
+async def test_run_pipeline_enqueues(client):
+    """Test run pipeline enqueues generation."""
+    from unittest.mock import patch
+
+    await client.post("/pipelines/add", data=_ADD_DATA)
+
+    with patch("src.web.routes.pipelines.deps.pipeline_service") as mock_svc:
+        mock_svc.return_value.get = AsyncMock(
+            return_value=MagicMock(id=1, is_active=True)
+        )
+        with patch("src.web.routes.pipelines.deps.get_task_enqueuer") as mock_enq:
+            mock_enq.return_value.enqueue_pipeline_run = AsyncMock()
+            resp = await client.post("/pipelines/1/run", follow_redirects=False)
+            assert resp.status_code == 303
+            assert "msg=pipeline_run_enqueued" in resp.headers["location"]
+
+
+@pytest.mark.asyncio
+async def test_run_pipeline_failure(client):
+    """Test run pipeline handles failure."""
+    from unittest.mock import patch
+
+    await client.post("/pipelines/add", data=_ADD_DATA)
+
+    with patch("src.web.routes.pipelines.deps.pipeline_service") as mock_svc:
+        mock_svc.return_value.get = AsyncMock(
+            return_value=MagicMock(id=1, is_active=True)
+        )
+        with patch("src.web.routes.pipelines.deps.get_task_enqueuer") as mock_enq:
+            mock_enq.return_value.enqueue_pipeline_run = AsyncMock(
+                side_effect=Exception("Queue error")
+            )
+            resp = await client.post("/pipelines/1/run", follow_redirects=False)
+            assert resp.status_code == 303
+            assert "error=pipeline_run_failed" in resp.headers["location"]
+
+
+@pytest.mark.asyncio
+async def test_generate_page_renders(client):
+    """Test generate page renders."""
+    await client.post("/pipelines/add", data=_ADD_DATA)
+
+    resp = await client.get("/pipelines/1/generate")
+    assert resp.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_generate_page_not_found(client):
+    """Test generate page with invalid pipeline."""
+    resp = await client.get("/pipelines/999999/generate", follow_redirects=False)
+    assert resp.status_code == 303
+    assert "error=pipeline_invalid" in resp.headers["location"]
+
+
+# === SSE Streaming tests ===
+
+
+@pytest.mark.asyncio
+async def test_generate_stream_success(client):
+    """Test SSE streaming generation."""
+    from unittest.mock import patch
+
+    await client.post("/pipelines/add", data=_ADD_DATA)
+
+    async def fake_stream(*args, **kwargs):
+        yield {"delta": "Hello", "generated_text": None, "citations": []}
+        yield {"delta": " world", "generated_text": "Hello world", "citations": []}
+
+    with patch("src.services.provider_service.AgentProviderService") as MockProviderService:
+        mock_provider_instance = MagicMock()
+        mock_provider_instance.get_provider_callable = MagicMock(return_value=lambda: None)
+        MockProviderService.return_value = mock_provider_instance
+
+        with patch("src.services.generation_service.GenerationService") as MockGen:
+            mock_instance = MagicMock()
+            mock_instance.generate_stream = fake_stream
+            MockGen.return_value = mock_instance
+
+            resp = await client.get("/pipelines/1/generate-stream")
+            assert resp.status_code == 200
+            assert "text/event-stream" in resp.headers["content-type"]
+
+
+@pytest.mark.asyncio
+async def test_generate_stream_pipeline_not_found(client):
+    """Test SSE streaming with invalid pipeline."""
+    resp = await client.get("/pipelines/999999/generate-stream", follow_redirects=False)
+    assert resp.status_code == 303
+    assert "error=pipeline_invalid" in resp.headers["location"]
+
+
+@pytest.mark.asyncio
+async def test_generate_pipeline_success(client):
+    """Test non-streaming generation success."""
+    from unittest.mock import patch
+
+    await client.post("/pipelines/add", data=_ADD_DATA)
+
+    with patch("src.services.provider_service.AgentProviderService") as MockProviderService:
+        mock_provider_instance = MagicMock()
+        mock_provider_instance.get_provider_callable = MagicMock(return_value=lambda: None)
+        MockProviderService.return_value = mock_provider_instance
+
+        with patch("src.services.generation_service.GenerationService") as MockGen:
+            mock_instance = MagicMock()
+            mock_instance.generate = AsyncMock(
+                return_value={"generated_text": "Test output", "citations": []}
+            )
+            MockGen.return_value = mock_instance
+
+            resp = await client.post(
+                "/pipelines/1/generate",
+                data={"model": "", "max_tokens": "256", "temperature": "0.0"},
+            )
+            assert resp.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_generate_pipeline_failure(client):
+    """Test non-streaming generation failure."""
+    from unittest.mock import patch
+
+    await client.post("/pipelines/add", data=_ADD_DATA)
+
+    with patch("src.services.provider_service.AgentProviderService") as MockProviderService:
+        mock_provider_instance = MagicMock()
+        mock_provider_instance.get_provider_callable = MagicMock(return_value=lambda: None)
+        MockProviderService.return_value = mock_provider_instance
+
+        with patch("src.services.generation_service.GenerationService") as MockGen:
+            mock_instance = MagicMock()
+            mock_instance.generate = AsyncMock(side_effect=Exception("Generation error"))
+            MockGen.return_value = mock_instance
+
+            resp = await client.post(
+                "/pipelines/1/generate",
+                data={"model": "", "max_tokens": "256", "temperature": "0.0"},
+            )
+            assert resp.status_code == 200
+            assert "Generation failed" in resp.text
+
+
+@pytest.mark.asyncio
+async def test_generate_pipeline_not_found(client):
+    """Test non-streaming generation with invalid pipeline."""
+    resp = await client.post(
+        "/pipelines/999999/generate",
+        data={"model": "", "max_tokens": "256", "temperature": "0.0"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    assert "error=pipeline_invalid" in resp.headers["location"]
+
+
+@pytest.mark.asyncio
+async def test_publish_pipeline_success(client):
+    """Test publishing a generation run."""
+    await client.post("/pipelines/add", data=_ADD_DATA)
+
+    # Get db from app state through transport
+    app = client._transport.app  # type: ignore
+    db = app.state.db
+
+    # Create a generation run
+    run_id = await db.repos.generation_runs.create_run(1, "prompt")
+    await db.repos.generation_runs.save_result(run_id, "Generated text", {})
+
+    resp = await client.post(
+        "/pipelines/1/publish",
+        data={"run_id": str(run_id)},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    assert "msg=pipeline_published" in resp.headers["location"]
+
+
+@pytest.mark.asyncio
+async def test_publish_pipeline_invalid_run(client):
+    """Test publishing with wrong pipeline_id."""
+    await client.post("/pipelines/add", data=_ADD_DATA)
+
+    # Get db from app state through transport
+    app = client._transport.app  # type: ignore
+    db = app.state.db
+
+    # Create a generation run
+    run_id = await db.repos.generation_runs.create_run(1, "prompt")
+    await db.repos.generation_runs.save_result(run_id, "Generated text", {})
+
+    # Try to publish with wrong pipeline_id
+    resp = await client.post(
+        "/pipelines/999999/publish",
+        data={"run_id": str(run_id)},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    assert "error=pipeline_invalid" in resp.headers["location"]
+
+
+@pytest.mark.asyncio
+async def test_publish_pipeline_run_not_found(client):
+    """Test publishing a non-existent run."""
+    await client.post("/pipelines/add", data=_ADD_DATA)
+
+    resp = await client.post(
+        "/pipelines/1/publish",
+        data={"run_id": "999999"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    assert "error=pipeline_invalid" in resp.headers["location"]
+
+
+@pytest.mark.asyncio
+async def test_edit_pipeline_not_found(client):
+    """Test edit with invalid pipeline_id."""
+    resp = await client.post(
+        "/pipelines/999999/edit",
+        data=_ADD_DATA,
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    assert "error=pipeline_invalid" in resp.headers["location"]
+
+
+@pytest.mark.asyncio
+async def test_toggle_pipeline_not_found(client):
+    """Test toggle with invalid pipeline_id."""
+    resp = await client.post("/pipelines/999999/toggle", follow_redirects=False)
+    assert resp.status_code == 303
+    assert "error=pipeline_invalid" in resp.headers["location"]
+
+
+# === _target_refs error paths ===
+
+
+def test_target_refs_missing_separator():
+    """Test _target_refs with missing separator."""
+    from src.web.routes.pipelines import _target_refs
+    from src.services.pipeline_service import PipelineValidationError
+
+    try:
+        _target_refs(["invalid_format"])
+        assert False, "Should have raised PipelineValidationError"
+    except PipelineValidationError as e:
+        assert "Некорректный формат цели" in str(e)
+
+
+def test_target_refs_invalid_dialog_id():
+    """Test _target_refs with invalid dialog_id."""
+    from src.web.routes.pipelines import _target_refs
+    from src.services.pipeline_service import PipelineValidationError
+
+    try:
+        _target_refs(["+1234567890|not_a_number"])
+        assert False, "Should have raised PipelineValidationError"
+    except PipelineValidationError as e:
+        assert "Некорректный dialog id" in str(e)
+
+
+def test_target_refs_success():
+    """Test _target_refs with valid input."""
+    from src.web.routes.pipelines import _target_refs
+
+    refs = _target_refs(["+1234567890|100", "+0987654321|200"])
+    assert len(refs) == 2
+    assert refs[0].phone == "+1234567890"
+    assert refs[0].dialog_id == 100
+    assert refs[1].phone == "+0987654321"
+    assert refs[1].dialog_id == 200

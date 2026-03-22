@@ -270,20 +270,19 @@ async def test_settings_page_ignores_invalid_persisted_numeric_settings(client):
 @pytest.mark.asyncio
 async def test_settings_save_semantic_persists_values_and_resets_index(client):
     db = client._transport.app.state.db
-    if db.vec_available:
-        await db.insert_messages_batch(
-            [
-                Message(
-                    channel_id=-100444,
-                    message_id=1,
-                    text="Semantic reset test",
-                    date=datetime.now(timezone.utc),
-                )
-            ]
-        )
-        rows = await db.execute_fetchall("SELECT id FROM messages ORDER BY id")
-        await db.repos.messages.upsert_message_embeddings([(int(rows[0]["id"]), [1.0, 0.0])])
-        await db.set_setting("semantic_last_embedded_id", "1")
+    await db.insert_messages_batch(
+        [
+            Message(
+                channel_id=-100444,
+                message_id=1,
+                text="Semantic reset test",
+                date=datetime.now(timezone.utc),
+            )
+        ]
+    )
+    rows = await db.execute_fetchall("SELECT id FROM messages ORDER BY id")
+    await db.repos.messages.upsert_message_embeddings([(int(rows[0]["id"]), [1.0, 0.0])])
+    await db.set_setting("semantic_last_embedded_id", "1")
 
     resp = await client.post(
         "/settings/save-semantic-search",
@@ -309,10 +308,6 @@ async def test_settings_save_semantic_persists_values_and_resets_index(client):
 
 @pytest.mark.asyncio
 async def test_settings_semantic_index_runs_embedding_service(client, monkeypatch):
-    db = client._transport.app.state.db
-    if not db.vec_available:
-        pytest.skip("sqlite-vec extension is unavailable in this environment")
-
     monkeypatch.setattr(
         EmbeddingService,
         "index_pending_messages",
@@ -549,9 +544,17 @@ async def test_settings_add_agent_provider_persists_provider_in_db(client):
 
 
 @pytest.mark.asyncio
-async def test_settings_save_agent_providers_preserves_priority_order(client):
+async def test_settings_save_agent_providers_preserves_priority_order(client, monkeypatch):
     db = client._transport.app.state.db
     await db.set_setting("agent_dev_mode_enabled", "1")
+    from src.web.routes import settings as settings_routes
+
+    probe_mock = AsyncMock()
+    fake_manager = SimpleNamespace(refresh_settings_cache=AsyncMock())
+    monkeypatch.setattr(settings_routes, "_probe_provider_config", probe_mock)
+    monkeypatch.setattr(
+        settings_routes, "_settings_agent_manager", lambda request: (fake_manager, False)
+    )
 
     await client.post(
         "/settings/agent-providers/add", data={"provider": "openai"}, follow_redirects=False
@@ -1304,8 +1307,6 @@ async def test_search_with_semantic_mode(client, monkeypatch):
     from src.services.embedding_service import EmbeddingService
 
     db = client._transport.app.state.db
-    if not db.vec_available:
-        pytest.skip("sqlite-vec extension is unavailable in this environment")
 
     await db.insert_messages_batch(
         [
@@ -1318,7 +1319,9 @@ async def test_search_with_semantic_mode(client, monkeypatch):
         ]
     )
     rows = await db.execute_fetchall("SELECT id FROM messages ORDER BY id")
-    await db.repos.messages.upsert_message_embeddings([(int(rows[0]["id"]), [1.0, 0.0])])
+    emb = [(int(rows[0]["id"]), [1.0, 0.0])]
+    await db.repos.messages.upsert_message_embeddings(emb)
+    await db.repos.messages.upsert_message_embedding_json(emb)
     monkeypatch.setattr(
         EmbeddingService,
         "index_pending_messages",

@@ -37,6 +37,11 @@ class NotificationBotsRepository:
         await self._db.commit()
         return cur.lastrowid or 0
 
+    async def count(self) -> int:
+        cur = await self._db.execute("SELECT COUNT(*) FROM notification_bots")
+        row = await cur.fetchone()
+        return row[0] if row else 0
+
     async def delete_bot(self, tg_user_id: int) -> None:
         await self._db.execute(
             "DELETE FROM notification_bots WHERE tg_user_id = ?",
