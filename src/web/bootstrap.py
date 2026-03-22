@@ -227,6 +227,7 @@ async def start_container(container: AppContainer) -> None:
         await container.agent_manager.refresh_settings_cache(preflight=True)
         container.agent_manager.initialize()
 
+    await container.scheduler.load_settings()
     autostart = await container.db.get_setting("scheduler_autostart")
     if autostart == "1":
         logger.info("Auto-starting scheduler (scheduler_autostart=1)")

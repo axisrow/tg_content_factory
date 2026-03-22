@@ -52,6 +52,18 @@ class SchedulerManager:
     def interval_minutes(self) -> int:
         return self._current_interval_minutes
 
+    async def load_settings(self) -> None:
+        """Load persisted settings from DB without starting the scheduler."""
+        if not self._scheduler_bundle:
+            return
+        saved = await self._scheduler_bundle.get_setting("collect_interval_minutes")
+        self._current_interval_minutes = parse_int_setting(
+            saved,
+            setting_name="collect_interval_minutes",
+            default=self._config.collect_interval_minutes,
+            logger=logger,
+        )
+
     async def start(self) -> None:
         if self._scheduler is not None and self._scheduler.running:
             logger.warning("Scheduler already running")
