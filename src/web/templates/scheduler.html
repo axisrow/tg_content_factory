@@ -45,12 +45,69 @@
             <form method="post" action="/scheduler/test-notification" data-busy>
                 <button type="submit" class="btn btn-outline-secondary"
                         {% if not bot_configured %}disabled title="Подключите бот в Настройках → Уведомления"{% endif %}>
-                    Тест уведомлений
+                    Тест
                 </button>
             </form>
+            <button type="button" class="btn btn-outline-info"
+                    onclick="dryRunNotifications()"
+                    id="dry-run-btn">
+                Dry-run
+            </button>
         </div>
     </div>
 </div>
+
+<!-- Scheduler Jobs -->
+{% if scheduler_jobs %}
+<div class="card mb-4">
+    <div class="card-header fw-semibold">
+        Джобы планировщика
+        <span class="badge text-bg-secondary ms-1">{{ scheduler_jobs|length }}</span>
+        {% if not is_running %}
+        <small class="text-muted ms-2">(будут зарегистрированы при запуске)</small>
+        {% endif %}
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+        <table class="table table-sm table-striped mb-0">
+            <thead>
+                <tr>
+                    <th>Джоб</th>
+                    <th>Интервал</th>
+                    <th>Следующий запуск</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for j in scheduler_jobs %}
+                <tr>
+                    <td>{{ j.label }}</td>
+                    <td>
+                        {% if j.interval_minutes %}
+                            {{ j.interval_minutes }} мин.
+                        {% else %}
+                            —
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if j.next_run %}
+                            {{ j.next_run.strftime('%H:%M:%S') }}
+                        {% elif is_running %}
+                            —
+                        {% else %}
+                            <span class="text-muted">остановлен</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<!-- Dry-run results (populated via fetch) -->
+<div id="dry-run-results" class="mb-4" style="display:none"></div>
 
 {% if search_log %}
 <div class="card mb-4">
@@ -262,5 +319,26 @@ setTimeout(function() {
     window.location.reload();
 }, 5000);
 {% endif %}
+
+function dryRunNotifications() {
+    var btn = document.getElementById('dry-run-btn');
+    var container = document.getElementById('dry-run-results');
+    btn.disabled = true;
+    btn.textContent = 'Загрузка...';
+    fetch('/scheduler/dry-run-notifications', {method: 'POST'})
+        .then(function(r) { return r.text(); })
+        .then(function(html) {
+            container.innerHTML = html;
+            container.style.display = '';
+        })
+        .catch(function() {
+            container.innerHTML = '<div class="alert alert-danger">Ошибка при выполнении dry-run</div>';
+            container.style.display = '';
+        })
+        .finally(function() {
+            btn.disabled = false;
+            btn.textContent = 'Dry-run';
+        });
+}
 </script>
 {% endblock %}

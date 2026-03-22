@@ -41,7 +41,7 @@ class TaskEnqueuer:
             payload_filter_value=sq_id,
         )
         if has:
-            logger.debug("SQ_STATS task for sq_id=%d already active, skipping", sq_id)
+            logger.info("SQ_STATS task for sq_id=%d already active, skipping", sq_id)
             return None
         task_id = await self._db.repos.tasks.create_generic_task(
             CollectionTaskType.SQ_STATS,
@@ -81,7 +81,7 @@ class TaskEnqueuer:
             payload_filter_value=pipeline_id,
         )
         if has:
-            logger.debug("PIPELINE_RUN for pipeline_id=%d already active, skipping", pipeline_id)
+            logger.info("PIPELINE_RUN for pipeline_id=%d already active, skipping", pipeline_id)
             return None
         task_id = await self._db.repos.tasks.create_generic_task(
             CollectionTaskType.PIPELINE_RUN,
@@ -99,7 +99,7 @@ class TaskEnqueuer:
             payload_filter_value=pipeline_id,
         )
         if has:
-            logger.debug("CONTENT_GENERATE for pipeline_id=%d already active, skipping", pipeline_id)
+            logger.info("CONTENT_GENERATE for pipeline_id=%d already active, skipping", pipeline_id)
             return None
         task_id = await self._db.repos.tasks.create_generic_task(
             CollectionTaskType.CONTENT_GENERATE,
@@ -113,7 +113,7 @@ class TaskEnqueuer:
         """Create a CONTENT_PUBLISH task for publishing approved drafts."""
         has = await self._db.repos.tasks.has_active_task(CollectionTaskType.CONTENT_PUBLISH)
         if has:
-            logger.debug("CONTENT_PUBLISH task already active, skipping")
+            logger.info("CONTENT_PUBLISH task already active, skipping")
             return None
         task_id = await self._db.repos.tasks.create_generic_task(
             CollectionTaskType.CONTENT_PUBLISH,

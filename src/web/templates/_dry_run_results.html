@@ -1,0 +1,51 @@
+<div class="card">
+    <div class="card-header fw-semibold">
+        Dry-run уведомлений
+        {% if since %}
+        <small class="text-muted ms-2">сообщения собранные с {{ since[:19] }}</small>
+        {% endif %}
+    </div>
+    <div class="card-body">
+        {% if no_queries %}
+            <p class="text-muted mb-0">Нет активных запросов с notify_on_collect.</p>
+        {% elif not since %}
+            <p class="text-muted mb-0">Нет завершённых задач сбора — невозможно определить окно.</p>
+        {% elif not results %}
+            <p class="text-muted mb-0">Нет совпадений.</p>
+        {% else %}
+            <table class="table table-sm table-striped mb-0">
+                <thead>
+                    <tr>
+                        <th>Запрос</th>
+                        <th>Совпадений</th>
+                        <th>Превью</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for r in results %}
+                    <tr>
+                        <td><strong>{{ r.query }}</strong></td>
+                        <td>
+                            {% if r.count > 0 %}
+                                <span class="badge text-bg-warning">{{ r.count }}</span>
+                            {% else %}
+                                <span class="text-muted">0</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% for p in r.previews %}
+                                <small class="d-block text-truncate" style="max-width:400px">{{ p }}</small>
+                            {% endfor %}
+                            {% if not r.previews %}
+                                <small class="text-muted">—</small>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% set total = results|map(attribute='count')|sum %}
+            <p class="mt-2 mb-0"><strong>Итого: {{ total }} совпадений, {{ results|length }} запросов</strong></p>
+        {% endif %}
+    </div>
+</div>

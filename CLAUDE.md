@@ -69,7 +69,9 @@ Three layers: **CLI/Web** → **Telegram + Search + Scheduler + Agent/Pipeline**
 - Notification bot: personal bot created via BotFather through a connected account (`src/telegram/notifier.py`)
 - **Agent system**: `AgentProviderService` selects backend — `claude-agent-sdk` when `ANTHROPIC_API_KEY` / `CLAUDE_CODE_OAUTH_TOKEN` is set, otherwise falls back to `deepagents` with provider adapters; developer override available in Settings UI
 - **Provider system**: `ProviderService` auto-registers LLM providers from env vars (`OPENAI_API_KEY`, `COHERE_API_KEY`, `OLLAMA_BASE`, etc.); provider adapters in `src/services/provider_adapters.py` are lightweight HTTP wrappers (no heavy SDK deps)
-- **Content pipelines**: `PipelineService` + `ContentGenerationService` orchestrate generate → draft → notify → publish flow; tracked via `generation_runs` DB table
+- **Content pipelines**: `PipelineService` + `ContentGenerationService` orchestrate generate → image → draft → notify → publish flow; tracked via `generation_runs` DB table
+- **Image generation**: `ImageGenerationService` routes to provider-specific HTTP adapters (Together/HuggingFace/OpenAI/Replicate) via `provider:model_id` convention; auto-registers from env vars; adapters defined in `src/services/provider_adapters.py`
+- **UnifiedDispatcher** (`src/services/unified_dispatcher.py`): polls DB for generic tasks (CONTENT_GENERATE, CONTENT_PUBLISH, PIPELINE_RUN, PHOTO_DUE, etc.) and dispatches to handler methods; recovers interrupted tasks on startup
 - **Photo publishing**: `PhotoAutoUploadService` / `PhotoPublishService` / `PhotoTaskService` — separate upload, schedule, publish tasks tracked in DB
 - **LangChain integration**: optional, lazy-loaded via `src/services/langchain_adapters.py`; enabled with `USE_LANGCHAIN=1`
 
@@ -104,6 +106,8 @@ Each repository has a `_to_<model>(row)` static helper that maps `aiosqlite.Row`
 - **Keyword matching**: plain text (case-insensitive substring) and regex (`re.IGNORECASE`)
 - **Channel filters**: `ChannelAnalyzer` checks `low_uniqueness`, `low_subscriber_ratio`, `cross_channel_spam`, `non_cyrillic`, `chat_noise`; filtered channels skipped during collection unless `force=True`
 - **Collection service**: `enqueue_channel_by_pk(pk, force)` respects `is_filtered` flag; `enqueue_all_channels()` uses `full=False` for incremental collection
+- **Image adapter convention**: `ImageAdapter = Callable[[str, str], Awaitable[str | None]]` — signature is `(prompt, model_id) → URL/path`; model string format `provider:model_id` (e.g. `together:black-forest-labs/FLUX.1-schnell`); without prefix falls back to first registered adapter
+- **Content pipeline flow**: CONTENT_GENERATE task → `ContentGenerationService.generate()` → LLM text → optional image → `generation_runs` record → if AUTO publish mode, enqueues CONTENT_PUBLISH → `PublishService.publish_run()` sends to target channel
 - **HTMX progressive enhancement**: collect routes check `HX-Request` header to return HTML fragments vs redirects
 - **Identifier parsing**: `parse_identifiers()` splits text by comma/semicolon/newline; `extract_identifiers()` regex-extracts t.me links, @usernames, negative IDs; `parse_file()` handles txt/csv/xlsx
 - **aiosqlite connection cleanup**: in tests using raw `aiosqlite.connect()`, always wrap in `try/finally` with `await conn.close()` — an unclosed worker-thread blocks pytest process exit

@@ -81,6 +81,7 @@ class SchedulerManager:
             id=self._job_id,
             replace_existing=True,
         )
+        logger.info("Registered job %s (every %d min)", self._job_id, collect_interval)
 
         if self._sq_bundle:
             await self.sync_search_query_jobs()
@@ -95,15 +96,18 @@ class SchedulerManager:
                 id=self._photo_due_job_id,
                 replace_existing=True,
             )
+            logger.info("Registered job %s (every 1 min)", self._photo_due_job_id)
             self._scheduler.add_job(
                 self._run_photo_auto,
                 IntervalTrigger(minutes=1),
                 id=self._photo_auto_job_id,
                 replace_existing=True,
             )
+            logger.info("Registered job %s (every 1 min)", self._photo_auto_job_id)
 
         self._scheduler.start()
-        logger.info("Scheduler started: collecting every %d minutes", collect_interval)
+        total_jobs = len(self._scheduler.get_jobs())
+        logger.info("Scheduler started with %d jobs, collecting every %d min", total_jobs, collect_interval)
 
     async def stop(self) -> None:
         if self._bg_task and not self._bg_task.done():
@@ -116,9 +120,10 @@ class SchedulerManager:
 
         if self._scheduler is None or not self._scheduler.running:
             return
+        job_count = len(self._scheduler.get_jobs())
         self._scheduler.shutdown(wait=False)
         self._scheduler = None
-        logger.info("Scheduler stopped")
+        logger.info("Scheduler stopped, %d jobs removed", job_count)
 
     def update_interval(self, minutes: int) -> None:
         if self._scheduler and self._scheduler.running:
@@ -305,3 +310,39 @@ class SchedulerManager:
         except Exception:
             logger.exception("Error enqueuing photo_auto")
         return {"enqueued": True}
+
+    async def get_potential_jobs(self) -> list[dict]:
+        """Return jobs that would be registered on start (for UI when scheduler is stopped)."""
+        jobs: list[dict] = [
+            {"job_id": "collect_all", "interval_minutes": self._current_interval_minutes},
+        ]
+        if self._task_enqueuer is not None:
+            jobs.append({"job_id": "photo_due", "interval_minutes": 1})
+            jobs.append({"job_id": "photo_auto", "interval_minutes": 1})
+        if self._sq_bundle:
+            try:
+                all_active = await self._sq_bundle.get_all(active_only=True)
+                for sq in all_active:
+                    if sq.track_stats:
+                        jobs.append({
+                            "job_id": f"sq_{sq.id}",
+                            "interval_minutes": sq.interval_minutes,
+                        })
+            except Exception:
+                logger.exception("Error fetching search queries for potential jobs")
+        if self._pipeline_bundle:
+            try:
+                all_active = await self._pipeline_bundle.get_all(active_only=True)
+                for p in all_active:
+                    if p.id is not None and p.is_active:
+                        jobs.append({
+                            "job_id": f"pipeline_run_{p.id}",
+                            "interval_minutes": p.generate_interval_minutes,
+                        })
+                        jobs.append({
+                            "job_id": f"content_generate_{p.id}",
+                            "interval_minutes": p.generate_interval_minutes,
+                        })
+            except Exception:
+                logger.exception("Error fetching pipelines for potential jobs")
+        return jobs
