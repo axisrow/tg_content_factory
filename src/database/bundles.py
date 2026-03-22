@@ -583,15 +583,24 @@ class SearchBundle:
     search_log: SearchLogRepository
     channels: ChannelsRepository
     settings: SettingsRepository
+    vec_available: bool = False
+    numpy_available: bool = False
 
     @classmethod
     def from_database(cls, db: "Database") -> "SearchBundle":
         repos = db.repos
+        try:
+            import numpy  # noqa: F401
+            numpy_ok = True
+        except ImportError:
+            numpy_ok = False
         return cls(
             repos.messages,
             repos.search_log,
             repos.channels,
             repos.settings,
+            vec_available=getattr(db, "vec_available", False),
+            numpy_available=numpy_ok,
         )
 
     async def search_messages(

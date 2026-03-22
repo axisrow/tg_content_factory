@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta
+
 from src.database.bundles import SearchBundle
 from src.models import SearchResult
+from src.search.numpy_semantic import NumpySemanticIndex
 from src.services.embedding_service import EmbeddingService
 
 
@@ -9,6 +12,13 @@ class LocalSearch:
     def __init__(self, search: SearchBundle, embedding_service: EmbeddingService | None = None):
         self._search = search
         self._embedding_service = embedding_service
+        self._numpy_index: NumpySemanticIndex | None = None
+        self._numpy_index_loaded: bool = False
+
+    def invalidate_numpy_index(self) -> None:
+        """Reset the cached numpy index so it is rebuilt on the next search."""
+        self._numpy_index = None
+        self._numpy_index_loaded = False
 
     async def search(
         self,
@@ -35,6 +45,17 @@ class LocalSearch:
         )
         return SearchResult(messages=messages, total=total, query=query)
 
+    async def _ensure_numpy_index(self) -> NumpySemanticIndex:
+        """Lazily load and build the numpy in-memory index from the JSON table."""
+        if not self._numpy_index_loaded:
+            index = NumpySemanticIndex()
+            embeddings = await self._search.messages.load_all_embeddings_json()
+            index.load(embeddings)
+            self._numpy_index = index
+            self._numpy_index_loaded = True
+        assert self._numpy_index is not None
+        return self._numpy_index
+
     async def search_semantic(
         self,
         query: str,
@@ -49,16 +70,65 @@ class LocalSearch:
         if self._embedding_service is None:
             raise RuntimeError("Semantic search is unavailable.")
         query_embedding = await self._embedding_service.embed_query(query)
-        messages, total = await self._search.messages.search_semantic_messages(
-            query_embedding,
-            channel_id=channel_id,
-            date_from=date_from,
-            date_to=date_to,
-            limit=limit,
-            offset=offset,
-            min_length=min_length,
-            max_length=max_length,
+
+        if self._search.vec_available:
+            messages, total = await self._search.messages.search_semantic_messages(
+                query_embedding,
+                channel_id=channel_id,
+                date_from=date_from,
+                date_to=date_to,
+                limit=limit,
+                offset=offset,
+                min_length=min_length,
+                max_length=max_length,
+            )
+            return SearchResult(messages=messages, total=total, query=query)
+
+        # Fallback: numpy cosine similarity
+        if not self._search.numpy_available:
+            raise RuntimeError(
+                "Semantic search is unavailable: sqlite-vec is not loaded and numpy is not installed."
+            )
+        index = await self._ensure_numpy_index()
+        if index.size == 0:
+            return SearchResult(messages=[], total=0, query=query)
+        # Build set of filtered channel IDs to exclude (matches vec SQL behavior)
+        filtered_channels: set[int] = set()
+        cur = await self._search.messages._db.execute(
+            "SELECT channel_id FROM channels WHERE is_filtered = 1"
         )
+        for row in await cur.fetchall():
+            filtered_channels.add(int(row["channel_id"]))
+        # Over-fetch to allow for post-filtering
+        fetch_k = min(index.size, max((limit + offset) * 4, 200))
+        top_ids = [mid for mid, _score in index.search(query_embedding, k=fetch_k)]
+        filtered: list = []
+        for mid in top_ids:
+            msg = await self._search.messages.get_by_id(mid)
+            if msg is None:
+                continue
+            if msg.channel_id in filtered_channels:
+                continue
+            if channel_id is not None and msg.channel_id != channel_id:
+                continue
+            if date_from and msg.date and str(msg.date) < date_from:
+                continue
+            if date_to and msg.date:
+                # Normalize date-only strings to be inclusive (match SQL path behavior)
+                effective_to = date_to
+                if len(date_to) == 10:  # "YYYY-MM-DD" without time
+                    next_day = datetime.strptime(date_to, "%Y-%m-%d") + timedelta(days=1)
+                    effective_to = next_day.strftime("%Y-%m-%d")
+                if str(msg.date) >= effective_to:
+                    continue
+            text_len = len(msg.text) if msg.text else 0
+            if min_length is not None and text_len < min_length:
+                continue
+            if max_length is not None and text_len > max_length:
+                continue
+            filtered.append(msg)
+        total = len(filtered)
+        messages = filtered[offset : offset + limit]
         return SearchResult(messages=messages, total=total, query=query)
 
     async def search_hybrid(
