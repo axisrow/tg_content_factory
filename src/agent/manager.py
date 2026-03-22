@@ -813,10 +813,10 @@ class DeepagentsBackend:
         model: str | None = None,
     ) -> str:
         """Run researcher-writer pipeline for content generation.
-        
+
         1. Researcher: gathers context using search_messages tool
         2. Writer: produces final content based on research
-        
+
         Returns the final written content.
         """
         errors: list[str] = []
@@ -831,24 +831,30 @@ class DeepagentsBackend:
                     self._run_agent,
                     research_prompt,
                     cfg,
-                    system_prompt="You are a researcher. Gather relevant information from the Telegram channels using available tools. Be thorough and cite your sources.",
+                    system_prompt=(
+                        "You are a researcher. Gather relevant information from the Telegram channels "
+                        "using available tools. Be thorough and cite your sources."
+                    ),
                 )
-                
+
                 # Step 2: Writer phase
                 combined_prompt = f"{writer_prompt}\n\nResearch context:\n{research_result}"
                 final_result = await asyncio.to_thread(
                     self._run_agent,
                     combined_prompt,
                     cfg,
-                    system_prompt="You are a content writer. Write high-quality content based on the research provided. Be engaging and informative.",
+                    system_prompt=(
+                        "You are a content writer. Write high-quality content based on the research "
+                        "provided. Be engaging and informative."
+                    ),
                 )
-                
+
                 self._init_error = None
                 return final_result
             except Exception as exc:
                 errors.append(f"{cfg.provider}: {exc}")
                 logger.warning("Deepagents researcher-writer failed (%s): %s", cfg.provider, exc)
-        
+
         self._init_error = (
             "; ".join(errors) if errors else "Deepagents providers are not configured."
         )

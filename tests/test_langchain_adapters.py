@@ -3,12 +3,10 @@
 from __future__ import annotations
 
 import types
-from unittest.mock import MagicMock, patch
 
 import pytest
 
 from src.services.langchain_adapters import is_langchain_available, make_langchain_adapter
-
 
 # === is_langchain_available tests ===
 
@@ -80,7 +78,6 @@ async def test_langchain_adapter_openai_success(monkeypatch):
 @pytest.mark.asyncio
 async def test_langchain_adapter_openai_uses_env_vars(monkeypatch):
     """OpenAI adapter uses environment variables."""
-    import os
 
     monkeypatch.setenv("OPENAI_API_KEY", "env_key")
     monkeypatch.setenv("OPENAI_API_BASE", "https://custom.api")
@@ -218,7 +215,6 @@ async def test_langchain_adapter_ollama_success(monkeypatch):
 @pytest.mark.asyncio
 async def test_langchain_adapter_ollama_uses_env_vars(monkeypatch):
     """Ollama adapter uses environment variables."""
-    import os
 
     monkeypatch.setenv("OLLAMA_BASE", "http://ollama.local:11434")
     monkeypatch.setenv("OLLAMA_API_KEY", "ollama_key")

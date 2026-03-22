@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from src.models import CollectionTaskType, SqStatsTaskPayload, PipelineRunTaskPayload
+from src.models import CollectionTaskType, PipelineRunTaskPayload, SqStatsTaskPayload
 from src.services.task_enqueuer import TaskEnqueuer
 
 
