@@ -34,7 +34,7 @@ class ContentPipelinesRepository:
             is_active=bool(row["is_active"]),
             last_generated_id=row["last_generated_id"],
             generate_interval_minutes=row["generate_interval_minutes"],
-            publish_times=row.get("publish_times"),
+            publish_times=row["publish_times"] if "publish_times" in row.keys() else None,
             created_at=_dt(row["created_at"]),
         )
 
