@@ -114,6 +114,13 @@ class ContentPipelinesRepository:
         row = await cur.fetchone()
         return self._to_pipeline(row) if row else None
 
+    async def update_generate_interval(self, pipeline_id: int, minutes: int) -> None:
+        await self._db.execute(
+            "UPDATE content_pipelines SET generate_interval_minutes = ? WHERE id = ?",
+            (minutes, pipeline_id),
+        )
+        await self._db.commit()
+
     async def update(
         self,
         pipeline_id: int,

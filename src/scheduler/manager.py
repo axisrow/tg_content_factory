@@ -52,6 +52,49 @@ class SchedulerManager:
     def interval_minutes(self) -> int:
         return self._current_interval_minutes
 
+    async def is_job_enabled(self, job_id: str) -> bool:
+        """Return True if the job is not explicitly disabled in settings."""
+        if not self._scheduler_bundle:
+            return True
+        val = await self._scheduler_bundle.get_setting(f"scheduler_job_disabled:{job_id}")
+        return val != "1"
+
+    async def sync_job_state(self, job_id: str, enabled: bool) -> None:
+        """Live add or remove a job from the running scheduler."""
+        if not self._scheduler or not self._scheduler.running:
+            return
+        if not enabled:
+            try:
+                self._scheduler.remove_job(job_id)
+            except Exception:
+                pass
+            return
+        if job_id == self._job_id:
+            self._scheduler.add_job(
+                self._run_collection,
+                IntervalTrigger(minutes=self._current_interval_minutes),
+                id=job_id,
+                replace_existing=True,
+            )
+        elif job_id == self._photo_due_job_id and self._task_enqueuer:
+            self._scheduler.add_job(
+                self._run_photo_due,
+                IntervalTrigger(minutes=1),
+                id=job_id,
+                replace_existing=True,
+            )
+        elif job_id == self._photo_auto_job_id and self._task_enqueuer:
+            self._scheduler.add_job(
+                self._run_photo_auto,
+                IntervalTrigger(minutes=1),
+                id=job_id,
+                replace_existing=True,
+            )
+        elif job_id.startswith("sq_"):
+            await self.sync_search_query_jobs()
+        elif job_id.startswith(("pipeline_run_", "content_generate_")):
+            await self.sync_pipeline_jobs()
+
     async def load_settings(self) -> None:
         """Load persisted settings from DB without starting the scheduler."""
         if not self._scheduler_bundle:
@@ -87,13 +130,16 @@ class SchedulerManager:
             logger=logger,
         )
         self._current_interval_minutes = collect_interval
-        self._scheduler.add_job(
-            self._run_collection,
-            IntervalTrigger(minutes=collect_interval),
-            id=self._job_id,
-            replace_existing=True,
-        )
-        logger.info("Registered job %s (every %d min)", self._job_id, collect_interval)
+        if await self.is_job_enabled(self._job_id):
+            self._scheduler.add_job(
+                self._run_collection,
+                IntervalTrigger(minutes=collect_interval),
+                id=self._job_id,
+                replace_existing=True,
+            )
+            logger.info("Registered job %s (every %d min)", self._job_id, collect_interval)
+        else:
+            logger.info("Job %s is disabled, skipping registration", self._job_id)
 
         if self._sq_bundle:
             await self.sync_search_query_jobs()
@@ -102,20 +148,26 @@ class SchedulerManager:
             await self.sync_pipeline_jobs()
 
         if self._task_enqueuer is not None:
-            self._scheduler.add_job(
-                self._run_photo_due,
-                IntervalTrigger(minutes=1),
-                id=self._photo_due_job_id,
-                replace_existing=True,
-            )
-            logger.info("Registered job %s (every 1 min)", self._photo_due_job_id)
-            self._scheduler.add_job(
-                self._run_photo_auto,
-                IntervalTrigger(minutes=1),
-                id=self._photo_auto_job_id,
-                replace_existing=True,
-            )
-            logger.info("Registered job %s (every 1 min)", self._photo_auto_job_id)
+            if await self.is_job_enabled(self._photo_due_job_id):
+                self._scheduler.add_job(
+                    self._run_photo_due,
+                    IntervalTrigger(minutes=1),
+                    id=self._photo_due_job_id,
+                    replace_existing=True,
+                )
+                logger.info("Registered job %s (every 1 min)", self._photo_due_job_id)
+            else:
+                logger.info("Job %s is disabled, skipping registration", self._photo_due_job_id)
+            if await self.is_job_enabled(self._photo_auto_job_id):
+                self._scheduler.add_job(
+                    self._run_photo_auto,
+                    IntervalTrigger(minutes=1),
+                    id=self._photo_auto_job_id,
+                    replace_existing=True,
+                )
+                logger.info("Registered job %s (every 1 min)", self._photo_auto_job_id)
+            else:
+                logger.info("Job %s is disabled, skipping registration", self._photo_auto_job_id)
 
         self._scheduler.start()
         total_jobs = len(self._scheduler.get_jobs())
@@ -224,6 +276,8 @@ class SchedulerManager:
 
         for sq in active_queries:
             job_id = f"sq_{sq.id}"
+            if not await self.is_job_enabled(job_id):
+                continue
             self._scheduler.add_job(
                 self._run_search_query,
                 IntervalTrigger(minutes=sq.interval_minutes),
@@ -260,22 +314,23 @@ class SchedulerManager:
             if p.id is None:
                 continue
             job_id = f"pipeline_run_{p.id}"
-            self._scheduler.add_job(
-                self._run_pipeline_job,
-                IntervalTrigger(minutes=p.generate_interval_minutes),
-                id=job_id,
-                replace_existing=True,
-                args=[p.id],
-            )
-            # Also add content_generate job
+            if await self.is_job_enabled(job_id):
+                self._scheduler.add_job(
+                    self._run_pipeline_job,
+                    IntervalTrigger(minutes=p.generate_interval_minutes),
+                    id=job_id,
+                    replace_existing=True,
+                    args=[p.id],
+                )
             gen_job_id = f"content_generate_{p.id}"
-            self._scheduler.add_job(
-                self._run_content_generate_job,
-                IntervalTrigger(minutes=p.generate_interval_minutes),
-                id=gen_job_id,
-                replace_existing=True,
-                args=[p.id],
-            )
+            if await self.is_job_enabled(gen_job_id):
+                self._scheduler.add_job(
+                    self._run_content_generate_job,
+                    IntervalTrigger(minutes=p.generate_interval_minutes),
+                    id=gen_job_id,
+                    replace_existing=True,
+                    args=[p.id],
+                )
         logger.info("Synced %d pipeline jobs", len(active_pipelines))
 
     async def _run_pipeline_job(self, pipeline_id: int) -> None:
