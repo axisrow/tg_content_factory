@@ -66,6 +66,7 @@ _ACTION_LABELS: list[tuple[re.Pattern, str]] = [
     (re.compile(r"^/agent/threads/\d+/chat$"), "Сообщение агенту"),
     (re.compile(r"^/agent/threads/\d+/context$"), "Загрузить контекст"),
     (re.compile(r"^/agent/threads/\d+/stop$"), "Остановить генерацию"),
+    (re.compile(r"^/agent/threads/\d+$"), "Удалить тред"),
 ]
 
 
