@@ -6,6 +6,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field, model_validator
 
+from src.telegram.flood_wait import FloodWaitInfo
+
 
 class Account(BaseModel):
     id: int | None = None
@@ -156,6 +158,7 @@ class ContentPipeline(BaseModel):
     is_active: bool = True
     last_generated_id: int = 0
     generate_interval_minutes: int = Field(60, ge=1)
+    publish_times: str | None = None  # JSON array of "HH:MM" times, e.g. '["09:00", "18:00"]'
     created_at: datetime | None = None
 
 
@@ -235,6 +238,7 @@ class SearchResult(BaseModel):
     query: str
     ai_summary: str | None = None
     error: str | None = None
+    flood_wait: FloodWaitInfo | None = None
 
 
 class GenerationRun(BaseModel):
@@ -246,6 +250,10 @@ class GenerationRun(BaseModel):
     metadata: dict | None = None
     image_url: str | None = None
     moderation_status: str = "pending"
+    quality_score: float | None = None
+    quality_issues: list[str] | None = None
+    variants: list[str] | None = None
+    selected_variant: int | None = None
     published_at: datetime | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None

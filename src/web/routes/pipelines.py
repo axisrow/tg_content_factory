@@ -58,19 +58,18 @@ async def _page_context(request: Request) -> dict:
             logger.warning("Failed to refresh dialog cache for %s", selected_phone, exc_info=True)
     cached_dialogs = await svc.list_cached_dialogs_by_phone()
     items = await svc.get_with_relations()
-    # gather next_run times for pipelines
+    # gather next_run times for pipelines (batch query)
     next_runs = {}
     try:
         scheduler = deps.get_scheduler(request)
+        all_jobs = scheduler.get_all_jobs_next_run()
         for item in items:
             pipeline = item.pipeline
             if pipeline.id is None:
                 continue
-            try:
-                nr = scheduler.get_job_next_run(f"pipeline_run_{pipeline.id}")
-                next_runs[pipeline.id] = nr.isoformat() if nr else None
-            except Exception:
-                next_runs[pipeline.id] = None
+            job_id = f"pipeline_run_{pipeline.id}"
+            nr = all_jobs.get(job_id)
+            next_runs[pipeline.id] = nr.isoformat() if nr else None
     except Exception:
         next_runs = {}
     return {

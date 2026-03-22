@@ -24,6 +24,7 @@ if TYPE_CHECKING:
     from src.search.engine import SearchEngine
     from src.services.photo_auto_upload_service import PhotoAutoUploadService
     from src.services.photo_task_service import PhotoTaskService
+    from src.telegram.notifier import Notifier
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +57,7 @@ class UnifiedDispatcher:
         search_engine: "SearchEngine" | None = None,
         pipeline_bundle: PipelineBundle | None = None,
         db: "Database" | None = None,
+        notifier: "Notifier | None" = None,
     ):
 
         self._collector = collector
@@ -70,6 +72,7 @@ class UnifiedDispatcher:
         self._search_engine = search_engine
         self._pipeline_bundle = pipeline_bundle
         self._db = db
+        self._notifier = notifier
         self._task: asyncio.Task | None = None
         self._stop_event = asyncio.Event()
 
@@ -428,9 +431,10 @@ class UnifiedDispatcher:
         run_id: int | None = None
         try:
             # Import lazily to avoid circular imports during module load
-            from src.services.generation_service import GenerationService
+            from src.services.content_generation_service import ContentGenerationService
+            from src.services.draft_notification_service import DraftNotificationService
             from src.services.pipeline_service import PipelineService
-            from src.services.provider_service import AgentProviderService
+            from src.services.quality_scoring_service import QualityScoringService
 
             svc = PipelineService(self._pipeline_bundle)
             pipeline = await svc.get(pipeline_id)
@@ -442,29 +446,21 @@ class UnifiedDispatcher:
                 )
                 return
 
-            provider_service = AgentProviderService(self._db)
-            provider_callable = provider_service.get_provider_callable(pipeline.llm_model)
-            gen = GenerationService(self._search_engine, provider_callable=provider_callable)
-
-            # create generation run
             db = self._db
-            run_id = await db.repos.generation_runs.create_run(
-                pipeline.id, pipeline.prompt_template
+            notification_service = DraftNotificationService(db, self._notifier)
+            quality_service = QualityScoringService(db)
+            gen = ContentGenerationService(
+                db,
+                self._search_engine,
+                notification_service=notification_service,
+                quality_service=quality_service,
             )
-            await db.repos.generation_runs.set_status(run_id, "running")
-            retrieval_query = pipeline.prompt_template or pipeline.name or ""
             try:
-                result = await gen.generate(
-                    query=retrieval_query,
-                    prompt_template=pipeline.prompt_template,
+                run = await gen.generate(
+                    pipeline=pipeline,
                     model=pipeline.llm_model,
                 )
-                await db.repos.generation_runs.save_result(
-                    run_id,
-                    result.get("generated_text", ""),
-                    {"citations": result.get("citations", [])},
-                )
-                await db.repos.generation_runs.set_status(run_id, "completed")
+                run_id = run.id
                 await self._tasks.update_collection_task(
                     task.id,
                     CollectionTaskStatus.COMPLETED,

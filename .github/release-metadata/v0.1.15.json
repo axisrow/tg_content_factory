@@ -1,22 +1,22 @@
 {
   "tag": "v0.1.15",
-  "title": "Semantic Search & Vector Embeddings",
+  "title": "Semantic Search Foundation",
   "highlights": [
     {
-      "title": "sqlite-vec Integration",
-      "description": "Load sqlite-vec extension at runtime, create vec_messages virtual table (cosine distance) and add KNN search via MATCH operator to the local search engine."
+      "title": "Portable Semantic Backend Roadmap Correction",
+      "description": "v0.1.15 established semantic retrieval as a product capability. The corrected roadmap keeps that capability but moves away from requiring runtime SQLite extension loading; sqlite-vec is treated as an optional accelerator direction, not a required foundation."
     },
     {
       "title": "EmbeddingService",
-      "description": "Provider-agnostic embedding abstraction supporting OpenAI text-embedding-3-small, Ollama nomic-embed-text and Cohere with incremental batch vectorization."
+      "description": "Provider-agnostic embedding abstraction remains the foundation for semantic indexing across both legacy and future portable semantic backends."
     },
     {
-      "title": "Hybrid FTS5 + Vector Search",
-      "description": "Combine keyword (FTS5) and semantic (KNN) results with Reciprocal Rank Fusion for relevance-ranked hybrid queries."
+      "title": "Hybrid FTS5 + Semantic Retrieval",
+      "description": "Keyword (FTS5) and semantic results remain part of the public search contract while the retrieval backend is being generalized away from a sqlite-vec-specific KNN path."
     },
     {
       "title": "semantic_search MCP Tool",
-      "description": "Add semantic_search tool to the AI agent MCP server for meaning-based queries — foundation for RAG in content generation pipelines."
+      "description": "Meaning-based agent queries are tied to semantic backend capability, not to a specific SQLite extension loading mechanism."
     }
   ]
 }

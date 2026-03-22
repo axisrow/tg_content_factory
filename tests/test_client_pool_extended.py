@@ -106,6 +106,35 @@ async def test_get_premium_client_unavailable(mock_db, mock_auth):
 
 
 @pytest.mark.asyncio
+async def test_get_premium_client_skips_premium_flood_waited(mock_db, mock_auth):
+    acc1 = Account(phone="+7001", is_active=True, is_premium=True, session_string="s1")
+    acc2 = Account(phone="+7002", is_active=True, is_premium=True, session_string="s2")
+    mock_db.get_accounts.return_value = [acc1, acc2]
+
+    pool = ClientPool(mock_auth, mock_db)
+    pool.clients = {"+7001": MagicMock(), "+7002": MagicMock()}
+    await pool.report_premium_flood("+7001", 120)
+
+    res = await pool.get_premium_client()
+    assert res is not None
+    assert res[1] == "+7002"
+    mock_db.update_account_flood.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_get_premium_unavailability_reason_reports_premium_flood(mock_db, mock_auth):
+    acc = Account(phone="+7001", is_active=True, is_premium=True, session_string="s1")
+    mock_db.get_accounts.return_value = [acc]
+
+    pool = ClientPool(mock_auth, mock_db)
+    pool.clients = {"+7001": MagicMock()}
+    await pool.report_premium_flood("+7001", 120)
+
+    reason = await pool.get_premium_unavailability_reason()
+    assert "Flood Wait" in reason
+
+
+@pytest.mark.asyncio
 async def test_get_stats_availability_all_flooded(mock_db, mock_auth):
     future = datetime.now(timezone.utc) + timedelta(seconds=100)
     acc = Account(phone="+7001", is_active=True, session_string="s1", flood_wait_until=future)
@@ -117,6 +146,21 @@ async def test_get_stats_availability_all_flooded(mock_db, mock_auth):
     stats = await pool.get_stats_availability()
     assert stats.state == "all_flooded"
     assert stats.retry_after_sec >= 99
+
+
+@pytest.mark.asyncio
+async def test_get_premium_stats_availability_all_flooded(mock_db, mock_auth):
+    premium = Account(phone="+7001", is_active=True, is_premium=True, session_string="s1")
+    regular = Account(phone="+7002", is_active=True, is_premium=False, session_string="s2")
+    mock_db.get_accounts.return_value = [premium, regular]
+
+    pool = ClientPool(mock_auth, mock_db)
+    pool.clients = {"+7001": MagicMock(), "+7002": MagicMock()}
+    await pool.report_premium_flood("+7001", 25)
+
+    stats = await pool.get_premium_stats_availability()
+    assert stats.state == "all_flooded"
+    assert stats.retry_after_sec >= 24
 
 
 @pytest.mark.asyncio
@@ -178,6 +222,27 @@ async def test_get_users_info_with_avatar(mock_db, mock_auth):
         assert len(info) == 1
         assert info[0].phone == "+7001"
         assert "data:image/jpeg;base64" in info[0].avatar_base64
+
+
+@pytest.mark.asyncio
+async def test_get_users_info_avatar_flood_does_not_mark_generic_account(mock_db, mock_auth):
+    acc = Account(phone="+7001", is_active=True, is_primary=True, session_string="s1")
+    mock_db.get_accounts.return_value = [acc]
+    client = AsyncMock()
+    client.get_me.return_value = MagicMock(first_name="F", last_name="L", username="u")
+    flood = FloodWaitError(request=None, capture=0)
+    flood.seconds = 33
+    client.download_profile_photo.side_effect = flood
+
+    pool = ClientPool(mock_auth, mock_db)
+    pool.clients = {"+7001": TelegramTransportSession(client, disconnect_on_close=False)}
+
+    info = await pool.get_users_info()
+
+    assert len(info) == 1
+    assert info[0].phone == "+7001"
+    assert info[0].avatar_base64 is None
+    mock_db.update_account_flood.assert_called_once()
 
 
 @pytest.mark.asyncio

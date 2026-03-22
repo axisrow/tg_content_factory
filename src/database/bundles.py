@@ -284,6 +284,9 @@ class ChannelBundle:
     async def fail_running_collection_tasks_on_startup(self) -> int:
         return await self.tasks.fail_running_collection_tasks_on_startup()
 
+    async def reset_orphaned_running_tasks(self) -> int:
+        return await self.tasks.reset_orphaned_running_tasks()
+
     async def cancel_collection_task(self, task_id: int, note: str | None = None) -> bool:
         return await self.tasks.cancel_collection_task(task_id, note=note)
 
@@ -581,16 +584,23 @@ class SearchBundle:
     channels: ChannelsRepository
     settings: SettingsRepository
     vec_available: bool = False
+    numpy_available: bool = False
 
     @classmethod
     def from_database(cls, db: "Database") -> "SearchBundle":
         repos = db.repos
+        try:
+            import numpy  # noqa: F401
+            numpy_ok = True
+        except ImportError:
+            numpy_ok = False
         return cls(
             repos.messages,
             repos.search_log,
             repos.channels,
             repos.settings,
-            db.vec_available,
+            vec_available=getattr(db, "vec_available", False),
+            numpy_available=numpy_ok,
         )
 
     async def search_messages(
