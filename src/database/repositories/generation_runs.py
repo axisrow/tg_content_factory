@@ -16,6 +16,50 @@ class GenerationRunsRepository:
     def __init__(self, db: aiosqlite.Connection):
         self._db = db
 
+    @staticmethod
+    def _to_generation_run(row: aiosqlite.Row) -> GenerationRun:
+        metadata = None
+        if row["metadata"]:
+            try:
+                metadata = json.loads(row["metadata"])
+            except Exception:
+                metadata = None
+
+        quality_issues = None
+        if "quality_issues" in row.keys() and row["quality_issues"]:
+            try:
+                quality_issues = json.loads(row["quality_issues"])
+            except Exception:
+                quality_issues = None
+
+        variants = None
+        if "variants" in row.keys() and row["variants"]:
+            try:
+                variants = json.loads(row["variants"])
+            except Exception:
+                variants = None
+
+        return GenerationRun(
+            id=row["id"],
+            pipeline_id=row["pipeline_id"],
+            status=row["status"],
+            prompt=row["prompt"],
+            generated_text=row["generated_text"],
+            metadata=metadata,
+            image_url=row["image_url"] if "image_url" in row.keys() else None,
+            moderation_status=(
+                row["moderation_status"] if "moderation_status" in row.keys() else "pending"
+            )
+            or "pending",
+            quality_score=row["quality_score"] if "quality_score" in row.keys() else None,
+            quality_issues=quality_issues,
+            variants=variants,
+            selected_variant=row["selected_variant"] if "selected_variant" in row.keys() else None,
+            published_at=_dt(row["published_at"] if "published_at" in row.keys() else None),
+            created_at=_dt(row["created_at"]),
+            updated_at=_dt(row["updated_at"]),
+        )
+
     async def create_run(self, pipeline_id: int | None, prompt: str) -> int:
         cur = await self._db.execute(
             ("INSERT INTO generation_runs (pipeline_id, status, prompt, created_at) "
@@ -57,8 +101,37 @@ class GenerationRunsRepository:
         )
         await self._db.commit()
 
+    async def set_quality_score(
+        self, run_id: int, score: float, issues: list[str] | None = None
+    ) -> None:
+        issues_json = json.dumps(issues, ensure_ascii=False) if issues else None
+        await self._db.execute(
+            ("UPDATE generation_runs SET quality_score = ?, quality_issues = ?, "
+             "updated_at = datetime('now') WHERE id = ?"),
+            (score, issues_json, run_id),
+        )
+        await self._db.commit()
+
+    async def set_variants(self, run_id: int, variants: list[str]) -> None:
+        await self._db.execute(
+            "UPDATE generation_runs SET variants = ?, updated_at = datetime('now') WHERE id = ?",
+            (json.dumps(variants, ensure_ascii=False), run_id),
+        )
+        await self._db.commit()
+
+    async def select_variant(self, run_id: int, variant_index: int, generated_text: str) -> None:
+        await self._db.execute(
+            ("UPDATE generation_runs SET generated_text = ?, selected_variant = ?, "
+             "updated_at = datetime('now') WHERE id = ?"),
+            (generated_text, variant_index, run_id),
+        )
+        await self._db.commit()
+
     async def list_pending_moderation(
-        self, pipeline_id: int | None = None, limit: int = 50, offset: int = 0
+        self,
+        pipeline_id: int | None = None,
+        limit: int = 50,
+        offset: int = 0,
     ) -> list[GenerationRun]:
         if pipeline_id is None:
             cur = await self._db.execute(
@@ -73,30 +146,7 @@ class GenerationRunsRepository:
                 (pipeline_id, limit, offset),
             )
         rows = await cur.fetchall()
-        results: list[GenerationRun] = []
-        for row in rows:
-            metadata = None
-            if row["metadata"]:
-                try:
-                    metadata = json.loads(row["metadata"])
-                except Exception:
-                    metadata = None
-            results.append(
-                GenerationRun(
-                    id=row["id"],
-                    pipeline_id=row["pipeline_id"],
-                    status=row["status"],
-                    prompt=row["prompt"],
-                    generated_text=row["generated_text"],
-                    metadata=metadata,
-                    image_url=row.get("image_url"),
-                    moderation_status=row.get("moderation_status") or "pending",
-                    published_at=_dt(row.get("published_at")),
-                    created_at=_dt(row["created_at"]),
-                    updated_at=_dt(row["updated_at"]),
-                )
-            )
-        return results
+        return [self._to_generation_run(row) for row in rows]
 
     async def reset_running_on_startup(self) -> int:
         """Reset generation_runs stuck in 'running' state to 'failed' on server startup."""
@@ -111,22 +161,7 @@ class GenerationRunsRepository:
         row = await cur.fetchone()
         if not row:
             return None
-        metadata = None
-        if row["metadata"]:
-            try:
-                metadata = json.loads(row["metadata"])
-            except Exception:
-                metadata = None
-        return GenerationRun(
-            id=row["id"],
-            pipeline_id=row["pipeline_id"],
-            status=row["status"],
-            prompt=row["prompt"],
-            generated_text=row["generated_text"],
-            metadata=metadata,
-            created_at=_dt(row["created_at"]),
-            updated_at=_dt(row["updated_at"]),
-        )
+        return self._to_generation_run(row)
 
     async def list_runs_for_calendar(self, days: int = 30) -> list[GenerationRun]:
         cur = await self._db.execute(
@@ -134,30 +169,7 @@ class GenerationRunsRepository:
             (f"-{days} days",),
         )
         rows = await cur.fetchall()
-        results: list[GenerationRun] = []
-        for row in rows:
-            metadata = None
-            if row["metadata"]:
-                try:
-                    metadata = json.loads(row["metadata"])
-                except Exception:
-                    metadata = None
-            results.append(
-                GenerationRun(
-                    id=row["id"],
-                    pipeline_id=row["pipeline_id"],
-                    status=row["status"],
-                    prompt=row["prompt"],
-                    generated_text=row["generated_text"],
-                    metadata=metadata,
-                    image_url=row.get("image_url"),
-                    moderation_status=row.get("moderation_status") or "pending",
-                    published_at=_dt(row.get("published_at")),
-                    created_at=_dt(row["created_at"]),
-                    updated_at=_dt(row["updated_at"]),
-                )
-            )
-        return results
+        return [self._to_generation_run(row) for row in rows]
 
     async def list_by_pipeline(
         self, pipeline_id: int, limit: int = 20, offset: int = 0
@@ -167,34 +179,10 @@ class GenerationRunsRepository:
             (pipeline_id, limit, offset),
         )
         rows = await cur.fetchall()
-        results: list[GenerationRun] = []
-        for row in rows:
-            metadata = None
-            if row["metadata"]:
-                try:
-                    metadata = json.loads(row["metadata"])
-                except Exception:
-                    metadata = None
-            keys = row.keys()
-            results.append(
-                GenerationRun(
-                    id=row["id"],
-                    pipeline_id=row["pipeline_id"],
-                    status=row["status"],
-                    prompt=row["prompt"],
-                    generated_text=row["generated_text"],
-                    metadata=metadata,
-                    image_url=row["image_url"] if "image_url" in keys else None,
-                    moderation_status=row["moderation_status"] if "moderation_status" in keys else "pending",
-                    published_at=_dt(row["published_at"]) if "published_at" in keys else None,
-                    created_at=_dt(row["created_at"]),
-                    updated_at=_dt(row["updated_at"]),
-                )
-            )
-        return results
+        return [self._to_generation_run(row) for row in rows]
 
     async def get_calendar_stats(self) -> dict:
-        """Return counts grouped by moderation_status, plus scheduled count."""
+        """Return counts grouped by moderation_status, plus published count."""
         cur = await self._db.execute(
             "SELECT moderation_status, COUNT(*) as cnt FROM generation_runs "
             "WHERE moderation_status IN ('pending', 'approved') "

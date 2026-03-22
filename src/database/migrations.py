@@ -7,28 +7,56 @@ import aiosqlite
 logger = logging.getLogger(__name__)
 
 
-async def _ensure_vec_messages_table(db: aiosqlite.Connection) -> None:
+async def _migrate_vec_to_portable(db: aiosqlite.Connection) -> None:
+    """Migrate legacy vec_messages (sqlite-vec) data to portable message_embeddings table."""
+    import json
+    import struct
+
+    cur = await db.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='vec_messages'"
+    )
+    if not await cur.fetchone():
+        return
+
     cur = await db.execute(
         "SELECT value FROM settings WHERE key = 'semantic_embedding_dimensions' LIMIT 1"
     )
-    row = await cur.fetchone()
-    if not row or not row["value"]:
+    dim_row = await cur.fetchone()
+    if not dim_row or not dim_row["value"]:
         return
     try:
-        dimensions = int(row["value"])
+        int(dim_row["value"])
     except (TypeError, ValueError):
-        logger.warning("Invalid semantic_embedding_dimensions setting %r", row["value"])
+        logger.warning("Invalid semantic_embedding_dimensions setting %r; skipping migration", dim_row["value"])
         return
-    await db.execute(f"""
-        CREATE VIRTUAL TABLE IF NOT EXISTS vec_messages USING vec0(
-            message_id INTEGER PRIMARY KEY,
-            embedding FLOAT[{dimensions}] distance_metric=cosine
+
+    cur = await db.execute("SELECT message_id, embedding FROM vec_messages")
+    rows = await cur.fetchall()
+    if not rows:
+        return
+
+    migrated = 0
+    for row in rows:
+        msg_id = row["message_id"]
+        raw = row["embedding"]
+        if isinstance(raw, str):
+            vector = json.loads(raw)
+            blob = struct.pack(f"{len(vector)}f", *vector)
+        elif isinstance(raw, (bytes, bytearray)):
+            blob = bytes(raw)
+        else:
+            continue
+        await db.execute(
+            "INSERT OR IGNORE INTO message_embeddings (message_id, embedding) VALUES (?, ?)",
+            (msg_id, blob),
         )
-        """)
+        migrated += 1
+
     await db.commit()
+    logger.info("Migrated %d embeddings from vec_messages to message_embeddings", migrated)
 
 
-async def run_migrations(db: aiosqlite.Connection, *, vec_available: bool = False) -> bool:
+async def run_migrations(db: aiosqlite.Connection) -> bool:
     """Run schema migrations. Returns True if FTS5 is available, False otherwise."""
     cur = await db.execute("PRAGMA table_info(messages)")
     msg_columns = {row["name"] for row in await cur.fetchall()}
@@ -307,6 +335,20 @@ async def run_migrations(db: aiosqlite.Connection, *, vec_available: bool = Fals
     await db.execute(
         "CREATE INDEX IF NOT EXISTS idx_generation_runs_moderation ON generation_runs(moderation_status, pipeline_id)"
     )
+    # Ensure quality scoring columns exist (PR #128)
+    if "quality_score" not in gr_columns:
+        await db.execute("ALTER TABLE generation_runs ADD COLUMN quality_score REAL")
+        await db.commit()
+    if "quality_issues" not in gr_columns:
+        await db.execute("ALTER TABLE generation_runs ADD COLUMN quality_issues TEXT")
+        await db.commit()
+    # Ensure A/B testing columns exist (PR #129)
+    if "variants" not in gr_columns:
+        await db.execute("ALTER TABLE generation_runs ADD COLUMN variants TEXT")
+        await db.commit()
+    if "selected_variant" not in gr_columns:
+        await db.execute("ALTER TABLE generation_runs ADD COLUMN selected_variant INTEGER")
+        await db.commit()
     await db.execute("""
         CREATE TABLE IF NOT EXISTS pipeline_sources (
             id INTEGER PRIMARY KEY,
@@ -545,7 +587,16 @@ async def run_migrations(db: aiosqlite.Connection, *, vec_available: bool = Fals
     )
     await db.commit()
 
-    if vec_available:
-        await _ensure_vec_messages_table(db)
+    await _migrate_vec_to_portable(db)
+
+    # Portable semantic backend: JSON-serialised embeddings table (issue #173)
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS message_embeddings_json (
+            message_id INTEGER PRIMARY KEY,
+            embedding  TEXT NOT NULL,
+            dims       INTEGER NOT NULL
+        )
+        """)
+    await db.commit()
 
     return fts_available

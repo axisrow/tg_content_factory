@@ -270,20 +270,19 @@ async def test_settings_page_ignores_invalid_persisted_numeric_settings(client):
 @pytest.mark.asyncio
 async def test_settings_save_semantic_persists_values_and_resets_index(client):
     db = client._transport.app.state.db
-    if db.vec_available:
-        await db.insert_messages_batch(
-            [
-                Message(
-                    channel_id=-100444,
-                    message_id=1,
-                    text="Semantic reset test",
-                    date=datetime.now(timezone.utc),
-                )
-            ]
-        )
-        rows = await db.execute_fetchall("SELECT id FROM messages ORDER BY id")
-        await db.repos.messages.upsert_message_embeddings([(int(rows[0]["id"]), [1.0, 0.0])])
-        await db.set_setting("semantic_last_embedded_id", "1")
+    await db.insert_messages_batch(
+        [
+            Message(
+                channel_id=-100444,
+                message_id=1,
+                text="Semantic reset test",
+                date=datetime.now(timezone.utc),
+            )
+        ]
+    )
+    rows = await db.execute_fetchall("SELECT id FROM messages ORDER BY id")
+    await db.repos.messages.upsert_message_embeddings([(int(rows[0]["id"]), [1.0, 0.0])])
+    await db.set_setting("semantic_last_embedded_id", "1")
 
     resp = await client.post(
         "/settings/save-semantic-search",
@@ -309,10 +308,6 @@ async def test_settings_save_semantic_persists_values_and_resets_index(client):
 
 @pytest.mark.asyncio
 async def test_settings_semantic_index_runs_embedding_service(client, monkeypatch):
-    db = client._transport.app.state.db
-    if not db.vec_available:
-        pytest.skip("sqlite-vec extension is unavailable in this environment")
-
     monkeypatch.setattr(
         EmbeddingService,
         "index_pending_messages",
@@ -549,9 +544,17 @@ async def test_settings_add_agent_provider_persists_provider_in_db(client):
 
 
 @pytest.mark.asyncio
-async def test_settings_save_agent_providers_preserves_priority_order(client):
+async def test_settings_save_agent_providers_preserves_priority_order(client, monkeypatch):
     db = client._transport.app.state.db
     await db.set_setting("agent_dev_mode_enabled", "1")
+    from src.web.routes import settings as settings_routes
+
+    probe_mock = AsyncMock()
+    fake_manager = SimpleNamespace(refresh_settings_cache=AsyncMock())
+    monkeypatch.setattr(settings_routes, "_probe_provider_config", probe_mock)
+    monkeypatch.setattr(
+        settings_routes, "_settings_agent_manager", lambda request: (fake_manager, False)
+    )
 
     await client.post(
         "/settings/agent-providers/add", data={"provider": "openai"}, follow_redirects=False
@@ -1205,7 +1208,7 @@ async def test_settings_page_blocks_agent_provider_writes_without_encryption_sec
         transport=transport,
         base_url="http://test",
         follow_redirects=True,
-        headers={"Authorization": f"Basic {auth_header}"},
+        headers={"Authorization": f"Basic {auth_header}", "Origin": "http://test"},
     ) as client:
         page = await client.get("/settings/")
         assert "SESSION_ENCRYPTION_KEY" in page.text
@@ -1304,8 +1307,6 @@ async def test_search_with_semantic_mode(client, monkeypatch):
     from src.services.embedding_service import EmbeddingService
 
     db = client._transport.app.state.db
-    if not db.vec_available:
-        pytest.skip("sqlite-vec extension is unavailable in this environment")
 
     await db.insert_messages_batch(
         [
@@ -1318,7 +1319,9 @@ async def test_search_with_semantic_mode(client, monkeypatch):
         ]
     )
     rows = await db.execute_fetchall("SELECT id FROM messages ORDER BY id")
-    await db.repos.messages.upsert_message_embeddings([(int(rows[0]["id"]), [1.0, 0.0])])
+    emb = [(int(rows[0]["id"]), [1.0, 0.0])]
+    await db.repos.messages.upsert_message_embeddings(emb)
+    await db.repos.messages.upsert_message_embedding_json(emb)
     monkeypatch.setattr(
         EmbeddingService,
         "index_pending_messages",
@@ -1530,7 +1533,7 @@ async def test_cookie_secure_on_https(client):
         transport=transport,
         base_url="https://test",
         follow_redirects=False,
-        headers={"Authorization": f"Basic {auth_header}"},
+        headers={"Authorization": f"Basic {auth_header}", "Origin": "https://test"},
     ) as c:
         resp = await c.get("/")
         cookie_header = resp.headers.get("set-cookie", "")
@@ -1591,7 +1594,7 @@ async def test_settings_shows_accounts(tmp_path):
         transport=transport,
         base_url="http://test",
         follow_redirects=True,
-        headers={"Authorization": f"Basic {auth_header}"},
+        headers={"Authorization": f"Basic {auth_header}", "Origin": "http://test"},
     ) as c:
         resp = await c.get("/settings/")
         assert resp.status_code == 200
@@ -1711,8 +1714,8 @@ async def test_csrf_blocks_null_origin(client):
 
 
 @pytest.mark.asyncio
-async def test_csrf_allows_post_without_origin_or_referer(client):
-    """POST without Origin/Referer headers is allowed (matches Django behavior)."""
+async def test_csrf_blocks_post_without_origin_or_referer(client):
+    """POST without Origin/Referer headers remains allowed for Basic-auth clients."""
     transport = client._transport
     auth_header = base64.b64encode(b":testpass").decode()
     async with AsyncClient(
@@ -1726,6 +1729,24 @@ async def test_csrf_allows_post_without_origin_or_referer(client):
             follow_redirects=False,
         )
         assert resp.status_code == 303
+
+
+@pytest.mark.asyncio
+async def test_csrf_blocks_cookie_auth_post_without_origin_or_referer(client):
+    token = create_session_token("admin", "test_secret_key")
+    transport = client._transport
+    async with AsyncClient(
+        transport=transport,
+        base_url="http://test",
+        cookies={COOKIE_NAME: token},
+    ) as c:
+        resp = await c.post(
+            "/channels/add",
+            data={"identifier": "@testchan"},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 403
+        assert "CSRF" in resp.text
 
 
 @pytest.mark.asyncio
@@ -1804,7 +1825,7 @@ async def test_resolve_channel_fail(tmp_path):
         transport=transport,
         base_url="http://test",
         follow_redirects=True,
-        headers={"Authorization": f"Basic {auth_header}"},
+        headers={"Authorization": f"Basic {auth_header}", "Origin": "http://test"},
     ) as c:
         resp = await c.post("/channels/add", data={"identifier": "@nonexistent"})
         assert resp.status_code == 200
@@ -1963,7 +1984,7 @@ async def test_add_scam_channel_is_inactive(tmp_path):
         transport=transport,
         base_url="http://test",
         follow_redirects=True,
-        headers={"Authorization": f"Basic {auth_header}"},
+        headers={"Authorization": f"Basic {auth_header}", "Origin": "http://test"},
     ) as c:
         resp = await c.post("/channels/add", data={"identifier": "@scamchan"})
         assert resp.status_code == 200
@@ -2033,7 +2054,7 @@ async def test_bulk_add_scam_dialog_is_inactive(tmp_path):
         transport=transport,
         base_url="http://test",
         follow_redirects=True,
-        headers={"Authorization": f"Basic {auth_header}"},
+        headers={"Authorization": f"Basic {auth_header}", "Origin": "http://test"},
     ) as c:
         resp = await c.post("/channels/add-bulk", data={"channel_ids": ["-100777"]})
         assert resp.status_code == 200
@@ -3125,7 +3146,7 @@ async def error_client(client):
     async with AsyncClient(
         transport=transport,
         base_url="http://test",
-        headers={"Authorization": f"Basic {auth_header}"},
+        headers={"Authorization": f"Basic {auth_header}", "Origin": "http://test"},
     ) as c:
         yield c
 

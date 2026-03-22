@@ -59,12 +59,20 @@ class AccountLeasePool:
                 self._in_use.add(phone)
             return AccountLease(account=account, shared=shared)
 
-    async def acquire_premium(self, connected_phones: set[str]) -> AccountLease | None:
+    async def acquire_premium(
+        self,
+        connected_phones: set[str],
+        *,
+        blocked_phones: set[str] | None = None,
+    ) -> AccountLease | None:
         async with self._lock:
             accounts = await self._db.get_accounts(active_only=True)
+            blocked_phones = blocked_phones or set()
 
             for account in accounts:
                 if not account.is_premium or account.phone not in connected_phones:
+                    continue
+                if account.phone in blocked_phones:
                     continue
                 if account.phone in self._in_use:
                     continue
@@ -73,6 +81,8 @@ class AccountLeasePool:
 
             for account in accounts:
                 if not account.is_premium or account.phone not in connected_phones:
+                    continue
+                if account.phone in blocked_phones:
                     continue
                 return AccountLease(account=account, shared=True)
 

@@ -4,6 +4,20 @@ Overview
 
 This project supports an optional LangChain-backed provider mode to simplify LLM provider integration. LangChain is strictly opt-in (to avoid adding heavy runtime dependencies) and is enabled via configuration.
 
+Semantic search portability note
+
+LangChain in this project is responsible for embeddings and model/provider
+integration, not for locking semantic retrieval to a specific vector storage
+backend. The roadmap is being corrected toward a portable SQLite-first semantic
+backend that works on standard Python builds without
+`enable_load_extension`. Legacy `sqlite-vec` integration is therefore treated as
+transitional rather than mandatory.
+
+The practical implication is that embedding settings and provider support stay
+relevant, while the storage and retrieval backend are being decoupled from
+runtime SQLite extension loading. See `docs/semantic-search.md` for the
+architecture note and operator rationale.
+
 Quick start
 
 1. Install LangChain and the provider client(s) you intend to use (example for OpenAI):
