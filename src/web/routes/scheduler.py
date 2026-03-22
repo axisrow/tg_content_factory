@@ -1,4 +1,5 @@
 import logging
+import re
 from datetime import timezone
 
 from fastapi import APIRouter, Query, Request
@@ -52,31 +53,54 @@ async def clear_pending_collect_tasks(request: Request):
 
 VALID_STATUS_FILTERS = {"all", "active", "completed"}
 
+_VALID_JOB_ID_RE = re.compile(
+    r"^(collect_all|photo_due|photo_auto|sq_\d+|pipeline_run_\d+|content_generate_\d+)$"
+)
 
-async def _build_jobs_context(sched) -> list[dict]:
+
+async def _build_jobs_context(sched, db) -> list[dict]:
     """Build a list of job dicts for the scheduler page template."""
+    # Always fetch potential jobs to get DB-sourced interval_minutes
+    potential = await sched.get_potential_jobs()
+    potential_map = {j["job_id"]: j for j in potential}
+
     if sched.is_running:
         raw = sched.get_all_jobs_next_run()
         jobs = []
         for job_id, next_run in raw.items():
+            db_interval = potential_map.get(job_id, {}).get("interval_minutes")
             jobs.append({
                 "job_id": job_id,
                 "label": _job_label(job_id),
                 "next_run": next_run,
-                "interval_minutes": None,
+                "interval_minutes": db_interval,
             })
-        return jobs
+        # Also include disabled jobs (not in APScheduler but exist in potential_map)
+        running_ids = set(raw.keys())
+        for j in potential:
+            if j["job_id"] not in running_ids:
+                jobs.append({
+                    "job_id": j["job_id"],
+                    "label": _job_label(j["job_id"]),
+                    "next_run": None,
+                    "interval_minutes": j["interval_minutes"],
+                })
+    else:
+        jobs = [
+            {
+                "job_id": j["job_id"],
+                "label": _job_label(j["job_id"]),
+                "next_run": None,
+                "interval_minutes": j["interval_minutes"],
+            }
+            for j in potential
+        ]
 
-    potential = await sched.get_potential_jobs()
-    return [
-        {
-            "job_id": j["job_id"],
-            "label": _job_label(j["job_id"]),
-            "next_run": None,
-            "interval_minutes": j["interval_minutes"],
-        }
-        for j in potential
-    ]
+    for j in jobs:
+        val = await db.repos.settings.get_setting(f"scheduler_job_disabled:{j['job_id']}")
+        j["enabled"] = val != "1"
+        j["interval_editable"] = j["job_id"] not in ("photo_due", "photo_auto")
+    return jobs
 
 
 @router.get("/", response_class=HTMLResponse)
@@ -128,7 +152,7 @@ async def scheduler_page(
         notifier is not None and notifier.admin_chat_id is not None
     ) or bot is not None
 
-    scheduler_jobs = await _build_jobs_context(sched)
+    scheduler_jobs = await _build_jobs_context(sched, db)
 
     return deps.get_templates(request).TemplateResponse(
         request,
@@ -152,6 +176,60 @@ async def scheduler_page(
             "scheduler_jobs": scheduler_jobs,
         },
     )
+
+
+@router.post("/jobs/{job_id}/toggle")
+async def toggle_scheduler_job(request: Request, job_id: str):
+    if getattr(request.app.state, "shutting_down", False):
+        return RedirectResponse(url="/scheduler?error=shutting_down", status_code=303)
+    if not _VALID_JOB_ID_RE.match(job_id):
+        return RedirectResponse(url="/scheduler?error=invalid_job", status_code=303)
+    db = deps.get_db(request)
+    key = f"scheduler_job_disabled:{job_id}"
+    current = await db.repos.settings.get_setting(key)
+    new_disabled = current != "1"
+    await db.repos.settings.set_setting(key, "1" if new_disabled else "0")
+    sched = deps.get_scheduler(request)
+    if sched.is_running:
+        await sched.sync_job_state(job_id, enabled=not new_disabled)
+    return RedirectResponse(url="/scheduler?msg=job_toggled", status_code=303)
+
+
+@router.post("/jobs/{job_id}/set-interval")
+async def set_job_interval(request: Request, job_id: str):
+    if getattr(request.app.state, "shutting_down", False):
+        return RedirectResponse(url="/scheduler?error=shutting_down", status_code=303)
+    if not _VALID_JOB_ID_RE.match(job_id):
+        return RedirectResponse(url="/scheduler?error=invalid_job", status_code=303)
+    if job_id in ("photo_due", "photo_auto"):
+        return RedirectResponse(url="/scheduler?error=invalid_job", status_code=303)
+    form = await request.form()
+    try:
+        minutes = int(form["interval_minutes"])
+        minutes = max(1, min(minutes, 1440))
+    except (KeyError, ValueError):
+        return RedirectResponse(url="/scheduler?error=invalid_interval", status_code=303)
+    db = deps.get_db(request)
+    sched = deps.get_scheduler(request)
+    if job_id == "collect_all":
+        await db.repos.settings.set_setting("collect_interval_minutes", str(minutes))
+        sched.update_interval(minutes)
+    elif job_id.startswith("sq_"):
+        sq_id = int(job_id.removeprefix("sq_"))
+        sq = await db.repos.search_queries.get_by_id(sq_id)
+        if sq:
+            await db.repos.search_queries.update(sq_id, sq.model_copy(update={"interval_minutes": minutes}))
+            if sched.is_running:
+                await sched.sync_search_query_jobs()
+    elif job_id.startswith(("pipeline_run_", "content_generate_")):
+        pid_str = job_id.removeprefix("pipeline_run_").removeprefix("content_generate_")
+        pid = int(pid_str)
+        pipeline = await db.repos.content_pipelines.get_by_id(pid)
+        if pipeline:
+            await db.repos.content_pipelines.update_generate_interval(pid, minutes)
+            if sched.is_running:
+                await sched.sync_pipeline_jobs()
+    return RedirectResponse(url="/scheduler?msg=interval_updated", status_code=303)
 
 
 @router.post("/start")

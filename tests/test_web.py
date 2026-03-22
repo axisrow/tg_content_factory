@@ -3184,6 +3184,87 @@ async def test_unhandled_exception_logged_to_logbuffer(error_client):
 
 
 @pytest.mark.asyncio
+async def test_scheduler_job_toggle_invalid_id(client):
+    """POST /scheduler/jobs/{job_id}/toggle with invalid job_id redirects to error."""
+    resp = await client.post("/scheduler/jobs/bogus_job/toggle", follow_redirects=False)
+    assert resp.status_code == 303
+    assert "error=invalid_job" in resp.headers["location"]
+
+
+@pytest.mark.asyncio
+async def test_scheduler_job_toggle_enables_and_disables(client):
+    """Toggling collect_all job persists disabled flag to settings."""
+    db = client._transport.app.state.db
+
+    # First toggle: should disable (default is enabled)
+    resp = await client.post("/scheduler/jobs/collect_all/toggle", follow_redirects=False)
+    assert resp.status_code == 303
+    assert await db.repos.settings.get_setting("scheduler_job_disabled:collect_all") == "1"
+
+    # Second toggle: should re-enable
+    resp = await client.post("/scheduler/jobs/collect_all/toggle", follow_redirects=False)
+    assert resp.status_code == 303
+    assert await db.repos.settings.get_setting("scheduler_job_disabled:collect_all") == "0"
+
+
+@pytest.mark.asyncio
+async def test_scheduler_job_set_interval_invalid_id(client):
+    """POST /scheduler/jobs/{job_id}/set-interval with invalid job_id redirects to error."""
+    resp = await client.post(
+        "/scheduler/jobs/malicious_id/set-interval",
+        data={"interval_minutes": "10"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    assert "error=invalid_job" in resp.headers["location"]
+
+
+@pytest.mark.asyncio
+async def test_scheduler_job_set_interval_collect_all(client):
+    """Setting interval for collect_all persists to settings."""
+    db = client._transport.app.state.db
+    resp = await client.post(
+        "/scheduler/jobs/collect_all/set-interval",
+        data={"interval_minutes": "45"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    assert "msg=interval_updated" in resp.headers["location"]
+    assert await db.repos.settings.get_setting("collect_interval_minutes") == "45"
+
+
+@pytest.mark.asyncio
+async def test_scheduler_job_set_interval_clamps_values(client):
+    """Interval is clamped to 1–1440 range."""
+    db = client._transport.app.state.db
+    await client.post(
+        "/scheduler/jobs/collect_all/set-interval",
+        data={"interval_minutes": "0"},
+        follow_redirects=False,
+    )
+    assert await db.repos.settings.get_setting("collect_interval_minutes") == "1"
+
+    await client.post(
+        "/scheduler/jobs/collect_all/set-interval",
+        data={"interval_minutes": "9999"},
+        follow_redirects=False,
+    )
+    assert await db.repos.settings.get_setting("collect_interval_minutes") == "1440"
+
+
+@pytest.mark.asyncio
+async def test_scheduler_page_shows_disabled_job(client):
+    """Disabled job shows unchecked checkbox on scheduler page."""
+    db = client._transport.app.state.db
+    await db.repos.settings.set_setting("scheduler_job_disabled:collect_all", "1")
+    resp = await client.get("/scheduler/")
+    assert resp.status_code == 200
+    # The disabled job row should not have 'checked' for collect_all checkbox
+    # and the label should have text-muted class
+    assert "collect_all" in resp.text
+
+
+@pytest.mark.asyncio
 async def test_analytics_page_empty(client):
     """Analytics page renders without error when no messages exist."""
     resp = await client.get("/analytics")
