@@ -38,10 +38,11 @@ async def test_start_container_autostarts_scheduler_when_flag_set(tmp_path):
     scheduler_mock.load_settings = AsyncMock()
     container.scheduler = scheduler_mock
 
-    await start_container(container)
-
-    scheduler_mock.start.assert_called_once()
-    await db.close()
+    try:
+        await start_container(container)
+        scheduler_mock.start.assert_called_once()
+    finally:
+        await db.close()
 
 
 @pytest.mark.asyncio
@@ -56,10 +57,11 @@ async def test_start_container_no_autostart_when_flag_absent(tmp_path):
     scheduler_mock.load_settings = AsyncMock()
     container.scheduler = scheduler_mock
 
-    await start_container(container)
-
-    scheduler_mock.start.assert_not_called()
-    await db.close()
+    try:
+        await start_container(container)
+        scheduler_mock.start.assert_not_called()
+    finally:
+        await db.close()
 
 
 @pytest.mark.asyncio
@@ -74,10 +76,11 @@ async def test_start_container_no_autostart_when_flag_zero(tmp_path):
     scheduler_mock.load_settings = AsyncMock()
     container.scheduler = scheduler_mock
 
-    await start_container(container)
-
-    scheduler_mock.start.assert_not_called()
-    await db.close()
+    try:
+        await start_container(container)
+        scheduler_mock.start.assert_not_called()
+    finally:
+        await db.close()
 
 
 @pytest.mark.asyncio
@@ -91,7 +94,8 @@ async def test_start_container_calls_load_settings(tmp_path):
     scheduler_mock.load_settings = AsyncMock()
     container.scheduler = scheduler_mock
 
-    await start_container(container)
-
-    scheduler_mock.load_settings.assert_called_once()
-    await db.close()
+    try:
+        await start_container(container)
+        scheduler_mock.load_settings.assert_called_once()
+    finally:
+        await db.close()
