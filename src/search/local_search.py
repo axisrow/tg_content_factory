@@ -90,14 +90,29 @@ class LocalSearch:
         index = await self._ensure_numpy_index()
         if index.size == 0:
             return SearchResult(messages=[], total=0, query=query)
-        top_ids = [mid for mid, _score in index.search(query_embedding, k=limit + offset)]
-        paginated_ids = top_ids[offset : offset + limit]
-        messages = []
-        for mid in paginated_ids:
+        # Over-fetch to allow for post-filtering
+        fetch_k = min(index.size, max((limit + offset) * 4, 200))
+        top_ids = [mid for mid, _score in index.search(query_embedding, k=fetch_k)]
+        filtered: list = []
+        for mid in top_ids:
             msg = await self._search.messages.get_by_id(mid)
-            if msg is not None:
-                messages.append(msg)
-        return SearchResult(messages=messages, total=len(top_ids), query=query)
+            if msg is None:
+                continue
+            if channel_id is not None and msg.channel_id != channel_id:
+                continue
+            if date_from and msg.date and str(msg.date) < date_from:
+                continue
+            if date_to and msg.date and str(msg.date) > date_to:
+                continue
+            text_len = len(msg.text) if msg.text else 0
+            if min_length is not None and text_len < min_length:
+                continue
+            if max_length is not None and text_len > max_length:
+                continue
+            filtered.append(msg)
+        total = len(filtered)
+        messages = filtered[offset : offset + limit]
+        return SearchResult(messages=messages, total=total, query=query)
 
     async def search_hybrid(
         self,
