@@ -90,6 +90,13 @@ class LocalSearch:
         index = await self._ensure_numpy_index()
         if index.size == 0:
             return SearchResult(messages=[], total=0, query=query)
+        # Build set of filtered channel IDs to exclude (matches vec SQL behavior)
+        filtered_channels: set[int] = set()
+        cur = await self._search.messages._db.execute(
+            "SELECT channel_id FROM channels WHERE is_filtered = 1"
+        )
+        for row in await cur.fetchall():
+            filtered_channels.add(int(row["channel_id"]))
         # Over-fetch to allow for post-filtering
         fetch_k = min(index.size, max((limit + offset) * 4, 200))
         top_ids = [mid for mid, _score in index.search(query_embedding, k=fetch_k)]
@@ -97,6 +104,8 @@ class LocalSearch:
         for mid in top_ids:
             msg = await self._search.messages.get_by_id(mid)
             if msg is None:
+                continue
+            if msg.channel_id in filtered_channels:
                 continue
             if channel_id is not None and msg.channel_id != channel_id:
                 continue
