@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
 from src.services.content_calendar_service import ContentCalendarService
@@ -10,7 +10,7 @@ router = APIRouter()
 
 
 @router.get("/", response_class=HTMLResponse)
-async def calendar_page(request: Request, days: int = 7, pipeline_id: int | None = None):
+async def calendar_page(request: Request, days: int = Query(default=7, ge=1, le=90), pipeline_id: int | None = None):
     """Render content calendar page."""
     db = deps.get_db(request)
     calendar = ContentCalendarService(db)
@@ -36,7 +36,7 @@ async def calendar_page(request: Request, days: int = 7, pipeline_id: int | None
 
 
 @router.get("/api/calendar")
-async def api_calendar(request: Request, days: int = 7, pipeline_id: int | None = None):
+async def api_calendar(request: Request, days: int = Query(default=7, ge=1, le=90), pipeline_id: int | None = None):
     """Get calendar data as JSON."""
     db = deps.get_db(request)
     calendar = ContentCalendarService(db)
@@ -64,7 +64,7 @@ async def api_calendar(request: Request, days: int = 7, pipeline_id: int | None 
 
 
 @router.get("/api/upcoming")
-async def api_upcoming(request: Request, limit: int = 20, pipeline_id: int | None = None):
+async def api_upcoming(request: Request, limit: int = Query(default=20, ge=1, le=200), pipeline_id: int | None = None):
     """Get upcoming events as JSON."""
     db = deps.get_db(request)
     calendar = ContentCalendarService(db)

@@ -46,7 +46,7 @@ class ContentCalendarService:
         days: int = 7,
         pipeline_id: int | None = None,
     ) -> list[CalendarDay]:
-        """Get calendar events for the next N days."""
+        """Get calendar events for the past N days."""
         results: list[CalendarDay] = []
         now = datetime.utcnow()
 
