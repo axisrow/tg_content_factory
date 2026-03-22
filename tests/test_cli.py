@@ -424,9 +424,9 @@ class TestCLISearch:
         _add_channel(cli_env, channel_id=301, title="SemanticCh")
         _add_message(cli_env, channel_id=301, message_id=1, text="Bitcoin outlook")
         rows = asyncio.run(cli_env.execute_fetchall("SELECT id FROM messages ORDER BY id"))
-        asyncio.run(
-            cli_env.repos.messages.upsert_message_embeddings([(int(rows[0]["id"]), [1.0, 0.0])])
-        )
+        emb = [(int(rows[0]["id"]), [1.0, 0.0])]
+        asyncio.run(cli_env.repos.messages.upsert_message_embeddings(emb))
+        asyncio.run(cli_env.repos.messages.upsert_message_embedding_json(emb))
 
         from src.cli.commands.search import run
         from src.services.embedding_service import EmbeddingService
