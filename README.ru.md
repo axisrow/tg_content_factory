@@ -69,6 +69,26 @@ cp .env.example .env
 docker-compose up -d
 ```
 
+## Важное замечание по roadmap semantic search
+
+Текущая реализация семантического и гибридного поиска исторически строилась
+вокруг runtime-загрузки `sqlite-vec`. Как обязательный foundation этот подход
+оказался слишком хрупким: одного установленного пакета `sqlite-vec` недостаточно,
+потому что активная сборка Python/SQLite должна еще поддерживать
+`sqlite3.enable_load_extension(...)`. На практике это означает, что один и тот же
+`pip install` может давать разный результат на разных машинах, вплоть до
+сценария "пакет установлен, но semantic search недоступен".
+
+Поэтому roadmap исправляется в сторону portable SQLite-first backend, который
+должен работать на обычной установке Python без `enable_load_extension`. Пока
+эта реализация не доведена до кода, `sqlite-vec` следует считать переходной
+зависимостью, а не гарантированным переключателем фичи. Публичный интерфейс
+поиска при этом не меняется: индексация embeddings, semantic search и hybrid
+search остаются целевым контрактом.
+
+Подробности, мотивация и целевая архитектура описаны в
+[docs/semantic-search.md](docs/semantic-search.md).
+
 ## Конфигурация
 
 ### Переменные окружения (.env)
@@ -171,6 +191,7 @@ telethon-cli users get-me --output json
 
 ## Roadmap
 
+- Portable semantic search на обычной установке Python без обязательной runtime-загрузки SQLite extension
 - LLM для фабрики контента
 - LLM для интеллектуального поиска
 - LLM для борьбы со спамом в чатах
@@ -198,6 +219,15 @@ telethon-cli users get-me --output json
  # Линтер
  ruff check src/ tests/ conftest.py
  ```
+
+### Важное замечание по CI
+
+- `push` workflow проверяет только head текущей ветки.
+- `pull_request` workflow проверяет результат merge с `main`.
+- Поэтому ветка может быть зелёной на `push` и красной на `pull_request`, если
+  в `main` уже есть lint/test-проблема, которая попадает в merge ref PR.
+- Перед повторным запуском PR-checks подтягивайте и синхронизируйте
+  `origin/main`, чтобы локальная проверка совпадала с CI.
 
 ### Политика real Telegram testing
 

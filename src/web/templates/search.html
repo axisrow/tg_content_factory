@@ -36,11 +36,11 @@
             <input class="form-check-input" type="radio" name="mode" id="mode-local" value="local" {{ 'checked' if mode == 'local' else '' }}>
             <label class="form-check-label" for="mode-local">Локальная база</label>
         </div>
-        <div class="form-check form-check-inline" title="Семантический поиск по локальной базе через embeddings и sqlite-vec">
+        <div class="form-check form-check-inline" title="Семантический поиск по локальной базе через embeddings и semantic backend">
             <input class="form-check-input" type="radio" name="mode" id="mode-semantic" value="semantic" {{ 'checked' if mode == 'semantic' else '' }}>
             <label class="form-check-label" for="mode-semantic">Семантический</label>
         </div>
-        <div class="form-check form-check-inline" title="Гибридный поиск: объединяет FTS5 и семантическое сходство">
+        <div class="form-check form-check-inline" title="Гибридный поиск: объединяет FTS5 и semantic retrieval">
             <input class="form-check-input" type="radio" name="mode" id="mode-hybrid" value="hybrid" {{ 'checked' if mode == 'hybrid' else '' }}>
             <label class="form-check-label" for="mode-hybrid">Гибридный</label>
         </div>
