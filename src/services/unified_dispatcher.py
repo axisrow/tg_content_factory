@@ -57,6 +57,7 @@ class UnifiedDispatcher:
         search_engine: "SearchEngine" | None = None,
         pipeline_bundle: PipelineBundle | None = None,
         db: "Database" | None = None,
+        client_pool: object | None = None,
         notifier: "Notifier | None" = None,
     ):
 
@@ -72,6 +73,7 @@ class UnifiedDispatcher:
         self._search_engine = search_engine
         self._pipeline_bundle = pipeline_bundle
         self._db = db
+        self._client_pool = client_pool
         self._notifier = notifier
         self._task: asyncio.Task | None = None
         self._stop_event = asyncio.Event()
