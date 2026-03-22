@@ -82,21 +82,25 @@ def _resolve_action_label(path: str) -> str:
 class TimingMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         t0 = time.monotonic()
-        response = await call_next(request)
-        ms = int((time.monotonic() - t0) * 1000)
-        path = request.url.path
-        if not is_public_path(path) and not path.startswith("/static"):
-            buf = getattr(request.app.state, "timing_buffer", None)
-            if buf is not None:
-                buf.add({
-                    "time": time.strftime("%H:%M:%S"),
-                    "method": request.method,
-                    "path": path,
-                    "status": response.status_code,
-                    "ms": ms,
-                })
-            if ms > 500:
-                logger.warning("SLOW %s %s %dms [%d]", request.method, path, ms, response.status_code)
+        response = None
+        try:
+            response = await call_next(request)
+        finally:
+            ms = int((time.monotonic() - t0) * 1000)
+            path = request.url.path
+            if not is_public_path(path):
+                status = response.status_code if response is not None else 500
+                buf = getattr(request.app.state, "timing_buffer", None)
+                if buf is not None:
+                    buf.add({
+                        "time": time.strftime("%H:%M:%S"),
+                        "method": request.method,
+                        "path": path,
+                        "status": status,
+                        "ms": ms,
+                    })
+                if ms > 500:
+                    logger.warning("SLOW %s %s %dms [%d]", request.method, path, ms, status)
         return response
 
 
