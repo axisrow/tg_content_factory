@@ -115,6 +115,8 @@ def test_handled_types_contains_expected():
     assert "photo_due" in HANDLED_TYPES
     assert "photo_auto" in HANDLED_TYPES
     assert "pipeline_run" in HANDLED_TYPES
+    assert "content_generate" in HANDLED_TYPES
+    assert "content_publish" in HANDLED_TYPES
 
 
 # === start/stop tests ===
