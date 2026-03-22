@@ -264,7 +264,7 @@ def make_together_image_adapter(api_key: str) -> ImageAdapter:
                 items = data.get("data")
                 if not items:
                     raise RuntimeError(f"Together image: empty 'data' in response: {data}")
-                return items[0]["url"]
+                return items[0].get("url") or items[0].get("b64_json")
 
     return adapter
 
@@ -321,7 +321,7 @@ def make_openai_image_adapter(api_key: str) -> ImageAdapter:
                 items = data.get("data")
                 if not items:
                     raise RuntimeError(f"OpenAI image: empty 'data' in response: {data}")
-                return items[0]["url"]
+                return items[0].get("url") or items[0].get("b64_json")
 
     return adapter
 
@@ -346,7 +346,9 @@ def make_replicate_image_adapter(api_token: str, timeout: float = 60.0) -> Image
                 prediction = await resp.json()
 
             # Poll for completion
-            poll_url = prediction["urls"]["get"]
+            poll_url = prediction.get("urls", {}).get("get")
+            if not poll_url:
+                raise RuntimeError(f"Replicate: missing poll URL in response: {prediction}")
             elapsed = 0.0
             while elapsed < timeout:
                 await asyncio.sleep(1.0)
