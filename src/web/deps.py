@@ -44,6 +44,7 @@ from src.telegram.notifier import Notifier
 from src.web.container import AppContainer
 from src.web.log_handler import LogBuffer
 from src.web.paths import TEMPLATES_DIR
+from src.web.timing import TimingBuffer
 
 T = TypeVar("T")
 _MISSING = object()
@@ -133,6 +134,7 @@ def get_container(request: Request) -> AppContainer:
         scheduler=_require_app_state_attr(request, "scheduler"),
         templates=templates,
         log_buffer=getattr(request.app.state, "log_buffer", None),
+        timing_buffer=getattr(request.app.state, "timing_buffer", None),
         session_secret=_require_app_state_attr(request, "session_secret"),
         bg_tasks=getattr(request.app.state, "bg_tasks", set()),
         agent_manager=getattr(request.app.state, "agent_manager", None),
@@ -244,6 +246,10 @@ def get_photo_auto_upload_service(request: Request) -> PhotoAutoUploadService:
 
 def get_log_buffer(request: Request) -> LogBuffer | None:
     return get_container(request).log_buffer
+
+
+def get_timing_buffer(request: Request) -> TimingBuffer | None:
+    return get_container(request).timing_buffer
 
 
 def is_shutting_down(request: Request) -> bool:

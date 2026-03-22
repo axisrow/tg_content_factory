@@ -1,0 +1,11 @@
+{% for r in records %}
+<tr{% if r.ms > 1000 %} class="table-danger"{% elif r.ms > 500 %} class="table-warning"{% endif %}>
+  <td><code>{{ r.time }}</code></td>
+  <td><strong>{{ r.ms }} ms</strong></td>
+  <td>{{ r.method }}</td>
+  <td><code>{{ r.path }}</code></td>
+  <td>{{ r.status }}</td>
+</tr>
+{% else %}
+<tr><td colspan="5">Записей нет — выполните несколько запросов к страницам.</td></tr>
+{% endfor %}

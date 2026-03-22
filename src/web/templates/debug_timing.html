@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Тайминг запросов — TG Agent{% endblock %}
+{% block content %}
+<div class="d-flex align-items-center gap-3 mb-3">
+  <h1 class="mb-0">Тайминг запросов</h1>
+  <a href="/debug" class="btn btn-sm btn-outline-secondary">← Логи</a>
+</div>
+<p class="text-muted">Последние 200 запросов, отсортированных по убыванию длительности.
+  <span class="badge bg-danger">красный</span> &gt;1000 ms,
+  <span class="badge bg-warning text-dark">жёлтый</span> 500–999 ms.
+</p>
+<div class="table-responsive" style="font-size:0.85rem">
+  <table class="table table-sm table-striped table-hover">
+    <thead>
+      <tr>
+        <th>Время</th>
+        <th>Длит., ms</th>
+        <th>Метод</th>
+        <th>Путь</th>
+        <th>Статус</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% include "_timing_rows.html" %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}
