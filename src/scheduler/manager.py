@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from typing import TYPE_CHECKING
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -40,6 +41,8 @@ class SchedulerManager:
         self._photo_auto_job_id = "photo_auto"
         self._current_interval_minutes: int = config.collect_interval_minutes
         self._bg_task: asyncio.Task | None = None
+        self._jobs_cache: dict[str, object] = {}
+        self._jobs_cache_ts: float = 0.0
 
     @property
     def is_running(self) -> bool:
@@ -118,10 +121,12 @@ class SchedulerManager:
         logger.info("Scheduler stopped")
 
     def update_interval(self, minutes: int) -> None:
-        self._current_interval_minutes = minutes
         if self._scheduler and self._scheduler.running:
             self._scheduler.reschedule_job(self._job_id, trigger=IntervalTrigger(minutes=minutes))
+            self._current_interval_minutes = minutes
             logger.info("Collection interval updated to %d minutes", minutes)
+        else:
+            self._current_interval_minutes = minutes
 
     def get_job_next_run(self, job_id: str):
         """Return next_run_time for a scheduled job, or None if missing."""
@@ -141,7 +146,22 @@ class SchedulerManager:
                         return getattr(job, "next_run_time", None)
             except Exception:
                 return None
-            return None
+        return None
+
+    def get_all_jobs_next_run(self) -> dict[str, object]:
+        """Return dict of job_id -> next_run_time for all scheduled jobs (TTL-cached 5s)."""
+        if self._scheduler is None:
+            return {}
+        now = time.monotonic()
+        if now - self._jobs_cache_ts < 5.0:
+            return self._jobs_cache
+        try:
+            jobs = self._scheduler.get_jobs()
+            self._jobs_cache = {job.id: getattr(job, "next_run_time", None) for job in jobs}
+            self._jobs_cache_ts = now
+            return self._jobs_cache
+        except Exception:
+            return {}
 
     async def trigger_now(self) -> dict:
         return await self._run_collection()

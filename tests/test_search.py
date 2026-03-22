@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from telethon.errors import FloodWaitError
 
 from src.models import Message
 from src.search.engine import SearchEngine
@@ -89,9 +90,6 @@ async def test_search_local_maps_channel_title(db):
 
 @pytest.mark.asyncio
 async def test_search_semantic_with_results(db, monkeypatch):
-    if not db.vec_available:
-        pytest.skip("sqlite-vec extension is unavailable in this environment")
-
     await db.insert_messages_batch(
         [
             Message(
@@ -110,12 +108,12 @@ async def test_search_semantic_with_results(db, monkeypatch):
     )
     rows = await db.execute_fetchall("SELECT id, text FROM messages ORDER BY id")
     ids_by_text = {row["text"]: int(row["id"]) for row in rows}
-    await db.repos.messages.upsert_message_embeddings(
-        [
-            (ids_by_text["Bitcoin sentiment is rising"], [1.0, 0.0]),
-            (ids_by_text["Rainy weather all week"], [0.0, 1.0]),
-        ]
-    )
+    embeddings = [
+        (ids_by_text["Bitcoin sentiment is rising"], [1.0, 0.0]),
+        (ids_by_text["Rainy weather all week"], [0.0, 1.0]),
+    ]
+    await db.repos.messages.upsert_message_embeddings(embeddings)
+    await db.repos.messages.upsert_message_embedding_json(embeddings)
     monkeypatch.setattr(
         EmbeddingService,
         "index_pending_messages",
@@ -238,6 +236,44 @@ async def test_search_telegram_returns_results(db, real_pool_harness_factory):
 
 
 @pytest.mark.asyncio
+async def test_search_telegram_ignores_quota_probe_failure_when_search_succeeds(
+    db,
+    real_pool_harness_factory,
+):
+    mock_msg = _make_mock_api_message()
+    mock_chat = MagicMock()
+    mock_chat.id = 100123
+    mock_chat.title = "Test Channel"
+    mock_chat.username = "test_channel"
+
+    response = _make_search_response([mock_msg], chats=[mock_chat])
+
+    def _invoke(request):
+        if request.__class__.__name__ == "CheckSearchPostsFloodRequest":
+            raise RuntimeError("quota unavailable")
+        return response
+
+    harness = real_pool_harness_factory()
+    await _connect_search_account(
+        harness,
+        phone="+1234567890",
+        session_string="premium-session",
+        is_premium=True,
+        client=FakeCliTelethonClient(
+            me=SimpleNamespace(premium=True),
+            invoke_side_effect=_invoke,
+        ),
+    )
+
+    engine = SearchEngine(db, pool=harness.pool)
+    result = await engine.search_telegram("AI", limit=10)
+
+    assert result.total == 1
+    assert result.error is None
+    assert result.messages[0].message_id == 42
+
+
+@pytest.mark.asyncio
 async def test_search_telegram_caches_to_db(db, real_pool_harness_factory):
     mock_msg = _make_mock_api_message(channel_id=100456, msg_id=7, text="cached search result")
     mock_chat = MagicMock()
@@ -289,6 +325,75 @@ async def test_search_telegram_no_premium(db, real_pool_harness_factory):
 
 
 @pytest.mark.asyncio
+async def test_search_telegram_flood_wait_does_not_mark_generic_account_flood(
+    db,
+    real_pool_harness_factory,
+):
+    def _raise_flood(_request):
+        err = FloodWaitError(request=None, capture=0)
+        err.seconds = 45
+        raise err
+
+    harness = real_pool_harness_factory()
+    phone = "+1234567890"
+    await _connect_search_account(
+        harness,
+        phone=phone,
+        session_string="premium-session",
+        is_premium=True,
+        client=FakeCliTelethonClient(
+            me=SimpleNamespace(premium=True),
+            invoke_side_effect=_raise_flood,
+        ),
+    )
+
+    engine = SearchEngine(db, pool=harness.pool)
+    result = await engine.search_telegram("query")
+
+    assert result.total == 0
+    assert result.flood_wait is not None
+    accounts = await db.get_accounts(active_only=True)
+    flooded = next(account for account in accounts if account.phone == phone)
+    assert flooded.flood_wait_until is None
+    unavailable_reason = await harness.pool.get_premium_unavailability_reason()
+    assert "Flood Wait" in unavailable_reason
+
+
+@pytest.mark.asyncio
+async def test_check_search_quota_flood_wait_returns_none_and_marks_premium_flood(
+    db,
+    real_pool_harness_factory,
+):
+    def _raise_flood(_request):
+        err = FloodWaitError(request=None, capture=0)
+        err.seconds = 21
+        raise err
+
+    harness = real_pool_harness_factory()
+    phone = "+1234567890"
+    await _connect_search_account(
+        harness,
+        phone=phone,
+        session_string="premium-session",
+        is_premium=True,
+        client=FakeCliTelethonClient(
+            me=SimpleNamespace(premium=True),
+            invoke_side_effect=_raise_flood,
+        ),
+    )
+
+    engine = SearchEngine(db, pool=harness.pool)
+    quota = await engine.check_search_quota("query")
+
+    assert quota is None
+    accounts = await db.get_accounts(active_only=True)
+    flooded = next(account for account in accounts if account.phone == phone)
+    assert flooded.flood_wait_until is None
+    unavailable_reason = await harness.pool.get_premium_unavailability_reason()
+    assert "Flood Wait" in unavailable_reason
+
+
+@pytest.mark.asyncio
 async def test_search_my_chats_runtime_error_returns_search_result(
     db,
     real_pool_harness_factory,
@@ -336,6 +441,68 @@ async def test_search_my_chats_returns_results(db, real_pool_harness_factory):
     assert result.messages[0].message_id == 42
     assert result.messages[0].text == "resolved message"
     assert result.messages[0].channel_title == "My Chat"
+
+
+@pytest.mark.asyncio
+async def test_search_my_chats_skips_warm_dialog_cache_when_already_fetched(
+    db,
+    real_pool_harness_factory,
+):
+    mock_msg = _make_resolved_message()
+    harness = real_pool_harness_factory()
+    phone = "+1234567890"
+    client = FakeCliTelethonClient(
+        dialogs=[],
+        iter_messages_factory=lambda *args, **kwargs: AsyncIterMessages([mock_msg]),
+    )
+    await _connect_search_account(
+        harness,
+        phone=phone,
+        session_string="session-1",
+        client=client,
+    )
+    harness.pool.mark_dialogs_fetched(phone)
+
+    engine = SearchEngine(db, pool=harness.pool)
+    result = await engine.search_my_chats("resolved", limit=10)
+
+    assert result.total == 1
+    client.get_dialogs.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_search_my_chats_reports_flood_wait_and_marks_account(
+    db,
+    real_pool_harness_factory,
+):
+    async def _flood_iter(*args, **kwargs):
+        err = FloodWaitError(request=None, capture=0)
+        err.seconds = 33
+        raise err
+        yield
+
+    harness = real_pool_harness_factory()
+    phone = "+1234567890"
+    await _connect_search_account(
+        harness,
+        phone=phone,
+        session_string="session-1",
+        client=FakeCliTelethonClient(
+            dialogs=[],
+            iter_messages_factory=_flood_iter,
+        ),
+    )
+
+    engine = SearchEngine(db, pool=harness.pool)
+    result = await engine.search_my_chats("query")
+
+    assert result.total == 0
+    assert result.flood_wait is not None
+    assert result.flood_wait.wait_seconds == 33
+    assert "Flood wait 33s" in (result.error or "")
+    accounts = await db.get_accounts(active_only=True)
+    flooded = next(account for account in accounts if account.phone == phone)
+    assert flooded.flood_wait_until is not None
 
 
 @pytest.mark.asyncio

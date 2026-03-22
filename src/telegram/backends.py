@@ -72,6 +72,161 @@ class TelegramTransportSession:
     ) -> Any:
         return await self._client.send_file(entity, files, caption=caption, schedule=schedule)
 
+    async def send_message(self, entity: Any, message: Any, **kwargs: Any) -> Any:
+        return await self._client.send_message(entity, message, **kwargs)
+
+    async def forward_messages(self, entity: Any, messages: Any, from_peer: Any) -> Any:
+        return await self._client.forward_messages(entity, messages, from_peer)
+
+    async def edit_message(self, entity: Any, message: int, text: str, **kwargs: Any) -> Any:
+        return await self._client.edit_message(entity, message, text, **kwargs)
+
+    async def pin_message(self, entity: Any, message: Any, *, notify: bool = False) -> Any:
+        return await self._client.pin_message(entity, message, notify=notify)
+
+    async def unpin_message(self, entity: Any, message: Any = None) -> Any:
+        return await self._client.unpin_message(entity, message)
+
+    async def delete_messages(self, entity: Any, message_ids: list[int]) -> Any:
+        return await self._client.delete_messages(entity, message_ids)
+
+    async def download_media(self, message: Any, *, file: Any = None) -> Any:
+        return await self._client.download_media(message, file=file)
+
+    async def get_participants(self, entity: Any, *, limit: int | None = None, search: str = "") -> Any:
+        kwargs: dict[str, Any] = {}
+        if limit is not None:
+            kwargs["limit"] = limit
+        if search:
+            kwargs["search"] = search
+        return await self._client.get_participants(entity, **kwargs)
+
+    def stream_participants(self, entity: Any, **kwargs: Any) -> AsyncIterator[Any]:
+        return self._client.iter_participants(entity, **kwargs)
+
+    async def edit_admin(self, entity: Any, user: Any, **kwargs: Any) -> Any:
+        return await self._client.edit_admin(entity, user, **kwargs)
+
+    async def edit_permissions(self, entity: Any, user: Any, until_date: Any = None, **kwargs: Any) -> Any:
+        if until_date is not None:
+            kwargs["until_date"] = until_date
+        return await self._client.edit_permissions(entity, user, **kwargs)
+
+    async def kick_participant(self, entity: Any, user: Any) -> Any:
+        return await self._client.kick_participant(entity, user)
+
+    async def edit_folder(self, entity: Any, folder: int) -> Any:
+        return await self._client.edit_folder(entity, folder)
+
+    async def send_read_acknowledge(self, entity: Any, *, max_id: int | None = None) -> Any:
+        kwargs: dict[str, Any] = {}
+        if max_id is not None:
+            kwargs["max_id"] = max_id
+        return await self._client.send_read_acknowledge(entity, **kwargs)
+
+    # --- base ---
+
+    def set_proxy(self, proxy: Any) -> None:
+        self._client.set_proxy(proxy)
+
+    # --- uploads ---
+
+    async def upload_file(self, file: Any, **kwargs: Any) -> Any:
+        return await self._client.upload_file(file, **kwargs)
+
+    # --- downloads ---
+
+    async def download_file(self, input_location: Any, file: Any = None, **kwargs: Any) -> Any:
+        return await self._client.download_file(input_location, file, **kwargs)
+
+    def stream_download(self, file: Any, **kwargs: Any) -> AsyncIterator[Any]:
+        return self._client.iter_download(file, **kwargs)
+
+    # --- dialogs ---
+
+    def stream_drafts(self) -> AsyncIterator[Any]:
+        return self._client.iter_drafts()
+
+    async def get_drafts(self) -> Any:
+        return await self._client.get_drafts()
+
+    def conversation(self, entity: Any, **kwargs: Any) -> Any:
+        return self._client.conversation(entity, **kwargs)
+
+    # --- users ---
+
+    async def is_bot(self) -> bool:
+        return await self._client.is_bot()
+
+    async def is_user_authorized(self) -> bool:
+        return await self._client.is_user_authorized()
+
+    async def get_peer_id(self, peer: Any) -> int:
+        return await self._client.get_peer_id(peer)
+
+    # --- chats ---
+
+    def stream_admin_log(self, entity: Any, **kwargs: Any) -> AsyncIterator[Any]:
+        return self._client.iter_admin_log(entity, **kwargs)
+
+    async def get_admin_log(self, entity: Any, **kwargs: Any) -> Any:
+        return await self._client.get_admin_log(entity, **kwargs)
+
+    def stream_profile_photos(self, entity: Any, **kwargs: Any) -> AsyncIterator[Any]:
+        return self._client.iter_profile_photos(entity, **kwargs)
+
+    async def get_profile_photos(self, entity: Any, **kwargs: Any) -> Any:
+        return await self._client.get_profile_photos(entity, **kwargs)
+
+    def action(self, entity: Any, action: str, **kwargs: Any) -> Any:
+        return self._client.action(entity, action, **kwargs)
+
+    async def get_permissions(self, entity: Any, user: Any = None) -> Any:
+        return await self._client.get_permissions(entity, user)
+
+    # --- updates ---
+
+    async def set_receive_updates(self, enabled: bool) -> None:
+        await self._client.set_receive_updates(enabled)
+
+    async def run_until_disconnected(self) -> None:
+        await self._client.run_until_disconnected()
+
+    def on(self, event: Any) -> Any:
+        return self._client.on(event)
+
+    def add_event_handler(self, callback: Any, event: Any = None) -> None:
+        self._client.add_event_handler(callback, event)
+
+    def remove_event_handler(self, callback: Any, event: Any = None) -> bool:
+        return self._client.remove_event_handler(callback, event)
+
+    def list_event_handlers(self) -> list:
+        return self._client.list_event_handlers()
+
+    async def catch_up(self) -> None:
+        await self._client.catch_up()
+
+    # --- bots ---
+
+    async def inline_query(self, bot: Any, query: str, **kwargs: Any) -> Any:
+        return await self._client.inline_query(bot, query, **kwargs)
+
+    # --- buttons ---
+
+    def build_reply_markup(self, buttons: Any) -> Any:
+        return self._client.build_reply_markup(buttons)
+
+    # --- account ---
+
+    def takeout(self, **kwargs: Any) -> Any:
+        return self._client.takeout(**kwargs)
+
+    async def end_takeout(self, success: bool) -> None:
+        await self._client.end_takeout(success)
+
+    # --- existing ---
+
     async def remove_dialog(self, entity: Any) -> None:
         await self._client.delete_dialog(entity)
 
@@ -108,6 +263,11 @@ class TelegramTransportSession:
         from telethon.tl.functions.channels import GetFullChannelRequest
 
         return await self.invoke_request(GetFullChannelRequest(entity))
+
+    async def get_broadcast_stats(self, entity: Any) -> Any:
+        from telethon.tl.functions.stats import GetBroadcastStatsRequest
+
+        return await self.invoke_request(GetBroadcastStatsRequest(channel=entity))
 
     async def fetch_forum_topics(self, entity: Any, *, limit: int = 100) -> Any:
         from telethon.tl.functions.messages import GetForumTopicsRequest
