@@ -301,7 +301,7 @@ class Database:
         sq: "SearchQuery",
         since: str,
         limit: int = 3,
-    ) -> tuple[int, list[Message]]:
+    ) -> tuple[list[Message], int]:
         self._require()
         return await self._messages.search_messages_for_query_since(sq, since, limit)
 

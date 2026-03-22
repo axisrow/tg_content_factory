@@ -245,12 +245,12 @@ async def dry_run_notifications(request: Request):
     for sq in queries:
         if since:
             try:
-                total, previews = await db.search_messages_for_query_since(sq, since, limit=2)
+                previews, total = await db.search_messages_for_query_since(sq, since, limit=2)
             except Exception:
                 logger.exception("Dry-run match error for sq_id=%s", sq.id)
-                total, previews = 0, []
+                previews, total = [], 0
         else:
-            total, previews = 0, []
+            previews, total = [], 0
         results.append({
             "query": sq.name or sq.query,
             "count": total,

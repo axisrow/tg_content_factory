@@ -783,7 +783,7 @@ class MessagesRepository:
         sq: SearchQuery,
         since: str,
         limit: int = 3,
-    ) -> tuple[int, list[Message]]:
+    ) -> tuple[list[Message], int]:
         """Count + preview matches for sq among messages collected since `since`."""
         self._require_fts()
         fts_query, extra_conds, extra_params = self._build_sq_parts(sq)
@@ -809,7 +809,7 @@ class MessagesRepository:
         )
         rows = await cur.fetchall()
         messages = self._rows_to_messages(rows)
-        return total, messages
+        return messages, total
 
     async def count_fts_matches_for_query(self, sq: SearchQuery) -> int:
         self._require_fts()
