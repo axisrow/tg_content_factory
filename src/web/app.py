@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import logging
+import re
 import secrets
 from contextlib import asynccontextmanager
 
@@ -30,6 +31,61 @@ from src.web.paths import TEMPLATES_DIR
 from src.web.template_globals import configure_template_globals
 
 logger = logging.getLogger(__name__)
+
+
+_btn_logger = logging.getLogger("button")
+_LOG_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
+
+# URL pattern → human-readable button label for /debug/ logs
+_ACTION_LABELS: list[tuple[re.Pattern, str]] = [
+    (re.compile(r"^/scheduler/start$"), "Запустить планировщик"),
+    (re.compile(r"^/scheduler/stop$"), "Остановить планировщик"),
+    (re.compile(r"^/scheduler/trigger$"), "Собрать все каналы"),
+    (re.compile(r"^/scheduler/test-notification$"), "Тест уведомлений"),
+    (re.compile(r"^/scheduler/dry-run-notifications$"), "Dry-run уведомлений"),
+    (re.compile(r"^/scheduler/tasks/\d+/cancel$"), "Отменить задачу"),
+    (re.compile(r"^/scheduler/tasks/clear-pending-collect$"), "Очистить очередь"),
+    (re.compile(r"^/channels/add$"), "Добавить канал"),
+    (re.compile(r"^/channels/add-bulk$"), "Добавить выбранные каналы"),
+    (re.compile(r"^/channels/collect-all$"), "Собрать все каналы"),
+    (re.compile(r"^/channels/stats/all$"), "Обновить статистику всех"),
+    (re.compile(r"^/channels/\d+/collect$"), "Загрузить канал"),
+    (re.compile(r"^/channels/\d+/stats$"), "Обновить статистику"),
+    (re.compile(r"^/channels/\d+/toggle$"), "Вкл/Откл канал"),
+    (re.compile(r"^/channels/\d+/delete$"), "Удалить канал"),
+    (re.compile(r"^/channels/\d+/filter-toggle$"), "Переключить фильтр"),
+    (re.compile(r"^/channels/-?\d+/purge-messages$"), "Очистить сообщения"),
+    (re.compile(r"^/moderation/\d+/approve$"), "Одобрить"),
+    (re.compile(r"^/moderation/\d+/reject$"), "Отклонить"),
+    (re.compile(r"^/moderation/\d+/publish$"), "Опубликовать"),
+    (re.compile(r"^/moderation/bulk-approve$"), "Одобрить выбранные"),
+    (re.compile(r"^/moderation/bulk-reject$"), "Отклонить выбранные"),
+    (re.compile(r"^/settings/\d+/toggle$"), "Вкл/Откл аккаунт"),
+    (re.compile(r"^/settings/\d+/delete$"), "Удалить аккаунт"),
+    (re.compile(r"^/agent/threads$"), "Новый тред"),
+    (re.compile(r"^/agent/threads/\d+/chat$"), "Сообщение агенту"),
+    (re.compile(r"^/agent/threads/\d+/context$"), "Загрузить контекст"),
+    (re.compile(r"^/agent/threads/\d+/stop$"), "Остановить генерацию"),
+    (re.compile(r"^/agent/threads/\d+$"), "Удалить тред"),
+]
+
+
+def _resolve_action_label(path: str) -> str:
+    for pattern, label in _ACTION_LABELS:
+        if pattern.match(path):
+            return label
+    return ""
+
+
+class ActionLogMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        if request.method in _LOG_METHODS:
+            label = request.headers.get("X-Button-Label") or _resolve_action_label(request.url.path)
+            if label:
+                _btn_logger.info("[%s] %s %s", label, request.method, request.url.path)
+            else:
+                _btn_logger.info("%s %s", request.method, request.url.path)
+        return await call_next(request)
 
 
 class BasicAuthMiddleware(BaseHTTPMiddleware):
@@ -110,6 +166,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
     if config.web.password:
         app.add_middleware(BasicAuthMiddleware, password=config.web.password)
     app.add_middleware(OriginCSRFMiddleware)
+    app.add_middleware(ActionLogMiddleware)
 
     @app.exception_handler(Exception)
     async def unhandled_exception_handler(request: Request, exc: Exception):

@@ -14,7 +14,7 @@
             </div>
             <div class="d-flex gap-2 flex-wrap">
                 <button type="submit" class="btn btn-primary flex-fill">Добавить</button>
-                <button type="button" class="btn btn-secondary" onclick="openSubscriptions()">Мои подписки</button>
+                <button type="button" class="btn btn-secondary" id="subscriptions-btn" onclick="openSubscriptions()">Мои подписки</button>
                 <a href="/channels/import" class="btn btn-outline-secondary">Импорт</a>
             </div>
         </form>
@@ -33,7 +33,8 @@
         <form method="post" action="/channels/collect-all" class="d-inline"
               hx-post="/channels/collect-all"
               hx-target="#collect-all-btn"
-              hx-swap="outerHTML">
+              hx-swap="outerHTML"
+              hx-disabled-elt="find button">
             <button type="submit" class="btn btn-secondary btn-sm">Собрать все каналы</button>
         </form>
     </span>
@@ -120,11 +121,11 @@
             </td>
             <td class="text-nowrap">
                 {% if ch.is_filtered %}
-                <form method="post" action="/channels/{{ ch.id }}/filter-toggle" class="d-inline">
+                <form method="post" action="/channels/{{ ch.id }}/filter-toggle" class="d-inline" data-busy>
                     <button type="submit" class="btn btn-outline-secondary btn-sm emoji-btn" title="Вернуть">&#128257;</button>
                 </form>
                 {% if ch.message_count > 0 %}
-                <form method="post" action="/channels/{{ ch.channel_id }}/purge-messages" class="d-inline" onsubmit="return confirm('Удалить {{ ch.message_count }} сообщений из этого канала?')">
+                <form method="post" action="/channels/{{ ch.channel_id }}/purge-messages" class="d-inline" data-busy onsubmit="return confirm('Удалить {{ ch.message_count }} сообщений из этого канала?')">
                     <button type="submit" class="btn btn-outline-danger btn-sm emoji-btn" title="Очистить сообщения">&#129529;</button>
                 </form>
                 {% endif %}
@@ -134,19 +135,20 @@
                           hx-post="/channels/{{ ch.id }}/collect"
                           hx-target="#collect-btn-{{ ch.id }}"
                           hx-swap="outerHTML"
+                          hx-disabled-elt="find button"
                           class="d-inline">
                         <button type="submit" class="btn btn-outline-primary btn-sm emoji-btn" title="Загрузить">&#11015;&#65039;</button>
                     </form>
                 </span>
-                <form method="post" action="/channels/{{ ch.id }}/stats" class="d-inline">
+                <form method="post" action="/channels/{{ ch.id }}/stats" class="d-inline" data-busy>
                     <button type="submit" class="btn btn-outline-primary btn-sm emoji-btn" title="Обновить статистику">&#128202;</button>
                 </form>
-                <form method="post" action="/channels/{{ ch.id }}/toggle" class="d-inline">
+                <form method="post" action="/channels/{{ ch.id }}/toggle" class="d-inline" data-busy>
                     <button type="submit" class="btn btn-outline-secondary btn-sm emoji-btn" title="{{ 'Отключить' if ch.is_active else 'Включить' }}">
                         {{ "⏏️" if ch.is_active else "▶️" }}
                     </button>
                 </form>
-                <form method="post" action="/channels/{{ ch.id }}/delete" class="d-inline" onsubmit="return confirm('Вы уверены, что хотите удалить этот канал?')">
+                <form method="post" action="/channels/{{ ch.id }}/delete" class="d-inline" data-busy onsubmit="return confirm('Вы уверены, что хотите удалить этот канал?')">
                     <button type="submit" class="btn btn-outline-danger btn-sm emoji-btn" title="Удалить">&#128465;&#65039;</button>
                 </form>
             </td>
@@ -193,11 +195,11 @@
             </div>
             <div class="card-actions">
                 {% if ch.is_filtered %}
-                <form method="post" action="/channels/{{ ch.id }}/filter-toggle" class="d-inline">
+                <form method="post" action="/channels/{{ ch.id }}/filter-toggle" class="d-inline" data-busy>
                     <button type="submit" class="btn btn-outline-secondary btn-sm emoji-btn" title="Вернуть">&#128257;</button>
                 </form>
                 {% if ch.message_count > 0 %}
-                <form method="post" action="/channels/{{ ch.channel_id }}/purge-messages" class="d-inline" onsubmit="return confirm('Удалить {{ ch.message_count }} сообщений из этого канала?')">
+                <form method="post" action="/channels/{{ ch.channel_id }}/purge-messages" class="d-inline" data-busy onsubmit="return confirm('Удалить {{ ch.message_count }} сообщений из этого канала?')">
                     <button type="submit" class="btn btn-outline-danger btn-sm emoji-btn" title="Очистить сообщения">&#129529;</button>
                 </form>
                 {% endif %}
@@ -207,19 +209,20 @@
                           hx-post="/channels/{{ ch.id }}/collect"
                           hx-target="#collect-btn-m-{{ ch.id }}"
                           hx-swap="outerHTML"
+                          hx-disabled-elt="find button"
                           class="d-inline">
                         <button type="submit" class="btn btn-outline-primary btn-sm emoji-btn" title="Загрузить">&#11015;&#65039;</button>
                     </form>
                 </span>
-                <form method="post" action="/channels/{{ ch.id }}/stats" class="d-inline">
+                <form method="post" action="/channels/{{ ch.id }}/stats" class="d-inline" data-busy>
                     <button type="submit" class="btn btn-outline-primary btn-sm emoji-btn" title="Обновить статистику">&#128202;</button>
                 </form>
-                <form method="post" action="/channels/{{ ch.id }}/toggle" class="d-inline">
+                <form method="post" action="/channels/{{ ch.id }}/toggle" class="d-inline" data-busy>
                     <button type="submit" class="btn btn-outline-secondary btn-sm emoji-btn" title="{{ 'Отключить' if ch.is_active else 'Включить' }}">
                         {{ "⏏️" if ch.is_active else "▶️" }}
                     </button>
                 </form>
-                <form method="post" action="/channels/{{ ch.id }}/delete" class="d-inline" onsubmit="return confirm('Вы уверены, что хотите удалить этот канал?')">
+                <form method="post" action="/channels/{{ ch.id }}/delete" class="d-inline" data-busy onsubmit="return confirm('Вы уверены, что хотите удалить этот канал?')">
                     <button type="submit" class="btn btn-outline-danger btn-sm emoji-btn" title="Удалить">&#128465;&#65039;</button>
                 </form>
             </div>
@@ -243,7 +246,7 @@
             </div>
             <div class="modal-footer">
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
-                <button type="button" class="btn btn-primary" onclick="addSelected()">Добавить выбранные</button>
+                <button type="button" class="btn btn-primary" id="add-selected-btn" onclick="addSelected()">Добавить выбранные</button>
             </div>
         </div>
     </div>
@@ -251,6 +254,8 @@
 
 <script>
 function openSubscriptions() {
+    var btn = document.getElementById("subscriptions-btn");
+    setAsyncButtonBusy(btn, true, 'Мои подписки');
     var modal = new bootstrap.Modal(document.getElementById("subscriptions-modal"));
     var list = document.getElementById("subscriptions-list");
     list.innerHTML = "Загрузка...";
@@ -318,12 +323,17 @@ function openSubscriptions() {
         })
         .catch(function() {
             list.innerHTML = "<p>Ошибка загрузки подписок.</p>";
+        })
+        .finally(function() {
+            setAsyncButtonBusy(btn, false);
         });
 }
 
 function addSelected() {
     var form = document.getElementById("bulk-form");
     if (form) {
+        var btn = document.getElementById("add-selected-btn");
+        setAsyncButtonBusy(btn, true, 'Добавить выбранные');
         form.submit();
     }
 }

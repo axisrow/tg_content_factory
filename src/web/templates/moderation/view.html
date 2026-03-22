@@ -79,10 +79,10 @@
             <div class="card">
                 <div class="card-header">Действия</div>
                 <div class="card-body">
-                    <form method="post" action="/moderation/{{ run.id }}/approve" class="mb-2">
+                    <form method="post" action="/moderation/{{ run.id }}/approve" class="mb-2" data-busy>
                         <button type="submit" class="btn btn-success w-100">Одобрить</button>
                     </form>
-                    <form method="post" action="/moderation/{{ run.id }}/reject">
+                    <form method="post" action="/moderation/{{ run.id }}/reject" data-busy>
                         <button type="submit" class="btn btn-danger w-100">Отклонить</button>
                     </form>
                 </div>
@@ -91,7 +91,7 @@
             <div class="card">
                 <div class="card-header">Публикация</div>
                 <div class="card-body">
-                    <form method="post" action="/moderation/{{ run.id }}/publish">
+                    <form method="post" action="/moderation/{{ run.id }}/publish" data-busy>
                         <button type="submit" class="btn btn-primary w-100">Опубликовать</button>
                     </form>
                 </div>

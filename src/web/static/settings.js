@@ -99,21 +99,7 @@ function updateModelOptionLabel(provider, model, status) {
     option.textContent = model + (status ? ' [' + status + ']' : '');
 }
 
-function setAsyncButtonBusy(button, busy, busyLabel) {
-    if (!button) return;
-    if (!button.dataset.defaultLabel) {
-        button.dataset.defaultLabel = button.innerHTML;
-    }
-    if (busy) {
-        button.disabled = true;
-        button.innerHTML =
-            '<span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>' +
-            (busyLabel || 'Выполняется...');
-        return;
-    }
-    button.disabled = false;
-    button.innerHTML = button.dataset.defaultLabel;
-}
+// setAsyncButtonBusy is defined globally in base.html
 
 function setAgentProviderActionsStatus(level, html) {
     const box = document.getElementById('agent-provider-actions-status');

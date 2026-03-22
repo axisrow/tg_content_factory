@@ -475,7 +475,7 @@
         {% else %}
         <p class="small text-muted">Тредов пока нет</p>
         {% endfor %}
-        <form method="post" action="/agent/threads" style="margin-top:auto">
+        <form method="post" action="/agent/threads" style="margin-top:auto" data-busy>
             <button type="submit" class="btn btn-outline-primary btn-sm w-100">+ Новый тред</button>
         </form>
     </div>
@@ -519,7 +519,7 @@
         <p class="small text-muted">Тредов пока нет</p>
         {% endfor %}
 
-        <form method="post" action="/agent/threads" style="margin-top:auto">
+        <form method="post" action="/agent/threads" style="margin-top:auto" data-busy>
             <button type="submit" class="btn btn-outline-primary btn-sm w-100 mt-2">+ Новый тред</button>
         </form>
     </div>
@@ -863,10 +863,13 @@
         e.preventDefault();
         e.stopPropagation();
         if (!confirm('Удалить тред?')) return;
+        var btn = e.target.closest('button') || e.target;
+        setAsyncButtonBusy(btn, true, '');
         try {
             await fetch('/agent/threads/' + tid, {method: 'DELETE'});
             window.location.href = '/agent';
         } catch(err) {
+            setAsyncButtonBusy(btn, false);
             alert('Ошибка удаления: ' + err.message);
         }
     };
@@ -947,8 +950,9 @@
             var limit = limitVal ? parseInt(limitVal) : 0;
             var topicId = document.getElementById('ctx-topic').value || null;
             var status = document.getElementById('ctx-status');
-            this.disabled = true;
+            setAsyncButtonBusy(this, true, 'Загрузить');
             status.textContent = 'Загрузка…';
+            var self = this;
             try {
                 var resp = await fetch('/agent/threads/' + threadId + '/context', {
                     method: 'POST',
@@ -970,7 +974,7 @@
             } catch(e) {
                 status.textContent = 'Ошибка: ' + e.message;
             } finally {
-                this.disabled = false;
+                setAsyncButtonBusy(self, false);
             }
         });
     }

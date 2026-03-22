@@ -257,6 +257,9 @@ async def dry_run_notifications(request: Request):
             "previews": [(m.text or "")[:150] for m in previews],
         })
 
+    total_matches = sum(r["count"] for r in results)
+    logger.info("Dry-run notifications: %d queries, %d matches, since=%s", len(queries), total_matches, since)
+
     return deps.get_templates(request).TemplateResponse(
         request,
         "_dry_run_results.html",

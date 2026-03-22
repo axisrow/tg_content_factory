@@ -32,7 +32,7 @@
     </div>
 
     {% if pending_runs %}
-    <form method="post" action="/moderation/bulk-approve">
+    <form method="post" action="/moderation/bulk-approve" data-busy>
         <div class="mb-3">
             <button type="submit" class="btn btn-success btn-sm">Одобрить выбранные</button>
             <button type="submit" formaction="/moderation/bulk-reject" class="btn btn-danger btn-sm">Отклонить выбранные</button>
