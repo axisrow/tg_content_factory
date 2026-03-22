@@ -339,6 +339,27 @@ async def test_stop_scheduler_calls_service(client):
 
 
 @pytest.mark.asyncio
+async def test_start_scheduler_sets_autostart_flag(client):
+    """POST /scheduler/start persists scheduler_autostart=1 to DB."""
+    db = client._transport.app.state.db
+    resp = await client.post("/scheduler/start", follow_redirects=False)
+    assert resp.status_code == 303
+    value = await db.get_setting("scheduler_autostart")
+    assert value == "1"
+
+
+@pytest.mark.asyncio
+async def test_stop_scheduler_clears_autostart_flag(client):
+    """POST /scheduler/stop persists scheduler_autostart=0 to DB."""
+    db = client._transport.app.state.db
+    await db.set_setting("scheduler_autostart", "1")
+    resp = await client.post("/scheduler/stop", follow_redirects=False)
+    assert resp.status_code == 303
+    value = await db.get_setting("scheduler_autostart")
+    assert value == "0"
+
+
+@pytest.mark.asyncio
 async def test_trigger_collection_calls_service(client):
     """Test trigger collection calls collection service."""
     mock_service = MagicMock()
