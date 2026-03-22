@@ -551,9 +551,21 @@ class UnifiedDispatcher:
             if pipeline.publish_mode == PipelinePublishMode.AUTO and run is not None:
                 from src.services.publish_service import PublishService
 
-                pool = self._collector._pool
-                publish_svc = PublishService(db, pool)
-                await publish_svc.publish_run(run, pipeline)
+                publish_svc = PublishService(db, self._client_pool)
+                try:
+                    await publish_svc.publish_run(run, pipeline)
+                except Exception as pub_exc:
+                    logger.exception(
+                        "Auto-publish failed for run id=%s (pipeline_id=%d); generation already saved",
+                        run.id,
+                        pipeline_id,
+                    )
+                    await self._tasks.update_collection_task(
+                        task.id,
+                        CollectionTaskStatus.FAILED,
+                        error=f"Generation ok but publish failed: {pub_exc!s:.400}",
+                    )
+                    return
 
             await self._tasks.update_collection_task(
                 task.id,
@@ -582,9 +594,11 @@ class UnifiedDispatcher:
             )
             return
 
-        if not self._db:
+        if not self._db or not self._pipeline_bundle:
             await self._tasks.update_collection_task(
-                task.id, CollectionTaskStatus.COMPLETED, note="No DB configured"
+                task.id,
+                CollectionTaskStatus.FAILED,
+                error="Pipeline execution environment not configured",
             )
             return
 
@@ -594,7 +608,7 @@ class UnifiedDispatcher:
             from src.services.publish_service import PublishService
 
             db = self._db
-            pool = self._collector._pool
+            pool = self._client_pool
             publish_svc = PublishService(db, pool)
 
             filter_sql = "AND pipeline_id = ?" if pipeline_id is not None else ""
