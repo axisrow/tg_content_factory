@@ -544,3 +544,19 @@ class CollectionTasksRepository:
         )
         await self._db.commit()
         return cur.rowcount > 0
+
+    async def get_last_completed_collect_task(self) -> CollectionTask | None:
+        """Return the most recently completed channel_collect task."""
+        cur = await self._db.execute(
+            "SELECT * FROM collection_tasks "
+            "WHERE task_type = ? AND status = ? "
+            "ORDER BY completed_at DESC LIMIT 1",
+            (
+                CollectionTaskType.CHANNEL_COLLECT.value,
+                CollectionTaskStatus.COMPLETED.value,
+            ),
+        )
+        row = await cur.fetchone()
+        if row is None:
+            return None
+        return self._to_task(row)
