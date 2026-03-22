@@ -301,9 +301,13 @@ class MessagesRepository:
         return cur.rowcount if cur.rowcount >= 0 else len(payload)
 
     async def load_all_embeddings_json(self) -> list[tuple[int, list[float]]]:
-        """Load all embeddings from the portable JSON table (issue #173)."""
+        """Load embeddings from the portable JSON table, excluding filtered channels."""
         cur = await self._db.execute(
-            "SELECT message_id, embedding FROM message_embeddings_json ORDER BY message_id"
+            "SELECT e.message_id, e.embedding FROM message_embeddings_json e "
+            "JOIN messages m ON m.id = e.message_id "
+            "JOIN channels c ON m.channel_id = c.channel_id "
+            "WHERE (c.is_filtered IS NULL OR c.is_filtered = 0) "
+            "ORDER BY e.message_id"
         )
         rows = await cur.fetchall()
         result: list[tuple[int, list[float]]] = []
