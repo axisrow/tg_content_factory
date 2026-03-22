@@ -135,14 +135,14 @@ class GenerationRunsRepository:
     ) -> list[GenerationRun]:
         if pipeline_id is None:
             cur = await self._db.execute(
-                "SELECT * FROM generation_runs WHERE moderation_status = 'pending' ORDER BY id DESC LIMIT ? OFFSET ?",
+                "SELECT * FROM generation_runs WHERE moderation_status IN ('pending', 'approved')"
+                " ORDER BY id DESC LIMIT ? OFFSET ?",
                 (limit, offset),
             )
         else:
             cur = await self._db.execute(
-                "SELECT * FROM generation_runs "
-                "WHERE moderation_status = 'pending' "
-                "AND pipeline_id = ? ORDER BY id DESC LIMIT ? OFFSET ?",
+                "SELECT * FROM generation_runs WHERE moderation_status IN ('pending', 'approved')"
+                " AND pipeline_id = ? ORDER BY id DESC LIMIT ? OFFSET ?",
                 (pipeline_id, limit, offset),
             )
         rows = await cur.fetchall()
@@ -163,6 +163,14 @@ class GenerationRunsRepository:
             return None
         return self._to_generation_run(row)
 
+    async def list_runs_for_calendar(self, days: int = 30) -> list[GenerationRun]:
+        cur = await self._db.execute(
+            "SELECT * FROM generation_runs WHERE created_at >= date('now', ?) ORDER BY created_at DESC",
+            (f"-{days} days",),
+        )
+        rows = await cur.fetchall()
+        return [self._to_generation_run(row) for row in rows]
+
     async def list_by_pipeline(
         self, pipeline_id: int, limit: int = 20, offset: int = 0
     ) -> list[GenerationRun]:
@@ -172,3 +180,23 @@ class GenerationRunsRepository:
         )
         rows = await cur.fetchall()
         return [self._to_generation_run(row) for row in rows]
+
+    async def get_calendar_stats(self) -> dict:
+        """Return counts grouped by moderation_status, plus published count."""
+        cur = await self._db.execute(
+            "SELECT moderation_status, COUNT(*) as cnt FROM generation_runs "
+            "WHERE moderation_status IN ('pending', 'approved') "
+            "GROUP BY moderation_status"
+        )
+        rows = await cur.fetchall()
+        counts = {row["moderation_status"]: int(row["cnt"]) for row in rows}
+        cur2 = await self._db.execute(
+            "SELECT COUNT(*) as cnt FROM generation_runs "
+            "WHERE moderation_status = 'published'"
+        )
+        row2 = await cur2.fetchone()
+        return {
+            "pending": counts.get("pending", 0),
+            "approved": counts.get("approved", 0),
+            "published": int(row2["cnt"]) if row2 else 0,
+        }
