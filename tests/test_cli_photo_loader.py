@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from src.config import AppConfig
@@ -103,7 +102,7 @@ def test_dialogs_action(tmp_path, capsys):
     ):
         from src.cli.commands.photo_loader import run
 
-        with patch("src.cli.commands.photo_loader.ChannelService") as MockChannelService:
+        with patch("src.cli.commands.photo_loader.ChannelService") as mock_channel_service:
             mock_instance = MagicMock()
             mock_instance.get_my_dialogs = AsyncMock(
                 return_value=[
@@ -111,7 +110,7 @@ def test_dialogs_action(tmp_path, capsys):
                     {"channel_id": 200, "channel_type": "chat", "title": "Test Chat"},
                 ]
             )
-            MockChannelService.return_value = mock_instance
+            mock_channel_service.return_value = mock_instance
 
             run(_ns(photo_loader_action="dialogs", phone="+100"))
 
@@ -164,15 +163,15 @@ def test_send_action(tmp_path, capsys):
         pool.disconnect_all = AsyncMock()
         return MagicMock(), pool
 
-    FakeTask, FakeAuto = _create_fake_services(
+    fake_task, fake_auto = _create_fake_services(
         task_methods={"send_now": AsyncMock(return_value=MagicMock(id=1, status="sent"))}
     )
 
     with (
         patch("src.cli.commands.photo_loader.runtime.init_db", side_effect=fake_init_db),
         patch("src.cli.commands.photo_loader.runtime.init_pool", side_effect=fake_init_pool),
-        patch("src.cli.commands.photo_loader.PhotoTaskService", FakeTask),
-        patch("src.cli.commands.photo_loader.PhotoAutoUploadService", FakeAuto),
+        patch("src.cli.commands.photo_loader.PhotoTaskService", fake_task),
+        patch("src.cli.commands.photo_loader.PhotoAutoUploadService", fake_auto),
     ):
         from src.cli.commands.photo_loader import run
 
@@ -213,15 +212,15 @@ def test_schedule_send_action(tmp_path, capsys):
         pool.disconnect_all = AsyncMock()
         return MagicMock(), pool
 
-    FakeTask, FakeAuto = _create_fake_services(
+    fake_task, fake_auto = _create_fake_services(
         task_methods={"schedule_send": AsyncMock(return_value=MagicMock(id=2, status="scheduled"))}
     )
 
     with (
         patch("src.cli.commands.photo_loader.runtime.init_db", side_effect=fake_init_db),
         patch("src.cli.commands.photo_loader.runtime.init_pool", side_effect=fake_init_pool),
-        patch("src.cli.commands.photo_loader.PhotoTaskService", FakeTask),
-        patch("src.cli.commands.photo_loader.PhotoAutoUploadService", FakeAuto),
+        patch("src.cli.commands.photo_loader.PhotoTaskService", fake_task),
+        patch("src.cli.commands.photo_loader.PhotoAutoUploadService", fake_auto),
     ):
         from src.cli.commands.photo_loader import run
 
@@ -263,7 +262,7 @@ def test_batch_create_action(tmp_path, capsys):
         pool.disconnect_all = AsyncMock()
         return MagicMock(), pool
 
-    FakeTask, FakeAuto = _create_fake_services(
+    fake_task, fake_auto = _create_fake_services(
         task_methods={
             "load_manifest": lambda self, path: [{"file": "test.jpg"}],
             "create_batch": AsyncMock(return_value=3),
@@ -273,8 +272,8 @@ def test_batch_create_action(tmp_path, capsys):
     with (
         patch("src.cli.commands.photo_loader.runtime.init_db", side_effect=fake_init_db),
         patch("src.cli.commands.photo_loader.runtime.init_pool", side_effect=fake_init_pool),
-        patch("src.cli.commands.photo_loader.PhotoTaskService", FakeTask),
-        patch("src.cli.commands.photo_loader.PhotoAutoUploadService", FakeAuto),
+        patch("src.cli.commands.photo_loader.PhotoTaskService", fake_task),
+        patch("src.cli.commands.photo_loader.PhotoAutoUploadService", fake_auto),
     ):
         from src.cli.commands.photo_loader import run
 
@@ -311,7 +310,7 @@ def test_batch_list_action(tmp_path, capsys):
         pool.disconnect_all = AsyncMock()
         return MagicMock(), pool
 
-    FakeTask, FakeAuto = _create_fake_services(
+    fake_task, fake_auto = _create_fake_services(
         task_methods={
             "list_batches": AsyncMock(
                 return_value=[
@@ -325,8 +324,8 @@ def test_batch_list_action(tmp_path, capsys):
     with (
         patch("src.cli.commands.photo_loader.runtime.init_db", side_effect=fake_init_db),
         patch("src.cli.commands.photo_loader.runtime.init_pool", side_effect=fake_init_pool),
-        patch("src.cli.commands.photo_loader.PhotoTaskService", FakeTask),
-        patch("src.cli.commands.photo_loader.PhotoAutoUploadService", FakeAuto),
+        patch("src.cli.commands.photo_loader.PhotoTaskService", fake_task),
+        patch("src.cli.commands.photo_loader.PhotoAutoUploadService", fake_auto),
     ):
         from src.cli.commands.photo_loader import run
 
@@ -359,13 +358,13 @@ def test_auto_create_action(tmp_path, capsys):
         pool.disconnect_all = AsyncMock()
         return MagicMock(), pool
 
-    FakeTask, FakeAuto = _create_fake_services(auto_methods={"create_job": AsyncMock(return_value=4)})
+    fake_task, fake_auto = _create_fake_services(auto_methods={"create_job": AsyncMock(return_value=4)})
 
     with (
         patch("src.cli.commands.photo_loader.runtime.init_db", side_effect=fake_init_db),
         patch("src.cli.commands.photo_loader.runtime.init_pool", side_effect=fake_init_pool),
-        patch("src.cli.commands.photo_loader.PhotoTaskService", FakeTask),
-        patch("src.cli.commands.photo_loader.PhotoAutoUploadService", FakeAuto),
+        patch("src.cli.commands.photo_loader.PhotoTaskService", fake_task),
+        patch("src.cli.commands.photo_loader.PhotoAutoUploadService", fake_auto),
     ):
         from src.cli.commands.photo_loader import run
 
@@ -404,7 +403,7 @@ def test_auto_list_action(tmp_path, capsys):
         pool.disconnect_all = AsyncMock()
         return MagicMock(), pool
 
-    FakeTask, FakeAuto = _create_fake_services(
+    fake_task, fake_auto = _create_fake_services(
         auto_methods={
             "list_jobs": AsyncMock(
                 return_value=[
@@ -423,8 +422,8 @@ def test_auto_list_action(tmp_path, capsys):
     with (
         patch("src.cli.commands.photo_loader.runtime.init_db", side_effect=fake_init_db),
         patch("src.cli.commands.photo_loader.runtime.init_pool", side_effect=fake_init_pool),
-        patch("src.cli.commands.photo_loader.PhotoTaskService", FakeTask),
-        patch("src.cli.commands.photo_loader.PhotoAutoUploadService", FakeAuto),
+        patch("src.cli.commands.photo_loader.PhotoTaskService", fake_task),
+        patch("src.cli.commands.photo_loader.PhotoAutoUploadService", fake_auto),
     ):
         from src.cli.commands.photo_loader import run
 
@@ -454,7 +453,7 @@ def test_auto_toggle_action(tmp_path, capsys):
         pool.disconnect_all = AsyncMock()
         return MagicMock(), pool
 
-    FakeTask, FakeAuto = _create_fake_services(
+    fake_task, fake_auto = _create_fake_services(
         auto_methods={
             "get_job": AsyncMock(return_value=MagicMock(id=1, is_active=True)),
             "update_job": AsyncMock(return_value=None),
@@ -464,8 +463,8 @@ def test_auto_toggle_action(tmp_path, capsys):
     with (
         patch("src.cli.commands.photo_loader.runtime.init_db", side_effect=fake_init_db),
         patch("src.cli.commands.photo_loader.runtime.init_pool", side_effect=fake_init_pool),
-        patch("src.cli.commands.photo_loader.PhotoTaskService", FakeTask),
-        patch("src.cli.commands.photo_loader.PhotoAutoUploadService", FakeAuto),
+        patch("src.cli.commands.photo_loader.PhotoTaskService", fake_task),
+        patch("src.cli.commands.photo_loader.PhotoAutoUploadService", fake_auto),
     ):
         from src.cli.commands.photo_loader import run
 
@@ -494,13 +493,13 @@ def test_auto_toggle_not_found(tmp_path, capsys):
         pool.disconnect_all = AsyncMock()
         return MagicMock(), pool
 
-    FakeTask, FakeAuto = _create_fake_services(auto_methods={"get_job": AsyncMock(return_value=None)})
+    fake_task, fake_auto = _create_fake_services(auto_methods={"get_job": AsyncMock(return_value=None)})
 
     with (
         patch("src.cli.commands.photo_loader.runtime.init_db", side_effect=fake_init_db),
         patch("src.cli.commands.photo_loader.runtime.init_pool", side_effect=fake_init_pool),
-        patch("src.cli.commands.photo_loader.PhotoTaskService", FakeTask),
-        patch("src.cli.commands.photo_loader.PhotoAutoUploadService", FakeAuto),
+        patch("src.cli.commands.photo_loader.PhotoTaskService", fake_task),
+        patch("src.cli.commands.photo_loader.PhotoAutoUploadService", fake_auto),
     ):
         from src.cli.commands.photo_loader import run
 
@@ -529,7 +528,7 @@ def test_run_due_action(tmp_path, capsys):
         pool.disconnect_all = AsyncMock()
         return MagicMock(), pool
 
-    FakeTask, FakeAuto = _create_fake_services(
+    fake_task, fake_auto = _create_fake_services(
         task_methods={"run_due": AsyncMock(return_value=5)},
         auto_methods={"run_due": AsyncMock(return_value=2)},
     )
@@ -537,8 +536,8 @@ def test_run_due_action(tmp_path, capsys):
     with (
         patch("src.cli.commands.photo_loader.runtime.init_db", side_effect=fake_init_db),
         patch("src.cli.commands.photo_loader.runtime.init_pool", side_effect=fake_init_pool),
-        patch("src.cli.commands.photo_loader.PhotoTaskService", FakeTask),
-        patch("src.cli.commands.photo_loader.PhotoAutoUploadService", FakeAuto),
+        patch("src.cli.commands.photo_loader.PhotoTaskService", fake_task),
+        patch("src.cli.commands.photo_loader.PhotoAutoUploadService", fake_auto),
     ):
         from src.cli.commands.photo_loader import run
 
@@ -568,13 +567,13 @@ def test_auto_delete_action(tmp_path, capsys):
         pool.disconnect_all = AsyncMock()
         return MagicMock(), pool
 
-    FakeTask, FakeAuto = _create_fake_services(auto_methods={"delete_job": AsyncMock(return_value=None)})
+    fake_task, fake_auto = _create_fake_services(auto_methods={"delete_job": AsyncMock(return_value=None)})
 
     with (
         patch("src.cli.commands.photo_loader.runtime.init_db", side_effect=fake_init_db),
         patch("src.cli.commands.photo_loader.runtime.init_pool", side_effect=fake_init_pool),
-        patch("src.cli.commands.photo_loader.PhotoTaskService", FakeTask),
-        patch("src.cli.commands.photo_loader.PhotoAutoUploadService", FakeAuto),
+        patch("src.cli.commands.photo_loader.PhotoTaskService", fake_task),
+        patch("src.cli.commands.photo_loader.PhotoAutoUploadService", fake_auto),
     ):
         from src.cli.commands.photo_loader import run
 
@@ -603,13 +602,13 @@ def test_batch_cancel_action(tmp_path, capsys):
         pool.disconnect_all = AsyncMock()
         return MagicMock(), pool
 
-    FakeTask, FakeAuto = _create_fake_services(task_methods={"cancel_item": AsyncMock(return_value=True)})
+    fake_task, fake_auto = _create_fake_services(task_methods={"cancel_item": AsyncMock(return_value=True)})
 
     with (
         patch("src.cli.commands.photo_loader.runtime.init_db", side_effect=fake_init_db),
         patch("src.cli.commands.photo_loader.runtime.init_pool", side_effect=fake_init_pool),
-        patch("src.cli.commands.photo_loader.PhotoTaskService", FakeTask),
-        patch("src.cli.commands.photo_loader.PhotoAutoUploadService", FakeAuto),
+        patch("src.cli.commands.photo_loader.PhotoTaskService", fake_task),
+        patch("src.cli.commands.photo_loader.PhotoAutoUploadService", fake_auto),
     ):
         from src.cli.commands.photo_loader import run
 
@@ -638,13 +637,13 @@ def test_auto_update_action(tmp_path, capsys):
         pool.disconnect_all = AsyncMock()
         return MagicMock(), pool
 
-    FakeTask, FakeAuto = _create_fake_services(auto_methods={"update_job": AsyncMock(return_value=None)})
+    fake_task, fake_auto = _create_fake_services(auto_methods={"update_job": AsyncMock(return_value=None)})
 
     with (
         patch("src.cli.commands.photo_loader.runtime.init_db", side_effect=fake_init_db),
         patch("src.cli.commands.photo_loader.runtime.init_pool", side_effect=fake_init_pool),
-        patch("src.cli.commands.photo_loader.PhotoTaskService", FakeTask),
-        patch("src.cli.commands.photo_loader.PhotoAutoUploadService", FakeAuto),
+        patch("src.cli.commands.photo_loader.PhotoTaskService", fake_task),
+        patch("src.cli.commands.photo_loader.PhotoAutoUploadService", fake_auto),
     ):
         from src.cli.commands.photo_loader import run
 

@@ -215,15 +215,15 @@ async def test_generate_stream_success(client):
         yield {"delta": "Hello", "generated_text": None, "citations": []}
         yield {"delta": " world", "generated_text": "Hello world", "citations": []}
 
-    with patch("src.services.provider_service.AgentProviderService") as MockProviderService:
+    with patch("src.services.provider_service.AgentProviderService") as mock_provider_service:
         mock_provider_instance = MagicMock()
         mock_provider_instance.get_provider_callable = MagicMock(return_value=lambda: None)
-        MockProviderService.return_value = mock_provider_instance
+        mock_provider_service.return_value = mock_provider_instance
 
-        with patch("src.services.generation_service.GenerationService") as MockGen:
+        with patch("src.services.generation_service.GenerationService") as mock_gen:
             mock_instance = MagicMock()
             mock_instance.generate_stream = fake_stream
-            MockGen.return_value = mock_instance
+            mock_gen.return_value = mock_instance
 
             resp = await client.get("/pipelines/1/generate-stream")
             assert resp.status_code == 200
@@ -245,17 +245,17 @@ async def test_generate_pipeline_success(client):
 
     await client.post("/pipelines/add", data=_ADD_DATA)
 
-    with patch("src.services.provider_service.AgentProviderService") as MockProviderService:
+    with patch("src.services.provider_service.AgentProviderService") as mock_provider_service:
         mock_provider_instance = MagicMock()
         mock_provider_instance.get_provider_callable = MagicMock(return_value=lambda: None)
-        MockProviderService.return_value = mock_provider_instance
+        mock_provider_service.return_value = mock_provider_instance
 
-        with patch("src.services.generation_service.GenerationService") as MockGen:
+        with patch("src.services.generation_service.GenerationService") as mock_gen:
             mock_instance = MagicMock()
             mock_instance.generate = AsyncMock(
                 return_value={"generated_text": "Test output", "citations": []}
             )
-            MockGen.return_value = mock_instance
+            mock_gen.return_value = mock_instance
 
             resp = await client.post(
                 "/pipelines/1/generate",
@@ -271,15 +271,15 @@ async def test_generate_pipeline_failure(client):
 
     await client.post("/pipelines/add", data=_ADD_DATA)
 
-    with patch("src.services.provider_service.AgentProviderService") as MockProviderService:
+    with patch("src.services.provider_service.AgentProviderService") as mock_provider_service:
         mock_provider_instance = MagicMock()
         mock_provider_instance.get_provider_callable = MagicMock(return_value=lambda: None)
-        MockProviderService.return_value = mock_provider_instance
+        mock_provider_service.return_value = mock_provider_instance
 
-        with patch("src.services.generation_service.GenerationService") as MockGen:
+        with patch("src.services.generation_service.GenerationService") as mock_gen:
             mock_instance = MagicMock()
             mock_instance.generate = AsyncMock(side_effect=Exception("Generation error"))
-            MockGen.return_value = mock_instance
+            mock_gen.return_value = mock_instance
 
             resp = await client.post(
                 "/pipelines/1/generate",
@@ -385,8 +385,8 @@ async def test_toggle_pipeline_not_found(client):
 
 def test_target_refs_missing_separator():
     """Test _target_refs with missing separator."""
-    from src.web.routes.pipelines import _target_refs
     from src.services.pipeline_service import PipelineValidationError
+    from src.web.routes.pipelines import _target_refs
 
     try:
         _target_refs(["invalid_format"])
@@ -397,8 +397,8 @@ def test_target_refs_missing_separator():
 
 def test_target_refs_invalid_dialog_id():
     """Test _target_refs with invalid dialog_id."""
-    from src.web.routes.pipelines import _target_refs
     from src.services.pipeline_service import PipelineValidationError
+    from src.web.routes.pipelines import _target_refs
 
     try:
         _target_refs(["+1234567890|not_a_number"])

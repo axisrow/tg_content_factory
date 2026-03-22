@@ -17,7 +17,6 @@ from src.web.csrf import (
     is_secure_request,
 )
 
-
 # === _normalize_port tests ===
 
 

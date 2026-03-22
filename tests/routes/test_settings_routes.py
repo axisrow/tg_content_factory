@@ -413,11 +413,11 @@ async def test_add_agent_provider_writes_disabled(client, db):
     """Test add agent provider when writes are disabled."""
     await db.set_setting("agent_dev_mode_enabled", "1")
 
-    with patch("src.web.routes.settings.AgentProviderService") as MockService:
+    with patch("src.web.routes.settings.AgentProviderService") as mock_service_cls:
         mock_service = MagicMock()
         mock_service.writes_enabled = False
         mock_service.load_provider_configs = AsyncMock(return_value=[])
-        MockService.return_value = mock_service
+        mock_service_cls.return_value = mock_service
 
         resp = await client.post(
             "/settings/agent-providers/add",
@@ -433,12 +433,12 @@ async def test_add_agent_provider_dev_mode_required(client, db):
     """Test add agent provider requires dev mode."""
     await db.set_setting("agent_dev_mode_enabled", "0")
 
-    with patch("src.web.routes.settings.AgentProviderService") as MockService:
+    with patch("src.web.routes.settings.AgentProviderService") as mock_service_cls:
         mock_service = MagicMock()
         mock_service.writes_enabled = True  # Set writes_enabled first
         mock_service.load_provider_configs = AsyncMock(return_value=[])
         mock_service.provider_specs = {}
-        MockService.return_value = mock_service
+        mock_service_cls.return_value = mock_service
 
         resp = await client.post(
             "/settings/agent-providers/add",
@@ -454,11 +454,11 @@ async def test_save_agent_providers_writes_disabled(client, db):
     """Test save agent providers when writes are disabled."""
     await db.set_setting("agent_dev_mode_enabled", "1")
 
-    with patch("src.web.routes.settings.AgentProviderService") as MockService:
+    with patch("src.web.routes.settings.AgentProviderService") as mock_service_cls:
         mock_service = MagicMock()
         mock_service.writes_enabled = False
         mock_service.load_provider_configs = AsyncMock(return_value=[])
-        MockService.return_value = mock_service
+        mock_service_cls.return_value = mock_service
 
         resp = await client.post(
             "/settings/agent-providers/save",
@@ -474,11 +474,11 @@ async def test_delete_agent_provider_writes_disabled(client, db):
     """Test delete agent provider when writes are disabled."""
     await db.set_setting("agent_dev_mode_enabled", "1")
 
-    with patch("src.web.routes.settings.AgentProviderService") as MockService:
+    with patch("src.web.routes.settings.AgentProviderService") as mock_service_cls:
         mock_service = MagicMock()
         mock_service.writes_enabled = False
         mock_service.load_provider_configs = AsyncMock(return_value=[])
-        MockService.return_value = mock_service
+        mock_service_cls.return_value = mock_service
 
         resp = await client.post(
             "/settings/agent-providers/openai/delete",
@@ -545,10 +545,10 @@ async def test_test_all_agent_provider_models_dev_mode_required(client, db):
     """Test test all requires dev mode."""
     await db.set_setting("agent_dev_mode_enabled", "0")
 
-    with patch("src.web.routes.settings.AgentProviderService") as MockService:
+    with patch("src.web.routes.settings.AgentProviderService") as mock_service_cls:
         mock_service = MagicMock()
         mock_service.writes_enabled = True  # Must be True to reach dev_mode check
-        MockService.return_value = mock_service
+        mock_service_cls.return_value = mock_service
 
         resp = await client.post(
             "/settings/agent-providers/test-all",
@@ -571,10 +571,10 @@ async def test_test_all_status_dev_mode_required(client, db):
     """Test test all status requires dev mode."""
     await db.set_setting("agent_dev_mode_enabled", "0")
 
-    with patch("src.web.routes.settings.AgentProviderService") as MockService:
+    with patch("src.web.routes.settings.AgentProviderService") as mock_service_cls:
         mock_service = MagicMock()
         mock_service.writes_enabled = True  # Must be True to reach dev_mode check
-        MockService.return_value = mock_service
+        mock_service_cls.return_value = mock_service
 
         resp = await client.get("/settings/agent-providers/test-all/status")
         assert resp.status_code == 403
@@ -595,12 +595,12 @@ async def test_notification_setup_json_response(client, db):
         )
         mock_svc.return_value = mock_target_service
 
-        with patch("src.web.routes.settings.NotificationService") as MockNotifService:
+        with patch("src.web.routes.settings.NotificationService") as mock_notif_service_cls:
             mock_notif_service = MagicMock()
             mock_notif_service.setup_bot = AsyncMock(
                 return_value=MagicMock(bot_username="test_bot", bot_id=12345)
             )
-            MockNotifService.return_value = mock_notif_service
+            mock_notif_service_cls.return_value = mock_notif_service
 
             resp = await client.post(
                 "/settings/notifications/setup",
@@ -625,12 +625,12 @@ async def test_notification_setup_runtime_error(client, db):
         )
         mock_svc.return_value = mock_target_service
 
-        with patch("src.web.routes.settings.NotificationService") as MockNotifService:
+        with patch("src.web.routes.settings.NotificationService") as mock_notif_service_cls:
             mock_notif_service = MagicMock()
             mock_notif_service.setup_bot = AsyncMock(
                 side_effect=RuntimeError("Account not available")
             )
-            MockNotifService.return_value = mock_notif_service
+            mock_notif_service_cls.return_value = mock_notif_service
 
             resp = await client.post(
                 "/settings/notifications/setup",
@@ -652,12 +652,12 @@ async def test_notification_setup_runtime_error_json(client, db):
         )
         mock_svc.return_value = mock_target_service
 
-        with patch("src.web.routes.settings.NotificationService") as MockNotifService:
+        with patch("src.web.routes.settings.NotificationService") as mock_notif_service_cls:
             mock_notif_service = MagicMock()
             mock_notif_service.setup_bot = AsyncMock(
                 side_effect=RuntimeError("Account not available")
             )
-            MockNotifService.return_value = mock_notif_service
+            mock_notif_service_cls.return_value = mock_notif_service
 
             resp = await client.post(
                 "/settings/notifications/setup",
@@ -681,10 +681,10 @@ async def test_notification_bot_status(client, db):
         )
         mock_svc.return_value = mock_target_service
 
-        with patch("src.web.routes.settings.NotificationService") as MockNotifService:
+        with patch("src.web.routes.settings.NotificationService") as mock_notif_service_cls:
             mock_notif_service = MagicMock()
             mock_notif_service.get_status = AsyncMock(return_value=None)
-            MockNotifService.return_value = mock_notif_service
+            mock_notif_service_cls.return_value = mock_notif_service
 
             resp = await client.get("/settings/notifications/status")
             assert resp.status_code == 200
@@ -704,10 +704,10 @@ async def test_notification_delete(client, db):
         )
         mock_svc.return_value = mock_target_service
 
-        with patch("src.web.routes.settings.NotificationService") as MockNotifService:
+        with patch("src.web.routes.settings.NotificationService") as mock_notif_service_cls:
             mock_notif_service = MagicMock()
             mock_notif_service.teardown_bot = AsyncMock(return_value=None)
-            MockNotifService.return_value = mock_notif_service
+            mock_notif_service_cls.return_value = mock_notif_service
 
             resp = await client.post(
                 "/settings/notifications/delete",
@@ -729,10 +729,10 @@ async def test_notification_delete_json(client, db):
         )
         mock_svc.return_value = mock_target_service
 
-        with patch("src.web.routes.settings.NotificationService") as MockNotifService:
+        with patch("src.web.routes.settings.NotificationService") as mock_notif_service_cls:
             mock_notif_service = MagicMock()
             mock_notif_service.teardown_bot = AsyncMock(return_value=None)
-            MockNotifService.return_value = mock_notif_service
+            mock_notif_service_cls.return_value = mock_notif_service
 
             resp = await client.post(
                 "/settings/notifications/delete",
@@ -761,15 +761,15 @@ async def test_test_notification_success(client, db):
             mock_target_service = MagicMock()
             mock_svc.return_value = mock_target_service
 
-            with patch("src.web.routes.settings.NotificationService") as MockNotifService:
+            with patch("src.web.routes.settings.NotificationService") as mock_notif_service_cls:
                 mock_notif_service = MagicMock()
                 mock_notif_service.get_status = AsyncMock(return_value=None)
-                MockNotifService.return_value = mock_notif_service
+                mock_notif_service_cls.return_value = mock_notif_service
 
-                with patch("src.web.routes.settings.Notifier") as MockNotifier:
+                with patch("src.web.routes.settings.Notifier") as mock_notifier_cls:
                     mock_notifier_instance = MagicMock()
                     mock_notifier_instance.notify = AsyncMock(return_value=True)
-                    MockNotifier.return_value = mock_notifier_instance
+                    mock_notifier_cls.return_value = mock_notifier_instance
 
                     resp = await client.post(
                         "/settings/notifications/test",

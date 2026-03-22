@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from src.services.quality_scoring_service import QualityScoringService, QualityScore
+from src.services.quality_scoring_service import QualityScore, QualityScoringService
 
 
 @pytest.fixture

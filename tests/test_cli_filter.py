@@ -28,9 +28,10 @@ def test_parse_pks():
 
 def test_print_result_empty():
     """Test _print_result with empty result."""
-    from src.cli.commands.filter import _print_result
-    from io import StringIO
     import sys
+    from io import StringIO
+
+    from src.cli.commands.filter import _print_result
 
     result = MagicMock()
     result.purged_count = 0
@@ -82,7 +83,7 @@ def test_filter_analyze(tmp_path, capsys):
     with patch("src.cli.commands.filter.runtime.init_db", side_effect=fake_init_db):
         from src.cli.commands.filter import run
 
-        with patch("src.cli.commands.filter.ChannelAnalyzer") as MockAnalyzer:
+        with patch("src.cli.commands.filter.ChannelAnalyzer") as mock_analyzer:
             mock_instance = MagicMock()
             mock_report = MagicMock()
             mock_report.results = []
@@ -90,7 +91,7 @@ def test_filter_analyze(tmp_path, capsys):
             mock_report.filtered_count = 0
             mock_instance.analyze_all = AsyncMock(return_value=mock_report)
             mock_instance.apply_filters = AsyncMock(return_value=0)
-            MockAnalyzer.return_value = mock_instance
+            mock_analyzer.return_value = mock_instance
 
             run(_ns(filter_action="analyze"))
 
@@ -114,12 +115,12 @@ def test_filter_apply(tmp_path, capsys):
     with patch("src.cli.commands.filter.runtime.init_db", side_effect=fake_init_db):
         from src.cli.commands.filter import run
 
-        with patch("src.cli.commands.filter.ChannelAnalyzer") as MockAnalyzer:
+        with patch("src.cli.commands.filter.ChannelAnalyzer") as mock_analyzer:
             mock_instance = MagicMock()
             mock_report = MagicMock()
             mock_instance.analyze_all = AsyncMock(return_value=mock_report)
             mock_instance.apply_filters = AsyncMock(return_value=5)
-            MockAnalyzer.return_value = mock_instance
+            mock_analyzer.return_value = mock_instance
 
             run(_ns(filter_action="apply"))
 
@@ -143,10 +144,10 @@ def test_filter_precheck(tmp_path, capsys):
     with patch("src.cli.commands.filter.runtime.init_db", side_effect=fake_init_db):
         from src.cli.commands.filter import run
 
-        with patch("src.cli.commands.filter.ChannelAnalyzer") as MockAnalyzer:
+        with patch("src.cli.commands.filter.ChannelAnalyzer") as mock_analyzer:
             mock_instance = MagicMock()
             mock_instance.precheck_subscriber_ratio = AsyncMock(return_value=3)
-            MockAnalyzer.return_value = mock_instance
+            mock_analyzer.return_value = mock_instance
 
             run(_ns(filter_action="precheck"))
 
@@ -170,10 +171,10 @@ def test_filter_reset(tmp_path, capsys):
     with patch("src.cli.commands.filter.runtime.init_db", side_effect=fake_init_db):
         from src.cli.commands.filter import run
 
-        with patch("src.cli.commands.filter.ChannelAnalyzer") as MockAnalyzer:
+        with patch("src.cli.commands.filter.ChannelAnalyzer") as mock_analyzer:
             mock_instance = MagicMock()
             mock_instance.reset_filters = AsyncMock()
-            MockAnalyzer.return_value = mock_instance
+            mock_analyzer.return_value = mock_instance
 
             run(_ns(filter_action="reset"))
 

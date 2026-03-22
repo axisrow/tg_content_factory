@@ -35,7 +35,7 @@ async def test_search_ai_mode_without_ai_search():
     engine.search_local = AsyncMock(return_value=_make_search_result())
 
     service = SearchService(engine, ai_search=None)
-    result = await service.search(mode="ai", query="test", limit=10)
+    _result = await service.search(mode="ai", query="test", limit=10)
 
     # Falls through to default (local)
     engine.search_local.assert_called_once()
@@ -48,7 +48,7 @@ async def test_search_telegram_mode():
     engine.search_telegram = AsyncMock(return_value=_make_search_result())
 
     service = SearchService(engine)
-    result = await service.search(mode="telegram", query="test", limit=10)
+    _result = await service.search(mode="telegram", query="test", limit=10)
 
     engine.search_telegram.assert_called_once_with("test", limit=10)
 
@@ -60,7 +60,7 @@ async def test_search_my_chats_mode():
     engine.search_my_chats = AsyncMock(return_value=_make_search_result())
 
     service = SearchService(engine)
-    result = await service.search(mode="my_chats", query="test", limit=10)
+    _result = await service.search(mode="my_chats", query="test", limit=10)
 
     engine.search_my_chats.assert_called_once_with("test", limit=10)
 
@@ -72,7 +72,7 @@ async def test_search_channel_mode():
     engine.search_in_channel = AsyncMock(return_value=_make_search_result())
 
     service = SearchService(engine)
-    result = await service.search(mode="channel", query="test", limit=10, channel_id=100)
+    _result = await service.search(mode="channel", query="test", limit=10, channel_id=100)
 
     engine.search_in_channel.assert_called_once_with(100, "test", limit=10)
 
@@ -84,7 +84,7 @@ async def test_search_semantic_mode():
     engine.search_semantic = AsyncMock(return_value=_make_search_result())
 
     service = SearchService(engine)
-    result = await service.search(
+    _result = await service.search(
         mode="semantic",
         query="test",
         limit=10,
@@ -106,7 +106,7 @@ async def test_search_hybrid_mode():
     engine.search_hybrid = AsyncMock(return_value=_make_search_result())
 
     service = SearchService(engine)
-    result = await service.search(
+    _result = await service.search(
         mode="hybrid",
         query="test",
         limit=10,
@@ -129,7 +129,7 @@ async def test_search_local_mode_default():
     engine.search_local = AsyncMock(return_value=_make_search_result())
 
     service = SearchService(engine)
-    result = await service.search(mode="unknown", query="test", limit=10)
+    _result = await service.search(mode="unknown", query="test", limit=10)
 
     engine.search_local.assert_called_once()
 

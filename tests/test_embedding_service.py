@@ -184,7 +184,7 @@ async def test_embedding_service_get_embeddings_provider_not_installed(db):
 @pytest.mark.asyncio
 async def test_embedding_service_get_embeddings_init_exception(db):
     """Test _get_embeddings when initialization fails with non-import error."""
-    service = EmbeddingService(db)
+    _service = EmbeddingService(db)
 
     # Mock the langchain.embeddings module and init_embeddings function
     mock_init = MagicMock(side_effect=ValueError("Invalid configuration"))

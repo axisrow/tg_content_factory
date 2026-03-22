@@ -9,7 +9,7 @@ import pytest
 from src.database import Database
 from src.models import Channel, Message
 from src.services.channel_service import ChannelService
-from src.services.filter_deletion_service import FilterDeletionService, PurgeResult
+from src.services.filter_deletion_service import FilterDeletionService
 
 
 @pytest.fixture
@@ -129,8 +129,8 @@ async def test_purge_all_filtered_no_channels(db):
 @pytest.mark.asyncio
 async def test_purge_all_filtered_with_channels(db):
     """Test purge all with filtered channels."""
-    pk1 = await _add_filtered_channel(db, channel_id=100, title="Filtered 1")
-    pk2 = await _add_filtered_channel(db, channel_id=200, title="Filtered 2")
+    _pk1 = await _add_filtered_channel(db, channel_id=100, title="Filtered 1")
+    _pk2 = await _add_filtered_channel(db, channel_id=200, title="Filtered 2")
     await db.add_channel(Channel(channel_id=300, title="Not Filtered"))
 
     await db.insert_message(
