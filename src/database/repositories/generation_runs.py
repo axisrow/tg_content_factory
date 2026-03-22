@@ -204,11 +204,11 @@ class GenerationRunsRepository:
         counts = {row["moderation_status"]: int(row["cnt"]) for row in rows}
         cur2 = await self._db.execute(
             "SELECT COUNT(*) as cnt FROM generation_runs "
-            "WHERE moderation_status IN ('pending', 'approved') AND published_at IS NOT NULL"
+            "WHERE moderation_status = 'published'"
         )
         row2 = await cur2.fetchone()
         return {
             "pending": counts.get("pending", 0),
             "approved": counts.get("approved", 0),
-            "scheduled": int(row2["cnt"]) if row2 else 0,
+            "published": int(row2["cnt"]) if row2 else 0,
         }

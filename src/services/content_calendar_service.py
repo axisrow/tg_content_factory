@@ -63,7 +63,7 @@ class ContentCalendarService:
                 days=days
             )
 
-        for i in range(days):
+        for i in range(-(days - 1), 1):
             day_start = (now + timedelta(days=i)).replace(
                 hour=0, minute=0, second=0, microsecond=0
             )
