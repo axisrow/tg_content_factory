@@ -35,6 +35,7 @@ from src.telegram.client_pool import ClientPool
 from src.telegram.collector import Collector
 from src.telegram.notifier import Notifier
 from src.web.log_handler import LogBuffer
+from src.web.timing import TimingBuffer
 
 
 @dataclass(slots=True)
@@ -67,6 +68,7 @@ class AppContainer:
     scheduler: SchedulerManager
     templates: Jinja2Templates
     log_buffer: LogBuffer | None
+    timing_buffer: TimingBuffer | None
     session_secret: str
     bg_tasks: set[asyncio.Task]
     agent_manager: AgentManager | None = None

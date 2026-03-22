@@ -36,6 +36,7 @@ def configure_app(app: FastAPI, container: AppContainer | None) -> None:
         app.state.photo_task_service = container.photo_task_service
         app.state.photo_auto_upload_service = container.photo_auto_upload_service
         app.state.session_secret = container.session_secret
+        app.state.timing_buffer = container.timing_buffer
     elif not hasattr(app.state, "templates"):
         app.state.templates = configure_template_globals(
             Jinja2Templates(directory=str(TEMPLATES_DIR)),
@@ -144,6 +145,12 @@ def register_routes(app: FastAPI) -> None:
     app.include_router(photo_loader_router, prefix="/my-telegram/photos")
     app.include_router(debug_router, prefix="/debug")
     app.include_router(pipelines_router, prefix="/pipelines")
+
+
+def build_timing_buffer():
+    from src.web.timing import TimingBuffer
+
+    return TimingBuffer(maxlen=200)
 
 
 def build_log_buffer() -> logging.Handler:
