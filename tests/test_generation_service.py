@@ -1,5 +1,7 @@
 from datetime import datetime, timezone
 
+import pytest
+
 from src.models import Message, SearchResult
 from src.services.generation_service import GenerationService
 
@@ -41,3 +43,140 @@ async def test_generation_service_basic():
     assert "GENERATED:" in out["generated_text"]
     assert "Hello world from test" in out["prompt"]
     assert isinstance(out["citations"], list)
+
+
+async def test_generation_service_empty_messages():
+    """Test generation with no messages."""
+    engine = DummySearchEngine([])
+    service = GenerationService(search_engine=engine, provider_callable=fake_provider)
+
+    out = await service.generate(query="test", prompt_template="Use {source_messages}")
+
+    assert "GENERATED:" in out["generated_text"]
+    assert out["citations"] == []
+
+
+async def test_generation_service_message_with_no_text():
+    """Test generation when message has no text."""
+    msg = Message(
+        id=1,
+        channel_id=10,
+        message_id=42,
+        sender_id=None,
+        sender_name="Alice",
+        text="",  # Empty text
+        date=datetime.now(timezone.utc),
+        collected_at=None,
+        channel_title="TestChannel",
+    )
+
+    engine = DummySearchEngine([msg])
+    service = GenerationService(search_engine=engine, provider_callable=fake_provider)
+
+    out = await service.generate(query="test", prompt_template="Use {source_messages}")
+
+    # Empty messages should be skipped
+    assert "GENERATED:" in out["generated_text"]
+
+
+async def test_generation_service_no_provider():
+    """Test generation without provider raises error."""
+    engine = DummySearchEngine([])
+    service = GenerationService(search_engine=engine, provider_callable=None)
+
+    with pytest.raises(RuntimeError, match="No provider callable"):
+        await service.generate(query="test")
+
+
+async def test_generation_service_uses_default_prompt():
+    """Test generation uses default prompt template."""
+    engine = DummySearchEngine([])
+    service = GenerationService(
+        search_engine=engine,
+        provider_callable=fake_provider,
+        default_prompt_template="DEFAULT: {source_messages}",
+    )
+
+    out = await service.generate(query="test")
+
+    assert "DEFAULT:" in out["prompt"]
+
+
+async def test_generation_service_with_stream_flag():
+    """Test generation with stream=True consumes stream."""
+    msg = Message(
+        id=1,
+        channel_id=10,
+        message_id=42,
+        sender_id=None,
+        sender_name="Alice",
+        text="Streaming test",
+        date=datetime.now(timezone.utc),
+        collected_at=None,
+        channel_title="StreamChannel",
+    )
+
+    engine = DummySearchEngine([msg])
+
+    async def streaming_provider(**kwargs):
+        return "STREAMED: " + (kwargs.get("prompt") or "")[:20]
+
+    service = GenerationService(search_engine=engine, provider_callable=streaming_provider)
+
+    out = await service.generate(query="test", stream=True)
+
+    assert "STREAMED:" in out["generated_text"]
+
+
+async def test_generation_service_sync_iterator_provider():
+    """Test generation with provider that returns a sync iterator."""
+
+    def sync_iterator_provider(**kwargs):
+        return iter(["chunk1", "chunk2", "chunk3"])
+
+    engine = DummySearchEngine([])
+    service = GenerationService(search_engine=engine, provider_callable=sync_iterator_provider)
+
+    chunks = []
+    async for chunk in service.generate_stream(query="test"):
+        chunks.append(chunk)
+
+    assert len(chunks) == 3
+    assert chunks[-1]["generated_text"] == "chunk1chunk2chunk3"
+
+
+async def test_generation_service_provider_exception():
+    """Test generation handles provider exception."""
+
+    async def failing_provider(**kwargs):
+        raise ValueError("Provider error")
+
+    engine = DummySearchEngine([])
+    service = GenerationService(search_engine=engine, provider_callable=failing_provider)
+
+    with pytest.raises(ValueError, match="Provider error"):
+        await service.generate(query="test")
+
+
+async def test_generation_service_citation_truncation():
+    """Test that citations truncate long text."""
+    long_text = "x" * 1000
+    msg = Message(
+        id=1,
+        channel_id=10,
+        message_id=42,
+        sender_id=None,
+        sender_name="Alice",
+        text=long_text,
+        date=datetime.now(timezone.utc),
+        collected_at=None,
+        channel_title="TestChannel",
+    )
+
+    engine = DummySearchEngine([msg])
+    service = GenerationService(search_engine=engine, provider_callable=fake_provider)
+
+    out = await service.generate(query="test")
+
+    # Citation text should be truncated to 512 chars
+    assert len(out["citations"][0]["text"]) == 512
