@@ -108,12 +108,12 @@ async def test_search_semantic_with_results(db, monkeypatch):
     )
     rows = await db.execute_fetchall("SELECT id, text FROM messages ORDER BY id")
     ids_by_text = {row["text"]: int(row["id"]) for row in rows}
-    await db.repos.messages.upsert_message_embeddings(
-        [
-            (ids_by_text["Bitcoin sentiment is rising"], [1.0, 0.0]),
-            (ids_by_text["Rainy weather all week"], [0.0, 1.0]),
-        ]
-    )
+    embeddings = [
+        (ids_by_text["Bitcoin sentiment is rising"], [1.0, 0.0]),
+        (ids_by_text["Rainy weather all week"], [0.0, 1.0]),
+    ]
+    await db.repos.messages.upsert_message_embeddings(embeddings)
+    await db.repos.messages.upsert_message_embedding_json(embeddings)
     monkeypatch.setattr(
         EmbeddingService,
         "index_pending_messages",

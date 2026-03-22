@@ -589,4 +589,14 @@ async def run_migrations(db: aiosqlite.Connection) -> bool:
 
     await _migrate_vec_to_portable(db)
 
+    # Portable semantic backend: JSON-serialised embeddings table (issue #173)
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS message_embeddings_json (
+            message_id INTEGER PRIMARY KEY,
+            embedding  TEXT NOT NULL,
+            dims       INTEGER NOT NULL
+        )
+        """)
+    await db.commit()
+
     return fts_available

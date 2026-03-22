@@ -1319,7 +1319,9 @@ async def test_search_with_semantic_mode(client, monkeypatch):
         ]
     )
     rows = await db.execute_fetchall("SELECT id FROM messages ORDER BY id")
-    await db.repos.messages.upsert_message_embeddings([(int(rows[0]["id"]), [1.0, 0.0])])
+    emb = [(int(rows[0]["id"]), [1.0, 0.0])]
+    await db.repos.messages.upsert_message_embeddings(emb)
+    await db.repos.messages.upsert_message_embedding_json(emb)
     monkeypatch.setattr(
         EmbeddingService,
         "index_pending_messages",

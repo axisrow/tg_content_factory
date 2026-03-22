@@ -94,7 +94,8 @@ class MessagesRepository:
         return int(row["cnt"]) if row else 0
 
     async def reset_embeddings_index(self) -> None:
-        await self._db.execute("DELETE FROM message_embeddings")
+        await self._db.execute("DROP TABLE IF EXISTS vec_messages")
+        await self._db.execute("DELETE FROM message_embeddings_json")
         await self._db.execute(
             "DELETE FROM settings WHERE key IN (?, ?)",
             (_EMBEDDING_DIMENSIONS_SETTING, "semantic_last_embedded_id"),
@@ -264,6 +265,45 @@ class MessagesRepository:
         )
         await self._db.commit()
         return cur.rowcount if cur.rowcount >= 0 else len(payload)
+
+    async def upsert_message_embedding_json(
+        self, embeddings: list[tuple[int, list[float]]]
+    ) -> int:
+        """Store embeddings in the portable JSON table (issue #173)."""
+        if not embeddings:
+            return 0
+        dimensions = len(embeddings[0][1])
+        await self.ensure_embeddings_table(dimensions)
+        payload = [
+            (message_id, json.dumps(vector, separators=(",", ":")), dimensions)
+            for message_id, vector in embeddings
+        ]
+        cur = await self._db.executemany(
+            "INSERT OR REPLACE INTO message_embeddings_json (message_id, embedding, dims) "
+            "VALUES (?, ?, ?)",
+            payload,
+        )
+        await self._db.commit()
+        return cur.rowcount if cur.rowcount >= 0 else len(payload)
+
+    async def load_all_embeddings_json(self) -> list[tuple[int, list[float]]]:
+        """Load embeddings from the portable JSON table, excluding filtered channels."""
+        cur = await self._db.execute(
+            "SELECT e.message_id, e.embedding FROM message_embeddings_json e "
+            "JOIN messages m ON m.id = e.message_id "
+            "LEFT JOIN channels c ON m.channel_id = c.channel_id "
+            "WHERE (c.is_filtered IS NULL OR c.is_filtered = 0) "
+            "ORDER BY e.message_id"
+        )
+        rows = await cur.fetchall()
+        result: list[tuple[int, list[float]]] = []
+        for row in rows:
+            try:
+                vec = json.loads(row["embedding"])
+                result.append((int(row["message_id"]), vec))
+            except Exception:
+                continue
+        return result
 
     def _build_message_filters(
         self,
@@ -620,6 +660,20 @@ class MessagesRepository:
         messages = await self._load_messages_by_ids(page_ids)
         return messages, len(ranked_ids)
 
+    async def get_by_id(self, message_db_id: int) -> Message | None:
+        """Fetch a single message by its DB primary key (id column)."""
+        cur = await self._db.execute(
+            "SELECT m.*, c.title as channel_title, c.username as channel_username "
+            "FROM messages m LEFT JOIN channels c ON m.channel_id = c.channel_id "
+            "WHERE m.id = ?",
+            (message_db_id,),
+        )
+        row = await cur.fetchone()
+        if row is None:
+            return None
+        msgs = self._rows_to_messages([row])
+        return msgs[0] if msgs else None
+
     @staticmethod
     def _rows_to_messages(rows) -> list[Message]:
         return [
@@ -807,6 +861,11 @@ class MessagesRepository:
         return result
 
     async def delete_messages_for_channel(self, channel_id: int) -> int:
+        await self._db.execute(
+            "DELETE FROM message_embeddings_json WHERE message_id IN "
+            "(SELECT id FROM messages WHERE channel_id = ?)",
+            (channel_id,),
+        )
         cur = await self._db.execute("DELETE FROM messages WHERE channel_id = ?", (channel_id,))
         await self._db.commit()
         return cur.rowcount or 0

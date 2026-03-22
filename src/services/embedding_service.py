@@ -75,6 +75,11 @@ class EmbeddingService:
         )
 
     async def _get_embeddings(self):
+        if not self._search.vec_available and not self._search.numpy_available:
+            raise RuntimeError(
+                "Semantic search is unavailable: sqlite-vec extension is not loaded "
+                "and numpy fallback index is not initialised."
+            )
         cfg = await self._runtime_config()
         cache_key = (cfg.provider, cfg.model, cfg.api_key, cfg.base_url)
         if self._embeddings is not None and self._embeddings_key == cache_key:
@@ -140,7 +145,12 @@ class EmbeddingService:
             message_ids = [message_id for message_id, _text in pending]
             texts = [text for _message_id, text in pending]
             vectors = await self._embed_documents(texts)
-            await self._search.messages.upsert_message_embeddings(list(zip(message_ids, vectors)))
+            await self._search.messages.upsert_message_embeddings(
+                list(zip(message_ids, vectors))
+            )
+            await self._search.messages.upsert_message_embedding_json(
+                list(zip(message_ids, vectors))
+            )
             last_embedded_id = message_ids[-1]
             await self._search.set_setting(LAST_EMBEDDED_ID_SETTING, str(last_embedded_id))
             indexed += len(message_ids)
