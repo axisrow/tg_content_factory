@@ -22,3 +22,21 @@ async def debug_logs_partial(request: Request):
     return deps.get_templates(request).TemplateResponse(
         request, "_debug_logs.html", {"records": records}
     )
+
+
+@router.get("/timing", response_class=HTMLResponse)
+async def debug_timing(request: Request):
+    buf = deps.get_timing_buffer(request)
+    records = sorted(buf.get_records(), key=lambda r: r["ms"], reverse=True) if buf else []
+    return deps.get_templates(request).TemplateResponse(
+        request, "debug_timing.html", {"records": records}
+    )
+
+
+@router.get("/timing/rows", response_class=HTMLResponse)
+async def debug_timing_rows(request: Request):
+    buf = deps.get_timing_buffer(request)
+    records = sorted(buf.get_records(), key=lambda r: r["ms"], reverse=True) if buf else []
+    return deps.get_templates(request).TemplateResponse(
+        request, "_timing_rows.html", {"records": records}
+    )

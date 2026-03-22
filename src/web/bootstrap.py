@@ -39,6 +39,7 @@ from src.web.container import AppContainer
 from src.web.log_handler import LogBuffer
 from src.web.paths import TEMPLATES_DIR
 from src.web.template_globals import configure_template_globals
+from src.web.timing import TimingBuffer
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +69,7 @@ async def build_container_with_templates(
     config: AppConfig,
     *,
     log_buffer: LogBuffer,
+    timing_buffer: TimingBuffer | None = None,
     templates: Jinja2Templates | None,
 ) -> AppContainer:
     db = Database(
@@ -194,6 +196,7 @@ async def build_container_with_templates(
         scheduler=scheduler,
         templates=_templates,
         log_buffer=log_buffer,
+        timing_buffer=timing_buffer,
         session_secret=session_secret,
         bg_tasks=set(),
         agent_manager=agent_manager,

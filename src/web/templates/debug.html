@@ -1,7 +1,10 @@
 {% extends "base.html" %}
 {% block title %}Дебаг — TG Agent{% endblock %}
 {% block content %}
-<h1>Консоль сервера</h1>
+<div class="d-flex align-items-center gap-3 mb-3">
+  <h1 class="mb-0">Консоль сервера</h1>
+  <a href="/debug/timing" class="btn btn-sm btn-outline-secondary">Тайминг запросов →</a>
+</div>
 <p><small class="text-muted">Последние 500 записей.</small></p>
 <div class="table-responsive" style="font-size:0.85rem">
   <table class="table table-sm table-striped">

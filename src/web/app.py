@@ -4,6 +4,7 @@ import base64
 import logging
 import re
 import secrets
+import time
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -14,6 +15,7 @@ from starlette.responses import HTMLResponse, RedirectResponse, Response
 from src.config import AppConfig, load_config
 from src.web.assembly import (
     build_log_buffer,
+    build_timing_buffer,
     configure_app,
     register_builtin_endpoints,
     register_routes,
@@ -77,6 +79,31 @@ def _resolve_action_label(path: str) -> str:
     return ""
 
 
+class TimingMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        t0 = time.monotonic()
+        response = None
+        try:
+            response = await call_next(request)
+        finally:
+            ms = int((time.monotonic() - t0) * 1000)
+            path = request.url.path
+            if not is_public_path(path):
+                status = response.status_code if response is not None else 500
+                buf = getattr(request.app.state, "timing_buffer", None)
+                if buf is not None:
+                    buf.add({
+                        "time": time.strftime("%H:%M:%S"),
+                        "method": request.method,
+                        "path": path,
+                        "status": status,
+                        "ms": ms,
+                    })
+                if ms > 500:
+                    logger.warning("SLOW %s %s %dms [%d]", request.method, path, ms, status)
+        return response
+
+
 class ActionLogMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         if request.method in _LOG_METHODS:
@@ -137,6 +164,7 @@ async def lifespan(app: FastAPI):
     container = await build_container_with_templates(
         app.state.config,
         log_buffer=app.state.log_buffer,
+        timing_buffer=app.state.timing_buffer,
         templates=app.state.templates,
     )
     configure_app(app, container)
@@ -157,6 +185,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
     app = FastAPI(title="TG Post Search", lifespan=lifespan)
     app.state.config = config
     app.state.log_buffer = build_log_buffer()
+    app.state.timing_buffer = build_timing_buffer()
     app.state.templates = configure_template_globals(
         Jinja2Templates(directory=str(TEMPLATES_DIR)),
         config,
@@ -167,6 +196,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
         app.add_middleware(BasicAuthMiddleware, password=config.web.password)
     app.add_middleware(OriginCSRFMiddleware)
     app.add_middleware(ActionLogMiddleware)
+    app.add_middleware(TimingMiddleware)
 
     @app.exception_handler(Exception)
     async def unhandled_exception_handler(request: Request, exc: Exception):
