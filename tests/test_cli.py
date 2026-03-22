@@ -12,31 +12,11 @@ import pytest
 
 from src.config import AppConfig
 from src.database import Database
-from src.models import Account, Channel, Message
+from src.models import Account, Message
+from tests.helpers import cli_add_channel as _add_channel
+from tests.helpers import cli_ns as _ns
 
 NOW = datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
-
-
-@pytest.fixture
-def cli_db(tmp_path):
-    """Sync fixture: real SQLite for CLI tests."""
-    db_path = str(tmp_path / "cli_test.db")
-    database = Database(db_path)
-    asyncio.run(database.initialize())
-    yield database
-    asyncio.run(database.close())
-
-
-@pytest.fixture
-def cli_env(cli_db):
-    """Patch runtime.init_db to return real db without loading config.yaml."""
-    config = AppConfig()
-
-    async def fake_init_db(config_path: str):
-        return config, cli_db
-
-    with patch("src.cli.runtime.init_db", side_effect=fake_init_db):
-        yield cli_db
 
 
 @pytest.fixture
@@ -55,19 +35,9 @@ def cli_env_with_pool(cli_env):
         yield cli_env
 
 
-def _ns(**kwargs) -> argparse.Namespace:
-    """Build Namespace with defaults."""
-    defaults = {"config": "config.yaml"}
-    defaults.update(kwargs)
-    return argparse.Namespace(**defaults)
-
-
 def _add_account(db: Database, phone: str = "+70001112233") -> int:
     return asyncio.run(db.add_account(Account(phone=phone, session_string="sess")))
 
-
-def _add_channel(db: Database, channel_id: int = 100, title: str = "TestCh") -> int:
-    return asyncio.run(db.add_channel(Channel(channel_id=channel_id, title=title)))
 
 
 def _add_message(db: Database, channel_id: int = 100, message_id: int = 1, text: str = "hello"):
@@ -76,6 +46,18 @@ def _add_message(db: Database, channel_id: int = 100, message_id: int = 1, text:
             Message(channel_id=channel_id, message_id=message_id, text=text, date=NOW)
         )
     )
+
+
+def _query_db(db, sql: str, params: tuple = ()) -> list[dict]:
+    """Read DB state after cli run() has closed the aiosqlite connection."""
+    import sqlite3
+
+    conn = sqlite3.connect(db._db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        return [dict(r) for r in conn.execute(sql, params).fetchall()]
+    finally:
+        conn.close()
 
 
 # ---------------------------------------------------------------------------
@@ -321,6 +303,82 @@ class TestCLIFilter:
         run(_ns(filter_action="precheck"))
         assert "Pre-filter applied" in capsys.readouterr().out
 
+    def test_purge_no_filtered(self, cli_env, capsys):
+        from src.cli.commands.filter import run
+
+        run(_ns(filter_action="purge", pks=None))
+        assert "No filtered channels affected." in capsys.readouterr().out
+
+    def test_purge_filtered_channel(self, cli_env, capsys):
+        ch_pk = _add_channel(cli_env, channel_id=999, title="FilteredCh")
+        asyncio.run(cli_env.set_channel_filtered(ch_pk, True))
+        _add_message(cli_env, channel_id=999, message_id=1, text="to be deleted")
+
+        from src.cli.commands.filter import run
+
+        run(_ns(filter_action="purge", pks=None))
+        out = capsys.readouterr().out
+        assert "1 channels" in out
+        assert "FilteredCh" in out
+
+        rows = _query_db(cli_env, "SELECT COUNT(*) AS cnt FROM messages WHERE channel_id=?", (999,))
+        assert rows[0]["cnt"] == 0  # messages deleted
+
+        rows = _query_db(cli_env, "SELECT COUNT(*) AS cnt FROM channels WHERE channel_id=?", (999,))
+        assert rows[0]["cnt"] == 1  # channel row retained
+
+    def test_purge_with_pks(self, cli_env, capsys):
+        ch1_pk = _add_channel(cli_env, channel_id=990, title="PurgeCh1")
+        ch2_pk = _add_channel(cli_env, channel_id=991, title="PurgeCh2")
+        asyncio.run(cli_env.set_channel_filtered(ch1_pk, True))
+        asyncio.run(cli_env.set_channel_filtered(ch2_pk, True))
+        _add_message(cli_env, channel_id=990, message_id=1)
+        _add_message(cli_env, channel_id=991, message_id=1)
+
+        from src.cli.commands.filter import run
+
+        run(_ns(filter_action="purge", pks=str(ch1_pk)))
+        out = capsys.readouterr().out
+        assert "PurgeCh1" in out
+        assert "PurgeCh2" not in out
+
+        rows = _query_db(cli_env, "SELECT COUNT(*) AS cnt FROM messages WHERE channel_id=?", (990,))
+        assert rows[0]["cnt"] == 0  # ch1 messages deleted
+
+        rows = _query_db(cli_env, "SELECT COUNT(*) AS cnt FROM messages WHERE channel_id=?", (991,))
+        assert rows[0]["cnt"] == 1  # ch2 messages untouched
+
+    def test_hard_delete_requires_dev_mode(self, cli_env, capsys):
+        from src.cli.commands.filter import run
+
+        run(_ns(filter_action="hard-delete", pks=None, yes=True))
+        assert "dev" in capsys.readouterr().out.lower()
+
+    def test_hard_delete_removes_channel(self, cli_env, capsys):
+        asyncio.run(cli_env.set_setting("agent_dev_mode_enabled", "1"))
+        ch_pk = _add_channel(cli_env, channel_id=888, title="ToDelete")
+        asyncio.run(cli_env.set_channel_filtered(ch_pk, True))
+
+        from src.cli.commands.filter import run
+
+        run(_ns(filter_action="hard-delete", pks=None, yes=True))
+        out = capsys.readouterr().out
+        # _print_result prints channel title when deletion succeeds
+        assert "ToDelete" in out
+        assert "1 channels" in out
+
+        rows = _query_db(cli_env, "SELECT COUNT(*) AS cnt FROM channels WHERE channel_id=?", (888,))
+        assert rows[0]["cnt"] == 0  # channel deleted
+
+    def test_hard_delete_no_filtered(self, cli_env, capsys):
+        asyncio.run(cli_env.set_setting("agent_dev_mode_enabled", "1"))
+        _add_channel(cli_env, channel_id=887, title="NotFiltered")
+
+        from src.cli.commands.filter import run
+
+        run(_ns(filter_action="hard-delete", pks=None, yes=True))
+        assert "No filtered channels to delete." in capsys.readouterr().out
+
 
 # ---------------------------------------------------------------------------
 # search
@@ -363,9 +421,6 @@ class TestCLISearch:
         assert "important" in out
 
     def test_semantic_with_data(self, cli_env, monkeypatch, capsys):
-        if not cli_env.vec_available:
-            pytest.skip("sqlite-vec extension is unavailable in this environment")
-
         _add_channel(cli_env, channel_id=301, title="SemanticCh")
         _add_message(cli_env, channel_id=301, message_id=1, text="Bitcoin outlook")
         rows = asyncio.run(cli_env.execute_fetchall("SELECT id FROM messages ORDER BY id"))
@@ -562,6 +617,29 @@ class TestCLISearchQuery:
 
         run(_sq_ns(search_query_action="delete", id=sq_id))
         assert "Deleted search query" in capsys.readouterr().out
+
+    def test_stats_no_data(self, cli_env, capsys):
+        sq_id = _add_search_query(cli_env, query="bitcoin")
+        from src.cli.commands.search_query import run
+
+        run(_sq_ns(search_query_action="stats", id=sq_id, days=30))
+        assert "No stats found." in capsys.readouterr().out
+
+    def test_stats_with_data(self, cli_env, capsys):
+        from src.database.bundles import SearchQueryBundle
+
+        sq_id = _add_search_query(cli_env, query="bitcoin")
+
+        async def _record():
+            bundle = SearchQueryBundle.from_database(cli_env)
+            await bundle.record_stat(sq_id, 42)
+
+        asyncio.run(_record())
+
+        from src.cli.commands.search_query import run
+
+        run(_sq_ns(search_query_action="stats", id=sq_id, days=30))
+        assert "42" in capsys.readouterr().out
 
 
 # ---------------------------------------------------------------------------

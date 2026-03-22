@@ -70,6 +70,25 @@ cp .env.example .env
 docker-compose up -d
 ```
 
+## Semantic Search Roadmap Note
+
+The current semantic and hybrid search implementation was originally built around
+runtime `sqlite-vec` loading. That turned out to be too fragile as a mandatory
+foundation: installing the `sqlite-vec` package alone is not enough, because the
+active Python/SQLite build must also support `sqlite3.enable_load_extension(...)`.
+In practice, the same `pip install` can therefore produce different operator
+outcomes across machines, including "package installed but semantic search
+unavailable."
+
+The roadmap is being corrected toward a portable SQLite-first semantic backend
+that works on standard Python builds without `enable_load_extension`. Until that
+backend lands, treat `sqlite-vec` as a transitional dependency rather than a
+guaranteed feature toggle. The public UX stays the same: semantic indexing,
+semantic search, and hybrid search remain the target interface.
+
+See [docs/semantic-search.md](docs/semantic-search.md) for the architecture
+note, migration story, and rationale for de-emphasizing mandatory `sqlite-vec`.
+
 ## Configuration
 
 ### Environment Variables (.env)
@@ -182,6 +201,7 @@ telethon-cli users get-me --output json
 
 ## Roadmap
 
+- Portable semantic search on stock Python installs without mandatory runtime SQLite extension loading
 - LLM-powered content factory
 - LLM-powered intelligent search
 - LLM-based chat spam moderation
@@ -206,6 +226,15 @@ telethon-cli users get-me --output json
  # Benchmark serial vs safe mixed-mode suite execution
  python -m src.main test benchmark
 
- # Lint
- ruff check src/ tests/ conftest.py
- ```
+  # Lint
+  ruff check src/ tests/ conftest.py
+  ```
+
+### CI Note
+
+- `push` workflow checks the branch head only.
+- `pull_request` workflow checks the merge result against `main`.
+- A branch can therefore be green on `push` and red on `pull_request` if `main`
+  introduced a lint/test failure that is pulled into the PR merge ref.
+- Before rerunning PR checks, fetch and sync with `origin/main` so local
+  verification matches CI.

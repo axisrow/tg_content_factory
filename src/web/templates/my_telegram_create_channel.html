@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block title %}Создать канал — TG Agent{% endblock %}
+{% block content %}
+<div class="d-flex align-items-center gap-3 mb-3">
+    <h1 class="mb-0">Создать Telegram-канал</h1>
+    <a href="/my-telegram/" class="btn btn-outline-secondary btn-sm">← Мой Телеграм</a>
+</div>
+
+{% if created %}
+<div class="alert alert-success">
+    <strong>Канал создан!</strong>
+    {% if channel_username %}
+    <br>Username: <code>@{{ channel_username }}</code>
+    <br><a href="{{ invite_link }}" target="_blank" rel="noopener noreferrer">{{ invite_link }}</a>
+    {% else %}
+    <br>ID: <code>{{ channel_id }}</code> (username не задан)
+    {% endif %}
+</div>
+{% endif %}
+
+{% if error %}
+<div class="alert alert-danger">{{ error }}</div>
+{% endif %}
+
+<div class="card" style="max-width:520px">
+    <div class="card-header fw-semibold">Новый канал</div>
+    <div class="card-body">
+        <form method="post" action="/my-telegram/create-channel" data-busy>
+            <div class="mb-3">
+                <label class="form-label">Аккаунт</label>
+                <select class="form-select" name="phone" required>
+                    {% for acc in accounts %}
+                    <option value="{{ acc }}">{{ acc }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="mb-3">
+                <label class="form-label">Название <span class="text-danger">*</span></label>
+                <input class="form-control" type="text" name="title" required maxlength="128" placeholder="My Channel">
+            </div>
+            <div class="mb-3">
+                <label class="form-label">Описание</label>
+                <textarea class="form-control" name="about" rows="2" maxlength="255" placeholder="О чём этот канал..."></textarea>
+            </div>
+            <div class="mb-3">
+                <label class="form-label">Username (опционально)</label>
+                <div class="input-group">
+                    <span class="input-group-text">@</span>
+                    <input class="form-control" type="text" name="username" placeholder="mychannel" maxlength="32" pattern="[a-zA-Z][a-zA-Z0-9_]{4,}" title="Минимум 5 символов, только буквы, цифры и _">
+                </div>
+                <div class="form-text">Оставьте пустым, чтобы создать приватный канал.</div>
+            </div>
+            <button type="submit" class="btn btn-primary" data-busy-label="Создаю...">Создать</button>
+        </form>
+    </div>
+</div>
+{% endblock %}

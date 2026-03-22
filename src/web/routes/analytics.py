@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 
+from src.services.content_analytics_service import ContentAnalyticsService
+from src.services.trend_service import TrendService
 from src.web import deps
 
 router = APIRouter()
@@ -34,5 +36,73 @@ async def analytics_page(
             "date_from": date_from,
             "date_to": date_to,
             "limit": limit,
+        },
+    )
+
+
+@router.get("/content", response_class=HTMLResponse)
+async def content_analytics_page(request: Request):
+    """Render content analytics dashboard page."""
+    db = deps.get_db(request)
+    analytics = ContentAnalyticsService(db)
+
+    summary = await analytics.get_summary()
+    pipeline_stats = await analytics.get_pipeline_stats()
+
+    return deps.get_templates(request).TemplateResponse(
+        request,
+        "analytics/content.html",
+        {
+            "summary": summary,
+            "pipeline_stats": pipeline_stats,
+        },
+    )
+
+
+@router.get("/content/api/summary")
+async def api_content_summary(request: Request):
+    """Get content summary statistics as JSON."""
+    db = deps.get_db(request)
+    analytics = ContentAnalyticsService(db)
+    return JSONResponse(await analytics.get_summary())
+
+
+@router.get("/content/api/pipelines")
+async def api_pipeline_stats(request: Request, pipeline_id: int | None = None):
+    """Get pipeline statistics as JSON."""
+    db = deps.get_db(request)
+    analytics = ContentAnalyticsService(db)
+    stats = await analytics.get_pipeline_stats(pipeline_id)
+    return JSONResponse([
+        {
+            "pipeline_id": s.pipeline_id,
+            "pipeline_name": s.pipeline_name,
+            "total_generations": s.total_generations,
+            "total_published": s.total_published,
+            "total_rejected": s.total_rejected,
+            "pending_moderation": s.pending_moderation,
+            "success_rate": s.success_rate,
+        }
+        for s in stats
+    ])
+
+
+@router.get("/trends", response_class=HTMLResponse)
+async def trends_page(request: Request, days: int = 7):
+    """Render trending topics and channels page."""
+    days = days if days in (7, 14, 30) else 7
+    db = deps.get_db(request)
+    trend = TrendService(db)
+    topics = await trend.get_trending_topics(days=days, limit=20)
+    channels = await trend.get_trending_channels(days=days, limit=10)
+    emojis = await trend.get_trending_emojis(days=days, limit=15)
+    return deps.get_templates(request).TemplateResponse(
+        request,
+        "analytics/trends.html",
+        {
+            "topics": topics,
+            "channels": channels,
+            "emojis": emojis,
+            "days": days,
         },
     )

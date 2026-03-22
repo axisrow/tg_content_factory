@@ -79,7 +79,6 @@ async def _semantic_settings_context(request: Request) -> dict[str, object]:
     embedding_dimensions = await db.repos.messages.get_embedding_dimensions()
     embeddings_count = await db.repos.messages.count_embeddings()
     return {
-        "semantic_vec_available": db.vec_available,
         "semantic_embeddings_provider": (
             await db.get_setting(EMBEDDINGS_PROVIDER_SETTING) or DEFAULT_EMBEDDINGS_PROVIDER
         ),
@@ -509,19 +508,22 @@ async def save_semantic_search_settings(request: Request):
             await db.set_setting(EMBEDDINGS_API_KEY_SETTING, api_key)
     if changed or reset_index:
         await db.repos.messages.reset_embeddings_index()
+        deps.get_search_engine(request).invalidate_numpy_index()
     return RedirectResponse(url="/settings?msg=semantic_saved", status_code=303)
 
 
 @router.post("/semantic-index")
 async def run_semantic_index(request: Request):
     db = deps.get_db(request)
-    if not db.vec_available:
+    if not deps.get_search_engine(request).semantic_available:
         return RedirectResponse(url="/settings?error=semantic_unavailable", status_code=303)
     form = await request.form()
     reset_index = str(form.get("semantic_reset_index", "")).strip() == "1"
     if reset_index:
         await db.repos.messages.reset_embeddings_index()
     indexed = await EmbeddingService(db, request.app.state.config).index_pending_messages()
+    if indexed > 0 or reset_index:
+        deps.get_search_engine(request).invalidate_numpy_index()
     return RedirectResponse(
         url=f"/settings?msg=semantic_indexed&indexed={indexed}",
         status_code=303,
