@@ -10,6 +10,8 @@ from src.models import (
     CollectionTask,
     CollectionTaskStatus,
     CollectionTaskType,
+    ContentGenerateTaskPayload,
+    ContentPublishTaskPayload,
     PipelineRunTaskPayload,
     SqStatsTaskPayload,
     StatsAllTaskPayload,
@@ -48,6 +50,10 @@ class CollectionTasksRepository:
             return SqStatsTaskPayload.model_validate(parsed)
         if task_kind == CollectionTaskType.PIPELINE_RUN.value:
             return PipelineRunTaskPayload.model_validate(parsed)
+        if task_kind == CollectionTaskType.CONTENT_GENERATE.value:
+            return ContentGenerateTaskPayload.model_validate(parsed)
+        if task_kind == CollectionTaskType.CONTENT_PUBLISH.value:
+            return ContentPublishTaskPayload.model_validate(parsed)
         return parsed
 
     @staticmethod
@@ -62,7 +68,16 @@ class CollectionTasksRepository:
     ) -> str | None:
         if payload is None:
             return None
-        if isinstance(payload, (StatsAllTaskPayload, SqStatsTaskPayload, PipelineRunTaskPayload)):
+        if isinstance(
+            payload,
+            (
+                StatsAllTaskPayload,
+                SqStatsTaskPayload,
+                PipelineRunTaskPayload,
+                ContentGenerateTaskPayload,
+                ContentPublishTaskPayload,
+            ),
+        ):
             return payload.model_dump_json()
         return json.dumps(payload)
 

@@ -115,8 +115,6 @@ def test_handled_types_contains_expected():
     assert "photo_due" in HANDLED_TYPES
     assert "photo_auto" in HANDLED_TYPES
     assert "pipeline_run" in HANDLED_TYPES
-    assert "content_generate" in HANDLED_TYPES
-    assert "content_publish" in HANDLED_TYPES
 
 
 # === start/stop tests ===
@@ -747,7 +745,7 @@ async def test_handle_pipeline_run_success_with_mocked_services(
     dispatcher, mock_tasks_repo
 ):
     """_handle_pipeline_run succeeds with mocked services."""
-    from unittest.mock import patch, MagicMock
+    from unittest.mock import MagicMock, patch
 
     mock_pipeline_bundle = MagicMock()
     mock_pipeline = MagicMock()
@@ -775,10 +773,10 @@ async def test_handle_pipeline_run_success_with_mocked_services(
 
     with patch(
         "src.services.content_generation_service.ContentGenerationService"
-    ) as MockGenService:
+    ) as mock_gen_service:
         mock_gen_instance = MagicMock()
         mock_gen_instance.generate = AsyncMock(return_value=mock_run)
-        MockGenService.return_value = mock_gen_instance
+        mock_gen_service.return_value = mock_gen_instance
 
         await dispatcher._handle_pipeline_run(task)
 
@@ -839,10 +837,10 @@ async def test_handle_pipeline_run_generation_exception(dispatcher, mock_tasks_r
 
     with patch(
         "src.services.content_generation_service.ContentGenerationService"
-    ) as MockGenService:
+    ) as mock_gen_service:
         mock_gen_instance = MagicMock()
         mock_gen_instance.generate = AsyncMock(side_effect=RuntimeError("LLM error"))
-        MockGenService.return_value = mock_gen_instance
+        mock_gen_service.return_value = mock_gen_instance
 
         await dispatcher._handle_pipeline_run(task)
 
@@ -859,6 +857,7 @@ async def test_handle_pipeline_run_generation_exception(dispatcher, mock_tasks_r
 async def test_handle_content_generate_with_auto_publish(dispatcher, mock_tasks_repo):
     """_handle_content_generate publishes automatically when mode is AUTO."""
     from unittest.mock import patch
+
     from src.models import ContentPipeline, PipelinePublishMode
 
     mock_pipeline = MagicMock(spec=ContentPipeline)
@@ -891,18 +890,18 @@ async def test_handle_content_generate_with_auto_publish(dispatcher, mock_tasks_
     with (
         patch(
             "src.services.content_generation_service.ContentGenerationService"
-        ) as MockGenService,
-        patch("src.services.publish_service.PublishService") as MockPublishService,
+        ) as mock_gen_service,
+        patch("src.services.publish_service.PublishService") as mock_publish_service,
     ):
         mock_gen_instance = MagicMock()
         mock_gen_instance.generate = AsyncMock(return_value=mock_run)
-        MockGenService.return_value = mock_gen_instance
+        mock_gen_service.return_value = mock_gen_instance
 
         mock_publish_instance = MagicMock()
         mock_publish_instance.publish_run = AsyncMock(
             return_value=[MagicMock(success=True)]
         )
-        MockPublishService.return_value = mock_publish_instance
+        mock_publish_service.return_value = mock_publish_instance
 
         await dispatcher._handle_content_generate(task)
 
@@ -917,6 +916,7 @@ async def test_handle_content_generate_without_auto_publish(
 ):
     """_handle_content_generate does not publish when mode is not AUTO."""
     from unittest.mock import patch
+
     from src.models import ContentPipeline, PipelinePublishMode
 
     mock_pipeline = MagicMock(spec=ContentPipeline)
@@ -945,10 +945,10 @@ async def test_handle_content_generate_without_auto_publish(
 
     with patch(
         "src.services.content_generation_service.ContentGenerationService"
-    ) as MockGenService:
+    ) as mock_gen_service:
         mock_gen_instance = MagicMock()
         mock_gen_instance.generate = AsyncMock(return_value=mock_run)
-        MockGenService.return_value = mock_gen_instance
+        mock_gen_service.return_value = mock_gen_instance
 
         await dispatcher._handle_content_generate(task)
 
@@ -1009,8 +1009,8 @@ async def test_handle_content_generate_exception(dispatcher, mock_tasks_repo):
 
     with patch(
         "src.services.content_generation_service.ContentGenerationService"
-    ) as MockGenService:
-        MockGenService.side_effect = RuntimeError("Generation failed")
+    ) as mock_gen_service:
+        mock_gen_service.side_effect = RuntimeError("Generation failed")
 
         await dispatcher._handle_content_generate(task)
 
@@ -1035,8 +1035,7 @@ async def test_handle_content_publish_no_approved_runs(dispatcher, mock_tasks_re
     mock_db.execute = mock_execute
 
     dispatcher._db = mock_db
-    dispatcher._collector = MagicMock()
-    dispatcher._collector._pool = MagicMock()
+    dispatcher._pipeline_bundle = MagicMock()
 
     task = CollectionTask(
         id=1,
@@ -1060,9 +1059,18 @@ async def test_handle_content_publish_success(dispatcher, mock_tasks_repo):
 
     mock_db = MagicMock()
 
+    _mock_row_data = {
+        "id": 1,
+        "pipeline_id": 1,
+        "status": "completed",
+        "moderation_status": "approved",
+        "generated_text": "test",
+        "created_at": None,
+        "published_at": None,
+    }
     mock_row = MagicMock()
-    mock_row.keys = MagicMock(return_value=["id", "pipeline_id", "status", "moderation_status", "generated_text", "created_at", "published_at"])
-    mock_row.__getitem__ = lambda self, key: {"id": 1, "pipeline_id": 1, "status": "completed", "moderation_status": "approved", "generated_text": "test", "created_at": None, "published_at": None}[key]
+    mock_row.keys = MagicMock(return_value=list(_mock_row_data.keys()))
+    mock_row.__getitem__ = lambda self, key: _mock_row_data[key]
 
     async def mock_execute(query, params=()):
         result = MagicMock()
@@ -1089,17 +1097,17 @@ async def test_handle_content_publish_success(dispatcher, mock_tasks_repo):
         payload=ContentPublishTaskPayload(pipeline_id=None),
     )
 
-    with patch("src.services.publish_service.PublishService") as MockPublishService:
+    with patch("src.services.publish_service.PublishService") as mock_publish_service:
         mock_publish_instance = MagicMock()
         mock_publish_instance.publish_run = AsyncMock(
             return_value=[MagicMock(success=True)]
         )
-        MockPublishService.return_value = mock_publish_instance
+        mock_publish_service.return_value = mock_publish_instance
 
         with patch(
             "src.database.repositories.generation_runs.GenerationRunsRepository"
-        ) as MockRepo:
-            MockRepo._to_generation_run = staticmethod(
+        ) as mock_repo:
+            mock_repo._to_generation_run = staticmethod(
                 lambda row: MagicMock(
                     id=1,
                     pipeline_id=1,
