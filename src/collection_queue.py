@@ -198,7 +198,7 @@ class CollectionQueue:
             return False
         self._retried_tasks.add(task_id)
         await self._channels.update_collection_task(task_id, CollectionTaskStatus.PENDING, note="Reconnect retry")
-        self._queue.put_nowait((task_id, channel, full, force))
+        self._queue.put_nowait((task_id, channel, force, full))
         logger.warning(
             "ConnectionError for channel %d, reconnected and re-queued task %d: %s",
             channel.channel_id, task_id, exc,
