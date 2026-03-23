@@ -175,7 +175,7 @@
                     <div class="form-text" id="provider_model_meta__{{ item.provider }}">
                         source:
                         <span class="badge text-bg-{{ 'success' if item.model_source == 'live' else 'secondary' }}">{{ item.model_source }}</span>
-                        {% if item.model_fetched_at %}| {{ item.model_fetched_at }}{% endif %}
+                        {% if item.model_fetched_at %}| {{ item.model_fetched_at|local_dt }}{% endif %}
                     </div>
                     <div class="small text-muted{{ '' if item.model_fetch_error else ' d-none' }}"
                          id="provider_model_error__{{ item.provider }}">{{ item.model_fetch_error }}</div>
@@ -184,7 +184,7 @@
                         <div>
                             compatibility:
                             <span class="badge text-bg-{{ 'success' if item.selected_compatibility.status == 'supported' else ('warning' if item.selected_compatibility.status == 'unknown' else 'danger') }}">{{ item.selected_compatibility.status }}</span>
-                            {% if item.selected_compatibility.tested_at %}| {{ item.selected_compatibility.tested_at }}{% endif %}
+                            {% if item.selected_compatibility.tested_at %}| {{ item.selected_compatibility.tested_at|local_dt }}{% endif %}
                         </div>
                         {% if item.selected_compatibility.reason %}
                         <div class="text-muted">{{ item.selected_compatibility.reason }}</div>

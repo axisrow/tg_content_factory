@@ -113,7 +113,7 @@
     <tbody>
         {% for msg in result.messages %}
         <tr>
-            <td class="text-nowrap">{{ msg.date.strftime('%Y-%m-%d %H:%M') }}</td>
+            <td class="text-nowrap">{{ msg.date|local_dt }}</td>
             <td>{{ msg.channel_title or msg.channel_username or msg.channel_id }}</td>
             <td>{{ msg.sender_name or "—" }}</td>
             <td>{{ msg.media_type or "—" }}</td>
@@ -140,7 +140,7 @@
                 <strong class="text-truncate">{{ msg.channel_title or msg.channel_username or msg.channel_id }}</strong>
                 {% if msg.channel_username %}<a href="https://t.me/{{ msg.channel_username }}/{{ msg.message_id }}" target="_blank" rel="noopener">&#8599;</a>{% else %}<a href="https://t.me/c/{{ msg.channel_id }}/{{ msg.message_id }}" target="_blank" rel="noopener">&#8599;</a>{% endif %}
             </div>
-            <small class="text-muted">{{ msg.date.strftime('%Y-%m-%d %H:%M') }}{% if msg.sender_name %} &middot; {{ msg.sender_name }}{% endif %}{% if msg.media_type %} &middot; {{ msg.media_type }}{% endif %}</small>
+            <small class="text-muted">{{ msg.date|local_dt }}{% if msg.sender_name %} &middot; {{ msg.sender_name }}{% endif %}{% if msg.media_type %} &middot; {{ msg.media_type }}{% endif %}</small>
             <p class="mb-0 mt-1" style="font-size:0.85rem">{{ msg.text[:200] if msg.text else "—" }}{{ "..." if msg.text and msg.text|length > 200 else "" }}</p>
             {%- if msg.views is not none or msg.forwards is not none or msg.reply_count is not none %}
             <small class="text-muted">

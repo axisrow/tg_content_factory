@@ -105,7 +105,7 @@
                     </td>
                     <td>
                         {% if j.next_run %}
-                            {{ j.next_run.strftime('%H:%M:%S') }}
+                            {{ j.next_run|local_dt("time") }}
                         {% elif is_running and j.enabled %}
                             —
                         {% elif not j.enabled %}
@@ -150,7 +150,7 @@
                     <td>{{ entry.query }}</td>
                     <td>{{ entry.phone }}</td>
                     <td>{{ entry.results_count }}</td>
-                    <td>{{ entry.created_at }}</td>
+                    <td>{{ entry.created_at|local_dt }}</td>
                 </tr>
                 {% endfor %}
             </tbody>
@@ -165,7 +165,7 @@
                         <strong class="text-truncate">{{ entry.query }}</strong>
                         <span class="badge text-bg-secondary">{{ entry.results_count }}</span>
                     </div>
-                    <small class="text-muted">{{ entry.phone }} &middot; {{ entry.created_at }}</small>
+                    <small class="text-muted">{{ entry.phone }} &middot; {{ entry.created_at|local_dt }}</small>
                 </div>
             </div>
             {% endfor %}
@@ -233,7 +233,7 @@
                             Отменена
                         {% else %}
                             {% if t.run_after %}
-                                Ожидание до {{ t.run_after.strftime('%Y-%m-%d %H:%M:%S UTC') }}
+                                Ожидание до {{ t.run_after|local_dt }}
                             {% else %}
                                 Ожидание
                             {% endif %}
@@ -246,8 +246,8 @@
                             {{ t.messages_collected }}
                         {% endif %}
                     </td>
-                    <td>{{ t.created_at.strftime('%Y-%m-%d %H:%M') if t.created_at else '—' }}</td>
-                    <td>{{ t.completed_at.strftime('%Y-%m-%d %H:%M') if t.completed_at else '—' }}</td>
+                    <td>{{ t.created_at|local_dt }}</td>
+                    <td>{{ t.completed_at|local_dt }}</td>
                     <td>
                         {% if t.status == 'running' %}
                             <form method="post" action="/scheduler/tasks/{{ t.id }}/cancel" class="mb-0" data-busy>
@@ -295,7 +295,7 @@
                         {% else %}
                             {{ t.messages_collected }} сообщ.
                         {% endif %}
-                        {% if t.created_at %}&middot; {{ t.created_at.strftime('%m-%d %H:%M') }}{% endif %}
+                        {% if t.created_at %}&middot; {{ t.created_at|local_dt }}{% endif %}
                     </small>
                     {% if t.status == 'running' or t.status == 'pending' %}
                     <div class="mt-1">

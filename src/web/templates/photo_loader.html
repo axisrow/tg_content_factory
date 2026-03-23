@@ -58,7 +58,7 @@
         </form>
         <div class="col-12">
             <small class="text-muted">
-                Используется сохранённый список диалогов{% if dialogs_cached_at %} от {{ dialogs_cached_at.strftime("%Y-%m-%d %H:%M") }}{% endif %}. Кнопка обновления заново загружает данные из Telegram.
+                Используется сохранённый список диалогов{% if dialogs_cached_at %} от {{ dialogs_cached_at|local_dt }}{% endif %}. Кнопка обновления заново загружает данные из Telegram.
             </small>
         </div>
         </div>
@@ -309,7 +309,7 @@
                             <td>{{ batch.target_title or batch.target_dialog_id }}</td>
                             <td>{{ batch.send_mode }}</td>
                             <td>{{ batch.status }}</td>
-                            <td>{{ batch.created_at or "—" }}</td>
+                            <td>{{ batch.created_at|local_dt }}</td>
                         </tr>
                         {% endfor %}
                         </tbody>
@@ -338,7 +338,7 @@
                             <td class="font-monospace">{{ job.folder_path }}</td>
                             <td>{{ job.interval_minutes }} мин.</td>
                             <td>{{ "active" if job.is_active else "paused" }}</td>
-                            <td>{{ job.last_run_at or "—" }}</td>
+                            <td>{{ job.last_run_at|local_dt }}</td>
                             <td class="d-flex gap-2">
                                 <form method="post" action="/my-telegram/photos/auto/{{ job.id }}/toggle" data-busy>
                                     <input type="hidden" name="phone" value="{{ selected_phone }}">
@@ -376,7 +376,7 @@
                             <td>{{ item.id }}</td>
                             <td>{{ item.target_title or item.target_dialog_id }}</td>
                             <td>{{ item.file_paths|length }}</td>
-                            <td>{{ item.schedule_at or item.created_at }}</td>
+                            <td>{{ (item.schedule_at or item.created_at)|local_dt }}</td>
                             <td>{{ item.status }}</td>
                             <td>
                                 <form method="post" action="/my-telegram/photos/items/{{ item.id }}/cancel" data-busy>

@@ -49,7 +49,7 @@
             {% for msg in top_messages %}
             <tr>
                 <td class="text-muted">{{ loop.index }}</td>
-                <td class="text-nowrap">{{ msg.date[:16] if msg.date else '—' }}</td>
+                <td class="text-nowrap">{{ msg.date|local_dt }}</td>
                 <td>{{ msg.channel_title or msg.channel_username or msg.channel_id }}</td>
                 <td><span class="badge text-bg-secondary">{{ msg.media_type or 'text' }}</span></td>
                 <td>{{ msg_text(msg.text) }}</td>
@@ -75,7 +75,7 @@
                     <strong class="text-truncate me-2">{{ msg.channel_title or msg.channel_username or msg.channel_id }}</strong>
                     <span class="badge text-bg-primary">{{ msg.total_reactions }} 👍</span>
                 </div>
-                <small class="text-muted">{{ msg.date[:16] if msg.date else '—' }} &middot; {{ msg.media_type or 'text' }}</small>
+                <small class="text-muted">{{ msg.date|local_dt }} &middot; {{ msg.media_type or 'text' }}</small>
                 <p class="mb-1 mt-1" style="font-size:0.85rem">{{ msg_text(msg.text) }}</p>
                 {% if msg.channel_username %}
                 <a href="https://t.me/{{ msg.channel_username }}/{{ msg.message_id }}" target="_blank" rel="noopener" class="btn btn-sm btn-outline-secondary">Открыть &#8599;</a>

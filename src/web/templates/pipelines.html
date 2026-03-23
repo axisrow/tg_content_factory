@@ -141,7 +141,7 @@
                     {{ pipeline.generate_interval_minutes }} мин
                     {% set nr = next_runs.get(pipeline.id) %}
                     {% if nr %}
-                    <div class="small text-muted">Next: {{ nr }}</div>
+                    <div class="small text-muted">Next: {{ nr|local_dt }}</div>
                     {% else %}
                     <div class="small text-muted">Не запланировано</div>
                     {% endif %}

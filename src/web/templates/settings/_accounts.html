@@ -24,8 +24,8 @@
             <td class="text-center">{% if acc.is_premium %}<span class="badge-active">&#9679;</span>{% else %}<span class="badge-inactive">&#9679;</span>{% endif %}</td>
             <td class="text-center">{% if acc.is_primary %}<span class="badge-active">&#9679;</span>{% else %}<span class="badge-inactive">&#9679;</span>{% endif %}</td>
             <td class="text-center">{% if acc.phone in connected_phones %}<span class="badge-active">&#9679;</span>{% else %}<span class="badge-inactive">&#9679;</span>{% endif %}</td>
-            <td>{{ acc.flood_wait_until.strftime('%H:%M:%S') if acc.flood_wait_until else "\u2014" }}</td>
-            <td>{{ acc.created_at.strftime('%Y-%m-%d') if acc.created_at else "\u2014" }}</td>
+            <td>{{ acc.flood_wait_until|local_dt("time") }}</td>
+            <td>{{ acc.created_at|local_dt("date") }}</td>
             <td class="text-nowrap">
                 <form method="post" action="/settings/{{ acc.id }}/toggle" class="d-inline" data-busy>
                     <button type="submit" class="btn btn-outline-secondary btn-sm"
@@ -58,8 +58,8 @@
                 {% if acc.is_premium %}Premium{% endif %}
                 {% if acc.is_primary %}&middot; Primary{% endif %}
                 {% if acc.phone in connected_phones %}&middot; Подключён{% endif %}
-                {% if acc.flood_wait_until %}&middot; Flood: {{ acc.flood_wait_until.strftime('%H:%M:%S') }}{% endif %}
-                {% if acc.created_at %}&middot; {{ acc.created_at.strftime('%Y-%m-%d') }}{% endif %}
+                {% if acc.flood_wait_until %}&middot; Flood: {{ acc.flood_wait_until|local_dt("time") }}{% endif %}
+                {% if acc.created_at %}&middot; {{ acc.created_at|local_dt("date") }}{% endif %}
             </small>
             <div class="card-actions">
                 <form method="post" action="/settings/{{ acc.id }}/toggle" class="d-inline" data-busy>
