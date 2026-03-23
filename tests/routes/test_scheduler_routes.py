@@ -524,6 +524,10 @@ async def test_dry_run_excludes_inactive_queries(client):
 async def test_dry_run_excludes_disabled_scheduler_job(client):
     """Dry-run excludes queries whose scheduler job is disabled."""
     db = client._transport.app.state.db
+    # Create a completed collection task so dry-run has a time window
+    task_id = await db.create_collection_task(channel_id=-1001234567890, channel_title="Test")
+    await db.update_collection_task(task_id, CollectionTaskStatus.COMPLETED)
+
     await db.repos.search_queries.add(SearchQuery(
         query="enabled_job_query", notify_on_collect=True, is_active=True, is_fts=False,
     ))
@@ -535,4 +539,5 @@ async def test_dry_run_excludes_disabled_scheduler_job(client):
 
     resp = await client.post("/scheduler/dry-run-notifications")
     assert resp.status_code == 200
+    assert "enabled_job_query" in resp.text
     assert "disabled_job_query" not in resp.text
