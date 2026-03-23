@@ -188,7 +188,10 @@ class TelegramAuth:
 
     async def create_client_from_session(self, session_string: str) -> TelegramClient:
         """Create and connect a client from saved session string."""
-        client = TelegramClient(StringSession(session_string), self._api_id, self._api_hash)
+        client = TelegramClient(
+            StringSession(session_string), self._api_id, self._api_hash,
+            connection_retries=None, retry_delay=2,
+        )
         await client.connect()
         if not await client.is_user_authorized():
             raise ConnectionError("Session is no longer valid")
