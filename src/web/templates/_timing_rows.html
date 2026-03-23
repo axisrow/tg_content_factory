@@ -1,6 +1,6 @@
 {% for r in records %}
 <tr{% if r.ms > 1000 %} class="table-danger"{% elif r.ms > 500 %} class="table-warning"{% endif %}>
-  <td><code>{{ r.time }}</code></td>
+  <td><code>{{ r.time|local_dt("time") }}</code></td>
   <td><strong>{{ r.ms }} ms</strong></td>
   <td>{{ r.method }}</td>
   <td><code>{{ r.path }}</code></td>

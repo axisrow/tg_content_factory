@@ -238,6 +238,23 @@
         var label = btn.getAttribute('data-busy-label') || btn.textContent.trim();
         btn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> ' + label;
     });
+    // Local date conversion: replace .local-dt[data-utc] spans with browser-local time
+    function convertLocalDates() {
+        document.querySelectorAll('.local-dt[data-utc]').forEach(function(el) {
+            var d = new Date(el.dataset.utc);
+            if (isNaN(d)) return;
+            var fmt = el.dataset.fmt || 'datetime';
+            if (fmt === 'time') {
+                el.textContent = d.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit', second: '2-digit'});
+            } else if (fmt === 'date') {
+                el.textContent = d.toLocaleDateString();
+            } else {
+                el.textContent = d.toLocaleString([], {year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'});
+            }
+        });
+    }
+    document.addEventListener('DOMContentLoaded', convertLocalDates);
+    document.body.addEventListener('htmx:afterSwap', convertLocalDates);
     // Reusable spinner helper for fetch-based (non-form) buttons
     window.setAsyncButtonBusy = function(button, busy, busyLabel) {
         if (!button) return;

@@ -65,11 +65,11 @@
                         <dd class="col-sm-7">{{ run.moderation_status }}</dd>
 
                         <dt class="col-sm-5">Создан</dt>
-                        <dd class="col-sm-7">{{ run.created_at.strftime('%Y-%m-%d %H:%M') if run.created_at else '—' }}</dd>
+                        <dd class="col-sm-7">{{ run.created_at|local_dt }}</dd>
 
                         {% if run.published_at %}
                         <dt class="col-sm-5">Опубликован</dt>
-                        <dd class="col-sm-7">{{ run.published_at.strftime('%Y-%m-%d %H:%M') }}</dd>
+                        <dd class="col-sm-7">{{ run.published_at|local_dt }}</dd>
                         {% endif %}
                     </dl>
                 </div>
