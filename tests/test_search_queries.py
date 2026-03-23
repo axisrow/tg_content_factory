@@ -281,6 +281,9 @@ async def test_fts_query_matches_wildcards():
     assert _fts_query_matches("джомтьен*", "пляж джомтьена")
     assert not _fts_query_matches("джомтьен*", "паттайя центр")
 
+    # Bare wildcard should not match everything
+    assert not _fts_query_matches("* AND байк*", "аренда квартиры")
+
 
 @pytest.mark.asyncio
 async def test_exclude_patterns_list_property():
