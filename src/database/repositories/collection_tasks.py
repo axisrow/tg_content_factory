@@ -10,6 +10,8 @@ from src.models import (
     CollectionTask,
     CollectionTaskStatus,
     CollectionTaskType,
+    ContentGenerateTaskPayload,
+    ContentPublishTaskPayload,
     PipelineRunTaskPayload,
     SqStatsTaskPayload,
     StatsAllTaskPayload,
@@ -48,6 +50,10 @@ class CollectionTasksRepository:
             return SqStatsTaskPayload.model_validate(parsed)
         if task_kind == CollectionTaskType.PIPELINE_RUN.value:
             return PipelineRunTaskPayload.model_validate(parsed)
+        if task_kind == CollectionTaskType.CONTENT_GENERATE.value:
+            return ContentGenerateTaskPayload.model_validate(parsed)
+        if task_kind == CollectionTaskType.CONTENT_PUBLISH.value:
+            return ContentPublishTaskPayload.model_validate(parsed)
         return parsed
 
     @staticmethod
@@ -57,12 +63,23 @@ class CollectionTasksRepository:
             | StatsAllTaskPayload
             | SqStatsTaskPayload
             | PipelineRunTaskPayload
+            | ContentGenerateTaskPayload
+            | ContentPublishTaskPayload
             | None
         ),
     ) -> str | None:
         if payload is None:
             return None
-        if isinstance(payload, (StatsAllTaskPayload, SqStatsTaskPayload, PipelineRunTaskPayload)):
+        if isinstance(
+            payload,
+            (
+                StatsAllTaskPayload,
+                SqStatsTaskPayload,
+                PipelineRunTaskPayload,
+                ContentGenerateTaskPayload,
+                ContentPublishTaskPayload,
+            ),
+        ):
             return payload.model_dump_json()
         return json.dumps(payload)
 
@@ -414,7 +431,15 @@ class CollectionTasksRepository:
         task_type: CollectionTaskType | str,
         *,
         title: str = "",
-        payload: dict[str, Any] | StatsAllTaskPayload | SqStatsTaskPayload | None = None,
+        payload: (
+            dict[str, Any]
+            | StatsAllTaskPayload
+            | SqStatsTaskPayload
+            | PipelineRunTaskPayload
+            | ContentGenerateTaskPayload
+            | ContentPublishTaskPayload
+            | None
+        ) = None,
         run_after: datetime | None = None,
         parent_task_id: int | None = None,
     ) -> int:

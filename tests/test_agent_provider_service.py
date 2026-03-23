@@ -815,3 +815,313 @@ async def test_agent_manager_skips_cached_unsupported_provider_and_fails_over(db
     assert "openai" not in seen_providers
     assert seen_providers
     assert any('"provider": "anthropic"' in chunk for chunk in chunks)
+
+
+# === _fetch_live_models HTTP error handling tests ===
+
+
+@pytest.mark.asyncio
+async def test_fetch_live_models_http_error_fallback_to_static(db, monkeypatch):
+    """_fetch_live_models propagates exception, caller handles fallback."""
+    import aiohttp
+
+    config = AppConfig()
+    config.security.session_encryption_key = "provider-secret"
+    service = AgentProviderService(db, config)
+
+    # Create a config for OpenAI
+    cfg = ProviderRuntimeConfig(
+        provider="openai",
+        enabled=True,
+        priority=0,
+        selected_model="gpt-4.1-mini",
+        secret_fields={"api_key": "test-key"},
+    )
+
+    async def _broken_fetch_json(url, headers=None):
+        raise aiohttp.ClientError("Connection refused")
+
+    monkeypatch.setattr(service, "_fetch_json", _broken_fetch_json)
+
+    from src.agent.provider_registry import provider_spec
+
+    spec = provider_spec("openai")
+
+    # _fetch_live_models raises exception, refresh_models_for_provider catches it
+    with pytest.raises(aiohttp.ClientError):
+        await service._fetch_live_models(spec, cfg)
+
+
+@pytest.mark.asyncio
+async def test_fetch_live_models_success_updates_cache(db, monkeypatch):
+    """_fetch_live_models returns live models on success."""
+    config = AppConfig()
+    config.security.session_encryption_key = "provider-secret"
+    service = AgentProviderService(db, config)
+
+    cfg = ProviderRuntimeConfig(
+        provider="openai",
+        enabled=True,
+        priority=0,
+        selected_model="gpt-4.1-mini",
+        secret_fields={"api_key": "test-key"},
+    )
+
+    async def _fake_fetch_json(url, headers=None):
+        return {"data": [{"id": "gpt-4.1"}, {"id": "gpt-4.1-mini"}]}
+
+    monkeypatch.setattr(service, "_fetch_json", _fake_fetch_json)
+
+    from src.agent.provider_registry import provider_spec
+
+    spec = provider_spec("openai")
+    models = await service._fetch_live_models(spec, cfg)
+
+    assert "gpt-4.1" in models
+    assert "gpt-4.1-mini" in models
+
+
+# === save_provider_configs encryption tests ===
+
+
+@pytest.mark.asyncio
+async def test_save_provider_configs_requires_encryption_key(db):
+    """save_provider_configs requires encryption key."""
+    service = AgentProviderService(db, AppConfig())  # No encryption key
+
+    cfg = ProviderRuntimeConfig(
+        provider="openai",
+        enabled=True,
+        priority=0,
+        selected_model="gpt-4.1-mini",
+    )
+
+    with pytest.raises(RuntimeError, match="SESSION_ENCRYPTION_KEY"):
+        await service.save_provider_configs([cfg])
+
+
+# === compatibility record tests ===
+
+
+def test_is_compatibility_record_fresh_with_recent_record(db):
+    """is_compatibility_record_fresh returns True for recent records."""
+    service = AgentProviderService(db, AppConfig())
+
+    recent_record = ProviderModelCompatibilityRecord(
+        model="gpt-4.1-mini",
+        status="supported",
+        tested_at=datetime.now(UTC).isoformat(),
+    )
+
+    assert service.is_compatibility_record_fresh(recent_record) is True
+
+
+def test_is_compatibility_record_fresh_with_stale_record(db):
+    """is_compatibility_record_fresh returns False for stale records."""
+    service = AgentProviderService(db, AppConfig())
+
+    stale_record = ProviderModelCompatibilityRecord(
+        model="gpt-4.1-mini",
+        status="supported",
+        tested_at="2024-01-01T00:00:00+00:00",
+    )
+
+    assert service.is_compatibility_record_fresh(stale_record) is False
+
+
+def test_is_compatibility_record_fresh_with_invalid_date(db):
+    """is_compatibility_record_fresh returns False for invalid date."""
+    service = AgentProviderService(db, AppConfig())
+
+    invalid_record = ProviderModelCompatibilityRecord(
+        model="gpt-4.1-mini",
+        status="supported",
+        tested_at="invalid-date",
+    )
+
+    assert service.is_compatibility_record_fresh(invalid_record) is False
+
+
+# === parse_provider_form tests ===
+
+
+def test_parse_provider_form_handles_missing_fields(db):
+    """parse_provider_form handles missing form fields gracefully."""
+    config = AppConfig()
+    config.security.session_encryption_key = "provider-secret"
+    service = AgentProviderService(db, config)
+
+    form = {}  # Empty form
+
+    result = service.parse_provider_form(form, [])
+
+    # Should return empty list when no providers are marked present
+    assert result == []
+
+
+def test_parse_provider_form_with_enabled_provider(db):
+    """parse_provider_form parses enabled provider from form."""
+    config = AppConfig()
+    config.security.session_encryption_key = "provider-secret"
+    service = AgentProviderService(db, config)
+
+    form = {
+        "provider_present__openai": "1",
+        "provider_enabled__openai": "1",
+        "provider_model__openai": "gpt-4.1-mini",
+        "provider_priority__openai": "0",
+    }
+
+    result = service.parse_provider_form(form, [])
+
+    assert len(result) == 1
+    assert result[0].provider == "openai"
+    assert result[0].enabled is True
+    assert result[0].selected_model == "gpt-4.1-mini"
+
+
+# === build_provider_views tests ===
+
+
+def test_build_provider_views_includes_compatibility(db):
+    """build_provider_views includes compatibility information."""
+    config = AppConfig()
+    config.security.session_encryption_key = "provider-secret"
+    service = AgentProviderService(db, config)
+
+    cfg = ProviderRuntimeConfig(
+        provider="openai",
+        enabled=True,
+        priority=0,
+        selected_model="gpt-4.1-mini",
+        secret_fields={"api_key": "test-key"},
+    )
+
+    fingerprint = service.config_fingerprint(cfg)
+    cache = {
+        "openai": ProviderModelCacheEntry(
+            provider="openai",
+            models=["gpt-4.1-mini"],
+            source="live",
+            compatibility={
+                fingerprint: ProviderModelCompatibilityRecord(
+                    model="gpt-4.1-mini",
+                    status="supported",
+                    tested_at=datetime.now(UTC).isoformat(),
+                    config_fingerprint=fingerprint,
+                )
+            },
+        )
+    }
+
+    views = service.build_provider_views([cfg], cache)
+
+    assert len(views) == 1
+    assert views[0]["provider"] == "openai"
+    assert views[0]["selected_compatibility"] is not None
+    assert views[0]["selected_compatibility"]["status"] == "supported"
+
+
+# === export_compatibility_catalog tests ===
+
+
+@pytest.mark.asyncio
+async def test_export_compatibility_catalog_creates_file(db, tmp_path):
+    """export_compatibility_catalog creates catalog file."""
+    config = AppConfig()
+    config.security.session_encryption_key = "provider-secret"
+    service = AgentProviderService(db, config)
+
+    cfg = ProviderRuntimeConfig(
+        provider="openai",
+        enabled=True,
+        priority=0,
+        selected_model="gpt-4.1-mini",
+        secret_fields={"api_key": "test-key"},
+    )
+
+    fingerprint = service.config_fingerprint(cfg)
+    cache = {
+        "openai": ProviderModelCacheEntry(
+            provider="openai",
+            models=["gpt-4.1-mini"],
+            source="live",
+            compatibility={
+                fingerprint: ProviderModelCompatibilityRecord(
+                    model="gpt-4.1-mini",
+                    status="supported",
+                    tested_at=datetime.now(UTC).isoformat(),
+                    config_fingerprint=fingerprint,
+                )
+            },
+        )
+    }
+
+    export_path = tmp_path / "catalog.json"
+    result = await service.export_compatibility_catalog(
+        [cfg], cache, path=export_path
+    )
+
+    assert result == export_path
+    assert export_path.exists()
+
+    import json
+
+    data = json.loads(export_path.read_text())
+    assert "generated_at" in data
+    assert "providers" in data
+
+
+# === canonical_endpoint_fingerprint tests ===
+
+
+def test_canonical_endpoint_fingerprint_for_openai(db):
+    """canonical_endpoint_fingerprint returns default URL for OpenAI."""
+    service = AgentProviderService(db, AppConfig())
+
+    cfg = ProviderRuntimeConfig(
+        provider="openai",
+        enabled=True,
+        priority=0,
+        selected_model="gpt-4.1-mini",
+        plain_fields={"base_url": "https://api.openai.com/v1"},
+    )
+
+    fingerprint = service.canonical_endpoint_fingerprint(cfg)
+
+    assert fingerprint == "https://api.openai.com/v1"
+
+
+def test_canonical_endpoint_fingerprint_for_custom_url_returns_none(db):
+    """canonical_endpoint_fingerprint returns None for custom URLs."""
+    service = AgentProviderService(db, AppConfig())
+
+    cfg = ProviderRuntimeConfig(
+        provider="openai",
+        enabled=True,
+        priority=0,
+        selected_model="gpt-4.1-mini",
+        plain_fields={"base_url": "https://custom.api.com/v1"},
+    )
+
+    fingerprint = service.canonical_endpoint_fingerprint(cfg)
+
+    assert fingerprint is None
+
+
+def test_canonical_endpoint_fingerprint_for_ollama_cloud(db):
+    """canonical_endpoint_fingerprint returns 'ollama://cloud' for Ollama cloud."""
+    service = AgentProviderService(db, AppConfig())
+
+    cfg = ProviderRuntimeConfig(
+        provider="ollama",
+        enabled=True,
+        priority=0,
+        selected_model="llama3.2",
+        plain_fields={"base_url": "https://ollama.com"},
+        secret_fields={"api_key": "test-key"},
+    )
+
+    fingerprint = service.canonical_endpoint_fingerprint(cfg)
+
+    assert fingerprint == "ollama://cloud"

@@ -628,12 +628,12 @@ class UnifiedDispatcher:
 
             runs = [GenerationRunsRepository._to_generation_run(row) for row in rows]
 
-            pipeline_svc = PipelineService(self._pipeline_bundle) if self._pipeline_bundle else None
+            pipeline_svc = PipelineService(self._pipeline_bundle)
             published = 0
             for run in runs:
                 if run.pipeline_id is None:
                     continue
-                pipeline = await pipeline_svc.get(run.pipeline_id) if pipeline_svc else None
+                pipeline = await pipeline_svc.get(run.pipeline_id)
                 if pipeline is None:
                     continue
                 results = await publish_svc.publish_run(run, pipeline)

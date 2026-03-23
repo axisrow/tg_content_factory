@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from datetime import date, datetime
 from unittest.mock import MagicMock, patch
@@ -634,3 +635,200 @@ def test_format_context_unknown_topic_in_grouping():
 def test_validate_prompt_template_rejects_unknown_variable():
     with pytest.raises(PromptTemplateError, match="Недопустимая переменная"):
         validate_prompt_template("Канал: {unknown}")
+
+
+# ── DeepagentsBackend property tests ───────────────────────────────────────────────
+
+
+def test_deepagents_backend_available_with_legacy_fallback(db, monkeypatch):
+    """DeepagentsBackend.available returns True with valid legacy fallback."""
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
+    monkeypatch.setenv("AGENT_FALLBACK_MODEL", "openai:gpt-4.1-mini")
+    monkeypatch.setenv("AGENT_FALLBACK_API_KEY", "test-key")
+
+    config = AppConfig()
+    mgr = AgentManager(db, config)
+
+    assert mgr._deepagents_backend.available is True
+
+
+def test_deepagents_backend_fallback_model_from_cache(db, monkeypatch):
+    """DeepagentsBackend.fallback_model returns model from last used."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+
+    config = AppConfig()
+    mgr = AgentManager(db, config)
+    mgr._deepagents_backend._last_used_model = "gpt-4.1-turbo"
+    mgr._deepagents_backend._last_used_provider = "openai"
+
+    assert mgr._deepagents_backend.fallback_model == "gpt-4.1-turbo"
+    assert mgr._deepagents_backend.fallback_provider == "openai"
+
+
+def test_deepagents_backend_fallback_provider_priority(db, monkeypatch):
+    """DeepagentsBackend.fallback_provider uses provider from model string."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setenv("AGENT_FALLBACK_MODEL", "groq:llama-3.1-8b")
+
+    config = AppConfig()
+    mgr = AgentManager(db, config)
+
+    assert mgr._deepagents_backend.fallback_provider == "groq"
+
+
+def test_deepagents_backend_configured_flag(db, monkeypatch):
+    """DeepagentsBackend.configured returns True when fallback is set."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setenv("AGENT_FALLBACK_MODEL", "openai:gpt-4.1-mini")
+
+    config = AppConfig()
+    mgr = AgentManager(db, config)
+
+    assert mgr._deepagents_backend.configured is True
+
+
+# ── Runtime status extended tests ──────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_runtime_status_dev_mode_override_respects_backend_override(db, monkeypatch):
+    """Runtime status respects dev mode backend override even when other backend is available."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "claude-key")
+    monkeypatch.setenv("AGENT_FALLBACK_MODEL", "openai:gpt-4.1-mini")
+    monkeypatch.setenv("AGENT_FALLBACK_API_KEY", "fallback-key")
+    await db.set_setting("agent_dev_mode_enabled", "1")
+    await db.set_setting("agent_backend_override", "claude")
+
+    mgr = AgentManager(db)
+    status = await mgr.get_runtime_status()
+
+    assert status.selected_backend == "claude"
+    assert status.using_override is True
+
+
+@pytest.mark.asyncio
+async def test_runtime_status_reports_error_when_override_backend_unavailable(db, monkeypatch):
+    """Runtime status reports error when overridden backend is unavailable."""
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
+    monkeypatch.setenv("AGENT_FALLBACK_MODEL", "openai:gpt-4.1-mini")
+    await db.set_setting("agent_dev_mode_enabled", "1")
+    await db.set_setting("agent_backend_override", "claude")
+
+    mgr = AgentManager(db)
+    with patch.object(mgr._deepagents_backend, "_build_agent", return_value=None):
+        mgr.initialize()
+    status = await mgr.get_runtime_status()
+
+    assert status.selected_backend == "claude"
+    assert status.error is not None
+    assert "claude-agent-sdk" in status.error
+
+
+@pytest.mark.asyncio
+async def test_runtime_status_fallback_info_includes_provider_details(db, monkeypatch):
+    """Runtime status includes fallback provider/model info."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "claude-key")
+    monkeypatch.setenv("AGENT_FALLBACK_MODEL", "groq:llama-3.1-8b")
+    monkeypatch.setenv("AGENT_FALLBACK_API_KEY", "groq-key")
+
+    mgr = AgentManager(db)
+    status = await mgr.get_runtime_status()
+
+    assert status.fallback_provider == "groq"
+    assert "llama" in status.fallback_model.lower()
+
+
+# ── DeepagentsBackend streaming tests ──────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_deepagents_backend_chat_stream_handles_exception(db, monkeypatch):
+    """DeepagentsBackend.chat_stream handles and propagates exceptions."""
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
+    monkeypatch.setenv("AGENT_FALLBACK_MODEL", "openai:gpt-4.1-mini")
+    monkeypatch.setenv("AGENT_FALLBACK_API_KEY", "test-key")
+
+    config = AppConfig()
+    mgr = AgentManager(db, config)
+
+    thread_id = await db.create_agent_thread("test")
+    await db.save_agent_message(thread_id, "user", "hello")
+
+    def fake_init_chat_model(*, model, model_provider, **kwargs):
+        raise RuntimeError("Provider init failed")
+
+    queue: asyncio.Queue[str | None] = asyncio.Queue()
+
+    with (
+        patch("langchain.chat_models.init_chat_model", fake_init_chat_model),
+        pytest.raises(RuntimeError, match="Provider init failed"),
+    ):
+        await mgr._deepagents_backend.chat_stream(
+            thread_id=thread_id,
+            prompt="test",
+            system_prompt="system",
+            stats={},
+            model=None,
+            queue=queue,
+        )
+
+
+# ── DeepagentsBackend tool tests ───────────────────────────────────────────────────
+
+
+def test_deepagents_search_tool_handles_exception(db, monkeypatch):
+    """_search_messages_tool returns friendly error on exception."""
+    mgr = AgentManager(db)
+
+    async def _broken_search(*args, **kwargs):
+        raise RuntimeError("DB unavailable")
+
+    monkeypatch.setattr(db, "search_messages", _broken_search)
+
+    # Force running outside loop
+    result = mgr._deepagents_backend._search_messages_tool("test")
+    assert "временно недоступен" in result or "Ничего не найдено" in result
+
+
+def test_deepagents_get_channels_tool_returns_empty_list_message(db, monkeypatch):
+    """_get_channels_tool returns message when no active channels."""
+    mgr = AgentManager(db)
+
+    async def _empty_channels(*args, **kwargs):
+        return []
+
+    monkeypatch.setattr(db, "get_channels", _empty_channels)
+
+    result = mgr._deepagents_backend._get_channels_tool()
+    assert "не найдены" in result
+
+
+# ── _build_prompt_stats_only tests ─────────────────────────────────────────────────
+
+
+def test_build_prompt_stats_only_empty_history(db):
+    """_build_prompt_stats_only returns correct stats for empty history."""
+    mgr = AgentManager(db)
+    stats = mgr._build_prompt_stats_only([], "hello")
+
+    assert stats["total_msgs"] == 0
+    assert stats["kept_msgs"] == 0
+    assert stats["prompt_chars"] > 0
+
+
+def test_build_prompt_stats_only_with_history(db):
+    """_build_prompt_stats_only returns correct stats with history."""
+    mgr = AgentManager(db)
+    history = [
+        {"role": "user", "content": "first question"},
+        {"role": "assistant", "content": "first answer"},
+    ]
+    stats = mgr._build_prompt_stats_only(history, "new question")
+
+    assert stats["total_msgs"] == 2
+    assert stats["kept_msgs"] == 2
+    assert "new question" not in stats  # stats only, no prompt built
+    assert stats["prompt_chars"] > 0

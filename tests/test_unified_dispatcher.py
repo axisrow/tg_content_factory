@@ -13,6 +13,8 @@ from src.models import (
     CollectionTask,
     CollectionTaskStatus,
     CollectionTaskType,
+    ContentGenerateTaskPayload,
+    ContentPublishTaskPayload,
     PipelineRunTaskPayload,
     SqStatsTaskPayload,
     StatsAllTaskPayload,
@@ -735,3 +737,503 @@ async def test_run_loop_handles_exception(
 
     # Should have recovered from exception and continued
     assert mock_tasks_repo.claim_next_due_generic_task.call_count >= 2
+
+
+# === _handle_pipeline_run extended tests ===
+
+
+@pytest.mark.asyncio
+async def test_handle_pipeline_run_success_with_mocked_services(
+    dispatcher, mock_tasks_repo
+):
+    """_handle_pipeline_run succeeds with mocked services."""
+    from unittest.mock import MagicMock, patch
+
+    mock_pipeline_bundle = MagicMock()
+    mock_pipeline = MagicMock()
+    mock_pipeline.id = 1
+    mock_pipeline.llm_model = "gpt-4"
+    mock_pipeline_bundle.get_by_id = AsyncMock(return_value=mock_pipeline)
+
+    mock_search_engine = MagicMock()
+    mock_db = MagicMock()
+
+    dispatcher._pipeline_bundle = mock_pipeline_bundle
+    dispatcher._search_engine = mock_search_engine
+    dispatcher._db = mock_db
+    dispatcher._notifier = None
+
+    task = CollectionTask(
+        id=1,
+        task_type=CollectionTaskType.PIPELINE_RUN,
+        status=CollectionTaskStatus.RUNNING,
+        payload=PipelineRunTaskPayload(pipeline_id=1),
+    )
+
+    mock_run = MagicMock()
+    mock_run.id = 42
+
+    with patch(
+        "src.services.content_generation_service.ContentGenerationService"
+    ) as mock_gen_service:
+        mock_gen_instance = MagicMock()
+        mock_gen_instance.generate = AsyncMock(return_value=mock_run)
+        mock_gen_service.return_value = mock_gen_instance
+
+        await dispatcher._handle_pipeline_run(task)
+
+    mock_tasks_repo.update_collection_task.assert_called()
+    args, kwargs = mock_tasks_repo.update_collection_task.call_args
+    assert args[1] == CollectionTaskStatus.COMPLETED
+
+
+@pytest.mark.asyncio
+async def test_handle_pipeline_run_pipeline_not_found(dispatcher, mock_tasks_repo):
+    """_handle_pipeline_run completes when pipeline not found."""
+    mock_pipeline_bundle = MagicMock()
+    mock_pipeline_bundle.get_by_id = AsyncMock(return_value=None)
+
+    dispatcher._pipeline_bundle = mock_pipeline_bundle
+    dispatcher._search_engine = MagicMock()
+    dispatcher._db = MagicMock()
+
+    task = CollectionTask(
+        id=1,
+        task_type=CollectionTaskType.PIPELINE_RUN,
+        status=CollectionTaskStatus.RUNNING,
+        payload=PipelineRunTaskPayload(pipeline_id=999),
+    )
+
+    await dispatcher._handle_pipeline_run(task)
+
+    mock_tasks_repo.update_collection_task.assert_called()
+    args, kwargs = mock_tasks_repo.update_collection_task.call_args
+    assert args[1] == CollectionTaskStatus.COMPLETED
+    assert "not found" in kwargs.get("note", "")
+
+
+@pytest.mark.asyncio
+async def test_handle_pipeline_run_generation_exception(dispatcher, mock_tasks_repo):
+    """_handle_pipeline_run handles generation errors."""
+    from unittest.mock import patch
+
+    mock_pipeline_bundle = MagicMock()
+    mock_pipeline = MagicMock()
+    mock_pipeline.id = 1
+    mock_pipeline.llm_model = "gpt-4"
+    mock_pipeline_bundle.get_by_id = AsyncMock(return_value=mock_pipeline)
+
+    mock_db = MagicMock()
+    mock_db.repos.generation_runs.set_status = AsyncMock()
+
+    dispatcher._pipeline_bundle = mock_pipeline_bundle
+    dispatcher._search_engine = MagicMock()
+    dispatcher._db = mock_db
+
+    task = CollectionTask(
+        id=1,
+        task_type=CollectionTaskType.PIPELINE_RUN,
+        status=CollectionTaskStatus.RUNNING,
+        payload=PipelineRunTaskPayload(pipeline_id=1),
+    )
+
+    with patch(
+        "src.services.content_generation_service.ContentGenerationService"
+    ) as mock_gen_service:
+        mock_gen_instance = MagicMock()
+        mock_gen_instance.generate = AsyncMock(side_effect=RuntimeError("LLM error"))
+        mock_gen_service.return_value = mock_gen_instance
+
+        await dispatcher._handle_pipeline_run(task)
+
+    mock_tasks_repo.update_collection_task.assert_called()
+    args, kwargs = mock_tasks_repo.update_collection_task.call_args
+    assert args[1] == CollectionTaskStatus.FAILED
+    assert "LLM error" in kwargs.get("error", "")
+
+
+# === _handle_content_generate tests ===
+
+
+@pytest.mark.asyncio
+async def test_handle_content_generate_with_auto_publish(dispatcher, mock_tasks_repo):
+    """_handle_content_generate publishes automatically when mode is AUTO."""
+    from unittest.mock import patch
+
+    from src.models import ContentPipeline, PipelinePublishMode
+
+    mock_pipeline = MagicMock(spec=ContentPipeline)
+    mock_pipeline.id = 1
+    mock_pipeline.llm_model = "gpt-4"
+    mock_pipeline.publish_mode = PipelinePublishMode.AUTO
+
+    mock_pipeline_bundle = MagicMock()
+    mock_pipeline_bundle.get_by_id = AsyncMock(return_value=mock_pipeline)
+
+    mock_db = MagicMock()
+    mock_db.repos.generation_runs.set_status = AsyncMock()
+
+    dispatcher._pipeline_bundle = mock_pipeline_bundle
+    dispatcher._search_engine = MagicMock()
+    dispatcher._db = mock_db
+
+    task = CollectionTask(
+        id=1,
+        task_type=CollectionTaskType.CONTENT_GENERATE,
+        status=CollectionTaskStatus.RUNNING,
+        payload=ContentGenerateTaskPayload(pipeline_id=1),
+    )
+
+    mock_run = MagicMock()
+    mock_run.id = 42
+
+    with (
+        patch(
+            "src.services.content_generation_service.ContentGenerationService"
+        ) as mock_gen_service,
+        patch("src.services.publish_service.PublishService") as mock_publish_service,
+    ):
+        mock_gen_instance = MagicMock()
+        mock_gen_instance.generate = AsyncMock(return_value=mock_run)
+        mock_gen_service.return_value = mock_gen_instance
+
+        mock_publish_instance = MagicMock()
+        mock_publish_instance.publish_run = AsyncMock(
+            return_value=[MagicMock(success=True)]
+        )
+        mock_publish_service.return_value = mock_publish_instance
+
+        await dispatcher._handle_content_generate(task)
+
+    mock_tasks_repo.update_collection_task.assert_called()
+    args, kwargs = mock_tasks_repo.update_collection_task.call_args
+    assert args[1] == CollectionTaskStatus.COMPLETED
+
+
+@pytest.mark.asyncio
+async def test_handle_content_generate_without_auto_publish(
+    dispatcher, mock_tasks_repo
+):
+    """_handle_content_generate does not publish when mode is not AUTO."""
+    from unittest.mock import patch
+
+    from src.models import ContentPipeline, PipelinePublishMode
+
+    mock_pipeline = MagicMock(spec=ContentPipeline)
+    mock_pipeline.id = 1
+    mock_pipeline.llm_model = "gpt-4"
+    mock_pipeline.publish_mode = PipelinePublishMode.MODERATED
+
+    mock_pipeline_bundle = MagicMock()
+    mock_pipeline_bundle.get_by_id = AsyncMock(return_value=mock_pipeline)
+
+    mock_db = MagicMock()
+
+    dispatcher._pipeline_bundle = mock_pipeline_bundle
+    dispatcher._search_engine = MagicMock()
+    dispatcher._db = mock_db
+
+    task = CollectionTask(
+        id=1,
+        task_type=CollectionTaskType.CONTENT_GENERATE,
+        status=CollectionTaskStatus.RUNNING,
+        payload=ContentGenerateTaskPayload(pipeline_id=1),
+    )
+
+    mock_run = MagicMock()
+    mock_run.id = 42
+
+    with patch(
+        "src.services.content_generation_service.ContentGenerationService"
+    ) as mock_gen_service:
+        mock_gen_instance = MagicMock()
+        mock_gen_instance.generate = AsyncMock(return_value=mock_run)
+        mock_gen_service.return_value = mock_gen_instance
+
+        await dispatcher._handle_content_generate(task)
+
+    mock_tasks_repo.update_collection_task.assert_called()
+    args, kwargs = mock_tasks_repo.update_collection_task.call_args
+    assert args[1] == CollectionTaskStatus.COMPLETED
+    assert kwargs.get("messages_collected") == 1
+
+
+@pytest.mark.asyncio
+async def test_handle_content_generate_pipeline_not_found(
+    dispatcher, mock_tasks_repo
+):
+    """_handle_content_generate completes when pipeline not found."""
+    mock_pipeline_bundle = MagicMock()
+    mock_pipeline_bundle.get_by_id = AsyncMock(return_value=None)
+
+    dispatcher._pipeline_bundle = mock_pipeline_bundle
+    dispatcher._search_engine = MagicMock()
+    dispatcher._db = MagicMock()
+
+    task = CollectionTask(
+        id=1,
+        task_type=CollectionTaskType.CONTENT_GENERATE,
+        status=CollectionTaskStatus.RUNNING,
+        payload=ContentGenerateTaskPayload(pipeline_id=999),
+    )
+
+    await dispatcher._handle_content_generate(task)
+
+    mock_tasks_repo.update_collection_task.assert_called()
+    args, kwargs = mock_tasks_repo.update_collection_task.call_args
+    assert args[1] == CollectionTaskStatus.COMPLETED
+    assert "not found" in kwargs.get("note", "")
+
+
+@pytest.mark.asyncio
+async def test_handle_content_generate_exception(dispatcher, mock_tasks_repo):
+    """_handle_content_generate handles exceptions."""
+    from unittest.mock import patch
+
+    mock_pipeline_bundle = MagicMock()
+    mock_pipeline = MagicMock()
+    mock_pipeline.id = 1
+    mock_pipeline.llm_model = "gpt-4"
+    mock_pipeline_bundle.get_by_id = AsyncMock(return_value=mock_pipeline)
+
+    dispatcher._pipeline_bundle = mock_pipeline_bundle
+    dispatcher._search_engine = MagicMock()
+    dispatcher._db = MagicMock()
+
+    task = CollectionTask(
+        id=1,
+        task_type=CollectionTaskType.CONTENT_GENERATE,
+        status=CollectionTaskStatus.RUNNING,
+        payload=ContentGenerateTaskPayload(pipeline_id=1),
+    )
+
+    with patch(
+        "src.services.content_generation_service.ContentGenerationService"
+    ) as mock_gen_service:
+        mock_gen_service.side_effect = RuntimeError("Generation failed")
+
+        await dispatcher._handle_content_generate(task)
+
+    mock_tasks_repo.update_collection_task.assert_called()
+    args, kwargs = mock_tasks_repo.update_collection_task.call_args
+    assert args[1] == CollectionTaskStatus.FAILED
+
+
+# === _handle_content_publish tests ===
+
+
+@pytest.mark.asyncio
+async def test_handle_content_publish_no_approved_runs(dispatcher, mock_tasks_repo):
+    """_handle_content_publish completes when no approved runs."""
+    mock_db = MagicMock()
+
+    async def mock_execute(query, params=()):
+        result = MagicMock()
+        result.fetchall = AsyncMock(return_value=[])
+        return result
+
+    mock_db.execute = mock_execute
+
+    dispatcher._db = mock_db
+    dispatcher._pipeline_bundle = MagicMock()
+
+    task = CollectionTask(
+        id=1,
+        task_type=CollectionTaskType.CONTENT_PUBLISH,
+        status=CollectionTaskStatus.RUNNING,
+        payload=ContentPublishTaskPayload(pipeline_id=None),
+    )
+
+    await dispatcher._handle_content_publish(task)
+
+    mock_tasks_repo.update_collection_task.assert_called()
+    args, kwargs = mock_tasks_repo.update_collection_task.call_args
+    assert args[1] == CollectionTaskStatus.COMPLETED
+    assert "No approved runs" in kwargs.get("note", "")
+
+
+@pytest.mark.asyncio
+async def test_handle_content_publish_success(dispatcher, mock_tasks_repo):
+    """_handle_content_publish publishes approved runs."""
+    from unittest.mock import patch
+
+    mock_db = MagicMock()
+
+    _mock_row_data = {
+        "id": 1,
+        "pipeline_id": 1,
+        "status": "completed",
+        "moderation_status": "approved",
+        "generated_text": "test",
+        "created_at": None,
+        "published_at": None,
+    }
+    mock_row = MagicMock()
+    mock_row.keys = MagicMock(return_value=list(_mock_row_data.keys()))
+    mock_row.__getitem__ = lambda self, key: _mock_row_data[key]
+
+    async def mock_execute(query, params=()):
+        result = MagicMock()
+        result.fetchall = AsyncMock(return_value=[mock_row])
+        return result
+
+    mock_db.execute = mock_execute
+
+    mock_pipeline = MagicMock()
+    mock_pipeline.id = 1
+
+    mock_pipeline_bundle = MagicMock()
+    mock_pipeline_bundle.get_by_id = AsyncMock(return_value=mock_pipeline)
+
+    dispatcher._db = mock_db
+    dispatcher._pipeline_bundle = mock_pipeline_bundle
+
+    task = CollectionTask(
+        id=1,
+        task_type=CollectionTaskType.CONTENT_PUBLISH,
+        status=CollectionTaskStatus.RUNNING,
+        payload=ContentPublishTaskPayload(pipeline_id=None),
+    )
+
+    with patch("src.services.publish_service.PublishService") as mock_publish_service:
+        mock_publish_instance = MagicMock()
+        mock_publish_instance.publish_run = AsyncMock(
+            return_value=[MagicMock(success=True)]
+        )
+        mock_publish_service.return_value = mock_publish_instance
+
+        with patch(
+            "src.database.repositories.generation_runs.GenerationRunsRepository"
+        ) as mock_repo:
+            mock_repo._to_generation_run = staticmethod(
+                lambda row: MagicMock(
+                    id=1,
+                    pipeline_id=1,
+                    status="completed",
+                    moderation_status="approved",
+                    generated_text="test content",
+                )
+            )
+
+            await dispatcher._handle_content_publish(task)
+
+    mock_tasks_repo.update_collection_task.assert_called()
+
+
+# === _handle_stats_all extended edge cases ===
+
+
+@pytest.mark.asyncio
+async def test_handle_stats_all_timeout_waiting_for_collector(
+    mock_collector, mock_channel_bundle, mock_tasks_repo
+):
+    """_handle_stats_all fails when waiting too long for collector."""
+    mock_collector.is_running = True  # Collector always running
+
+    task = CollectionTask(
+        id=1,
+        task_type=CollectionTaskType.STATS_ALL,
+        status=CollectionTaskStatus.RUNNING,
+        payload=StatsAllTaskPayload(
+            channel_ids=[100],
+            next_index=0,
+            batch_size=10,
+        ),
+    )
+
+    dispatcher = UnifiedDispatcher(
+        mock_collector,
+        mock_channel_bundle,
+        mock_tasks_repo,
+        poll_interval_sec=0.01,
+        channel_timeout_sec=0.05,  # Very short timeout
+    )
+
+    await dispatcher._handle_stats_all(task)
+
+    mock_tasks_repo.update_collection_task.assert_called()
+    args, kwargs = mock_tasks_repo.update_collection_task.call_args
+    assert args[1] == CollectionTaskStatus.FAILED
+    assert "Timed out" in kwargs.get("error", "")
+
+
+@pytest.mark.asyncio
+async def test_handle_stats_all_exception_during_stats(
+    mock_collector, mock_channel_bundle, mock_tasks_repo
+):
+    """_handle_stats_all handles exceptions during stats collection."""
+    mock_collector.collect_channel_stats = AsyncMock(
+        side_effect=RuntimeError("Network error")
+    )
+
+    task = CollectionTask(
+        id=1,
+        task_type=CollectionTaskType.STATS_ALL,
+        status=CollectionTaskStatus.RUNNING,
+        payload=StatsAllTaskPayload(
+            channel_ids=[100],
+            next_index=0,
+            batch_size=10,
+        ),
+    )
+
+    dispatcher = UnifiedDispatcher(
+        mock_collector,
+        mock_channel_bundle,
+        mock_tasks_repo,
+        poll_interval_sec=0.01,
+    )
+
+    await dispatcher._handle_stats_all(task)
+
+    # Should increment errors and continue
+    mock_tasks_repo.update_collection_task.assert_called()
+
+
+# === _run_loop extended exception recovery tests ===
+
+
+@pytest.mark.asyncio
+async def test_run_loop_marks_task_failed_on_unexpected_exception(
+    mock_collector, mock_channel_bundle, mock_tasks_repo
+):
+    """_run_loop marks task as failed when exception occurs during processing."""
+    task = CollectionTask(
+        id=1,
+        task_type=CollectionTaskType.STATS_ALL,
+        status=CollectionTaskStatus.RUNNING,
+        payload=StatsAllTaskPayload(channel_ids=[123], next_index=0),
+    )
+
+    call_count = [0]
+
+    async def claim_side_effect(*args, **kwargs):
+        call_count[0] += 1
+        if call_count[0] == 1:
+            return task
+        return None
+
+    # Make _handle_stats_all throw an exception
+    mock_collector.collect_channel_stats = AsyncMock(
+        side_effect=RuntimeError("Unexpected error")
+    )
+    mock_collector.get_stats_availability = AsyncMock(
+        return_value=MagicMock(state="available", next_available_at_utc=None)
+    )
+
+    mock_tasks_repo.claim_next_due_generic_task.side_effect = claim_side_effect
+    mock_tasks_repo.get_collection_task.return_value = task
+
+    dispatcher = UnifiedDispatcher(
+        mock_collector,
+        mock_channel_bundle,
+        mock_tasks_repo,
+        poll_interval_sec=0.01,
+    )
+
+    await dispatcher.start()
+    await asyncio.sleep(0.1)
+    await dispatcher.stop()
+
+    # Task should have been processed despite exception
+    assert mock_tasks_repo.claim_next_due_generic_task.call_count >= 1

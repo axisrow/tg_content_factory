@@ -118,7 +118,13 @@ class CollectionTask(BaseModel):
     note: str | None = None
     run_after: datetime | None = None
     payload: (
-        dict[str, Any] | StatsAllTaskPayload | SqStatsTaskPayload | PipelineRunTaskPayload | None
+        dict[str, Any]
+        | StatsAllTaskPayload
+        | SqStatsTaskPayload
+        | PipelineRunTaskPayload
+        | ContentGenerateTaskPayload
+        | ContentPublishTaskPayload
+        | None
     ) = None
     parent_task_id: int | None = None
     created_at: datetime | None = None
