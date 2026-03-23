@@ -3,10 +3,13 @@ from __future__ import annotations
 import importlib.metadata
 import logging
 import os
+import re
 import tomllib
+from datetime import datetime, timezone
 
 from fastapi import Request
 from fastapi.templating import Jinja2Templates
+from markupsafe import Markup, escape
 
 from src.config import AppConfig, is_provider_model_ref
 from src.web.paths import TEMPLATES_DIR
@@ -71,10 +74,45 @@ def _agent_available_for_request(request: Request) -> bool:
     return _agent_available(getattr(request.app.state, "config", None))
 
 
+def local_dt_filter(value: datetime | str | None, fmt: str = "datetime") -> Markup:
+    """Jinja2 filter: renders a UTC datetime as a client-side localised span.
+
+    The span contains the ISO-8601 UTC string in ``data-utc`` and the desired
+    format key in ``data-fmt``.  A small JS snippet in base.html converts it to
+    the browser's local time on load and after every HTMX swap.
+    """
+    if value is None:
+        return Markup("—")
+
+    # Normalise to an ISO-8601 string with explicit UTC offset so that
+    # JavaScript's Date() always interprets it as UTC.
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        iso = value.isoformat()
+    else:
+        s = str(value).strip()
+        if not s:
+            return Markup("—")
+        # Append Z if there is no timezone indicator already (handles both +HH:MM and -HH:MM)
+        if s[-1] != "Z" and not re.search(r"[+-]\d{2}:\d{2}$", s):
+            s = s + "Z"
+        iso = s
+
+    # Server-side fallback text shown before JS runs
+    if isinstance(value, datetime):
+        fallback = value.strftime("%Y-%m-%d %H:%M")
+    else:
+        fallback = str(value)[:16]
+
+    return Markup(f'<span class="local-dt" data-utc="{escape(iso)}" data-fmt="{escape(fmt)}">{escape(fallback)}</span>')
+
+
 def configure_template_globals(
     templates: Jinja2Templates,
     config: AppConfig | None = None,
 ) -> Jinja2Templates:
     templates.env.globals["agent_available"] = _agent_available_for_request
     templates.env.globals["app_version"] = get_app_version()
+    templates.env.filters["local_dt"] = local_dt_filter
     return templates
