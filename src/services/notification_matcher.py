@@ -76,6 +76,6 @@ def _fts_query_matches(fts_query: str, text: str) -> bool:
     for part in parts:
         part = part.strip().strip("()")
         alternatives = re.split(r"\bOR\b", part, flags=re.IGNORECASE)
-        if not any(alt.strip().strip('"').lower() in text_lower for alt in alternatives):
+        if not any(alt.strip().strip('"').rstrip("*").lower() in text_lower for alt in alternatives):
             return False
     return True

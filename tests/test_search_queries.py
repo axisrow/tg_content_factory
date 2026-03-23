@@ -260,6 +260,29 @@ async def test_fts_collector_matching():
 
 
 @pytest.mark.asyncio
+async def test_fts_query_matches_wildcards():
+    """Test _fts_query_matches handles FTS5 trailing wildcards."""
+    from src.services.notification_matcher import _fts_query_matches
+
+    # Single wildcard term
+    assert _fts_query_matches("байк*", "аренда байка на день")
+    assert _fts_query_matches("байк*", "байки в аренду")
+    assert not _fts_query_matches("байк*", "аренда машины")
+
+    # Full user query with wildcards in both AND groups
+    query = "(байк* OR мотобайк* OR мотоцикл* OR скутер*) AND (аренд* OR сня* OR взя*)"
+    assert _fts_query_matches(query, "хочу снять байк на неделю")
+    assert _fts_query_matches(query, "аренда мотоцикла в Бали")
+    assert _fts_query_matches(query, "взять скутер напрокат")
+    assert not _fts_query_matches(query, "продажа байка")
+    assert not _fts_query_matches(query, "аренда квартиры")
+
+    # Simple wildcard
+    assert _fts_query_matches("джомтьен*", "пляж джомтьена")
+    assert not _fts_query_matches("джомтьен*", "паттайя центр")
+
+
+@pytest.mark.asyncio
 async def test_exclude_patterns_list_property():
     sq = SearchQuery(query="test", exclude_patterns="foo\nbar\n  baz  \n\n")
     assert sq.exclude_patterns_list == ["foo", "bar", "baz"]
