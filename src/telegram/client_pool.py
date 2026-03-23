@@ -419,6 +419,21 @@ class ClientPool:
         lease = await self._connect_account(account)
         await self._backend_router.release(lease)
 
+    async def reconnect_phone(self, phone: str) -> bool:
+        """Attempt to reconnect a disconnected client. Returns True on success."""
+        session = self.clients.get(phone)
+        if session is None:
+            return False
+        try:
+            client = session.raw_client
+            if not client.is_connected():
+                logger.info("Reconnecting client for %s", phone)
+                await client.connect()
+            return client.is_connected()
+        except Exception:
+            logger.exception("Failed to reconnect client for %s", phone)
+            return False
+
     async def remove_client(self, phone: str) -> None:
         self._session_overrides.pop(phone, None)
         async with self._lock:

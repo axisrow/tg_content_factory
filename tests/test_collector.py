@@ -652,6 +652,102 @@ async def test_collection_queue_skips_filtered_channel(db):
 
 
 @pytest.mark.asyncio
+async def test_connection_error_triggers_reconnect_and_requeue(db):
+    """ConnectionError during collection triggers reconnect and re-enqueues the task."""
+    from src.collection_queue import CollectionQueue
+
+    ch = Channel(channel_id=-100170, title="Reconnect Test")
+    await db.add_channel(ch)
+    channels = await db.get_channels()
+    stored_ch = next(c for c in channels if c.channel_id == -100170)
+
+    call_count = 0
+
+    async def _collect_side_effect(channel, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise ConnectionError("Cannot send requests while disconnected")
+        return 5
+
+    pool = make_mock_pool()
+    pool.reconnect_phone = AsyncMock(return_value=True)
+    pool.clients = {"+1234": MagicMock()}
+
+    collector = Collector(pool, db, SchedulerConfig())
+    collector.collect_single_channel = AsyncMock(side_effect=_collect_side_effect)
+
+    queue = CollectionQueue(collector, db)
+    task_id = await queue.enqueue(stored_ch)
+    await asyncio.sleep(1.0)
+
+    task = await db.get_collection_task(task_id)
+    assert task.status == "completed"
+    assert call_count == 2
+    pool.reconnect_phone.assert_awaited_once_with("+1234")
+
+    await queue.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_connection_error_no_retry_after_max(db):
+    """Second ConnectionError after retry marks task as FAILED."""
+    from src.collection_queue import CollectionQueue
+
+    ch = Channel(channel_id=-100171, title="No Retry Test")
+    await db.add_channel(ch)
+    channels = await db.get_channels()
+    stored_ch = next(c for c in channels if c.channel_id == -100171)
+
+    pool = make_mock_pool()
+    pool.reconnect_phone = AsyncMock(return_value=True)
+    pool.clients = {"+1234": MagicMock()}
+
+    collector = Collector(pool, db, SchedulerConfig())
+    collector.collect_single_channel = AsyncMock(
+        side_effect=ConnectionError("Cannot send requests while disconnected")
+    )
+
+    queue = CollectionQueue(collector, db)
+    task_id = await queue.enqueue(stored_ch)
+    await asyncio.sleep(1.0)
+
+    task = await db.get_collection_task(task_id)
+    assert task.status == "failed"
+
+    await queue.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_connection_error_reconnect_fails(db):
+    """When reconnect fails, task is marked as FAILED immediately."""
+    from src.collection_queue import CollectionQueue
+
+    ch = Channel(channel_id=-100172, title="Reconnect Fail Test")
+    await db.add_channel(ch)
+    channels = await db.get_channels()
+    stored_ch = next(c for c in channels if c.channel_id == -100172)
+
+    pool = make_mock_pool()
+    pool.reconnect_phone = AsyncMock(return_value=False)
+    pool.clients = {"+1234": MagicMock()}
+
+    collector = Collector(pool, db, SchedulerConfig())
+    collector.collect_single_channel = AsyncMock(
+        side_effect=ConnectionError("Cannot send requests while disconnected")
+    )
+
+    queue = CollectionQueue(collector, db)
+    task_id = await queue.enqueue(stored_ch)
+    await asyncio.sleep(0.5)
+
+    task = await db.get_collection_task(task_id)
+    assert task.status == "failed"
+
+    await queue.shutdown()
+
+
+@pytest.mark.asyncio
 async def test_enqueue_all_channels_uses_incremental_queue_tasks(db):
     from src.collection_queue import CollectionQueue
     from src.services.collection_service import CollectionService
