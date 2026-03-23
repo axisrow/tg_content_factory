@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 
 from fastapi import Request
 from fastapi.templating import Jinja2Templates
-from markupsafe import Markup
+from markupsafe import Markup, escape
 
 from src.config import AppConfig, is_provider_model_ref
 from src.web.paths import TEMPLATES_DIR
@@ -104,7 +104,7 @@ def local_dt_filter(value: datetime | str | None, fmt: str = "datetime") -> Mark
     else:
         fallback = str(value)[:16]
 
-    return Markup(f'<span class="local-dt" data-utc="{iso}" data-fmt="{fmt}">{fallback}</span>')
+    return Markup(f'<span class="local-dt" data-utc="{iso}" data-fmt="{escape(fmt)}">{fallback}</span>')
 
 
 def configure_template_globals(
