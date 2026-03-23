@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import logging
+import os
 import re
 import secrets
 import time
@@ -79,8 +80,18 @@ def _resolve_action_label(path: str) -> str:
     return ""
 
 
+_PROFILING_ENABLED = os.environ.get("ENV", "PROD").upper() == "DEV"
+
+
 class TimingMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
+        profiler = None
+        if _PROFILING_ENABLED:
+            from src.web.timing import RequestProfiler
+
+            profiler = RequestProfiler()
+            profiler.activate()
+
         t0 = time.monotonic()
         response = None
         try:
@@ -92,15 +103,27 @@ class TimingMiddleware(BaseHTTPMiddleware):
                 status = response.status_code if response is not None else 500
                 buf = getattr(request.app.state, "timing_buffer", None)
                 if buf is not None:
-                    buf.add({
+                    record = {
                         "time": time.strftime("%H:%M:%S"),
                         "method": request.method,
                         "path": path,
                         "status": status,
                         "ms": ms,
-                    })
+                    }
+                    if profiler is not None:
+                        record.update(profiler.to_breakdown())
+                    buf.add(record)
                 if ms > 500:
-                    logger.warning("SLOW %s %s %dms [%d]", request.method, path, ms, status)
+                    if profiler is not None:
+                        bd = profiler.to_breakdown()
+                        logger.warning(
+                            "SLOW %s %s %dms [%d] db=%dms/%dq",
+                            request.method, path, ms, status, bd["db_ms"], bd["db_queries"],
+                        )
+                    else:
+                        logger.warning("SLOW %s %s %dms [%d]", request.method, path, ms, status)
+            if profiler is not None:
+                profiler.deactivate()
         return response
 
 
