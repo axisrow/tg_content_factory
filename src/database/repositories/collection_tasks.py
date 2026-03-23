@@ -63,6 +63,8 @@ class CollectionTasksRepository:
             | StatsAllTaskPayload
             | SqStatsTaskPayload
             | PipelineRunTaskPayload
+            | ContentGenerateTaskPayload
+            | ContentPublishTaskPayload
             | None
         ),
     ) -> str | None:
@@ -429,7 +431,15 @@ class CollectionTasksRepository:
         task_type: CollectionTaskType | str,
         *,
         title: str = "",
-        payload: dict[str, Any] | StatsAllTaskPayload | SqStatsTaskPayload | None = None,
+        payload: (
+            dict[str, Any]
+            | StatsAllTaskPayload
+            | SqStatsTaskPayload
+            | PipelineRunTaskPayload
+            | ContentGenerateTaskPayload
+            | ContentPublishTaskPayload
+            | None
+        ) = None,
         run_after: datetime | None = None,
         parent_task_id: int | None = None,
     ) -> int:

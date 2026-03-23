@@ -115,6 +115,8 @@ def test_handled_types_contains_expected():
     assert "photo_due" in HANDLED_TYPES
     assert "photo_auto" in HANDLED_TYPES
     assert "pipeline_run" in HANDLED_TYPES
+    assert "content_generate" in HANDLED_TYPES
+    assert "content_publish" in HANDLED_TYPES
 
 
 # === start/stop tests ===
@@ -874,8 +876,6 @@ async def test_handle_content_generate_with_auto_publish(dispatcher, mock_tasks_
     dispatcher._pipeline_bundle = mock_pipeline_bundle
     dispatcher._search_engine = MagicMock()
     dispatcher._db = mock_db
-    dispatcher._collector = MagicMock()
-    dispatcher._collector._pool = MagicMock()
 
     task = CollectionTask(
         id=1,
@@ -1086,8 +1086,6 @@ async def test_handle_content_publish_success(dispatcher, mock_tasks_repo):
     mock_pipeline_bundle.get_by_id = AsyncMock(return_value=mock_pipeline)
 
     dispatcher._db = mock_db
-    dispatcher._collector = MagicMock()
-    dispatcher._collector._pool = MagicMock()
     dispatcher._pipeline_bundle = mock_pipeline_bundle
 
     task = CollectionTask(
