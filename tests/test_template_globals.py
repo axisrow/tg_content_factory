@@ -42,9 +42,18 @@ def test_string_with_z_unchanged():
     assert "ZZ" not in result
 
 
-def test_string_with_offset_unchanged():
+def test_string_with_positive_offset_unchanged():
     result = str(local_dt_filter("2024-03-15T12:30:00+02:00"))
     assert "2024-03-15T12:30:00+02:00" in result
+    assert "ZZ" not in result
+    assert result.count("Z") == 0
+
+
+def test_string_with_negative_offset_unchanged():
+    # Negative UTC offsets like -05:00 must not get Z appended (would produce invalid ISO)
+    result = str(local_dt_filter("2024-03-15T10:30:00-05:00"))
+    assert "2024-03-15T10:30:00-05:00" in result
+    assert "Z" not in result
 
 
 def test_fmt_date_attribute():

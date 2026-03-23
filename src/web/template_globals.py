@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.metadata
 import logging
 import os
+import re
 import tomllib
 from datetime import datetime, timezone
 
@@ -93,8 +94,8 @@ def local_dt_filter(value: datetime | str | None, fmt: str = "datetime") -> Mark
         s = str(value).strip()
         if not s:
             return Markup("—")
-        # Append Z if there is no timezone indicator already
-        if "+" not in s and s[-1] != "Z" and not s.endswith("+00:00"):
+        # Append Z if there is no timezone indicator already (handles both +HH:MM and -HH:MM)
+        if s[-1] != "Z" and not re.search(r"[+-]\d{2}:\d{2}$", s):
             s = s + "Z"
         iso = s
 
@@ -104,7 +105,7 @@ def local_dt_filter(value: datetime | str | None, fmt: str = "datetime") -> Mark
     else:
         fallback = str(value)[:16]
 
-    return Markup(f'<span class="local-dt" data-utc="{iso}" data-fmt="{escape(fmt)}">{fallback}</span>')
+    return Markup(f'<span class="local-dt" data-utc="{escape(iso)}" data-fmt="{escape(fmt)}">{escape(fallback)}</span>')
 
 
 def configure_template_globals(
