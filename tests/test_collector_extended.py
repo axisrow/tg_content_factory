@@ -151,6 +151,11 @@ async def test_fts_query_matches_logic():
     assert not _fts_query_matches("(apple OR orange) AND fruit", "I love apple juice")
     assert _fts_query_matches("simple", "Simple query test")
 
+    # FTS5 wildcard support
+    assert _fts_query_matches("apple*", "I love apples")
+    assert _fts_query_matches("(apple* OR orange*) AND fruit*", "fresh apple fruits")
+    assert not _fts_query_matches("apple*", "I love bananas")
+
 
 @pytest.mark.asyncio
 async def test_collect_channel_stats_flooded_error(collector, mock_pool):

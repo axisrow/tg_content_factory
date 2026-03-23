@@ -11,7 +11,7 @@ from httpx import ASGITransport, AsyncClient
 from src.collection_queue import CollectionQueue
 from src.config import AppConfig
 from src.database import Database
-from src.models import Account, CollectionTaskStatus, StatsAllTaskPayload
+from src.models import Account, CollectionTaskStatus, SearchQuery, StatsAllTaskPayload
 from src.scheduler.manager import SchedulerManager
 from src.search.ai_search import AISearchEngine
 from src.search.engine import SearchEngine
@@ -492,3 +492,52 @@ async def test_scheduler_page_with_cancelled_task(client):
 
     resp = await client.get("/scheduler/")
     assert resp.status_code == 200
+
+
+# ── Dry-run notification tests ──────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_dry_run_no_queries(client):
+    """Dry-run with no notification queries shows empty state."""
+    resp = await client.post("/scheduler/dry-run-notifications")
+    assert resp.status_code == 200
+    assert "Нет активных запросов" in resp.text
+
+
+@pytest.mark.asyncio
+async def test_dry_run_excludes_inactive_queries(client):
+    """Dry-run excludes queries with is_active=False."""
+    db = client._transport.app.state.db
+    await db.repos.search_queries.add(SearchQuery(
+        query="active_query", notify_on_collect=True, is_active=True, is_fts=False,
+    ))
+    await db.repos.search_queries.add(SearchQuery(
+        query="inactive_query", notify_on_collect=True, is_active=False, is_fts=False,
+    ))
+    resp = await client.post("/scheduler/dry-run-notifications")
+    assert resp.status_code == 200
+    assert "inactive_query" not in resp.text
+
+
+@pytest.mark.asyncio
+async def test_dry_run_excludes_disabled_scheduler_job(client):
+    """Dry-run excludes queries whose scheduler job is disabled."""
+    db = client._transport.app.state.db
+    # Create a completed collection task so dry-run has a time window
+    task_id = await db.create_collection_task(channel_id=-1001234567890, channel_title="Test")
+    await db.update_collection_task(task_id, CollectionTaskStatus.COMPLETED)
+
+    await db.repos.search_queries.add(SearchQuery(
+        query="enabled_job_query", notify_on_collect=True, is_active=True, is_fts=False,
+    ))
+    disabled_id = await db.repos.search_queries.add(SearchQuery(
+        query="disabled_job_query", notify_on_collect=True, is_active=True, is_fts=False,
+    ))
+    # Disable the scheduler job for the second query
+    await db.repos.settings.set_setting(f"scheduler_job_disabled:sq_{disabled_id}", "1")
+
+    resp = await client.post("/scheduler/dry-run-notifications")
+    assert resp.status_code == 200
+    assert "enabled_job_query" in resp.text
+    assert "disabled_job_query" not in resp.text
