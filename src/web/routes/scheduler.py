@@ -314,6 +314,13 @@ async def dry_run_notifications(request: Request):
         since = None
 
     queries = await db.get_notification_queries(active_only=True)
+    # Exclude queries whose scheduler job is disabled
+    filtered = []
+    for sq in queries:
+        val = await db.repos.settings.get_setting(f"scheduler_job_disabled:sq_{sq.id}")
+        if val != "1":
+            filtered.append(sq)
+    queries = filtered
     if not queries:
         return deps.get_templates(request).TemplateResponse(
             request,
