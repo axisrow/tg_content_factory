@@ -20,6 +20,7 @@ class CollectionQueue:
         self._queue: asyncio.Queue[tuple[int, Channel, bool, bool]] = asyncio.Queue()
         self._worker: asyncio.Task | None = None
         self._current_task_id: int | None = None
+        self._retried_tasks: set[int] = set()
 
     async def enqueue(self, channel: Channel, force: bool = False, full: bool = True) -> int | None:
         """Enqueue a channel for collection, atomically skipping duplicates.
@@ -160,6 +161,15 @@ class CollectionQueue:
                         note=note,
                     )
                     logger.info("Collected %d messages from channel %d", count, channel.channel_id)
+            except (ConnectionError, OSError) as exc:
+                requeued = await self._try_reconnect_and_requeue(task_id, channel, full, force, exc)
+                if not requeued:
+                    await self._channels.update_collection_task(
+                        task_id,
+                        CollectionTaskStatus.FAILED,
+                        error=str(exc)[:500],
+                    )
+                    logger.exception("Collection failed for channel %d (reconnect failed)", channel.channel_id)
             except Exception as exc:
                 await self._channels.update_collection_task(
                     task_id,
@@ -170,6 +180,31 @@ class CollectionQueue:
             finally:
                 self._current_task_id = None
                 self._queue.task_done()
+
+    async def _try_reconnect_and_requeue(
+        self, task_id: int, channel: Channel, full: bool, force: bool, exc: Exception
+    ) -> bool:
+        """Try to reconnect the Telegram client and re-enqueue the failed task. Returns True if requeued."""
+        if task_id in self._retried_tasks:
+            return False
+        pool = getattr(self._collector, "_pool", None)
+        if pool is None or not hasattr(pool, "reconnect_phone"):
+            return False
+        reconnected = False
+        for phone in list(pool.clients):
+            if await pool.reconnect_phone(phone):
+                reconnected = True
+                break
+        if not reconnected:
+            return False
+        self._retried_tasks.add(task_id)
+        await self._channels.update_collection_task(task_id, CollectionTaskStatus.PENDING, note="Reconnect retry")
+        self._queue.put_nowait((task_id, channel, full, force))
+        logger.warning(
+            "ConnectionError for channel %d, reconnected and re-queued task %d: %s",
+            channel.channel_id, task_id, exc,
+        )
+        return True
 
     async def requeue_startup_tasks(self) -> int:
         """Re-enqueue pending collection tasks that survived a server restart.
