@@ -161,7 +161,7 @@ class CollectionQueue:
                         note=note,
                     )
                     logger.info("Collected %d messages from channel %d", count, channel.channel_id)
-            except (ConnectionError, OSError) as exc:
+            except ConnectionError as exc:
                 requeued = await self._try_reconnect_and_requeue(task_id, channel, full, force, exc)
                 if not requeued:
                     await self._channels.update_collection_task(
@@ -192,9 +192,8 @@ class CollectionQueue:
             return False
         reconnected = False
         for phone in list(pool.clients):
-            if await pool.reconnect_phone(phone):
-                reconnected = True
-                break
+            result = await pool.reconnect_phone(phone)
+            reconnected = reconnected or result
         if not reconnected:
             return False
         self._retried_tasks.add(task_id)
@@ -247,3 +246,4 @@ class CollectionQueue:
                 await self._worker
             except asyncio.CancelledError:
                 pass
+        self._retried_tasks.clear()
