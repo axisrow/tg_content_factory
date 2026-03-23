@@ -122,6 +122,12 @@ class TimingMiddleware(BaseHTTPMiddleware):
                         )
                     else:
                         logger.warning("SLOW %s %s %dms [%d]", request.method, path, ms, status)
+                elif profiler is not None:
+                    bd = profiler.to_breakdown()
+                    logger.info(
+                        "%s %s %dms [%d] db=%dms/%dq",
+                        request.method, path, ms, status, bd["db_ms"], bd["db_queries"],
+                    )
             if profiler is not None:
                 profiler.deactivate()
         return response
