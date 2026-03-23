@@ -359,6 +359,8 @@ class TelethonCliBackend(TelegramBackend):
         )
         try:
             client: TelegramClient = telethon_cli_runtime.create_client(namespace)
+            client._connection_retries = None
+            client._retry_delay = 2
             client.flood_sleep_threshold = 60
             await client.connect()
             if not await client.is_user_authorized():
