@@ -538,7 +538,7 @@ class TestChannelStatsTool:
     async def test_with_stats(self, mock_db):
         mock_db.repos = MagicMock()
         mock_db.repos.channels.get_latest_stats_for_all = AsyncMock(
-            return_value=[{"channel_id": 100, "subscribers": 5000, "avg_views": 1200}]
+            return_value={100: SimpleNamespace(channel_id=100, subscriber_count=5000, avg_views=1200)}
         )
         handlers = _get_tool_handlers(mock_db)
 
@@ -550,7 +550,7 @@ class TestChannelStatsTool:
     @pytest.mark.asyncio
     async def test_empty(self, mock_db):
         mock_db.repos = MagicMock()
-        mock_db.repos.channels.get_latest_stats_for_all = AsyncMock(return_value=[])
+        mock_db.repos.channels.get_latest_stats_for_all = AsyncMock(return_value={})
         handlers = _get_tool_handlers(mock_db)
 
         result = await handlers["get_channel_stats"]({})

@@ -115,7 +115,7 @@ def build_deepagents_tools(db, client_pool=None) -> list[Callable]:  # noqa: C90
             return "Статистика каналов не собрана."
         lines = [f"Статистика ({len(stats)} каналов):"]
         for cid, s in stats.items():
-            lines.append(f"- channel_id={cid}: subscribers={getattr(s, 'subscribers', '?')}")
+            lines.append(f"- channel_id={cid}: subscribers={s.subscriber_count or '?'}")
         return "\n".join(lines)
 
     tools.append(get_channel_stats)

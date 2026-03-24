@@ -56,11 +56,11 @@ def register(db, client_pool, embedding_service, **kwargs):
             if not stats:
                 return _text_response("Статистика каналов пока не собрана.")
             lines = [f"Статистика каналов ({len(stats)}):"]
-            for s in stats:
+            for cid, s in stats.items():
                 lines.append(
-                    f"- channel_id={s['channel_id']}: "
-                    f"subscribers={s.get('subscribers', '?')}, "
-                    f"avg_views={s.get('avg_views', '?')}"
+                    f"- channel_id={cid}: "
+                    f"subscribers={s.subscriber_count or '?'}, "
+                    f"avg_views={s.avg_views or '?'}"
                 )
             return _text_response("\n".join(lines))
         except Exception as e:
