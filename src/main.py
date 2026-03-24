@@ -7,6 +7,7 @@ from src.cli.commands import (
     account,
     channel,
     collect,
+    image,
     photo_loader,
     pipeline,
     scheduler,
@@ -75,6 +76,10 @@ def cmd_photo_loader(args: argparse.Namespace) -> None:
 
 def cmd_pipeline(args: argparse.Namespace) -> None:
     _run_with_legacy_runtime(pipeline.run, args)
+
+
+def cmd_image(args: argparse.Namespace) -> None:
+    image.run(args)
 
 
 def cmd_test(args: argparse.Namespace) -> None:

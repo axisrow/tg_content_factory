@@ -1,0 +1,183 @@
+{% extends "base.html" %}
+{% block title %}Изображения — TG Agent{% endblock %}
+{% block content %}
+<h1 class="mb-4">Изображения</h1>
+
+<div class="row g-4">
+    <div class="col-12 col-lg-6">
+        <div class="card shadow-sm">
+            <div class="card-header bg-body-secondary fw-semibold">Генерация</div>
+            <div class="card-body">
+                {% if providers %}
+                <form id="generate-form">
+                    <div class="mb-3">
+                        <label for="img-prompt" class="form-label">Prompt</label>
+                        <textarea class="form-control" id="img-prompt" name="prompt" rows="3" placeholder="A cat riding a bicycle through Tokyo at sunset..." required></textarea>
+                    </div>
+                    <div class="mb-3">
+                        <label for="img-model" class="form-label">Модель</label>
+                        <input type="text" class="form-control" id="img-model" name="model"
+                               placeholder="replicate:black-forest-labs/flux-schnell"
+                               list="model-suggestions">
+                        <datalist id="model-suggestions">
+                            <option value="replicate:black-forest-labs/flux-schnell">
+                            <option value="replicate:black-forest-labs/flux-1.1-pro">
+                            <option value="together:black-forest-labs/FLUX.1-schnell">
+                            <option value="together:black-forest-labs/FLUX.1-dev">
+                            <option value="openai:dall-e-3">
+                            <option value="huggingface:stabilityai/stable-diffusion-xl-base-1.0">
+                        </datalist>
+                        <div class="form-text">Формат: <code>provider:model_id</code>. Без префикса — первый доступный провайдер.</div>
+                    </div>
+                    <button type="submit" class="btn btn-primary" id="generate-btn">
+                        <i class="bi bi-image me-1"></i>Сгенерировать
+                    </button>
+                </form>
+
+                <div id="generate-result" class="mt-3 d-none">
+                    <div id="generate-error" class="alert alert-danger d-none"></div>
+                    <div id="generate-success" class="d-none">
+                        <img id="generated-image" class="img-fluid rounded shadow-sm mb-2" alt="Generated image">
+                        <div class="small text-muted" id="generated-meta"></div>
+                    </div>
+                </div>
+                <div id="generate-spinner" class="text-center mt-3 d-none">
+                    <div class="spinner-border text-primary" role="status"></div>
+                    <div class="small text-muted mt-1">Генерация...</div>
+                </div>
+                {% else %}
+                <div class="text-muted">
+                    Нет настроенных провайдеров. Добавьте API ключ в
+                    <a href="/settings">Настройки &rarr; Изображения</a>.
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <div class="col-12 col-lg-6">
+        <div class="card shadow-sm">
+            <div class="card-header bg-body-secondary fw-semibold">Каталог моделей</div>
+            <div class="card-body">
+                <div class="row g-2 mb-3">
+                    <div class="col">
+                        <select id="catalog-provider" class="form-select">
+                            <option value="">Провайдер</option>
+                            {% for p in providers %}
+                            <option value="{{ p }}">{{ p }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="col">
+                        <input type="text" id="catalog-query" class="form-control" placeholder="flux, sdxl...">
+                    </div>
+                    <div class="col-auto">
+                        <button class="btn btn-outline-secondary" id="catalog-search-btn" type="button">
+                            <i class="bi bi-search"></i>
+                        </button>
+                    </div>
+                </div>
+                <div id="catalog-results"></div>
+                <div id="catalog-spinner" class="text-center d-none">
+                    <div class="spinner-border spinner-border-sm text-secondary" role="status"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block head_scripts %}
+<script defer>
+document.addEventListener('DOMContentLoaded', function() {
+    const form = document.getElementById('generate-form');
+    if (!form) return;
+    const btn = document.getElementById('generate-btn');
+    const spinner = document.getElementById('generate-spinner');
+    const resultDiv = document.getElementById('generate-result');
+    const errorDiv = document.getElementById('generate-error');
+    const successDiv = document.getElementById('generate-success');
+    const img = document.getElementById('generated-image');
+    const meta = document.getElementById('generated-meta');
+
+    form.addEventListener('submit', async function(e) {
+        e.preventDefault();
+        btn.disabled = true;
+        spinner.classList.remove('d-none');
+        resultDiv.classList.add('d-none');
+        errorDiv.classList.add('d-none');
+        successDiv.classList.add('d-none');
+
+        try {
+            const formData = new FormData(form);
+            const resp = await fetch('/images/generate', { method: 'POST', body: formData });
+            const data = await resp.json();
+            resultDiv.classList.remove('d-none');
+            if (data.ok) {
+                img.src = data.url;
+                meta.textContent = `Model: ${data.model || 'default'} | Prompt: ${data.prompt}`;
+                successDiv.classList.remove('d-none');
+            } else {
+                errorDiv.textContent = data.error || 'Unknown error';
+                errorDiv.classList.remove('d-none');
+            }
+        } catch (err) {
+            resultDiv.classList.remove('d-none');
+            errorDiv.textContent = err.message;
+            errorDiv.classList.remove('d-none');
+        } finally {
+            btn.disabled = false;
+            spinner.classList.add('d-none');
+        }
+    });
+
+    // Catalog search
+    const catalogBtn = document.getElementById('catalog-search-btn');
+    const catalogResults = document.getElementById('catalog-results');
+    const catalogSpinner = document.getElementById('catalog-spinner');
+    const catalogProvider = document.getElementById('catalog-provider');
+    const catalogQuery = document.getElementById('catalog-query');
+
+    catalogBtn.addEventListener('click', async function() {
+        const provider = catalogProvider.value;
+        if (!provider) return;
+        catalogSpinner.classList.remove('d-none');
+        catalogResults.innerHTML = '';
+        try {
+            const q = catalogQuery.value.trim();
+            const url = `/images/models/search?provider=${encodeURIComponent(provider)}&q=${encodeURIComponent(q)}`;
+            const resp = await fetch(url);
+            const data = await resp.json();
+            if (!data.ok || !data.models.length) {
+                catalogResults.innerHTML = '<p class="text-muted small">Ничего не найдено</p>';
+                return;
+            }
+            let html = '<div class="list-group list-group-flush">';
+            for (const m of data.models) {
+                html += `<div class="list-group-item d-flex justify-content-between align-items-start">
+                    <div>
+                        <div class="fw-semibold small">${m.id}</div>
+                        <div class="text-muted small">${m.description || ''}</div>
+                        ${m.run_count ? `<span class="badge text-bg-secondary">${m.run_count.toLocaleString()} runs</span>` : ''}
+                    </div>
+                    <button class="btn btn-outline-primary btn-sm ms-2 use-model-btn" data-model="${m.model_string}">
+                        Выбрать
+                    </button>
+                </div>`;
+            }
+            html += '</div>';
+            catalogResults.innerHTML = html;
+            catalogResults.querySelectorAll('.use-model-btn').forEach(function(b) {
+                b.addEventListener('click', function() {
+                    document.getElementById('img-model').value = this.dataset.model;
+                });
+            });
+        } catch (err) {
+            catalogResults.innerHTML = `<p class="text-danger small">${err.message}</p>`;
+        } finally {
+            catalogSpinner.classList.add('d-none');
+        }
+    });
+});
+</script>
+{% endblock %}

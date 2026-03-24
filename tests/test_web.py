@@ -273,6 +273,25 @@ async def test_delete_image_provider(client):
 
 
 @pytest.mark.asyncio
+async def test_images_page_shows_db_configured_provider(client):
+    """Provider added via Settings should appear on /images page."""
+    # Add provider with API key via settings
+    await client.post("/settings/image-providers/add", data={"provider": "replicate"})
+    await client.post(
+        "/settings/image-providers/save",
+        data={
+            "img_provider_present__replicate": "1",
+            "img_provider_enabled__replicate": "1",
+            "img_provider_secret__replicate__api_key": "r8_test_key",
+        },
+    )
+    # Verify it shows up on /images
+    resp = await client.get("/images/")
+    assert resp.status_code == 200
+    assert "replicate" in resp.text
+
+
+@pytest.mark.asyncio
 async def test_startup_continues_after_pool_initialize_timeout(tmp_path, db, caplog, monkeypatch):
     """start_container proceeds when pool.initialize() hangs past the timeout."""
     import asyncio
