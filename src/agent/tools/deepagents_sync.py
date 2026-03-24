@@ -24,7 +24,7 @@ def _run_sync(tool_name: str, operation: Callable[[], Awaitable[_T]]) -> _T:
     raise RuntimeError(f"Deepagents tool '{tool_name}' cannot run inside an active event loop")
 
 
-def build_deepagents_tools(db, client_pool=None) -> list[Callable]:  # noqa: C901
+def build_deepagents_tools(db, client_pool=None, config=None) -> list[Callable]:  # noqa: C901
     """Build all sync tools for the deepagents backend.
 
     Returns a list of callables compatible with LangChain tool registration.
@@ -732,11 +732,25 @@ def build_deepagents_tools(db, client_pool=None) -> list[Callable]:  # noqa: C90
 
     def generate_image(prompt: str, model: str = "") -> str:
         """Generate an image from text prompt."""
-        try:
+        async def _run():
             from src.services.image_generation_service import ImageGenerationService
 
             svc = ImageGenerationService()
-            result = _run_sync("gen_image", lambda: svc.generate(model=model or None, text=prompt))
+            if db is not None and config is not None:
+                try:
+                    from src.services.image_provider_service import ImageProviderService
+
+                    ip_svc = ImageProviderService(db, config)
+                    ip_configs = await ip_svc.load_provider_configs()
+                    adapters = ip_svc.build_adapters(ip_configs)
+                    if adapters:
+                        svc = ImageGenerationService(adapters=adapters)
+                except Exception:
+                    pass
+            return await svc.generate(model=model or None, text=prompt)
+
+        try:
+            result = _run_sync("gen_image", _run)
             return f"Изображение: {result}" if result else "Генерация не вернула результат."
         except Exception as exc:
             return f"Ошибка: {exc}"
@@ -745,11 +759,25 @@ def build_deepagents_tools(db, client_pool=None) -> list[Callable]:  # noqa: C90
 
     def list_image_providers() -> str:
         """List configured image generation providers."""
-        try:
+        async def _run():
             from src.services.image_generation_service import ImageGenerationService
 
             svc = ImageGenerationService()
-            names = svc.adapter_names
+            if db is not None and config is not None:
+                try:
+                    from src.services.image_provider_service import ImageProviderService
+
+                    ip_svc = ImageProviderService(db, config)
+                    ip_configs = await ip_svc.load_provider_configs()
+                    adapters = ip_svc.build_adapters(ip_configs)
+                    if adapters:
+                        svc = ImageGenerationService(adapters=adapters)
+                except Exception:
+                    pass
+            return svc.adapter_names
+
+        try:
+            names = _run_sync("list_providers", _run)
             return f"Провайдеры: {', '.join(names)}" if names else "Провайдеры не настроены."
         except Exception as exc:
             return f"Ошибка: {exc}"

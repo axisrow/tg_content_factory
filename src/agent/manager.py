@@ -191,7 +191,10 @@ class ClaudeSdkBackend:
 
         os.environ.setdefault("CLAUDE_CODE_STREAM_CLOSE_TIMEOUT", "300000")
         self._server = make_mcp_server(
-            self._db, client_pool=self._client_pool, scheduler_manager=self._scheduler_manager,
+            self._db,
+            client_pool=self._client_pool,
+            scheduler_manager=self._scheduler_manager,
+            config=self._config,
         )
         logger.info("Claude SDK backend initialized")
 
@@ -488,7 +491,7 @@ class DeepagentsBackend:
         """Return the full tool set for deepagents backend."""
         from src.agent.tools.deepagents_sync import build_deepagents_tools
 
-        return build_deepagents_tools(self._db)
+        return build_deepagents_tools(self._db, config=self._config)
 
     def _search_messages_tool(self, query_text: str) -> str:
         """Search messages — used by probe. Delegates to sync tools."""

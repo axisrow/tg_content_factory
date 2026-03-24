@@ -610,3 +610,201 @@ class TestMakeMcpServer:
 
         server = make_mcp_server(mock_db)
         assert "instance" in server
+
+
+# ---------------------------------------------------------------------------
+# image tools (generate_image, list_image_providers, list_image_models)
+# ---------------------------------------------------------------------------
+
+
+class TestImageTools:
+    """Tests for image generation agent tools, verifying DB-backed provider loading."""
+
+    def _get_image_handlers(self, mock_db, config=None):
+        captured = []
+        with patch(
+            "src.agent.tools.create_sdk_mcp_server",
+            side_effect=lambda **kw: captured.extend(kw.get("tools", [])),
+        ):
+            from src.agent.tools import make_mcp_server
+
+            make_mcp_server(mock_db, config=config)
+        return {t.name: t.handler for t in captured}
+
+    # ── generate_image ──
+
+    @pytest.mark.asyncio
+    async def test_generate_image_missing_prompt(self, mock_db):
+        handlers = self._get_image_handlers(mock_db)
+        result = await handlers["generate_image"]({"prompt": ""})
+        assert "prompt обязателен" in result["content"][0]["text"]
+
+    @pytest.mark.asyncio
+    async def test_generate_image_uses_db_provider(self, mock_db):
+        """generate_image must load providers from DB, not just env vars."""
+        from src.config import AppConfig
+        from src.services.image_provider_service import ImageProviderConfig
+
+        config = AppConfig()
+        config.security.session_encryption_key = "test-secret"
+
+        fake_cfg = ImageProviderConfig(provider="together", enabled=True, api_key="sk-db-key")
+
+        with (
+            patch(
+                "src.services.image_provider_service.ImageProviderService.load_provider_configs",
+                new_callable=AsyncMock,
+                return_value=[fake_cfg],
+            ),
+            patch(
+                "src.services.image_generation_service.ImageGenerationService.generate",
+                new_callable=AsyncMock,
+                return_value="https://example.com/opossum.png",
+            ),
+            patch(
+                "src.services.image_generation_service.ImageGenerationService.is_available",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
+        ):
+            handlers = self._get_image_handlers(mock_db, config=config)
+            result = await handlers["generate_image"]({"prompt": "cute opossum"})
+
+        text = result["content"][0]["text"]
+        assert "https://example.com/opossum.png" in text
+
+    @pytest.mark.asyncio
+    async def test_generate_image_no_providers_message(self, mock_db):
+        """When no providers configured, return a helpful error message."""
+        from src.config import AppConfig
+
+        config = AppConfig()
+        config.security.session_encryption_key = "test-secret"
+
+        with patch(
+            "src.services.image_provider_service.ImageProviderService.load_provider_configs",
+            new_callable=AsyncMock,
+            return_value=[],
+        ):
+            handlers = self._get_image_handlers(mock_db, config=config)
+            result = await handlers["generate_image"]({"prompt": "opossum"})
+
+        text = result["content"][0]["text"]
+        assert "не настроен" in text.lower() or "не доступн" in text.lower()
+
+    # ── list_image_providers ──
+
+    @pytest.mark.asyncio
+    async def test_list_image_providers_from_db(self, mock_db):
+        """list_image_providers must show providers loaded from DB."""
+        from src.config import AppConfig
+        from src.services.image_provider_service import ImageProviderConfig
+
+        config = AppConfig()
+        config.security.session_encryption_key = "test-secret"
+
+        fake_cfg = ImageProviderConfig(provider="replicate", enabled=True, api_key="r8_test")
+
+        with (
+            patch(
+                "src.services.image_provider_service.ImageProviderService.load_provider_configs",
+                new_callable=AsyncMock,
+                return_value=[fake_cfg],
+            ),
+        ):
+            handlers = self._get_image_handlers(mock_db, config=config)
+            result = await handlers["list_image_providers"]({})
+
+        text = result["content"][0]["text"]
+        assert "replicate" in text
+
+    @pytest.mark.asyncio
+    async def test_list_image_providers_empty(self, mock_db):
+        from src.config import AppConfig
+
+        config = AppConfig()
+        config.security.session_encryption_key = "test-secret"
+
+        with patch(
+            "src.services.image_provider_service.ImageProviderService.load_provider_configs",
+            new_callable=AsyncMock,
+            return_value=[],
+        ):
+            handlers = self._get_image_handlers(mock_db, config=config)
+            result = await handlers["list_image_providers"]({})
+
+        assert "не настроен" in result["content"][0]["text"].lower()
+
+    # ── list_image_models ──
+
+    @pytest.mark.asyncio
+    async def test_list_image_models_missing_provider(self, mock_db):
+        handlers = self._get_image_handlers(mock_db)
+        result = await handlers["list_image_models"]({"provider": ""})
+        assert "provider обязателен" in result["content"][0]["text"]
+
+
+# ---------------------------------------------------------------------------
+# deepagents_sync image tools
+# ---------------------------------------------------------------------------
+
+
+class TestDeepagentsSyncImageTools:
+    """Tests for generate_image / list_image_providers in deepagents_sync.py."""
+
+    def _get_tools(self, mock_db, config=None):
+        from src.agent.tools.deepagents_sync import build_deepagents_tools
+
+        tools = build_deepagents_tools(mock_db, config=config)
+        return {t.__name__: t for t in tools}
+
+    def test_generate_image_uses_db_provider(self, mock_db):
+        from src.config import AppConfig
+        from src.services.image_provider_service import ImageProviderConfig
+
+        config = AppConfig()
+        config.security.session_encryption_key = "test-secret"
+
+        fake_cfg = ImageProviderConfig(provider="replicate", enabled=True, api_key="r8_test")
+
+        with (
+            patch(
+                "src.services.image_provider_service.ImageProviderService.load_provider_configs",
+                new_callable=AsyncMock,
+                return_value=[fake_cfg],
+            ),
+            patch(
+                "src.services.image_generation_service.ImageGenerationService.generate",
+                new_callable=AsyncMock,
+                return_value="https://example.com/opossum.png",
+            ),
+        ):
+            tools = self._get_tools(mock_db, config=config)
+            result = tools["generate_image"]("cute opossum")
+
+        assert "https://example.com/opossum.png" in result
+
+    def test_list_image_providers_from_db(self, mock_db):
+        from src.config import AppConfig
+        from src.services.image_provider_service import ImageProviderConfig
+
+        config = AppConfig()
+        config.security.session_encryption_key = "test-secret"
+
+        fake_cfg = ImageProviderConfig(provider="together", enabled=True, api_key="sk-test")
+
+        with patch(
+            "src.services.image_provider_service.ImageProviderService.load_provider_configs",
+            new_callable=AsyncMock,
+            return_value=[fake_cfg],
+        ):
+            tools = self._get_tools(mock_db, config=config)
+            result = tools["list_image_providers"]()
+
+        assert "together" in result
+
+    def test_list_image_providers_no_config(self, mock_db):
+        """When config=None, falls back to env-only path (no DB lookup)."""
+        tools = self._get_tools(mock_db, config=None)
+        result = tools["list_image_providers"]()
+        assert "не настроен" in result.lower()

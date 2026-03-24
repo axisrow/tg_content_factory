@@ -477,10 +477,17 @@ class UnifiedDispatcher:
             notification_service = DraftNotificationService(db, self._notifier)
             quality_service = QualityScoringService(db)
 
+            agent_manager = None
+            _backend = getattr(pipeline, "generation_backend", None)
+            if _backend is not None and getattr(_backend, "value", _backend) == "deep_agents":
+                from src.agent.manager import AgentManager
+
+                agent_manager = AgentManager(self._db, self._config)
             image_service = await self._build_image_service()
             gen = ContentGenerationService(
                 db,
                 self._search_engine,
+                agent_manager=agent_manager,
                 image_service=image_service,
                 notification_service=notification_service,
                 quality_service=quality_service,
@@ -559,10 +566,17 @@ class UnifiedDispatcher:
             notification_service = DraftNotificationService(db, self._notifier)
             quality_service = QualityScoringService(db)
 
+            agent_manager = None
+            _backend = getattr(pipeline, "generation_backend", None)
+            if _backend is not None and getattr(_backend, "value", _backend) == "deep_agents":
+                from src.agent.manager import AgentManager
+
+                agent_manager = AgentManager(self._db, self._config)
             image_service = await self._build_image_service()
             gen = ContentGenerationService(
                 db,
                 self._search_engine,
+                agent_manager=agent_manager,
                 image_service=image_service,
                 notification_service=notification_service,
                 quality_service=quality_service,

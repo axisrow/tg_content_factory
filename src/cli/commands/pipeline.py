@@ -217,12 +217,24 @@ def run(args: argparse.Namespace) -> None:
                     from src.agent.manager import AgentManager
 
                     agent_manager = AgentManager(db, config)
+                image_service = None
+                try:
+                    from src.services.image_generation_service import ImageGenerationService
+                    from src.services.image_provider_service import ImageProviderService
+
+                    ip_svc = ImageProviderService(db, config)
+                    ip_configs = await ip_svc.load_provider_configs()
+                    adapters = ip_svc.build_adapters(ip_configs)
+                    image_service = ImageGenerationService(adapters=adapters) if adapters else ImageGenerationService()
+                except Exception:
+                    pass
                 from src.services.quality_scoring_service import QualityScoringService
 
                 gen_svc = ContentGenerationService(
                     db,
                     engine,
                     agent_manager=agent_manager,
+                    image_service=image_service,
                     quality_service=QualityScoringService(db),
                 )
                 try:

@@ -4,18 +4,41 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import logging
 
+from src.cli import runtime
 from src.services.image_generation_service import ImageGenerationService
+
+logger = logging.getLogger(__name__)
+
+
+async def _build_service(config_path: str) -> ImageGenerationService:
+    """Build ImageGenerationService with DB-configured providers + env fallback."""
+    try:
+        from src.services.image_provider_service import ImageProviderService
+
+        config, db = await runtime.init_db(config_path)
+        try:
+            svc = ImageProviderService(db, config)
+            configs = await svc.load_provider_configs()
+            adapters = svc.build_adapters(configs)
+            if adapters:
+                return ImageGenerationService(adapters=adapters)
+        finally:
+            await db.close()
+    except Exception:
+        logger.warning("Failed to load image providers from DB, falling back to env vars", exc_info=True)
+    return ImageGenerationService()
 
 
 def run(args: argparse.Namespace) -> None:
     async def _run() -> None:
         action = args.image_action
-        svc = ImageGenerationService()
+        svc = await _build_service(args.config)
 
         if action == "generate":
             if not await svc.is_available():
-                print("No image providers configured. Set REPLICATE_API_TOKEN or similar env var.")
+                print("No image providers configured. Set REPLICATE_API_TOKEN or similar env var, or configure via Settings UI.")
                 return
             model = args.model or None
             prompt = args.prompt
@@ -42,7 +65,7 @@ def run(args: argparse.Namespace) -> None:
         elif action == "providers":
             names = svc.adapter_names
             if not names:
-                print("No providers configured. Set env vars: REPLICATE_API_TOKEN, TOGETHER_API_KEY, etc.")
+                print("No providers configured. Set env vars: REPLICATE_API_TOKEN, TOGETHER_API_KEY, etc., or configure via Settings UI.")
                 return
             for name in names:
                 print(f"  {name}")
