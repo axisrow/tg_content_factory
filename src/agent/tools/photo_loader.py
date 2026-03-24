@@ -14,9 +14,11 @@ def register(db, client_pool, embedding_service, **kwargs):
     @tool("list_photo_batches", "List photo upload batches", {"limit": int})
     async def list_photo_batches(args):
         try:
+            from src.database.bundles import PhotoLoaderBundle
+            from src.services.photo_publish_service import PhotoPublishService
             from src.services.photo_task_service import PhotoTaskService
 
-            svc = PhotoTaskService(db, client_pool)
+            svc = PhotoTaskService(PhotoLoaderBundle.from_database(db), PhotoPublishService(client_pool))
             limit = int(args.get("limit", 50))
             batches = await svc.list_batches(limit=limit)
             if not batches:
@@ -36,9 +38,11 @@ def register(db, client_pool, embedding_service, **kwargs):
     @tool("list_photo_items", "List photo batch items with status", {"limit": int})
     async def list_photo_items(args):
         try:
+            from src.database.bundles import PhotoLoaderBundle
+            from src.services.photo_publish_service import PhotoPublishService
             from src.services.photo_task_service import PhotoTaskService
 
-            svc = PhotoTaskService(db, client_pool)
+            svc = PhotoTaskService(PhotoLoaderBundle.from_database(db), PhotoPublishService(client_pool))
             limit = int(args.get("limit", 100))
             items = await svc.list_items(limit=limit)
             if not items:
@@ -70,9 +74,11 @@ def register(db, client_pool, embedding_service, **kwargs):
         if gate:
             return gate
         try:
+            from src.database.bundles import PhotoLoaderBundle
+            from src.services.photo_publish_service import PhotoPublishService
             from src.services.photo_task_service import PhotoTaskService
 
-            svc = PhotoTaskService(db, client_pool)
+            svc = PhotoTaskService(PhotoLoaderBundle.from_database(db), PhotoPublishService(client_pool))
             phone = args.get("phone", "")
             target = args.get("target", "")
             files = [f.strip() for f in args.get("file_paths", "").split(",") if f.strip()]
@@ -115,10 +121,12 @@ def register(db, client_pool, embedding_service, **kwargs):
         try:
             from datetime import datetime
 
+            from src.database.bundles import PhotoLoaderBundle
             from src.models import PhotoTarget
+            from src.services.photo_publish_service import PhotoPublishService
             from src.services.photo_task_service import PhotoTaskService
 
-            svc = PhotoTaskService(db, client_pool)
+            svc = PhotoTaskService(PhotoLoaderBundle.from_database(db), PhotoPublishService(client_pool))
             phone = args.get("phone", "")
             target = args.get("target", "")
             files = [f.strip() for f in args.get("file_paths", "").split(",") if f.strip()]
@@ -155,9 +163,11 @@ def register(db, client_pool, embedding_service, **kwargs):
         if gate:
             return gate
         try:
+            from src.database.bundles import PhotoLoaderBundle
+            from src.services.photo_publish_service import PhotoPublishService
             from src.services.photo_task_service import PhotoTaskService
 
-            svc = PhotoTaskService(db, client_pool)
+            svc = PhotoTaskService(PhotoLoaderBundle.from_database(db), PhotoPublishService(client_pool))
             ok = await svc.cancel_item(int(item_id))
             if ok:
                 return _text_response(f"Фото item_id={item_id} отменено.")
@@ -170,9 +180,11 @@ def register(db, client_pool, embedding_service, **kwargs):
     @tool("list_auto_uploads", "List automatic photo upload jobs", {})
     async def list_auto_uploads(args):
         try:
+            from src.database.bundles import PhotoLoaderBundle
             from src.services.photo_auto_upload_service import PhotoAutoUploadService
+            from src.services.photo_publish_service import PhotoPublishService
 
-            svc = PhotoAutoUploadService(db, client_pool)
+            svc = PhotoAutoUploadService(PhotoLoaderBundle.from_database(db), PhotoPublishService(client_pool))
             jobs = await svc.list_jobs()
             if not jobs:
                 return _text_response("Автозагрузки не настроены.")
@@ -195,9 +207,11 @@ def register(db, client_pool, embedding_service, **kwargs):
         if job_id is None:
             return _text_response("Ошибка: job_id обязателен.")
         try:
+            from src.database.bundles import PhotoLoaderBundle
             from src.services.photo_auto_upload_service import PhotoAutoUploadService
+            from src.services.photo_publish_service import PhotoPublishService
 
-            svc = PhotoAutoUploadService(db, client_pool)
+            svc = PhotoAutoUploadService(PhotoLoaderBundle.from_database(db), PhotoPublishService(client_pool))
             job = await svc.get_job(int(job_id))
             if job is None:
                 return _text_response(f"Автозагрузка id={job_id} не найдена.")
@@ -223,9 +237,11 @@ def register(db, client_pool, embedding_service, **kwargs):
         if gate:
             return gate
         try:
+            from src.database.bundles import PhotoLoaderBundle
             from src.services.photo_auto_upload_service import PhotoAutoUploadService
+            from src.services.photo_publish_service import PhotoPublishService
 
-            svc = PhotoAutoUploadService(db, client_pool)
+            svc = PhotoAutoUploadService(PhotoLoaderBundle.from_database(db), PhotoPublishService(client_pool))
             await svc.delete_job(int(job_id))
             return _text_response(f"Автозагрузка id={job_id} удалена.")
         except Exception as e:

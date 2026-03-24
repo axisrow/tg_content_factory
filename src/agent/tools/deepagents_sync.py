@@ -125,7 +125,7 @@ def build_deepagents_tools(db, client_pool=None) -> list[Callable]:  # noqa: C90
         try:
             from src.services.channel_service import ChannelService
 
-            svc = ChannelService(db, client_pool)
+            svc = ChannelService(db, client_pool, None)
             result = _run_sync("add_channel", lambda: svc.add_by_identifier(identifier))
             return f"Канал добавлен: {result}" if result else f"Не удалось добавить канал: {identifier}"
         except Exception as exc:
@@ -138,7 +138,7 @@ def build_deepagents_tools(db, client_pool=None) -> list[Callable]:  # noqa: C90
         try:
             from src.services.channel_service import ChannelService
 
-            svc = ChannelService(db, client_pool)
+            svc = ChannelService(db, client_pool, None)
             _run_sync("delete_channel", lambda: svc.delete(pk))
             return f"Канал pk={pk} удалён."
         except Exception as exc:
@@ -151,7 +151,7 @@ def build_deepagents_tools(db, client_pool=None) -> list[Callable]:  # noqa: C90
         try:
             from src.services.channel_service import ChannelService
 
-            svc = ChannelService(db, client_pool)
+            svc = ChannelService(db, client_pool, None)
             _run_sync("toggle_channel", lambda: svc.toggle(pk))
             return f"Канал pk={pk} переключён."
         except Exception as exc:
@@ -510,7 +510,10 @@ def build_deepagents_tools(db, client_pool=None) -> list[Callable]:  # noqa: C90
     def reset_filters() -> str:
         """⚠️ DANGEROUS: Reset all channel filters."""
         try:
-            count = _run_sync("reset_filters", db.reset_all_channel_filters)
+            from src.filters.analyzer import ChannelAnalyzer
+
+            analyzer = ChannelAnalyzer(db)
+            count = _run_sync("reset_filters", analyzer.reset_filters)
             return f"Фильтры сброшены: {count} каналов разблокированы."
         except Exception as exc:
             return f"Ошибка: {exc}"
@@ -714,8 +717,8 @@ def build_deepagents_tools(db, client_pool=None) -> list[Callable]:  # noqa: C90
         """Get notification bot status."""
         try:
             from src.services.notification_service import NotificationService
-
-            svc = NotificationService(db, client_pool)
+            from src.services.notification_target_service import NotificationTargetService
+            svc = NotificationService(db, NotificationTargetService(db, client_pool))
             bot = _run_sync("notif_status", svc.get_status)
             if not bot:
                 return "Бот уведомлений не настроен."
@@ -732,7 +735,7 @@ def build_deepagents_tools(db, client_pool=None) -> list[Callable]:  # noqa: C90
         try:
             from src.services.image_generation_service import ImageGenerationService
 
-            svc = ImageGenerationService(db)
+            svc = ImageGenerationService()
             result = _run_sync("gen_image", lambda: svc.generate(model=model or None, text=prompt))
             return f"Изображение: {result}" if result else "Генерация не вернула результат."
         except Exception as exc:
@@ -745,7 +748,7 @@ def build_deepagents_tools(db, client_pool=None) -> list[Callable]:  # noqa: C90
         try:
             from src.services.image_generation_service import ImageGenerationService
 
-            svc = ImageGenerationService(db)
+            svc = ImageGenerationService()
             names = svc.adapter_names
             return f"Провайдеры: {', '.join(names)}" if names else "Провайдеры не настроены."
         except Exception as exc:

@@ -22,7 +22,7 @@ def register(db, client_pool, embedding_service, **kwargs):
         try:
             from src.services.channel_service import ChannelService
 
-            svc = ChannelService(db, client_pool)
+            svc = ChannelService(db, client_pool, None)
             dialogs = await svc.get_my_dialogs(phone)
             if not dialogs:
                 return _text_response(f"Диалоги для {phone} не найдены.")
@@ -55,7 +55,7 @@ def register(db, client_pool, embedding_service, **kwargs):
         try:
             from src.services.channel_service import ChannelService
 
-            svc = ChannelService(db, client_pool)
+            svc = ChannelService(db, client_pool, None)
             dialogs = await svc.get_my_dialogs(phone, refresh=True)
             return _text_response(f"Диалоги обновлены: {len(dialogs)} шт.")
         except Exception as e:
@@ -86,7 +86,7 @@ def register(db, client_pool, embedding_service, **kwargs):
         try:
             from src.services.channel_service import ChannelService
 
-            svc = ChannelService(db, client_pool)
+            svc = ChannelService(db, client_pool, None)
             dialog_ids = [(int(x.strip()), "") for x in dialog_ids_str.split(",") if x.strip()]
             results = await svc.leave_dialogs(phone, dialog_ids)
             success = sum(1 for v in results.values() if v)
@@ -180,11 +180,13 @@ def register(db, client_pool, embedding_service, **kwargs):
             return gate
         try:
             if phone:
-                await db.repos.dialog_cache.clear_dialogs_for_phone(phone)
+                if client_pool is not None:
+                    client_pool.invalidate_dialogs_cache(phone)
+                await db.repos.dialog_cache.clear_dialogs(phone)
             else:
-                accounts = await db.get_accounts()
-                for acc in accounts:
-                    await db.repos.dialog_cache.clear_dialogs_for_phone(acc.phone)
+                if client_pool is not None:
+                    client_pool.invalidate_dialogs_cache()
+                await db.repos.dialog_cache.clear_all_dialogs()
             return _text_response("Кеш диалогов очищен.")
         except Exception as e:
             return _text_response(f"Ошибка очистки кеша: {e}")

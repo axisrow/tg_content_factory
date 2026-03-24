@@ -25,7 +25,7 @@ def register(db, client_pool, embedding_service, **kwargs):
         try:
             from src.services.image_generation_service import ImageGenerationService
 
-            svc = ImageGenerationService(db)
+            svc = ImageGenerationService()
             if not await svc.is_available():
                 return _text_response("Генерация изображений не настроена. Добавьте провайдера в настройках.")
             result = await svc.generate(model=model, text=prompt)
@@ -50,7 +50,7 @@ def register(db, client_pool, embedding_service, **kwargs):
         try:
             from src.services.image_generation_service import ImageGenerationService
 
-            svc = ImageGenerationService(db)
+            svc = ImageGenerationService()
             models = await svc.search_models(provider=provider, query=query)
             if not models:
                 return _text_response(f"Модели для {provider} не найдены.")
@@ -71,7 +71,7 @@ def register(db, client_pool, embedding_service, **kwargs):
         try:
             from src.services.image_generation_service import ImageGenerationService
 
-            svc = ImageGenerationService(db)
+            svc = ImageGenerationService()
             names = svc.adapter_names
             if not names:
                 return _text_response("Провайдеры изображений не настроены.")
