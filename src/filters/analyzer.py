@@ -220,5 +220,5 @@ class ChannelAnalyzer:
             await self._database.set_channels_filtered_bulk(to_filter)
         return len(to_filter)
 
-    async def reset_filters(self) -> None:
-        await self._database.reset_all_channel_filters()
+    async def reset_filters(self) -> int:
+        return await self._database.reset_all_channel_filters()

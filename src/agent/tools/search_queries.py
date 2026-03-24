@@ -94,6 +94,9 @@ def register(db, client_pool, embedding_service, **kwargs):
             "is_regex": bool,
             "is_fts": bool,
             "notify_on_collect": bool,
+            "track_stats": bool,
+            "exclude_patterns": str,
+            "max_length": int,
             "confirm": bool,
         },
     )
@@ -112,12 +115,18 @@ def register(db, client_pool, embedding_service, **kwargs):
             is_regex = bool(args.get("is_regex", False))
             is_fts = bool(args.get("is_fts", False))
             notify = bool(args.get("notify_on_collect", False))
+            track_stats = bool(args.get("track_stats", True))
+            exclude_patterns = args.get("exclude_patterns", "")
+            max_length = args.get("max_length")
             sq_id = await svc.add(
                 query,
                 interval_minutes=interval,
                 is_regex=is_regex,
                 is_fts=is_fts,
                 notify_on_collect=notify,
+                track_stats=track_stats,
+                exclude_patterns=exclude_patterns or "",
+                max_length=int(max_length) if max_length is not None else None,
             )
             return _text_response(f"Поисковый запрос создан (id={sq_id}).")
         except Exception as e:
@@ -135,6 +144,9 @@ def register(db, client_pool, embedding_service, **kwargs):
             "is_regex": bool,
             "is_fts": bool,
             "notify_on_collect": bool,
+            "track_stats": bool,
+            "exclude_patterns": str,
+            "max_length": int,
             "confirm": bool,
         },
     )
@@ -157,6 +169,9 @@ def register(db, client_pool, embedding_service, **kwargs):
             is_regex = bool(args.get("is_regex", existing.is_regex))
             is_fts = bool(args.get("is_fts", existing.is_fts))
             notify = bool(args.get("notify_on_collect", existing.notify_on_collect))
+            track_stats = bool(args.get("track_stats", getattr(existing, "track_stats", True)))
+            exclude_patterns = args.get("exclude_patterns", getattr(existing, "exclude_patterns", ""))
+            max_length_raw = args.get("max_length", getattr(existing, "max_length", None))
             ok = await svc.update(
                 int(sq_id),
                 query,
@@ -164,6 +179,9 @@ def register(db, client_pool, embedding_service, **kwargs):
                 is_regex=is_regex,
                 is_fts=is_fts,
                 notify_on_collect=notify,
+                track_stats=track_stats,
+                exclude_patterns=exclude_patterns or "",
+                max_length=int(max_length_raw) if max_length_raw is not None else None,
             )
             if ok:
                 return _text_response(f"Поисковый запрос id={sq_id} обновлён.")

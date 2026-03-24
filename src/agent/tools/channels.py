@@ -87,7 +87,7 @@ def register(db, client_pool, embedding_service, **kwargs):
         try:
             from src.services.channel_service import ChannelService
 
-            svc = ChannelService(db)
+            svc = ChannelService(db, client_pool, None)
             added = await svc.add_by_identifier(identifier)
             if added:
                 return _text_response(f"Канал '{identifier}' успешно добавлен.")
@@ -119,7 +119,7 @@ def register(db, client_pool, embedding_service, **kwargs):
         try:
             from src.services.channel_service import ChannelService
 
-            svc = ChannelService(db)
+            svc = ChannelService(db, client_pool, None)
             await svc.delete(int(pk))
             return _text_response(f"Канал '{name}' удалён.")
         except Exception as e:
@@ -143,7 +143,7 @@ def register(db, client_pool, embedding_service, **kwargs):
         try:
             from src.services.channel_service import ChannelService
 
-            svc = ChannelService(db)
+            svc = ChannelService(db, client_pool, None)
             await svc.toggle(int(pk))
             ch = await db.get_channel_by_pk(int(pk))
             if ch:
@@ -179,7 +179,7 @@ def register(db, client_pool, embedding_service, **kwargs):
         try:
             from src.services.channel_service import ChannelService
 
-            svc = ChannelService(db)
+            svc = ChannelService(db, client_pool, None)
             added = 0
             errors = []
             for ident in identifiers:
