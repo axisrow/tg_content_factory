@@ -53,6 +53,8 @@ dev = [
     "pytest-xdist==3.8.0",
     "httpx==0.28.1",
     "ruff==0.14.13",
+    "langchain==1.2.12",
+    "langchain-core==1.2.19",
 ]
 
 [project.urls]
