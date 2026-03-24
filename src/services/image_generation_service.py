@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from typing import TYPE_CHECKING, Optional
@@ -39,8 +40,11 @@ class ImageGenerationService:
             return None
         try:
             return await adapter(text, model_id)
+        except (OSError, asyncio.TimeoutError) as exc:
+            logger.warning("Image generation failed (model=%s): %s", model, exc)
+            return None
         except Exception:
-            logger.exception("Image generation failed (model=%s)", model)
+            logger.exception("Image generation unexpected error (model=%s)", model)
             return None
 
     async def is_available(self) -> bool:

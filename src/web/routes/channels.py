@@ -1,4 +1,5 @@
 import logging
+import sqlite3
 
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
@@ -78,8 +79,6 @@ async def toggle_channel(request: Request, pk: int):
 async def delete_channel(request: Request, pk: int):
     try:
         await deps.channel_service(request).delete(pk)
-    except Exception as exc:
-        if "FOREIGN KEY constraint failed" in str(exc):
-            return RedirectResponse(url="/channels?error=channel_in_pipeline", status_code=303)
-        raise
+    except sqlite3.IntegrityError:
+        return RedirectResponse(url="/channels?error=channel_in_pipeline", status_code=303)
     return RedirectResponse(url="/channels?msg=channel_deleted", status_code=303)

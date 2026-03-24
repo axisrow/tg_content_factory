@@ -264,6 +264,7 @@ class ClaudeSdkBackend:
                         draining = True
                 return
             except Exception as exc:
+                # claude_agent_sdk raises RuntimeError with this text; no specific exception type
                 if attempt == 0 and "Control request timeout" in str(exc):
                     logger.warning("Agent init timeout, retrying (thread %d)", thread_id)
                     last_err = exc
@@ -973,11 +974,7 @@ class AgentManager:
 
     async def refresh_settings_cache(self, *, preflight: bool = False) -> None:
         await self._deepagents_backend.refresh_settings_cache()
-        if (
-            preflight
-            and self._deepagents_backend.configured
-            and self._deepagents_backend.preflight_available is None
-        ):
+        if preflight and self._deepagents_backend.configured:
             try:
                 self._deepagents_backend.initialize()
             except Exception:

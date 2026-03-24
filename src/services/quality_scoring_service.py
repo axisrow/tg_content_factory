@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from dataclasses import dataclass
@@ -69,9 +70,21 @@ class QualityScoringService:
         Returns:
             QualityScore with rubric scores and overall rating
         """
+        _default_score = QualityScore(
+            relevance=0.5,
+            language_quality=0.5,
+            informativeness=0.5,
+            structure=0.5,
+            overall=0.5,
+            issues=["Scoring failed"],
+        )
         try:
             from src.services.provider_service import AgentProviderService
+        except ImportError:
+            logger.warning("Provider service not available for quality scoring")
+            return _default_score
 
+        try:
             provider_service = AgentProviderService(self._db)
             provider_callable = provider_service.get_provider_callable(model)
 
@@ -101,16 +114,12 @@ class QualityScoringService:
                 issues=data.get("issues", []),
             )
 
+        except (OSError, asyncio.TimeoutError) as exc:
+            logger.warning("Quality scoring unavailable: %s", exc)
+            return _default_score
         except Exception:
             logger.exception("Quality scoring failed")
-            return QualityScore(
-                relevance=0.5,
-                language_quality=0.5,
-                informativeness=0.5,
-                structure=0.5,
-                overall=0.5,
-                issues=["Scoring failed"],
-            )
+            return _default_score
 
     def passes_threshold(self, score: QualityScore, threshold: float | None = None) -> bool:
         """Check if score passes the quality threshold.

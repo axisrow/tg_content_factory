@@ -578,7 +578,8 @@ async def test_settings_save_agent_can_disable_dev_mode_without_disclaimer(clien
 
     assert resp.status_code == 303
     assert await db.get_setting("agent_dev_mode_enabled") == "0"
-    assert await db.get_setting("agent_backend_override") == "deepagents"
+    # Override is reset to "auto" when dev mode is disabled
+    assert await db.get_setting("agent_backend_override") == "auto"
 
 
 @pytest.mark.asyncio

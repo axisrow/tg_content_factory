@@ -11,7 +11,7 @@ def is_langchain_available() -> bool:
     try:
         importlib.import_module("langchain")
         return True
-    except Exception:
+    except ImportError:
         return False
 
 
