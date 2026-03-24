@@ -19,9 +19,12 @@ class ImageGenerationService:
     first available adapter is used as fallback.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, adapters: dict[str, "ImageAdapter"] | None = None) -> None:
         self._adapters: dict[str, ImageAdapter] = {}
-        self._register_from_env()
+        if adapters is not None:
+            self._adapters = dict(adapters)
+        else:
+            self._register_from_env()
 
     # ── public API ──
 

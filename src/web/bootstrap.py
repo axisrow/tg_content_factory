@@ -163,6 +163,7 @@ async def build_container_with_templates(
         db=db,
         client_pool=pool,
         notifier=notifier,
+        config=config,
     )
     scheduler = SchedulerManager(
         config.scheduler,
