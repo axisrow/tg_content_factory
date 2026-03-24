@@ -614,8 +614,6 @@ async def save_agent_settings(request: Request):
                     url="/settings?error=agent_backend_no_valid_providers", status_code=303
                 )
         elif backend_override == "claude":
-            import os
-
             if not (
                 os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("CLAUDE_CODE_OAUTH_TOKEN")
             ):
@@ -1118,8 +1116,6 @@ async def save_image_providers(request: Request):
     existing = await service.load_provider_configs()
     configs = service.parse_provider_form(form, existing)
     # Validate enabled configs have an API key or env var fallback
-    import os
-
     from src.services.image_provider_service import image_provider_spec
 
     for cfg in configs:
