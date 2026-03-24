@@ -95,6 +95,6 @@ async def search_models_route(request: Request):
         return JSONResponse({"ok": False, "error": "provider is required"}, status_code=400)
 
     api_key = await _get_provider_api_key(request, provider)
-    svc = await _get_image_service(request)
+    svc = ImageGenerationService()
     models = await svc.search_models(provider, query, api_key=api_key)
     return JSONResponse({"ok": True, "models": models, "provider": provider})

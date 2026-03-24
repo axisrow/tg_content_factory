@@ -152,28 +152,49 @@ document.addEventListener('DOMContentLoaded', function() {
                 catalogResults.innerHTML = '<p class="text-muted small">Ничего не найдено</p>';
                 return;
             }
-            let html = '<div class="list-group list-group-flush">';
+            const list = document.createElement('div');
+            list.className = 'list-group list-group-flush';
             for (const m of data.models) {
-                html += `<div class="list-group-item d-flex justify-content-between align-items-start">
-                    <div>
-                        <div class="fw-semibold small">${m.id}</div>
-                        <div class="text-muted small">${m.description || ''}</div>
-                        ${m.run_count ? `<span class="badge text-bg-secondary">${m.run_count.toLocaleString()} runs</span>` : ''}
-                    </div>
-                    <button class="btn btn-outline-primary btn-sm ms-2 use-model-btn" data-model="${m.model_string}">
-                        Выбрать
-                    </button>
-                </div>`;
-            }
-            html += '</div>';
-            catalogResults.innerHTML = html;
-            catalogResults.querySelectorAll('.use-model-btn').forEach(function(b) {
-                b.addEventListener('click', function() {
+                const item = document.createElement('div');
+                item.className = 'list-group-item d-flex justify-content-between align-items-start';
+
+                const info = document.createElement('div');
+                const title = document.createElement('div');
+                title.className = 'fw-semibold small';
+                title.textContent = m.id;
+                info.appendChild(title);
+
+                const desc = document.createElement('div');
+                desc.className = 'text-muted small';
+                desc.textContent = m.description || '';
+                info.appendChild(desc);
+
+                if (m.run_count) {
+                    const badge = document.createElement('span');
+                    badge.className = 'badge text-bg-secondary';
+                    badge.textContent = m.run_count.toLocaleString() + ' runs';
+                    info.appendChild(badge);
+                }
+                item.appendChild(info);
+
+                const btn = document.createElement('button');
+                btn.className = 'btn btn-outline-primary btn-sm ms-2 use-model-btn';
+                btn.setAttribute('data-model', m.model_string);
+                btn.textContent = 'Выбрать';
+                btn.addEventListener('click', function() {
                     document.getElementById('img-model').value = this.dataset.model;
                 });
-            });
+                item.appendChild(btn);
+                list.appendChild(item);
+            }
+            catalogResults.innerHTML = '';
+            catalogResults.appendChild(list);
         } catch (err) {
-            catalogResults.innerHTML = `<p class="text-danger small">${err.message}</p>`;
+            catalogResults.textContent = '';
+            const errP = document.createElement('p');
+            errP.className = 'text-danger small';
+            errP.textContent = err.message;
+            catalogResults.appendChild(errP);
         } finally {
             catalogSpinner.classList.add('d-none');
         }
