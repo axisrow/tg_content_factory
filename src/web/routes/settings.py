@@ -598,6 +598,27 @@ async def save_agent_settings(request: Request):
     else:
         prompt_template = current_prompt_template
 
+    if backend_override != "auto" and dev_mode_enabled:
+        if backend_override == "deepagents":
+            service = _agent_provider_service(request)
+            configs = await service.load_provider_configs()
+            has_valid = any(
+                cfg.enabled and not service.validate_provider_config(cfg) for cfg in configs
+            )
+            if not has_valid:
+                return RedirectResponse(
+                    url="/settings?error=agent_backend_no_valid_providers", status_code=303
+                )
+        elif backend_override == "claude":
+            import os
+
+            if not (
+                os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("CLAUDE_CODE_OAUTH_TOKEN")
+            ):
+                return RedirectResponse(
+                    url="/settings?error=agent_backend_claude_unavailable", status_code=303
+                )
+
     await db.set_setting("agent_dev_mode_enabled", "1" if dev_mode_enabled else "0")
     await db.set_setting("agent_backend_override", backend_override)
     await db.set_setting(AGENT_PROMPT_TEMPLATE_SETTING, prompt_template)

@@ -439,6 +439,17 @@ async def test_settings_semantic_index_runs_embedding_service(client, monkeypatc
 @pytest.mark.asyncio
 async def test_settings_save_agent_persists_dev_mode_and_override(client):
     db = client._transport.app.state.db
+    # Need a valid provider config for deepagents override to be accepted
+    import json
+
+    await db.set_setting(
+        "agent_deepagents_providers_v1",
+        json.dumps([{
+            "provider": "ollama", "enabled": True, "priority": 0,
+            "selected_model": "llama3.2", "plain_fields": {"base_url": ""},
+            "secret_fields_enc": {}, "last_validation_error": "",
+        }]),
+    )
 
     resp = await client.post(
         "/settings/save-agent",
@@ -482,6 +493,16 @@ async def test_settings_page_shows_ai_agent_block_only_in_dev_mode(client):
 async def test_settings_save_agent_preserves_override_when_toggling_dev_mode_only(client):
     db = client._transport.app.state.db
     await db.set_setting("agent_backend_override", "deepagents")
+    import json
+
+    await db.set_setting(
+        "agent_deepagents_providers_v1",
+        json.dumps([{
+            "provider": "ollama", "enabled": True, "priority": 0,
+            "selected_model": "llama3.2", "plain_fields": {"base_url": ""},
+            "secret_fields_enc": {}, "last_validation_error": "",
+        }]),
+    )
 
     resp = await client.post(
         "/settings/save-agent",
@@ -517,6 +538,17 @@ async def test_settings_save_agent_backend_override_keeps_dev_mode_enabled(clien
     db = client._transport.app.state.db
     await db.set_setting("agent_dev_mode_enabled", "1")
     await db.set_setting("agent_backend_override", "auto")
+    # Need a valid provider config for deepagents override to be accepted
+    import json
+
+    await db.set_setting(
+        "agent_deepagents_providers_v1",
+        json.dumps([{
+            "provider": "ollama", "enabled": True, "priority": 0,
+            "selected_model": "llama3.2", "plain_fields": {"base_url": ""},
+            "secret_fields_enc": {}, "last_validation_error": "",
+        }]),
+    )
 
     resp = await client.post(
         "/settings/save-agent",
@@ -3395,3 +3427,71 @@ async def test_analytics_page_with_date_filter(client):
     assert "Аналитика" in resp.text
     assert 'value="2025-01-01"' in resp.text
     assert 'value="2025-12-31"' in resp.text
+
+
+# ── Backend override validation tests ──────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_save_agent_rejects_deepagents_override_without_providers(client):
+    """Deepagents override is rejected when no valid providers are configured."""
+    db = client._transport.app.state.db
+
+    resp = await client.post(
+        "/settings/save-agent",
+        data={
+            "agent_form_scope": "dev_mode",
+            "agent_dev_mode_enabled": "1",
+            "agent_dev_mode_disclaimer": "1",
+            "agent_backend_override": "deepagents",
+        },
+        follow_redirects=False,
+    )
+
+    assert resp.status_code == 303
+    assert "error=agent_backend_no_valid_providers" in resp.headers["location"]
+    assert await db.get_setting("agent_backend_override") != "deepagents"
+
+
+@pytest.mark.asyncio
+async def test_save_agent_rejects_claude_override_without_api_key(client, monkeypatch):
+    """Claude override is rejected when no API key is available."""
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
+    db = client._transport.app.state.db
+
+    resp = await client.post(
+        "/settings/save-agent",
+        data={
+            "agent_form_scope": "dev_mode",
+            "agent_dev_mode_enabled": "1",
+            "agent_dev_mode_disclaimer": "1",
+            "agent_backend_override": "claude",
+        },
+        follow_redirects=False,
+    )
+
+    assert resp.status_code == 303
+    assert "error=agent_backend_claude_unavailable" in resp.headers["location"]
+    assert await db.get_setting("agent_backend_override") != "claude"
+
+
+@pytest.mark.asyncio
+async def test_save_agent_accepts_auto_override_always(client):
+    """Auto override is always accepted regardless of provider/key state."""
+    db = client._transport.app.state.db
+
+    resp = await client.post(
+        "/settings/save-agent",
+        data={
+            "agent_form_scope": "dev_mode",
+            "agent_dev_mode_enabled": "1",
+            "agent_dev_mode_disclaimer": "1",
+            "agent_backend_override": "auto",
+        },
+        follow_redirects=False,
+    )
+
+    assert resp.status_code == 303
+    assert "msg=agent_saved" in resp.headers["location"]
+    assert await db.get_setting("agent_backend_override") == "auto"

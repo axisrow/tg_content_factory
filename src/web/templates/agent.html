@@ -542,13 +542,13 @@
 
             {% if agent_status %}
             <div class="chat-runtime">
-                <span class="runtime-chip {{ 'runtime-chip-on' if agent_status.claude_available else 'runtime-chip-off' }}">
+                <span class="runtime-chip {{ 'runtime-chip-on' if agent_status.selected_backend == 'claude' else 'runtime-chip-off' }}">
                     Claude
-                    <strong>{{ "on" if agent_status.claude_available else "off" }}</strong>
+                    <strong>{{ "on" if agent_status.selected_backend == "claude" else "off" }}</strong>
                 </span>
-                <span class="runtime-chip {{ 'runtime-chip-on' if agent_status.deepagents_available else 'runtime-chip-off' }}">
+                <span class="runtime-chip {{ 'runtime-chip-on' if agent_status.selected_backend == 'deepagents' else 'runtime-chip-off' }}">
                     deepagents
-                    <strong>{{ "on" if agent_status.deepagents_available else "off" }}</strong>
+                    <strong>{{ "on" if agent_status.selected_backend == "deepagents" else "off" }}</strong>
                 </span>
                 {% if agent_status.selected_backend == "deepagents" and agent_status.fallback_model %}
                 <span class="runtime-chip runtime-chip-accent">
