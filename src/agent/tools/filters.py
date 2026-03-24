@@ -74,8 +74,8 @@ def register(db, client_pool, embedding_service, **kwargs):
             from src.filters.analyzer import ChannelAnalyzer
 
             analyzer = ChannelAnalyzer(db)
-            await analyzer.reset_filters()
-            return _text_response("Фильтры сброшены.")
+            count = await analyzer.reset_filters()
+            return _text_response(f"Фильтры сброшены: {count} каналов разблокированы.")
         except Exception as e:
             return _text_response(f"Ошибка сброса фильтров: {e}")
 

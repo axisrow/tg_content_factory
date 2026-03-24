@@ -513,8 +513,8 @@ def build_deepagents_tools(db, client_pool=None) -> list[Callable]:  # noqa: C90
             from src.filters.analyzer import ChannelAnalyzer
 
             analyzer = ChannelAnalyzer(db)
-            _run_sync("reset_filters", analyzer.reset_filters)
-            return "Фильтры сброшены."
+            count = _run_sync("reset_filters", analyzer.reset_filters)
+            return f"Фильтры сброшены: {count} каналов разблокированы."
         except Exception as exc:
             return f"Ошибка: {exc}"
 
