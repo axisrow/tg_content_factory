@@ -973,7 +973,11 @@ class AgentManager:
 
     async def refresh_settings_cache(self, *, preflight: bool = False) -> None:
         await self._deepagents_backend.refresh_settings_cache()
-        if preflight and self._deepagents_backend.configured:
+        if (
+            preflight
+            and self._deepagents_backend.configured
+            and self._deepagents_backend.preflight_available is None
+        ):
             try:
                 self._deepagents_backend.initialize()
             except Exception:

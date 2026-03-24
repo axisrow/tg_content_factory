@@ -916,21 +916,39 @@ def test_build_agent_tools_import_error_shows_details(db, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_refresh_reinitializes_on_preflight_true(db, monkeypatch):
-    """refresh_settings_cache(preflight=True) re-inits even when preflight_available is not None."""
+async def test_refresh_reinitializes_after_config_change(db, monkeypatch):
+    """refresh_settings_cache(preflight=True) re-inits when configs changed (preflight_available reset to None)."""
     monkeypatch.setenv("AGENT_FALLBACK_MODEL", "openai:gpt-4.1-mini")
     monkeypatch.setenv("AGENT_FALLBACK_API_KEY", "test-key")
 
     mgr = AgentManager(db)
     backend = mgr._deepagents_backend
 
-    # Simulate a previously failed preflight
+    # Simulate config change resetting preflight (as DeepagentsBackend.refresh_settings_cache does)
+    backend._preflight_available = None
+    backend._init_error = None
+
+    with patch.object(backend, "initialize") as mock_init:
+        await mgr.refresh_settings_cache(preflight=True)
+        mock_init.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_refresh_skips_reinit_when_already_initialized(db, monkeypatch):
+    """refresh_settings_cache(preflight=True) skips initialize() when preflight_available is already set."""
+    monkeypatch.setenv("AGENT_FALLBACK_MODEL", "openai:gpt-4.1-mini")
+    monkeypatch.setenv("AGENT_FALLBACK_API_KEY", "test-key")
+
+    mgr = AgentManager(db)
+    backend = mgr._deepagents_backend
+
+    # Simulate a previously completed preflight (success or failure)
     backend._preflight_available = False
     backend._init_error = "some old error"
 
     with patch.object(backend, "initialize") as mock_init:
         await mgr.refresh_settings_cache(preflight=True)
-        mock_init.assert_called_once()
+        mock_init.assert_not_called()
 
 
 @pytest.mark.asyncio
