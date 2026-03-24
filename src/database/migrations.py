@@ -590,6 +590,9 @@ async def run_migrations(db: aiosqlite.Connection) -> bool:
     await db.execute(
         "CREATE INDEX IF NOT EXISTS idx_messages_collected_at ON messages(collected_at)"
     )
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_messages_date ON messages(date)"
+    )
     await db.commit()
 
     await _migrate_vec_to_portable(db)

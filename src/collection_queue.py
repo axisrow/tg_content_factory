@@ -164,6 +164,7 @@ class CollectionQueue:
             except ConnectionError as exc:
                 requeued = await self._try_reconnect_and_requeue(task_id, channel, full, force, exc)
                 if not requeued:
+                    self._retried_tasks.discard(task_id)
                     await self._channels.update_collection_task(
                         task_id,
                         CollectionTaskStatus.FAILED,
@@ -171,12 +172,15 @@ class CollectionQueue:
                     )
                     logger.exception("Collection failed for channel %d (reconnect failed)", channel.channel_id)
             except Exception as exc:
+                self._retried_tasks.discard(task_id)
                 await self._channels.update_collection_task(
                     task_id,
                     CollectionTaskStatus.FAILED,
                     error=str(exc)[:500],
                 )
                 logger.exception("Collection failed for channel %d", channel.channel_id)
+            else:
+                self._retried_tasks.discard(task_id)
             finally:
                 self._current_task_id = None
                 self._queue.task_done()

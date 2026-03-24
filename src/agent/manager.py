@@ -1119,6 +1119,11 @@ class AgentManager:
                 await queue.put(f"data: {err_payload}\n\n")
             await queue.put(None)
 
+        # Cleanup stale done tasks before adding new one
+        stale = [tid for tid, t in self._active_tasks.items() if t.done()]
+        for tid in stale:
+            del self._active_tasks[tid]
+
         task = asyncio.create_task(
             _run_backend(backend, lambda text: f"Ошибка агента ({backend_name}): {text}")
         )

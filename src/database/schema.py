@@ -87,6 +87,7 @@ CREATE INDEX IF NOT EXISTS idx_channel_stats_lookup
     ON channel_stats(channel_id, collected_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_messages_text ON messages(text);
 CREATE INDEX IF NOT EXISTS idx_messages_channel_date ON messages(channel_id, date);
+CREATE INDEX IF NOT EXISTS idx_messages_date ON messages(date);
 
 CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
     text,
