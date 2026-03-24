@@ -1,0 +1,80 @@
+{% if not img_provider_writes_enabled %}
+<div class="alert alert-warning py-2">
+    Для управления API-ключами генерации изображений требуется <code>SESSION_ENCRYPTION_KEY</code>. Без него настройки доступны только для чтения.
+</div>
+{% endif %}
+
+<form method="post" action="/settings/image-providers/add" class="row g-2 align-items-end mb-4" data-busy>
+    <div class="col-12 col-md-6">
+        <label for="img_provider_add" class="form-label">Добавить провайдера</label>
+        <select id="img_provider_add" name="provider" class="form-select" {% if not img_provider_writes_enabled %}disabled{% endif %}>
+            <option value="">Выберите провайдера</option>
+            {% for spec in img_provider_options %}
+            <option value="{{ spec.name }}">{{ spec.display_name }} ({{ spec.name }})</option>
+            {% endfor %}
+        </select>
+    </div>
+    <div class="col-12 col-md-auto">
+        <button type="submit" class="btn btn-outline-primary btn-sm" {% if not img_provider_writes_enabled %}disabled{% endif %}>
+            <i class="bi bi-plus-lg me-1"></i>Добавить
+        </button>
+    </div>
+</form>
+
+{% if img_provider_views %}
+<form method="post" action="/settings/image-providers/save" data-busy>
+    {% for item in img_provider_views %}
+    <div class="card shadow-sm mb-3">
+        <div class="card-body">
+            <input type="hidden" name="img_provider_present__{{ item.provider }}" value="1">
+            <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-3">
+                <div>
+                    <div class="fw-semibold">{{ item.display_name }}</div>
+                    <div class="small text-muted">
+                        provider: <code>{{ item.provider }}</code>
+                        {% if item.env_var_set %}
+                        | <span class="badge text-bg-success">env</span> <code>{{ item.env_var_names }}</code>
+                        {% endif %}
+                    </div>
+                </div>
+                <button type="submit"
+                        class="btn btn-outline-danger btn-sm"
+                        formaction="/settings/image-providers/{{ item.provider }}/delete"
+                        formmethod="post"
+                        {% if not img_provider_writes_enabled %}disabled{% endif %}>
+                    <i class="bi bi-trash me-1"></i>Удалить
+                </button>
+            </div>
+
+            <div class="row g-3 mb-2">
+                <div class="col-12 col-md-3">
+                    <label class="form-label" for="img_provider_enabled__{{ item.provider }}">Статус</label>
+                    <select class="form-select" id="img_provider_enabled__{{ item.provider }}"
+                            name="img_provider_enabled__{{ item.provider }}" {% if not img_provider_writes_enabled %}disabled{% endif %}>
+                        <option value="1" {{ 'selected' if item.enabled else '' }}>Enabled</option>
+                        <option value="" {{ 'selected' if not item.enabled else '' }}>Disabled</option>
+                    </select>
+                </div>
+                <div class="col-12 col-md-5">
+                    <label class="form-label" for="img_provider_secret__{{ item.provider }}__api_key">API Key</label>
+                    <input type="password" class="form-control"
+                           id="img_provider_secret__{{ item.provider }}__api_key"
+                           name="img_provider_secret__{{ item.provider }}__api_key"
+                           placeholder="{{ '••••••••' if item.has_key else 'Введите API ключ' }}"
+                           {% if not img_provider_writes_enabled %}disabled{% endif %}>
+                    <div class="form-text">
+                        {% if item.has_key %}Ключ сохранён и скрыт. Оставьте пустым, чтобы не менять.{% elif item.env_var_set %}Ключ из env будет использован как fallback.{% else %}Значение ещё не задано.{% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+
+    <div class="d-flex justify-content-end">
+        <button type="submit" class="btn btn-primary" {% if not img_provider_writes_enabled %}disabled{% endif %}>Сохранить</button>
+    </div>
+</form>
+{% else %}
+<p class="text-muted mb-0">Провайдеры изображений ещё не добавлены.</p>
+{% endif %}

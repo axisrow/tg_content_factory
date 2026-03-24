@@ -33,6 +33,13 @@
         </button>
     </li>
     <li class="nav-item" role="presentation">
+        <button class="nav-link" id="tab-image" data-bs-toggle="pill"
+                data-bs-target="#pane-image" type="button" role="tab"
+                aria-controls="pane-image" aria-selected="false">
+            <i class="bi bi-image me-1"></i>Изображения
+        </button>
+    </li>
+    <li class="nav-item" role="presentation">
         <button class="nav-link" id="tab-devmode" data-bs-toggle="pill"
                 data-bs-target="#pane-devmode" type="button" role="tab"
                 aria-controls="pane-devmode" aria-selected="false">
@@ -88,6 +95,15 @@
             <div class="card-header bg-body-secondary fw-semibold">Semantic Search & Embeddings</div>
             <div class="card-body">
                 {% include "settings/_semantic.html" %}
+            </div>
+        </div>
+    </div>
+
+    <div class="tab-pane fade" id="pane-image" role="tabpanel" aria-labelledby="tab-image">
+        <div class="card shadow-sm">
+            <div class="card-header bg-body-secondary fw-semibold">Image Generation Providers</div>
+            <div class="card-body">
+                {% include "settings/_image_providers.html" %}
             </div>
         </div>
     </div>
