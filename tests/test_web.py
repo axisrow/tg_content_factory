@@ -220,6 +220,102 @@ async def test_settings_page(client):
 
 
 @pytest.mark.asyncio
+async def test_settings_page_image_providers_tab(client):
+    resp = await client.get("/settings/")
+    assert resp.status_code == 200
+    assert "Image Generation Providers" in resp.text
+    assert "Изображения" in resp.text  # tab label
+
+
+@pytest.mark.asyncio
+async def test_add_image_provider(client):
+    resp = await client.post(
+        "/settings/image-providers/add",
+        data={"provider": "together"},
+    )
+    assert resp.status_code == 200
+    # Verify provider was added by checking settings page
+    resp2 = await client.get("/settings/")
+    assert "Together AI" in resp2.text
+
+
+@pytest.mark.asyncio
+async def test_add_image_provider_invalid(client):
+    resp = await client.post(
+        "/settings/image-providers/add",
+        data={"provider": "nonexistent"},
+    )
+    assert resp.status_code == 200
+    assert "error=image_provider_invalid" in str(resp.url)
+
+
+@pytest.mark.asyncio
+async def test_save_image_providers(client):
+    # First add a provider
+    await client.post("/settings/image-providers/add", data={"provider": "openai"})
+    # Then save with a key
+    resp = await client.post(
+        "/settings/image-providers/save",
+        data={
+            "img_provider_present__openai": "1",
+            "img_provider_enabled__openai": "1",
+            "img_provider_secret__openai__api_key": "sk-test",
+        },
+    )
+    assert resp.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_delete_image_provider(client):
+    await client.post("/settings/image-providers/add", data={"provider": "replicate"})
+    resp = await client.post("/settings/image-providers/replicate/delete")
+    assert resp.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_startup_continues_after_pool_initialize_timeout(tmp_path, db, caplog, monkeypatch):
+    """start_container proceeds when pool.initialize() hangs past the timeout."""
+    import asyncio
+    from types import SimpleNamespace
+
+    from src.web.bootstrap import start_container
+
+    # Shrink timeout so test runs fast
+    monkeypatch.setattr("src.web.bootstrap._POOL_INIT_TIMEOUT", 0.1)
+
+    async def _hang():
+        await asyncio.sleep(9999)
+
+    pool = SimpleNamespace(initialize=_hang)
+    auth = SimpleNamespace(is_configured=True)
+    channel_bundle = SimpleNamespace(
+        fail_running_collection_tasks_on_startup=AsyncMock(return_value=0),
+    )
+    photo_task_service = SimpleNamespace(recover_running=AsyncMock(return_value=0))
+    ai_search = SimpleNamespace(initialize=lambda: None)
+    scheduler = SimpleNamespace(load_settings=AsyncMock(), start=AsyncMock())
+    gen_runs = SimpleNamespace(reset_running_on_startup=AsyncMock(return_value=0))
+
+    container = SimpleNamespace(
+        auth=auth,
+        pool=pool,
+        channel_bundle=channel_bundle,
+        photo_task_service=photo_task_service,
+        db=SimpleNamespace(repos=SimpleNamespace(generation_runs=gen_runs), get_setting=AsyncMock(return_value=None)),
+        collection_queue=None,
+        unified_dispatcher=None,
+        ai_search=ai_search,
+        agent_manager=None,
+        scheduler=scheduler,
+    )
+
+    with caplog.at_level("WARNING"):
+        await asyncio.wait_for(start_container(container), timeout=5)
+
+    assert "telegram pool timed out" in caplog.text
+
+
+@pytest.mark.asyncio
 async def test_settings_page_hides_credentials_form_when_env_credentials_configured(
     client, monkeypatch
 ):

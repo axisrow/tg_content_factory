@@ -71,6 +71,7 @@ class ClientPool:
         self._max_flood_wait_sec = max_flood_wait_sec
         self._runtime_config = self._normalize_runtime_config(runtime_config)
         self.clients: dict[str, object] = {}
+        self.init_timeout: float = 15.0
         self._lock = asyncio.Lock()
         self._in_use: set[str] = set()
         self._lease_pool = AccountLeasePool(db, self._in_use)
@@ -245,14 +246,7 @@ class ClientPool:
                 session = lease.session
                 logger.info("Connected account: %s (primary=%s)", acc.phone, acc.is_primary)
                 try:
-                    me = await run_with_flood_wait(
-                        session.fetch_me(),
-                        operation="initialize_fetch_me",
-                        phone=acc.phone,
-                        pool=self,
-                        logger_=logger,
-                        timeout=15.0,
-                    )
+                    me = await asyncio.wait_for(session.fetch_me(), timeout=10.0)
                     is_premium = bool(getattr(me, "premium", False))
                     if is_premium != acc.is_premium:
                         await self._db.update_account_premium(acc.phone, is_premium)
@@ -264,7 +258,23 @@ class ClientPool:
             except Exception as e:
                 logger.error("Failed to connect %s: %s", acc.phone, e)
 
-        await asyncio.gather(*[_init_one(acc) for acc in new_accounts])
+        tasks = {asyncio.create_task(_init_one(acc)): acc for acc in new_accounts}
+        done, pending = await asyncio.wait(tasks.keys(), timeout=self.init_timeout)
+        if pending:
+            phones = []
+            for task in pending:
+                acc = tasks[task]
+                phones.append(acc.phone)
+                logger.warning("Account %s init timed out — skipping", acc.phone)
+                task.cancel()
+            await asyncio.wait(pending, timeout=3.0)
+            for phone in phones:
+                if phone in self.clients:
+                    try:
+                        await asyncio.wait_for(self.clients[phone].close(), timeout=2.0)
+                    except Exception:
+                        pass
+                    del self.clients[phone]
 
     async def get_available_client(self) -> tuple[TelegramTransportSession, str] | None:
         """Get first available client not in flood wait. Returns (client, phone) or None."""

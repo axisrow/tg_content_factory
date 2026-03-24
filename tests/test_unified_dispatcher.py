@@ -1237,3 +1237,71 @@ async def test_run_loop_marks_task_failed_on_unexpected_exception(
 
     # Task should have been processed despite exception
     assert mock_tasks_repo.claim_next_due_generic_task.call_count >= 1
+
+
+# === _build_image_service ===
+
+
+@pytest.mark.asyncio
+async def test_build_image_service_no_config(mock_collector, mock_channel_bundle, mock_tasks_repo):
+    """Without config, falls back to env-based registration."""
+    dispatcher = UnifiedDispatcher(
+        mock_collector, mock_channel_bundle, mock_tasks_repo,
+        config=None, db=None,
+    )
+    svc = await dispatcher._build_image_service()
+    # adapters=None path → _register_from_env called
+    assert svc is not None
+
+
+@pytest.mark.asyncio
+async def test_build_image_service_with_db_config(
+    mock_collector, mock_channel_bundle, mock_tasks_repo, db, monkeypatch,
+):
+    """DB-configured provider creates adapter from stored key."""
+    import json
+
+    from src.config import AppConfig
+    from src.security import SessionCipher
+
+    config = AppConfig()
+    config.security.session_encryption_key = "test-secret"
+    cipher = SessionCipher("test-secret")
+    payload = [{"provider": "together", "enabled": True, "api_key_enc": cipher.encrypt("key123")}]
+    await db.set_setting("image_providers_v1", json.dumps(payload))
+    # Clear env to ensure adapters come from DB only
+    monkeypatch.delenv("TOGETHER_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("HUGGINGFACE_API_KEY", raising=False)
+    monkeypatch.delenv("HUGGINGFACE_TOKEN", raising=False)
+    monkeypatch.delenv("REPLICATE_API_TOKEN", raising=False)
+
+    dispatcher = UnifiedDispatcher(
+        mock_collector, mock_channel_bundle, mock_tasks_repo,
+        config=config, db=db,
+    )
+    svc = await dispatcher._build_image_service()
+    assert "together" in svc.adapter_names
+
+
+@pytest.mark.asyncio
+async def test_build_image_service_disabled_blocks_env(
+    mock_collector, mock_channel_bundle, mock_tasks_repo, db, monkeypatch,
+):
+    """Disabled DB provider blocks env-var fallback."""
+    import json
+
+    from src.config import AppConfig
+
+    config = AppConfig()
+    config.security.session_encryption_key = "test-secret"
+    payload = [{"provider": "together", "enabled": False}]
+    await db.set_setting("image_providers_v1", json.dumps(payload))
+    monkeypatch.setenv("TOGETHER_API_KEY", "env-key")
+
+    dispatcher = UnifiedDispatcher(
+        mock_collector, mock_channel_bundle, mock_tasks_repo,
+        config=config, db=db,
+    )
+    svc = await dispatcher._build_image_service()
+    assert "together" not in svc.adapter_names

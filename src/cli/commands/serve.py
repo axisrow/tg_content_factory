@@ -32,5 +32,7 @@ def run(args: argparse.Namespace) -> None:
 
     try:
         uvicorn.run(app, host=config.web.host, port=config.web.port)
+    except KeyboardInterrupt:
+        pass
     finally:
         unregister_current_process(pid_path)

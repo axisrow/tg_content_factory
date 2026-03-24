@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import logging
 import os
 import re
 import secrets
+import signal
 import time
 from contextlib import asynccontextmanager
 
@@ -188,8 +190,37 @@ class BasicAuthMiddleware(BaseHTTPMiddleware):
         )
 
 
+def _make_telethon_noise_handler():
+    """Suppress Telethon 'Task was destroyed' warnings from orphaned background loops."""
+
+    def handler(loop: asyncio.AbstractEventLoop, context: dict) -> None:
+        msg = context.get("message", "")
+        if "Task was destroyed" in msg:
+            return
+        loop.default_exception_handler(context)
+
+    return handler
+
+
+def _suppress_telethon_gc_warnings() -> None:
+    """Suppress 'coroutine ignored GeneratorExit' from Telethon GC."""
+    import sys
+
+    _orig_unraisable = sys.unraisablehook
+
+    def _hook(unraisable: sys.UnraisableHookArgs) -> None:
+        if isinstance(unraisable.exc_value, RuntimeError) and "GeneratorExit" in str(unraisable.exc_value):
+            return
+        _orig_unraisable(unraisable)
+
+    sys.unraisablehook = _hook
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    loop = asyncio.get_running_loop()
+    loop.set_exception_handler(_make_telethon_noise_handler())
+    _suppress_telethon_gc_warnings()
     container = await build_container_with_templates(
         app.state.config,
         log_buffer=app.state.log_buffer,
@@ -198,8 +229,25 @@ async def lifespan(app: FastAPI):
     )
     configure_app(app, container)
     logger.info("Application started")
+
+    startup_task = asyncio.create_task(start_container(container))
+
+    def _abort_startup(sig: int) -> None:
+        logger.warning("Received %s during startup, aborting...", signal.Signals(sig).name)
+        startup_task.cancel()
+
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        loop.add_signal_handler(sig, _abort_startup, sig)
+
     try:
-        await start_container(container)
+        await startup_task
+    except asyncio.CancelledError:
+        logger.warning("startup: cancelled by signal — server starts with partial init")
+    finally:
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            loop.remove_signal_handler(sig)
+
+    try:
         yield
     finally:
         logger.info("Shutting down...")
