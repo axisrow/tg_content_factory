@@ -1116,8 +1116,6 @@ async def save_image_providers(request: Request):
     existing = await service.load_provider_configs()
     configs = service.parse_provider_form(form, existing)
     # Validate enabled configs have an API key or env var fallback
-    from src.services.image_provider_service import image_provider_spec
-
     for cfg in configs:
         if not cfg.enabled:
             continue
