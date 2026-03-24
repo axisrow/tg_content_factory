@@ -33,6 +33,12 @@ from src.services.embedding_service import (
     LAST_EMBEDDED_ID_SETTING,
     EmbeddingService,
 )
+from src.services.image_provider_service import (
+    IMAGE_PROVIDER_ORDER,
+    IMAGE_PROVIDER_SPECS,
+    ImageProviderService,
+    image_provider_spec,
+)
 from src.services.notification_service import NotificationService
 from src.settings_utils import parse_int_setting
 from src.telegram.notifier import Notifier
@@ -52,6 +58,10 @@ def _notification_service(request: Request) -> NotificationService:
         notif_cfg.bot_name_prefix,
         notif_cfg.bot_username_prefix,
     )
+
+
+def _image_provider_service(request: Request) -> ImageProviderService:
+    return ImageProviderService(deps.get_db(request), request.app.state.config)
 
 
 def _wants_json(request: Request) -> bool:
@@ -415,6 +425,13 @@ async def settings_page(request: Request):
         for name in PROVIDER_ORDER
         if name not in configured_names
     ]
+    img_provider_service = _image_provider_service(request)
+    img_provider_configs = await img_provider_service.load_provider_configs()
+    img_provider_views = img_provider_service.build_provider_views(img_provider_configs)
+    configured_img_names = {cfg.provider for cfg in img_provider_configs}
+    available_img_options = [
+        IMAGE_PROVIDER_SPECS[name] for name in IMAGE_PROVIDER_ORDER if name not in configured_img_names
+    ]
     semantic_context = await _semantic_settings_context(request)
     return deps.get_templates(request).TemplateResponse(
         request,
@@ -444,6 +461,9 @@ async def settings_page(request: Request):
             "agent_provider_writes_enabled": provider_service.writes_enabled,
             "agent_provider_views": provider_views,
             "agent_provider_options": available_provider_options,
+            "img_provider_writes_enabled": img_provider_service.writes_enabled,
+            "img_provider_views": img_provider_views,
+            "img_provider_options": available_img_options,
             **semantic_context,
         },
     )
@@ -1041,6 +1061,49 @@ async def test_notification(request: Request):
     if ok:
         return RedirectResponse(url="/settings?msg=notification_test_sent", status_code=303)
     return RedirectResponse(url="/settings?error=notification_test_failed", status_code=303)
+
+
+# ── Image Providers ──
+
+
+@router.post("/image-providers/add")
+async def add_image_provider(request: Request):
+    service = _image_provider_service(request)
+    if not service.writes_enabled:
+        return RedirectResponse(url="/settings?error=image_provider_secret_required", status_code=303)
+    form = await request.form()
+    provider_name = str(form.get("provider", "")).strip()
+    if image_provider_spec(provider_name) is None:
+        return RedirectResponse(url="/settings?error=image_provider_invalid", status_code=303)
+    configs = await service.load_provider_configs()
+    if any(cfg.provider == provider_name for cfg in configs):
+        return RedirectResponse(url="/settings?msg=image_saved", status_code=303)
+    configs.append(service.create_empty_config(provider_name))
+    await service.save_provider_configs(configs)
+    return RedirectResponse(url="/settings?msg=image_saved", status_code=303)
+
+
+@router.post("/image-providers/save")
+async def save_image_providers(request: Request):
+    service = _image_provider_service(request)
+    if not service.writes_enabled:
+        return RedirectResponse(url="/settings?error=image_provider_secret_required", status_code=303)
+    form = await request.form()
+    existing = await service.load_provider_configs()
+    configs = service.parse_provider_form(form, existing)
+    await service.save_provider_configs(configs)
+    return RedirectResponse(url="/settings?msg=image_saved", status_code=303)
+
+
+@router.post("/image-providers/{provider_name}/delete")
+async def delete_image_provider(request: Request, provider_name: str):
+    service = _image_provider_service(request)
+    if not service.writes_enabled:
+        return RedirectResponse(url="/settings?error=image_provider_secret_required", status_code=303)
+    configs = await service.load_provider_configs()
+    configs = [cfg for cfg in configs if cfg.provider != provider_name]
+    await service.save_provider_configs(configs)
+    return RedirectResponse(url="/settings?msg=image_saved", status_code=303)
 
 
 @router.post("/{account_id}/toggle")

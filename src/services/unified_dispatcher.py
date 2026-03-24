@@ -22,6 +22,7 @@ from src.telegram.collector import Collector
 if TYPE_CHECKING:
     from src.database import Database
     from src.search.engine import SearchEngine
+    from src.services.image_generation_service import ImageGenerationService
     from src.services.photo_auto_upload_service import PhotoAutoUploadService
     from src.services.photo_task_service import PhotoTaskService
     from src.telegram.notifier import Notifier
@@ -59,6 +60,7 @@ class UnifiedDispatcher:
         db: "Database" | None = None,
         client_pool: object | None = None,
         notifier: "Notifier | None" = None,
+        config: object | None = None,
     ):
 
         self._collector = collector
@@ -75,8 +77,27 @@ class UnifiedDispatcher:
         self._db = db
         self._client_pool = client_pool
         self._notifier = notifier
+        self._config = config
         self._task: asyncio.Task | None = None
         self._stop_event = asyncio.Event()
+
+    async def _build_image_service(self) -> "ImageGenerationService":
+        from src.services.image_generation_service import ImageGenerationService
+
+        adapters = None
+        if self._db and self._config:
+            try:
+                from src.services.image_provider_service import ImageProviderService
+
+                svc = ImageProviderService(self._db, self._config)
+                configs = await svc.load_provider_configs()
+                built = svc.build_adapters(configs)
+                if built:
+                    adapters = built
+            except Exception:
+                logger.warning("Failed to load image provider configs from DB", exc_info=True)
+                adapters = {}  # don't fall back to env-only; honour user's saved state
+        return ImageGenerationService(adapters=adapters)
 
     async def start(self) -> None:
         if self._task and not self._task.done():
@@ -452,9 +473,7 @@ class UnifiedDispatcher:
             notification_service = DraftNotificationService(db, self._notifier)
             quality_service = QualityScoringService(db)
 
-            from src.services.image_generation_service import ImageGenerationService
-
-            image_service = ImageGenerationService()
+            image_service = await self._build_image_service()
             gen = ContentGenerationService(
                 db,
                 self._search_engine,
@@ -536,9 +555,7 @@ class UnifiedDispatcher:
             notification_service = DraftNotificationService(db, self._notifier)
             quality_service = QualityScoringService(db)
 
-            from src.services.image_generation_service import ImageGenerationService
-
-            image_service = ImageGenerationService()
+            image_service = await self._build_image_service()
             gen = ContentGenerationService(
                 db,
                 self._search_engine,
