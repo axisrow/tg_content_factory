@@ -7,7 +7,7 @@ from claude_agent_sdk import tool
 from src.agent.tools._registry import _text_response, require_confirmation
 
 
-def register(db, client_pool, embedding_service):
+def register(db, client_pool, embedding_service, **kwargs):
     tools = []
 
     @tool("get_settings", "Get current system settings (scheduler, agent, filters, etc.)", {})

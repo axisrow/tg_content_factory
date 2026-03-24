@@ -5,7 +5,7 @@ from claude_agent_sdk import tool
 from src.agent.tools._registry import _text_response
 
 
-def register(db, client_pool, embedding_service):
+def register(db, client_pool, embedding_service, **kwargs):
     """Register search-related agent tools."""
     tools = []
 

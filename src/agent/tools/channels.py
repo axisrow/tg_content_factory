@@ -6,7 +6,7 @@ from mcp.types import ToolAnnotations
 from src.agent.tools._registry import _text_response, require_confirmation, require_pool
 
 
-def register(db, client_pool, embedding_service):
+def register(db, client_pool, embedding_service, **kwargs):
     """Register channel-related agent tools."""
     tools = []
 

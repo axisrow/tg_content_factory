@@ -8,7 +8,7 @@ from mcp.types import ToolAnnotations
 from src.agent.tools._registry import _text_response, require_confirmation, require_pool
 
 
-def register(db, client_pool, embedding_service):
+def register(db, client_pool, embedding_service, **kwargs):
     tools = []
 
     # ------------------------------------------------------------------
@@ -363,10 +363,12 @@ def register(db, client_pool, embedding_service):
             return _text_response("Ошибка: pipeline_id обязателен.")
         try:
             limit = int(args.get("limit", 20))
-            runs = await db.repos.generation_runs.list_by_pipeline(int(pipeline_id), limit=limit)
             status_filter = args.get("status")
+            fetch_limit = limit * 10 if status_filter else limit
+            runs = await db.repos.generation_runs.list_by_pipeline(int(pipeline_id), limit=fetch_limit)
             if status_filter:
                 runs = [r for r in runs if r.status == status_filter or r.moderation_status == status_filter]
+                runs = runs[:limit]
             if not runs:
                 return _text_response(f"Нет генераций для пайплайна id={pipeline_id}.")
             lines = [f"Генерации пайплайна id={pipeline_id} ({len(runs)} шт.):"]

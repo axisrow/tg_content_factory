@@ -179,17 +179,20 @@ class AgentRuntimeStatus:
 
 
 class ClaudeSdkBackend:
-    def __init__(self, db: Database, config: AppConfig, client_pool=None) -> None:
+    def __init__(self, db: Database, config: AppConfig, client_pool=None, scheduler_manager=None) -> None:
         self._db = db
         self._config = config
         self._client_pool = client_pool
+        self._scheduler_manager = scheduler_manager
         self._server = None
 
     def initialize(self) -> None:
         from src.agent.tools import make_mcp_server
 
         os.environ.setdefault("CLAUDE_CODE_STREAM_CLOSE_TIMEOUT", "300000")
-        self._server = make_mcp_server(self._db, client_pool=self._client_pool)
+        self._server = make_mcp_server(
+            self._db, client_pool=self._client_pool, scheduler_manager=self._scheduler_manager,
+        )
         logger.info("Claude SDK backend initialized")
 
     @property
@@ -950,10 +953,14 @@ class DeepagentsBackend:
 
 
 class AgentManager:
-    def __init__(self, db: Database, config: AppConfig | None = None, client_pool=None) -> None:
+    def __init__(
+        self, db: Database, config: AppConfig | None = None, client_pool=None, scheduler_manager=None,
+    ) -> None:
         self._db = db
         self._config = config or AppConfig()
-        self._claude_backend = ClaudeSdkBackend(db, self._config, client_pool=client_pool)
+        self._claude_backend = ClaudeSdkBackend(
+            db, self._config, client_pool=client_pool, scheduler_manager=scheduler_manager,
+        )
         self._deepagents_backend = DeepagentsBackend(db, self._config)
         self._active_tasks: dict[int, asyncio.Task] = {}
 

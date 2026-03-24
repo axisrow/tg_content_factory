@@ -7,7 +7,7 @@ from claude_agent_sdk import tool
 from src.agent.tools._registry import _text_response
 
 
-def register(db, client_pool, embedding_service):
+def register(db, client_pool, embedding_service, **kwargs):
     tools = []
 
     @tool("get_analytics_summary", "Get overall content analytics: generations, published, pending, rejected", {})

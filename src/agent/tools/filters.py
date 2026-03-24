@@ -8,7 +8,7 @@ from mcp.types import ToolAnnotations
 from src.agent.tools._registry import _text_response, require_confirmation
 
 
-def register(db, client_pool, embedding_service):
+def register(db, client_pool, embedding_service, **kwargs):
     tools = []
 
     @tool("analyze_filters", "Analyze all channels and compute filter scores (low uniqueness, spam, etc.)", {})

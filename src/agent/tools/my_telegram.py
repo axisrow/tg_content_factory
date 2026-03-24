@@ -8,7 +8,7 @@ from mcp.types import ToolAnnotations
 from src.agent.tools._registry import _text_response, require_confirmation, require_pool
 
 
-def register(db, client_pool, embedding_service):
+def register(db, client_pool, embedding_service, **kwargs):
     tools = []
 
     @tool("list_dialogs", "List Telegram dialogs (chats/channels) for an account", {"phone": str})
@@ -115,6 +115,7 @@ def register(db, client_pool, embedding_service):
             return gate
         try:
             about = args.get("about", "")
+            username = args.get("username", "")
             client = await client_pool.get_client_for_phone(phone)
             if client is None:
                 return _text_response(f"Клиент для {phone} не найден.")
@@ -126,8 +127,17 @@ def register(db, client_pool, embedding_service):
                 broadcast=True,
             ))
             channel = result.chats[0]
+            username_note = ""
+            if username:
+                try:
+                    from telethon.tl.functions.channels import UpdateUsernameRequest
+
+                    await client(UpdateUsernameRequest(channel, username))
+                    username_note = f"\n- Username: @{username}"
+                except Exception as ue:
+                    username_note = f"\n- Username: не удалось установить ({ue})"
             return _text_response(
-                f"Канал создан!\n- ID: {channel.id}\n- Title: {title}"
+                f"Канал создан!\n- ID: {channel.id}\n- Title: {title}{username_note}"
             )
         except Exception as e:
             return _text_response(f"Ошибка создания канала: {e}")

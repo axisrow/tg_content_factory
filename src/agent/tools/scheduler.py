@@ -7,16 +7,23 @@ from claude_agent_sdk import tool
 from src.agent.tools._registry import _text_response, require_confirmation, require_pool
 
 
-def register(db, client_pool, embedding_service):
+def register(db, client_pool, embedding_service, **kwargs):
+    scheduler_manager = kwargs.get("scheduler_manager")
     tools = []
+
+    def _get_mgr():
+        """Return the live scheduler manager or raise."""
+        if scheduler_manager is not None:
+            return scheduler_manager
+        raise RuntimeError(
+            "Планировщик недоступен — live SchedulerManager не передан. "
+            "Эта операция доступна только через web-интерфейс."
+        )
 
     @tool("get_scheduler_status", "Get current scheduler status, jobs, and next run times", {})
     async def get_scheduler_status(args):
         try:
-            from src.scheduler.manager import SchedulerManager
-
-            mgr = SchedulerManager(db)
-            await mgr.load_settings()
+            mgr = _get_mgr()
             running = mgr.is_running
             jobs = await mgr.get_potential_jobs()
             next_runs = mgr.get_all_jobs_next_run()
@@ -49,10 +56,7 @@ def register(db, client_pool, embedding_service):
         if gate:
             return gate
         try:
-            from src.scheduler.manager import SchedulerManager
-
-            mgr = SchedulerManager(db)
-            await mgr.load_settings()
+            mgr = _get_mgr()
             await mgr.start()
             return _text_response("Планировщик запущен.")
         except Exception as e:
@@ -70,9 +74,7 @@ def register(db, client_pool, embedding_service):
         if gate:
             return gate
         try:
-            from src.scheduler.manager import SchedulerManager
-
-            mgr = SchedulerManager(db)
+            mgr = _get_mgr()
             await mgr.stop()
             return _text_response("Планировщик остановлен.")
         except Exception as e:
@@ -93,10 +95,7 @@ def register(db, client_pool, embedding_service):
         if gate:
             return gate
         try:
-            from src.scheduler.manager import SchedulerManager
-
-            mgr = SchedulerManager(db)
-            await mgr.load_settings()
+            mgr = _get_mgr()
             result = await mgr.trigger_now()
             return _text_response(f"Сбор запущен: {result}")
         except Exception as e:
@@ -110,10 +109,7 @@ def register(db, client_pool, embedding_service):
         if not job_id:
             return _text_response("Ошибка: job_id обязателен.")
         try:
-            from src.scheduler.manager import SchedulerManager
-
-            mgr = SchedulerManager(db)
-            await mgr.load_settings()
+            mgr = _get_mgr()
             current = await mgr.is_job_enabled(job_id)
             new_state = not current
             await mgr.sync_job_state(job_id, new_state)

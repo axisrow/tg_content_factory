@@ -13,13 +13,15 @@ from claude_agent_sdk import create_sdk_mcp_server
 from src.agent.tools._registry import _text_response  # noqa: F401
 
 
-def make_mcp_server(db, client_pool=None):
+def make_mcp_server(db, client_pool=None, scheduler_manager=None):
     """Create an in-process MCP server with all agent tools.
 
     Args:
         db: Database instance for all DB operations.
         client_pool: Optional ClientPool for Telegram operations.
             If None (CLI mode), pool-dependent tools return an error message.
+        scheduler_manager: Optional live SchedulerManager instance.
+            If None, scheduler tools return an error message.
     """
     from src.services.embedding_service import EmbeddingService
 
@@ -45,6 +47,9 @@ def make_mcp_server(db, client_pool=None):
         settings,
     )
 
+    # Extra context passed alongside the standard (db, client_pool, embedding_service)
+    extras = {"scheduler_manager": scheduler_manager}
+
     all_tools = []
     for module in [
         search,
@@ -64,7 +69,7 @@ def make_mcp_server(db, client_pool=None):
         settings,
         agent_threads,
     ]:
-        all_tools.extend(module.register(db, client_pool, embedding_service))
+        all_tools.extend(module.register(db, client_pool, embedding_service, **extras))
 
     return create_sdk_mcp_server(
         name="telegram_db",
