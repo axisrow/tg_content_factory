@@ -45,7 +45,117 @@ def _embed_history_in_prompt(history_msgs: list[dict], message: str) -> str:
     return "\n".join(parts)
 
 
-_ALLOWED_TOOLS = ["mcp__telegram_db__search_messages", "mcp__telegram_db__get_channels"]
+_ALLOWED_TOOLS = [
+    # Search
+    "mcp__telegram_db__search_messages",
+    "mcp__telegram_db__semantic_search",
+    "mcp__telegram_db__index_messages",
+    # Channels
+    "mcp__telegram_db__list_channels",
+    "mcp__telegram_db__get_channel_stats",
+    "mcp__telegram_db__add_channel",
+    "mcp__telegram_db__delete_channel",
+    "mcp__telegram_db__toggle_channel",
+    "mcp__telegram_db__import_channels",
+    "mcp__telegram_db__refresh_channel_types",
+    # Collection
+    "mcp__telegram_db__collect_channel",
+    "mcp__telegram_db__collect_all_channels",
+    "mcp__telegram_db__collect_channel_stats",
+    "mcp__telegram_db__collect_all_stats",
+    # Pipelines
+    "mcp__telegram_db__list_pipelines",
+    "mcp__telegram_db__get_pipeline_detail",
+    "mcp__telegram_db__add_pipeline",
+    "mcp__telegram_db__edit_pipeline",
+    "mcp__telegram_db__toggle_pipeline",
+    "mcp__telegram_db__delete_pipeline",
+    "mcp__telegram_db__run_pipeline",
+    "mcp__telegram_db__generate_draft",
+    "mcp__telegram_db__list_pipeline_runs",
+    "mcp__telegram_db__get_pipeline_run",
+    "mcp__telegram_db__publish_pipeline_run",
+    "mcp__telegram_db__get_pipeline_queue",
+    # Moderation
+    "mcp__telegram_db__list_pending_moderation",
+    "mcp__telegram_db__view_moderation_run",
+    "mcp__telegram_db__approve_run",
+    "mcp__telegram_db__reject_run",
+    "mcp__telegram_db__bulk_approve_runs",
+    "mcp__telegram_db__bulk_reject_runs",
+    # Search Queries
+    "mcp__telegram_db__list_search_queries",
+    "mcp__telegram_db__get_search_query",
+    "mcp__telegram_db__add_search_query",
+    "mcp__telegram_db__edit_search_query",
+    "mcp__telegram_db__delete_search_query",
+    "mcp__telegram_db__toggle_search_query",
+    "mcp__telegram_db__run_search_query",
+    # Accounts
+    "mcp__telegram_db__list_accounts",
+    "mcp__telegram_db__toggle_account",
+    "mcp__telegram_db__delete_account",
+    "mcp__telegram_db__get_flood_status",
+    # Filters
+    "mcp__telegram_db__analyze_filters",
+    "mcp__telegram_db__apply_filters",
+    "mcp__telegram_db__reset_filters",
+    "mcp__telegram_db__toggle_channel_filter",
+    "mcp__telegram_db__purge_filtered_channels",
+    "mcp__telegram_db__hard_delete_channels",
+    # Analytics
+    "mcp__telegram_db__get_analytics_summary",
+    "mcp__telegram_db__get_pipeline_stats",
+    "mcp__telegram_db__get_daily_stats",
+    "mcp__telegram_db__get_trending_topics",
+    "mcp__telegram_db__get_trending_channels",
+    "mcp__telegram_db__get_message_velocity",
+    "mcp__telegram_db__get_peak_hours",
+    "mcp__telegram_db__get_calendar",
+    # Scheduler
+    "mcp__telegram_db__get_scheduler_status",
+    "mcp__telegram_db__start_scheduler",
+    "mcp__telegram_db__stop_scheduler",
+    "mcp__telegram_db__trigger_collection",
+    "mcp__telegram_db__toggle_scheduler_job",
+    # Notifications
+    "mcp__telegram_db__get_notification_status",
+    "mcp__telegram_db__setup_notification_bot",
+    "mcp__telegram_db__delete_notification_bot",
+    "mcp__telegram_db__test_notification",
+    # Photo Loader
+    "mcp__telegram_db__list_photo_batches",
+    "mcp__telegram_db__list_photo_items",
+    "mcp__telegram_db__send_photos_now",
+    "mcp__telegram_db__schedule_photos",
+    "mcp__telegram_db__cancel_photo_item",
+    "mcp__telegram_db__list_auto_uploads",
+    "mcp__telegram_db__toggle_auto_upload",
+    "mcp__telegram_db__delete_auto_upload",
+    # My Telegram
+    "mcp__telegram_db__list_dialogs",
+    "mcp__telegram_db__refresh_dialogs",
+    "mcp__telegram_db__leave_dialogs",
+    "mcp__telegram_db__create_telegram_channel",
+    "mcp__telegram_db__get_forum_topics",
+    "mcp__telegram_db__clear_dialog_cache",
+    # Images
+    "mcp__telegram_db__generate_image",
+    "mcp__telegram_db__list_image_models",
+    "mcp__telegram_db__list_image_providers",
+    # Settings
+    "mcp__telegram_db__get_settings",
+    "mcp__telegram_db__save_scheduler_settings",
+    "mcp__telegram_db__save_agent_settings",
+    "mcp__telegram_db__save_filter_settings",
+    "mcp__telegram_db__get_system_info",
+    # Agent Threads
+    "mcp__telegram_db__list_agent_threads",
+    "mcp__telegram_db__create_agent_thread",
+    "mcp__telegram_db__delete_agent_thread",
+    "mcp__telegram_db__rename_agent_thread",
+    "mcp__telegram_db__get_thread_messages",
+]
 _DEEPAGENTS_PROBE_PROMPT = (
     "Compatibility probe. You must use the tool that lists active Telegram "
     "channels before answering. "
@@ -69,16 +179,20 @@ class AgentRuntimeStatus:
 
 
 class ClaudeSdkBackend:
-    def __init__(self, db: Database, config: AppConfig) -> None:
+    def __init__(self, db: Database, config: AppConfig, client_pool=None, scheduler_manager=None) -> None:
         self._db = db
         self._config = config
+        self._client_pool = client_pool
+        self._scheduler_manager = scheduler_manager
         self._server = None
 
     def initialize(self) -> None:
         from src.agent.tools import make_mcp_server
 
         os.environ.setdefault("CLAUDE_CODE_STREAM_CLOSE_TIMEOUT", "300000")
-        self._server = make_mcp_server(self._db)
+        self._server = make_mcp_server(
+            self._db, client_pool=self._client_pool, scheduler_manager=self._scheduler_manager,
+        )
         logger.info("Claude SDK backend initialized")
 
     @property
@@ -369,50 +483,27 @@ class DeepagentsBackend:
             f"Deepagents tool '{tool_name}' cannot run inside an active event loop: {loop}"
         )
 
+    def _default_tools(self) -> list[Callable]:
+        """Return the full tool set for deepagents backend."""
+        from src.agent.tools.deepagents_sync import build_deepagents_tools
+
+        return build_deepagents_tools(self._db)
+
     def _search_messages_tool(self, query_text: str) -> str:
-        """Search recent Telegram messages by free-text query and return short previews."""
-        try:
-            messages, total = self._run_db_tool_sync(
-                "search_messages",
-                lambda: self._db.search_messages(query_text, limit=20),
-            )
-        except Exception as exc:
-            logger.warning("Deepagents search_messages tool failed: %s", exc)
-            return "Поиск сообщений временно недоступен из-за внутренней ошибки."
-
-        if not messages:
-            return f"Ничего не найдено по запросу: {query_text}"
-
-        lines = [f"Найдено {total} сообщений по запросу '{query_text}'. Топ результатов:"]
-        for message in messages:
-            preview = (message.text or "").replace("\n", " ")[:200]
-            lines.append(
-                (
-                    f"- [{message.date}] channel_id={message.channel_id} "
-                    f"message_id={message.message_id}: {preview}"
-                )
-            )
-        return "\n".join(lines)
+        """Search messages — used by probe. Delegates to sync tools."""
+        tools = self._default_tools()
+        search_fn = next((t for t in tools if t.__name__ == "search_messages"), None)
+        if search_fn:
+            return search_fn(query_text)
+        return "Поиск недоступен."
 
     def _get_channels_tool(self) -> str:
-        """List active Telegram channels that are available to the agent."""
-        try:
-            channels = self._run_db_tool_sync(
-                "get_channels",
-                lambda: self._db.get_channels(active_only=True, include_filtered=False),
-            )
-        except Exception as exc:
-            logger.warning("Deepagents get_channels tool failed: %s", exc)
-            return "Список активных каналов временно недоступен из-за внутренней ошибки."
-        if not channels:
-            return "Активные каналы не найдены."
-        lines = ["Активные каналы:"]
-        for channel in channels[:200]:
-            title = channel.title or str(channel.channel_id)
-            lines.append(
-                f"- channel_id={channel.channel_id}, title={title}, type={channel.channel_type}"
-            )
-        return "\n".join(lines)
+        """List channels — used by probe. Delegates to sync tools."""
+        tools = self._default_tools()
+        channels_fn = next((t for t in tools if t.__name__ == "list_channels"), None)
+        if channels_fn:
+            return channels_fn()
+        return "Каналы недоступны."
 
     def _build_agent(
         self,
@@ -461,7 +552,7 @@ class DeepagentsBackend:
             model = init_chat_model(model=resolved_model_name, model_provider=provider, **extra)
             agent = create_deep_agent(
                 model=model,
-                tools=tools or [self._search_messages_tool, self._get_channels_tool],
+                tools=tools or self._default_tools(),
                 system_prompt=system_prompt,
             )
             if record_last_used:
@@ -862,10 +953,14 @@ class DeepagentsBackend:
 
 
 class AgentManager:
-    def __init__(self, db: Database, config: AppConfig | None = None) -> None:
+    def __init__(
+        self, db: Database, config: AppConfig | None = None, client_pool=None, scheduler_manager=None,
+    ) -> None:
         self._db = db
         self._config = config or AppConfig()
-        self._claude_backend = ClaudeSdkBackend(db, self._config)
+        self._claude_backend = ClaudeSdkBackend(
+            db, self._config, client_pool=client_pool, scheduler_manager=scheduler_manager,
+        )
         self._deepagents_backend = DeepagentsBackend(db, self._config)
         self._active_tasks: dict[int, asyncio.Task] = {}
 

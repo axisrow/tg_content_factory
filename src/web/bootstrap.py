@@ -145,7 +145,6 @@ async def build_container_with_templates(
     collection_queue = CollectionQueue(collector, channel_bundle)
     search_engine = SearchEngine(search_bundle, pool, config=config)
     ai_search = AISearchEngine(config.llm, search_bundle)
-    agent_manager = AgentManager(db, config)
     search_query_bundle = SearchQueryBundle(repos.search_queries, repos.messages)
 
     from src.services.collection_service import CollectionService
@@ -173,6 +172,7 @@ async def build_container_with_templates(
         task_enqueuer=task_enqueuer,
         pipeline_bundle=pipeline_bundle,
     )
+    agent_manager = AgentManager(db, config, client_pool=pool, scheduler_manager=scheduler)
 
     _templates = configure_template_globals(
         templates or Jinja2Templates(directory=str(TEMPLATES_DIR)),
