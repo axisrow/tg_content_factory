@@ -264,6 +264,7 @@ class ClaudeSdkBackend:
                         draining = True
                 return
             except Exception as exc:
+                # claude_agent_sdk raises RuntimeError with this text; no specific exception type
                 if attempt == 0 and "Control request timeout" in str(exc):
                     logger.warning("Agent init timeout, retrying (thread %d)", thread_id)
                     last_err = exc

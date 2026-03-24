@@ -46,8 +46,7 @@ class AgentProviderService:
 
                 self.register_provider("context7", make_context7_adapter(context7_key))
             except Exception:
-                # ignore if adapter module unavailable
-                pass
+                logger.debug("Failed to register context7 adapter", exc_info=True)
 
         # Register lightweight HTTP adapters when env vars are present
         try:
@@ -57,65 +56,80 @@ class AgentProviderService:
                 make_huggingface_adapter,
                 make_ollama_adapter,
             )
+        except ImportError:
+            logger.debug("provider_adapters not available, skipping HTTP adapters")
+            make_cohere_adapter = make_generic_http_adapter = None
+            make_huggingface_adapter = make_ollama_adapter = None
 
+        # Each provider in its own try so one failure doesn't block the rest
+        _http_adapters: list[tuple[str, Any]] = []
+        if make_cohere_adapter is not None:
             cohere_key = os.environ.get("COHERE_API_KEY")
             if cohere_key and "cohere" not in self._registry:
-                self.register_provider("cohere", make_cohere_adapter(cohere_key))
+                _http_adapters.append(("cohere", lambda: make_cohere_adapter(cohere_key)))
 
             ollama_base = os.environ.get("OLLAMA_BASE") or os.environ.get("OLLAMA_URL")
             if ollama_base and "ollama" not in self._registry:
-                self.register_provider(
-                    "ollama", make_ollama_adapter(ollama_base, os.environ.get("OLLAMA_API_KEY"))
+                _http_adapters.append(
+                    ("ollama", lambda: make_ollama_adapter(
+                        ollama_base, os.environ.get("OLLAMA_API_KEY")
+                    ))
                 )
 
             hf_key = os.environ.get("HUGGINGFACE_API_KEY") or os.environ.get("HUGGINGFACE_TOKEN")
             if hf_key and "huggingface" not in self._registry:
-                self.register_provider("huggingface", make_huggingface_adapter(hf_key))
+                _http_adapters.append(
+                    ("huggingface", lambda: make_huggingface_adapter(hf_key))
+                )
 
-            # Generic providers (Fireworks / DeepSeek / Together) via base URL env vars
             fireworks_base = os.environ.get("FIREWORKS_BASE") or os.environ.get(
                 "FIREWORKS_API_BASE"
             )
             fireworks_key = os.environ.get("FIREWORKS_API_KEY")
             if fireworks_base and "fireworks" not in self._registry:
-                self.register_provider(
-                    "fireworks", make_generic_http_adapter(fireworks_base, fireworks_key)
+                _http_adapters.append(
+                    ("fireworks", lambda: make_generic_http_adapter(fireworks_base, fireworks_key))
                 )
 
-            deepseek_base = os.environ.get("DEEPSEEK_BASE") or os.environ.get("DEEPSEEK_API_BASE")
+            deepseek_base = os.environ.get("DEEPSEEK_BASE") or os.environ.get(
+                "DEEPSEEK_API_BASE"
+            )
             deepseek_key = os.environ.get("DEEPSEEK_API_KEY")
             if deepseek_base and "deepseek" not in self._registry:
-                self.register_provider(
-                    "deepseek", make_generic_http_adapter(deepseek_base, deepseek_key)
+                _http_adapters.append(
+                    ("deepseek", lambda: make_generic_http_adapter(deepseek_base, deepseek_key))
                 )
 
-            together_base = os.environ.get("TOGETHER_BASE") or os.environ.get("TOGETHER_API_BASE")
+            together_base = os.environ.get("TOGETHER_BASE") or os.environ.get(
+                "TOGETHER_API_BASE"
+            )
             together_key = os.environ.get("TOGETHER_API_KEY")
             if together_base and "together" not in self._registry:
-                self.register_provider(
-                    "together", make_generic_http_adapter(together_base, together_key)
+                _http_adapters.append(
+                    ("together", lambda: make_generic_http_adapter(together_base, together_key))
                 )
-        except Exception:
-            # provider_adapters import failed — skip lightweight adapter registration
-            pass
+
+        for adapter_name, adapter_factory in _http_adapters:
+            try:
+                self.register_provider(adapter_name, adapter_factory())
+            except Exception:
+                logger.debug("Failed to register %s adapter", adapter_name, exc_info=True)
 
         # Optional LangChain-backed adapters (enable by setting USE_LANGCHAIN=1).
-        # When enabled, attempt to register LangChain adapters for common providers.
         if os.environ.get("USE_LANGCHAIN", "").lower() in ("1", "true", "yes"):
             try:
                 from src.services.langchain_adapters import make_langchain_adapter
+            except ImportError:
+                logger.debug("LangChain adapters not available")
+                make_langchain_adapter = None
 
+            if make_langchain_adapter is not None:
                 for _p in ("openai", "anthropic", "ollama", "cohere", "huggingface"):
                     try:
                         adapter = make_langchain_adapter(_p, None)
-                        # prefer LangChain adapter: override existing if present
                         self._registry[_p] = adapter
                     except Exception:
-                        # ignore provider-specific failures
-                        continue
-            except Exception:
-                # LangChain not available or adapter import failed; continue silently
-                pass
+                        logger.debug("Failed to register LangChain %s adapter", _p, exc_info=True)
 
     def register_provider(self, name: str, func: Callable[..., Awaitable[str]]) -> None:
         self._registry[name] = func

@@ -598,6 +598,10 @@ async def save_agent_settings(request: Request):
     else:
         prompt_template = current_prompt_template
 
+    # Reset override when dev mode is off to prevent stale override from activating later
+    if not dev_mode_enabled:
+        backend_override = "auto"
+
     if backend_override != "auto" and dev_mode_enabled:
         if backend_override == "deepagents":
             service = _agent_provider_service(request)
@@ -1113,6 +1117,23 @@ async def save_image_providers(request: Request):
     form = await request.form()
     existing = await service.load_provider_configs()
     configs = service.parse_provider_form(form, existing)
+    # Validate enabled configs have an API key or env var fallback
+    import os
+
+    from src.services.image_provider_service import image_provider_spec
+
+    for cfg in configs:
+        if not cfg.enabled:
+            continue
+        spec = image_provider_spec(cfg.provider)
+        if spec is None:
+            continue
+        has_key = bool(cfg.api_key.strip())
+        has_env = any(os.environ.get(v) for v in spec.env_vars)
+        if not has_key and not has_env:
+            return RedirectResponse(
+                url="/settings?error=image_provider_missing_key", status_code=303
+            )
     await service.save_provider_configs(configs)
     return RedirectResponse(url="/settings?msg=image_saved", status_code=303)
 

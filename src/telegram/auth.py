@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 
 from telethon import TelegramClient
+from telethon.errors import SessionPasswordNeededError
 from telethon.sessions import StringSession
 from telethon.tl.functions.auth import ResendCodeRequest
 from telethon.tl.types.auth import (
@@ -169,13 +170,10 @@ class TelegramAuth:
 
         try:
             await client.sign_in(phone, code, phone_code_hash=phone_code_hash)
-        except Exception as e:
-            if "Two-steps verification" in str(e) or "password" in str(e).lower():
-                if not password_2fa:
-                    raise ValueError("2FA password required") from e
-                await client.sign_in(password=password_2fa)
-            else:
-                raise
+        except SessionPasswordNeededError:
+            if not password_2fa:
+                raise ValueError("2FA password required")
+            await client.sign_in(password=password_2fa)
 
         session_string = client.session.save()
         del self._pending[phone]
