@@ -26,6 +26,74 @@ async def test_pool_initialize_no_accounts(real_pool_harness_factory):
 
 
 @pytest.mark.asyncio
+async def test_pool_initialize_completes_with_accounts(real_pool_harness_factory):
+    """initialize() with working accounts completes quickly."""
+    import time
+
+    harness = real_pool_harness_factory()
+    harness.queue_cli_client(phone="+70000000001", client=FakeCliTelethonClient())
+    await harness.add_account("+70000000001", session_string="s1", is_primary=True)
+
+    t0 = time.monotonic()
+    await harness.initialize_connected_accounts()
+    elapsed = time.monotonic() - t0
+
+    assert "+70000000001" in harness.pool.clients
+    assert elapsed < 5.0, f"initialize took {elapsed:.1f}s, expected < 5s"
+
+
+@pytest.mark.asyncio
+async def test_pool_initialize_skips_hanging_connect(real_pool_harness_factory, caplog):
+    """Account whose _connect_account hangs is skipped after timeout."""
+    import asyncio
+    import time
+
+    harness = real_pool_harness_factory()
+
+    # Good account
+    harness.queue_cli_client(phone="+70000000001", client=FakeCliTelethonClient())
+    await harness.add_account("+70000000001", session_string="s1", is_primary=True)
+
+    # Bad account — will hang on connect
+    hanging_client = FakeCliTelethonClient()
+
+    async def _hang(*a, **kw):
+        await asyncio.sleep(9999)
+
+    hanging_client.connect = _hang
+    harness.queue_cli_client(phone="+70000000002", client=hanging_client)
+    await harness.add_account("+70000000002", session_string="s2")
+
+    harness.pool.init_timeout = 1.0
+
+    t0 = time.monotonic()
+    await harness.pool.initialize()
+    elapsed = time.monotonic() - t0
+
+    # Good account should have connected; hanging one skipped by internal timeout
+    assert "+70000000001" in harness.pool.clients
+    assert "+70000000002" not in harness.pool.clients
+    assert elapsed < 5.0
+
+
+@pytest.mark.asyncio
+async def test_pool_initialize_handles_fetch_me_error(real_pool_harness_factory, caplog):
+    """Account whose get_me raises an error is handled gracefully."""
+    from unittest.mock import AsyncMock
+
+    harness = real_pool_harness_factory()
+    client = FakeCliTelethonClient()
+    client.get_me = AsyncMock(side_effect=RuntimeError("auth failed"))
+    harness.queue_cli_client(phone="+70000000001", client=client)
+    await harness.add_account("+70000000001", session_string="s1", is_primary=True)
+
+    await harness.initialize_connected_accounts()
+
+    assert "+70000000001" in harness.pool.clients
+    assert "Failed to fetch premium status" in caplog.text
+
+
+@pytest.mark.asyncio
 async def test_pool_get_available_no_clients(real_pool_harness_factory):
     harness = real_pool_harness_factory()
     result = await harness.pool.get_available_client()
