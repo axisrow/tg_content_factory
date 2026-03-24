@@ -56,7 +56,11 @@ class ABTestingService:
 
         try:
             from src.services.provider_service import AgentProviderService
+        except ImportError:
+            logger.warning("Provider service not available for variant generation")
+            return variants
 
+        try:
             provider_service = AgentProviderService(self._db)
 
             for i in range(1, num_variants):

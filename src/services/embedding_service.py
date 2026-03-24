@@ -99,7 +99,8 @@ class EmbeddingService:
         except ImportError as exc:
             package = f"langchain-{cfg.provider.replace('_', '-')}"
             raise RuntimeError(
-                f"Embedding provider '{cfg.provider}' is unavailable. Install '{package}'."
+                f"Embedding provider '{cfg.provider}' is unavailable. "
+                f"Install '{package}'. Детали: {exc}"
             ) from exc
         except Exception as exc:
             raise RuntimeError(f"Failed to initialize embeddings: {exc}") from exc

@@ -23,6 +23,7 @@ class AISearchEngine:
             search = SearchBundle.from_database(search)
         self._search = search
         self._agent = None
+        self._init_error: str | None = None
 
     @property
     def enabled(self) -> bool:
@@ -35,42 +36,47 @@ class AISearchEngine:
 
         try:
             from deepagents import create_deep_agent
+        except ImportError as exc:
+            logger.warning("deepagents not installed, AI search unavailable: %s", exc)
+            return
 
-            search = self._search
+        search = self._search
 
-            def search_posts_tool(query: str) -> str:
-                """Search collected posts in the database."""
-                import concurrent.futures
+        def search_posts_tool(query: str) -> str:
+            """Search collected posts in the database."""
+            import concurrent.futures
 
-                try:
-                    asyncio.get_running_loop()
-                    with concurrent.futures.ThreadPoolExecutor() as executor:
-                        coro = search.search_messages(query, limit=20)
-                        future = executor.submit(asyncio.run, coro)
-                        messages, total = future.result()
-                except RuntimeError:
-                    messages, total = asyncio.run(search.search_messages(query, limit=20))
+            try:
+                asyncio.get_running_loop()
+                with concurrent.futures.ThreadPoolExecutor() as executor:
+                    coro = search.search_messages(query, limit=20)
+                    future = executor.submit(asyncio.run, coro)
+                    messages, total = future.result()
+            except RuntimeError:
+                messages, total = asyncio.run(search.search_messages(query, limit=20))
 
-                if not messages:
-                    return f"No results found for: {query}"
+            if not messages:
+                return f"No results found for: {query}"
 
-                lines = [f"Found {total} results for '{query}'. Top results:"]
-                for m in messages:
-                    text_preview = (m.text or "")[:200]
-                    lines.append(f"- [{m.date}] Channel {m.channel_id}: {text_preview}")
-                return "\n".join(lines)
+            lines = [f"Found {total} results for '{query}'. Top results:"]
+            for m in messages:
+                text_preview = (m.text or "")[:200]
+                lines.append(f"- [{m.date}] Channel {m.channel_id}: {text_preview}")
+            return "\n".join(lines)
 
-            model_str = f"{self._config.provider}:{self._config.model}"
+        model_str = f"{self._config.provider}:{self._config.model}"
+        try:
             self._agent = create_deep_agent(
                 model=model_str,
                 tools=[search_posts_tool],
                 system_prompt=_SYSTEM_PROMPT,
             )
             logger.info("AI search agent initialized with model %s", model_str)
-        except ImportError:
-            logger.warning("deepagents not installed, AI search unavailable")
+        except ImportError as exc:
+            logger.warning("AI search dependency missing: %s", exc)
         except Exception as e:
             logger.error("Failed to initialize AI search: %s", e)
+            self._init_error = str(e)
 
     async def search(self, query: str) -> SearchResult:
         """Run AI-powered search."""

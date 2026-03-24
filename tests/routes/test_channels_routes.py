@@ -151,8 +151,10 @@ async def test_delete_channel(client):
 async def test_delete_channel_in_pipeline(client):
     """Test delete channel that is in pipeline."""
     with patch("src.web.routes.channels.deps.channel_service") as mock_svc:
+        import sqlite3
+
         mock_svc.return_value.delete = AsyncMock(
-            side_effect=Exception("FOREIGN KEY constraint failed")
+            side_effect=sqlite3.IntegrityError("FOREIGN KEY constraint failed")
         )
         resp = await client.post("/channels/1/delete", follow_redirects=False)
         assert resp.status_code == 303
