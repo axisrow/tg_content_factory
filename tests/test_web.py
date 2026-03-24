@@ -246,7 +246,7 @@ async def test_add_image_provider_invalid(client):
         data={"provider": "nonexistent"},
     )
     assert resp.status_code == 200
-    assert "error=image_provider_invalid" in str(resp.url) or resp.status_code == 200
+    assert "error=image_provider_invalid" in str(resp.url)
 
 
 @pytest.mark.asyncio
