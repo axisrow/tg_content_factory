@@ -141,3 +141,32 @@ def test_adapter_names():
     svc.register_adapter("a", noop)
     svc.register_adapter("b", noop)
     assert svc.adapter_names == ["a", "b"]
+
+
+# ── constructor with adapters param ──
+
+
+@pytest.mark.asyncio
+async def test_init_with_prebuilt_adapters():
+    async def fake(prompt: str, model: str) -> str:
+        return "prebuilt-url"
+
+    svc = ImageGenerationService(adapters={"test": fake})
+    assert svc.adapter_names == ["test"]
+    result = await svc.generate("test:m", "prompt")
+    assert result == "prebuilt-url"
+
+
+def test_init_with_empty_adapters():
+    svc = ImageGenerationService(adapters={})
+    assert svc.adapter_names == []
+
+
+def test_init_with_none_calls_register_from_env(monkeypatch):
+    monkeypatch.delenv("TOGETHER_API_KEY", raising=False)
+    monkeypatch.delenv("HUGGINGFACE_API_KEY", raising=False)
+    monkeypatch.delenv("HUGGINGFACE_TOKEN", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("REPLICATE_API_TOKEN", raising=False)
+    svc = ImageGenerationService(adapters=None)
+    assert svc.adapter_names == []  # no env vars set

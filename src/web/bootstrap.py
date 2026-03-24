@@ -219,8 +219,8 @@ async def build_container_with_templates(
 
 
 async def start_container(container: AppContainer) -> None:
+    t_start = time.monotonic()
     if _is_dev:
-        t_start = time.monotonic()
         t1 = time.monotonic()
 
     recovered = await container.channel_bundle.fail_running_collection_tasks_on_startup()
@@ -232,12 +232,13 @@ async def start_container(container: AppContainer) -> None:
     gr_recovered = await container.db.repos.generation_runs.reset_running_on_startup()
     if gr_recovered:
         logger.warning("Reset %d stuck generation_runs to 'failed' on startup", gr_recovered)
+    logger.info("startup: recovery done (%.1fs)", time.monotonic() - t_start)
     if _is_dev:
-        logger.info("startup/start: recovery %.2fs", time.monotonic() - t1)
         t1 = time.monotonic()
 
     if container.auth.is_configured:
         await container.pool.initialize()
+    logger.info("startup: telegram pool done (%.1fs)", time.monotonic() - t_start)
     if _is_dev:
         logger.info("startup/start: telegram_pool %.2fs", time.monotonic() - t1)
 
@@ -245,15 +246,19 @@ async def start_container(container: AppContainer) -> None:
         requeued = await container.collection_queue.requeue_startup_tasks()
         if requeued:
             logger.info("Re-enqueued %d pending collection tasks on startup", requeued)
+    logger.info("startup: collection queue done (%.1fs)", time.monotonic() - t_start)
 
     if _is_dev:
         t1 = time.monotonic()
     if container.unified_dispatcher is not None:
         await container.unified_dispatcher.start()
+    logger.info("startup: dispatcher done (%.1fs)", time.monotonic() - t_start)
     container.ai_search.initialize()
+    logger.info("startup: ai_search done (%.1fs)", time.monotonic() - t_start)
     if container.agent_manager is not None:
         await container.agent_manager.refresh_settings_cache(preflight=True)
         container.agent_manager.initialize()
+    logger.info("startup: agent_manager done (%.1fs)", time.monotonic() - t_start)
     if _is_dev:
         logger.info("startup/start: dispatcher+ai+agent %.2fs", time.monotonic() - t1)
         t1 = time.monotonic()
@@ -263,6 +268,8 @@ async def start_container(container: AppContainer) -> None:
     if autostart == "1":
         logger.info("Auto-starting scheduler (scheduler_autostart=1)")
         await container.scheduler.start()
+    logger.info("startup: scheduler done (%.1fs)", time.monotonic() - t_start)
+    logger.info("startup: READY (total %.1fs)", time.monotonic() - t_start)
     if _is_dev:
         logger.info("startup/start: scheduler %.2fs", time.monotonic() - t1)
         logger.info("startup/start: TOTAL %.2fs", time.monotonic() - t_start)

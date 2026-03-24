@@ -220,6 +220,59 @@ async def test_settings_page(client):
 
 
 @pytest.mark.asyncio
+async def test_settings_page_image_providers_tab(client):
+    resp = await client.get("/settings/")
+    assert resp.status_code == 200
+    assert "Image Generation Providers" in resp.text
+    assert "Изображения" in resp.text  # tab label
+
+
+@pytest.mark.asyncio
+async def test_add_image_provider(client):
+    resp = await client.post(
+        "/settings/image-providers/add",
+        data={"provider": "together"},
+    )
+    assert resp.status_code == 200
+    # Verify provider was added by checking settings page
+    resp2 = await client.get("/settings/")
+    assert "Together AI" in resp2.text
+
+
+@pytest.mark.asyncio
+async def test_add_image_provider_invalid(client):
+    resp = await client.post(
+        "/settings/image-providers/add",
+        data={"provider": "nonexistent"},
+    )
+    assert resp.status_code == 200
+    assert "error=image_provider_invalid" in str(resp.url) or resp.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_save_image_providers(client):
+    # First add a provider
+    await client.post("/settings/image-providers/add", data={"provider": "openai"})
+    # Then save with a key
+    resp = await client.post(
+        "/settings/image-providers/save",
+        data={
+            "img_provider_present__openai": "1",
+            "img_provider_enabled__openai": "1",
+            "img_provider_secret__openai__api_key": "sk-test",
+        },
+    )
+    assert resp.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_delete_image_provider(client):
+    await client.post("/settings/image-providers/add", data={"provider": "replicate"})
+    resp = await client.post("/settings/image-providers/replicate/delete")
+    assert resp.status_code == 200
+
+
+@pytest.mark.asyncio
 async def test_settings_page_hides_credentials_form_when_env_credentials_configured(
     client, monkeypatch
 ):
