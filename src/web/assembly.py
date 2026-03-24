@@ -116,6 +116,7 @@ def register_routes(app: FastAPI) -> None:
     from src.web.routes.dashboard import router as dashboard_router
     from src.web.routes.debug import router as debug_router
     from src.web.routes.filter import router as filter_router
+    from src.web.routes.images import router as images_router
     from src.web.routes.import_channels import router as import_router
     from src.web.routes.moderation import router as moderation_router
     from src.web.routes.my_telegram import router as my_telegram_router
@@ -144,6 +145,7 @@ def register_routes(app: FastAPI) -> None:
     app.include_router(my_telegram_router, prefix="/my-telegram")
     app.include_router(photo_loader_router, prefix="/my-telegram/photos")
     app.include_router(debug_router, prefix="/debug")
+    app.include_router(images_router, prefix="/images")
     app.include_router(pipelines_router, prefix="/pipelines")
 
 

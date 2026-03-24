@@ -100,3 +100,63 @@ class ImageGenerationService:
         if self._adapters:
             return next(iter(self._adapters.values()))
         return None
+
+    # ── model catalog ──
+
+    async def search_models(self, provider: str, query: str = "", *, api_key: str = "") -> list[dict]:
+        """Search available models for a provider. Returns list of dicts with name, description, etc."""
+        import aiohttp
+
+        if provider == "replicate":
+            token = api_key or os.environ.get("REPLICATE_API_TOKEN", "")
+            if not token:
+                return []
+            url = "https://api.replicate.com/v1/models"
+            params = {}
+            if query:
+                params["query"] = query
+            headers = {"Authorization": f"Bearer {token}"}
+            timeout = aiohttp.ClientTimeout(total=15)
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(url, headers=headers, params=params, timeout=timeout) as resp:
+                        if resp.status != 200:
+                            return []
+                        data = await resp.json()
+                        results = data.get("results", [])
+                        return [
+                            {
+                                "id": f"{r.get('owner', '')}/{r.get('name', '')}",
+                                "model_string": f"replicate:{r.get('owner', '')}/{r.get('name', '')}",
+                                "description": (r.get("description") or "")[:200],
+                                "run_count": r.get("run_count", 0),
+                            }
+                            for r in results[:20]
+                        ]
+            except Exception:
+                logger.warning("Failed to search Replicate models", exc_info=True)
+                return []
+
+        # Static catalogs for providers without search API
+        def _m(mid: str, provider: str, desc: str) -> dict:
+            return {"id": mid, "model_string": f"{provider}:{mid}", "description": desc, "run_count": 0}
+
+        catalogs: dict[str, list[dict]] = {
+            "together": [
+                _m("black-forest-labs/FLUX.1-schnell", "together", "FLUX.1 Schnell — fast"),
+                _m("black-forest-labs/FLUX.1-dev", "together", "FLUX.1 Dev — high quality"),
+            ],
+            "openai": [
+                _m("dall-e-3", "openai", "DALL-E 3 — OpenAI image generation"),
+                _m("dall-e-2", "openai", "DALL-E 2 — OpenAI image generation"),
+            ],
+            "huggingface": [
+                _m("stabilityai/stable-diffusion-xl-base-1.0", "huggingface", "Stable Diffusion XL"),
+                _m("black-forest-labs/FLUX.1-dev", "huggingface", "FLUX.1 Dev on HuggingFace"),
+            ],
+        }
+        models = catalogs.get(provider, [])
+        if query:
+            q = query.lower()
+            models = [m for m in models if q in m["id"].lower() or q in m["description"].lower()]
+        return models
