@@ -73,7 +73,6 @@ Three layers: **CLI/Web** → **Telegram + Search + Scheduler + Agent/Pipeline**
 - **Image generation**: `ImageGenerationService` routes to provider-specific HTTP adapters (Together/HuggingFace/OpenAI/Replicate) via `provider:model_id` convention; auto-registers from env vars; adapters defined in `src/services/provider_adapters.py`
 - **UnifiedDispatcher** (`src/services/unified_dispatcher.py`): polls DB for generic tasks (CONTENT_GENERATE, CONTENT_PUBLISH, PIPELINE_RUN, PHOTO_DUE, etc.) and dispatches to handler methods; recovers interrupted tasks on startup
 - **Photo publishing**: `PhotoAutoUploadService` / `PhotoPublishService` / `PhotoTaskService` — separate upload, schedule, publish tasks tracked in DB
-- **LangChain integration**: optional, lazy-loaded via `src/services/langchain_adapters.py`; enabled with `USE_LANGCHAIN=1`
 
 ### Database access pattern
 

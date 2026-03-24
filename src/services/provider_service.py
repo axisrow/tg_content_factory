@@ -115,21 +115,6 @@ class AgentProviderService:
             except Exception:
                 logger.debug("Failed to register %s adapter", adapter_name, exc_info=True)
 
-        # Optional LangChain-backed adapters (enable by setting USE_LANGCHAIN=1).
-        if os.environ.get("USE_LANGCHAIN", "").lower() in ("1", "true", "yes"):
-            try:
-                from src.services.langchain_adapters import make_langchain_adapter
-            except ImportError:
-                logger.debug("LangChain adapters not available")
-                make_langchain_adapter = None
-
-            if make_langchain_adapter is not None:
-                for _p in ("openai", "anthropic", "ollama", "cohere", "huggingface"):
-                    try:
-                        adapter = make_langchain_adapter(_p, None)
-                        self._registry[_p] = adapter
-                    except Exception:
-                        logger.debug("Failed to register LangChain %s adapter", _p, exc_info=True)
 
     def register_provider(self, name: str, func: Callable[..., Awaitable[str]]) -> None:
         self._registry[name] = func
