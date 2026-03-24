@@ -234,9 +234,11 @@ class ClientPool:
     async def initialize(self) -> None:
         """Load active accounts and validate that their sessions are usable."""
         accounts = await self._db.get_accounts(active_only=True)
-        for acc in accounts:
-            if acc.phone in self.clients:
-                continue  # Already connected — skip to avoid reconnecting on repeated calls
+        new_accounts = [acc for acc in accounts if acc.phone not in self.clients]
+        if not new_accounts:
+            return
+
+        async def _init_one(acc: Account) -> None:
             lease: BackendClientLease | None = None
             try:
                 lease = await self._connect_account(acc)
@@ -261,6 +263,8 @@ class ClientPool:
                         await self._backend_router.release(lease)
             except Exception as e:
                 logger.error("Failed to connect %s: %s", acc.phone, e)
+
+        await asyncio.gather(*[_init_one(acc) for acc in new_accounts])
 
     async def get_available_client(self) -> tuple[TelegramTransportSession, str] | None:
         """Get first available client not in flood wait. Returns (client, phone) or None."""
@@ -397,8 +401,13 @@ class ClientPool:
 
     async def report_premium_flood(self, phone: str, wait_seconds: int) -> None:
         """Mark account as premium-search flood-waited without touching generic account state."""
-        until = datetime.now(timezone.utc) + timedelta(seconds=wait_seconds)
+        now = datetime.now(timezone.utc)
+        until = now + timedelta(seconds=wait_seconds)
         self._premium_flood_wait_until[phone] = until
+        # Eager cleanup of expired entries
+        expired = [p for p, u in self._premium_flood_wait_until.items() if u <= now and p != phone]
+        for p in expired:
+            del self._premium_flood_wait_until[p]
         logger.warning(
             "Premium flood wait for %s: %d seconds (until %s)",
             phone,

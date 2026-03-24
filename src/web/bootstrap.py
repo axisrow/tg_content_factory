@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import secrets
+import time
 
 from fastapi.templating import Jinja2Templates
 
@@ -42,6 +44,7 @@ from src.web.template_globals import configure_template_globals
 from src.web.timing import TimingBuffer
 
 logger = logging.getLogger(__name__)
+_is_dev = os.environ.get("ENV", "PROD").upper() == "DEV"
 
 
 async def load_telegram_credentials(db: Database, config: AppConfig) -> tuple[int, str]:
@@ -72,11 +75,18 @@ async def build_container_with_templates(
     timing_buffer: TimingBuffer | None = None,
     templates: Jinja2Templates | None,
 ) -> AppContainer:
+    if _is_dev:
+        t_build = time.monotonic()
+
     db = Database(
         config.database.path,
         session_encryption_secret=resolve_session_encryption_secret(config),
     )
+    if _is_dev:
+        t1 = time.monotonic()
     await db.initialize()
+    if _is_dev:
+        logger.info("startup/build: db_init %.2fs", time.monotonic() - t1)
 
     repos = db.repos
     account_bundle = AccountBundle(repos.accounts)
@@ -167,6 +177,9 @@ async def build_container_with_templates(
         config,
     )
 
+    if _is_dev:
+        logger.info("startup/build: container_build %.2fs", time.monotonic() - t_build)
+
     return AppContainer(
         config=config,
         db=db,
@@ -205,6 +218,10 @@ async def build_container_with_templates(
 
 
 async def start_container(container: AppContainer) -> None:
+    if _is_dev:
+        t_start = time.monotonic()
+        t1 = time.monotonic()
+
     recovered = await container.channel_bundle.fail_running_collection_tasks_on_startup()
     if recovered:
         logger.warning("Marked %d interrupted collection tasks as failed on startup", recovered)
@@ -214,27 +231,40 @@ async def start_container(container: AppContainer) -> None:
     gr_recovered = await container.db.repos.generation_runs.reset_running_on_startup()
     if gr_recovered:
         logger.warning("Reset %d stuck generation_runs to 'failed' on startup", gr_recovered)
+    if _is_dev:
+        logger.info("startup/start: recovery %.2fs", time.monotonic() - t1)
+        t1 = time.monotonic()
 
     if container.auth.is_configured:
         await container.pool.initialize()
+    if _is_dev:
+        logger.info("startup/start: telegram_pool %.2fs", time.monotonic() - t1)
 
     if container.collection_queue is not None:
         requeued = await container.collection_queue.requeue_startup_tasks()
         if requeued:
             logger.info("Re-enqueued %d pending collection tasks on startup", requeued)
 
+    if _is_dev:
+        t1 = time.monotonic()
     if container.unified_dispatcher is not None:
         await container.unified_dispatcher.start()
     container.ai_search.initialize()
     if container.agent_manager is not None:
         await container.agent_manager.refresh_settings_cache(preflight=True)
         container.agent_manager.initialize()
+    if _is_dev:
+        logger.info("startup/start: dispatcher+ai+agent %.2fs", time.monotonic() - t1)
+        t1 = time.monotonic()
 
     await container.scheduler.load_settings()
     autostart = await container.db.get_setting("scheduler_autostart")
     if autostart == "1":
         logger.info("Auto-starting scheduler (scheduler_autostart=1)")
         await container.scheduler.start()
+    if _is_dev:
+        logger.info("startup/start: scheduler %.2fs", time.monotonic() - t1)
+        logger.info("startup/start: TOTAL %.2fs", time.monotonic() - t_start)
 
 
 async def _cancel_bg_tasks(tasks: set[asyncio.Task]) -> None:
