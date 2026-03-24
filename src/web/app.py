@@ -190,8 +190,37 @@ class BasicAuthMiddleware(BaseHTTPMiddleware):
         )
 
 
+def _make_telethon_noise_handler():
+    """Suppress Telethon 'Task was destroyed' warnings from orphaned background loops."""
+
+    def handler(loop: asyncio.AbstractEventLoop, context: dict) -> None:
+        msg = context.get("message", "")
+        if "Task was destroyed" in msg:
+            return
+        loop.default_exception_handler(context)
+
+    return handler
+
+
+def _suppress_telethon_gc_warnings() -> None:
+    """Suppress 'coroutine ignored GeneratorExit' from Telethon GC."""
+    import sys
+
+    _orig_unraisable = sys.unraisablehook
+
+    def _hook(unraisable: sys.UnraisableHookArgs) -> None:
+        if isinstance(unraisable.exc_value, RuntimeError) and "GeneratorExit" in str(unraisable.exc_value):
+            return
+        _orig_unraisable(unraisable)
+
+    sys.unraisablehook = _hook
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    loop = asyncio.get_running_loop()
+    loop.set_exception_handler(_make_telethon_noise_handler())
+    _suppress_telethon_gc_warnings()
     container = await build_container_with_templates(
         app.state.config,
         log_buffer=app.state.log_buffer,

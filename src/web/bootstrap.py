@@ -45,6 +45,7 @@ from src.web.timing import TimingBuffer
 
 logger = logging.getLogger(__name__)
 _is_dev = os.environ.get("ENV", "PROD").upper() == "DEV"
+_POOL_INIT_TIMEOUT = 20
 
 
 async def load_telegram_credentials(db: Database, config: AppConfig) -> tuple[int, str]:
@@ -237,7 +238,13 @@ async def start_container(container: AppContainer) -> None:
         t1 = time.monotonic()
 
     if container.auth.is_configured:
-        await container.pool.initialize()
+        try:
+            await asyncio.wait_for(container.pool.initialize(), timeout=_POOL_INIT_TIMEOUT)
+        except asyncio.TimeoutError:
+            logger.warning(
+                "startup: telegram pool timed out after %ds — continuing without full init",
+                _POOL_INIT_TIMEOUT,
+            )
     logger.info("startup: telegram pool done (%.1fs)", time.monotonic() - t_start)
     if _is_dev:
         logger.info("startup/start: telegram_pool %.2fs", time.monotonic() - t1)
