@@ -71,8 +71,11 @@ def register(db, client_pool, embedding_service, **kwargs):
         if gate:
             return gate
         try:
-            count = await db.reset_all_channel_filters()
-            return _text_response(f"Фильтры сброшены: {count} каналов разблокированы.")
+            from src.filters.analyzer import ChannelAnalyzer
+
+            analyzer = ChannelAnalyzer(db)
+            await analyzer.reset_filters()
+            return _text_response("Фильтры сброшены.")
         except Exception as e:
             return _text_response(f"Ошибка сброса фильтров: {e}")
 

@@ -15,8 +15,9 @@ def register(db, client_pool, embedding_service, **kwargs):
     async def get_notification_status(args):
         try:
             from src.services.notification_service import NotificationService
+            from src.services.notification_target_service import NotificationTargetService
 
-            svc = NotificationService(db, client_pool)
+            svc = NotificationService(db, NotificationTargetService(db, client_pool))
             bot = await svc.get_status()
             if bot is None:
                 return _text_response("Бот уведомлений не настроен.")
@@ -46,8 +47,9 @@ def register(db, client_pool, embedding_service, **kwargs):
             return gate
         try:
             from src.services.notification_service import NotificationService
+            from src.services.notification_target_service import NotificationTargetService
 
-            svc = NotificationService(db, client_pool)
+            svc = NotificationService(db, NotificationTargetService(db, client_pool))
             bot = await svc.setup_bot()
             return _text_response(
                 f"Бот уведомлений создан!\n"
@@ -74,8 +76,9 @@ def register(db, client_pool, embedding_service, **kwargs):
             return gate
         try:
             from src.services.notification_service import NotificationService
+            from src.services.notification_target_service import NotificationTargetService
 
-            svc = NotificationService(db, client_pool)
+            svc = NotificationService(db, NotificationTargetService(db, client_pool))
             await svc.teardown_bot()
             return _text_response("Бот уведомлений удалён.")
         except Exception as e:
@@ -90,8 +93,9 @@ def register(db, client_pool, embedding_service, **kwargs):
             return pool_gate
         try:
             from src.services.notification_service import NotificationService
+            from src.services.notification_target_service import NotificationTargetService
 
-            svc = NotificationService(db, client_pool)
+            svc = NotificationService(db, NotificationTargetService(db, client_pool))
             bot = await svc.get_status()
             if bot is None:
                 return _text_response("Бот уведомлений не настроен. Сначала вызовите setup_notification_bot.")
