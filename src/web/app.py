@@ -230,7 +230,6 @@ async def lifespan(app: FastAPI):
     configure_app(app, container)
     logger.info("Application started")
 
-    loop = asyncio.get_running_loop()
     startup_task = asyncio.create_task(start_container(container))
 
     def _abort_startup(sig: int) -> None:
@@ -244,9 +243,9 @@ async def lifespan(app: FastAPI):
         await startup_task
     except asyncio.CancelledError:
         logger.warning("startup: cancelled by signal — server starts with partial init")
-
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        loop.remove_signal_handler(sig)
+    finally:
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            loop.remove_signal_handler(sig)
 
     try:
         yield

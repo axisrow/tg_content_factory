@@ -64,15 +64,15 @@ async def test_pool_initialize_skips_hanging_connect(real_pool_harness_factory, 
     harness.queue_cli_client(phone="+70000000002", client=hanging_client)
     await harness.add_account("+70000000002", session_string="s2")
 
+    harness.pool.init_timeout = 1.0
+
     t0 = time.monotonic()
-    try:
-        await asyncio.wait_for(harness.pool.initialize(), timeout=3.0)
-    except asyncio.TimeoutError:
-        pass  # Expected — the hanging account causes timeout
+    await harness.pool.initialize()
     elapsed = time.monotonic() - t0
 
-    # Good account should have connected
+    # Good account should have connected; hanging one skipped by internal timeout
     assert "+70000000001" in harness.pool.clients
+    assert "+70000000002" not in harness.pool.clients
     assert elapsed < 5.0
 
 

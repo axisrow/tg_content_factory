@@ -71,6 +71,7 @@ class ClientPool:
         self._max_flood_wait_sec = max_flood_wait_sec
         self._runtime_config = self._normalize_runtime_config(runtime_config)
         self.clients: dict[str, object] = {}
+        self.init_timeout: float = 15.0
         self._lock = asyncio.Lock()
         self._in_use: set[str] = set()
         self._lease_pool = AccountLeasePool(db, self._in_use)
@@ -258,7 +259,7 @@ class ClientPool:
                 logger.error("Failed to connect %s: %s", acc.phone, e)
 
         tasks = {asyncio.create_task(_init_one(acc)): acc for acc in new_accounts}
-        done, pending = await asyncio.wait(tasks.keys(), timeout=15.0)
+        done, pending = await asyncio.wait(tasks.keys(), timeout=self.init_timeout)
         if pending:
             phones = []
             for task in pending:
