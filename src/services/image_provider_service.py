@@ -160,13 +160,19 @@ class ImageProviderService:
             enabled = str(form.get(f"img_provider_enabled__{name}", "")).strip() == "1"
             new_key = str(form.get(f"img_provider_secret__{name}__api_key", "")).strip()
             old_cfg = existing_map.get(name)
+            preserved = ""
             if new_key:
                 api_key = new_key
             elif old_cfg:
                 api_key = old_cfg.api_key
+                preserved = old_cfg._api_key_enc_preserved
             else:
                 api_key = ""
-            configs.append(ImageProviderConfig(provider=name, enabled=enabled, api_key=api_key))
+            configs.append(
+                ImageProviderConfig(
+                    provider=name, enabled=enabled, api_key=api_key, _api_key_enc_preserved=preserved,
+                )
+            )
         return configs
 
     # ── adapter construction ──
