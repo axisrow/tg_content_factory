@@ -92,7 +92,11 @@ class UnifiedDispatcher:
                 svc = ImageProviderService(self._db, self._config)
                 configs = await svc.load_provider_configs()
                 built = svc.build_adapters(configs)
-                if built:
+                if configs:
+                    # DB has entries — honour them, even if all disabled → {}
+                    adapters = built
+                elif built:
+                    # No DB entries but env-only adapters found by build_adapters
                     adapters = built
             except Exception:
                 logger.warning("Failed to load image provider configs from DB", exc_info=True)
