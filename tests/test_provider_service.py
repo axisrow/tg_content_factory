@@ -22,7 +22,7 @@ def clean_env():
         "FIREWORKS_API_BASE", "FIREWORKS_API_KEY", "DEEPSEEK_BASE",
         "DEEPSEEK_API_BASE", "DEEPSEEK_API_KEY", "TOGETHER_BASE",
         "TOGETHER_API_BASE", "TOGETHER_API_KEY", "CONTEXT7_API_KEY",
-        "CTX7_API_KEY", "USE_LANGCHAIN",
+        "CTX7_API_KEY",
     ]
     for var in env_vars:
         saved[var] = os.environ.get(var)
@@ -258,31 +258,6 @@ def test_context7_registered_with_ctx7_fallback(clean_env):
     svc = AgentProviderService()
     assert "context7" in svc._registry
 
-
-# === LangChain integration tests ===
-
-
-def test_langchain_enabled_registers_adapters(clean_env):
-    """LangChain adapters registered when USE_LANGCHAIN=1."""
-    os.environ["USE_LANGCHAIN"] = "1"
-
-    # Mock langchain adapters module import
-    mock_adapter = AsyncMock(return_value="LC response")
-    with patch.dict(
-        "sys.modules",
-        {"src.services.langchain_adapters": MagicMock(make_langchain_adapter=MagicMock(return_value=mock_adapter))},
-    ):
-        svc = AgentProviderService()
-        # Service should initialize without error
-        assert "default" in svc._registry
-
-
-def test_langchain_disabled_by_default(clean_env):
-    """LangChain disabled by default."""
-    svc = AgentProviderService()
-    # No langchain import should happen
-    # Just check that service initializes without error
-    assert "default" in svc._registry
 
 
 # === Edge cases ===
