@@ -110,7 +110,8 @@ def _settings_agent_manager(request: Request) -> tuple[AgentManager, bool]:
     manager = deps.get_agent_manager(request)
     if manager is not None:
         return manager, True
-    return AgentManager(deps.get_db(request), request.app.state.config), False
+    pool = getattr(request.app.state, "pool", None)
+    return AgentManager(deps.get_db(request), request.app.state.config, client_pool=pool), False
 
 
 async def _dev_mode_enabled(request: Request) -> bool:
