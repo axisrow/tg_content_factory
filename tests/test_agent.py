@@ -833,3 +833,121 @@ def test_build_prompt_stats_only_with_history(db):
     assert stats["kept_msgs"] == 2
     assert "new question" not in stats  # stats only, no prompt built
     assert stats["prompt_chars"] > 0
+
+
+# ── ImportError handling tests ─────────────────────────────────────────────────────
+
+
+def test_build_agent_deepagents_import_error_shows_real_cause(db, monkeypatch):
+    """When deepagents import fails (e.g. missing langchain_anthropic), show real error."""
+    config = AppConfig()
+    config.agent.fallback_model = "ollama:kimi-k2.5"
+    mgr = AgentManager(db, config)
+
+    import builtins
+
+    real_import = builtins.__import__
+
+    def fake_import(name, *args, **kwargs):
+        if name == "deepagents":
+            raise ImportError("No module named 'langchain_anthropic'")
+        return real_import(name, *args, **kwargs)
+
+    cfg = ProviderRuntimeConfig(
+        provider="ollama", enabled=True, priority=0, selected_model="kimi-k2.5",
+        plain_fields={"base_url": "http://localhost:11434"},
+    )
+    with patch("builtins.__import__", side_effect=fake_import):
+        with pytest.raises(RuntimeError, match="Не удалось импортировать deepagents"):
+            mgr._deepagents_backend._build_agent(cfg, record_last_used=False)
+
+    assert "langchain_anthropic" in mgr._deepagents_backend._init_error
+
+
+def test_build_agent_langchain_import_error_blames_correct_provider(db, monkeypatch):
+    """When langchain provider import fails, error correctly names the provider package."""
+    config = AppConfig()
+    config.agent.fallback_model = "ollama:kimi-k2.5"
+    mgr = AgentManager(db, config)
+
+    cfg = ProviderRuntimeConfig(
+        provider="ollama", enabled=True, priority=0, selected_model="kimi-k2.5",
+        plain_fields={"base_url": "http://localhost:11434"},
+    )
+
+    def fake_init_chat_model(**kwargs):
+        raise ImportError("No module named 'langchain_ollama'")
+
+    with (
+        patch("deepagents.create_deep_agent"),
+        patch("langchain.chat_models.init_chat_model", side_effect=fake_init_chat_model),
+    ):
+        with pytest.raises(RuntimeError, match="langchain-ollama"):
+            mgr._deepagents_backend._build_agent(cfg, record_last_used=False)
+
+    assert "ollama" in mgr._deepagents_backend._init_error
+
+
+def test_build_agent_tools_import_error_shows_details(db, monkeypatch):
+    """ImportError from create_deep_agent/tools shows detailed message."""
+    config = AppConfig()
+    config.agent.fallback_model = "ollama:kimi-k2.5"
+    mgr = AgentManager(db, config)
+
+    cfg = ProviderRuntimeConfig(
+        provider="ollama", enabled=True, priority=0, selected_model="kimi-k2.5",
+        plain_fields={"base_url": "http://localhost:11434"},
+    )
+
+    def fake_create_deep_agent(**kwargs):
+        raise ImportError("No module named 'some_optional_dep'")
+
+    with (
+        patch("deepagents.create_deep_agent", side_effect=fake_create_deep_agent),
+        patch("langchain.chat_models.init_chat_model", return_value=MagicMock()),
+    ):
+        with pytest.raises(RuntimeError, match="Ошибка импорта при создании агента"):
+            mgr._deepagents_backend._build_agent(cfg, record_last_used=False)
+
+    assert "some_optional_dep" in mgr._deepagents_backend._init_error
+
+
+# ── Refresh re-init tests ─────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_refresh_reinitializes_on_preflight_true(db, monkeypatch):
+    """refresh_settings_cache(preflight=True) re-inits even when preflight_available is not None."""
+    monkeypatch.setenv("AGENT_FALLBACK_MODEL", "openai:gpt-4.1-mini")
+    monkeypatch.setenv("AGENT_FALLBACK_API_KEY", "test-key")
+
+    mgr = AgentManager(db)
+    backend = mgr._deepagents_backend
+
+    # Simulate a previously failed preflight
+    backend._preflight_available = False
+    backend._init_error = "some old error"
+
+    with patch.object(backend, "initialize") as mock_init:
+        await mgr.refresh_settings_cache(preflight=True)
+        mock_init.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_runtime_status_selected_backend_deepagents_override(db, monkeypatch):
+    """When override=deepagents, selected_backend is deepagents even if claude_available=True."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "claude-key")
+    monkeypatch.setenv("AGENT_FALLBACK_MODEL", "openai:gpt-4.1-mini")
+    monkeypatch.setenv("AGENT_FALLBACK_API_KEY", "test-key")
+    await db.set_setting("agent_dev_mode_enabled", "1")
+    await db.set_setting("agent_backend_override", "deepagents")
+
+    mgr = AgentManager(db)
+    with patch.object(mgr._deepagents_backend, "_build_agent", return_value=None):
+        mgr.initialize()
+
+    status = await mgr.get_runtime_status()
+
+    assert status.claude_available is True
+    assert status.selected_backend == "deepagents"
+    assert status.using_override is True

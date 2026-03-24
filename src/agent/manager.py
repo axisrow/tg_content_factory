@@ -547,9 +547,25 @@ class DeepagentsBackend:
 
         try:
             from deepagents import create_deep_agent
+        except ImportError as exc:
+            self._init_error = f"Не удалось импортировать deepagents: {exc}"
+            raise RuntimeError(self._init_error) from exc
+
+        try:
             from langchain.chat_models import init_chat_model
 
             model = init_chat_model(model=resolved_model_name, model_provider=provider, **extra)
+        except ImportError as exc:
+            package = (
+                f"langchain-{provider.replace('_', '-')}" if provider else "langchain provider"
+            )
+            self._init_error = (
+                f"Не установлена интеграция для provider '{provider}'. "
+                f"Установите пакет вроде '{package}'. Детали: {exc}"
+            )
+            raise RuntimeError(self._init_error) from exc
+
+        try:
             agent = create_deep_agent(
                 model=model,
                 tools=tools or self._default_tools(),
@@ -560,16 +576,7 @@ class DeepagentsBackend:
                 self._last_used_model = configured_model_name
             return agent
         except ImportError as exc:
-            if "deepagents" in str(exc):
-                self._init_error = "deepagents не установлен."
-                raise RuntimeError(self._init_error) from exc
-            package = (
-                f"langchain-{provider.replace('_', '-')}" if provider else "langchain provider"
-            )
-            self._init_error = (
-                f"Не установлена интеграция для provider '{provider}'. "
-                f"Установите пакет вроде '{package}'."
-            )
+            self._init_error = f"Ошибка импорта при создании агента: {exc}"
             raise RuntimeError(self._init_error) from exc
         except ValueError as exc:
             self._init_error = f"Некорректная конфигурация fallback модели: {exc}"
@@ -966,11 +973,7 @@ class AgentManager:
 
     async def refresh_settings_cache(self, *, preflight: bool = False) -> None:
         await self._deepagents_backend.refresh_settings_cache()
-        if (
-            preflight
-            and self._deepagents_backend.configured
-            and self._deepagents_backend.preflight_available is None
-        ):
+        if preflight and self._deepagents_backend.configured:
             try:
                 self._deepagents_backend.initialize()
             except Exception:
