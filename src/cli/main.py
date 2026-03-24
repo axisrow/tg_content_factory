@@ -8,6 +8,7 @@ from src.cli.commands import (
     account,
     channel,
     collect,
+    image,
     notification,
     photo_loader,
     scheduler,
@@ -51,6 +52,7 @@ def main() -> None:
         "test": test_cmd.run,
         "agent": agent_cmd.run,
         "analytics": analytics_cmd.run,
+        "image": image.run,
     }
 
     handler = commands.get(args.command)
@@ -68,6 +70,7 @@ def main() -> None:
             "test": "test_action",
             "agent": "agent_action",
             "analytics": "analytics_action",
+            "image": "image_action",
         }
         if args.command in sub_attr and not getattr(args, sub_attr[args.command], None):
             parser.parse_args([args.command, "--help"])
