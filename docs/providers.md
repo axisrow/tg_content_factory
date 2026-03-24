@@ -30,7 +30,7 @@ Context7 & operator caution
 Testing
 
 - Adapter unit tests mock aiohttp.ClientSession (see tests/test_provider_adapters.py).
-- For integration tests, mock HTTP responses with aioresponses or monkeypatch aiohttp.ClientSession; LangChain-specific tests should be gated behind USE_LANGCHAIN or a dedicated CI job.
+- For integration tests, mock HTTP responses with aioresponses or monkeypatch aiohttp.ClientSession.
 
 Security
 
