@@ -97,7 +97,7 @@ def register(db, client_pool, embedding_service, **kwargs):
         message_ids_str = args.get("message_ids", "")
         if not phone or not chat_id or not message_ids_str:
             return _text_response("Ошибка: phone, chat_id и message_ids обязательны.")
-        ids = [int(x.strip()) for x in message_ids_str.split(",") if x.strip()]
+        ids = [int(x.strip()) for x in message_ids_str.split(",") if x.strip().isdigit()]
         if not ids:
             return _text_response("Ошибка: не указаны валидные message_ids.")
         gate = require_confirmation(

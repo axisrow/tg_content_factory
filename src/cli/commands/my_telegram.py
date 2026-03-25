@@ -171,6 +171,14 @@ def run(args: argparse.Namespace) -> None:
                 if phone not in pool.clients:
                     print(f"Account {phone} not connected.")
                     return
+                if not args.yes:
+                    preview = args.text[:200] + ("..." if len(args.text) > 200 else "")
+                    print(f"Edit message #{args.message_id} in {args.chat_id}:")
+                    print(f"  {preview}")
+                    answer = input("Continue? [y/N] ").strip().lower()
+                    if answer != "y":
+                        print("Aborted.")
+                        return
                 result = await pool.get_native_client_by_phone(phone)
                 if result is None:
                     print(f"Client for {phone} unavailable (flood-wait or not connected).")

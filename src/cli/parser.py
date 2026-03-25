@@ -435,6 +435,7 @@ def build_parser() -> argparse.ArgumentParser:
     my_tg_edit.add_argument("message_id", type=int, help="Message ID to edit")
     my_tg_edit.add_argument("text", help="New message text")
     my_tg_edit.add_argument("--phone", default=None, help="Account phone (default: first connected)")
+    my_tg_edit.add_argument("--yes", "-y", action="store_true", help="Skip confirmation prompt")
 
     my_tg_del_msg = my_tg_sub.add_parser("delete-message", help="Delete messages from a chat")
     my_tg_del_msg.add_argument("chat_id", help="Chat ID or @username")
