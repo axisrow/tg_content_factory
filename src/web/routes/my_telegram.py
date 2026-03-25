@@ -148,6 +148,81 @@ async def send_message(request: Request):
         )
 
 
+@router.post("/edit-message")
+async def edit_message(request: Request):
+    form = await request.form()
+    phone = form.get("phone", "")
+    chat_id = form.get("chat_id", "")
+    message_id = form.get("message_id", "")
+    text = form.get("text", "")
+    pool = deps.get_pool(request)
+    if not phone or not chat_id or not message_id or not text:
+        return RedirectResponse(
+            url=f"/my-telegram/?phone={quote(phone, safe='')}&error=missing_fields",
+            status_code=303,
+        )
+    result = await pool.get_native_client_by_phone(phone)
+    if result is None:
+        return RedirectResponse(
+            url=f"/my-telegram/?phone={quote(phone, safe='')}&error=client_unavailable",
+            status_code=303,
+        )
+    client, _ = result
+    try:
+        entity = await client.get_entity(chat_id)
+        await client.edit_message(entity, int(message_id), text)
+        return RedirectResponse(
+            url=f"/my-telegram/?phone={quote(phone, safe='')}&msg=message_edited",
+            status_code=303,
+        )
+    except Exception as exc:
+        logger.exception("Failed to edit message: %s", exc)
+        return RedirectResponse(
+            url=f"/my-telegram/?phone={quote(phone, safe='')}&error=edit_failed",
+            status_code=303,
+        )
+
+
+@router.post("/delete-message")
+async def delete_message(request: Request):
+    form = await request.form()
+    phone = form.get("phone", "")
+    chat_id = form.get("chat_id", "")
+    message_ids_str = form.get("message_ids", "")
+    pool = deps.get_pool(request)
+    if not phone or not chat_id or not message_ids_str:
+        return RedirectResponse(
+            url=f"/my-telegram/?phone={quote(phone, safe='')}&error=missing_fields",
+            status_code=303,
+        )
+    ids = [int(x.strip()) for x in message_ids_str.split(",") if x.strip().isdigit()]
+    if not ids:
+        return RedirectResponse(
+            url=f"/my-telegram/?phone={quote(phone, safe='')}&error=invalid_ids",
+            status_code=303,
+        )
+    result = await pool.get_native_client_by_phone(phone)
+    if result is None:
+        return RedirectResponse(
+            url=f"/my-telegram/?phone={quote(phone, safe='')}&error=client_unavailable",
+            status_code=303,
+        )
+    client, _ = result
+    try:
+        entity = await client.get_entity(chat_id)
+        await client.delete_messages(entity, ids)
+        return RedirectResponse(
+            url=f"/my-telegram/?phone={quote(phone, safe='')}&msg=messages_deleted",
+            status_code=303,
+        )
+    except Exception as exc:
+        logger.exception("Failed to delete messages: %s", exc)
+        return RedirectResponse(
+            url=f"/my-telegram/?phone={quote(phone, safe='')}&error=delete_failed",
+            status_code=303,
+        )
+
+
 @router.get("/create-channel", response_class=HTMLResponse)
 async def create_channel_page(request: Request):
     pool = deps.get_pool(request)

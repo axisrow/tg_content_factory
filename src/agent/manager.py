@@ -96,6 +96,7 @@ _ALLOWED_TOOLS = [
     "mcp__telegram_db__toggle_account",
     "mcp__telegram_db__delete_account",
     "mcp__telegram_db__get_flood_status",
+    "mcp__telegram_db__clear_flood_status",
     # Filters
     "mcp__telegram_db__analyze_filters",
     "mcp__telegram_db__apply_filters",
@@ -103,6 +104,7 @@ _ALLOWED_TOOLS = [
     "mcp__telegram_db__toggle_channel_filter",
     "mcp__telegram_db__purge_filtered_channels",
     "mcp__telegram_db__hard_delete_channels",
+    "mcp__telegram_db__precheck_filters",
     # Analytics
     "mcp__telegram_db__get_analytics_summary",
     "mcp__telegram_db__get_pipeline_stats",
@@ -132,6 +134,10 @@ _ALLOWED_TOOLS = [
     "mcp__telegram_db__list_auto_uploads",
     "mcp__telegram_db__toggle_auto_upload",
     "mcp__telegram_db__delete_auto_upload",
+    "mcp__telegram_db__create_photo_batch",
+    "mcp__telegram_db__run_photo_due",
+    "mcp__telegram_db__create_auto_upload",
+    "mcp__telegram_db__update_auto_upload",
     # My Telegram
     "mcp__telegram_db__list_dialogs",
     "mcp__telegram_db__refresh_dialogs",
@@ -139,6 +145,11 @@ _ALLOWED_TOOLS = [
     "mcp__telegram_db__create_telegram_channel",
     "mcp__telegram_db__get_forum_topics",
     "mcp__telegram_db__clear_dialog_cache",
+    "mcp__telegram_db__get_cache_status",
+    # Messaging
+    "mcp__telegram_db__send_message",
+    "mcp__telegram_db__edit_message",
+    "mcp__telegram_db__delete_message",
     # Images
     "mcp__telegram_db__generate_image",
     "mcp__telegram_db__list_image_models",
