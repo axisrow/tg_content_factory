@@ -160,4 +160,29 @@ def register(db, client_pool, embedding_service, **kwargs):
 
     tools.append(hard_delete_channels)
 
+    @tool(
+        "precheck_filters",
+        "⚠️ Pre-filter channels by subscriber ratio (no Telegram API needed). "
+        "Marks channels as filtered. Ask user for confirmation first.",
+        {"confirm": bool},
+    )
+    async def precheck_filters(args):
+        gate = require_confirmation(
+            "пометит каналы как filtered по subscriber ratio (bulk операция)", args
+        )
+        if gate:
+            return gate
+        try:
+            from src.filters.analyzer import ChannelAnalyzer
+
+            analyzer = ChannelAnalyzer(db)
+            count = await analyzer.precheck_subscriber_ratio()
+            return _text_response(
+                f"Pre-filter применён: {count} каналов отмечены как filtered (low_subscriber_ratio)."
+            )
+        except Exception as e:
+            return _text_response(f"Ошибка pre-filter: {e}")
+
+    tools.append(precheck_filters)
+
     return tools

@@ -13,7 +13,20 @@ def run(args: argparse.Namespace) -> None:
         config, db = await runtime.init_db(args.config)
         _, pool = await runtime.init_pool(config, db)
         try:
-            if args.my_telegram_action == "list":
+            if args.my_telegram_action == "refresh":
+                accounts = sorted(pool.clients.keys())
+                if not accounts:
+                    print("No connected accounts.")
+                    return
+                phone = args.phone or accounts[0]
+                if phone not in pool.clients:
+                    print(f"Account {phone} not connected.")
+                    return
+                svc = ChannelService(db, pool, None)  # type: ignore[arg-type]
+                dialogs = await svc.get_my_dialogs(phone, refresh=True)
+                print(f"Dialogs refreshed: {len(dialogs)} total.")
+
+            elif args.my_telegram_action == "list":
                 accounts = sorted(pool.clients.keys())
                 if not accounts:
                     print("No connected accounts.")
@@ -116,6 +129,38 @@ def run(args: argparse.Namespace) -> None:
                             str(t.get("date") or "-")[:26],
                         )
                     )
+
+            elif args.my_telegram_action == "send":
+                accounts = sorted(pool.clients.keys())
+                if not accounts:
+                    print("No connected accounts.")
+                    return
+                phone = args.phone or accounts[0]
+                if phone not in pool.clients:
+                    print(f"Account {phone} not connected.")
+                    return
+                recipient = args.recipient
+                text = args.text
+
+                if not args.yes:
+                    print(f"Send message from {phone} to {recipient}:")
+                    print(f"  {text[:200]}{'...' if len(text) > 200 else ''}")
+                    answer = input("Continue? [y/N] ").strip().lower()
+                    if answer != "y":
+                        print("Aborted.")
+                        return
+
+                result = await pool.get_native_client_by_phone(phone)
+                if result is None:
+                    print(f"Client for {phone} unavailable (flood-wait or not connected).")
+                    return
+                client, _ = result
+                try:
+                    entity = await client.get_entity(recipient)
+                    await client.send_message(entity, text)
+                    print(f"Message sent to {recipient}.")
+                except Exception as exc:
+                    print(f"Error sending message: {exc}")
 
             elif args.my_telegram_action == "cache-clear":
                 phone: str | None = getattr(args, "phone", None)
