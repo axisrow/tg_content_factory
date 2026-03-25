@@ -22,10 +22,8 @@ class ChannelsRepository:
                    is_active=excluded.is_active,
                    about=COALESCE(excluded.about, channels.about),
                    linked_chat_id=COALESCE(excluded.linked_chat_id, channels.linked_chat_id),
-                   has_comments=CASE WHEN excluded.about IS NOT NULL
-                                     THEN excluded.has_comments
-                                     ELSE COALESCE(channels.has_comments, excluded.has_comments)
-                                END""",
+                   has_comments=CASE WHEN COALESCE(excluded.linked_chat_id, channels.linked_chat_id)
+                                          IS NOT NULL THEN 1 ELSE 0 END""",
             (
                 channel.channel_id,
                 channel.title,
