@@ -264,6 +264,11 @@ class TelegramTransportSession:
 
         return await self.invoke_request(GetFullChannelRequest(entity))
 
+    async def fetch_full_chat(self, entity: Any) -> Any:
+        from telethon.tl.functions.messages import GetFullChatRequest
+
+        return await self.invoke_request(GetFullChatRequest(entity))
+
     async def get_broadcast_stats(self, entity: Any) -> Any:
         from telethon.tl.functions.stats import GetBroadcastStatsRequest
 

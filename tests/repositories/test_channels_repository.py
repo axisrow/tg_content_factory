@@ -379,6 +379,104 @@ async def test_update_channel_meta_null_values(repo):
     assert channel.username is None
 
 
+# update_channel_full_meta tests
+
+
+async def test_update_channel_full_meta(repo):
+    """Test updating full channel metadata."""
+    await repo.add_channel(make_channel(1))
+    await repo.update_channel_full_meta(
+        1,
+        about="Test description",
+        linked_chat_id=12345,
+        has_comments=True,
+    )
+
+    channel = await repo.get_channel_by_channel_id(1)
+    assert channel.about == "Test description"
+    assert channel.linked_chat_id == 12345
+    assert channel.has_comments is True
+
+
+async def test_update_channel_full_meta_null_values(repo):
+    """Test updating full channel metadata with None values."""
+    await repo.add_channel(make_channel(1, about="Old", linked_chat_id=999, has_comments=True))
+    await repo.update_channel_full_meta(1, about=None, linked_chat_id=None, has_comments=False)
+
+    channel = await repo.get_channel_by_channel_id(1)
+    assert channel.about is None
+    assert channel.linked_chat_id is None
+    assert channel.has_comments is False
+
+
+# add_channel_with_meta_fields tests
+
+
+async def test_add_channel_with_meta_fields(repo):
+    """Test inserting channel with metadata fields."""
+    channel = make_channel(
+        12345,
+        title="Full Channel",
+        about="Channel description",
+        linked_chat_id=54321,
+        has_comments=True,
+    )
+    pk = await repo.add_channel(channel)
+    assert pk > 0
+
+    result = await repo.get_channel_by_pk(pk)
+    assert result.about == "Channel description"
+    assert result.linked_chat_id == 54321
+    assert result.has_comments is True
+
+
+async def test_add_channel_upsert_preserves_meta(repo):
+    """Test that upsert updates metadata on conflict."""
+    ch1 = make_channel(
+        12345,
+        title="Original",
+        about="Original description",
+        linked_chat_id=111,
+        has_comments=False,
+    )
+    await repo.add_channel(ch1)
+
+    ch2 = make_channel(
+        12345,
+        title="Updated",
+        about="Updated description",
+        linked_chat_id=222,
+        has_comments=True,
+    )
+    await repo.add_channel(ch2)
+
+    result = await repo.get_channel_by_channel_id(12345)
+    assert result.title == "Updated"
+    assert result.about == "Updated description"
+    assert result.linked_chat_id == 222
+    assert result.has_comments is True
+
+
+async def test_map_channel_missing_meta_columns(repo):
+    """Test that _map_channel degrades gracefully when metadata columns are absent."""
+    # Add a channel with full fields
+    await repo.add_channel(make_channel(1, title="Test"))
+    # Simulate old row without metadata columns by selecting specific columns
+    cur = await repo._db.execute(
+        "SELECT id, channel_id, title, username, channel_type, is_active, is_filtered, filter_flags, last_collected_id, added_at "
+        "FROM channels WHERE channel_id = 1"
+    )
+    old_row = await cur.fetchone()
+
+    # Should not raise, should use defaults for missing metadata columns
+    channel = repo._map_channel(old_row)
+    assert channel.channel_id == 1
+    assert channel.title == "Test"
+    assert channel.about is None
+    assert channel.linked_chat_id is None
+    assert channel.has_comments is False
+
+
 # get_forum_topics tests
 
 

@@ -2105,6 +2105,9 @@ async def test_add_scam_channel_is_inactive(tmp_path):
     async def _get_dialogs(self):
         return []
 
+    async def _fetch_meta(self, channel_id, channel_type=None):
+        return None
+
     app.state.pool = type(
         "Pool",
         (),
@@ -2113,6 +2116,7 @@ async def test_add_scam_channel_is_inactive(tmp_path):
             "get_users_info": _no_users,
             "resolve_channel": _resolve_scam,
             "get_dialogs": _get_dialogs,
+            "fetch_channel_meta": _fetch_meta,
         },
     )()
     from src.telegram.auth import TelegramAuth

@@ -40,12 +40,18 @@ class ChannelService:
         info = await self._pool.resolve_channel(identifier.strip())
         if not info:
             return False
+        meta = await self._pool.fetch_channel_meta(
+            info["channel_id"], info.get("channel_type")
+        )
         channel = Channel(
             channel_id=info["channel_id"],
             title=info["title"],
             username=info["username"],
             channel_type=info.get("channel_type"),
             is_active=not info.get("deactivate", False),
+            about=meta.get("about") if meta else None,
+            linked_chat_id=meta.get("linked_chat_id") if meta else None,
+            has_comments=meta.get("has_comments", False) if meta else False,
         )
         await self._channels.add_channel(channel)
         return True
@@ -124,3 +130,31 @@ class ChannelService:
 
     async def get_by_pk(self, pk: int) -> Channel | None:
         return await self._channels.get_by_pk(pk)
+
+    async def refresh_channel_meta(self, pk: int) -> bool:
+        """Refresh about/linked_chat_id/has_comments for a single channel. Returns True on success."""
+        channel = await self._channels.get_by_pk(pk)
+        if not channel:
+            return False
+        meta = await self._pool.fetch_channel_meta(channel.channel_id, channel.channel_type)
+        if not meta:
+            return False
+        await self._channels.update_channel_full_meta(
+            channel.channel_id,
+            about=meta["about"],
+            linked_chat_id=meta["linked_chat_id"],
+            has_comments=meta["has_comments"],
+        )
+        return True
+
+    async def refresh_all_channel_meta(self) -> tuple[int, int]:
+        """Refresh metadata for all active channels. Returns (ok_count, failed_count)."""
+        channels = await self._channels.list_channels(active_only=True)
+        ok = 0
+        failed = 0
+        for channel in channels:
+            if await self.refresh_channel_meta(channel.id or 0):
+                ok += 1
+            else:
+                failed += 1
+        return ok, failed

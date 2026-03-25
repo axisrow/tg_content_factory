@@ -10,7 +10,12 @@ from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
-from telethon.errors import UsernameInvalidError, UsernameNotOccupiedError
+from telethon.errors import (
+    ChannelPrivateError,
+    ChatAdminRequiredError,
+    UsernameInvalidError,
+    UsernameNotOccupiedError,
+)
 from telethon.tl.types import ChannelForbidden, PeerChannel, PeerUser
 
 from src.config import TelegramRuntimeConfig
@@ -775,6 +780,81 @@ class ClientPool:
         else:
             channel_type = "group"
         return channel_type, channel_type in ("scam", "fake", "restricted")
+
+    async def fetch_channel_meta(
+        self, channel_id: int, channel_type: str | None
+    ) -> dict | None:
+        """Fetch about, linked_chat_id, has_comments for a channel.
+
+        Only works for channel/supergroup/gigagroup/forum/monoforum types.
+        Returns dict with keys: about, linked_chat_id, has_comments.
+        Returns None on failure.
+        """
+        # Group type has no linked_chat_id, so skip the expensive API call
+        if channel_type == "group":
+            return None
+
+        result = await self.get_available_client()
+        if not result:
+            logger.warning("fetch_channel_meta: no available client for channel_id %s", channel_id)
+            return None
+
+        session, phone = result
+        session = adapt_transport_session(session, disconnect_on_close=False)
+        try:
+            entity = await run_with_flood_wait(
+                session.resolve_entity(PeerChannel(channel_id)),
+                operation="fetch_channel_meta",
+                phone=phone,
+                pool=self,
+                logger_=logger,
+                timeout=30.0,
+            )
+            full = await run_with_flood_wait(
+                session.fetch_full_channel(entity),
+                operation="fetch_channel_meta_full",
+                phone=phone,
+                pool=self,
+                logger_=logger,
+                timeout=30.0,
+            )
+            about = full.full_chat.about if full and full.full_chat else None
+            linked_chat_id = (
+                full.full_chat.linked_chat_id if full and full.full_chat else None
+            )
+            has_comments = linked_chat_id is not None
+            return {
+                "about": about,
+                "linked_chat_id": linked_chat_id,
+                "has_comments": has_comments,
+            }
+        except asyncio.TimeoutError:
+            logger.warning(
+                "fetch_channel_meta: get_entity timed out for channel_id %s", channel_id
+            )
+            return None
+        except HandledFloodWaitError as exc:
+            logger.info(
+                "fetch_channel_meta: flood wait for channel_id %s: %s",
+                channel_id,
+                exc.info.detail,
+            )
+            return None
+        except (ChannelPrivateError, ChatAdminRequiredError):
+            logger.debug(
+                "fetch_channel_meta: access denied for channel_id %s (expected for private channels)",
+                channel_id,
+            )
+            return None
+        except Exception as e:
+            logger.warning(
+                "fetch_channel_meta: failed to fetch full meta for channel_id %s: %s",
+                channel_id,
+                e,
+            )
+            return None
+        finally:
+            await self.release_client(phone)
 
     async def get_dialogs_for_phone(
         self,

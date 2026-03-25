@@ -100,6 +100,19 @@ def build_parser() -> argparse.ArgumentParser:
 
     ch_sub.add_parser("refresh-types", help="Fill missing channel_type for existing channels")
 
+    ch_meta = ch_sub.add_parser("refresh-meta", help="Refresh about/linked_chat_id for channels")
+    ch_meta.add_argument(
+        "identifier",
+        nargs="?",
+        default=None,
+        help="Channel pk, channel_id, or @username (omit for all)",
+    )
+    ch_meta.add_argument(
+        "--all",
+        action="store_true",
+        help="Refresh metadata for all active channels",
+    )
+
     ch_import = ch_sub.add_parser("import", help="Bulk import from file or text")
     ch_import.add_argument("source", help="Path to .txt/.csv file, or comma-separated identifiers")
 
