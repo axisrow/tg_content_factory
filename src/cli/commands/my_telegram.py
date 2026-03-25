@@ -155,9 +155,12 @@ def run(args: argparse.Namespace) -> None:
                     print(f"Client for {phone} unavailable (flood-wait or not connected).")
                     return
                 client, _ = result
-                entity = await client.get_entity(recipient)
-                await client.send_message(entity, text)
-                print(f"Message sent to {recipient}.")
+                try:
+                    entity = await client.get_entity(recipient)
+                    await client.send_message(entity, text)
+                    print(f"Message sent to {recipient}.")
+                except Exception as exc:
+                    print(f"Error sending message: {exc}")
 
             elif args.my_telegram_action == "cache-clear":
                 phone: str | None = getattr(args, "phone", None)
