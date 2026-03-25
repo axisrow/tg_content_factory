@@ -49,6 +49,30 @@ def register(db, client_pool, embedding_service, **kwargs):
             if not await svc.is_available():
                 return _text_response("Генерация изображений не настроена. Добавьте провайдера в настройках.")
             result = await svc.generate(model=model, text=prompt)
+            if result and (result.startswith("https://") or result.startswith("http://")):
+                import hashlib
+                import os
+
+                import httpx
+
+                os.makedirs("data/image", exist_ok=True)
+                ext = result.rsplit(".", 1)[-1].split("?")[0][:4] or "png"
+                filename = hashlib.md5(result.encode()).hexdigest()[:12] + "." + ext
+                local_path = os.path.join("data/image", filename)
+                async with httpx.AsyncClient() as http_client:
+                    resp = await http_client.get(result, follow_redirects=True, timeout=30)
+                    resp.raise_for_status()
+                    with open(local_path, "wb") as f:
+                        f.write(resp.content)
+                logger.info("Image downloaded to %s", local_path)
+                await db.repos.generated_images.save(
+                    prompt=prompt, model=model, image_url=result, local_path=local_path,
+                )
+                return _text_response(
+                    f"Изображение сгенерировано:\n"
+                    f"- URL: {result}\n"
+                    f"- Файл: {local_path}"
+                )
             if result:
                 return _text_response(f"Изображение сгенерировано:\n{result}")
             return _text_response("Генерация не вернула результат.")

@@ -5,7 +5,13 @@ from __future__ import annotations
 from claude_agent_sdk import tool
 from mcp.types import ToolAnnotations
 
-from src.agent.tools._registry import _text_response, require_confirmation, require_pool
+from src.agent.tools._registry import (
+    _text_response,
+    normalize_phone,
+    require_confirmation,
+    require_phone_permission,
+    require_pool,
+)
 
 
 def register(db, client_pool, embedding_service, **kwargs):
@@ -16,9 +22,12 @@ def register(db, client_pool, embedding_service, **kwargs):
         pool_gate = require_pool(client_pool, "Список диалогов")
         if pool_gate:
             return pool_gate
-        phone = args.get("phone", "")
+        phone = normalize_phone(args.get("phone", ""))
         if not phone:
             return _text_response("Ошибка: phone обязателен.")
+        perm_gate = await require_phone_permission(db, phone, "list_dialogs")
+        if perm_gate:
+            return perm_gate
         try:
             from src.services.channel_service import ChannelService
 
@@ -29,8 +38,8 @@ def register(db, client_pool, embedding_service, **kwargs):
             lines = [f"Диалоги ({len(dialogs)}):"]
             for d in dialogs[:100]:
                 title = d.get("title", "?")
-                did = d.get("id", "?")
-                dtype = d.get("type", "?")
+                did = d.get("channel_id", "?")
+                dtype = d.get("channel_type", "?")
                 lines.append(f"- id={did}, type={dtype}: {title}")
             if len(dialogs) > 100:
                 lines.append(f"... и ещё {len(dialogs) - 100}")
@@ -49,9 +58,12 @@ def register(db, client_pool, embedding_service, **kwargs):
         pool_gate = require_pool(client_pool, "Обновление диалогов")
         if pool_gate:
             return pool_gate
-        phone = args.get("phone", "")
+        phone = normalize_phone(args.get("phone", ""))
         if not phone:
             return _text_response("Ошибка: phone обязателен.")
+        perm_gate = await require_phone_permission(db, phone, "refresh_dialogs")
+        if perm_gate:
+            return perm_gate
         try:
             from src.services.channel_service import ChannelService
 
@@ -74,10 +86,13 @@ def register(db, client_pool, embedding_service, **kwargs):
         pool_gate = require_pool(client_pool, "Выход из диалогов")
         if pool_gate:
             return pool_gate
-        phone = args.get("phone", "")
+        phone = normalize_phone(args.get("phone", ""))
         dialog_ids_str = args.get("dialog_ids", "")
         if not phone or not dialog_ids_str:
             return _text_response("Ошибка: phone и dialog_ids обязательны.")
+        perm_gate = await require_phone_permission(db, phone, "leave_dialogs")
+        if perm_gate:
+            return perm_gate
         gate = require_confirmation(
             f"выйдет из {len(dialog_ids_str.split(','))} диалогов на аккаунте {phone}", args
         )
@@ -106,10 +121,13 @@ def register(db, client_pool, embedding_service, **kwargs):
         pool_gate = require_pool(client_pool, "Создание канала")
         if pool_gate:
             return pool_gate
-        phone = args.get("phone", "")
+        phone = normalize_phone(args.get("phone", ""))
         title = args.get("title", "")
         if not phone or not title:
             return _text_response("Ошибка: phone и title обязательны.")
+        perm_gate = await require_phone_permission(db, phone, "create_telegram_channel")
+        if perm_gate:
+            return perm_gate
         gate = require_confirmation(f"создаст новый Telegram-канал '{title}'", args)
         if gate:
             return gate
@@ -173,7 +191,11 @@ def register(db, client_pool, embedding_service, **kwargs):
         {"phone": str, "confirm": bool},
     )
     async def clear_dialog_cache(args):
-        phone = args.get("phone", "")
+        phone = normalize_phone(args.get("phone", ""))
+        if phone:
+            perm_gate = await require_phone_permission(db, phone, "clear_dialog_cache")
+            if perm_gate:
+                return perm_gate
         gate = require_confirmation(
             f"очистит кеш диалогов{' для ' + phone if phone else ' для всех аккаунтов'}", args
         )

@@ -16,6 +16,7 @@ from src.database.repositories.collection_tasks import CollectionTasksRepository
 from src.database.repositories.content_pipelines import ContentPipelinesRepository
 from src.database.repositories.dialog_cache import DialogCacheRepository
 from src.database.repositories.filters import FilterRepository
+from src.database.repositories.generated_images import GeneratedImagesRepository
 from src.database.repositories.generation_runs import GenerationRunsRepository
 from src.database.repositories.messages import MessagesRepository
 from src.database.repositories.notification_bots import NotificationBotsRepository
@@ -119,6 +120,7 @@ class Database:
         self._dialog_cache = DialogCacheRepository(self._db)
         self._content_pipelines = ContentPipelinesRepository(self._db)
         self._generation_runs = GenerationRunsRepository(self._db)
+        self._generated_images = GeneratedImagesRepository(self._db)
         self._repos = DatabaseRepositories(
             accounts=self._accounts,
             channels=self._channels,
@@ -134,6 +136,7 @@ class Database:
             dialog_cache=self._dialog_cache,
             content_pipelines=self._content_pipelines,
             generation_runs=self._generation_runs,
+            generated_images=self._generated_images,
         )
 
         await self._accounts.migrate_sessions()
