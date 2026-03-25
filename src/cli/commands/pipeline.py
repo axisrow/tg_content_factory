@@ -317,6 +317,28 @@ def run(args: argparse.Namespace) -> None:
                 await db.repos.generation_runs.set_moderation_status(args.run_id, "rejected")
                 print(f"Rejected run id={args.run_id}")
 
+            elif args.pipeline_action == "bulk-approve":
+                approved = 0
+                for run_id in args.run_ids:
+                    run = await db.repos.generation_runs.get(run_id)
+                    if run is None:
+                        print(f"  Run id={run_id} not found, skipping.")
+                        continue
+                    await db.repos.generation_runs.set_moderation_status(run_id, "approved")
+                    approved += 1
+                print(f"Bulk approved: {approved}/{len(args.run_ids)}")
+
+            elif args.pipeline_action == "bulk-reject":
+                rejected = 0
+                for run_id in args.run_ids:
+                    run = await db.repos.generation_runs.get(run_id)
+                    if run is None:
+                        print(f"  Run id={run_id} not found, skipping.")
+                        continue
+                    await db.repos.generation_runs.set_moderation_status(run_id, "rejected")
+                    rejected += 1
+                print(f"Bulk rejected: {rejected}/{len(args.run_ids)}")
+
             elif args.pipeline_action == "publish":
                 run = await db.repos.generation_runs.get(args.run_id)
                 if run is None:

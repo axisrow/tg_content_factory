@@ -91,4 +91,28 @@ def register(db, client_pool, embedding_service, **kwargs):
 
     tools.append(get_flood_status)
 
+    @tool(
+        "clear_flood_status",
+        "Clear flood wait restriction for a specific account. Ask user for confirmation first.",
+        {"phone": str, "confirm": bool},
+    )
+    async def clear_flood_status(args):
+        phone = args.get("phone", "")
+        if not phone:
+            return _text_response("Ошибка: phone обязателен.")
+        gate = require_confirmation(f"сбросит flood-wait для аккаунта {phone}", args)
+        if gate:
+            return gate
+        try:
+            accounts = await db.get_accounts()
+            acc = next((a for a in accounts if a.phone == phone), None)
+            if acc is None:
+                return _text_response(f"Аккаунт {phone} не найден.")
+            await db.update_account_flood(phone, None)
+            return _text_response(f"Flood-wait для {phone} сброшен.")
+        except Exception as e:
+            return _text_response(f"Ошибка сброса flood-wait: {e}")
+
+    tools.append(clear_flood_status)
+
     return tools

@@ -99,6 +99,10 @@ def run(args: argparse.Namespace) -> None:
                 await svc.toggle(args.id)
                 print(f"Toggled search query id={args.id}")
 
+            elif args.search_query_action == "run":
+                count = await svc.run_once(args.id)
+                print(f"Search query id={args.id} executed: {count} matches found.")
+
             elif args.search_query_action == "stats":
                 stats = await svc.get_daily_stats(args.id, args.days)
                 if not stats:

@@ -12,6 +12,11 @@ class SettingsRepository:
         row = await cur.fetchone()
         return row["value"] if row else None
 
+    async def list_all(self) -> list[tuple[str, str]]:
+        cur = await self._db.execute("SELECT key, value FROM settings ORDER BY key")
+        rows = await cur.fetchall()
+        return [(r["key"], r["value"]) for r in rows]
+
     async def set_setting(self, key: str, value: str) -> None:
         await self._db.execute(
             "INSERT INTO settings (key, value) VALUES (?, ?) "

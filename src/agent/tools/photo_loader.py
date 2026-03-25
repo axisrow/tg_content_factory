@@ -249,4 +249,179 @@ def register(db, client_pool, embedding_service, **kwargs):
 
     tools.append(delete_auto_upload)
 
+    @tool(
+        "create_photo_batch",
+        "⚠️ Create a photo batch for sending to a Telegram dialog. "
+        "Params: phone, target (dialog_id), file_paths (comma-sep), caption. "
+        "Ask user for confirmation first.",
+        {"phone": str, "target": str, "file_paths": str, "caption": str, "confirm": bool},
+    )
+    async def create_photo_batch(args):
+        pool_gate = require_pool(client_pool, "Создание батча фото")
+        if pool_gate:
+            return pool_gate
+        phone = args.get("phone", "")
+        target = args.get("target", "")
+        files = [f.strip() for f in args.get("file_paths", "").split(",") if f.strip()]
+        caption = args.get("caption")
+        if not phone or not target or not files:
+            return _text_response("Ошибка: phone, target и file_paths обязательны.")
+        gate = require_confirmation(
+            f"создаст батч фото для отправки: файлы={files}, target={target}", args
+        )
+        if gate:
+            return gate
+        try:
+            from src.database.bundles import PhotoLoaderBundle
+            from src.services.photo_publish_service import PhotoPublishService
+            from src.services.photo_task_service import PhotoTaskService
+
+            svc = PhotoTaskService(PhotoLoaderBundle.from_database(db), PhotoPublishService(client_pool))
+            entries = [{"file_path": f} for f in files]
+            from src.models import PhotoTarget
+
+            batch_id = await svc.create_batch(
+                phone=phone,
+                target=PhotoTarget(dialog_id=int(target)),
+                entries=entries,
+                caption=caption,
+            )
+            return _text_response(f"Батч создан: id={batch_id}")
+        except Exception as e:
+            return _text_response(f"Ошибка создания батча: {e}")
+
+    tools.append(create_photo_batch)
+
+    @tool(
+        "run_photo_due",
+        "⚠️ Process all due photo items and auto-upload jobs (sends to Telegram). "
+        "Ask user for confirmation first.",
+        {"confirm": bool},
+    )
+    async def run_photo_due(args):
+        pool_gate = require_pool(client_pool, "Обработка фото")
+        if pool_gate:
+            return pool_gate
+        gate = require_confirmation("отправит все запланированные фото в Telegram", args)
+        if gate:
+            return gate
+        try:
+            from src.database.bundles import PhotoLoaderBundle
+            from src.services.photo_auto_upload_service import PhotoAutoUploadService
+            from src.services.photo_publish_service import PhotoPublishService
+            from src.services.photo_task_service import PhotoTaskService
+
+            publish_svc = PhotoPublishService(client_pool)
+            bundle = PhotoLoaderBundle.from_database(db)
+            tasks_svc = PhotoTaskService(bundle, publish_svc)
+            auto_svc = PhotoAutoUploadService(bundle, publish_svc)
+            items = await tasks_svc.run_due()
+            jobs = await auto_svc.run_due()
+            return _text_response(f"Обработано: items={items}, auto_jobs={jobs}")
+        except Exception as e:
+            return _text_response(f"Ошибка обработки фото: {e}")
+
+    tools.append(run_photo_due)
+
+    @tool(
+        "create_auto_upload",
+        "⚠️ Create an auto-upload job to send photos from a folder on a schedule. "
+        "Ask user for confirmation first.",
+        {
+            "phone": str, "target": str, "folder_path": str,
+            "interval_minutes": int, "mode": str, "caption": str, "confirm": bool,
+        },
+    )
+    async def create_auto_upload(args):
+        pool_gate = require_pool(client_pool, "Создание автозагрузки")
+        if pool_gate:
+            return pool_gate
+        folder_path = args.get("folder_path", "")
+        target = args.get("target", "")
+        gate = require_confirmation(
+            f"создаст автозагрузку фото: folder={folder_path}, target={target}", args
+        )
+        if gate:
+            return gate
+        try:
+            from src.database.bundles import PhotoLoaderBundle
+            from src.models import PhotoAutoUploadJob, PhotoSendMode
+            from src.services.photo_auto_upload_service import PhotoAutoUploadService
+            from src.services.photo_publish_service import PhotoPublishService
+
+            svc = PhotoAutoUploadService(PhotoLoaderBundle.from_database(db), PhotoPublishService(client_pool))
+            phone = args.get("phone", "")
+            target = args.get("target", "")
+            folder_path = args.get("folder_path", "")
+            interval = int(args.get("interval_minutes", 60))
+            mode = args.get("mode", "album")
+            caption = args.get("caption")
+            if not phone or not target or not folder_path:
+                return _text_response("Ошибка: phone, target и folder_path обязательны.")
+            job_id = await svc.create_job(PhotoAutoUploadJob(
+                phone=phone,
+                target_dialog_id=int(target),
+                folder_path=folder_path,
+                send_mode=PhotoSendMode(mode),
+                caption=caption,
+                interval_minutes=interval,
+            ))
+            return _text_response(f"Автозагрузка создана: id={job_id}")
+        except Exception as e:
+            return _text_response(f"Ошибка создания автозагрузки: {e}")
+
+    tools.append(create_auto_upload)
+
+    @tool(
+        "update_auto_upload",
+        "⚠️ Update an existing auto-upload job settings. Ask user for confirmation first.",
+        {
+            "job_id": int, "folder_path": str, "mode": str,
+            "caption": str, "interval_minutes": int, "is_active": bool, "confirm": bool,
+        },
+    )
+    async def update_auto_upload(args):
+        job_id = args.get("job_id")
+        if job_id is None:
+            return _text_response("Ошибка: job_id обязателен.")
+        changes = []
+        if args.get("folder_path"):
+            changes.append(f"folder={args['folder_path']}")
+        if args.get("mode"):
+            changes.append(f"mode={args['mode']}")
+        if args.get("interval_minutes") is not None:
+            changes.append(f"interval={args['interval_minutes']}m")
+        if args.get("is_active") is not None:
+            changes.append(f"active={args['is_active']}")
+        desc = f"обновит автозагрузку id={job_id}"
+        if changes:
+            desc += f" ({', '.join(changes)})"
+        gate = require_confirmation(desc, args)
+        if gate:
+            return gate
+        try:
+            from src.database.bundles import PhotoLoaderBundle
+            from src.models import PhotoSendMode
+            from src.services.photo_auto_upload_service import PhotoAutoUploadService
+            from src.services.photo_publish_service import PhotoPublishService
+
+            svc = PhotoAutoUploadService(PhotoLoaderBundle.from_database(db), PhotoPublishService(client_pool))
+            existing = await svc.get_job(int(job_id))
+            if existing is None:
+                return _text_response(f"Автозагрузка id={job_id} не найдена.")
+            mode_str = args.get("mode")
+            await svc.update_job(
+                int(job_id),
+                folder_path=args.get("folder_path"),
+                send_mode=PhotoSendMode(mode_str) if mode_str else None,
+                caption=args.get("caption"),
+                interval_minutes=args.get("interval_minutes"),
+                is_active=args.get("is_active"),
+            )
+            return _text_response(f"Автозагрузка id={job_id} обновлена.")
+        except Exception as e:
+            return _text_response(f"Ошибка обновления автозагрузки: {e}")
+
+    tools.append(update_auto_upload)
+
     return tools

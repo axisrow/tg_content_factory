@@ -75,6 +75,7 @@ TOOL_CATEGORIES: dict[str, ToolCategory] = {
     "toggle_account": ToolCategory.WRITE,
     "delete_account": ToolCategory.DELETE,
     "get_flood_status": ToolCategory.READ,
+    "clear_flood_status": ToolCategory.WRITE,
     # Filters
     "analyze_filters": ToolCategory.READ,
     "apply_filters": ToolCategory.WRITE,
@@ -82,6 +83,7 @@ TOOL_CATEGORIES: dict[str, ToolCategory] = {
     "toggle_channel_filter": ToolCategory.WRITE,
     "purge_filtered_channels": ToolCategory.DELETE,
     "hard_delete_channels": ToolCategory.DELETE,
+    "precheck_filters": ToolCategory.WRITE,
     # Analytics
     "get_analytics_summary": ToolCategory.READ,
     "get_pipeline_stats": ToolCategory.READ,
@@ -111,6 +113,10 @@ TOOL_CATEGORIES: dict[str, ToolCategory] = {
     "list_auto_uploads": ToolCategory.READ,
     "toggle_auto_upload": ToolCategory.WRITE,
     "delete_auto_upload": ToolCategory.DELETE,
+    "create_photo_batch": ToolCategory.WRITE,
+    "run_photo_due": ToolCategory.WRITE,
+    "create_auto_upload": ToolCategory.WRITE,
+    "update_auto_upload": ToolCategory.WRITE,
     # My Telegram
     "list_dialogs": ToolCategory.READ,
     "refresh_dialogs": ToolCategory.WRITE,
@@ -118,6 +124,9 @@ TOOL_CATEGORIES: dict[str, ToolCategory] = {
     "create_telegram_channel": ToolCategory.WRITE,
     "get_forum_topics": ToolCategory.READ,
     "clear_dialog_cache": ToolCategory.WRITE,
+    "get_cache_status": ToolCategory.READ,
+    # Messaging
+    "send_message": ToolCategory.WRITE,
     # Images
     "generate_image": ToolCategory.WRITE,
     "list_image_models": ToolCategory.READ,
@@ -167,10 +176,11 @@ MODULE_GROUPS: OrderedDict[str, list[str]] = OrderedDict([
     ]),
     ("Аккаунты", [
         "list_accounts", "toggle_account", "delete_account", "get_flood_status",
+        "clear_flood_status",
     ]),
     ("Фильтры", [
         "analyze_filters", "apply_filters", "reset_filters", "toggle_channel_filter",
-        "purge_filtered_channels", "hard_delete_channels",
+        "purge_filtered_channels", "hard_delete_channels", "precheck_filters",
     ]),
     ("Аналитика", [
         "get_analytics_summary", "get_pipeline_stats", "get_daily_stats",
@@ -188,10 +198,14 @@ MODULE_GROUPS: OrderedDict[str, list[str]] = OrderedDict([
     ("Фото", [
         "list_photo_batches", "list_photo_items", "send_photos_now", "schedule_photos",
         "cancel_photo_item", "list_auto_uploads", "toggle_auto_upload", "delete_auto_upload",
+        "create_photo_batch", "run_photo_due", "create_auto_upload", "update_auto_upload",
     ]),
     ("Мой Telegram", [
         "list_dialogs", "refresh_dialogs", "leave_dialogs", "create_telegram_channel",
-        "get_forum_topics", "clear_dialog_cache",
+        "get_forum_topics", "clear_dialog_cache", "get_cache_status",
+    ]),
+    ("Сообщения", [
+        "send_message",
     ]),
     ("Изображения", [
         "list_image_models", "list_image_providers", "generate_image",

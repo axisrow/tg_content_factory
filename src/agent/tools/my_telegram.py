@@ -116,9 +116,10 @@ def register(db, client_pool, embedding_service, **kwargs):
         try:
             about = args.get("about", "")
             username = args.get("username", "")
-            client = await client_pool.get_client_for_phone(phone)
-            if client is None:
-                return _text_response(f"Клиент для {phone} не найден.")
+            result = await client_pool.get_native_client_by_phone(phone)
+            if result is None:
+                return _text_response(f"Клиент для {phone} не найден или flood-wait активен.")
+            client, _ = result
             from telethon.tl.functions.channels import CreateChannelRequest
 
             result = await client(CreateChannelRequest(
@@ -192,5 +193,23 @@ def register(db, client_pool, embedding_service, **kwargs):
             return _text_response(f"Ошибка очистки кеша: {e}")
 
     tools.append(clear_dialog_cache)
+
+    @tool("get_cache_status", "Show dialog cache status: DB entries and age per account", {})
+    async def get_cache_status(args):
+        try:
+            phones = await db.repos.dialog_cache.get_all_phones()
+            if not phones:
+                return _text_response("Кеш диалогов пуст.")
+            lines = ["Статус кеша диалогов:"]
+            for ph in sorted(phones):
+                count = await db.repos.dialog_cache.count_dialogs(ph)
+                cached_at = await db.repos.dialog_cache.get_cached_at(ph)
+                cached_at_str = cached_at.strftime("%Y-%m-%d %H:%M:%S UTC") if cached_at else "—"
+                lines.append(f"- {ph}: {count} записей, обновлён {cached_at_str}")
+            return _text_response("\n".join(lines))
+        except Exception as e:
+            return _text_response(f"Ошибка получения статуса кеша: {e}")
+
+    tools.append(get_cache_status)
 
     return tools

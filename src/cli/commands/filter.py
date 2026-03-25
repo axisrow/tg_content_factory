@@ -102,6 +102,16 @@ def run(args: argparse.Namespace) -> None:
                     " (low_subscriber_ratio)."
                 )
 
+            elif args.filter_action == "toggle":
+                channel = await db.get_channel_by_pk(args.pk)
+                if channel is None:
+                    print(f"Channel pk={args.pk} not found.")
+                    return
+                new_state = not channel.is_filtered
+                await db.set_channel_filtered(args.pk, new_state)
+                status = "filtered" if new_state else "unfiltered"
+                print(f"Channel pk={args.pk} ({channel.title}) marked as {status}.")
+
             elif args.filter_action == "reset":
                 await analyzer.reset_filters()
                 print("All channel filters have been reset.")

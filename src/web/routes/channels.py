@@ -82,3 +82,32 @@ async def delete_channel(request: Request, pk: int):
     except sqlite3.IntegrityError:
         return RedirectResponse(url="/channels?error=channel_in_pipeline", status_code=303)
     return RedirectResponse(url="/channels?msg=channel_deleted", status_code=303)
+
+
+@router.post("/refresh-types")
+async def refresh_channel_types(request: Request):
+    db = deps.get_db(request)
+    pool = deps.get_pool(request)
+    channels = await db.get_channels(active_only=True)
+    updated = 0
+    failed = 0
+    for ch in channels:
+        identifier = ch.username or str(ch.channel_id)
+        try:
+            info = await pool.resolve_channel(identifier)
+        except Exception:
+            info = None
+        if info is False:
+            await db.set_channel_active(ch.id, False)
+            await db.set_channel_type(ch.channel_id, "unavailable")
+            failed += 1
+            continue
+        if not info or info.get("channel_type") is None:
+            failed += 1
+            continue
+        await db.set_channel_type(ch.channel_id, info["channel_type"])
+        updated += 1
+    return RedirectResponse(
+        url=f"/channels?msg=types_refreshed&updated={updated}&failed={failed}",
+        status_code=303,
+    )
