@@ -212,18 +212,27 @@ MODULE_GROUPS: OrderedDict[str, list[str]] = OrderedDict([
 # ---------------------------------------------------------------------------
 
 
+def _default_permissions() -> dict[str, bool]:
+    """Default permissions: read=True, write/delete=False."""
+    return {
+        name: (cat == ToolCategory.READ)
+        for name, cat in TOOL_CATEGORIES.items()
+    }
+
+
 async def load_tool_permissions(db) -> dict[str, bool]:
-    """Load per-tool permissions from DB.  Missing setting → all tools allowed."""
+    """Load per-tool permissions from DB.  Missing setting → read-only defaults."""
+    defaults = _default_permissions()
     raw = await db.get_setting(TOOL_PERMISSIONS_SETTING)
     if not raw:
-        return {name: True for name in TOOL_CATEGORIES}
+        return defaults
     try:
         saved: dict = json.loads(raw)
     except (json.JSONDecodeError, TypeError):
         logger.warning("Corrupted tool permissions setting, using defaults")
-        return {name: True for name in TOOL_CATEGORIES}
-    # Merge: saved values take precedence, new tools default to True
-    return {name: saved.get(name, True) for name in TOOL_CATEGORIES}
+        return defaults
+    # Merge: saved values take precedence, new tools get default for their category
+    return {name: saved.get(name, defaults[name]) for name in TOOL_CATEGORIES}
 
 
 async def save_tool_permissions(db, permissions: dict[str, bool]) -> None:
