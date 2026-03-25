@@ -16,7 +16,13 @@ CREATE TABLE IF NOT EXISTS channels (
     username TEXT,
     is_active INTEGER DEFAULT 1,
     last_collected_id INTEGER DEFAULT 0,
-    added_at TEXT DEFAULT (datetime('now'))
+    added_at TEXT DEFAULT (datetime('now')),
+    channel_type TEXT,
+    is_filtered INTEGER DEFAULT 0,
+    filter_flags TEXT DEFAULT '',
+    about TEXT,
+    linked_chat_id INTEGER,
+    has_comments INTEGER DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS messages (

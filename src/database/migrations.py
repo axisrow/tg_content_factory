@@ -96,6 +96,15 @@ async def run_migrations(db: aiosqlite.Connection) -> bool:
     if "filter_flags" not in ch_columns:
         await db.execute("ALTER TABLE channels ADD COLUMN filter_flags TEXT DEFAULT ''")
         await db.commit()
+    if "about" not in ch_columns:
+        await db.execute("ALTER TABLE channels ADD COLUMN about TEXT")
+        await db.commit()
+    if "linked_chat_id" not in ch_columns:
+        await db.execute("ALTER TABLE channels ADD COLUMN linked_chat_id INTEGER")
+        await db.commit()
+    if "has_comments" not in ch_columns:
+        await db.execute("ALTER TABLE channels ADD COLUMN has_comments INTEGER DEFAULT 0")
+        await db.commit()
 
     cur = await db.execute("PRAGMA table_info(collection_tasks)")
     task_rows = await cur.fetchall()

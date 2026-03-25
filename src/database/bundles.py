@@ -140,6 +140,18 @@ class ChannelBundle:
     ) -> None:
         await self.channels.update_channel_meta(channel_id, username=username, title=title)
 
+    async def update_channel_full_meta(
+        self,
+        channel_id: int,
+        *,
+        about: str | None,
+        linked_chat_id: int | None,
+        has_comments: bool,
+    ) -> None:
+        await self.channels.update_channel_full_meta(
+            channel_id, about=about, linked_chat_id=linked_chat_id, has_comments=has_comments
+        )
+
     async def set_filtered_bulk(
         self,
         updates: list[tuple[int, str]],

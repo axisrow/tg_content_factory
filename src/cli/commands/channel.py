@@ -92,6 +92,8 @@ def run(args: argparse.Namespace) -> None:
                     print(f"Could not resolve channel: {args.identifier}")
                     return
 
+                # Fetch full metadata
+                meta = await pool.fetch_channel_meta(info["channel_id"], info.get("channel_type"))
                 deactivate = info.get("deactivate", False)
                 await db.add_channel(
                     Channel(
@@ -100,6 +102,9 @@ def run(args: argparse.Namespace) -> None:
                         username=info["username"],
                         channel_type=info.get("channel_type"),
                         is_active=not deactivate,
+                        about=meta.get("about") if meta else None,
+                        linked_chat_id=meta.get("linked_chat_id") if meta else None,
+                        has_comments=meta.get("has_comments", False) if meta else False,
                     )
                 )
                 msg = f"Added channel: {info['title']} ({info['channel_id']})"
@@ -271,6 +276,58 @@ def run(args: argparse.Namespace) -> None:
                     print(f"OK: {ch.title} → {info['channel_type']}")
                     updated += 1
                 print(f"\nUpdated: {updated}, Deactivated: {deactivated}, Skipped: {failed}")
+
+            elif args.channel_action == "refresh-meta":
+                _, pool = await runtime.init_pool(config, db)
+                if not pool.clients:
+                    logging.error("No connected accounts.")
+                    return
+                if args.all:
+                    # Refresh all active channels
+                    channels = await db.get_channels(active_only=True)
+                    print(f"Active channels to refresh: {len(channels)}")
+                    ok = failed = 0
+                    for ch in channels:
+                        meta = await pool.fetch_channel_meta(ch.channel_id, ch.channel_type)
+                        if meta:
+                            await db.update_channel_full_meta(
+                                ch.channel_id,
+                                about=meta["about"],
+                                linked_chat_id=meta["linked_chat_id"],
+                                has_comments=meta["has_comments"],
+                            )
+                            print(
+                                f"OK: {ch.title} (about_len={len(meta['about'] or '')}, "
+                                f"linked={meta['linked_chat_id']}, comments={meta['has_comments']})"
+                            )
+                            ok += 1
+                        else:
+                            print(f"SKIP: {ch.title}")
+                            failed += 1
+                    print(f"\nRefreshed: {ok}, Failed: {failed}")
+                elif args.identifier:
+                    # Refresh single channel
+                    channels = await db.get_channels()
+                    ch = resolve_channel(channels, args.identifier)
+                    if not ch:
+                        print(f"Channel '{args.identifier}' not found")
+                        return
+                    meta = await pool.fetch_channel_meta(ch.channel_id, ch.channel_type)
+                    if meta:
+                        await db.update_channel_full_meta(
+                            ch.channel_id,
+                            about=meta["about"],
+                            linked_chat_id=meta["linked_chat_id"],
+                            has_comments=meta["has_comments"],
+                        )
+                        print(f"OK: Updated {ch.title}")
+                        print(f"  about={meta['about'][:60] if meta['about'] else 'N/A'}...")
+                        print(f"  linked_chat_id={meta['linked_chat_id']}")
+                        print(f"  has_comments={meta['has_comments']}")
+                    else:
+                        print(f"Failed to fetch metadata for {ch.title}")
+                else:
+                    print("Please provide --all or a channel identifier")
 
             elif args.channel_action == "collect":
                 _, pool = await runtime.init_pool(config, db)
