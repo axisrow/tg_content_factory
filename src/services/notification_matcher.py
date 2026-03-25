@@ -24,8 +24,8 @@ class NotificationMatcher:
         if not messages or not queries:
             return {}
 
-        # Collect matches per query: {sq_id: (query_name, count, first_preview)}
-        matches: dict[int, tuple[str, int, str]] = {}
+        # Collect matches per query: {sq_id: (query_name, count, first_preview, first_link)}
+        matches: dict[int, tuple[str, int, str, str]] = {}
         for msg in messages:
             if not msg.text:
                 continue
@@ -51,22 +51,30 @@ class NotificationMatcher:
                         continue
                     key = sq.id
                     if key in matches:
-                        name, count, preview = matches[key]
-                        matches[key] = (name, count + 1, preview)
+                        name, count, preview, link = matches[key]
+                        matches[key] = (name, count + 1, preview, link)
                     else:
-                        matches[key] = (sq.query, 1, msg.text[:200])
+                        matches[key] = (sq.query, 1, msg.text[:200], _make_message_link(msg))
 
         result: dict[int, int] = {}
-        for sq_id, (name, count, preview) in matches.items():
+        for sq_id, (name, count, preview, link) in matches.items():
             result[sq_id] = count
             if count == 1:
-                await self._notifier.notify(f"Query '{name}' matched in channel:\n{preview}")
+                await self._notifier.notify(f"Query '{name}' matched in channel:\n{preview}\n{link}")
             else:
                 await self._notifier.notify(
-                    f"Query '{name}' matched {count} times. First:\n{preview}"
+                    f"Query '{name}' matched {count} times. First:\n{preview}\n{link}"
                 )
 
         return result
+
+
+def _make_message_link(msg: Message) -> str:
+    """Build a t.me link for the message."""
+    if msg.channel_username:
+        return f"https://t.me/{msg.channel_username}/{msg.message_id}"
+    bare_id = str(msg.channel_id).lstrip("-").removeprefix("100")
+    return f"https://t.me/c/{bare_id}/{msg.message_id}"
 
 
 def _fts_query_matches(fts_query: str, text: str) -> bool:
