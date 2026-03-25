@@ -260,7 +260,15 @@ def register(db, client_pool, embedding_service, **kwargs):
         pool_gate = require_pool(client_pool, "Создание батча фото")
         if pool_gate:
             return pool_gate
-        gate = require_confirmation("создаст батч фото для отправки", args)
+        phone = args.get("phone", "")
+        target = args.get("target", "")
+        files = [f.strip() for f in args.get("file_paths", "").split(",") if f.strip()]
+        caption = args.get("caption")
+        if not phone or not target or not files:
+            return _text_response("Ошибка: phone, target и file_paths обязательны.")
+        gate = require_confirmation(
+            f"создаст батч фото для отправки: файлы={files}, target={target}", args
+        )
         if gate:
             return gate
         try:
@@ -269,12 +277,6 @@ def register(db, client_pool, embedding_service, **kwargs):
             from src.services.photo_task_service import PhotoTaskService
 
             svc = PhotoTaskService(PhotoLoaderBundle.from_database(db), PhotoPublishService(client_pool))
-            phone = args.get("phone", "")
-            target = args.get("target", "")
-            files = [f.strip() for f in args.get("file_paths", "").split(",") if f.strip()]
-            caption = args.get("caption")
-            if not phone or not target or not files:
-                return _text_response("Ошибка: phone, target и file_paths обязательны.")
             entries = [{"file_path": f} for f in files]
             from src.models import PhotoTarget
 
@@ -292,13 +294,17 @@ def register(db, client_pool, embedding_service, **kwargs):
 
     @tool(
         "run_photo_due",
-        "Process all due photo items and auto-upload jobs",
-        {},
+        "⚠️ Process all due photo items and auto-upload jobs (sends to Telegram). "
+        "Ask user for confirmation first.",
+        {"confirm": bool},
     )
     async def run_photo_due(args):
         pool_gate = require_pool(client_pool, "Обработка фото")
         if pool_gate:
             return pool_gate
+        gate = require_confirmation("отправит все запланированные фото в Telegram", args)
+        if gate:
+            return gate
         try:
             from src.database.bundles import PhotoLoaderBundle
             from src.services.photo_auto_upload_service import PhotoAutoUploadService
@@ -364,16 +370,19 @@ def register(db, client_pool, embedding_service, **kwargs):
 
     @tool(
         "update_auto_upload",
-        "Update an existing auto-upload job settings.",
+        "⚠️ Update an existing auto-upload job settings. Ask user for confirmation first.",
         {
             "job_id": int, "folder_path": str, "mode": str,
-            "caption": str, "interval_minutes": int, "is_active": bool,
+            "caption": str, "interval_minutes": int, "is_active": bool, "confirm": bool,
         },
     )
     async def update_auto_upload(args):
         job_id = args.get("job_id")
         if job_id is None:
             return _text_response("Ошибка: job_id обязателен.")
+        gate = require_confirmation(f"обновит автозагрузку id={job_id}", args)
+        if gate:
+            return gate
         try:
             from src.database.bundles import PhotoLoaderBundle
             from src.models import PhotoSendMode
