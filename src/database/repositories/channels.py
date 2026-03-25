@@ -13,18 +13,24 @@ class ChannelsRepository:
 
     async def add_channel(self, channel: Channel) -> int:
         cur = await self._db.execute(
-            """INSERT INTO channels (channel_id, title, username, channel_type, is_active)
-               VALUES (?, ?, ?, ?, ?)
+            """INSERT INTO channels (channel_id, title, username, channel_type, is_active,
+                                     about, linked_chat_id, has_comments)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(channel_id) DO UPDATE
                SET title=excluded.title, username=excluded.username,
                    channel_type=excluded.channel_type,
-                   is_active=excluded.is_active""",
+                   is_active=excluded.is_active,
+                   about=excluded.about, linked_chat_id=excluded.linked_chat_id,
+                   has_comments=excluded.has_comments""",
             (
                 channel.channel_id,
                 channel.title,
                 channel.username,
                 channel.channel_type,
                 int(channel.is_active),
+                channel.about,
+                channel.linked_chat_id,
+                int(channel.has_comments),
             ),
         )
         await self._db.commit()
@@ -44,6 +50,9 @@ class ChannelsRepository:
             filter_flags=(
                 row["filter_flags"] if "filter_flags" in keys and row["filter_flags"] else ""
             ),
+            about=row["about"] if "about" in keys else None,
+            linked_chat_id=row["linked_chat_id"] if "linked_chat_id" in keys else None,
+            has_comments=bool(row["has_comments"]) if "has_comments" in keys and row["has_comments"] else False,
             last_collected_id=row["last_collected_id"],
             added_at=datetime.fromisoformat(row["added_at"]) if row["added_at"] else None,
             message_count=(
@@ -170,6 +179,15 @@ class ChannelsRepository:
         await self._db.execute(
             "UPDATE channels SET username = ?, title = ? WHERE channel_id = ?",
             (username, title, channel_id),
+        )
+        await self._db.commit()
+
+    async def update_channel_full_meta(
+        self, channel_id: int, *, about: str | None, linked_chat_id: int | None, has_comments: bool
+    ) -> None:
+        await self._db.execute(
+            "UPDATE channels SET about = ?, linked_chat_id = ?, has_comments = ? WHERE channel_id = ?",
+            (about, linked_chat_id, int(has_comments), channel_id),
         )
         await self._db.commit()
 

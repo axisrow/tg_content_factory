@@ -47,6 +47,7 @@
             <th>ID канала</th>
             <th>Название</th>
             <th>Username</th>
+            <th>Описание</th>
             <th>Тип</th>
             <th>Статус</th>
             <th>Сообщений</th>
@@ -65,7 +66,8 @@
             <td>{{ ch.channel_id }}</td>
             <td>{{ ch.title or "—" }}</td>
             <td>{% if ch.username %}<a href="https://t.me/{{ ch.username }}" target="_blank" rel="noopener">@{{ ch.username }}</a>{% else %}—{% endif %}</td>
-            <td>{% if ch.channel_type == "channel" %}{% if not ch.username %}Канал <span title="Приватный">&#128274;</span>{% else %}Канал{% endif %}{% elif ch.channel_type == "supergroup" %}{% if not ch.username %}Супергруппа <span title="Приватная">&#128274;</span>{% else %}Супергруппа{% endif %}{% elif ch.channel_type == "gigagroup" %}{% if not ch.username %}Гигагруппа <span title="Приватная">&#128274;</span>{% else %}Гигагруппа{% endif %}{% elif ch.channel_type == "group" %}{% if not ch.username %}Группа <span title="Приватная">&#128274;</span>{% else %}Группа{% endif %}{% elif ch.channel_type == "forum" %}{% if not ch.username %}Форум <span title="Приватный">&#128274;</span>{% else %}Форум{% endif %}{% elif ch.channel_type == "monoforum" %}Монофорум{% elif ch.channel_type == "restricted" %}<span class="text-danger">Ограничен</span>{% elif ch.channel_type == "scam" %}<span class="text-danger">Скам &#9888;&#65039;</span>{% elif ch.channel_type == "fake" %}<span class="text-danger">Фейк &#9888;&#65039;</span>{% elif ch.channel_type == "unavailable" %}<span class="text-muted">Недоступен</span>{% else %}<span class="text-muted">Непроверен</span>{% endif %}</td>
+            <td><small>{% if ch.about %}{{ ch.about[:60] }}{% if ch.about|length > 60 %}…{% endif %}{% else %}—{% endif %}</small></td>
+            <td>{% if ch.channel_type == "channel" %}{% if not ch.username %}Канал <span title="Приватный">&#128274;</span>{% else %}Канал{% endif %}{% elif ch.channel_type == "supergroup" %}{% if not ch.username %}Супергруппа <span title="Приватная">&#128274;</span>{% else %}Супергруппа{% endif %}{% elif ch.channel_type == "gigagroup" %}{% if not ch.username %}Гигагруппа <span title="Приватная">&#128274;</span>{% else %}Гигагруппа{% endif %}{% elif ch.channel_type == "group" %}{% if not ch.username %}Группа <span title="Приватная">&#128274;</span>{% else %}Группа{% endif %}{% elif ch.channel_type == "forum" %}{% if not ch.username %}Форум <span title="Приватный">&#128274;</span>{% else %}Форум{% endif %}{% elif ch.channel_type == "monoforum" %}Монофорум{% elif ch.channel_type == "restricted" %}<span class="text-danger">Ограничен</span>{% elif ch.channel_type == "scam" %}<span class="text-danger">Скам &#9888;&#65039;</span>{% elif ch.channel_type == "fake" %}<span class="text-danger">Фейк &#9888;&#65039;</span>{% elif ch.channel_type == "unavailable" %}<span class="text-muted">Недоступен</span>{% else %}<span class="text-muted">Непроверен</span>{% endif %}{% if ch.has_comments %} <span title="Есть комментарии">💬</span>{% endif %}</td>
             <td>
               {% if ch.is_filtered %}<span class="badge-filtered" title="Отфильтрован">&#9679;</span>
               {% elif ch.is_active %}<span class="badge-active">&#9679;</span>
@@ -171,7 +173,9 @@
                         {% elif ch.is_active %}<span class="badge-active">&#9679;</span>
                         {% else %}<span class="badge-inactive">&#9679;</span>{% endif %}
                         <strong class="text-truncate">{{ ch.title or "—" }}</strong>
+                        {% if ch.has_comments %}<span title="Есть комментарии">💬</span>{% endif %}
                     </div>
+                    {% if ch.about %}<small class="d-block text-muted mb-1" title="{{ ch.about }}">{{ ch.about[:60] }}{% if ch.about|length > 60 %}…{% endif %}</small>{% endif %}
                     <small class="text-muted">
                         {% if ch.username %}<a href="https://t.me/{{ ch.username }}" target="_blank" rel="noopener">@{{ ch.username }}</a> &middot; {% endif %}
                         ID: {{ ch.channel_id }} &middot; {{ ch.message_count }} сообщ.

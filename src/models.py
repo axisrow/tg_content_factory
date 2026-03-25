@@ -39,6 +39,9 @@ class Channel(BaseModel):
     is_active: bool = True
     is_filtered: bool = False
     filter_flags: str = ""
+    about: str | None = None
+    linked_chat_id: int | None = None
+    has_comments: bool = False
     last_collected_id: int = 0
     added_at: datetime | None = None
     message_count: int = 0
