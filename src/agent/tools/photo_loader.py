@@ -336,7 +336,11 @@ def register(db, client_pool, embedding_service, **kwargs):
         pool_gate = require_pool(client_pool, "Создание автозагрузки")
         if pool_gate:
             return pool_gate
-        gate = require_confirmation("создаст задачу автозагрузки фото", args)
+        folder_path = args.get("folder_path", "")
+        target = args.get("target", "")
+        gate = require_confirmation(
+            f"создаст автозагрузку фото: folder={folder_path}, target={target}", args
+        )
         if gate:
             return gate
         try:
