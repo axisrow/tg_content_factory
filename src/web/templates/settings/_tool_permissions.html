@@ -1,0 +1,105 @@
+<p class="form-text mb-3">
+    Управление разрешениями инструментов AI-агента. Отключённые инструменты не будут доступны агенту.
+    По умолчанию все инструменты разрешены.
+</p>
+
+<form method="post" action="/settings/save-agent" data-busy>
+    <input type="hidden" name="agent_form_scope" value="tool_permissions">
+
+    <div class="row g-3 mb-4">
+        <div class="col-12 col-md-4">
+            <div class="card border-success">
+                <div class="card-body py-2">
+                    <div class="form-check form-switch">
+                        <input class="form-check-input" type="checkbox" id="cat_toggle_read"
+                               onchange="toggleToolCategory('read', this.checked)">
+                        <label class="form-check-label fw-semibold" for="cat_toggle_read">
+                            <span class="badge text-bg-success me-1">Read</span>
+                            <span class="text-muted small" id="cat_count_read"></span>
+                        </label>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-12 col-md-4">
+            <div class="card border-warning">
+                <div class="card-body py-2">
+                    <div class="form-check form-switch">
+                        <input class="form-check-input" type="checkbox" id="cat_toggle_write"
+                               onchange="toggleToolCategory('write', this.checked)">
+                        <label class="form-check-label fw-semibold" for="cat_toggle_write">
+                            <span class="badge text-bg-warning me-1">Write</span>
+                            <span class="text-muted small" id="cat_count_write"></span>
+                        </label>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-12 col-md-4">
+            <div class="card border-danger">
+                <div class="card-body py-2">
+                    <div class="form-check form-switch">
+                        <input class="form-check-input" type="checkbox" id="cat_toggle_delete"
+                               onchange="toggleToolCategory('delete', this.checked)">
+                        <label class="form-check-label fw-semibold" for="cat_toggle_delete">
+                            <span class="badge text-bg-danger me-1">Delete</span>
+                            <span class="text-muted small" id="cat_count_delete"></span>
+                        </label>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="accordion" id="toolPermModules">
+        {% for module in tool_permission_modules %}
+        <div class="accordion-item">
+            <h2 class="accordion-header">
+                <div class="d-flex align-items-center w-100">
+                    <div class="form-check form-switch ms-3 me-2 flex-shrink-0" onclick="event.stopPropagation()">
+                        <input class="form-check-input module-toggle" type="checkbox"
+                               id="mod_toggle_{{ loop.index }}"
+                               data-module-idx="{{ loop.index }}"
+                               onchange="toggleToolModule({{ loop.index }}, this.checked)">
+                    </div>
+                    <button class="accordion-button collapsed flex-grow-1 py-2 ps-0" type="button"
+                            data-bs-toggle="collapse" data-bs-target="#toolMod_{{ loop.index }}">
+                        {{ module.display_name }}
+                        <span class="text-muted small ms-2" id="mod_count_{{ loop.index }}"></span>
+                    </button>
+                </div>
+            </h2>
+            <div id="toolMod_{{ loop.index }}" class="accordion-collapse collapse">
+                <div class="accordion-body py-2">
+                    {% set mod_idx = loop.index %}
+                    {% for tool in module.tools %}
+                    <div class="form-check">
+                        <input class="form-check-input tool-perm-cb" type="checkbox"
+                               id="tp_{{ tool.name }}"
+                               name="tool_perm__{{ tool.name }}" value="1"
+                               data-category="{{ tool.category }}"
+                               data-module-idx="{{ mod_idx }}"
+                               {% if tool.enabled %}checked{% endif %}
+                               onchange="updateToolPermToggles()">
+                        <label class="form-check-label" for="tp_{{ tool.name }}">
+                            <code>{{ tool.name }}</code>
+                            {% if tool.category == 'read' %}
+                            <span class="badge text-bg-success">R</span>
+                            {% elif tool.category == 'write' %}
+                            <span class="badge text-bg-warning">W</span>
+                            {% else %}
+                            <span class="badge text-bg-danger">D</span>
+                            {% endif %}
+                        </label>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+
+    <div class="d-flex justify-content-end mt-3">
+        <button type="submit" class="btn btn-primary">Сохранить разрешения</button>
+    </div>
+</form>
