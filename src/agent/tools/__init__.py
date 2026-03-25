@@ -25,7 +25,7 @@ def make_mcp_server(db, client_pool=None, scheduler_manager=None, config=None):
     """
     from src.services.embedding_service import EmbeddingService
 
-    embedding_service = EmbeddingService(db)
+    embedding_service = EmbeddingService(db, config=config)
 
     # Import all tool modules
     from src.agent.tools import (

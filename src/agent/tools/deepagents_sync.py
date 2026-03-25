@@ -57,7 +57,7 @@ def build_deepagents_tools(db, client_pool=None, config=None) -> list[Callable]:
         try:
             from src.services.embedding_service import EmbeddingService
 
-            svc = EmbeddingService(db)
+            svc = EmbeddingService(db, config=config)
             embedding = _run_sync("semantic_embed", lambda: svc.embed_query(query_text))
             messages, total = _run_sync(
                 "semantic_search", lambda: db.search_semantic_messages(embedding, limit=limit)
@@ -79,7 +79,7 @@ def build_deepagents_tools(db, client_pool=None, config=None) -> list[Callable]:
         try:
             from src.services.embedding_service import EmbeddingService
 
-            svc = EmbeddingService(db)
+            svc = EmbeddingService(db, config=config)
             count = _run_sync("index_messages", svc.index_pending_messages)
             return f"Проиндексировано: {count} сообщений."
         except Exception as exc:
@@ -233,8 +233,9 @@ def build_deepagents_tools(db, client_pool=None, config=None) -> list[Callable]:
             pipeline = _run_sync("run_pipeline_get", lambda: svc.get(pipeline_id))
             if not pipeline:
                 return f"Пайплайн id={pipeline_id} не найден."
-            engine = SearchEngine(db)
-            gen_svc = ContentGenerationService(db, engine)
+            engine = SearchEngine(db, config=config)
+            image_service = _build_image_service_sync()
+            gen_svc = ContentGenerationService(db, engine, image_service=image_service)
             run = _run_sync("run_pipeline", lambda: gen_svc.generate(pipeline))
             preview = (run.generated_text or "")[:300]
             return f"Генерация завершена (run id={run.id}). Превью:\n{preview}"

@@ -2,14 +2,36 @@
 
 from __future__ import annotations
 
+import logging
+
 from claude_agent_sdk import tool
 from mcp.types import ToolAnnotations
 
 from src.agent.tools._registry import _text_response, require_confirmation, require_pool
 
+logger = logging.getLogger(__name__)
+
 
 def register(db, client_pool, embedding_service, **kwargs):
+    config = kwargs.get("config")
     tools = []
+
+    async def _build_image_service():
+        """Build ImageGenerationService with DB providers + env fallback."""
+        from src.services.image_generation_service import ImageGenerationService
+
+        if db and config:
+            try:
+                from src.services.image_provider_service import ImageProviderService
+
+                svc = ImageProviderService(db, config)
+                configs = await svc.load_provider_configs()
+                adapters = svc.build_adapters(configs)
+                if adapters:
+                    return ImageGenerationService(adapters=adapters)
+            except Exception:
+                logger.warning("Failed to load image providers from DB", exc_info=True)
+        return ImageGenerationService()
 
     # ------------------------------------------------------------------
     # Read tools
@@ -293,8 +315,9 @@ def register(db, client_pool, embedding_service, **kwargs):
             if not pipeline.is_active:
                 return _text_response(f"Пайплайн '{pipeline.name}' неактивен.")
 
-            engine = SearchEngine(db)
-            gen_svc = ContentGenerationService(db, engine)
+            engine = SearchEngine(db, config=config)
+            image_service = await _build_image_service()
+            gen_svc = ContentGenerationService(db, engine, image_service=image_service)
             run = await gen_svc.generate(pipeline)
 
             preview = (run.generated_text or "")[:500]
@@ -325,7 +348,7 @@ def register(db, client_pool, embedding_service, **kwargs):
             from src.services.pipeline_service import PipelineService
             from src.services.provider_service import AgentProviderService
 
-            engine = SearchEngine(db)
+            engine = SearchEngine(db, config=config)
             prompt_template = None
             llm_model = None
             if pipeline_id is not None:
