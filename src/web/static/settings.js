@@ -394,6 +394,50 @@ function initSettingsTabs() {
     });
 }
 
+/* ---- Tool Permissions ---- */
+
+function toggleToolCategory(category, checked) {
+    document.querySelectorAll('.tool-perm-cb[data-category="' + category + '"]').forEach(function(cb) {
+        cb.checked = checked;
+    });
+    updateToolPermToggles();
+}
+
+function toggleToolModule(moduleIdx, checked) {
+    document.querySelectorAll('.tool-perm-cb[data-module-idx="' + moduleIdx + '"]').forEach(function(cb) {
+        cb.checked = checked;
+    });
+    updateToolPermToggles();
+}
+
+function updateToolPermToggles() {
+    /* Update category master toggles */
+    ['read', 'write', 'delete'].forEach(function(cat) {
+        var cbs = document.querySelectorAll('.tool-perm-cb[data-category="' + cat + '"]');
+        var toggle = document.getElementById('cat_toggle_' + cat);
+        var countEl = document.getElementById('cat_count_' + cat);
+        if (!toggle || cbs.length === 0) return;
+        var checked = 0;
+        cbs.forEach(function(cb) { if (cb.checked) checked++; });
+        toggle.checked = checked === cbs.length;
+        toggle.indeterminate = checked > 0 && checked < cbs.length;
+        if (countEl) countEl.textContent = checked + '/' + cbs.length;
+    });
+
+    /* Update module toggles */
+    document.querySelectorAll('.module-toggle').forEach(function(toggle) {
+        var idx = toggle.getAttribute('data-module-idx');
+        var cbs = document.querySelectorAll('.tool-perm-cb[data-module-idx="' + idx + '"]');
+        var countEl = document.getElementById('mod_count_' + idx);
+        if (cbs.length === 0) return;
+        var checked = 0;
+        cbs.forEach(function(cb) { if (cb.checked) checked++; });
+        toggle.checked = checked === cbs.length;
+        toggle.indeterminate = checked > 0 && checked < cbs.length;
+        if (countEl) countEl.textContent = checked + '/' + cbs.length;
+    });
+}
+
 document.addEventListener('DOMContentLoaded', function() {
     /* Agent provider model change handlers */
     document.querySelectorAll('select[id^="provider_model__"]').forEach(function(select) {
@@ -408,4 +452,9 @@ document.addEventListener('DOMContentLoaded', function() {
 
     /* Tab navigation */
     initSettingsTabs();
+
+    /* Initialize tool permission toggles state */
+    if (document.querySelector('.tool-perm-cb')) {
+        updateToolPermToggles();
+    }
 });

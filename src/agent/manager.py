@@ -228,10 +228,15 @@ class ClaudeSdkBackend:
         cli_path = shutil.which("claude")
         logger.info("claude-cli path: %s", cli_path)
 
+        from src.agent.tools.permissions import filter_allowed_tools, load_tool_permissions
+
+        permissions = await load_tool_permissions(self._db)
+        allowed = filter_allowed_tools(_ALLOWED_TOOLS, permissions)
+
         options = ClaudeAgentOptions(
             system_prompt=system_prompt,
             mcp_servers={"telegram_db": self._server},
-            allowed_tools=_ALLOWED_TOOLS,
+            allowed_tools=allowed,
             cli_path=cli_path or None,
             stderr=_on_stderr,
             **extra,
@@ -484,11 +489,14 @@ class DeepagentsBackend:
             f"Deepagents tool '{tool_name}' cannot run inside an active event loop: {loop}"
         )
 
-    def _default_tools(self) -> list[Callable]:
-        """Return the full tool set for deepagents backend."""
+    def _default_tools(self, permissions: dict[str, bool] | None = None) -> list[Callable]:
+        """Return the tool set for deepagents backend, filtered by permissions."""
         from src.agent.tools.deepagents_sync import build_deepagents_tools
 
-        return build_deepagents_tools(self._db)
+        all_tools = build_deepagents_tools(self._db)
+        if permissions is None:
+            return all_tools
+        return [t for t in all_tools if permissions.get(t.__name__, True)]
 
     def _search_messages_tool(self, query_text: str) -> str:
         """Search messages — used by probe. Delegates to sync tools."""
@@ -511,6 +519,7 @@ class DeepagentsBackend:
         cfg: ProviderRuntimeConfig,
         *,
         tools: list[Callable] | None = None,
+        permissions: dict[str, bool] | None = None,
         record_last_used: bool = True,
         system_prompt: str = DEFAULT_AGENT_PROMPT_TEMPLATE,
     ):
@@ -569,7 +578,7 @@ class DeepagentsBackend:
         try:
             agent = create_deep_agent(
                 model=model,
-                tools=tools or self._default_tools(),
+                tools=tools or self._default_tools(permissions=permissions),
                 system_prompt=system_prompt,
             )
             if record_last_used:
@@ -689,8 +698,9 @@ class DeepagentsBackend:
         *,
         history_msgs: list[dict] | None = None,
         system_prompt: str = DEFAULT_AGENT_PROMPT_TEMPLATE,
+        permissions: dict[str, bool] | None = None,
     ) -> str:
-        agent = self._build_agent(cfg, system_prompt=system_prompt)
+        agent = self._build_agent(cfg, system_prompt=system_prompt, permissions=permissions)
         # Different agent frameworks have different history handling:
         # - `.run(prompt_str)` agents receive history embedded as XML tags in a single string
         # - `.invoke({"messages": [...]})` agents receive history as a structured message list
@@ -867,6 +877,11 @@ class DeepagentsBackend:
         history_msgs: list[dict] | None = None,
     ) -> None:
         del thread_id, stats, model
+
+        from src.agent.tools.permissions import load_tool_permissions
+
+        permissions = await load_tool_permissions(self._db)
+
         errors: list[str] = []
         for cfg in await self._candidate_configs():
             validation_error = self._validation_error(cfg)
@@ -880,6 +895,7 @@ class DeepagentsBackend:
                     cfg,
                     history_msgs=history_msgs,
                     system_prompt=system_prompt,
+                    permissions=permissions,
                 )
                 self._init_error = None
                 if full_text:
