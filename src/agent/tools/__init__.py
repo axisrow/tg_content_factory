@@ -13,7 +13,7 @@ from claude_agent_sdk import create_sdk_mcp_server
 from src.agent.tools._registry import _text_response  # noqa: F401
 
 
-def make_mcp_server(db, client_pool=None, scheduler_manager=None):
+def make_mcp_server(db, client_pool=None, scheduler_manager=None, config=None):
     """Create an in-process MCP server with all agent tools.
 
     Args:
@@ -48,7 +48,7 @@ def make_mcp_server(db, client_pool=None, scheduler_manager=None):
     )
 
     # Extra context passed alongside the standard (db, client_pool, embedding_service)
-    extras = {"scheduler_manager": scheduler_manager}
+    extras = {"scheduler_manager": scheduler_manager, "config": config}
 
     all_tools = []
     for module in [

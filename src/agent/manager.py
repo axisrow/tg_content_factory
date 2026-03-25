@@ -192,6 +192,7 @@ class ClaudeSdkBackend:
         os.environ.setdefault("CLAUDE_CODE_STREAM_CLOSE_TIMEOUT", "300000")
         self._server = make_mcp_server(
             self._db, client_pool=self._client_pool, scheduler_manager=self._scheduler_manager,
+            config=self._config,
         )
         logger.info("Claude SDK backend initialized")
 
@@ -493,7 +494,7 @@ class DeepagentsBackend:
         """Return the tool set for deepagents backend, filtered by permissions."""
         from src.agent.tools.deepagents_sync import build_deepagents_tools
 
-        all_tools = build_deepagents_tools(self._db)
+        all_tools = build_deepagents_tools(self._db, config=self._config)
         if permissions is None:
             return all_tools
         return [t for t in all_tools if permissions.get(t.__name__, True)]

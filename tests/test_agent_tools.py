@@ -21,7 +21,7 @@ def mock_db():
     return MagicMock(spec=Database)
 
 
-def _get_tool_handlers(mock_db, client_pool=None):
+def _get_tool_handlers(mock_db, client_pool=None, config=None):
     """Build MCP tools and return their handlers keyed by name."""
     captured_tools = []
 
@@ -31,7 +31,7 @@ def _get_tool_handlers(mock_db, client_pool=None):
     ):
         from src.agent.tools import make_mcp_server
 
-        make_mcp_server(mock_db, client_pool=client_pool)
+        make_mcp_server(mock_db, client_pool=client_pool, config=config)
 
     return {t.name: t.handler for t in captured_tools}
 
@@ -610,3 +610,89 @@ class TestMakeMcpServer:
 
         server = make_mcp_server(mock_db)
         assert "instance" in server
+
+
+# ---------------------------------------------------------------------------
+# Image tools — DB provider loading
+# ---------------------------------------------------------------------------
+
+
+class TestImageToolsDBProviders:
+    """Tests for image tools loading providers from DB."""
+
+    async def test_generate_image_uses_db_providers(self, mock_db):
+        """generate_image should load adapters from DB when config is provided."""
+        fake_config = SimpleNamespace()
+
+        mock_adapter = AsyncMock(return_value="/tmp/image.png")
+        fake_configs = [SimpleNamespace(provider="together", enabled=True, api_key="test-key")]
+
+        with (
+            patch(
+                "src.services.image_provider_service.ImageProviderService",
+            ) as mock_prov_svc,
+            patch(
+                "src.services.image_generation_service.ImageGenerationService",
+            ) as mock_img_svc,
+        ):
+            # Setup provider service mock
+            prov_instance = mock_prov_svc.return_value
+            prov_instance.load_provider_configs = AsyncMock(return_value=fake_configs)
+            prov_instance.build_adapters.return_value = {"together": mock_adapter}
+
+            # Setup image service mock
+            img_instance = mock_img_svc.return_value
+            img_instance.is_available = AsyncMock(return_value=True)
+            img_instance.generate = AsyncMock(return_value="/tmp/image.png")
+
+            handlers = _get_tool_handlers(mock_db, config=fake_config)
+            result = await handlers["generate_image"]({"prompt": "a cat"})
+            text = _text(result)
+
+            assert "сгенерировано" in text.lower() or "/tmp/image.png" in text
+            # Should have been created with adapters from DB
+            mock_img_svc.assert_called_once_with(adapters={"together": mock_adapter})
+
+    async def test_generate_image_falls_back_to_env(self, mock_db):
+        """generate_image should fall back to env vars when no config provided."""
+        with patch(
+            "src.services.image_generation_service.ImageGenerationService",
+        ) as mock_img_svc:
+            img_instance = mock_img_svc.return_value
+            img_instance.is_available = AsyncMock(return_value=False)
+
+            handlers = _get_tool_handlers(mock_db)
+            result = await handlers["generate_image"]({"prompt": "a cat"})
+            text = _text(result)
+
+            assert "не настроена" in text.lower() or "настройках" in text.lower()
+            # Should have been created without adapters (env fallback)
+            mock_img_svc.assert_called_once_with()
+
+    async def test_list_image_providers_uses_db(self, mock_db):
+        """list_image_providers should load from DB when config provided."""
+        fake_config = SimpleNamespace()
+        mock_adapter = AsyncMock()
+
+        with (
+            patch(
+                "src.services.image_provider_service.ImageProviderService",
+            ) as mock_prov_svc,
+            patch(
+                "src.services.image_generation_service.ImageGenerationService",
+            ) as mock_img_svc,
+        ):
+            prov_instance = mock_prov_svc.return_value
+            prov_instance.load_provider_configs = AsyncMock(
+                return_value=[SimpleNamespace(provider="together", enabled=True, api_key="test-key")]
+            )
+            prov_instance.build_adapters.return_value = {"together": mock_adapter}
+
+            img_instance = mock_img_svc.return_value
+            img_instance.adapter_names = ["together"]
+
+            handlers = _get_tool_handlers(mock_db, config=fake_config)
+            result = await handlers["list_image_providers"]({})
+            text = _text(result)
+
+            assert "together" in text
