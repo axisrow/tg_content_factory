@@ -657,6 +657,8 @@ class Collector:
                 return total_collected + len(all_messages)
 
             if should_notify and all_messages:
+                for m in all_messages:
+                    m.channel_username = channel.username
                 await self._check_notification_queries(all_messages)
 
             # Update forum topics in DB if messages with topic_id
