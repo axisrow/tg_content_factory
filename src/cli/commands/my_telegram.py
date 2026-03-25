@@ -150,7 +150,11 @@ def run(args: argparse.Namespace) -> None:
                         print("Aborted.")
                         return
 
-                client = pool.clients[phone]
+                result = await pool.get_native_client_by_phone(phone)
+                if result is None:
+                    print(f"Client for {phone} unavailable (flood-wait or not connected).")
+                    return
+                client, _ = result
                 entity = await client.get_entity(recipient)
                 await client.send_message(entity, text)
                 print(f"Message sent to {recipient}.")
