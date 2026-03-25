@@ -380,7 +380,19 @@ def register(db, client_pool, embedding_service, **kwargs):
         job_id = args.get("job_id")
         if job_id is None:
             return _text_response("Ошибка: job_id обязателен.")
-        gate = require_confirmation(f"обновит автозагрузку id={job_id}", args)
+        changes = []
+        if args.get("folder_path"):
+            changes.append(f"folder={args['folder_path']}")
+        if args.get("mode"):
+            changes.append(f"mode={args['mode']}")
+        if args.get("interval_minutes") is not None:
+            changes.append(f"interval={args['interval_minutes']}m")
+        if args.get("is_active") is not None:
+            changes.append(f"active={args['is_active']}")
+        desc = f"обновит автозагрузку id={job_id}"
+        if changes:
+            desc += f" ({', '.join(changes)})"
+        gate = require_confirmation(desc, args)
         if gate:
             return gate
         try:
@@ -390,6 +402,9 @@ def register(db, client_pool, embedding_service, **kwargs):
             from src.services.photo_publish_service import PhotoPublishService
 
             svc = PhotoAutoUploadService(PhotoLoaderBundle.from_database(db), PhotoPublishService(client_pool))
+            existing = await svc.get_job(int(job_id))
+            if existing is None:
+                return _text_response(f"Автозагрузка id={job_id} не найдена.")
             mode_str = args.get("mode")
             await svc.update_job(
                 int(job_id),
