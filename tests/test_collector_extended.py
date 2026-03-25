@@ -137,10 +137,35 @@ async def test_notification_queries_logic(collector, mock_db):
     sq = SearchQuery(id=1, query="test", is_regex=False, is_fts=False)
     mock_db.get_notification_queries.return_value = [sq]
 
-    # Need messages with actual text
-    msgs = [Message(channel_id=1, message_id=1, text="This is a test message", date=datetime.now())]
+    # Need messages with actual text and channel_username for link
+    msgs = [
+        Message(
+            channel_id=1, message_id=42, text="This is a test message",
+            date=datetime.now(), channel_username="mychan",
+        )
+    ]
     await collector._check_notification_queries(msgs)
     notifier.notify.assert_called_once()
+    call_text = notifier.notify.call_args[0][0]
+    assert "https://t.me/mychan/42" in call_text
+
+
+@pytest.mark.asyncio
+async def test_notification_queries_private_channel_link(collector, mock_db):
+    """Private channel (no username) should produce t.me/c/ link."""
+    notifier = AsyncMock()
+    collector._notifier = notifier
+    collector._notification_matcher = NotificationMatcher(notifier)
+    sq = SearchQuery(id=1, query="hello", is_regex=False, is_fts=False)
+    mock_db.get_notification_queries.return_value = [sq]
+
+    msgs = [
+        Message(channel_id=-1001234567890, message_id=99, text="hello world", date=datetime.now())
+    ]
+    await collector._check_notification_queries(msgs)
+    notifier.notify.assert_called_once()
+    call_text = notifier.notify.call_args[0][0]
+    assert "https://t.me/c/1234567890/99" in call_text
 
 
 @pytest.mark.asyncio
