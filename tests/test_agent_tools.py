@@ -168,7 +168,7 @@ class TestSemanticSearchTool:
         mock_db.search_semantic_messages = AsyncMock(return_value=(mock_messages, 1))
 
         class FakeEmbeddingService:
-            def __init__(self, _db):
+            def __init__(self, _db, **_kwargs):
                 pass
 
             async def index_pending_messages(self):
@@ -190,7 +190,7 @@ class TestSemanticSearchTool:
     @pytest.mark.asyncio
     async def test_error_returns_text_not_exception(self, mock_db):
         class BrokenEmbeddingService:
-            def __init__(self, _db):
+            def __init__(self, _db, **_kwargs):
                 pass
 
             async def embed_query(self, query):
@@ -696,3 +696,59 @@ class TestImageToolsDBProviders:
             text = _text(result)
 
             assert "together" in text
+
+
+# ---------------------------------------------------------------------------
+# Config propagation — EmbeddingService & SearchEngine
+# ---------------------------------------------------------------------------
+
+
+class TestConfigPropagation:
+    """Tests for config being properly passed to services."""
+
+    async def test_embedding_service_receives_config(self, mock_db):
+        """EmbeddingService should receive config from make_mcp_server."""
+        fake_config = SimpleNamespace()
+
+        with patch("src.services.embedding_service.EmbeddingService") as mock_cls:
+            mock_cls.return_value = MagicMock()
+            _get_tool_handlers(mock_db, config=fake_config)
+            mock_cls.assert_called_once_with(mock_db, config=fake_config)
+
+    async def test_embedding_service_none_config(self, mock_db):
+        """EmbeddingService should receive config=None when no config provided."""
+        with patch("src.services.embedding_service.EmbeddingService") as mock_cls:
+            mock_cls.return_value = MagicMock()
+            _get_tool_handlers(mock_db)
+            mock_cls.assert_called_once_with(mock_db, config=None)
+
+    async def test_run_pipeline_passes_config_to_search_engine(self, mock_db):
+        """run_pipeline should pass config to SearchEngine."""
+        fake_config = SimpleNamespace()
+
+        with (
+            patch("src.services.embedding_service.EmbeddingService") as mock_embed_cls,
+            patch("src.search.engine.SearchEngine") as mock_search_cls,
+            patch("src.services.content_generation_service.ContentGenerationService") as mock_gen_cls,
+            patch("src.services.pipeline_service.PipelineService") as mock_pipe_cls,
+            patch("src.services.image_generation_service.ImageGenerationService") as mock_img_cls,
+        ):
+            mock_embed_cls.return_value = MagicMock()
+            mock_search_cls.return_value = MagicMock()
+            mock_img_cls.return_value = MagicMock()
+
+            mock_pipeline = SimpleNamespace(
+                id=1, name="test", is_active=True, llm_model=None,
+                prompt_template="test", publish_mode="moderated",
+            )
+            mock_pipe_cls.return_value.get = AsyncMock(return_value=mock_pipeline)
+
+            mock_run = SimpleNamespace(
+                id=1, generated_text="test output", moderation_status="pending",
+            )
+            mock_gen_cls.return_value.generate = AsyncMock(return_value=mock_run)
+
+            handlers = _get_tool_handlers(mock_db, config=fake_config)
+            await handlers["run_pipeline"]({"pipeline_id": 1})
+
+            mock_search_cls.assert_called_with(mock_db, config=fake_config)
