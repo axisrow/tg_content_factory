@@ -434,6 +434,12 @@ async def settings_page(request: Request):
         IMAGE_PROVIDER_SPECS[name] for name in IMAGE_PROVIDER_ORDER if name not in configured_img_names
     ]
     semantic_context = await _semantic_settings_context(request)
+
+    from src.agent.tools.permissions import build_template_context, load_tool_permissions
+
+    tool_permissions = await load_tool_permissions(db)
+    tool_perm_context = build_template_context(tool_permissions)
+
     return deps.get_templates(request).TemplateResponse(
         request,
         "settings.html",
@@ -466,6 +472,7 @@ async def settings_page(request: Request):
             "img_provider_views": img_provider_views,
             "img_provider_options": available_img_options,
             **semantic_context,
+            **tool_perm_context,
         },
     )
 
@@ -557,6 +564,16 @@ async def save_agent_settings(request: Request):
     db = deps.get_db(request)
 
     form_scope = str(form.get("agent_form_scope", "dev_mode")).strip()
+
+    if form_scope == "tool_permissions":
+        from src.agent.tools.permissions import TOOL_CATEGORIES, save_tool_permissions
+
+        permissions = {}
+        for tool_name in TOOL_CATEGORIES:
+            permissions[tool_name] = form.get(f"tool_perm__{tool_name}") == "1"
+        await save_tool_permissions(db, permissions)
+        return RedirectResponse(url="/settings?msg=tool_permissions_saved", status_code=303)
+
     current_dev_mode = (await db.get_setting("agent_dev_mode_enabled") or "0") == "1"
     current_backend_override = await db.get_setting("agent_backend_override") or "auto"
     current_prompt_template = (

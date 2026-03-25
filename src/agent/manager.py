@@ -228,10 +228,15 @@ class ClaudeSdkBackend:
         cli_path = shutil.which("claude")
         logger.info("claude-cli path: %s", cli_path)
 
+        from src.agent.tools.permissions import filter_allowed_tools, load_tool_permissions
+
+        permissions = await load_tool_permissions(self._db)
+        allowed = filter_allowed_tools(_ALLOWED_TOOLS, permissions)
+
         options = ClaudeAgentOptions(
             system_prompt=system_prompt,
             mcp_servers={"telegram_db": self._server},
-            allowed_tools=_ALLOWED_TOOLS,
+            allowed_tools=allowed,
             cli_path=cli_path or None,
             stderr=_on_stderr,
             **extra,
