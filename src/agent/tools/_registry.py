@@ -57,7 +57,9 @@ async def require_phone_permission(db: object, phone: str, tool_name: str) -> di
     Otherwise returns a message with list of allowed phones so agent can retry.
     """
     try:
-        raw = await db.get_setting("agent_phone_tool_permissions")
+        from src.agent.tools.permissions import TOOL_PERMISSIONS_SETTING
+
+        raw = await db.get_setting(TOOL_PERMISSIONS_SETTING)
     except Exception:
         return None  # DB error → allow all
     if not raw:
