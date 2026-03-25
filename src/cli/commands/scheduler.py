@@ -51,6 +51,58 @@ def run(args: argparse.Namespace) -> None:
                     f"total {result.total_candidates}). "
                     f"Run 'serve' to execute tasks."
                 )
+
+            elif args.scheduler_action == "status":
+                interval = config.scheduler.collect_interval_minutes
+                autostart = await db.get_setting("scheduler_autostart") or "0"
+                print("Scheduler config:")
+                print(f"  Interval: {interval} min")
+                print(f"  Autostart: {'yes' if autostart == '1' else 'no'}")
+                settings = await db.repos.settings.list_all()
+                disabled_jobs = [
+                    (k.removeprefix("scheduler_job_disabled:"), v)
+                    for k, v in settings if k.startswith("scheduler_job_disabled:")
+                ]
+                if disabled_jobs:
+                    print("  Disabled jobs:")
+                    for job_id, val in disabled_jobs:
+                        if val == "1":
+                            print(f"    - {job_id}")
+
+            elif args.scheduler_action == "stop":
+                await db.set_setting("scheduler_autostart", "0")
+                print("Scheduler autostart disabled. Running scheduler will stop on next restart.")
+
+            elif args.scheduler_action == "job-toggle":
+                job_id = args.job_id
+                key = f"scheduler_job_disabled:{job_id}"
+                current = await db.repos.settings.get_setting(key)
+                new_disabled = current != "1"
+                await db.repos.settings.set_setting(key, "1" if new_disabled else "0")
+                status = "disabled" if new_disabled else "enabled"
+                print(f"Job '{job_id}' {status}.")
+
+            elif args.scheduler_action == "set-interval":
+                job_id = args.job_id
+                minutes = max(1, min(args.minutes, 1440))
+                if job_id == "collect_all":
+                    await db.repos.settings.set_setting("collect_interval_minutes", str(minutes))
+                else:
+                    await db.repos.settings.set_setting(
+                        f"scheduler_job_{job_id}_interval", str(minutes)
+                    )
+                print(f"Interval for '{job_id}' set to {minutes} min.")
+
+            elif args.scheduler_action == "task-cancel":
+                ok = await db.repos.tasks.cancel_collection_task(args.task_id)
+                if ok:
+                    print(f"Task {args.task_id} cancelled.")
+                else:
+                    print(f"Task {args.task_id} not found or already completed.")
+
+            elif args.scheduler_action == "clear-pending":
+                deleted = await db.repos.tasks.delete_pending_channel_tasks()
+                print(f"Cleared {deleted} pending collection tasks.")
         finally:
             await pool.disconnect_all()
             await db.close()

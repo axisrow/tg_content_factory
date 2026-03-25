@@ -1160,13 +1160,4 @@ async def delete_image_provider(request: Request, provider_name: str):
     return RedirectResponse(url="/settings?msg=image_saved", status_code=303)
 
 
-@router.post("/{account_id}/toggle")
-async def toggle_account(request: Request, account_id: int):
-    await deps.account_service(request).toggle(account_id)
-    return RedirectResponse(url="/settings?msg=account_toggled", status_code=303)
-
-
-@router.post("/{account_id}/delete")
-async def delete_account(request: Request, account_id: int):
-    await deps.account_service(request).delete(account_id)
-    return RedirectResponse(url="/settings?msg=account_deleted", status_code=303)
+    # Account toggle/delete endpoints moved to src/web/routes/accounts.py

@@ -107,6 +107,7 @@ def register_builtin_endpoints(app: FastAPI) -> None:
 
 
 def register_routes(app: FastAPI) -> None:
+    from src.web.routes.accounts import router as accounts_router
     from src.web.routes.agent import router as agent_router
     from src.web.routes.analytics import router as analytics_router
     from src.web.routes.auth import router as auth_router
@@ -142,6 +143,7 @@ def register_routes(app: FastAPI) -> None:
     app.include_router(import_router, prefix="/channels")
     app.include_router(scheduler_router, prefix="/scheduler")
     app.include_router(settings_router, prefix="/settings")
+    app.include_router(accounts_router, prefix="/settings")
     app.include_router(my_telegram_router, prefix="/my-telegram")
     app.include_router(photo_loader_router, prefix="/my-telegram/photos")
     app.include_router(debug_router, prefix="/debug")
