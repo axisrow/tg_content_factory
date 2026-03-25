@@ -26,8 +26,9 @@ def register(db, client_pool, embedding_service, **kwargs):
         text = args.get("text", "")
         if not phone or not recipient or not text:
             return _text_response("Ошибка: phone, recipient и text обязательны.")
+        preview = text[:120] + ("..." if len(text) > 120 else "")
         gate = require_confirmation(
-            f"отправит сообщение от {phone} пользователю {recipient}", args
+            f"отправит сообщение от {phone} пользователю {recipient}: «{preview}»", args
         )
         if gate:
             return gate
