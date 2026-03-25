@@ -162,6 +162,69 @@ def run(args: argparse.Namespace) -> None:
                 except Exception as exc:
                     print(f"Error sending message: {exc}")
 
+            elif args.my_telegram_action == "edit-message":
+                accounts = sorted(pool.clients.keys())
+                if not accounts:
+                    print("No connected accounts.")
+                    return
+                phone = args.phone or accounts[0]
+                if phone not in pool.clients:
+                    print(f"Account {phone} not connected.")
+                    return
+                if not args.yes:
+                    preview = args.text[:200] + ("..." if len(args.text) > 200 else "")
+                    print(f"Edit message #{args.message_id} in {args.chat_id}:")
+                    print(f"  {preview}")
+                    answer = input("Continue? [y/N] ").strip().lower()
+                    if answer != "y":
+                        print("Aborted.")
+                        return
+                result = await pool.get_native_client_by_phone(phone)
+                if result is None:
+                    print(f"Client for {phone} unavailable (flood-wait or not connected).")
+                    return
+                client, _ = result
+                try:
+                    entity = await client.get_entity(args.chat_id)
+                    await client.edit_message(entity, args.message_id, args.text)
+                    print(f"Message #{args.message_id} edited.")
+                except Exception as exc:
+                    print(f"Error editing message: {exc}")
+
+            elif args.my_telegram_action == "delete-message":
+                accounts = sorted(pool.clients.keys())
+                if not accounts:
+                    print("No connected accounts.")
+                    return
+                phone = args.phone or accounts[0]
+                if phone not in pool.clients:
+                    print(f"Account {phone} not connected.")
+                    return
+                raw_ids: list[str] = []
+                for item in args.message_ids:
+                    raw_ids.extend(i.strip() for i in item.split(",") if i.strip())
+                ids = [int(x) for x in raw_ids if x.isdigit()]
+                if not ids:
+                    print("No valid message IDs provided.")
+                    return
+                if not args.yes:
+                    print(f"Delete {len(ids)} message(s) from {args.chat_id}: {ids}")
+                    answer = input("Continue? [y/N] ").strip().lower()
+                    if answer != "y":
+                        print("Aborted.")
+                        return
+                result = await pool.get_native_client_by_phone(phone)
+                if result is None:
+                    print(f"Client for {phone} unavailable (flood-wait or not connected).")
+                    return
+                client, _ = result
+                try:
+                    entity = await client.get_entity(args.chat_id)
+                    await client.delete_messages(entity, ids)
+                    print(f"Deleted {len(ids)} message(s).")
+                except Exception as exc:
+                    print(f"Error deleting messages: {exc}")
+
             elif args.my_telegram_action == "cache-clear":
                 phone: str | None = getattr(args, "phone", None)
                 if phone:

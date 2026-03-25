@@ -127,6 +127,8 @@ TOOL_CATEGORIES: dict[str, ToolCategory] = {
     "get_cache_status": ToolCategory.READ,
     # Messaging
     "send_message": ToolCategory.WRITE,
+    "edit_message": ToolCategory.WRITE,
+    "delete_message": ToolCategory.DELETE,
     # Images
     "generate_image": ToolCategory.WRITE,
     "list_image_models": ToolCategory.READ,
@@ -205,7 +207,7 @@ MODULE_GROUPS: OrderedDict[str, list[str]] = OrderedDict([
         "get_forum_topics", "clear_dialog_cache", "get_cache_status",
     ]),
     ("Сообщения", [
-        "send_message",
+        "send_message", "edit_message", "delete_message",
     ]),
     ("Изображения", [
         "list_image_models", "list_image_providers", "generate_image",
