@@ -683,7 +683,9 @@ class TestImageToolsDBProviders:
             ) as mock_img_svc,
         ):
             prov_instance = mock_prov_svc.return_value
-            prov_instance.load_provider_configs = AsyncMock(return_value=[])
+            prov_instance.load_provider_configs = AsyncMock(
+                return_value=[SimpleNamespace(provider="together", enabled=True, api_key="test-key")]
+            )
             prov_instance.build_adapters.return_value = {"together": mock_adapter}
 
             img_instance = mock_img_svc.return_value
