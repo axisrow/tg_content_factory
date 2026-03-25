@@ -490,10 +490,17 @@ class DeepagentsBackend:
         )
 
     def _default_tools(self) -> list[Callable]:
-        """Return the full tool set for deepagents backend."""
+        """Return the tool set for deepagents backend, filtered by permissions."""
         from src.agent.tools.deepagents_sync import build_deepagents_tools
+        from src.agent.tools.permissions import load_tool_permissions
 
-        return build_deepagents_tools(self._db)
+        all_tools = build_deepagents_tools(self._db)
+        try:
+            permissions = asyncio.run(load_tool_permissions(self._db))
+        except RuntimeError:
+            # Inside event loop — permissions unavailable, allow all
+            return all_tools
+        return [t for t in all_tools if permissions.get(t.__name__, True)]
 
     def _search_messages_tool(self, query_text: str) -> str:
         """Search messages — used by probe. Delegates to sync tools."""
