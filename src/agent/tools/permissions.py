@@ -243,12 +243,12 @@ async def save_tool_permissions(db, permissions: dict[str, bool]) -> None:
 def filter_allowed_tools(all_tools: list[str], permissions: dict[str, bool]) -> list[str]:
     """Filter MCP-prefixed tool names by permissions.
 
-    Tools not present in TOOL_CATEGORIES pass through unchanged (future-proof).
+    Unknown tools (not in permissions dict) are denied by default.
     """
     result = []
     for prefixed_name in all_tools:
         bare = prefixed_name.removeprefix(MCP_PREFIX)
-        if permissions.get(bare, True):
+        if permissions.get(bare, False):
             result.append(prefixed_name)
     return result
 
@@ -272,7 +272,7 @@ def build_template_context(permissions: dict[str, bool]) -> dict:
         entry = {
             "name": tool_name,
             "module": tool_to_module.get(tool_name, ""),
-            "enabled": permissions.get(tool_name, True),
+            "enabled": permissions.get(tool_name, False),
         }
         categories[cat.value].append(entry)
 
@@ -285,7 +285,7 @@ def build_template_context(permissions: dict[str, bool]) -> dict:
             tools.append({
                 "name": t,
                 "category": cat.value,
-                "enabled": permissions.get(t, True),
+                "enabled": permissions.get(t, False),
             })
         modules.append({"name": mod_name, "display_name": mod_name, "tools": tools})
 
