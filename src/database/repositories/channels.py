@@ -20,8 +20,12 @@ class ChannelsRepository:
                SET title=excluded.title, username=excluded.username,
                    channel_type=excluded.channel_type,
                    is_active=excluded.is_active,
-                   about=excluded.about, linked_chat_id=excluded.linked_chat_id,
-                   has_comments=excluded.has_comments""",
+                   about=COALESCE(excluded.about, channels.about),
+                   linked_chat_id=COALESCE(excluded.linked_chat_id, channels.linked_chat_id),
+                   has_comments=CASE WHEN excluded.about IS NOT NULL
+                                     THEN excluded.has_comments
+                                     ELSE COALESCE(channels.has_comments, excluded.has_comments)
+                                END""",
             (
                 channel.channel_id,
                 channel.title,
