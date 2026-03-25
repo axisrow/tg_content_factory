@@ -24,7 +24,7 @@ def _run_sync(tool_name: str, operation: Callable[[], Awaitable[_T]]) -> _T:
     raise RuntimeError(f"Deepagents tool '{tool_name}' cannot run inside an active event loop")
 
 
-def build_deepagents_tools(db, client_pool=None) -> list[Callable]:  # noqa: C901
+def build_deepagents_tools(db, client_pool=None, config=None) -> list[Callable]:  # noqa: C901
     """Build all sync tools for the deepagents backend.
 
     Returns a list of callables compatible with LangChain tool registration.
@@ -57,7 +57,7 @@ def build_deepagents_tools(db, client_pool=None) -> list[Callable]:  # noqa: C90
         try:
             from src.services.embedding_service import EmbeddingService
 
-            svc = EmbeddingService(db)
+            svc = EmbeddingService(db, config=config)
             embedding = _run_sync("semantic_embed", lambda: svc.embed_query(query_text))
             messages, total = _run_sync(
                 "semantic_search", lambda: db.search_semantic_messages(embedding, limit=limit)
@@ -79,7 +79,7 @@ def build_deepagents_tools(db, client_pool=None) -> list[Callable]:  # noqa: C90
         try:
             from src.services.embedding_service import EmbeddingService
 
-            svc = EmbeddingService(db)
+            svc = EmbeddingService(db, config=config)
             count = _run_sync("index_messages", svc.index_pending_messages)
             return f"Проиндексировано: {count} сообщений."
         except Exception as exc:
@@ -233,8 +233,9 @@ def build_deepagents_tools(db, client_pool=None) -> list[Callable]:  # noqa: C90
             pipeline = _run_sync("run_pipeline_get", lambda: svc.get(pipeline_id))
             if not pipeline:
                 return f"Пайплайн id={pipeline_id} не найден."
-            engine = SearchEngine(db)
-            gen_svc = ContentGenerationService(db, engine)
+            engine = SearchEngine(db, config=config)
+            image_service = _build_image_service_sync()
+            gen_svc = ContentGenerationService(db, engine, image_service=image_service)
             run = _run_sync("run_pipeline", lambda: gen_svc.generate(pipeline))
             preview = (run.generated_text or "")[:300]
             return f"Генерация завершена (run id={run.id}). Превью:\n{preview}"
@@ -730,12 +731,31 @@ def build_deepagents_tools(db, client_pool=None) -> list[Callable]:  # noqa: C90
 
     # === Images ===
 
+    def _build_image_service_sync():
+        """Build ImageGenerationService with DB providers + env fallback (sync)."""
+        from src.services.image_generation_service import ImageGenerationService
+
+        if db and config:
+            try:
+                from src.services.image_provider_service import ImageProviderService
+
+                svc = ImageProviderService(db, config)
+
+                async def _load():
+                    configs = await svc.load_provider_configs()
+                    return svc.build_adapters(configs)
+
+                adapters = _run_sync("load_image_providers", _load)
+                if adapters:
+                    return ImageGenerationService(adapters=adapters)
+            except Exception:
+                logger.warning("Failed to load image providers from DB", exc_info=True)
+        return ImageGenerationService()
+
     def generate_image(prompt: str, model: str = "") -> str:
         """Generate an image from text prompt."""
         try:
-            from src.services.image_generation_service import ImageGenerationService
-
-            svc = ImageGenerationService()
+            svc = _build_image_service_sync()
             result = _run_sync("gen_image", lambda: svc.generate(model=model or None, text=prompt))
             return f"Изображение: {result}" if result else "Генерация не вернула результат."
         except Exception as exc:
@@ -746,9 +766,7 @@ def build_deepagents_tools(db, client_pool=None) -> list[Callable]:  # noqa: C90
     def list_image_providers() -> str:
         """List configured image generation providers."""
         try:
-            from src.services.image_generation_service import ImageGenerationService
-
-            svc = ImageGenerationService()
+            svc = _build_image_service_sync()
             names = svc.adapter_names
             return f"Провайдеры: {', '.join(names)}" if names else "Провайдеры не настроены."
         except Exception as exc:

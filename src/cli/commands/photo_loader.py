@@ -54,6 +54,11 @@ def run(args: argparse.Namespace) -> None:
                     )
                 return
 
+            if action == "refresh":
+                dialogs = await channel_service.get_my_dialogs(args.phone, refresh=True)
+                print(f"Dialogs refreshed: {len(dialogs)} total.")
+                return
+
             if action == "send":
                 item = await tasks.send_now(
                     phone=args.phone,

@@ -21,7 +21,7 @@ def mock_db():
     return MagicMock(spec=Database)
 
 
-def _get_tool_handlers(mock_db, client_pool=None):
+def _get_tool_handlers(mock_db, client_pool=None, config=None):
     """Build MCP tools and return their handlers keyed by name."""
     captured_tools = []
 
@@ -31,7 +31,7 @@ def _get_tool_handlers(mock_db, client_pool=None):
     ):
         from src.agent.tools import make_mcp_server
 
-        make_mcp_server(mock_db, client_pool=client_pool)
+        make_mcp_server(mock_db, client_pool=client_pool, config=config)
 
     return {t.name: t.handler for t in captured_tools}
 
@@ -168,7 +168,7 @@ class TestSemanticSearchTool:
         mock_db.search_semantic_messages = AsyncMock(return_value=(mock_messages, 1))
 
         class FakeEmbeddingService:
-            def __init__(self, _db):
+            def __init__(self, _db, **_kwargs):
                 pass
 
             async def index_pending_messages(self):
@@ -190,7 +190,7 @@ class TestSemanticSearchTool:
     @pytest.mark.asyncio
     async def test_error_returns_text_not_exception(self, mock_db):
         class BrokenEmbeddingService:
-            def __init__(self, _db):
+            def __init__(self, _db, **_kwargs):
                 pass
 
             async def embed_query(self, query):
@@ -610,3 +610,145 @@ class TestMakeMcpServer:
 
         server = make_mcp_server(mock_db)
         assert "instance" in server
+
+
+# ---------------------------------------------------------------------------
+# Image tools — DB provider loading
+# ---------------------------------------------------------------------------
+
+
+class TestImageToolsDBProviders:
+    """Tests for image tools loading providers from DB."""
+
+    async def test_generate_image_uses_db_providers(self, mock_db):
+        """generate_image should load adapters from DB when config is provided."""
+        fake_config = SimpleNamespace()
+
+        mock_adapter = AsyncMock(return_value="/tmp/image.png")
+        fake_configs = [SimpleNamespace(provider="together", enabled=True, api_key="test-key")]
+
+        with (
+            patch(
+                "src.services.image_provider_service.ImageProviderService",
+            ) as mock_prov_svc,
+            patch(
+                "src.services.image_generation_service.ImageGenerationService",
+            ) as mock_img_svc,
+        ):
+            # Setup provider service mock
+            prov_instance = mock_prov_svc.return_value
+            prov_instance.load_provider_configs = AsyncMock(return_value=fake_configs)
+            prov_instance.build_adapters.return_value = {"together": mock_adapter}
+
+            # Setup image service mock
+            img_instance = mock_img_svc.return_value
+            img_instance.is_available = AsyncMock(return_value=True)
+            img_instance.generate = AsyncMock(return_value="/tmp/image.png")
+
+            handlers = _get_tool_handlers(mock_db, config=fake_config)
+            result = await handlers["generate_image"]({"prompt": "a cat"})
+            text = _text(result)
+
+            assert "сгенерировано" in text.lower() or "/tmp/image.png" in text
+            # Should have been created with adapters from DB
+            mock_img_svc.assert_called_once_with(adapters={"together": mock_adapter})
+
+    async def test_generate_image_falls_back_to_env(self, mock_db):
+        """generate_image should fall back to env vars when no config provided."""
+        with patch(
+            "src.services.image_generation_service.ImageGenerationService",
+        ) as mock_img_svc:
+            img_instance = mock_img_svc.return_value
+            img_instance.is_available = AsyncMock(return_value=False)
+
+            handlers = _get_tool_handlers(mock_db)
+            result = await handlers["generate_image"]({"prompt": "a cat"})
+            text = _text(result)
+
+            assert "не настроена" in text.lower() or "настройках" in text.lower()
+            # Should have been created without adapters (env fallback)
+            mock_img_svc.assert_called_once_with()
+
+    async def test_list_image_providers_uses_db(self, mock_db):
+        """list_image_providers should load from DB when config provided."""
+        fake_config = SimpleNamespace()
+        mock_adapter = AsyncMock()
+
+        with (
+            patch(
+                "src.services.image_provider_service.ImageProviderService",
+            ) as mock_prov_svc,
+            patch(
+                "src.services.image_generation_service.ImageGenerationService",
+            ) as mock_img_svc,
+        ):
+            prov_instance = mock_prov_svc.return_value
+            prov_instance.load_provider_configs = AsyncMock(
+                return_value=[SimpleNamespace(provider="together", enabled=True, api_key="test-key")]
+            )
+            prov_instance.build_adapters.return_value = {"together": mock_adapter}
+
+            img_instance = mock_img_svc.return_value
+            img_instance.adapter_names = ["together"]
+
+            handlers = _get_tool_handlers(mock_db, config=fake_config)
+            result = await handlers["list_image_providers"]({})
+            text = _text(result)
+
+            assert "together" in text
+
+
+# ---------------------------------------------------------------------------
+# Config propagation — EmbeddingService & SearchEngine
+# ---------------------------------------------------------------------------
+
+
+class TestConfigPropagation:
+    """Tests for config being properly passed to services."""
+
+    async def test_embedding_service_receives_config(self, mock_db):
+        """EmbeddingService should receive config from make_mcp_server."""
+        fake_config = SimpleNamespace()
+
+        with patch("src.services.embedding_service.EmbeddingService") as mock_cls:
+            mock_cls.return_value = MagicMock()
+            _get_tool_handlers(mock_db, config=fake_config)
+            mock_cls.assert_called_once_with(mock_db, config=fake_config)
+
+    async def test_embedding_service_none_config(self, mock_db):
+        """EmbeddingService should receive config=None when no config provided."""
+        with patch("src.services.embedding_service.EmbeddingService") as mock_cls:
+            mock_cls.return_value = MagicMock()
+            _get_tool_handlers(mock_db)
+            mock_cls.assert_called_once_with(mock_db, config=None)
+
+    async def test_run_pipeline_passes_config_to_search_engine(self, mock_db):
+        """run_pipeline should pass config to SearchEngine."""
+        fake_config = SimpleNamespace()
+
+        with (
+            patch("src.services.embedding_service.EmbeddingService") as mock_embed_cls,
+            patch("src.search.engine.SearchEngine") as mock_search_cls,
+            patch("src.services.content_generation_service.ContentGenerationService") as mock_gen_cls,
+            patch("src.services.pipeline_service.PipelineService") as mock_pipe_cls,
+            patch("src.services.image_generation_service.ImageGenerationService") as mock_img_cls,
+        ):
+            mock_embed_cls.return_value = MagicMock()
+            mock_search_cls.return_value = MagicMock()
+            mock_img_cls.return_value = MagicMock()
+
+            mock_pipeline = SimpleNamespace(
+                id=1, name="test", is_active=True, llm_model=None,
+                prompt_template="test", publish_mode="moderated",
+            )
+            mock_pipe_cls.return_value.get = AsyncMock(return_value=mock_pipeline)
+
+            mock_run = SimpleNamespace(
+                id=1, generated_text="test output", moderation_status="pending",
+            )
+            mock_gen_cls.return_value.generate = AsyncMock(return_value=mock_run)
+
+            handlers = _get_tool_handlers(mock_db, config=fake_config)
+            await handlers["run_pipeline"]({"pipeline_id": 1})
+
+            mock_search_cls.assert_called_with(mock_db, config=fake_config)

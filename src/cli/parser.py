@@ -122,6 +122,8 @@ def build_parser() -> argparse.ArgumentParser:
     flt_sub.add_parser("apply", help="Analyze and mark filtered channels")
     flt_sub.add_parser("reset", help="Reset all channel filters")
     flt_sub.add_parser("precheck", help="Apply pre-filter by subscriber ratio (no Telegram needed)")
+    flt_toggle = flt_sub.add_parser("toggle", help="Toggle filter for a single channel")
+    flt_toggle.add_argument("pk", type=int, help="Channel primary key")
     flt_purge = flt_sub.add_parser("purge", help="Purge messages from filtered channels")
     flt_purge.add_argument("--pks", default=None, help="Comma-separated PKs (default: all)")
     flt_hard = flt_sub.add_parser(
@@ -168,6 +170,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     sq_toggle = sq_sub.add_parser("toggle", help="Toggle search query active state")
     sq_toggle.add_argument("id", type=int, help="Search query id")
+
+    sq_run = sq_sub.add_parser("run", help="Run a search query once and show matches")
+    sq_run.add_argument("id", type=int, help="Search query id")
 
     sq_stats = sq_sub.add_parser("stats", help="Show daily stats for a search query")
     sq_stats.add_argument("id", type=int, help="Search query id")
@@ -326,6 +331,12 @@ def build_parser() -> argparse.ArgumentParser:
     pipeline_reject = pipeline_sub.add_parser("reject", help="Reject a generation run")
     pipeline_reject.add_argument("run_id", type=int, help="Run id to reject")
 
+    pipeline_bulk_approve = pipeline_sub.add_parser("bulk-approve", help="Approve multiple runs")
+    pipeline_bulk_approve.add_argument("run_ids", nargs="+", type=int, help="Run IDs to approve")
+
+    pipeline_bulk_reject = pipeline_sub.add_parser("bulk-reject", help="Reject multiple runs")
+    pipeline_bulk_reject.add_argument("run_ids", nargs="+", type=int, help="Run IDs to reject")
+
     # ── image ──
     image_parser = sub.add_parser("image", help="Image generation")
     image_sub = image_parser.add_subparsers(dest="image_action")
@@ -362,6 +373,16 @@ def build_parser() -> argparse.ArgumentParser:
     sched_sub = sched_parser.add_subparsers(dest="scheduler_action")
     sched_sub.add_parser("start", help="Start scheduler (foreground)")
     sched_sub.add_parser("trigger", help="Trigger one-shot collection")
+    sched_sub.add_parser("status", help="Show scheduler configuration and status")
+    sched_sub.add_parser("stop", help="Disable scheduler autostart")
+    sched_job_toggle = sched_sub.add_parser("job-toggle", help="Toggle scheduler job enabled/disabled")
+    sched_job_toggle.add_argument("job_id", help="Job identifier (e.g. collect_all, sq_1)")
+    sched_interval = sched_sub.add_parser("set-interval", help="Set scheduler job interval")
+    sched_interval.add_argument("job_id", help="Job identifier")
+    sched_interval.add_argument("minutes", type=int, help="Interval in minutes (1-1440)")
+    sched_task_cancel = sched_sub.add_parser("task-cancel", help="Cancel a collection task")
+    sched_task_cancel.add_argument("task_id", type=int, help="Task ID to cancel")
+    sched_sub.add_parser("clear-pending", help="Clear all pending collection tasks")
 
     my_tg_parser = sub.add_parser("my-telegram", help="View account dialogs")
     my_tg_sub = my_tg_parser.add_subparsers(dest="my_telegram_action")
@@ -369,6 +390,11 @@ def build_parser() -> argparse.ArgumentParser:
     my_tg_list.add_argument(
         "--phone", default=None, help="Account phone (default: first connected)"
     )  # noqa: E501
+    my_tg_refresh = my_tg_sub.add_parser("refresh", help="Refresh dialog cache from Telegram")
+    my_tg_refresh.add_argument(
+        "--phone", default=None, help="Account phone (default: first connected)"
+    )
+
     my_tg_leave = my_tg_sub.add_parser("leave", help="Leave dialogs by ID")
     my_tg_leave.add_argument(
         "dialog_ids",
@@ -398,6 +424,25 @@ def build_parser() -> argparse.ArgumentParser:
     my_tg_clear.add_argument("--phone", default=None, help="Account phone (default: all accounts)")
     my_tg_sub.add_parser("cache-status", help="Show dialog cache status (entries, age)")
 
+    my_tg_send = my_tg_sub.add_parser("send", help="Send a direct message to a user or chat")
+    my_tg_send.add_argument("recipient", help="Recipient: @username, phone number, or numeric ID")
+    my_tg_send.add_argument("text", help="Message text to send")
+    my_tg_send.add_argument("--phone", default=None, help="Account phone (default: first connected)")
+    my_tg_send.add_argument("--yes", "-y", action="store_true", help="Skip confirmation prompt")
+
+    my_tg_edit = my_tg_sub.add_parser("edit-message", help="Edit a sent message")
+    my_tg_edit.add_argument("chat_id", help="Chat ID or @username")
+    my_tg_edit.add_argument("message_id", type=int, help="Message ID to edit")
+    my_tg_edit.add_argument("text", help="New message text")
+    my_tg_edit.add_argument("--phone", default=None, help="Account phone (default: first connected)")
+    my_tg_edit.add_argument("--yes", "-y", action="store_true", help="Skip confirmation prompt")
+
+    my_tg_del_msg = my_tg_sub.add_parser("delete-message", help="Delete messages from a chat")
+    my_tg_del_msg.add_argument("chat_id", help="Chat ID or @username")
+    my_tg_del_msg.add_argument("message_ids", nargs="+", help="Message IDs to delete (space or comma-separated)")
+    my_tg_del_msg.add_argument("--phone", default=None, help="Account phone (default: first connected)")
+    my_tg_del_msg.add_argument("--yes", "-y", action="store_true", help="Skip confirmation prompt")
+
     my_tg_create = my_tg_sub.add_parser("create-channel", help="Create a new Telegram broadcast channel")
     my_tg_create.add_argument("--phone", default=None, help="Account phone (default: first connected)")
     my_tg_create.add_argument("--title", required=True, help="Channel title")
@@ -409,6 +454,9 @@ def build_parser() -> argparse.ArgumentParser:
     notif_sub.add_parser("setup", help="Create personal notification bot via BotFather")
     notif_sub.add_parser("status", help="Show notification bot status")
     notif_sub.add_parser("delete", help="Delete notification bot via BotFather")
+    notif_test = notif_sub.add_parser("test", help="Send a test notification message")
+    notif_test.add_argument("--message", default="Тестовое уведомление", help="Message text")
+    notif_sub.add_parser("dry-run", help="Preview notification matches without sending")
 
     agent_parser = sub.add_parser("agent", help="Agent chat management")
     agent_sub = agent_parser.add_subparsers(dest="agent_action")
@@ -447,6 +495,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     photo_dialogs = photo_sub.add_parser("dialogs", help="List dialogs for an account")
     photo_dialogs.add_argument("--phone", required=True, help="Account phone")
+
+    photo_refresh = photo_sub.add_parser("refresh", help="Refresh dialog cache for photo loader")
+    photo_refresh.add_argument("--phone", required=True, help="Account phone")
 
     photo_send = photo_sub.add_parser("send", help="Send photos now")
     photo_send.add_argument("--phone", required=True, help="Account phone")
@@ -546,5 +597,40 @@ def build_parser() -> argparse.ArgumentParser:
     analytics_hourly.add_argument(
         "--date-to", dest="date_to", default=None, help="End date (YYYY-MM-DD)"
     )
+
+    analytics_sub.add_parser("summary", help="Content generation summary")
+
+    analytics_daily = analytics_sub.add_parser("daily", help="Daily generation stats")
+    analytics_daily.add_argument("--days", type=int, default=30, help="Number of days (default: 30)")
+    analytics_daily.add_argument("--pipeline-id", dest="pipeline_id", type=int, default=None)
+
+    analytics_pipeline = analytics_sub.add_parser("pipeline-stats", help="Per-pipeline statistics")
+    analytics_pipeline.add_argument("--pipeline-id", dest="pipeline_id", type=int, default=None)
+
+    analytics_trending = analytics_sub.add_parser("trending-topics", help="Trending topics/keywords")
+    analytics_trending.add_argument("--days", type=int, default=7, help="Number of days (default: 7)")
+    analytics_trending.add_argument("--limit", type=int, default=20)
+
+    analytics_channels = analytics_sub.add_parser("trending-channels", help="Top channels by activity")
+    analytics_channels.add_argument("--days", type=int, default=7, help="Number of days (default: 7)")
+    analytics_channels.add_argument("--limit", type=int, default=20)
+
+    analytics_velocity = analytics_sub.add_parser("velocity", help="Message volume per day")
+    analytics_velocity.add_argument("--days", type=int, default=30, help="Number of days (default: 30)")
+
+    analytics_sub.add_parser("peak-hours", help="Peak activity hours")
+
+    analytics_calendar = analytics_sub.add_parser("calendar", help="Upcoming scheduled publications")
+    analytics_calendar.add_argument("--limit", type=int, default=20)
+    analytics_calendar.add_argument("--pipeline-id", dest="pipeline_id", type=int, default=None)
+
+    settings_parser = sub.add_parser("settings", help="System settings management")
+    settings_sub = settings_parser.add_subparsers(dest="settings_action")
+    settings_get = settings_sub.add_parser("get", help="Show settings")
+    settings_get.add_argument("--key", default=None, help="Specific setting key (default: show all)")
+    settings_set = settings_sub.add_parser("set", help="Set a setting value")
+    settings_set.add_argument("key", help="Setting key")
+    settings_set.add_argument("value", help="Setting value")
+    settings_sub.add_parser("info", help="Show system diagnostics")
 
     return parser

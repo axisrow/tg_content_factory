@@ -41,6 +41,48 @@ def run(args: argparse.Namespace) -> None:
                 print("Deleting notification bot via BotFather...")
                 await svc.teardown_bot()
                 print("Notification bot deleted.")
+
+            elif args.notification_action == "test":
+                message = getattr(args, "message", "Тестовое уведомление")
+                await svc.send_notification(message)
+                print("Test notification sent.")
+
+            elif args.notification_action == "dry-run":
+                from datetime import timezone
+
+                last_task = await db.repos.tasks.get_last_completed_collect_task()
+                since = None
+                if last_task and last_task.completed_at:
+                    since = last_task.completed_at.astimezone(timezone.utc).strftime(
+                        "%Y-%m-%d %H:%M:%S"
+                    )
+                queries = await db.get_notification_queries(active_only=True)
+                filtered = []
+                for sq in queries:
+                    val = await db.repos.settings.get_setting(
+                        f"scheduler_job_disabled:sq_{sq.id}"
+                    )
+                    if val != "1":
+                        filtered.append(sq)
+                queries = filtered
+                if not queries:
+                    print("No active notification queries.")
+                    return
+                total_matches = 0
+                for sq in queries:
+                    if since:
+                        try:
+                            _, total = await db.search_messages_for_query_since(
+                                sq, since, limit=0
+                            )
+                        except Exception:
+                            total = 0
+                    else:
+                        total = 0
+                    name = sq.name or sq.query
+                    print(f"  {name}: {total} matches")
+                    total_matches += total
+                print(f"\nTotal: {total_matches} matches (since {since or 'N/A'})")
         finally:
             await pool.disconnect_all()
             await db.close()
