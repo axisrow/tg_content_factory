@@ -212,18 +212,27 @@ MODULE_GROUPS: OrderedDict[str, list[str]] = OrderedDict([
 # ---------------------------------------------------------------------------
 
 
+def _default_permissions() -> dict[str, bool]:
+    """Default permissions: read=True, write/delete=False."""
+    return {
+        name: (cat == ToolCategory.READ)
+        for name, cat in TOOL_CATEGORIES.items()
+    }
+
+
 async def load_tool_permissions(db) -> dict[str, bool]:
-    """Load per-tool permissions from DB.  Missing setting → all tools allowed."""
+    """Load per-tool permissions from DB.  Missing setting → read-only defaults."""
+    defaults = _default_permissions()
     raw = await db.get_setting(TOOL_PERMISSIONS_SETTING)
     if not raw:
-        return {name: True for name in TOOL_CATEGORIES}
+        return defaults
     try:
         saved: dict = json.loads(raw)
     except (json.JSONDecodeError, TypeError):
         logger.warning("Corrupted tool permissions setting, using defaults")
-        return {name: True for name in TOOL_CATEGORIES}
-    # Merge: saved values take precedence, new tools default to True
-    return {name: saved.get(name, True) for name in TOOL_CATEGORIES}
+        return defaults
+    # Merge: saved values take precedence, new tools get default for their category
+    return {name: saved.get(name, defaults[name]) for name in TOOL_CATEGORIES}
 
 
 async def save_tool_permissions(db, permissions: dict[str, bool]) -> None:
@@ -234,12 +243,12 @@ async def save_tool_permissions(db, permissions: dict[str, bool]) -> None:
 def filter_allowed_tools(all_tools: list[str], permissions: dict[str, bool]) -> list[str]:
     """Filter MCP-prefixed tool names by permissions.
 
-    Tools not present in TOOL_CATEGORIES pass through unchanged (future-proof).
+    Unknown tools (not in permissions dict) are denied by default.
     """
     result = []
     for prefixed_name in all_tools:
         bare = prefixed_name.removeprefix(MCP_PREFIX)
-        if permissions.get(bare, True):
+        if permissions.get(bare, False):
             result.append(prefixed_name)
     return result
 
@@ -263,7 +272,7 @@ def build_template_context(permissions: dict[str, bool]) -> dict:
         entry = {
             "name": tool_name,
             "module": tool_to_module.get(tool_name, ""),
-            "enabled": permissions.get(tool_name, True),
+            "enabled": permissions.get(tool_name, False),
         }
         categories[cat.value].append(entry)
 
@@ -276,7 +285,7 @@ def build_template_context(permissions: dict[str, bool]) -> dict:
             tools.append({
                 "name": t,
                 "category": cat.value,
-                "enabled": permissions.get(t, True),
+                "enabled": permissions.get(t, False),
             })
         modules.append({"name": mod_name, "display_name": mod_name, "tools": tools})
 
