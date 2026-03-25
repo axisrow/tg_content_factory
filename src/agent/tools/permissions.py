@@ -83,7 +83,7 @@ TOOL_CATEGORIES: dict[str, ToolCategory] = {
     "toggle_channel_filter": ToolCategory.WRITE,
     "purge_filtered_channels": ToolCategory.DELETE,
     "hard_delete_channels": ToolCategory.DELETE,
-    "precheck_filters": ToolCategory.READ,
+    "precheck_filters": ToolCategory.WRITE,
     # Analytics
     "get_analytics_summary": ToolCategory.READ,
     "get_pipeline_stats": ToolCategory.READ,

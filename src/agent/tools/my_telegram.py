@@ -116,9 +116,10 @@ def register(db, client_pool, embedding_service, **kwargs):
         try:
             about = args.get("about", "")
             username = args.get("username", "")
-            client = await client_pool.get_client_for_phone(phone)
-            if client is None:
-                return _text_response(f"Клиент для {phone} не найден.")
+            result = await client_pool.get_native_client_by_phone(phone)
+            if result is None:
+                return _text_response(f"Клиент для {phone} не найден или flood-wait активен.")
+            client, _ = result
             from telethon.tl.functions.channels import CreateChannelRequest
 
             result = await client(CreateChannelRequest(

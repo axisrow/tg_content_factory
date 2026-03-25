@@ -120,12 +120,18 @@ async def send_message(request: Request):
     recipient = form.get("recipient", "")
     text = form.get("text", "")
     pool = deps.get_pool(request)
-    client = pool.clients.get(phone)
-    if not client or not recipient or not text:
+    if not phone or not recipient or not text:
         return RedirectResponse(
             url=f"/my-telegram/?phone={quote(phone, safe='')}&error=missing_fields",
             status_code=303,
         )
+    result = await pool.get_native_client_by_phone(phone)
+    if result is None:
+        return RedirectResponse(
+            url=f"/my-telegram/?phone={quote(phone, safe='')}&error=client_unavailable",
+            status_code=303,
+        )
+    client, _ = result
     try:
         entity = await client.get_entity(recipient)
         await client.send_message(entity, text)
