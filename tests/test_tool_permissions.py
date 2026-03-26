@@ -146,6 +146,12 @@ class TestRequirePhonePermission:
         assert "укажи параметр phone" in text
         assert "+79990001111" in text
 
+    async def test_legacy_flat_format_allows(self, mock_db):
+        """Legacy flat format (values are bools, not dicts) must not crash."""
+        perms = {"leave_dialogs": True, "search_messages": False}
+        mock_db.get_setting = AsyncMock(return_value=json.dumps(perms))
+        assert await require_phone_permission(mock_db, "+79990001111", "leave_dialogs") is None
+
 
 # ---------------------------------------------------------------------------
 # permissions.load_tool_permissions
