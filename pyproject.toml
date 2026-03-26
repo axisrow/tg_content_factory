@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tg-agent"
-version = "0.1.17"
+version = "0.1.18"
 description = "Telegram Post Search & Monitoring"
 readme = "README.md"
 license = {text = "MIT"}
@@ -53,6 +53,9 @@ dependencies = [
     "httpx==0.28.1",
     "ruff==0.14.13",
 ]
+
+[project.optional-dependencies]
+docs = ["mkdocs-material>=9.5"]
 
 [project.urls]
 Homepage = "https://github.com/axisrow/tg_content_factory"

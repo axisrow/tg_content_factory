@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import uuid
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, Optional
 
 import aiohttp
+
+logger = logging.getLogger(__name__)
 
 # Type alias for image generation adapters
 ImageAdapter = Callable[[str, str], Awaitable[Optional[str]]]
@@ -273,7 +276,10 @@ def make_huggingface_image_adapter(api_token: str, output_dir: str = "data/image
     """HuggingFace Inference API — returns binary image, saved to local file."""
 
     async def adapter(prompt: str, model: str = "") -> Optional[str]:
-        model_id = model or "stabilityai/stable-diffusion-xl-base-1.0"
+        default_model = "stabilityai/stable-diffusion-xl-base-1.0"
+        if model and "/" not in model:
+            logger.warning("HuggingFace: model %r lacks '/' separator, falling back to %s", model, default_model)
+        model_id = model if model and "/" in model else default_model
         url = f"https://api-inference.huggingface.co/models/{model_id}"
         headers = {"Authorization": f"Bearer {api_token}"}
         payload = {"inputs": prompt}
@@ -330,7 +336,10 @@ def make_replicate_image_adapter(api_token: str, timeout: float = 60.0) -> Image
     """Replicate async prediction API with polling."""
 
     async def adapter(prompt: str, model: str = "") -> Optional[str]:
-        model_id = model or "black-forest-labs/flux-schnell"
+        default_model = "black-forest-labs/flux-schnell"
+        if model and "/" not in model:
+            logger.warning("Replicate: model %r lacks '/' separator, falling back to %s", model, default_model)
+        model_id = model if model and "/" in model else default_model
         # Use the model route: POST /v1/models/{owner}/{name}/predictions
         url = f"https://api.replicate.com/v1/models/{model_id}/predictions"
         headers = {"Authorization": f"Bearer {api_token}", "Content-Type": "application/json"}
