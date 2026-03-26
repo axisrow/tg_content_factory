@@ -136,9 +136,10 @@ class ImageGenerationService:
                                 "run_count": r.get("run_count", 0),
                                 "rank": r.get("rank"),
                             }
-                            for r in results[:20]
+                            for r in results
                         ]
-                        return sorted(models, key=lambda m: m.get("run_count", 0), reverse=True)
+                        models.sort(key=lambda m: m.get("run_count", 0), reverse=True)
+                        return models[:20]
             except Exception:
                 logger.warning("Failed to search Replicate models", exc_info=True)
                 return []
