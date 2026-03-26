@@ -376,7 +376,7 @@ async def edit_admin(request: Request):
     chat_id = form.get("chat_id", "")
     user_id = form.get("user_id", "")
     title = form.get("title", "") or None
-    is_admin = form.get("is_admin", "1") in ("1", "true", "on")
+    is_admin = form.get("is_admin", "0") in ("1", "true", "on")
     pool = deps.get_pool(request)
     if not phone or not chat_id or not user_id:
         return RedirectResponse(
