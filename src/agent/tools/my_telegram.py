@@ -11,6 +11,7 @@ from src.agent.tools._registry import (
     require_confirmation,
     require_phone_permission,
     require_pool,
+    resolve_phone,
 )
 
 
@@ -22,9 +23,9 @@ def register(db, client_pool, embedding_service, **kwargs):
         pool_gate = require_pool(client_pool, "Список диалогов")
         if pool_gate:
             return pool_gate
-        phone = normalize_phone(args.get("phone", ""))
-        if not phone:
-            return _text_response("Ошибка: phone обязателен.")
+        phone, err = await resolve_phone(db, args.get("phone", ""))
+        if err:
+            return err
         perm_gate = await require_phone_permission(db, phone, "list_dialogs")
         if perm_gate:
             return perm_gate
@@ -58,9 +59,9 @@ def register(db, client_pool, embedding_service, **kwargs):
         pool_gate = require_pool(client_pool, "Обновление диалогов")
         if pool_gate:
             return pool_gate
-        phone = normalize_phone(args.get("phone", ""))
-        if not phone:
-            return _text_response("Ошибка: phone обязателен.")
+        phone, err = await resolve_phone(db, args.get("phone", ""))
+        if err:
+            return err
         perm_gate = await require_phone_permission(db, phone, "refresh_dialogs")
         if perm_gate:
             return perm_gate
@@ -86,10 +87,12 @@ def register(db, client_pool, embedding_service, **kwargs):
         pool_gate = require_pool(client_pool, "Выход из диалогов")
         if pool_gate:
             return pool_gate
-        phone = normalize_phone(args.get("phone", ""))
+        phone, err = await resolve_phone(db, args.get("phone", ""))
+        if err:
+            return err
         dialog_ids_str = args.get("dialog_ids", "")
-        if not phone or not dialog_ids_str:
-            return _text_response("Ошибка: phone и dialog_ids обязательны.")
+        if not dialog_ids_str:
+            return _text_response("Ошибка: dialog_ids обязателен.")
         perm_gate = await require_phone_permission(db, phone, "leave_dialogs")
         if perm_gate:
             return perm_gate
@@ -121,10 +124,12 @@ def register(db, client_pool, embedding_service, **kwargs):
         pool_gate = require_pool(client_pool, "Создание канала")
         if pool_gate:
             return pool_gate
-        phone = normalize_phone(args.get("phone", ""))
+        phone, err = await resolve_phone(db, args.get("phone", ""))
+        if err:
+            return err
         title = args.get("title", "")
-        if not phone or not title:
-            return _text_response("Ошибка: phone и title обязательны.")
+        if not title:
+            return _text_response("Ошибка: title обязателен.")
         perm_gate = await require_phone_permission(db, phone, "create_telegram_channel")
         if perm_gate:
             return perm_gate

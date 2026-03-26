@@ -351,6 +351,15 @@ async def save_tool_permissions(db, permissions: dict[str, bool], phone: str | N
     if saved and not _is_per_phone_format(saved):
         # Migrate legacy flat → per-phone: existing flat becomes the phone's entry
         saved = {}
+    # Seed unsaved accounts with all-enabled defaults so they are not implicitly denied
+    defaults = _default_permissions()
+    try:
+        accounts = await db.get_accounts()
+        for acc in accounts:
+            if acc.phone not in saved:
+                saved[acc.phone] = dict(defaults)
+    except Exception:
+        pass  # DB error — proceed with what we have
     saved[phone] = permissions
     await db.set_setting(TOOL_PERMISSIONS_SETTING, json.dumps(saved, ensure_ascii=False))
 

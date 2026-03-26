@@ -5,7 +5,13 @@ from __future__ import annotations
 from claude_agent_sdk import tool
 from mcp.types import ToolAnnotations
 
-from src.agent.tools._registry import _text_response, require_confirmation, require_pool
+from src.agent.tools._registry import (
+    _text_response,
+    require_confirmation,
+    require_phone_permission,
+    require_pool,
+    resolve_phone,
+)
 
 
 def register(db, client_pool, embedding_service, **kwargs):
@@ -22,11 +28,16 @@ def register(db, client_pool, embedding_service, **kwargs):
         pool_gate = require_pool(client_pool, "Отправка сообщения")
         if pool_gate:
             return pool_gate
-        phone = args.get("phone", "")
+        phone, err = await resolve_phone(db, args.get("phone", ""))
+        if err:
+            return err
+        perm_gate = await require_phone_permission(db, phone, "send_message")
+        if perm_gate:
+            return perm_gate
         recipient = args.get("recipient", "")
         text = args.get("text", "")
-        if not phone or not recipient or not text:
-            return _text_response("Ошибка: phone, recipient и text обязательны.")
+        if not recipient or not text:
+            return _text_response("Ошибка: recipient и text обязательны.")
         preview = text[:120] + ("..." if len(text) > 120 else "")
         gate = require_confirmation(
             f"отправит сообщение от {phone} пользователю {recipient}: «{preview}»", args
@@ -56,12 +67,17 @@ def register(db, client_pool, embedding_service, **kwargs):
         pool_gate = require_pool(client_pool, "Редактирование сообщения")
         if pool_gate:
             return pool_gate
-        phone = args.get("phone", "")
+        phone, err = await resolve_phone(db, args.get("phone", ""))
+        if err:
+            return err
+        perm_gate = await require_phone_permission(db, phone, "edit_message")
+        if perm_gate:
+            return perm_gate
         chat_id = args.get("chat_id", "")
         message_id = args.get("message_id")
         text = args.get("text", "")
-        if not phone or not chat_id or not message_id or not text:
-            return _text_response("Ошибка: phone, chat_id, message_id и text обязательны.")
+        if not chat_id or not message_id or not text:
+            return _text_response("Ошибка: chat_id, message_id и text обязательны.")
         preview = text[:120] + ("..." if len(text) > 120 else "")
         gate = require_confirmation(
             f"отредактирует сообщение #{message_id} в чате {chat_id}: «{preview}»", args
@@ -92,11 +108,16 @@ def register(db, client_pool, embedding_service, **kwargs):
         pool_gate = require_pool(client_pool, "Удаление сообщений")
         if pool_gate:
             return pool_gate
-        phone = args.get("phone", "")
+        phone, err = await resolve_phone(db, args.get("phone", ""))
+        if err:
+            return err
+        perm_gate = await require_phone_permission(db, phone, "delete_message")
+        if perm_gate:
+            return perm_gate
         chat_id = args.get("chat_id", "")
         message_ids_str = args.get("message_ids", "")
-        if not phone or not chat_id or not message_ids_str:
-            return _text_response("Ошибка: phone, chat_id и message_ids обязательны.")
+        if not chat_id or not message_ids_str:
+            return _text_response("Ошибка: chat_id и message_ids обязательны.")
         ids = [int(x.strip()) for x in message_ids_str.split(",") if x.strip().isdigit()]
         if not ids:
             return _text_response("Ошибка: не указаны валидные message_ids.")
@@ -128,12 +149,17 @@ def register(db, client_pool, embedding_service, **kwargs):
         pool_gate = require_pool(client_pool, "Пересылка сообщений")
         if pool_gate:
             return pool_gate
-        phone = args.get("phone", "")
+        phone, err = await resolve_phone(db, args.get("phone", ""))
+        if err:
+            return err
+        perm_gate = await require_phone_permission(db, phone, "forward_messages")
+        if perm_gate:
+            return perm_gate
         from_chat = args.get("from_chat", "")
         to_chat = args.get("to_chat", "")
         message_ids_str = args.get("message_ids", "")
-        if not phone or not from_chat or not to_chat or not message_ids_str:
-            return _text_response("Ошибка: phone, from_chat, to_chat и message_ids обязательны.")
+        if not from_chat or not to_chat or not message_ids_str:
+            return _text_response("Ошибка: from_chat, to_chat и message_ids обязательны.")
         ids = [int(x.strip()) for x in message_ids_str.split(",") if x.strip().isdigit()]
         if not ids:
             return _text_response("Ошибка: не указаны валидные message_ids.")
@@ -165,12 +191,17 @@ def register(db, client_pool, embedding_service, **kwargs):
         pool_gate = require_pool(client_pool, "Закрепление сообщения")
         if pool_gate:
             return pool_gate
-        phone = args.get("phone", "")
+        phone, err = await resolve_phone(db, args.get("phone", ""))
+        if err:
+            return err
+        perm_gate = await require_phone_permission(db, phone, "pin_message")
+        if perm_gate:
+            return perm_gate
         chat_id = args.get("chat_id", "")
         message_id = args.get("message_id")
         notify = args.get("notify", False)
-        if not phone or not chat_id or not message_id:
-            return _text_response("Ошибка: phone, chat_id и message_id обязательны.")
+        if not chat_id or not message_id:
+            return _text_response("Ошибка: chat_id и message_id обязательны.")
         gate = require_confirmation(f"закрепит сообщение #{message_id} в чате {chat_id}", args)
         if gate:
             return gate
@@ -197,11 +228,16 @@ def register(db, client_pool, embedding_service, **kwargs):
         pool_gate = require_pool(client_pool, "Открепление сообщения")
         if pool_gate:
             return pool_gate
-        phone = args.get("phone", "")
+        phone, err = await resolve_phone(db, args.get("phone", ""))
+        if err:
+            return err
+        perm_gate = await require_phone_permission(db, phone, "unpin_message")
+        if perm_gate:
+            return perm_gate
         chat_id = args.get("chat_id", "")
         message_id = args.get("message_id") or None
-        if not phone or not chat_id:
-            return _text_response("Ошибка: phone и chat_id обязательны.")
+        if not chat_id:
+            return _text_response("Ошибка: chat_id обязателен.")
         target = f"#{message_id}" if message_id else "все сообщения"
         gate = require_confirmation(f"открепит {target} в чате {chat_id}", args)
         if gate:
@@ -230,11 +266,16 @@ def register(db, client_pool, embedding_service, **kwargs):
         pool_gate = require_pool(client_pool, "Загрузка медиа")
         if pool_gate:
             return pool_gate
-        phone = args.get("phone", "")
+        phone, err = await resolve_phone(db, args.get("phone", ""))
+        if err:
+            return err
+        perm_gate = await require_phone_permission(db, phone, "download_media")
+        if perm_gate:
+            return perm_gate
         chat_id = args.get("chat_id", "")
         message_id = args.get("message_id")
-        if not phone or not chat_id or not message_id:
-            return _text_response("Ошибка: phone, chat_id и message_id обязательны.")
+        if not chat_id or not message_id:
+            return _text_response("Ошибка: chat_id и message_id обязательны.")
         try:
             result = await client_pool.get_native_client_by_phone(phone)
             if result is None:
@@ -270,12 +311,17 @@ def register(db, client_pool, embedding_service, **kwargs):
         pool_gate = require_pool(client_pool, "Получение участников")
         if pool_gate:
             return pool_gate
-        phone = args.get("phone", "")
+        phone, err = await resolve_phone(db, args.get("phone", ""))
+        if err:
+            return err
+        perm_gate = await require_phone_permission(db, phone, "get_participants")
+        if perm_gate:
+            return perm_gate
         chat_id = args.get("chat_id", "")
         limit = args.get("limit") or 200
         search = args.get("search", "")
-        if not phone or not chat_id:
-            return _text_response("Ошибка: phone и chat_id обязательны.")
+        if not chat_id:
+            return _text_response("Ошибка: chat_id обязателен.")
         try:
             result = await client_pool.get_native_client_by_phone(phone)
             if result is None:
@@ -312,13 +358,18 @@ def register(db, client_pool, embedding_service, **kwargs):
         pool_gate = require_pool(client_pool, "Изменение прав администратора")
         if pool_gate:
             return pool_gate
-        phone = args.get("phone", "")
+        phone, err = await resolve_phone(db, args.get("phone", ""))
+        if err:
+            return err
+        perm_gate = await require_phone_permission(db, phone, "edit_admin")
+        if perm_gate:
+            return perm_gate
         chat_id = args.get("chat_id", "")
         user_id = args.get("user_id", "")
         is_admin = args.get("is_admin", True)
         title = args.get("title") or None
-        if not phone or not chat_id or not user_id:
-            return _text_response("Ошибка: phone, chat_id и user_id обязательны.")
+        if not chat_id or not user_id:
+            return _text_response("Ошибка: chat_id и user_id обязательны.")
         action = "повысит" if is_admin else "понизит"
         gate = require_confirmation(f"{action} {user_id} в {chat_id}", args)
         if gate:
@@ -357,14 +408,19 @@ def register(db, client_pool, embedding_service, **kwargs):
         pool_gate = require_pool(client_pool, "Изменение ограничений пользователя")
         if pool_gate:
             return pool_gate
-        phone = args.get("phone", "")
+        phone, err = await resolve_phone(db, args.get("phone", ""))
+        if err:
+            return err
+        perm_gate = await require_phone_permission(db, phone, "edit_permissions")
+        if perm_gate:
+            return perm_gate
         chat_id = args.get("chat_id", "")
         user_id = args.get("user_id", "")
         until_date_str = args.get("until_date") or None
         send_messages = args.get("send_messages")
         send_media = args.get("send_media")
-        if not phone or not chat_id or not user_id:
-            return _text_response("Ошибка: phone, chat_id и user_id обязательны.")
+        if not chat_id or not user_id:
+            return _text_response("Ошибка: chat_id и user_id обязательны.")
         if send_messages is None and send_media is None:
             return _text_response(
                 "Ошибка: укажите хотя бы один флаг ограничения "
@@ -404,11 +460,16 @@ def register(db, client_pool, embedding_service, **kwargs):
         pool_gate = require_pool(client_pool, "Исключение участника")
         if pool_gate:
             return pool_gate
-        phone = args.get("phone", "")
+        phone, err = await resolve_phone(db, args.get("phone", ""))
+        if err:
+            return err
+        perm_gate = await require_phone_permission(db, phone, "kick_participant")
+        if perm_gate:
+            return perm_gate
         chat_id = args.get("chat_id", "")
         user_id = args.get("user_id", "")
-        if not phone or not chat_id or not user_id:
-            return _text_response("Ошибка: phone, chat_id и user_id обязательны.")
+        if not chat_id or not user_id:
+            return _text_response("Ошибка: chat_id и user_id обязательны.")
         gate = require_confirmation(f"исключит {user_id} из чата {chat_id}", args)
         if gate:
             return gate
@@ -435,10 +496,15 @@ def register(db, client_pool, embedding_service, **kwargs):
         pool_gate = require_pool(client_pool, "Получение статистики")
         if pool_gate:
             return pool_gate
-        phone = args.get("phone", "")
+        phone, err = await resolve_phone(db, args.get("phone", ""))
+        if err:
+            return err
+        perm_gate = await require_phone_permission(db, phone, "get_broadcast_stats")
+        if perm_gate:
+            return perm_gate
         chat_id = args.get("chat_id", "")
-        if not phone or not chat_id:
-            return _text_response("Ошибка: phone и chat_id обязательны.")
+        if not chat_id:
+            return _text_response("Ошибка: chat_id обязателен.")
         try:
             result = await client_pool.get_native_client_by_phone(phone)
             if result is None:
@@ -486,10 +552,15 @@ def register(db, client_pool, embedding_service, **kwargs):
         pool_gate = require_pool(client_pool, "Архивирование чата")
         if pool_gate:
             return pool_gate
-        phone = args.get("phone", "")
+        phone, err = await resolve_phone(db, args.get("phone", ""))
+        if err:
+            return err
+        perm_gate = await require_phone_permission(db, phone, "archive_chat")
+        if perm_gate:
+            return perm_gate
         chat_id = args.get("chat_id", "")
-        if not phone or not chat_id:
-            return _text_response("Ошибка: phone и chat_id обязательны.")
+        if not chat_id:
+            return _text_response("Ошибка: chat_id обязателен.")
         gate = require_confirmation(f"архивирует чат {chat_id}", args)
         if gate:
             return gate
@@ -516,10 +587,15 @@ def register(db, client_pool, embedding_service, **kwargs):
         pool_gate = require_pool(client_pool, "Разархивирование чата")
         if pool_gate:
             return pool_gate
-        phone = args.get("phone", "")
+        phone, err = await resolve_phone(db, args.get("phone", ""))
+        if err:
+            return err
+        perm_gate = await require_phone_permission(db, phone, "unarchive_chat")
+        if perm_gate:
+            return perm_gate
         chat_id = args.get("chat_id", "")
-        if not phone or not chat_id:
-            return _text_response("Ошибка: phone и chat_id обязательны.")
+        if not chat_id:
+            return _text_response("Ошибка: chat_id обязателен.")
         gate = require_confirmation(f"разархивирует чат {chat_id}", args)
         if gate:
             return gate
@@ -545,11 +621,16 @@ def register(db, client_pool, embedding_service, **kwargs):
         pool_gate = require_pool(client_pool, "Отметка сообщений как прочитанных")
         if pool_gate:
             return pool_gate
-        phone = args.get("phone", "")
+        phone, err = await resolve_phone(db, args.get("phone", ""))
+        if err:
+            return err
+        perm_gate = await require_phone_permission(db, phone, "mark_read")
+        if perm_gate:
+            return perm_gate
         chat_id = args.get("chat_id", "")
         max_id = args.get("max_id") or None
-        if not phone or not chat_id:
-            return _text_response("Ошибка: phone и chat_id обязательны.")
+        if not chat_id:
+            return _text_response("Ошибка: chat_id обязателен.")
         try:
             result = await client_pool.get_native_client_by_phone(phone)
             if result is None:

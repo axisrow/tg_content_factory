@@ -49,6 +49,24 @@ def require_pool(client_pool: object | None, action: str = "Эта операц�
     )
 
 
+async def resolve_phone(db: object, raw_phone: str) -> tuple[str, dict | None]:
+    """Normalize phone, default to primary account if empty.
+
+    Returns ``(phone, None)`` on success or ``("", error_response)`` on failure.
+    """
+    phone = normalize_phone(raw_phone)
+    if phone:
+        return phone, None
+    try:
+        accounts = await db.get_accounts()
+    except Exception:
+        return "", _text_response("Ошибка: не удалось получить список аккаунтов.")
+    if not accounts:
+        return "", _text_response("Ошибка: нет подключённых аккаунтов.")
+    primary = next((a for a in accounts if a.is_primary), accounts[0])
+    return primary.phone, None
+
+
 async def require_phone_permission(db: object, phone: str, tool_name: str) -> dict | None:
     """Return helpful response with allowed phones if not permitted, else None.
 
