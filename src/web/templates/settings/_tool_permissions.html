@@ -1,21 +1,53 @@
+{% if not accounts %}
+<p class="alert alert-warning mb-3">
+    <i class="bi bi-exclamation-triangle me-2"></i>
+    Аккаунты не подключены. Добавьте Telegram-аккаунт в разделе <a href="#pane-accounts">Аккаунты</a>.
+</p>
+{% else %}
 <p class="form-text mb-3">
     Управление разрешениями инструментов AI-агента. Отключённые инструменты не будут доступны агенту.
     По умолчанию все инструменты разрешены.
 </p>
 
+<!-- Phone tabs -->
+<ul class="nav nav-tabs mb-3" id="tool-perm-tabs" role="tablist">
+    {% for acc in accounts %}
+    <li class="nav-item" role="presentation">
+        <button class="nav-link{% if loop.first %} active{% endif %}"
+                id="tool-perm-tab-{{ loop.index }}"
+                data-bs-toggle="tab"
+                data-bs-target="#tool-perm-pane-{{ loop.index }}"
+                type="button" role="tab">
+            {{ acc.phone }}{% if acc.is_primary %} [primary]{% endif %}
+        </button>
+    </li>
+    {% endfor %}
+</ul>
+
+<div class="tab-content" id="tool-perm-tab-content">
+{% for acc in accounts %}
+{% set pidx = loop.index %}
+{% set pctx = phone_perm_contexts.get(acc.phone, {}) %}
+{% set modules = pctx.get("tool_permission_modules", []) %}
+<div class="tab-pane fade{% if loop.first %} show active{% endif %}"
+     id="tool-perm-pane-{{ pidx }}" role="tabpanel">
+
 <form method="post" action="/settings/save-agent" data-busy>
     <input type="hidden" name="agent_form_scope" value="tool_permissions">
+    <input type="hidden" name="phone" value="{{ acc.phone }}">
 
+    <!-- Category toggles -->
     <div class="row g-3 mb-4">
         <div class="col-12 col-md-4">
             <div class="card border-success">
                 <div class="card-body py-2">
                     <div class="form-check form-switch">
-                        <input class="form-check-input" type="checkbox" id="cat_toggle_read"
-                               onchange="toggleToolCategory('read', this.checked)">
-                        <label class="form-check-label fw-semibold" for="cat_toggle_read">
+                        <input class="form-check-input cat-toggle" type="checkbox"
+                               id="cat_toggle_read_{{ pidx }}"
+                               data-pidx="{{ pidx }}" data-cat="read">
+                        <label class="form-check-label fw-semibold" for="cat_toggle_read_{{ pidx }}">
                             <span class="badge text-bg-success me-1">Read</span>
-                            <span class="text-muted small" id="cat_count_read"></span>
+                            <span class="text-muted small" id="cat_count_read_{{ pidx }}"></span>
                         </label>
                     </div>
                 </div>
@@ -25,11 +57,12 @@
             <div class="card border-warning">
                 <div class="card-body py-2">
                     <div class="form-check form-switch">
-                        <input class="form-check-input" type="checkbox" id="cat_toggle_write"
-                               onchange="toggleToolCategory('write', this.checked)">
-                        <label class="form-check-label fw-semibold" for="cat_toggle_write">
+                        <input class="form-check-input cat-toggle" type="checkbox"
+                               id="cat_toggle_write_{{ pidx }}"
+                               data-pidx="{{ pidx }}" data-cat="write">
+                        <label class="form-check-label fw-semibold" for="cat_toggle_write_{{ pidx }}">
                             <span class="badge text-bg-warning me-1">Write</span>
-                            <span class="text-muted small" id="cat_count_write"></span>
+                            <span class="text-muted small" id="cat_count_write_{{ pidx }}"></span>
                         </label>
                     </div>
                 </div>
@@ -39,11 +72,12 @@
             <div class="card border-danger">
                 <div class="card-body py-2">
                     <div class="form-check form-switch">
-                        <input class="form-check-input" type="checkbox" id="cat_toggle_delete"
-                               onchange="toggleToolCategory('delete', this.checked)">
-                        <label class="form-check-label fw-semibold" for="cat_toggle_delete">
+                        <input class="form-check-input cat-toggle" type="checkbox"
+                               id="cat_toggle_delete_{{ pidx }}"
+                               data-pidx="{{ pidx }}" data-cat="delete">
+                        <label class="form-check-label fw-semibold" for="cat_toggle_delete_{{ pidx }}">
                             <span class="badge text-bg-danger me-1">Delete</span>
-                            <span class="text-muted small" id="cat_count_delete"></span>
+                            <span class="text-muted small" id="cat_count_delete_{{ pidx }}"></span>
                         </label>
                     </div>
                 </div>
@@ -51,37 +85,38 @@
         </div>
     </div>
 
-    <div class="accordion" id="toolPermModules">
-        {% for module in tool_permission_modules %}
+    <!-- Accordion modules -->
+    <div class="accordion" id="toolPermModules_{{ pidx }}">
+        {% for module in modules %}
         <div class="accordion-item">
             <h2 class="accordion-header">
                 <div class="d-flex align-items-center w-100">
                     <div class="form-check form-switch ms-3 me-2 flex-shrink-0" onclick="event.stopPropagation()">
                         <input class="form-check-input module-toggle" type="checkbox"
-                               id="mod_toggle_{{ loop.index }}"
-                               data-module-idx="{{ loop.index }}"
-                               onchange="toggleToolModule({{ loop.index }}, this.checked)">
+                               id="mod_toggle_{{ pidx }}_{{ loop.index }}"
+                               data-pidx="{{ pidx }}" data-mod-idx="{{ loop.index }}">
                     </div>
                     <button class="accordion-button collapsed flex-grow-1 py-2 ps-0" type="button"
-                            data-bs-toggle="collapse" data-bs-target="#toolMod_{{ loop.index }}">
+                            data-bs-toggle="collapse" data-bs-target="#toolMod_{{ pidx }}_{{ loop.index }}">
                         {{ module.display_name }}
-                        <span class="text-muted small ms-2" id="mod_count_{{ loop.index }}"></span>
+                        <span class="text-muted small ms-2" id="mod_count_{{ pidx }}_{{ loop.index }}"></span>
                     </button>
                 </div>
             </h2>
-            <div id="toolMod_{{ loop.index }}" class="accordion-collapse collapse">
+            <div id="toolMod_{{ pidx }}_{{ loop.index }}" class="accordion-collapse collapse"
+                 data-bs-parent="#toolPermModules_{{ pidx }}">
                 <div class="accordion-body py-2">
-                    {% set mod_idx = loop.index %}
+                    {% set midx = loop.index %}
                     {% for tool in module.tools %}
                     <div class="form-check">
                         <input class="form-check-input tool-perm-cb" type="checkbox"
-                               id="tp_{{ tool.name }}"
+                               id="tp_{{ pidx }}_{{ tool.name }}"
                                name="tool_perm__{{ tool.name }}" value="1"
                                data-category="{{ tool.category }}"
-                               data-module-idx="{{ mod_idx }}"
-                               {% if tool.enabled %}checked{% endif %}
-                               onchange="updateToolPermToggles()">
-                        <label class="form-check-label" for="tp_{{ tool.name }}">
+                               data-pidx="{{ pidx }}"
+                               data-mod-idx="{{ midx }}"
+                               {% if tool.enabled %}checked{% endif %}>
+                        <label class="form-check-label" for="tp_{{ pidx }}_{{ tool.name }}">
                             <code>{{ tool.name }}</code>
                             {% if tool.category == 'read' %}
                             <span class="badge text-bg-success">R</span>
@@ -103,3 +138,71 @@
         <button type="submit" class="btn btn-primary">Сохранить разрешения</button>
     </div>
 </form>
+
+</div>
+{% endfor %}
+</div>
+
+<script>
+(function() {
+    function updateToggles(pidx) {
+        var cbs = document.querySelectorAll('.tool-perm-cb[data-pidx="' + pidx + '"]');
+        // Module counts
+        var mods = {};
+        cbs.forEach(function(cb) {
+            var m = cb.dataset.modIdx;
+            if (!mods[m]) mods[m] = {total: 0, on: 0};
+            mods[m].total++;
+            if (cb.checked) mods[m].on++;
+        });
+        Object.keys(mods).forEach(function(m) {
+            var el = document.getElementById('mod_count_' + pidx + '_' + m);
+            if (el) el.textContent = mods[m].on + '/' + mods[m].total;
+            var t = document.getElementById('mod_toggle_' + pidx + '_' + m);
+            if (t) { t.checked = mods[m].on === mods[m].total; t.indeterminate = mods[m].on > 0 && mods[m].on < mods[m].total; }
+        });
+        // Category counts
+        var cats = {read: {total:0, on:0}, write: {total:0, on:0}, 'delete': {total:0, on:0}};
+        cbs.forEach(function(cb) {
+            var c = cb.dataset.category;
+            cats[c].total++;
+            if (cb.checked) cats[c].on++;
+        });
+        ['read','write','delete'].forEach(function(c) {
+            var el = document.getElementById('cat_count_' + c + '_' + pidx);
+            if (el) el.textContent = cats[c].on + '/' + cats[c].total;
+            var t = document.getElementById('cat_toggle_' + c + '_' + pidx);
+            if (t) { t.checked = cats[c].on === cats[c].total; t.indeterminate = cats[c].on > 0 && cats[c].on < cats[c].total; }
+        });
+    }
+
+    // Tool checkbox → recalc
+    document.querySelectorAll('.tool-perm-cb').forEach(function(cb) {
+        cb.addEventListener('change', function() { updateToggles(this.dataset.pidx); });
+    });
+    // Module toggle
+    document.querySelectorAll('.module-toggle').forEach(function(t) {
+        t.addEventListener('change', function() {
+            var pidx = this.dataset.pidx, m = this.dataset.modIdx, val = this.checked;
+            document.querySelectorAll('.tool-perm-cb[data-pidx="' + pidx + '"][data-mod-idx="' + m + '"]')
+                .forEach(function(cb) { cb.checked = val; });
+            updateToggles(pidx);
+        });
+    });
+    // Category toggle
+    document.querySelectorAll('.cat-toggle').forEach(function(t) {
+        t.addEventListener('change', function() {
+            var pidx = this.dataset.pidx, cat = this.dataset.cat, val = this.checked;
+            document.querySelectorAll('.tool-perm-cb[data-pidx="' + pidx + '"][data-category="' + cat + '"]')
+                .forEach(function(cb) { cb.checked = val; });
+            updateToggles(pidx);
+        });
+    });
+    // Initial calc
+    document.querySelectorAll('[id^="tool-perm-pane-"]').forEach(function(pane) {
+        var pidx = pane.id.replace('tool-perm-pane-', '');
+        updateToggles(pidx);
+    });
+})();
+</script>
+{% endif %}

@@ -5,7 +5,13 @@ from __future__ import annotations
 from claude_agent_sdk import tool
 from mcp.types import ToolAnnotations
 
-from src.agent.tools._registry import _text_response, require_confirmation, require_pool
+from src.agent.tools._registry import (
+    _text_response,
+    normalize_phone,
+    require_confirmation,
+    require_phone_permission,
+    require_pool,
+)
 
 
 def register(db, client_pool, embedding_service, **kwargs):
@@ -70,6 +76,11 @@ def register(db, client_pool, embedding_service, **kwargs):
         pool_gate = require_pool(client_pool, "Отправка фото")
         if pool_gate:
             return pool_gate
+        phone = normalize_phone(args.get("phone", ""))
+        if phone:
+            perm_gate = await require_phone_permission(db, phone, "send_photos_now")
+            if perm_gate:
+                return perm_gate
         gate = require_confirmation("отправит фото в Telegram-диалог", args)
         if gate:
             return gate
@@ -79,18 +90,27 @@ def register(db, client_pool, embedding_service, **kwargs):
             from src.services.photo_task_service import PhotoTaskService
 
             svc = PhotoTaskService(PhotoLoaderBundle.from_database(db), PhotoPublishService(client_pool))
-            phone = args.get("phone", "")
             target = args.get("target", "")
             files = [f.strip() for f in args.get("file_paths", "").split(",") if f.strip()]
             mode = args.get("mode", "album")
             caption = args.get("caption")
             if not phone or not target or not files:
                 return _text_response("Ошибка: phone, target и file_paths обязательны.")
-            from src.models import PhotoTarget
+            from src.services.photo_task_service import PhotoTarget
 
+            # Resolve "me" to own user_id via Telethon
+            if target.strip().lower() == "me":
+                client_result = await client_pool.get_client_by_phone(phone)
+                if not client_result:
+                    return _text_response(f"Клиент для {phone} не найден.")
+                session, _ = client_result
+                me = await session.fetch_me()
+                target_id = me.id
+            else:
+                target_id = int(target)
             result = await svc.send_now(
                 phone=phone,
-                target=PhotoTarget(dialog_id=int(target)),
+                target=PhotoTarget(dialog_id=target_id),
                 file_paths=files,
                 mode=mode,
                 caption=caption,
@@ -115,6 +135,11 @@ def register(db, client_pool, embedding_service, **kwargs):
         pool_gate = require_pool(client_pool, "Планирование фото")
         if pool_gate:
             return pool_gate
+        phone = normalize_phone(args.get("phone", ""))
+        if phone:
+            perm_gate = await require_phone_permission(db, phone, "schedule_photos")
+            if perm_gate:
+                return perm_gate
         gate = require_confirmation("запланирует отправку фото", args)
         if gate:
             return gate
@@ -122,12 +147,10 @@ def register(db, client_pool, embedding_service, **kwargs):
             from datetime import datetime
 
             from src.database.bundles import PhotoLoaderBundle
-            from src.models import PhotoTarget
             from src.services.photo_publish_service import PhotoPublishService
-            from src.services.photo_task_service import PhotoTaskService
+            from src.services.photo_task_service import PhotoTarget, PhotoTaskService
 
             svc = PhotoTaskService(PhotoLoaderBundle.from_database(db), PhotoPublishService(client_pool))
-            phone = args.get("phone", "")
             target = args.get("target", "")
             files = [f.strip() for f in args.get("file_paths", "").split(",") if f.strip()]
             schedule_at_str = args.get("schedule_at", "")
@@ -260,7 +283,7 @@ def register(db, client_pool, embedding_service, **kwargs):
         pool_gate = require_pool(client_pool, "Создание батча фото")
         if pool_gate:
             return pool_gate
-        phone = args.get("phone", "")
+        phone = normalize_phone(args.get("phone", ""))
         target = args.get("target", "")
         files = [f.strip() for f in args.get("file_paths", "").split(",") if f.strip()]
         caption = args.get("caption")
@@ -278,7 +301,7 @@ def register(db, client_pool, embedding_service, **kwargs):
 
             svc = PhotoTaskService(PhotoLoaderBundle.from_database(db), PhotoPublishService(client_pool))
             entries = [{"file_path": f} for f in files]
-            from src.models import PhotoTarget
+            from src.services.photo_task_service import PhotoTarget
 
             batch_id = await svc.create_batch(
                 phone=phone,
@@ -350,7 +373,7 @@ def register(db, client_pool, embedding_service, **kwargs):
             from src.services.photo_publish_service import PhotoPublishService
 
             svc = PhotoAutoUploadService(PhotoLoaderBundle.from_database(db), PhotoPublishService(client_pool))
-            phone = args.get("phone", "")
+            phone = normalize_phone(args.get("phone", ""))
             target = args.get("target", "")
             folder_path = args.get("folder_path", "")
             interval = int(args.get("interval_minutes", 60))

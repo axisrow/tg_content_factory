@@ -50,6 +50,7 @@ logger = logging.getLogger(__name__)
 CREDENTIALS_MASK = "••••••••"
 
 
+
 def _notification_service(request: Request) -> NotificationService:
     notif_cfg = request.app.state.config.notifications
     return NotificationService(
@@ -435,10 +436,17 @@ async def settings_page(request: Request):
     ]
     semantic_context = await _semantic_settings_context(request)
 
-    from src.agent.tools.permissions import build_template_context, load_tool_permissions
+    from src.agent.tools.permissions import (
+        build_template_context,
+        load_tool_permissions_all_phones,
+    )
 
-    tool_permissions = await load_tool_permissions(db)
-    tool_perm_context = build_template_context(tool_permissions)
+    phone_permissions = await load_tool_permissions_all_phones(db, accounts)
+    # Build per-phone template contexts
+    phone_perm_contexts = {
+        phone: build_template_context(perms)
+        for phone, perms in phone_permissions.items()
+    }
 
     return deps.get_templates(request).TemplateResponse(
         request,
@@ -472,7 +480,7 @@ async def settings_page(request: Request):
             "img_provider_views": img_provider_views,
             "img_provider_options": available_img_options,
             **semantic_context,
-            **tool_perm_context,
+            "phone_perm_contexts": phone_perm_contexts,
         },
     )
 
@@ -568,11 +576,12 @@ async def save_agent_settings(request: Request):
     if form_scope == "tool_permissions":
         from src.agent.tools.permissions import TOOL_CATEGORIES, save_tool_permissions
 
+        phone = str(form.get("phone", "")).strip() or None
         permissions = {}
         for tool_name in TOOL_CATEGORIES:
             permissions[tool_name] = form.get(f"tool_perm__{tool_name}") == "1"
-        await save_tool_permissions(db, permissions)
-        return RedirectResponse(url="/settings?msg=tool_permissions_saved", status_code=303)
+        await save_tool_permissions(db, permissions, phone=phone)
+        return RedirectResponse(url="/settings?msg=tool_permissions_saved#pane-tool-permissions", status_code=303)
 
     current_dev_mode = (await db.get_setting("agent_dev_mode_enabled") or "0") == "1"
     current_backend_override = await db.get_setting("agent_backend_override") or "auto"
@@ -645,6 +654,7 @@ async def save_agent_settings(request: Request):
     if agent_manager is not None:
         await agent_manager.refresh_settings_cache(preflight=True)
     return RedirectResponse(url="/settings?msg=agent_saved", status_code=303)
+
 
 
 @router.post("/agent-providers/add")

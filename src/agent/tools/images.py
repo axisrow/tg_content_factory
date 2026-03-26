@@ -49,6 +49,40 @@ def register(db, client_pool, embedding_service, **kwargs):
             if not await svc.is_available():
                 return _text_response("Генерация изображений не настроена. Добавьте провайдера в настройках.")
             result = await svc.generate(model=model, text=prompt)
+            if result and (result.startswith("https://") or result.startswith("http://")):
+                import hashlib
+                import os
+
+                import httpx
+
+                os.makedirs("data/image", exist_ok=True)
+                from urllib.parse import urlparse
+
+                url_path = urlparse(result).path
+                _, dot, suffix = url_path.rpartition(".")
+                ext = suffix[:4] if dot and suffix.isalnum() else "png"
+                filename = hashlib.md5(result.encode()).hexdigest()[:12] + "." + ext
+                local_path = os.path.join("data/image", filename)
+                max_image_bytes = 50 * 1024 * 1024  # 50 MB
+                async with httpx.AsyncClient() as http_client:
+                    async with http_client.stream("GET", result, follow_redirects=True, timeout=30) as resp:
+                        resp.raise_for_status()
+                        with open(local_path, "wb") as f:
+                            total = 0
+                            async for chunk in resp.aiter_bytes(chunk_size=65536):
+                                total += len(chunk)
+                                if total > max_image_bytes:
+                                    raise ValueError("Image exceeds 50 MB limit")
+                                f.write(chunk)
+                logger.info("Image downloaded to %s", local_path)
+                await db.repos.generated_images.save(
+                    prompt=prompt, model=model, image_url=result, local_path=local_path,
+                )
+                return _text_response(
+                    f"Изображение сгенерировано:\n"
+                    f"- URL: {result}\n"
+                    f"- Файл: {local_path}"
+                )
             if result:
                 return _text_response(f"Изображение сгенерировано:\n{result}")
             return _text_response("Генерация не вернула результат.")

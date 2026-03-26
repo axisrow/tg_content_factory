@@ -11,6 +11,7 @@ from src.database.repositories.collection_tasks import CollectionTasksRepository
 from src.database.repositories.content_pipelines import ContentPipelinesRepository
 from src.database.repositories.dialog_cache import DialogCacheRepository
 from src.database.repositories.filters import FilterRepository
+from src.database.repositories.generated_images import GeneratedImagesRepository
 from src.database.repositories.generation_runs import GenerationRunsRepository
 from src.database.repositories.messages import MessagesRepository
 from src.database.repositories.notification_bots import NotificationBotsRepository
@@ -59,6 +60,7 @@ class DatabaseRepositories:
     dialog_cache: DialogCacheRepository
     content_pipelines: ContentPipelinesRepository
     generation_runs: GenerationRunsRepository
+    generated_images: GeneratedImagesRepository
 
 
 @dataclass(frozen=True)

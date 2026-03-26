@@ -614,6 +614,16 @@ async def run_migrations(db: aiosqlite.Connection) -> bool:
             dims       INTEGER NOT NULL
         )
         """)
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS generated_images (
+            id INTEGER PRIMARY KEY,
+            prompt TEXT NOT NULL,
+            model TEXT,
+            image_url TEXT,
+            local_path TEXT,
+            created_at TEXT DEFAULT (datetime('now'))
+        )
+        """)
     await db.commit()
 
     return fts_available

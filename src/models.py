@@ -315,6 +315,15 @@ class PhotoBatchItem(BaseModel):
     completed_at: datetime | None = None
 
 
+class GeneratedImage(BaseModel):
+    id: int | None = None
+    prompt: str
+    model: str | None = None
+    image_url: str | None = None
+    local_path: str | None = None
+    created_at: str | None = None
+
+
 class PhotoAutoUploadJob(BaseModel):
     id: int | None = None
     phone: str

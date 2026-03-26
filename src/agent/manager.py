@@ -244,6 +244,11 @@ class ClaudeSdkBackend:
 
         permissions = await load_tool_permissions(self._db)
         allowed = filter_allowed_tools(_ALLOWED_TOOLS, permissions)
+        if len(allowed) < len(_ALLOWED_TOOLS):
+            denied = [t.removeprefix("mcp__telegram_db__") for t in _ALLOWED_TOOLS if t not in allowed]
+            logger.debug("Agent tools: %d/%d allowed, denied: %s", len(allowed), len(_ALLOWED_TOOLS), denied[:20])
+        else:
+            logger.debug("Agent tools: all %d tools allowed", len(allowed))
 
         options = ClaudeAgentOptions(
             system_prompt=system_prompt,
@@ -712,7 +717,20 @@ class DeepagentsBackend:
         system_prompt: str = DEFAULT_AGENT_PROMPT_TEMPLATE,
         permissions: dict[str, bool] | None = None,
     ) -> str:
+        # Append available tools list to system prompt so models without
+        # native function calling still know which tools exist.
+        filtered_tools = self._default_tools(permissions=permissions)
+        tool_names = [t.__name__ for t in filtered_tools]
+        if tool_names:
+            system_prompt += (
+                "\n\nУ тебя есть доступ к следующим инструментам (tools). "
+                "Используй их для выполнения задач:\n" + "\n".join(f"- {n}" for n in tool_names)
+            )
         agent = self._build_agent(cfg, system_prompt=system_prompt, permissions=permissions)
+        logger.info(
+            "Deepagents _run_agent: provider=%s, model=%s, tools=%d, agent_type=%s",
+            cfg.provider, cfg.selected_model, len(filtered_tools), type(agent).__name__,
+        )
         # Different agent frameworks have different history handling:
         # - `.run(prompt_str)` agents receive history embedded as XML tags in a single string
         # - `.invoke({"messages": [...]})` agents receive history as a structured message list
@@ -725,7 +743,12 @@ class DeepagentsBackend:
                 messages.append({"role": msg["role"], "content": msg["content"]})
             messages.append({"role": "user", "content": prompt})
             result = agent.invoke({"messages": messages})
-        return self._extract_result_text(result)
+        extracted = self._extract_result_text(result)
+        logger.info(
+            "Deepagents _run_agent result: type=%s, len=%d, preview=%r",
+            type(result).__name__, len(extracted), extracted[:200] if extracted else "(empty)",
+        )
+        return extracted
 
     def _probe_tools(self) -> tuple[list[Callable], dict[str, int]]:
         calls = {"search_messages": 0, "get_channels": 0}
@@ -893,6 +916,11 @@ class DeepagentsBackend:
         from src.agent.tools.permissions import load_tool_permissions
 
         permissions = await load_tool_permissions(self._db)
+        enabled_count = sum(1 for v in permissions.values() if v)
+        logger.info(
+            "Deepagents tool permissions: %d/%d enabled",
+            enabled_count, len(permissions),
+        )
 
         errors: list[str] = []
         for cfg in await self._candidate_configs():
@@ -910,6 +938,8 @@ class DeepagentsBackend:
                     permissions=permissions,
                 )
                 self._init_error = None
+                if not full_text:
+                    logger.debug("Deepagents returned empty response for provider=%s", cfg.provider)
                 if full_text:
                     chunk_payload = json.dumps({"text": full_text}, ensure_ascii=False)
                     await queue.put(f"data: {chunk_payload}\n\n")
