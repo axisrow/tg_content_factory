@@ -223,6 +223,48 @@ async def delete_message(request: Request):
         )
 
 
+@router.post("/forward-messages")
+async def forward_messages(request: Request):
+    form = await request.form()
+    phone = form.get("phone", "")
+    from_chat = form.get("from_chat", "")
+    to_chat = form.get("to_chat", "")
+    message_ids_str = form.get("message_ids", "")
+    pool = deps.get_pool(request)
+    if not phone or not from_chat or not to_chat or not message_ids_str:
+        return RedirectResponse(
+            url=f"/my-telegram/?phone={quote(phone, safe='')}&error=missing_fields",
+            status_code=303,
+        )
+    ids = [int(x.strip()) for x in message_ids_str.split(",") if x.strip().isdigit()]
+    if not ids:
+        return RedirectResponse(
+            url=f"/my-telegram/?phone={quote(phone, safe='')}&error=invalid_ids",
+            status_code=303,
+        )
+    result = await pool.get_native_client_by_phone(phone)
+    if result is None:
+        return RedirectResponse(
+            url=f"/my-telegram/?phone={quote(phone, safe='')}&error=client_unavailable",
+            status_code=303,
+        )
+    client, _ = result
+    try:
+        from_entity = await client.get_entity(from_chat)
+        to_entity = await client.get_entity(to_chat)
+        await client.forward_messages(to_entity, ids, from_entity)
+        return RedirectResponse(
+            url=f"/my-telegram/?phone={quote(phone, safe='')}&msg=messages_forwarded",
+            status_code=303,
+        )
+    except Exception as exc:
+        logger.exception("Failed to forward messages: %s", exc)
+        return RedirectResponse(
+            url=f"/my-telegram/?phone={quote(phone, safe='')}&error=forward_failed",
+            status_code=303,
+        )
+
+
 @router.post("/pin-message")
 async def pin_message(request: Request):
     form = await request.form()

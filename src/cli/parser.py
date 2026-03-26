@@ -430,6 +430,13 @@ def build_parser() -> argparse.ArgumentParser:
     my_tg_send.add_argument("--phone", default=None, help="Account phone (default: first connected)")
     my_tg_send.add_argument("--yes", "-y", action="store_true", help="Skip confirmation prompt")
 
+    my_tg_fwd = my_tg_sub.add_parser("forward", help="Forward messages between chats")
+    my_tg_fwd.add_argument("from_chat", help="Source chat ID or @username")
+    my_tg_fwd.add_argument("to_chat", help="Destination chat ID or @username")
+    my_tg_fwd.add_argument("message_ids", nargs="+", help="Message IDs to forward (space or comma-separated)")
+    my_tg_fwd.add_argument("--phone", default=None, help="Account phone (default: first connected)")
+    my_tg_fwd.add_argument("--yes", "-y", action="store_true", help="Skip confirmation prompt")
+
     my_tg_edit = my_tg_sub.add_parser("edit-message", help="Edit a sent message")
     my_tg_edit.add_argument("chat_id", help="Chat ID or @username")
     my_tg_edit.add_argument("message_id", type=int, help="Message ID to edit")

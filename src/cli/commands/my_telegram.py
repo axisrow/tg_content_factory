@@ -162,6 +162,41 @@ def run(args: argparse.Namespace) -> None:
                 except Exception as exc:
                     print(f"Error sending message: {exc}")
 
+            elif args.my_telegram_action == "forward":
+                accounts = sorted(pool.clients.keys())
+                if not accounts:
+                    print("No connected accounts.")
+                    return
+                phone = args.phone or accounts[0]
+                if phone not in pool.clients:
+                    print(f"Account {phone} not connected.")
+                    return
+                raw_ids: list[str] = []
+                for item in args.message_ids:
+                    raw_ids.extend(i.strip() for i in item.split(",") if i.strip())
+                ids = [int(x) for x in raw_ids if x.isdigit()]
+                if not ids:
+                    print("No valid message IDs provided.")
+                    return
+                if not args.yes:
+                    print(f"Forward {len(ids)} message(s) from {args.from_chat} to {args.to_chat}: {ids}")
+                    answer = input("Continue? [y/N] ").strip().lower()
+                    if answer != "y":
+                        print("Aborted.")
+                        return
+                result = await pool.get_native_client_by_phone(phone)
+                if result is None:
+                    print(f"Client for {phone} unavailable (flood-wait or not connected).")
+                    return
+                client, _ = result
+                try:
+                    from_entity = await client.get_entity(args.from_chat)
+                    to_entity = await client.get_entity(args.to_chat)
+                    await client.forward_messages(to_entity, ids, from_entity)
+                    print(f"Forwarded {len(ids)} message(s) from {args.from_chat} to {args.to_chat}.")
+                except Exception as exc:
+                    print(f"Error forwarding messages: {exc}")
+
             elif args.my_telegram_action == "edit-message":
                 accounts = sorted(pool.clients.keys())
                 if not accounts:
