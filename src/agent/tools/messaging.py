@@ -257,7 +257,8 @@ def register(db, client_pool, embedding_service, **kwargs):
 
     @tool(
         "download_media",
-        "Download media from a Telegram message. Returns the local file path.",
+        "Download media from a Telegram message. Returns the local file path. "
+        "Use chat_id='me' for Saved Messages (Избранное).",
         {"phone": str, "chat_id": str, "message_id": int},
     )
     async def download_media(args):

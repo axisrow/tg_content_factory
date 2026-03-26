@@ -115,7 +115,14 @@ def register(db, client_pool, embedding_service, **kwargs):
             lines = [f"Модели {provider} ({len(models)}):"]
             for m in models[:30]:
                 name = m.get("id", m.get("name", "?"))
-                lines.append(f"- {name}")
+                parts = [f"- {name}"]
+                rc = m.get("run_count")
+                if rc:
+                    parts.append(f"({rc:,} runs)")
+                rank = m.get("rank")
+                if rank is not None:
+                    parts.append(f"[rank {rank}]")
+                lines.append(" ".join(parts))
             if len(models) > 30:
                 lines.append(f"... и ещё {len(models) - 30}")
             return _text_response("\n".join(lines))

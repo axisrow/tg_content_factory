@@ -123,7 +123,7 @@ class ClientPool:
             filtered = [
                 dict(dialog)
                 for dialog in full_dialogs
-                if dialog.get("channel_type") not in ("dm", "bot")
+                if dialog.get("channel_type") not in ("dm", "bot", "saved")
             ]
             self._store_cached_dialogs(phone, mode, filtered)
             self._store_cached_dialogs(phone, "full", full_dialogs)
@@ -149,7 +149,7 @@ class ClientPool:
                 filtered = [
                     dict(dialog)
                     for dialog in full_entry.dialogs
-                    if dialog.get("channel_type") not in ("dm", "bot")
+                    if dialog.get("channel_type") not in ("dm", "bot", "saved")
                 ]
                 self._store_cached_dialogs(phone, mode, filtered)
                 return filtered
@@ -182,7 +182,7 @@ class ClientPool:
         target_type: str | None = None,
     ):
         session = adapt_transport_session(session, disconnect_on_close=False)
-        peer = PeerUser(dialog_id) if target_type in ("dm", "bot") else PeerChannel(abs(dialog_id))
+        peer = PeerUser(dialog_id) if target_type in ("dm", "bot", "saved") else PeerChannel(abs(dialog_id))
         try:
             return await run_with_flood_wait(
                 session.resolve_input_entity(peer),
@@ -905,6 +905,11 @@ class ClientPool:
         try:
             items: list[dict] = []
             stats = DialogFetchStats()
+            try:
+                me = await session.fetch_me()
+                my_id: int | None = me.id
+            except Exception:
+                my_id = None
 
             async def _iter() -> None:
                 async for dialog in session.stream_dialogs():
@@ -934,6 +939,7 @@ class ClientPool:
                         )
                     elif include_dm or mode == "full":
                         is_bot = getattr(entity, "bot", False)
+                        is_saved = my_id is not None and entity.id == my_id
                         if is_bot:
                             stats.bots += 1
                         else:
@@ -941,9 +947,9 @@ class ClientPool:
                         items.append(
                             {
                                 "channel_id": entity.id,
-                                "title": dialog.title,
+                                "title": "Избранное (Saved Messages)" if is_saved else dialog.title,
                                 "username": getattr(entity, "username", None),
-                                "channel_type": "bot" if is_bot else "dm",
+                                "channel_type": "saved" if is_saved else ("bot" if is_bot else "dm"),
                                 "deactivate": False,
                                 "is_own": False,
                             }
@@ -1009,7 +1015,7 @@ class ClientPool:
         try:
             for cid, ctype in dialogs:
                 try:
-                    peer = PeerUser(cid) if ctype in ("dm", "bot") else PeerChannel(abs(cid))
+                    peer = PeerUser(cid) if ctype in ("dm", "bot", "saved") else PeerChannel(abs(cid))
                     async def _remove_dialog() -> None:
                         entity = await session.resolve_entity(peer)
                         await session.remove_dialog(entity)

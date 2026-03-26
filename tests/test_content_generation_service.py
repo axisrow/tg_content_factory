@@ -67,6 +67,9 @@ class FakeDB:
     async def execute(self, sql, params=()):
         return None
 
+    async def get_setting(self, key):
+        return None
+
 
 async def test_content_generation_service_rag():
     msg = Message(
