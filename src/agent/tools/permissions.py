@@ -20,8 +20,8 @@ class ToolCategory(str, Enum):
 
 
 # ---------------------------------------------------------------------------
-# Authoritative tool → category mapping.  Every tool in _ALLOWED_TOOLS must
-# appear here.  The bare name (without the MCP prefix) is used as the key.
+# Authoritative tool → category mapping.  get_all_allowed_tools() derives the
+# MCP-prefixed allow-list from this dict.  Bare name is used as the key.
 # ---------------------------------------------------------------------------
 
 TOOL_CATEGORIES: dict[str, ToolCategory] = {
@@ -353,6 +353,11 @@ async def save_tool_permissions(db, permissions: dict[str, bool], phone: str | N
         saved = {}
     saved[phone] = permissions
     await db.set_setting(TOOL_PERMISSIONS_SETTING, json.dumps(saved, ensure_ascii=False))
+
+
+def get_all_allowed_tools() -> list[str]:
+    """Build the full list of MCP-prefixed tool names from TOOL_CATEGORIES."""
+    return [f"{MCP_PREFIX}{name}" for name in TOOL_CATEGORIES]
 
 
 def filter_allowed_tools(all_tools: list[str], permissions: dict[str, bool]) -> list[str]:

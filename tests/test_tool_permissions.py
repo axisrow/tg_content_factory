@@ -15,6 +15,7 @@ from src.agent.tools._registry import (
     require_pool,
 )
 from src.agent.tools.permissions import (
+    MCP_PREFIX,
     TOOL_CATEGORIES,
     _is_per_phone_format,
     build_template_context,
@@ -352,6 +353,28 @@ class TestBuildTemplateContext:
         delete_tools = ctx["tool_permission_categories"]["delete"]
         leave = next(t for t in delete_tools if t["name"] == "leave_dialogs")
         assert leave["enabled"] is False
+
+
+# ---------------------------------------------------------------------------
+# permissions.get_all_allowed_tools
+# ---------------------------------------------------------------------------
+
+
+class TestGetAllAllowedTools:
+    """Ensure get_all_allowed_tools() derives from TOOL_CATEGORIES."""
+
+    def test_length_matches_categories(self):
+        from src.agent.tools.permissions import get_all_allowed_tools
+
+        assert len(get_all_allowed_tools()) == len(TOOL_CATEGORIES)
+
+    def test_all_prefixed(self):
+        from src.agent.tools.permissions import get_all_allowed_tools
+
+        for tool in get_all_allowed_tools():
+            assert tool.startswith(MCP_PREFIX), f"{tool} missing prefix"
+            bare = tool.removeprefix(MCP_PREFIX)
+            assert bare in TOOL_CATEGORIES, f"{bare} not in TOOL_CATEGORIES"
 
 
 # ---------------------------------------------------------------------------
