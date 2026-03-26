@@ -80,8 +80,11 @@ class ContentGenerationService:
             generated_text = result.get("generated_text", "")
             metadata: dict[str, Any] = {"citations": result.get("citations", [])}
 
-            if pipeline.image_model:
-                image_url = await self._generate_image(pipeline, generated_text)
+            image_model = pipeline.image_model
+            if not image_model:
+                image_model = await self._db.get_setting("default_image_model") or ""
+            if image_model:
+                image_url = await self._generate_image(pipeline, generated_text, model=image_model)
                 if image_url:
                     await self._db.execute(
                         "UPDATE generation_runs SET image_url = ? WHERE id = ?",
@@ -200,7 +203,9 @@ class ContentGenerationService:
             "citations": [],
         }
 
-    async def _generate_image(self, pipeline: ContentPipeline, text: str) -> str | None:
+    async def _generate_image(
+        self, pipeline: ContentPipeline, text: str, *, model: str | None = None
+    ) -> str | None:
         """Generate image for the content.
 
         Until the real image-generation service is wired, image generation should
@@ -212,4 +217,4 @@ class ContentGenerationService:
                 pipeline.id,
             )
             return None
-        return await self._image_service.generate(pipeline.image_model, text)
+        return await self._image_service.generate(model or pipeline.image_model, text)
