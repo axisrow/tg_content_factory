@@ -111,3 +111,31 @@ async def refresh_channel_types(request: Request):
         url=f"/channels?msg=types_refreshed&updated={updated}&failed={failed}",
         status_code=303,
     )
+
+
+@router.post("/refresh-meta")
+async def refresh_channel_meta(request: Request):
+    db = deps.get_db(request)
+    pool = deps.get_pool(request)
+    channels = await db.get_channels(active_only=True)
+    ok = 0
+    failed = 0
+    for ch in channels:
+        try:
+            meta = await pool.fetch_channel_meta(ch.channel_id, ch.channel_type)
+        except Exception:
+            meta = None
+        if meta:
+            await db.update_channel_full_meta(
+                ch.channel_id,
+                about=meta["about"],
+                linked_chat_id=meta["linked_chat_id"],
+                has_comments=meta["has_comments"],
+            )
+            ok += 1
+        else:
+            failed += 1
+    return RedirectResponse(
+        url=f"/channels?msg=meta_refreshed&updated={ok}&failed={failed}",
+        status_code=303,
+    )

@@ -133,6 +133,7 @@ TOOL_CATEGORIES: dict[str, ToolCategory] = {
     "generate_image": ToolCategory.WRITE,
     "list_image_models": ToolCategory.READ,
     "list_image_providers": ToolCategory.READ,
+    "list_generated_images": ToolCategory.READ,
     # Settings
     "get_settings": ToolCategory.READ,
     "save_scheduler_settings": ToolCategory.WRITE,
@@ -210,7 +211,7 @@ MODULE_GROUPS: OrderedDict[str, list[str]] = OrderedDict([
         "send_message", "edit_message", "delete_message",
     ]),
     ("Изображения", [
-        "list_image_models", "list_image_providers", "generate_image",
+        "list_image_models", "list_image_providers", "generate_image", "list_generated_images",
     ]),
     ("Настройки", [
         "get_settings", "save_scheduler_settings", "save_agent_settings",
