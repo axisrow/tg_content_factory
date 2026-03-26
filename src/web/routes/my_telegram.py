@@ -310,19 +310,24 @@ async def download_media(request: Request):
     try:
         entity = await client.get_entity(chat_id)
         msg = None
-        async for m in client._client.iter_messages(entity, ids=int(message_id)):
+        async for m in client.iter_messages(entity, ids=int(message_id)):
             msg = m
             break
         if msg is None:
             return RedirectResponse(
                 url=f"/my-telegram/?phone={quote(phone, safe='')}&error=message_not_found", status_code=303
             )
-        output_dir = pathlib.Path("data/downloads")
+        output_dir = pathlib.Path(__file__).resolve().parents[3] / "data" / "downloads"
         output_dir.mkdir(parents=True, exist_ok=True)
         path = await client.download_media(msg, file=str(output_dir))
         if not path:
             return RedirectResponse(
                 url=f"/my-telegram/?phone={quote(phone, safe='')}&error=no_media", status_code=303
+            )
+        resolved = pathlib.Path(path).resolve()
+        if not resolved.is_relative_to(output_dir.resolve()):
+            return RedirectResponse(
+                url=f"/my-telegram/?phone={quote(phone, safe='')}&error=path_escape", status_code=303
             )
         return FileResponse(path=path, filename=os.path.basename(path))
     except Exception as exc:
@@ -338,7 +343,7 @@ async def get_participants(request: Request):
     chat_id = request.query_params.get("chat_id", "")
     limit_str = request.query_params.get("limit", "")
     search = request.query_params.get("search", "")
-    limit = int(limit_str) if limit_str and limit_str.isdigit() else None
+    limit = int(limit_str) if limit_str and limit_str.isdigit() else 200
     pool = deps.get_pool(request)
     if not phone or not chat_id:
         return JSONResponse({"error": "phone and chat_id required"}, status_code=400)
@@ -371,6 +376,7 @@ async def edit_admin(request: Request):
     chat_id = form.get("chat_id", "")
     user_id = form.get("user_id", "")
     title = form.get("title", "") or None
+    is_admin = form.get("is_admin", "1") in ("1", "true", "on")
     pool = deps.get_pool(request)
     if not phone or not chat_id or not user_id:
         return RedirectResponse(
@@ -385,7 +391,7 @@ async def edit_admin(request: Request):
     try:
         entity = await client.get_entity(chat_id)
         user = await client.get_entity(user_id)
-        kwargs = {}
+        kwargs = {"is_admin": is_admin}
         if title:
             kwargs["title"] = title
         await client.edit_admin(entity, user, **kwargs)
@@ -408,6 +414,8 @@ async def edit_permissions(request: Request):
     chat_id = form.get("chat_id", "")
     user_id = form.get("user_id", "")
     until_date_str = form.get("until_date", "") or None
+    send_messages_str = form.get("send_messages")
+    send_media_str = form.get("send_media")
     pool = deps.get_pool(request)
     if not phone or not chat_id or not user_id:
         return RedirectResponse(
@@ -423,7 +431,12 @@ async def edit_permissions(request: Request):
         entity = await client.get_entity(chat_id)
         user = await client.get_entity(user_id)
         until_date = datetime.fromisoformat(until_date_str) if until_date_str else None
-        await client.edit_permissions(entity, user, until_date=until_date)
+        kwargs = {"until_date": until_date}
+        if send_messages_str is not None:
+            kwargs["send_messages"] = send_messages_str in ("1", "true", "on")
+        if send_media_str is not None:
+            kwargs["send_media"] = send_media_str in ("1", "true", "on")
+        await client.edit_permissions(entity, user, **kwargs)
         return RedirectResponse(
             url=f"/my-telegram/?phone={quote(phone, safe='')}&msg=permissions_updated", status_code=303
         )
@@ -479,7 +492,15 @@ async def broadcast_stats(request: Request):
     try:
         entity = await client.get_entity(chat_id)
         stats = await client.get_broadcast_stats(entity)
-        return JSONResponse({"stats": str(stats)})
+        fields = {}
+        for attr in ("period", "followers", "views_per_post", "shares_per_post",
+                      "reactions_per_post", "forwards_per_post", "enabled_notifications"):
+            val = getattr(stats, attr, None)
+            if val is not None:
+                fields[attr] = str(val)
+        if not fields:
+            fields["raw"] = str(stats)
+        return JSONResponse({"stats": fields})
     except Exception as exc:
         logger.exception("Failed to get broadcast stats: %s", exc)
         return JSONResponse({"error": str(exc)}, status_code=500)

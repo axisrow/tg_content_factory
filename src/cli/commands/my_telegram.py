@@ -297,7 +297,7 @@ def run(args: argparse.Namespace) -> None:
                 try:
                     entity = await client.get_entity(args.chat_id)
                     msg = None
-                    async for m in client._client.iter_messages(entity, ids=args.message_id):
+                    async for m in client.iter_messages(entity, ids=args.message_id):
                         msg = m
                         break
                     if msg is None:
@@ -370,7 +370,7 @@ def run(args: argparse.Namespace) -> None:
                 try:
                     entity = await client.get_entity(args.chat_id)
                     user = await client.get_entity(args.user_id)
-                    kwargs = {}
+                    kwargs = {"is_admin": args.is_admin}
                     if args.title:
                         kwargs["title"] = args.title
                     await client.edit_admin(entity, user, **kwargs)
@@ -406,7 +406,12 @@ def run(args: argparse.Namespace) -> None:
                     until_date = None
                     if args.until_date:
                         until_date = datetime.fromisoformat(args.until_date)
-                    await client.edit_permissions(entity, user, until_date=until_date)
+                    kwargs = {"until_date": until_date}
+                    if args.send_messages is not None:
+                        kwargs["send_messages"] = args.send_messages.lower() in ("1", "true", "on")
+                    if args.send_media is not None:
+                        kwargs["send_media"] = args.send_media.lower() in ("1", "true", "on")
+                    await client.edit_permissions(entity, user, **kwargs)
                     print(f"Permissions updated for {args.user_id}.")
                 except Exception as exc:
                     print(f"Error editing permissions: {exc}")
@@ -457,7 +462,11 @@ def run(args: argparse.Namespace) -> None:
                     entity = await client.get_entity(args.chat_id)
                     stats = await client.get_broadcast_stats(entity)
                     print(f"Broadcast stats for {args.chat_id}:")
-                    print(f"  {stats}")
+                    for attr in ("period", "followers", "views_per_post", "shares_per_post",
+                                 "reactions_per_post", "forwards_per_post", "enabled_notifications"):
+                        val = getattr(stats, attr, None)
+                        if val is not None:
+                            print(f"  {attr}: {val}")
                 except Exception as exc:
                     print(f"Error fetching broadcast stats: {exc}")
 

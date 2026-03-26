@@ -473,7 +473,7 @@ def build_parser() -> argparse.ArgumentParser:
     my_tg_participants = my_tg_sub.add_parser("participants", help="List participants of a channel/group")
     my_tg_participants.add_argument("chat_id", help="Chat ID or @username")
     my_tg_participants.add_argument("--phone", default=None, help="Account phone (default: first connected)")
-    my_tg_participants.add_argument("--limit", type=int, default=None, help="Max participants to fetch")
+    my_tg_participants.add_argument("--limit", type=int, default=200, help="Max participants to fetch (default: 200)")
     my_tg_participants.add_argument("--search", default="", help="Search query to filter participants")
 
     my_tg_edit_admin = my_tg_sub.add_parser("edit-admin", help="Promote or demote a user as admin")
@@ -481,6 +481,9 @@ def build_parser() -> argparse.ArgumentParser:
     my_tg_edit_admin.add_argument("user_id", help="User ID or @username to change admin rights for")
     my_tg_edit_admin.add_argument("--phone", default=None, help="Account phone (default: first connected)")
     my_tg_edit_admin.add_argument("--title", default=None, help="Custom admin title")
+    my_tg_edit_admin.add_argument("--is-admin", dest="is_admin", action="store_true",
+                                  default=True, help="Promote to admin (default)")
+    my_tg_edit_admin.add_argument("--no-admin", dest="is_admin", action="store_false", help="Demote from admin")
     my_tg_edit_admin.add_argument("--yes", "-y", action="store_true", help="Skip confirmation prompt")
 
     my_tg_edit_perms = my_tg_sub.add_parser("edit-permissions", help="Restrict or unrestrict a user in a group")
@@ -489,6 +492,10 @@ def build_parser() -> argparse.ArgumentParser:
     my_tg_edit_perms.add_argument("--phone", default=None, help="Account phone (default: first connected)")
     my_tg_edit_perms.add_argument("--until-date", default=None, dest="until_date",
                                   help="Restriction end date (ISO format, e.g. 2025-12-31)")
+    my_tg_edit_perms.add_argument("--send-messages", dest="send_messages", default=None,
+                                  help="Allow sending messages (true/false)")
+    my_tg_edit_perms.add_argument("--send-media", dest="send_media", default=None,
+                                  help="Allow sending media (true/false)")
     my_tg_edit_perms.add_argument("--yes", "-y", action="store_true", help="Skip confirmation prompt")
 
     my_tg_kick = my_tg_sub.add_parser("kick", help="Kick a participant from a chat")

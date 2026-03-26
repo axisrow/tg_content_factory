@@ -204,16 +204,19 @@ def register(db, client_pool, embedding_service, **kwargs):
             client, _ = result
             entity = await client.get_entity(chat_id)
             msg = None
-            async for m in client._client.iter_messages(entity, ids=int(message_id)):
+            async for m in client.iter_messages(entity, ids=int(message_id)):
                 msg = m
                 break
             if msg is None:
                 return _text_response(f"Сообщение #{message_id} не найдено.")
-            output_dir = pathlib.Path("data/downloads")
+            output_dir = pathlib.Path(__file__).resolve().parents[3] / "data" / "downloads"
             output_dir.mkdir(parents=True, exist_ok=True)
             path = await client.download_media(msg, file=str(output_dir))
             if not path:
                 return _text_response("В сообщении нет медиа.")
+            resolved = pathlib.Path(path).resolve()
+            if not resolved.is_relative_to(output_dir.resolve()):
+                return _text_response("Ошибка: путь загрузки вне допустимой директории.")
             return _text_response(f"Медиа загружено: {path}")
         except Exception as e:
             return _text_response(f"Ошибка загрузки медиа: {e}")
@@ -231,7 +234,7 @@ def register(db, client_pool, embedding_service, **kwargs):
             return pool_gate
         phone = args.get("phone", "")
         chat_id = args.get("chat_id", "")
-        limit = args.get("limit") or None
+        limit = args.get("limit") or 200
         search = args.get("search", "")
         if not phone or not chat_id:
             return _text_response("Ошибка: phone и chat_id обязательны.")
@@ -263,8 +266,9 @@ def register(db, client_pool, embedding_service, **kwargs):
     @tool(
         "edit_admin",
         "Promote or demote a user as admin in a Telegram channel/group. "
+        "Set is_admin=true to promote (grants all permissions), is_admin=false to demote. "
         "Ask user for confirmation first.",
-        {"phone": str, "chat_id": str, "user_id": str, "title": str, "confirm": bool},
+        {"phone": str, "chat_id": str, "user_id": str, "is_admin": bool, "title": str, "confirm": bool},
     )
     async def edit_admin(args):
         pool_gate = require_pool(client_pool, "Изменение прав администратора")
@@ -273,10 +277,12 @@ def register(db, client_pool, embedding_service, **kwargs):
         phone = args.get("phone", "")
         chat_id = args.get("chat_id", "")
         user_id = args.get("user_id", "")
+        is_admin = args.get("is_admin", True)
         title = args.get("title") or None
         if not phone or not chat_id or not user_id:
             return _text_response("Ошибка: phone, chat_id и user_id обязательны.")
-        gate = require_confirmation(f"изменит права администратора для {user_id} в {chat_id}", args)
+        action = "повысит" if is_admin else "понизит"
+        gate = require_confirmation(f"{action} {user_id} в {chat_id}", args)
         if gate:
             return gate
         try:
@@ -286,7 +292,7 @@ def register(db, client_pool, embedding_service, **kwargs):
             client, _ = result
             entity = await client.get_entity(chat_id)
             user = await client.get_entity(user_id)
-            kwargs = {}
+            kwargs = {"is_admin": is_admin}
             if title:
                 kwargs["title"] = title
             await client.edit_admin(entity, user, **kwargs)
@@ -299,8 +305,13 @@ def register(db, client_pool, embedding_service, **kwargs):
     @tool(
         "edit_permissions",
         "Restrict or unrestrict a user in a Telegram group. "
-        "Ask user for confirmation first.",
-        {"phone": str, "chat_id": str, "user_id": str, "until_date": str, "confirm": bool},
+        "Set send_messages=false to mute, send_media=false to block media, etc. "
+        "To unrestrict, set all flags to true. Ask user for confirmation first.",
+        {
+            "phone": str, "chat_id": str, "user_id": str,
+            "send_messages": bool, "send_media": bool,
+            "until_date": str, "confirm": bool,
+        },
     )
     async def edit_permissions(args):
         from datetime import datetime
@@ -312,8 +323,15 @@ def register(db, client_pool, embedding_service, **kwargs):
         chat_id = args.get("chat_id", "")
         user_id = args.get("user_id", "")
         until_date_str = args.get("until_date") or None
+        send_messages = args.get("send_messages")
+        send_media = args.get("send_media")
         if not phone or not chat_id or not user_id:
             return _text_response("Ошибка: phone, chat_id и user_id обязательны.")
+        if send_messages is None and send_media is None:
+            return _text_response(
+                "Ошибка: укажите хотя бы один флаг ограничения "
+                "(send_messages, send_media)."
+            )
         gate = require_confirmation(f"изменит ограничения для {user_id} в {chat_id}", args)
         if gate:
             return gate
@@ -325,7 +343,12 @@ def register(db, client_pool, embedding_service, **kwargs):
             entity = await client.get_entity(chat_id)
             user = await client.get_entity(user_id)
             until_date = datetime.fromisoformat(until_date_str) if until_date_str else None
-            await client.edit_permissions(entity, user, until_date=until_date)
+            kwargs = {"until_date": until_date}
+            if send_messages is not None:
+                kwargs["send_messages"] = send_messages
+            if send_media is not None:
+                kwargs["send_media"] = send_media
+            await client.edit_permissions(entity, user, **kwargs)
             return _text_response(f"Ограничения обновлены для {user_id} в {chat_id}.")
         except Exception as e:
             return _text_response(f"Ошибка изменения ограничений: {e}")
@@ -385,7 +408,18 @@ def register(db, client_pool, embedding_service, **kwargs):
             client, _ = result
             entity = await client.get_entity(chat_id)
             stats = await client.get_broadcast_stats(entity)
-            return _text_response(f"Статистика канала {chat_id}:\n{stats}")
+            fields = {}
+            for attr in ("period", "followers", "views_per_post", "shares_per_post",
+                         "reactions_per_post", "forwards_per_post", "enabled_notifications"):
+                val = getattr(stats, attr, None)
+                if val is not None:
+                    fields[attr] = str(val)
+            if not fields:
+                fields["raw"] = str(stats)
+            lines = [f"Статистика канала {chat_id}:"]
+            for k, v in fields.items():
+                lines.append(f"  {k}: {v}")
+            return _text_response("\n".join(lines))
         except Exception as e:
             return _text_response(f"Ошибка получения статистики: {e}")
 
