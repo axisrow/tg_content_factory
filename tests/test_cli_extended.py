@@ -68,6 +68,7 @@ def cli_env_with_mock_pool(cli_env):
     mock_pool.clients = {"+70001112233": MagicMock()}
     mock_pool.disconnect_all = AsyncMock()
     mock_pool.release_client = AsyncMock()
+    mock_pool.fetch_channel_meta = AsyncMock(return_value=None)
 
     mock_client = AsyncMock()
     mock_client.get_dialogs = AsyncMock()
