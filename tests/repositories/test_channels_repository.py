@@ -463,8 +463,9 @@ async def test_map_channel_missing_meta_columns(repo):
     await repo.add_channel(make_channel(1, title="Test"))
     # Simulate old row without metadata columns by selecting specific columns
     cur = await repo._db.execute(
-        "SELECT id, channel_id, title, username, channel_type, is_active, is_filtered, filter_flags, last_collected_id, added_at "
-        "FROM channels WHERE channel_id = 1"
+        "SELECT id, channel_id, title, username, channel_type, is_active,"
+        " is_filtered, filter_flags, last_collected_id, added_at"
+        " FROM channels WHERE channel_id = 1"
     )
     old_row = await cur.fetchone()
 
