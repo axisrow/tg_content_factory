@@ -140,4 +140,30 @@ def register(db, client_pool, embedding_service, **kwargs):
 
     tools.append(list_image_providers)
 
+    @tool(
+        "list_generated_images",
+        "List recently generated images stored in the database. "
+        "Returns image ID, prompt, model, local file path, and creation date.",
+        {"limit": int},
+    )
+    async def list_generated_images(args):
+        limit = args.get("limit") or 20
+        try:
+            images = await db.repos.generated_images.list_recent(limit=limit)
+            if not images:
+                return _text_response("Нет сгенерированных изображений.")
+            lines = [f"Последние {len(images)} изображений:"]
+            for img in images:
+                prompt_preview = (img.prompt[:60] + "...") if len(img.prompt) > 60 else img.prompt
+                lines.append(f"  [{img.id}] {img.created_at} — {prompt_preview}")
+                if img.local_path:
+                    lines.append(f"       Файл: /{img.local_path}")
+                if img.model:
+                    lines.append(f"       Модель: {img.model}")
+            return _text_response("\n".join(lines))
+        except Exception as e:
+            return _text_response(f"Ошибка получения списка изображений: {e}")
+
+    tools.append(list_generated_images)
+
     return tools
