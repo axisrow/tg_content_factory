@@ -6,7 +6,6 @@ import logging
 import os
 import re
 import secrets
-import signal
 import time
 from contextlib import asynccontextmanager
 
@@ -230,22 +229,7 @@ async def lifespan(app: FastAPI):
     configure_app(app, container)
     logger.info("Application started")
 
-    startup_task = asyncio.create_task(start_container(container))
-
-    def _abort_startup(sig: int) -> None:
-        logger.warning("Received %s during startup, aborting...", signal.Signals(sig).name)
-        startup_task.cancel()
-
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        loop.add_signal_handler(sig, _abort_startup, sig)
-
-    try:
-        await startup_task
-    except asyncio.CancelledError:
-        logger.warning("startup: cancelled by signal — server starts with partial init")
-    finally:
-        for sig in (signal.SIGINT, signal.SIGTERM):
-            loop.remove_signal_handler(sig)
+    await start_container(container)
 
     try:
         yield

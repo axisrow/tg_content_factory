@@ -229,31 +229,112 @@ MODULE_GROUPS: OrderedDict[str, list[str]] = OrderedDict([
 
 
 def _default_permissions() -> dict[str, bool]:
-    """Default permissions: read=True, write/delete=False."""
-    return {
-        name: (cat == ToolCategory.READ)
-        for name, cat in TOOL_CATEGORIES.items()
-    }
+    """Default permissions: all tools enabled."""
+    return {name: True for name in TOOL_CATEGORIES}
 
 
-async def load_tool_permissions(db) -> dict[str, bool]:
-    """Load per-tool permissions from DB.  Missing setting → read-only defaults."""
-    defaults = _default_permissions()
+def _is_per_phone_format(saved: dict) -> bool:
+    """Detect whether saved dict is per-phone (values are dicts) or flat (values are bools)."""
+    if not saved:
+        return False
+    first_value = next(iter(saved.values()))
+    return isinstance(first_value, dict)
+
+
+async def _load_raw_permissions(db) -> dict:
+    """Load raw JSON from DB setting."""
     raw = await db.get_setting(TOOL_PERMISSIONS_SETTING)
     if not raw:
-        return defaults
+        return {}
     try:
-        saved: dict = json.loads(raw)
+        return json.loads(raw)
     except (json.JSONDecodeError, TypeError):
         logger.warning("Corrupted tool permissions setting, using defaults")
+        return {}
+
+
+async def load_tool_permissions(db, phone: str | None = None) -> dict[str, bool]:
+    """Load per-tool permissions from DB for a specific phone.
+
+    If *phone* is ``None``, loads permissions for the primary account.
+    Supports both legacy flat format and per-phone format.
+    Missing setting → all-enabled defaults.
+    """
+    defaults = _default_permissions()
+    saved = await _load_raw_permissions(db)
+    if not saved:
+        logger.debug("Tool permissions: no DB setting, using defaults (all enabled)")
         return defaults
-    # Merge: saved values take precedence, new tools get default for their category
-    return {name: saved.get(name, defaults[name]) for name in TOOL_CATEGORIES}
+
+    is_per_phone = _is_per_phone_format(saved)
+    logger.debug(
+        "Tool permissions raw: per_phone=%s, top_keys=%s",
+        is_per_phone, list(saved.keys())[:5],
+    )
+
+    if is_per_phone:
+        phone_used = phone
+        if phone and phone in saved:
+            phone_perms = saved[phone]
+        else:
+            if phone is None:
+                accounts = await db.get_accounts()
+                if accounts:
+                    primary = next((a for a in accounts if a.is_primary), accounts[0])
+                    phone_used = primary.phone
+                    phone_perms = saved.get(primary.phone, {})
+                else:
+                    phone_perms = {}
+            else:
+                phone_perms = {}
+        if not phone_perms:
+            logger.debug("Tool permissions: phone=%s not in saved, using defaults", phone_used)
+            return defaults
+        result = {name: phone_perms.get(name, defaults[name]) for name in TOOL_CATEGORIES}
+    else:
+        phone_used = "(flat/legacy)"
+        result = {name: saved.get(name, defaults[name]) for name in TOOL_CATEGORIES}
+
+    enabled = sum(1 for v in result.values() if v)
+    disabled = sum(1 for v in result.values() if not v)
+    logger.debug("Tool permissions for %s: %d enabled, %d disabled", phone_used, enabled, disabled)
+    return result
 
 
-async def save_tool_permissions(db, permissions: dict[str, bool]) -> None:
-    """Persist per-tool permissions as JSON."""
-    await db.set_setting(TOOL_PERMISSIONS_SETTING, json.dumps(permissions, ensure_ascii=False))
+async def load_tool_permissions_all_phones(db, accounts) -> dict[str, dict[str, bool]]:
+    """Load permissions for every account phone.  Returns ``{phone: {tool: bool}}``."""
+    defaults = _default_permissions()
+    saved = await _load_raw_permissions(db)
+
+    result = {}
+    for acc in accounts:
+        if _is_per_phone_format(saved) and acc.phone in saved:
+            phone_perms = saved[acc.phone]
+            result[acc.phone] = {name: phone_perms.get(name, defaults[name]) for name in TOOL_CATEGORIES}
+        elif not _is_per_phone_format(saved) and saved:
+            # Legacy flat → apply to all phones
+            result[acc.phone] = {name: saved.get(name, defaults[name]) for name in TOOL_CATEGORIES}
+        else:
+            result[acc.phone] = dict(defaults)
+    return result
+
+
+async def save_tool_permissions(db, permissions: dict[str, bool], phone: str | None = None) -> None:
+    """Persist per-tool permissions as JSON.
+
+    If *phone* is given, saves under the per-phone key without touching other phones.
+    If *phone* is ``None``, saves in legacy flat format (backward compat).
+    """
+    if phone is None:
+        await db.set_setting(TOOL_PERMISSIONS_SETTING, json.dumps(permissions, ensure_ascii=False))
+        return
+
+    saved = await _load_raw_permissions(db)
+    if saved and not _is_per_phone_format(saved):
+        # Migrate legacy flat → per-phone: existing flat becomes the phone's entry
+        saved = {}
+    saved[phone] = permissions
+    await db.set_setting(TOOL_PERMISSIONS_SETTING, json.dumps(saved, ensure_ascii=False))
 
 
 def filter_allowed_tools(all_tools: list[str], permissions: dict[str, bool]) -> list[str]:

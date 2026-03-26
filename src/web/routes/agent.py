@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import sqlite3
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
@@ -240,9 +241,15 @@ async def chat(request: Request, thread_id: int):
                 data_str = chunk.removeprefix("data: ").strip()
                 data = json.loads(data_str)
                 if data.get("done") and data.get("full_text"):
-                    await db.save_agent_message(thread_id, "assistant", data["full_text"])
+                    try:
+                        await db.save_agent_message(thread_id, "assistant", data["full_text"])
+                    except sqlite3.IntegrityError:
+                        logger.debug("Thread %d deleted during response — skipping save", thread_id)
                 elif data.get("error"):
-                    await db.delete_last_agent_exchange(thread_id)
+                    try:
+                        await db.delete_last_agent_exchange(thread_id)
+                    except sqlite3.IntegrityError:
+                        pass
             except json.JSONDecodeError:
                 pass
             except Exception:
