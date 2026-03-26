@@ -507,6 +507,32 @@ async def photo_toggle_auto(request: Request, job_id: int, phone: str = Form("")
     return _redirect(phone, "photo_auto_toggled")
 
 
+@router.post("/auto/{job_id}/update")
+async def photo_update_auto(request: Request, job_id: int):
+    form = await request.form()
+    phone = form.get("phone", "")
+    service = deps.get_photo_auto_upload_service(request)
+    job = await service.get_job(job_id)
+    if job is None:
+        return _redirect(phone, "photo_auto_failed", error=True)
+    kwargs: dict = {}
+    if form.get("folder"):
+        kwargs["folder_path"] = form["folder"]
+    if form.get("mode"):
+        from src.models import PhotoSendMode
+
+        kwargs["send_mode"] = PhotoSendMode(form["mode"])
+    if form.get("caption") is not None:
+        kwargs["caption"] = form["caption"]
+    interval = form.get("interval_minutes")
+    if interval and str(interval).isdigit():
+        kwargs["interval_minutes"] = int(interval)
+    if form.get("is_active"):
+        kwargs["is_active"] = form["is_active"] in ("1", "true", "on")
+    await service.update_job(job_id, **kwargs)
+    return _redirect(phone, "photo_auto_updated")
+
+
 @router.post("/auto/{job_id}/delete")
 async def photo_delete_auto(request: Request, job_id: int, phone: str = Form("")):
     await deps.get_photo_auto_upload_service(request).delete_job(job_id)
