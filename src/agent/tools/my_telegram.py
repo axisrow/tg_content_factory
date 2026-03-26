@@ -18,7 +18,12 @@ from src.agent.tools._registry import (
 def register(db, client_pool, embedding_service, **kwargs):
     tools = []
 
-    @tool("list_dialogs", "List Telegram dialogs (chats/channels) for an account", {"phone": str})
+    @tool(
+        "list_dialogs",
+        "List Telegram dialogs (chats/channels) for an account. "
+        "Saved Messages shown as type='saved'.",
+        {"phone": str},
+    )
     async def list_dialogs(args):
         pool_gate = require_pool(client_pool, "Список диалогов")
         if pool_gate:
