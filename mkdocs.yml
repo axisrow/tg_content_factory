@@ -1,0 +1,71 @@
+site_name: TG Agent
+site_description: Telegram Post Search, Monitoring & Content Automation
+site_url: https://axisrow.github.io/tg_content_factory/
+repo_url: https://github.com/axisrow/tg_content_factory
+repo_name: axisrow/tg_content_factory
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - search.highlight
+    - search.suggest
+    - content.code.copy
+    - content.code.annotate
+
+plugins:
+  - search
+
+markdown_extensions:
+  - tables
+  - admonition
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.details
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - Getting Started:
+    - Installation: getting-started/installation.md
+    - Configuration: getting-started/configuration.md
+    - Quick Start: getting-started/quickstart.md
+  - Features:
+    - Overview: features/overview.md
+    - Channel Management: features/channels.md
+    - Message Collection: features/collection.md
+    - Search: features/search.md
+    - Content Pipelines: features/pipelines.md
+    - Photo Loader: features/photo-loader.md
+    - Agent System: features/agent.md
+    - Scheduler: features/scheduler.md
+    - Notifications: features/notifications.md
+    - Filters: features/filters.md
+    - Analytics: features/analytics.md
+    - My Telegram: features/my-telegram.md
+  - Reference:
+    - CLI Reference: reference/cli.md
+    - Web API Reference: reference/web-api.md
+    - CLI / Web Parity: reference/parity.md
+    - Agent Tools: reference/agent-tools.md
+  - Architecture: architecture.md

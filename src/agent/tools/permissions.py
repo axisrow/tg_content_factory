@@ -129,6 +129,17 @@ TOOL_CATEGORIES: dict[str, ToolCategory] = {
     "send_message": ToolCategory.WRITE,
     "edit_message": ToolCategory.WRITE,
     "delete_message": ToolCategory.DELETE,
+    "pin_message": ToolCategory.WRITE,
+    "unpin_message": ToolCategory.WRITE,
+    "download_media": ToolCategory.READ,
+    "get_participants": ToolCategory.READ,
+    "edit_admin": ToolCategory.WRITE,
+    "edit_permissions": ToolCategory.WRITE,
+    "kick_participant": ToolCategory.DELETE,
+    "get_broadcast_stats": ToolCategory.READ,
+    "archive_chat": ToolCategory.WRITE,
+    "unarchive_chat": ToolCategory.WRITE,
+    "mark_read": ToolCategory.WRITE,
     # Images
     "generate_image": ToolCategory.WRITE,
     "list_image_models": ToolCategory.READ,
@@ -208,6 +219,11 @@ MODULE_GROUPS: OrderedDict[str, list[str]] = OrderedDict([
     ]),
     ("Сообщения", [
         "send_message", "edit_message", "delete_message",
+        "pin_message", "unpin_message", "download_media",
+    ]),
+    ("Управление чатом", [
+        "get_participants", "edit_admin", "edit_permissions", "kick_participant",
+        "get_broadcast_stats", "archive_chat", "unarchive_chat", "mark_read",
     ]),
     ("Изображения", [
         "list_image_models", "list_image_providers", "generate_image",
