@@ -527,7 +527,7 @@ async def photo_update_auto(request: Request, job_id: int):
     interval = form.get("interval_minutes")
     if interval and str(interval).isdigit():
         kwargs["interval_minutes"] = int(interval)
-    if form.get("is_active") is not None:
+    if form.get("is_active"):
         kwargs["is_active"] = form["is_active"] in ("1", "true", "on")
     await service.update_job(job_id, **kwargs)
     return _redirect(phone, "photo_auto_updated")
