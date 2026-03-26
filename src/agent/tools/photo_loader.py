@@ -7,10 +7,10 @@ from mcp.types import ToolAnnotations
 
 from src.agent.tools._registry import (
     _text_response,
-    normalize_phone,
     require_confirmation,
     require_phone_permission,
     require_pool,
+    resolve_phone,
 )
 
 
@@ -76,11 +76,12 @@ def register(db, client_pool, embedding_service, **kwargs):
         pool_gate = require_pool(client_pool, "Отправка фото")
         if pool_gate:
             return pool_gate
-        phone = normalize_phone(args.get("phone", ""))
-        if phone:
-            perm_gate = await require_phone_permission(db, phone, "send_photos_now")
-            if perm_gate:
-                return perm_gate
+        phone, err = await resolve_phone(db, args.get("phone", ""))
+        if err:
+            return err
+        perm_gate = await require_phone_permission(db, phone, "send_photos_now")
+        if perm_gate:
+            return perm_gate
         gate = require_confirmation("отправит фото в Telegram-диалог", args)
         if gate:
             return gate
@@ -135,11 +136,12 @@ def register(db, client_pool, embedding_service, **kwargs):
         pool_gate = require_pool(client_pool, "Планирование фото")
         if pool_gate:
             return pool_gate
-        phone = normalize_phone(args.get("phone", ""))
-        if phone:
-            perm_gate = await require_phone_permission(db, phone, "schedule_photos")
-            if perm_gate:
-                return perm_gate
+        phone, err = await resolve_phone(db, args.get("phone", ""))
+        if err:
+            return err
+        perm_gate = await require_phone_permission(db, phone, "schedule_photos")
+        if perm_gate:
+            return perm_gate
         gate = require_confirmation("запланирует отправку фото", args)
         if gate:
             return gate
@@ -283,12 +285,17 @@ def register(db, client_pool, embedding_service, **kwargs):
         pool_gate = require_pool(client_pool, "Создание батча фото")
         if pool_gate:
             return pool_gate
-        phone = normalize_phone(args.get("phone", ""))
+        phone, err = await resolve_phone(db, args.get("phone", ""))
+        if err:
+            return err
+        perm_gate = await require_phone_permission(db, phone, "create_photo_batch")
+        if perm_gate:
+            return perm_gate
         target = args.get("target", "")
         files = [f.strip() for f in args.get("file_paths", "").split(",") if f.strip()]
         caption = args.get("caption")
-        if not phone or not target or not files:
-            return _text_response("Ошибка: phone, target и file_paths обязательны.")
+        if not target or not files:
+            return _text_response("Ошибка: target и file_paths обязательны.")
         gate = require_confirmation(
             f"создаст батч фото для отправки: файлы={files}, target={target}", args
         )
@@ -359,8 +366,19 @@ def register(db, client_pool, embedding_service, **kwargs):
         pool_gate = require_pool(client_pool, "Создание автозагрузки")
         if pool_gate:
             return pool_gate
+        phone, err = await resolve_phone(db, args.get("phone", ""))
+        if err:
+            return err
+        perm_gate = await require_phone_permission(db, phone, "create_auto_upload")
+        if perm_gate:
+            return perm_gate
         folder_path = args.get("folder_path", "")
         target = args.get("target", "")
+        interval = int(args.get("interval_minutes", 60))
+        mode = args.get("mode", "album")
+        caption = args.get("caption")
+        if not target or not folder_path:
+            return _text_response("Ошибка: target и folder_path обязательны.")
         gate = require_confirmation(
             f"создаст автозагрузку фото: folder={folder_path}, target={target}", args
         )
@@ -373,14 +391,6 @@ def register(db, client_pool, embedding_service, **kwargs):
             from src.services.photo_publish_service import PhotoPublishService
 
             svc = PhotoAutoUploadService(PhotoLoaderBundle.from_database(db), PhotoPublishService(client_pool))
-            phone = normalize_phone(args.get("phone", ""))
-            target = args.get("target", "")
-            folder_path = args.get("folder_path", "")
-            interval = int(args.get("interval_minutes", 60))
-            mode = args.get("mode", "album")
-            caption = args.get("caption")
-            if not phone or not target or not folder_path:
-                return _text_response("Ошибка: phone, target и folder_path обязательны.")
             job_id = await svc.create_job(PhotoAutoUploadJob(
                 phone=phone,
                 target_dialog_id=int(target),

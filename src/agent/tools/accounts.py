@@ -5,7 +5,7 @@ from __future__ import annotations
 from claude_agent_sdk import tool
 from mcp.types import ToolAnnotations
 
-from src.agent.tools._registry import _text_response, require_confirmation
+from src.agent.tools._registry import _text_response, require_confirmation, resolve_phone
 
 
 def register(db, client_pool, embedding_service, **kwargs):
@@ -97,9 +97,9 @@ def register(db, client_pool, embedding_service, **kwargs):
         {"phone": str, "confirm": bool},
     )
     async def clear_flood_status(args):
-        phone = args.get("phone", "")
-        if not phone:
-            return _text_response("Ошибка: phone обязателен.")
+        phone, err = await resolve_phone(db, args.get("phone", ""))
+        if err:
+            return err
         gate = require_confirmation(f"сбросит flood-wait для аккаунта {phone}", args)
         if gate:
             return gate
