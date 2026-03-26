@@ -69,7 +69,7 @@ async def require_phone_permission(db: object, phone: str, tool_name: str) -> di
     except (ValueError, TypeError):
         return None  # malformed → allow all
     # Collect phones allowed for this tool
-    allowed_phones = [p for p, tools in perms.items() if tools.get(tool_name, False)]
+    allowed_phones = [p for p, tools in perms.items() if isinstance(tools, dict) and tools.get(tool_name, False)]
     if not allowed_phones:
         return None  # tool not restricted for any phone → allow all
     if phone in allowed_phones:
