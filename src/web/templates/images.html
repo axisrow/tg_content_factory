@@ -175,6 +175,12 @@ document.addEventListener('DOMContentLoaded', function() {
                     badge.textContent = m.run_count.toLocaleString() + ' runs';
                     info.appendChild(badge);
                 }
+                if (m.rank != null) {
+                    const rankBadge = document.createElement('span');
+                    rankBadge.className = 'badge text-bg-info ms-1';
+                    rankBadge.textContent = 'rank ' + m.rank;
+                    info.appendChild(rankBadge);
+                }
                 item.appendChild(info);
 
                 const btn = document.createElement('button');
