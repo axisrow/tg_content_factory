@@ -355,6 +355,26 @@ async def save_tool_permissions(db, permissions: dict[str, bool], phone: str | N
     await db.set_setting(TOOL_PERMISSIONS_SETTING, json.dumps(saved, ensure_ascii=False))
 
 
+async def load_tool_permissions_union(db) -> dict[str, bool]:
+    """Union across all phones — True if ANY phone allows the tool.
+
+    Used by agent backends so that tools visible to at least one account
+    remain available for the session.  Per-phone handler gates do fine-grained blocking.
+    """
+    defaults = _default_permissions()
+    saved = await _load_raw_permissions(db)
+    if not saved:
+        return defaults
+
+    if not _is_per_phone_format(saved):
+        return {name: saved.get(name, defaults[name]) for name in TOOL_CATEGORIES}
+
+    phone_dicts = [v for v in saved.values() if isinstance(v, dict)]
+    if not phone_dicts:
+        return defaults
+    return {name: any(pd.get(name, defaults[name]) for pd in phone_dicts) for name in TOOL_CATEGORIES}
+
+
 def get_all_allowed_tools() -> list[str]:
     """Build the full list of MCP-prefixed tool names from TOOL_CATEGORIES."""
     return [f"{MCP_PREFIX}{name}" for name in TOOL_CATEGORIES]
