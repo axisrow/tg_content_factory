@@ -119,6 +119,44 @@ def register(db, client_pool, embedding_service, **kwargs):
     tools.append(delete_message)
 
     @tool(
+        "forward_messages",
+        "Forward messages from one Telegram chat to another. "
+        "Pass comma-separated message IDs. Always ask user for confirmation first.",
+        {"phone": str, "from_chat": str, "to_chat": str, "message_ids": str, "confirm": bool},
+    )
+    async def forward_messages(args):
+        pool_gate = require_pool(client_pool, "Пересылка сообщений")
+        if pool_gate:
+            return pool_gate
+        phone = args.get("phone", "")
+        from_chat = args.get("from_chat", "")
+        to_chat = args.get("to_chat", "")
+        message_ids_str = args.get("message_ids", "")
+        if not phone or not from_chat or not to_chat or not message_ids_str:
+            return _text_response("Ошибка: phone, from_chat, to_chat и message_ids обязательны.")
+        ids = [int(x.strip()) for x in message_ids_str.split(",") if x.strip().isdigit()]
+        if not ids:
+            return _text_response("Ошибка: не указаны валидные message_ids.")
+        gate = require_confirmation(
+            f"перешлёт {len(ids)} сообщений из {from_chat} в {to_chat}: {ids}", args
+        )
+        if gate:
+            return gate
+        try:
+            result = await client_pool.get_native_client_by_phone(phone)
+            if result is None:
+                return _text_response(f"Клиент для {phone} не найден или flood-wait активен.")
+            client, _ = result
+            from_entity = await client.get_entity(from_chat)
+            to_entity = await client.get_entity(to_chat)
+            await client.forward_messages(to_entity, ids, from_entity)
+            return _text_response(f"Переслано {len(ids)} сообщений из {from_chat} в {to_chat}.")
+        except Exception as e:
+            return _text_response(f"Ошибка пересылки сообщений: {e}")
+
+    tools.append(forward_messages)
+
+    @tool(
         "pin_message",
         "Pin a message in a Telegram chat. Ask user for confirmation first.",
         {"phone": str, "chat_id": str, "message_id": int, "notify": bool, "confirm": bool},

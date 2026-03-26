@@ -127,6 +127,7 @@ TOOL_CATEGORIES: dict[str, ToolCategory] = {
     "get_cache_status": ToolCategory.READ,
     # Messaging
     "send_message": ToolCategory.WRITE,
+    "forward_messages": ToolCategory.WRITE,
     "edit_message": ToolCategory.WRITE,
     "delete_message": ToolCategory.DELETE,
     "pin_message": ToolCategory.WRITE,
@@ -219,7 +220,7 @@ MODULE_GROUPS: OrderedDict[str, list[str]] = OrderedDict([
         "get_forum_topics", "clear_dialog_cache", "get_cache_status",
     ]),
     ("Сообщения", [
-        "send_message", "edit_message", "delete_message",
+        "send_message", "forward_messages", "edit_message", "delete_message",
         "pin_message", "unpin_message", "download_media",
     ]),
     ("Управление чатом", [
