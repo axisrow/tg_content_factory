@@ -10,7 +10,7 @@ from fastapi.templating import Jinja2Templates
 
 from src.web.container import AppContainer
 from src.web.panel_auth import get_cookie_user, sanitize_next, set_session_cookie
-from src.web.paths import STATIC_DIR, TEMPLATES_DIR
+from src.web.paths import DATA_IMAGE_DIR, STATIC_DIR, TEMPLATES_DIR
 from src.web.session import COOKIE_NAME
 from src.web.template_globals import configure_template_globals
 
@@ -50,6 +50,10 @@ def configure_app(app: FastAPI, container: AppContainer | None) -> None:
         mount_names = {route.name for route in app.routes}
         if "static" not in mount_names:
             app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+    # Serve generated images from data/image/
+    DATA_IMAGE_DIR.mkdir(parents=True, exist_ok=True)
+    if "data-image" not in {r.name for r in app.routes}:
+        app.mount("/data/image", StaticFiles(directory=str(DATA_IMAGE_DIR)), name="data-image")
 
 
 def register_builtin_endpoints(app: FastAPI) -> None:

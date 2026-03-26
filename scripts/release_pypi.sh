@@ -86,17 +86,18 @@ build_artifacts() {
 }
 
 upload_target() {
-  local repository="$1"
+  local repo_url="$1"
   local password_var="$2"
+  local label="$3"
 
   require_var "${password_var}"
 
-  echo "Uploading to ${repository}"
+  echo "Uploading to ${label}"
   (
     cd "${ROOT_DIR}"
     TWINE_USERNAME="${TWINE_USERNAME}" \
     TWINE_PASSWORD="${!password_var}" \
-    python3 -m twine upload --non-interactive --repository "${repository}" dist/*
+    python3 -m twine upload --non-interactive --repository-url "${repo_url}" dist/*
   )
 }
 
@@ -104,13 +105,13 @@ build_artifacts
 
 case "${TARGET}" in
   testpypi)
-    upload_target "testpypi" "TEST_PYPI_TOKEN"
+    upload_target "https://test.pypi.org/legacy/" "TEST_PYPI_TOKEN" "TestPyPI"
     ;;
   pypi)
-    upload_target "pypi" "PYPI_TOKEN"
+    upload_target "https://upload.pypi.org/legacy/" "PYPI_TOKEN" "PyPI"
     ;;
   all)
-    upload_target "testpypi" "TEST_PYPI_TOKEN"
-    upload_target "pypi" "PYPI_TOKEN"
+    upload_target "https://test.pypi.org/legacy/" "TEST_PYPI_TOKEN" "TestPyPI"
+    upload_target "https://upload.pypi.org/legacy/" "PYPI_TOKEN" "PyPI"
     ;;
 esac
