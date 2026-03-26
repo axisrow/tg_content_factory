@@ -22,6 +22,7 @@ from src.agent.tools.permissions import (
     filter_allowed_tools,
     load_tool_permissions,
     load_tool_permissions_all_phones,
+    load_tool_permissions_union,
     save_tool_permissions,
 )
 from src.database import Database
@@ -238,6 +239,44 @@ class TestLoadToolPermissionsAllPhones:
         result = await load_tool_permissions_all_phones(mock_db, accounts)
         assert result["+7111"]["search_messages"] is False
         assert result["+7222"]["search_messages"] is False
+
+
+# ---------------------------------------------------------------------------
+# permissions.load_tool_permissions_union
+# ---------------------------------------------------------------------------
+
+
+class TestLoadToolPermissionsUnion:
+    async def test_no_setting_returns_defaults(self, mock_db):
+        mock_db.get_setting = AsyncMock(return_value=None)
+        result = await load_tool_permissions_union(mock_db)
+        assert all(v is True for v in result.values())
+
+    async def test_flat_format(self, mock_db):
+        saved = {"search_messages": False}
+        mock_db.get_setting = AsyncMock(return_value=json.dumps(saved))
+        result = await load_tool_permissions_union(mock_db)
+        assert result["search_messages"] is False
+        assert result["list_channels"] is True
+
+    async def test_per_phone_union_any_allows(self, mock_db):
+        saved = {
+            "+7111": {"send_photos_now": False, "leave_dialogs": False},
+            "+7222": {"send_photos_now": True, "leave_dialogs": False},
+        }
+        mock_db.get_setting = AsyncMock(return_value=json.dumps(saved))
+        result = await load_tool_permissions_union(mock_db)
+        assert result["send_photos_now"] is True  # +7222 allows
+        assert result["leave_dialogs"] is False  # both deny
+
+    async def test_per_phone_all_deny(self, mock_db):
+        saved = {
+            "+7111": {"send_photos_now": False},
+            "+7222": {"send_photos_now": False},
+        }
+        mock_db.get_setting = AsyncMock(return_value=json.dumps(saved))
+        result = await load_tool_permissions_union(mock_db)
+        assert result["send_photos_now"] is False
 
 
 # ---------------------------------------------------------------------------

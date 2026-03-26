@@ -122,11 +122,11 @@ class ClaudeSdkBackend:
             MCP_PREFIX,
             filter_allowed_tools,
             get_all_allowed_tools,
-            load_tool_permissions,
+            load_tool_permissions_union,
         )
 
         all_tools = get_all_allowed_tools()
-        permissions = await load_tool_permissions(self._db)
+        permissions = await load_tool_permissions_union(self._db)
         allowed = filter_allowed_tools(all_tools, permissions)
         if len(allowed) < len(all_tools):
             denied = [t.removeprefix(MCP_PREFIX) for t in all_tools if t not in allowed]
@@ -797,9 +797,9 @@ class DeepagentsBackend:
     ) -> None:
         del thread_id, stats, model
 
-        from src.agent.tools.permissions import load_tool_permissions
+        from src.agent.tools.permissions import load_tool_permissions_union
 
-        permissions = await load_tool_permissions(self._db)
+        permissions = await load_tool_permissions_union(self._db)
         enabled_count = sum(1 for v in permissions.values() if v)
         logger.info(
             "Deepagents tool permissions: %d/%d enabled",
