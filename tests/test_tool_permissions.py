@@ -13,6 +13,7 @@ from src.agent.tools._registry import (
     require_confirmation,
     require_phone_permission,
     require_pool,
+    resolve_phone,
 )
 from src.agent.tools.permissions import (
     MCP_PREFIX,
@@ -105,6 +106,39 @@ class TestRequirePool:
 
 
 # ---------------------------------------------------------------------------
+# _registry.resolve_phone
+# ---------------------------------------------------------------------------
+
+
+class TestResolvePhone:
+    async def test_phone_provided(self, mock_db):
+        phone, err = await resolve_phone(mock_db, "79990001111")
+        assert phone == "+79990001111"
+        assert err is None
+
+    async def test_empty_phone_uses_primary(self, mock_db):
+        mock_db.get_accounts = AsyncMock(
+            return_value=[SimpleNamespace(phone="+79990001111", is_primary=True)]
+        )
+        phone, err = await resolve_phone(mock_db, "")
+        assert phone == "+79990001111"
+        assert err is None
+
+    async def test_empty_phone_no_accounts(self, mock_db):
+        mock_db.get_accounts = AsyncMock(return_value=[])
+        phone, err = await resolve_phone(mock_db, "")
+        assert phone == ""
+        assert err is not None
+        assert "нет подключённых" in _text(err)
+
+    async def test_empty_phone_db_error(self, mock_db):
+        mock_db.get_accounts = AsyncMock(side_effect=Exception("DB down"))
+        phone, err = await resolve_phone(mock_db, "")
+        assert phone == ""
+        assert err is not None
+
+
+# ---------------------------------------------------------------------------
 # _registry.require_phone_permission
 # ---------------------------------------------------------------------------
 
@@ -139,6 +173,17 @@ class TestRequirePhonePermission:
         perms = {"+79990001111": {"some_other_tool": True}}
         mock_db.get_setting = AsyncMock(return_value=json.dumps(perms))
         assert await require_phone_permission(mock_db, "+79990001111", "leave_dialogs") is None
+
+    async def test_tool_missing_from_saved_denies(self, mock_db):
+        """Tool not explicitly saved for a phone defaults to denied."""
+        perms = {
+            "+79990001111": {"send_photos_now": True},
+            "+79990002222": {"some_other_tool": True},  # send_photos_now missing → denied
+        }
+        mock_db.get_setting = AsyncMock(return_value=json.dumps(perms))
+        result = await require_phone_permission(mock_db, "+79990002222", "send_photos_now")
+        assert result is not None
+        assert "не разрешён" in _text(result)
 
     async def test_empty_phone_hint(self, mock_db):
         perms = {"+79990001111": {"leave_dialogs": True}}
@@ -295,6 +340,9 @@ class TestSaveToolPermissions:
 
     async def test_per_phone_new_entry(self, mock_db):
         mock_db.get_setting = AsyncMock(return_value=json.dumps({"+7111": {"a": True}}))
+        mock_db.get_accounts = AsyncMock(return_value=[
+            SimpleNamespace(phone="+7111"), SimpleNamespace(phone="+7222"),
+        ])
         mock_db.set_setting = AsyncMock()
         await save_tool_permissions(mock_db, {"b": True}, phone="+7222")
         saved = json.loads(mock_db.set_setting.await_args[0][1])
@@ -303,13 +351,29 @@ class TestSaveToolPermissions:
 
     async def test_per_phone_overwrite(self, mock_db):
         mock_db.get_setting = AsyncMock(return_value=json.dumps({"+7111": {"a": True}}))
+        mock_db.get_accounts = AsyncMock(return_value=[SimpleNamespace(phone="+7111")])
         mock_db.set_setting = AsyncMock()
         await save_tool_permissions(mock_db, {"a": False}, phone="+7111")
         saved = json.loads(mock_db.set_setting.await_args[0][1])
         assert saved["+7111"] == {"a": False}
 
+    async def test_per_phone_seeds_unsaved_accounts(self, mock_db):
+        """Saving for one phone seeds other accounts with all-enabled defaults."""
+        mock_db.get_setting = AsyncMock(return_value=None)
+        mock_db.get_accounts = AsyncMock(return_value=[
+            SimpleNamespace(phone="+7111"), SimpleNamespace(phone="+7222"),
+        ])
+        mock_db.set_setting = AsyncMock()
+        await save_tool_permissions(mock_db, {"send_photos_now": False}, phone="+7111")
+        saved = json.loads(mock_db.set_setting.await_args[0][1])
+        assert saved["+7111"]["send_photos_now"] is False
+        # +7222 was seeded with defaults (all True)
+        assert "+7222" in saved
+        assert all(v is True for v in saved["+7222"].values())
+
     async def test_per_phone_migrates_legacy_flat(self, mock_db):
         mock_db.get_setting = AsyncMock(return_value=json.dumps({"search_messages": True}))
+        mock_db.get_accounts = AsyncMock(return_value=[SimpleNamespace(phone="+7111")])
         mock_db.set_setting = AsyncMock()
         await save_tool_permissions(mock_db, {"leave_dialogs": False}, phone="+7111")
         saved = json.loads(mock_db.set_setting.await_args[0][1])
