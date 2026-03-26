@@ -86,7 +86,7 @@ def register(db, client_pool, embedding_service, **kwargs):
                 )
                 return _text_response(
                     f"Изображение создано!\n\n"
-                    f"![{prompt}](/{local_path})"
+                    f"![{prompt}](/data/image/{filename})"
                 )
             if result:
                 return _text_response(f"Изображение сгенерировано:\n{result}")
