@@ -225,6 +225,330 @@ def run(args: argparse.Namespace) -> None:
                 except Exception as exc:
                     print(f"Error deleting messages: {exc}")
 
+            elif args.my_telegram_action == "pin-message":
+                accounts = sorted(pool.clients.keys())
+                if not accounts:
+                    print("No connected accounts.")
+                    return
+                phone = args.phone or accounts[0]
+                if phone not in pool.clients:
+                    print(f"Account {phone} not connected.")
+                    return
+                if not args.yes:
+                    print(f"Pin message #{args.message_id} in {args.chat_id}")
+                    answer = input("Continue? [y/N] ").strip().lower()
+                    if answer != "y":
+                        print("Aborted.")
+                        return
+                result = await pool.get_native_client_by_phone(phone)
+                if result is None:
+                    print(f"Client for {phone} unavailable.")
+                    return
+                client, _ = result
+                try:
+                    entity = await client.get_entity(args.chat_id)
+                    await client.pin_message(entity, args.message_id, notify=args.notify)
+                    print(f"Message #{args.message_id} pinned.")
+                except Exception as exc:
+                    print(f"Error pinning message: {exc}")
+
+            elif args.my_telegram_action == "unpin-message":
+                accounts = sorted(pool.clients.keys())
+                if not accounts:
+                    print("No connected accounts.")
+                    return
+                phone = args.phone or accounts[0]
+                if phone not in pool.clients:
+                    print(f"Account {phone} not connected.")
+                    return
+                if not args.yes:
+                    target = f"#{args.message_id}" if args.message_id else "all messages"
+                    print(f"Unpin {target} in {args.chat_id}")
+                    answer = input("Continue? [y/N] ").strip().lower()
+                    if answer != "y":
+                        print("Aborted.")
+                        return
+                result = await pool.get_native_client_by_phone(phone)
+                if result is None:
+                    print(f"Client for {phone} unavailable.")
+                    return
+                client, _ = result
+                try:
+                    entity = await client.get_entity(args.chat_id)
+                    await client.unpin_message(entity, args.message_id)
+                    print("Message(s) unpinned.")
+                except Exception as exc:
+                    print(f"Error unpinning message: {exc}")
+
+            elif args.my_telegram_action == "download-media":
+                accounts = sorted(pool.clients.keys())
+                if not accounts:
+                    print("No connected accounts.")
+                    return
+                phone = args.phone or accounts[0]
+                if phone not in pool.clients:
+                    print(f"Account {phone} not connected.")
+                    return
+                result = await pool.get_native_client_by_phone(phone)
+                if result is None:
+                    print(f"Client for {phone} unavailable.")
+                    return
+                client, _ = result
+                try:
+                    entity = await client.get_entity(args.chat_id)
+                    msg = None
+                    async for m in client.iter_messages(entity, ids=args.message_id):
+                        msg = m
+                        break
+                    if msg is None:
+                        print(f"Message #{args.message_id} not found.")
+                        return
+                    path = await client.download_media(msg, file=args.output_dir)
+                    if path:
+                        print(f"Downloaded: {path}")
+                    else:
+                        print("No media in this message.")
+                except Exception as exc:
+                    print(f"Error downloading media: {exc}")
+
+            elif args.my_telegram_action == "participants":
+                accounts = sorted(pool.clients.keys())
+                if not accounts:
+                    print("No connected accounts.")
+                    return
+                phone = args.phone or accounts[0]
+                if phone not in pool.clients:
+                    print(f"Account {phone} not connected.")
+                    return
+                result = await pool.get_native_client_by_phone(phone)
+                if result is None:
+                    print(f"Client for {phone} unavailable.")
+                    return
+                client, _ = result
+                try:
+                    entity = await client.get_entity(args.chat_id)
+                    participants = await client.get_participants(
+                        entity, limit=args.limit, search=args.search
+                    )
+                    if not participants:
+                        print("No participants found.")
+                        return
+                    fmt = "{:<12} {:<25} {:<25} {:<25}"
+                    print(fmt.format("ID", "First name", "Last name", "Username"))
+                    print("-" * 90)
+                    for p in participants:
+                        print(fmt.format(
+                            str(p.id),
+                            (getattr(p, "first_name", None) or "")[:25],
+                            (getattr(p, "last_name", None) or "")[:25],
+                            ("@" + p.username if getattr(p, "username", None) else "")[:25],
+                        ))
+                    print(f"\nTotal: {len(participants)}")
+                except Exception as exc:
+                    print(f"Error fetching participants: {exc}")
+
+            elif args.my_telegram_action == "edit-admin":
+                accounts = sorted(pool.clients.keys())
+                if not accounts:
+                    print("No connected accounts.")
+                    return
+                phone = args.phone or accounts[0]
+                if phone not in pool.clients:
+                    print(f"Account {phone} not connected.")
+                    return
+                if not args.yes:
+                    print(f"Edit admin rights for {args.user_id} in {args.chat_id}")
+                    answer = input("Continue? [y/N] ").strip().lower()
+                    if answer != "y":
+                        print("Aborted.")
+                        return
+                result = await pool.get_native_client_by_phone(phone)
+                if result is None:
+                    print(f"Client for {phone} unavailable.")
+                    return
+                client, _ = result
+                try:
+                    entity = await client.get_entity(args.chat_id)
+                    user = await client.get_entity(args.user_id)
+                    kwargs = {"is_admin": args.is_admin}
+                    if args.title:
+                        kwargs["title"] = args.title
+                    await client.edit_admin(entity, user, **kwargs)
+                    print(f"Admin rights updated for {args.user_id}.")
+                except Exception as exc:
+                    print(f"Error editing admin: {exc}")
+
+            elif args.my_telegram_action == "edit-permissions":
+                accounts = sorted(pool.clients.keys())
+                if not accounts:
+                    print("No connected accounts.")
+                    return
+                phone = args.phone or accounts[0]
+                if phone not in pool.clients:
+                    print(f"Account {phone} not connected.")
+                    return
+                if not args.yes:
+                    print(f"Edit permissions for {args.user_id} in {args.chat_id}")
+                    answer = input("Continue? [y/N] ").strip().lower()
+                    if answer != "y":
+                        print("Aborted.")
+                        return
+                result = await pool.get_native_client_by_phone(phone)
+                if result is None:
+                    print(f"Client for {phone} unavailable.")
+                    return
+                client, _ = result
+                try:
+                    from datetime import datetime
+
+                    entity = await client.get_entity(args.chat_id)
+                    user = await client.get_entity(args.user_id)
+                    if args.send_messages is None and args.send_media is None:
+                        print("Error: specify at least one flag (--send-messages or --send-media).")
+                        return
+                    until_date = None
+                    if args.until_date:
+                        until_date = datetime.fromisoformat(args.until_date)
+                    kwargs = {"until_date": until_date}
+                    if args.send_messages is not None:
+                        kwargs["send_messages"] = args.send_messages.lower() in ("1", "true", "on")
+                    if args.send_media is not None:
+                        kwargs["send_media"] = args.send_media.lower() in ("1", "true", "on")
+                    await client.edit_permissions(entity, user, **kwargs)
+                    print(f"Permissions updated for {args.user_id}.")
+                except Exception as exc:
+                    print(f"Error editing permissions: {exc}")
+
+            elif args.my_telegram_action == "kick":
+                accounts = sorted(pool.clients.keys())
+                if not accounts:
+                    print("No connected accounts.")
+                    return
+                phone = args.phone or accounts[0]
+                if phone not in pool.clients:
+                    print(f"Account {phone} not connected.")
+                    return
+                if not args.yes:
+                    print(f"Kick {args.user_id} from {args.chat_id}")
+                    answer = input("Continue? [y/N] ").strip().lower()
+                    if answer != "y":
+                        print("Aborted.")
+                        return
+                result = await pool.get_native_client_by_phone(phone)
+                if result is None:
+                    print(f"Client for {phone} unavailable.")
+                    return
+                client, _ = result
+                try:
+                    entity = await client.get_entity(args.chat_id)
+                    user = await client.get_entity(args.user_id)
+                    await client.kick_participant(entity, user)
+                    print(f"{args.user_id} kicked from {args.chat_id}.")
+                except Exception as exc:
+                    print(f"Error kicking participant: {exc}")
+
+            elif args.my_telegram_action == "broadcast-stats":
+                accounts = sorted(pool.clients.keys())
+                if not accounts:
+                    print("No connected accounts.")
+                    return
+                phone = args.phone or accounts[0]
+                if phone not in pool.clients:
+                    print(f"Account {phone} not connected.")
+                    return
+                result = await pool.get_native_client_by_phone(phone)
+                if result is None:
+                    print(f"Client for {phone} unavailable.")
+                    return
+                client, _ = result
+                try:
+                    entity = await client.get_entity(args.chat_id)
+                    stats = await client.get_broadcast_stats(entity)
+                    print(f"Broadcast stats for {args.chat_id}:")
+                    for attr in ("followers", "views_per_post", "shares_per_post",
+                                 "reactions_per_post", "forwards_per_post"):
+                        val = getattr(stats, attr, None)
+                        if val is not None:
+                            current = getattr(val, "current", None)
+                            previous = getattr(val, "previous", None)
+                            if current is not None:
+                                print(f"  {attr}: {current} (prev: {previous})")
+                            else:
+                                print(f"  {attr}: {val}")
+                    period = getattr(stats, "period", None)
+                    if period is not None:
+                        min_d = getattr(period, "min_date", None)
+                        max_d = getattr(period, "max_date", None)
+                        print(f"  period: {min_d} — {max_d}")
+                    en = getattr(stats, "enabled_notifications", None)
+                    if en is not None:
+                        print(f"  enabled_notifications: {en}")
+                except Exception as exc:
+                    print(f"Error fetching broadcast stats: {exc}")
+
+            elif args.my_telegram_action == "archive":
+                accounts = sorted(pool.clients.keys())
+                if not accounts:
+                    print("No connected accounts.")
+                    return
+                phone = args.phone or accounts[0]
+                if phone not in pool.clients:
+                    print(f"Account {phone} not connected.")
+                    return
+                result = await pool.get_native_client_by_phone(phone)
+                if result is None:
+                    print(f"Client for {phone} unavailable.")
+                    return
+                client, _ = result
+                try:
+                    entity = await client.get_entity(args.chat_id)
+                    await client.edit_folder(entity, 1)
+                    print(f"{args.chat_id} archived.")
+                except Exception as exc:
+                    print(f"Error archiving: {exc}")
+
+            elif args.my_telegram_action == "unarchive":
+                accounts = sorted(pool.clients.keys())
+                if not accounts:
+                    print("No connected accounts.")
+                    return
+                phone = args.phone or accounts[0]
+                if phone not in pool.clients:
+                    print(f"Account {phone} not connected.")
+                    return
+                result = await pool.get_native_client_by_phone(phone)
+                if result is None:
+                    print(f"Client for {phone} unavailable.")
+                    return
+                client, _ = result
+                try:
+                    entity = await client.get_entity(args.chat_id)
+                    await client.edit_folder(entity, 0)
+                    print(f"{args.chat_id} unarchived.")
+                except Exception as exc:
+                    print(f"Error unarchiving: {exc}")
+
+            elif args.my_telegram_action == "mark-read":
+                accounts = sorted(pool.clients.keys())
+                if not accounts:
+                    print("No connected accounts.")
+                    return
+                phone = args.phone or accounts[0]
+                if phone not in pool.clients:
+                    print(f"Account {phone} not connected.")
+                    return
+                result = await pool.get_native_client_by_phone(phone)
+                if result is None:
+                    print(f"Client for {phone} unavailable.")
+                    return
+                client, _ = result
+                try:
+                    entity = await client.get_entity(args.chat_id)
+                    await client.send_read_acknowledge(entity, max_id=args.max_id)
+                    print(f"Messages marked as read in {args.chat_id}.")
+                except Exception as exc:
+                    print(f"Error marking messages as read: {exc}")
+
             elif args.my_telegram_action == "cache-clear":
                 phone: str | None = getattr(args, "phone", None)
                 if phone:
