@@ -45,128 +45,6 @@ def _embed_history_in_prompt(history_msgs: list[dict], message: str) -> str:
     return "\n".join(parts)
 
 
-_ALLOWED_TOOLS = [
-    # Search
-    "mcp__telegram_db__search_messages",
-    "mcp__telegram_db__semantic_search",
-    "mcp__telegram_db__index_messages",
-    # Channels
-    "mcp__telegram_db__list_channels",
-    "mcp__telegram_db__get_channel_stats",
-    "mcp__telegram_db__add_channel",
-    "mcp__telegram_db__delete_channel",
-    "mcp__telegram_db__toggle_channel",
-    "mcp__telegram_db__import_channels",
-    "mcp__telegram_db__refresh_channel_types",
-    # Collection
-    "mcp__telegram_db__collect_channel",
-    "mcp__telegram_db__collect_all_channels",
-    "mcp__telegram_db__collect_channel_stats",
-    "mcp__telegram_db__collect_all_stats",
-    # Pipelines
-    "mcp__telegram_db__list_pipelines",
-    "mcp__telegram_db__get_pipeline_detail",
-    "mcp__telegram_db__add_pipeline",
-    "mcp__telegram_db__edit_pipeline",
-    "mcp__telegram_db__toggle_pipeline",
-    "mcp__telegram_db__delete_pipeline",
-    "mcp__telegram_db__run_pipeline",
-    "mcp__telegram_db__generate_draft",
-    "mcp__telegram_db__list_pipeline_runs",
-    "mcp__telegram_db__get_pipeline_run",
-    "mcp__telegram_db__publish_pipeline_run",
-    "mcp__telegram_db__get_pipeline_queue",
-    # Moderation
-    "mcp__telegram_db__list_pending_moderation",
-    "mcp__telegram_db__view_moderation_run",
-    "mcp__telegram_db__approve_run",
-    "mcp__telegram_db__reject_run",
-    "mcp__telegram_db__bulk_approve_runs",
-    "mcp__telegram_db__bulk_reject_runs",
-    # Search Queries
-    "mcp__telegram_db__list_search_queries",
-    "mcp__telegram_db__get_search_query",
-    "mcp__telegram_db__add_search_query",
-    "mcp__telegram_db__edit_search_query",
-    "mcp__telegram_db__delete_search_query",
-    "mcp__telegram_db__toggle_search_query",
-    "mcp__telegram_db__run_search_query",
-    # Accounts
-    "mcp__telegram_db__list_accounts",
-    "mcp__telegram_db__toggle_account",
-    "mcp__telegram_db__delete_account",
-    "mcp__telegram_db__get_flood_status",
-    "mcp__telegram_db__clear_flood_status",
-    # Filters
-    "mcp__telegram_db__analyze_filters",
-    "mcp__telegram_db__apply_filters",
-    "mcp__telegram_db__reset_filters",
-    "mcp__telegram_db__toggle_channel_filter",
-    "mcp__telegram_db__purge_filtered_channels",
-    "mcp__telegram_db__hard_delete_channels",
-    "mcp__telegram_db__precheck_filters",
-    # Analytics
-    "mcp__telegram_db__get_analytics_summary",
-    "mcp__telegram_db__get_pipeline_stats",
-    "mcp__telegram_db__get_daily_stats",
-    "mcp__telegram_db__get_trending_topics",
-    "mcp__telegram_db__get_trending_channels",
-    "mcp__telegram_db__get_message_velocity",
-    "mcp__telegram_db__get_peak_hours",
-    "mcp__telegram_db__get_calendar",
-    # Scheduler
-    "mcp__telegram_db__get_scheduler_status",
-    "mcp__telegram_db__start_scheduler",
-    "mcp__telegram_db__stop_scheduler",
-    "mcp__telegram_db__trigger_collection",
-    "mcp__telegram_db__toggle_scheduler_job",
-    # Notifications
-    "mcp__telegram_db__get_notification_status",
-    "mcp__telegram_db__setup_notification_bot",
-    "mcp__telegram_db__delete_notification_bot",
-    "mcp__telegram_db__test_notification",
-    # Photo Loader
-    "mcp__telegram_db__list_photo_batches",
-    "mcp__telegram_db__list_photo_items",
-    "mcp__telegram_db__send_photos_now",
-    "mcp__telegram_db__schedule_photos",
-    "mcp__telegram_db__cancel_photo_item",
-    "mcp__telegram_db__list_auto_uploads",
-    "mcp__telegram_db__toggle_auto_upload",
-    "mcp__telegram_db__delete_auto_upload",
-    "mcp__telegram_db__create_photo_batch",
-    "mcp__telegram_db__run_photo_due",
-    "mcp__telegram_db__create_auto_upload",
-    "mcp__telegram_db__update_auto_upload",
-    # My Telegram
-    "mcp__telegram_db__list_dialogs",
-    "mcp__telegram_db__refresh_dialogs",
-    "mcp__telegram_db__leave_dialogs",
-    "mcp__telegram_db__create_telegram_channel",
-    "mcp__telegram_db__get_forum_topics",
-    "mcp__telegram_db__clear_dialog_cache",
-    "mcp__telegram_db__get_cache_status",
-    # Messaging
-    "mcp__telegram_db__send_message",
-    "mcp__telegram_db__edit_message",
-    "mcp__telegram_db__delete_message",
-    # Images
-    "mcp__telegram_db__generate_image",
-    "mcp__telegram_db__list_image_models",
-    "mcp__telegram_db__list_image_providers",
-    # Settings
-    "mcp__telegram_db__get_settings",
-    "mcp__telegram_db__save_scheduler_settings",
-    "mcp__telegram_db__save_agent_settings",
-    "mcp__telegram_db__save_filter_settings",
-    "mcp__telegram_db__get_system_info",
-    # Agent Threads
-    "mcp__telegram_db__list_agent_threads",
-    "mcp__telegram_db__create_agent_thread",
-    "mcp__telegram_db__delete_agent_thread",
-    "mcp__telegram_db__rename_agent_thread",
-    "mcp__telegram_db__get_thread_messages",
-]
 _DEEPAGENTS_PROBE_PROMPT = (
     "Compatibility probe. You must use the tool that lists active Telegram "
     "channels before answering. "
@@ -240,13 +118,19 @@ class ClaudeSdkBackend:
         cli_path = shutil.which("claude")
         logger.info("claude-cli path: %s", cli_path)
 
-        from src.agent.tools.permissions import filter_allowed_tools, load_tool_permissions
+        from src.agent.tools.permissions import (
+            MCP_PREFIX,
+            filter_allowed_tools,
+            get_all_allowed_tools,
+            load_tool_permissions,
+        )
 
+        all_tools = get_all_allowed_tools()
         permissions = await load_tool_permissions(self._db)
-        allowed = filter_allowed_tools(_ALLOWED_TOOLS, permissions)
-        if len(allowed) < len(_ALLOWED_TOOLS):
-            denied = [t.removeprefix("mcp__telegram_db__") for t in _ALLOWED_TOOLS if t not in allowed]
-            logger.debug("Agent tools: %d/%d allowed, denied: %s", len(allowed), len(_ALLOWED_TOOLS), denied[:20])
+        allowed = filter_allowed_tools(all_tools, permissions)
+        if len(allowed) < len(all_tools):
+            denied = [t.removeprefix(MCP_PREFIX) for t in all_tools if t not in allowed]
+            logger.debug("Agent tools: %d/%d allowed, denied: %s", len(allowed), len(all_tools), denied[:20])
         else:
             logger.debug("Agent tools: all %d tools allowed", len(allowed))
 
