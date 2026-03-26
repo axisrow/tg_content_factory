@@ -50,6 +50,13 @@ def configure_app(app: FastAPI, container: AppContainer | None) -> None:
         mount_names = {route.name for route in app.routes}
         if "static" not in mount_names:
             app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+    # Serve generated images from data/image/
+    import pathlib
+
+    _data_image_dir = pathlib.Path("data/image")
+    _data_image_dir.mkdir(parents=True, exist_ok=True)
+    if "data-image" not in {r.name for r in app.routes}:
+        app.mount("/data/image", StaticFiles(directory=str(_data_image_dir)), name="data-image")
 
 
 def register_builtin_endpoints(app: FastAPI) -> None:
