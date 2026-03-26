@@ -81,9 +81,10 @@ def register(db, client_pool, embedding_service, **kwargs):
                                 os.unlink(local_path)
                             raise
                 logger.info("Image downloaded to %s", local_path)
-                await db.repos.generated_images.save(
-                    prompt=prompt, model=model, image_url=result, local_path=local_path,
-                )
+                if db:
+                    await db.repos.generated_images.save(
+                        prompt=prompt, model=model, image_url=result, local_path=local_path,
+                    )
                 return _text_response(
                     f"Изображение создано!\n\n"
                     f"![{prompt}](/data/image/{filename})"
