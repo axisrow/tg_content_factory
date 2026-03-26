@@ -1,0 +1,26 @@
+{
+  "tag": "v0.1.19",
+  "title": "Telethon API Coverage & Chat Management",
+  "highlights": [
+    {
+      "title": "Full Telethon API Coverage",
+      "description": "CLI, Web, and Agent wrappers for all Telethon transport operations: forward, edit, delete, pin/unpin messages, download media, participants, admin/permissions management, broadcast stats."
+    },
+    {
+      "title": "Chat Management Module",
+      "description": "New permission group 'Управление чатом' with get-participants, edit-admin, edit-permissions, kick-participant, archive/unarchive, mark-read operations."
+    },
+    {
+      "title": "Forward Messages",
+      "description": "Full CLI/Web/Agent implementation for forwarding messages between Telegram chats with confirmation prompts and pool rotation."
+    },
+    {
+      "title": "Agent Toolset Expansion",
+      "description": "Agent now exposes 117 tools covering all CLI commands and API endpoints with per-phone tool permissions."
+    },
+    {
+      "title": "list_generated_images Fix",
+      "description": "Fixed CLI/Web parity gaps for generated images listing and corrected agent tool registration."
+    }
+  ]
+}
