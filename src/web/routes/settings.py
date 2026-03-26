@@ -479,6 +479,7 @@ async def settings_page(request: Request):
             "img_provider_writes_enabled": img_provider_service.writes_enabled,
             "img_provider_views": img_provider_views,
             "img_provider_options": available_img_options,
+            "default_image_model": await db.get_setting("default_image_model") or "",
             **semantic_context,
             "phone_perm_contexts": phone_perm_contexts,
         },
@@ -1156,6 +1157,8 @@ async def save_image_providers(request: Request):
                 url="/settings?error=image_provider_missing_key", status_code=303
             )
     await service.save_provider_configs(configs)
+    default_model = str(form.get("default_image_model", "")).strip()
+    await deps.get_db(request).set_setting("default_image_model", default_model)
     return RedirectResponse(url="/settings?msg=image_saved", status_code=303)
 
 
