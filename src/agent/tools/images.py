@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import logging
+import os
 
 from claude_agent_sdk import tool
 
 from src.agent.tools._registry import _text_response
+from src.web.paths import DATA_IMAGE_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -51,36 +53,41 @@ def register(db, client_pool, embedding_service, **kwargs):
             result = await svc.generate(model=model, text=prompt)
             if result and (result.startswith("https://") or result.startswith("http://")):
                 import hashlib
-                import os
 
                 import httpx
 
-                os.makedirs("data/image", exist_ok=True)
+                DATA_IMAGE_DIR.mkdir(parents=True, exist_ok=True)
                 from urllib.parse import urlparse
 
                 url_path = urlparse(result).path
                 _, dot, suffix = url_path.rpartition(".")
                 ext = suffix[:4] if dot and suffix.isalnum() else "png"
                 filename = hashlib.md5(result.encode()).hexdigest()[:12] + "." + ext
-                local_path = os.path.join("data/image", filename)
+                local_path = str(DATA_IMAGE_DIR / filename)
                 max_image_bytes = 50 * 1024 * 1024  # 50 MB
                 async with httpx.AsyncClient() as http_client:
                     async with http_client.stream("GET", result, follow_redirects=True, timeout=30) as resp:
                         resp.raise_for_status()
-                        with open(local_path, "wb") as f:
-                            total = 0
-                            async for chunk in resp.aiter_bytes(chunk_size=65536):
-                                total += len(chunk)
-                                if total > max_image_bytes:
-                                    raise ValueError("Image exceeds 50 MB limit")
-                                f.write(chunk)
+                        try:
+                            with open(local_path, "wb") as f:
+                                total = 0
+                                async for chunk in resp.aiter_bytes(chunk_size=65536):
+                                    total += len(chunk)
+                                    if total > max_image_bytes:
+                                        raise ValueError("Image exceeds 50 MB limit")
+                                    f.write(chunk)
+                        except BaseException:
+                            if os.path.exists(local_path):
+                                os.unlink(local_path)
+                            raise
                 logger.info("Image downloaded to %s", local_path)
-                await db.repos.generated_images.save(
-                    prompt=prompt, model=model, image_url=result, local_path=local_path,
-                )
+                if db:
+                    await db.repos.generated_images.save(
+                        prompt=prompt, model=model, image_url=result, local_path=local_path,
+                    )
                 return _text_response(
                     f"Изображение создано!\n\n"
-                    f"![{prompt}](/{local_path})"
+                    f"![{prompt}](/data/image/{filename})"
                 )
             if result:
                 return _text_response(f"Изображение сгенерировано:\n{result}")
