@@ -417,6 +417,10 @@ async def edit_permissions(request: Request):
     send_messages_str = form.get("send_messages")
     send_media_str = form.get("send_media")
     pool = deps.get_pool(request)
+    if send_messages_str is None and send_media_str is None:
+        return RedirectResponse(
+            url=f"/my-telegram/?phone={quote(phone, safe='')}&error=no_permission_flags", status_code=303
+        )
     if not phone or not chat_id or not user_id:
         return RedirectResponse(
             url=f"/my-telegram/?phone={quote(phone, safe='')}&error=missing_fields", status_code=303
@@ -493,11 +497,27 @@ async def broadcast_stats(request: Request):
         entity = await client.get_entity(chat_id)
         stats = await client.get_broadcast_stats(entity)
         fields = {}
-        for attr in ("period", "followers", "views_per_post", "shares_per_post",
-                      "reactions_per_post", "forwards_per_post", "enabled_notifications"):
+        for attr in ("followers", "views_per_post", "shares_per_post",
+                      "reactions_per_post", "forwards_per_post"):
             val = getattr(stats, attr, None)
             if val is not None:
-                fields[attr] = str(val)
+                current = getattr(val, "current", None)
+                previous = getattr(val, "previous", None)
+                if current is not None:
+                    fields[attr] = {"current": current, "previous": previous}
+                else:
+                    fields[attr] = str(val)
+        period = getattr(stats, "period", None)
+        if period is not None:
+            min_d = getattr(period, "min_date", None)
+            max_d = getattr(period, "max_date", None)
+            fields["period"] = {
+                "min_date": min_d.isoformat() if min_d else None,
+                "max_date": max_d.isoformat() if max_d else None,
+            }
+        en = getattr(stats, "enabled_notifications", None)
+        if en is not None:
+            fields["enabled_notifications"] = en
         if not fields:
             fields["raw"] = str(stats)
         return JSONResponse({"stats": fields})

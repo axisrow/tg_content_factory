@@ -409,11 +409,24 @@ def register(db, client_pool, embedding_service, **kwargs):
             entity = await client.get_entity(chat_id)
             stats = await client.get_broadcast_stats(entity)
             fields = {}
-            for attr in ("period", "followers", "views_per_post", "shares_per_post",
-                         "reactions_per_post", "forwards_per_post", "enabled_notifications"):
+            for attr in ("followers", "views_per_post", "shares_per_post",
+                         "reactions_per_post", "forwards_per_post"):
                 val = getattr(stats, attr, None)
                 if val is not None:
-                    fields[attr] = str(val)
+                    current = getattr(val, "current", None)
+                    previous = getattr(val, "previous", None)
+                    if current is not None:
+                        fields[attr] = f"{current} (prev: {previous})"
+                    else:
+                        fields[attr] = str(val)
+            period = getattr(stats, "period", None)
+            if period is not None:
+                min_d = getattr(period, "min_date", None)
+                max_d = getattr(period, "max_date", None)
+                fields["period"] = f"{min_d} — {max_d}"
+            en = getattr(stats, "enabled_notifications", None)
+            if en is not None:
+                fields["enabled_notifications"] = str(en)
             if not fields:
                 fields["raw"] = str(stats)
             lines = [f"Статистика канала {chat_id}:"]

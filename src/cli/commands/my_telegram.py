@@ -403,6 +403,9 @@ def run(args: argparse.Namespace) -> None:
 
                     entity = await client.get_entity(args.chat_id)
                     user = await client.get_entity(args.user_id)
+                    if args.send_messages is None and args.send_media is None:
+                        print("Error: specify at least one flag (--send-messages or --send-media).")
+                        return
                     until_date = None
                     if args.until_date:
                         until_date = datetime.fromisoformat(args.until_date)
@@ -462,11 +465,24 @@ def run(args: argparse.Namespace) -> None:
                     entity = await client.get_entity(args.chat_id)
                     stats = await client.get_broadcast_stats(entity)
                     print(f"Broadcast stats for {args.chat_id}:")
-                    for attr in ("period", "followers", "views_per_post", "shares_per_post",
-                                 "reactions_per_post", "forwards_per_post", "enabled_notifications"):
+                    for attr in ("followers", "views_per_post", "shares_per_post",
+                                 "reactions_per_post", "forwards_per_post"):
                         val = getattr(stats, attr, None)
                         if val is not None:
-                            print(f"  {attr}: {val}")
+                            current = getattr(val, "current", None)
+                            previous = getattr(val, "previous", None)
+                            if current is not None:
+                                print(f"  {attr}: {current} (prev: {previous})")
+                            else:
+                                print(f"  {attr}: {val}")
+                    period = getattr(stats, "period", None)
+                    if period is not None:
+                        min_d = getattr(period, "min_date", None)
+                        max_d = getattr(period, "max_date", None)
+                        print(f"  period: {min_d} — {max_d}")
+                    en = getattr(stats, "enabled_notifications", None)
+                    if en is not None:
+                        print(f"  enabled_notifications: {en}")
                 except Exception as exc:
                     print(f"Error fetching broadcast stats: {exc}")
 
