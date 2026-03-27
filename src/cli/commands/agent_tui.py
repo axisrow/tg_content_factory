@@ -193,6 +193,7 @@ class AgentTuiApp(App):
         await sidebar.refresh_threads(threads, self.current_thread_id)
 
     async def _switch_thread(self, thread_id: int) -> None:
+        self.action_cancel_stream()
         self.current_thread_id = thread_id
         messages_container = self.query_one("#messages", VerticalScroll)
         await messages_container.remove_children()
