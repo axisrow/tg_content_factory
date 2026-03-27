@@ -14,6 +14,28 @@ from src.models import Channel, NotificationBot
 
 
 @pytest.fixture
+def cli_db(tmp_path):
+    """Sync fixture: real SQLite for CLI tests."""
+    db_path = str(tmp_path / "cli_test.db")
+    database = Database(db_path)
+    asyncio.run(database.initialize())
+    yield database
+    asyncio.run(database.close())
+
+
+@pytest.fixture
+def cli_env(cli_db):
+    """Patch runtime.init_db to return real db without loading config.yaml."""
+    config = AppConfig()
+
+    async def fake_init_db(config_path: str):
+        return config, cli_db
+
+    with patch("src.cli.runtime.init_db", side_effect=fake_init_db):
+        yield cli_db
+
+
+@pytest.fixture
 def cli_env_with_pool(cli_env):
     """Additionally patch runtime.init_pool to return a pool with clients."""
     fake_pool = AsyncMock()

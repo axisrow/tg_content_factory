@@ -49,7 +49,7 @@ def set_session_cookie(response: Response, request: Request) -> None:
 
 
 def is_public_path(path: str) -> bool:
-    return path in ("/health", "/logout", "/rss.xml", "/atom.xml", LOGIN_PATH) or path.startswith("/static/")
+    return path in ("/health", "/logout", LOGIN_PATH) or path.startswith("/static/")
 
 
 def sanitize_next(next_value: str | None) -> str:

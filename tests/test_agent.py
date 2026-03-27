@@ -841,7 +841,7 @@ def test_build_prompt_stats_only_with_history(db):
 def test_build_agent_deepagents_import_error_shows_real_cause(db, monkeypatch):
     """When deepagents import fails (e.g. missing langchain_anthropic), show real error."""
     config = AppConfig()
-    config.agent.fallback_model = "ollama:llama3"
+    config.agent.fallback_model = "ollama:kimi-k2.5"
     mgr = AgentManager(db, config)
 
     import builtins
@@ -854,7 +854,7 @@ def test_build_agent_deepagents_import_error_shows_real_cause(db, monkeypatch):
         return real_import(name, *args, **kwargs)
 
     cfg = ProviderRuntimeConfig(
-        provider="ollama", enabled=True, priority=0, selected_model="llama3",
+        provider="ollama", enabled=True, priority=0, selected_model="kimi-k2.5",
         plain_fields={"base_url": "http://localhost:11434"},
     )
     with patch("builtins.__import__", side_effect=fake_import):
@@ -867,11 +867,11 @@ def test_build_agent_deepagents_import_error_shows_real_cause(db, monkeypatch):
 def test_build_agent_langchain_import_error_blames_correct_provider(db, monkeypatch):
     """When langchain provider import fails, error correctly names the provider package."""
     config = AppConfig()
-    config.agent.fallback_model = "ollama:llama3"
+    config.agent.fallback_model = "ollama:kimi-k2.5"
     mgr = AgentManager(db, config)
 
     cfg = ProviderRuntimeConfig(
-        provider="ollama", enabled=True, priority=0, selected_model="llama3",
+        provider="ollama", enabled=True, priority=0, selected_model="kimi-k2.5",
         plain_fields={"base_url": "http://localhost:11434"},
     )
 
@@ -891,11 +891,11 @@ def test_build_agent_langchain_import_error_blames_correct_provider(db, monkeypa
 def test_build_agent_tools_import_error_shows_details(db, monkeypatch):
     """ImportError from create_deep_agent/tools shows detailed message."""
     config = AppConfig()
-    config.agent.fallback_model = "ollama:llama3"
+    config.agent.fallback_model = "ollama:kimi-k2.5"
     mgr = AgentManager(db, config)
 
     cfg = ProviderRuntimeConfig(
-        provider="ollama", enabled=True, priority=0, selected_model="llama3",
+        provider="ollama", enabled=True, priority=0, selected_model="kimi-k2.5",
         plain_fields={"base_url": "http://localhost:11434"},
     )
 

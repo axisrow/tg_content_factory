@@ -32,6 +32,15 @@ def _chan(channel_id, title, username="", ch_type="channel", deactivate=False):
 
 
 @pytest.fixture
+def cli_db(tmp_path):
+    db_path = str(tmp_path / "cli_extended.db")
+    database = Database(db_path)
+    asyncio.run(database.initialize())
+    yield database
+    asyncio.run(database.close())
+
+
+@pytest.fixture
 def cli_env(cli_db):
     config = AppConfig()
 

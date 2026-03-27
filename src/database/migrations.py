@@ -626,27 +626,4 @@ async def run_migrations(db: aiosqlite.Connection) -> bool:
         """)
     await db.commit()
 
-    # Multi-step pipeline refinement (issue #240)
-    cur = await db.execute("PRAGMA table_info(content_pipelines)")
-    cp2_columns = {row["name"] for row in await cur.fetchall()}
-    if "refinement_steps" not in cp2_columns:
-        await db.execute("ALTER TABLE content_pipelines ADD COLUMN refinement_steps TEXT")
-        await db.commit()
-
-    # Channel tags (issue #230)
-    await db.execute("""
-        CREATE TABLE IF NOT EXISTS tags (
-            id   INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT UNIQUE NOT NULL
-        )
-        """)
-    await db.execute("""
-        CREATE TABLE IF NOT EXISTS channel_tags (
-            channel_pk INTEGER NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
-            tag_id     INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
-            PRIMARY KEY (channel_pk, tag_id)
-        )
-        """)
-    await db.commit()
-
     return fts_available

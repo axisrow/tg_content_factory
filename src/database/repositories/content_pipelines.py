@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from datetime import datetime
 
 import aiosqlite
@@ -36,11 +35,6 @@ class ContentPipelinesRepository:
             last_generated_id=row["last_generated_id"],
             generate_interval_minutes=row["generate_interval_minutes"],
             publish_times=row["publish_times"] if "publish_times" in row.keys() else None,
-            refinement_steps=(
-                json.loads(row["refinement_steps"])
-                if "refinement_steps" in row.keys() and row["refinement_steps"]
-                else []
-            ),
             created_at=_dt(row["created_at"]),
         )
 
@@ -167,13 +161,6 @@ class ContentPipelinesRepository:
         except Exception:
             await self._db.rollback()
             raise
-
-    async def set_refinement_steps(self, pipeline_id: int, steps: list[dict]) -> None:
-        await self._db.execute(
-            "UPDATE content_pipelines SET refinement_steps = ? WHERE id = ?",
-            (json.dumps(steps, ensure_ascii=False), pipeline_id),
-        )
-        await self._db.commit()
 
     async def set_active(self, pipeline_id: int, active: bool) -> None:
         await self._db.execute(

@@ -45,7 +45,6 @@ class Channel(BaseModel):
     last_collected_id: int = 0
     added_at: datetime | None = None
     message_count: int = 0
-    tags: list[str] = []
 
 
 class Message(BaseModel):
@@ -169,7 +168,6 @@ class ContentPipeline(BaseModel):
     last_generated_id: int = 0
     generate_interval_minutes: int = Field(60, ge=1)
     publish_times: str | None = None  # JSON array of "HH:MM" times, e.g. '["09:00", "18:00"]'
-    refinement_steps: list[dict] = []  # list of {name, prompt} dicts; {text} in prompt is replaced
     created_at: datetime | None = None
 
 

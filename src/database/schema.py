@@ -306,15 +306,4 @@ CREATE TABLE IF NOT EXISTS message_embeddings (
     message_id INTEGER PRIMARY KEY,
     embedding  BLOB NOT NULL
 );
-
-CREATE TABLE IF NOT EXISTS tags (
-    id   INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT UNIQUE NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS channel_tags (
-    channel_pk INTEGER NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
-    tag_id     INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
-    PRIMARY KEY (channel_pk, tag_id)
-);
 """

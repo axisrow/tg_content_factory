@@ -5,7 +5,7 @@ import logging
 from urllib.parse import quote
 
 from fastapi import APIRouter, Form, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 
 from src.agent.prompt_template import ALLOWED_TEMPLATE_VARIABLES
 from src.models import PipelineGenerationBackend, PipelinePublishMode
@@ -376,35 +376,3 @@ async def publish_pipeline(request: Request, pipeline_id: int, run_id: int = For
     await db.repos.generation_runs.save_result(run_id, run.generated_text or "", metadata)
     await db.repos.generation_runs.set_status(run_id, "published")
     return _pipeline_redirect("pipeline_published")
-
-
-@router.get("/{pipeline_id}/refinement-steps")
-async def get_refinement_steps(request: Request, pipeline_id: int):
-    db = deps.get_db(request)
-    pipeline = await db.repos.content_pipelines.get_by_id(pipeline_id)
-    if pipeline is None:
-        return _pipeline_redirect("pipeline_not_found", error=True)
-    return JSONResponse(content={"steps": pipeline.refinement_steps})
-
-
-@router.post("/{pipeline_id}/refinement-steps")
-async def set_refinement_steps(request: Request, pipeline_id: int):
-    """Accept JSON body: {"steps": [{"name": "...", "prompt": "...{text}..."}]}."""
-    db = deps.get_db(request)
-    pipeline = await db.repos.content_pipelines.get_by_id(pipeline_id)
-    if pipeline is None:
-        return _pipeline_redirect("pipeline_not_found", error=True)
-    try:
-        body = await request.json()
-        steps = body.get("steps", [])
-        if not isinstance(steps, list):
-            raise ValueError("steps must be a list")
-        validated = [
-            {"name": str(s.get("name", "")).strip(), "prompt": str(s.get("prompt", "")).strip()}
-            for s in steps
-            if isinstance(s, dict) and s.get("prompt", "").strip()
-        ]
-    except Exception as exc:
-        return JSONResponse(content={"ok": False, "error": str(exc)}, status_code=400)
-    await db.repos.content_pipelines.set_refinement_steps(pipeline_id, validated)
-    return JSONResponse(content={"ok": True, "steps": validated})
