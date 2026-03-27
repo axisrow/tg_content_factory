@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
     from src.services.provider_adapters import ImageAdapter
+    from src.services.s3_store import S3Store
 
 logger = logging.getLogger(__name__)
 
@@ -22,10 +23,12 @@ class ImageGenerationService:
 
     def __init__(self, adapters: dict[str, "ImageAdapter"] | None = None) -> None:
         self._adapters: dict[str, ImageAdapter] = {}
+        self._s3: S3Store | None = None
         if adapters is not None:
             self._adapters = dict(adapters)
         else:
             self._register_from_env()
+        self._init_s3()
 
     # ── public API ──
 
@@ -39,13 +42,19 @@ class ImageGenerationService:
             logger.warning("No image adapter available for model=%s", model)
             return None
         try:
-            return await adapter(text, model_id)
+            result = await adapter(text, model_id)
         except (OSError, asyncio.TimeoutError) as exc:
             logger.warning("Image generation failed (model=%s): %s", model, exc)
             return None
         except Exception:
             logger.exception("Image generation unexpected error (model=%s)", model)
             return None
+        # Upload local files to S3 when configured
+        if result and not result.startswith("http") and getattr(self, "_s3", None) is not None:
+            s3_url = await self._s3.upload_file(result)
+            if s3_url:
+                return s3_url
+        return result
 
     async def is_available(self) -> bool:
         return len(self._adapters) > 0
@@ -59,6 +68,12 @@ class ImageGenerationService:
         return list(self._adapters.keys())
 
     # ── internals ──
+
+    def _init_s3(self) -> None:
+        from src.services.s3_store import S3Store
+        self._s3 = S3Store.from_env()
+        if self._s3:
+            logger.info("S3 image storage configured")
 
     def _register_from_env(self) -> None:
         from src.services.provider_adapters import (

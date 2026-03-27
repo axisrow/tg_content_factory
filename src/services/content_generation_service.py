@@ -80,6 +80,13 @@ class ContentGenerationService:
             generated_text = result.get("generated_text", "")
             metadata: dict[str, Any] = {"citations": result.get("citations", [])}
 
+            # Apply optional refinement steps (generate → refine → ... → image → publish)
+            if pipeline.refinement_steps and generated_text:
+                generated_text = await self._apply_refinement_steps(
+                    generated_text, pipeline, model, max_tokens, temperature
+                )
+                metadata["refinement_steps_applied"] = len(pipeline.refinement_steps)
+
             image_model = pipeline.image_model
             if not image_model:
                 image_model = await self._db.get_setting("default_image_model") or ""
@@ -202,6 +209,49 @@ class ContentGenerationService:
             "generated_text": full_text,
             "citations": [],
         }
+
+    async def _apply_refinement_steps(
+        self,
+        text: str,
+        pipeline: ContentPipeline,
+        model: str | None,
+        max_tokens: int,
+        temperature: float,
+    ) -> str:
+        """Apply each refinement step sequentially, replacing {text} with current output."""
+        from src.services.provider_service import AgentProviderService
+
+        provider_service = AgentProviderService(self._db)
+        provider_callable = provider_service.get_provider_callable(pipeline.llm_model)
+
+        for step in pipeline.refinement_steps:
+            step_prompt = step.get("prompt", "")
+            if not step_prompt:
+                continue
+            rendered = step_prompt.replace("{text}", text)
+            try:
+                result = await provider_callable(
+                    rendered,
+                    model=model or pipeline.llm_model or "",
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                )
+                refined = result.get("text") or result.get("generated_text") or ""
+                if refined:
+                    text = refined
+                    logger.debug(
+                        "Refinement step %r applied for pipeline_id=%s",
+                        step.get("name", "unnamed"),
+                        pipeline.id,
+                    )
+            except Exception:
+                logger.warning(
+                    "Refinement step %r failed for pipeline_id=%s; keeping previous text",
+                    step.get("name", "unnamed"),
+                    pipeline.id,
+                    exc_info=True,
+                )
+        return text
 
     async def _generate_image(
         self, pipeline: ContentPipeline, text: str, *, model: str | None = None

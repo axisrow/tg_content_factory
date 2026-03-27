@@ -45,6 +45,13 @@ def _embed_history_in_prompt(history_msgs: list[dict], message: str) -> str:
     return "\n".join(parts)
 
 
+# Ollama models known to not support native function calling.
+# For these, the ReAct text-loop fallback is used instead of deepagents tool binding.
+_OLLAMA_NO_NATIVE_FC: frozenset[str] = frozenset({
+    "kimi-k2.5",
+    "kimi-k1.5",
+})
+
 _DEEPAGENTS_PROBE_PROMPT = (
     "Compatibility probe. You must use the tool that lists active Telegram "
     "channels before answering. "
@@ -455,6 +462,27 @@ class DeepagentsBackend:
         else:
             extra.update({key: value for key, value in cfg.secret_fields.items() if value.strip()})
         self._init_attempted_model = cfg.model_name
+
+        # ReAct fallback for Ollama models without native function calling
+        if provider == "ollama":
+            bare_model = resolved_model_name.split(":")[0]
+            if bare_model in _OLLAMA_NO_NATIVE_FC:
+                logger.info(
+                    "Model %r does not support native FC via Ollama; using ReAct fallback",
+                    resolved_model_name,
+                )
+                from src.agent.react_agent import OllamaReActAgent
+                agent = OllamaReActAgent(
+                    base_url=str(extra.get("base_url", "http://localhost:11434")),
+                    model=resolved_model_name,
+                    tools=tools or self._default_tools(permissions=permissions),
+                    system_prompt=system_prompt,
+                    api_key=cfg.secret_fields.get("api_key", ""),
+                )
+                if record_last_used:
+                    self._last_used_provider = provider
+                    self._last_used_model = configured_model_name
+                return agent
 
         try:
             from deepagents import create_deep_agent
