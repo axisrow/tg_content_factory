@@ -176,7 +176,7 @@ async def test_tui_send_message_calls_chat_stream(db, app_factory):
 
     mgr.chat_stream.assert_called_once()
     call_args = mgr.chat_stream.call_args
-    assert call_args[0][1] == "test message" or call_args[1].get("message") == "test message" or True
+    assert call_args[0][1] == "test message" or call_args[1].get("message") == "test message"
     # thread_id and message are positional args
     assert "test message" in str(call_args)
 

@@ -50,21 +50,10 @@ class ThreadItem(Widget):
             self.remove_class("active")
 
 
-class ThreadSelected(App.Message if False else object):
-    """Custom message for thread selection."""
-
-    def __new__(cls, thread_id: int):  # type: ignore[override]
-        return object.__new__(cls)
-
-    def __init__(self, thread_id: int) -> None:
-        self.thread_id = thread_id
-
-
-# Use proper Textual message system
 from textual.message import Message  # noqa: E402
 
 
-class ThreadSelected(Message):  # noqa: F811
+class ThreadSelected(Message):
     def __init__(self, thread_id: int) -> None:
         super().__init__()
         self.thread_id = thread_id
@@ -116,6 +105,7 @@ class StreamingMessage(Static):
             self._md.update(self._content)
 
     def set_error(self, error: str) -> None:
+        self._pending_render = False
         self.add_class("user-bubble")
         self.remove_class("streaming-bubble")
         self.border_title = "Ошибка"
@@ -282,13 +272,12 @@ class AgentTuiApp(App):
 
         self._stream_worker = self.run_worker(
             self._stream_response(thread_id, message, streaming_msg),
-            exclusive=False,
+            exclusive=True,
             group="chat",
             thread=False,
         )
 
     async def _stream_response(self, thread_id: int, message: str, widget: StreamingMessage) -> None:
-        model = getattr(self.config, "agent", None)
         model = None  # let AgentManager pick default
 
         messages_container = self.query_one("#messages", VerticalScroll)
