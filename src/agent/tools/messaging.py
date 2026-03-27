@@ -675,14 +675,21 @@ def register(db, client_pool, embedding_service, **kwargs):
             entity = await client.get_entity(chat_id)
             lines = [f"Последние {limit} сообщений из {chat_id}:\n"]
             count = 0
+            total_chars = 0
+            budget = 50_000
             async for msg in client.iter_messages(entity, limit=limit):
                 if not msg.text:
                     continue
                 sender = f" [id:{msg.sender_id}]" if msg.sender_id else ""
                 date_str = msg.date.strftime("%Y-%m-%d %H:%M") if msg.date else ""
                 preview = msg.text[:500]
-                lines.append(f"#{msg.id} {date_str}{sender}: {preview}")
+                line = f"#{msg.id} {date_str}{sender}: {preview}"
+                lines.append(line)
+                total_chars += len(line)
                 count += 1
+                if total_chars >= budget:
+                    lines.append(f"\n[Вывод обрезан после {count} сообщений, достигнут лимит символов]")
+                    break
             if count == 0:
                 return _text_response("Сообщений с текстом не найдено.")
             lines.append(f"\nИтого: {count} сообщений.")
