@@ -305,4 +305,5 @@ class AgentTuiApp(App):
                 widget.finalize()
         except asyncio.CancelledError:
             await self.db.delete_last_agent_exchange(thread_id)
-            await widget.remove()
+            if widget.is_attached:
+                await widget.remove()
