@@ -25,7 +25,9 @@ from src.database import Database
 @pytest.fixture
 def mock_db():
     """Create a mock Database for testing tools."""
-    return MagicMock(spec=Database)
+    db = MagicMock(spec=Database)
+    db.get_setting = AsyncMock(return_value=None)
+    return db
 
 
 def _get_tool_handlers(mock_db, client_pool=None, config=None, **kwargs):
@@ -309,30 +311,28 @@ class TestDeepagentsSyncGetNotificationStatus:
 
 
 class TestDeepagentsSyncListImageProviders:
-    def test_no_providers(self):
+    def test_no_providers(self, mock_db):
         from src.agent.tools.deepagents_sync import build_deepagents_tools
 
-        mock_db2 = MagicMock()
         img_svc_mock = MagicMock()
         img_svc_mock.adapter_names = []
         with patch(
             "src.services.image_generation_service.ImageGenerationService", return_value=img_svc_mock
         ):
-            tools = build_deepagents_tools(mock_db2)
+            tools = build_deepagents_tools(mock_db)
             tool_map = {t.__name__: t for t in tools}
             result = tool_map["list_image_providers"]()
         assert "не настроены" in result
 
-    def test_with_providers(self):
+    def test_with_providers(self, mock_db):
         from src.agent.tools.deepagents_sync import build_deepagents_tools
 
-        mock_db2 = MagicMock()
         img_svc_mock = MagicMock()
         img_svc_mock.adapter_names = ["together", "hf"]
         with patch(
             "src.services.image_generation_service.ImageGenerationService", return_value=img_svc_mock
         ):
-            tools = build_deepagents_tools(mock_db2)
+            tools = build_deepagents_tools(mock_db)
             tool_map = {t.__name__: t for t in tools}
             result = tool_map["list_image_providers"]()
         assert "together" in result

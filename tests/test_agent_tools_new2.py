@@ -21,7 +21,9 @@ from src.database import Database
 @pytest.fixture
 def mock_db():
     """Create a mock Database for testing tools."""
-    return MagicMock(spec=Database)
+    db = MagicMock(spec=Database)
+    db.get_setting = AsyncMock(return_value=None)
+    return db
 
 
 def _get_tool_handlers(mock_db, client_pool=None, config=None, **kwargs):
