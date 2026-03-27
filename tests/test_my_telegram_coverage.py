@@ -902,7 +902,7 @@ async def web_client(db, real_pool_harness_factory):
     async with make_auth_client(app) as c:
         yield c, app
     await app.state.collection_queue.shutdown()
-    await app.state.client_pool.disconnect_all()
+    await app.state.pool.disconnect_all()
 
 
 class TestWebPage:
