@@ -247,6 +247,8 @@ class AgentTuiApp(App):
             self._stream_worker.cancel()
 
     async def action_send_message(self) -> None:
+        if self._stream_worker is not None and not self._stream_worker.is_cancelled:
+            return  # prevent double-send while streaming to avoid delete_last_agent_exchange deleting next user message
         input_area = self.query_one("#input", TextArea)
         message = input_area.text.strip()
         if not message or self.current_thread_id is None:
