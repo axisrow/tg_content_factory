@@ -650,8 +650,10 @@ def register(db, client_pool, embedding_service, **kwargs):
         "Read the last N messages from any Telegram chat or channel without storing them in the database. "
         "Useful to preview content before deciding whether to collect it. "
         "chat_id can be a username (@channel), t.me link, numeric ID, or 'me' for Saved Messages. "
-        "Default limit is 100 messages.",
-        {"phone": str, "chat_id": str, "limit": int},
+        "Two modes: 'preview' (default) — truncates each message to 300 chars, limit up to 200, "
+        "50k char output budget; 'full' — returns complete message text, limit up to 2000, "
+        "500k char output budget. Default limit is 100 messages.",
+        {"phone": str, "chat_id": str, "limit": int, "mode": str},
     )
     async def read_messages(args):
         pool_gate = require_pool(client_pool, "Чтение сообщений")
@@ -664,8 +666,15 @@ def register(db, client_pool, embedding_service, **kwargs):
         if perm_gate:
             return perm_gate
         chat_id = args.get("chat_id", "")
+        mode = args.get("mode") or "preview"
+        if mode not in ("preview", "full"):
+            return _text_response("Ошибка: mode должен быть 'preview' или 'full'.")
+        is_full = mode == "full"
+        max_limit = 2000 if is_full else 200
+        budget = 500_000 if is_full else 50_000
+        msg_preview_len = None if is_full else 300
         try:
-            limit = max(1, min(int(args.get("limit") or 100), 500))
+            limit = max(1, min(int(args.get("limit") or 100), max_limit))
         except (TypeError, ValueError):
             limit = 100
         if not chat_id:
@@ -676,17 +685,16 @@ def register(db, client_pool, embedding_service, **kwargs):
                 return _text_response(f"Клиент для {phone} не найден или flood-wait активен.")
             client, _ = result
             entity = await client.get_entity(chat_id)
-            lines = [f"Последние {limit} сообщений из {chat_id}:\n"]
+            lines = [f"Последние {limit} сообщений из {chat_id} (режим: {mode}):\n"]
             count = 0
             total_chars = 0
-            budget = 50_000
             async for msg in client.iter_messages(entity, limit=limit):
                 if not msg.text:
                     continue
                 sender = f" [id:{msg.sender_id}]" if msg.sender_id else ""
                 date_str = msg.date.strftime("%Y-%m-%d %H:%M") if msg.date else ""
-                preview = msg.text[:500]
-                line = f"#{msg.id} {date_str}{sender}: {preview}"
+                text = msg.text if msg_preview_len is None else msg.text[:msg_preview_len]
+                line = f"#{msg.id} {date_str}{sender}: {text}"
                 lines.append(line)
                 total_chars += len(line)
                 count += 1
