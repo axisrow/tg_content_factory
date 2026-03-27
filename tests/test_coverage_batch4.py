@@ -493,6 +493,24 @@ class TestSearchMyTelegram:
         assert "и ещё" not in text
 
     @pytest.mark.asyncio
+    async def test_filter_empty_distinguishes_from_no_dialogs(self, mock_db):
+        pool = _make_pool_with_account()
+        mock_db.get_accounts = AsyncMock(
+            return_value=[SimpleNamespace(phone="+79001234567", is_primary=True)]
+        )
+        dialogs = [
+            {"channel_id": 1, "title": "Test", "channel_type": "channel"},
+        ]
+        with patch("src.services.channel_service.ChannelService") as mock_svc:
+            mock_svc.return_value.get_my_dialogs = AsyncMock(return_value=dialogs)
+            handlers = _get_tool_handlers(mock_db, client_pool=pool)
+            result = await handlers["search_my_telegram"]({"phone": "+79001234567", "type": "dm"})
+        text = _text(result)
+        assert "Нет диалогов по запросу" in text
+        assert "Всего диалогов" in text
+        assert "не найдены" not in text
+
+    @pytest.mark.asyncio
     async def test_limit_param(self, mock_db):
         pool = _make_pool_with_account()
         mock_db.get_accounts = AsyncMock(

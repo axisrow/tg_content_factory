@@ -49,6 +49,7 @@ def register(db, client_pool, embedding_service, **kwargs):
 
             svc = ChannelService(db, client_pool, None)
             dialogs = await svc.get_my_dialogs(phone)
+            total = len(dialogs)
             type_filter = (args.get("type") or "").strip().lower()
             if type_filter:
                 allowed = _TYPE_ALIASES.get(type_filter, {type_filter})
@@ -64,7 +65,18 @@ def register(db, client_pool, embedding_service, **kwargs):
                 except (TypeError, ValueError):
                     pass
             if not dialogs:
-                return _text_response(f"Диалоги для {phone} не найдены.")
+                if total == 0:
+                    return _text_response(f"Диалоги для {phone} не найдены.")
+                parts = []
+                if type_filter:
+                    parts.append(f"тип: {type_filter}")
+                if search_query:
+                    parts.append(f"поиск: '{search_query}'")
+                filters_desc = ", ".join(parts)
+                return _text_response(
+                    f"Нет диалогов по запросу ({filters_desc}). "
+                    f"Всего диалогов для {phone}: {total}."
+                )
             lines = [f"Диалоги ({len(dialogs)}):"]
             for d in dialogs:
                 title = d.get("title", "?")
