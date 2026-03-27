@@ -1059,14 +1059,15 @@ class TestListImageModelsTool:
         assert "rank 1" in text
 
     @pytest.mark.asyncio
-    async def test_models_truncated_at_30(self, mock_db):
+    async def test_models_all_shown_beyond_30(self, mock_db):
         models = [{"id": f"m{i}"} for i in range(35)]
         _svc_path = "src.services.image_generation_service.ImageGenerationService"
         with patch(f"{_svc_path}.search_models", new=AsyncMock(return_value=models)):
             handlers = _get_channel_tool_handlers(mock_db)
             result = await handlers["list_image_models"]({"provider": "replicate"})
         text = _text(result)
-        assert "ещё 5" in text
+        assert "Модели replicate (35)" in text
+        assert "ещё" not in text
 
 
 class TestListGeneratedImagesTool:

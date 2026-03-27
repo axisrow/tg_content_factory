@@ -333,15 +333,13 @@ def register(db, client_pool, embedding_service, **kwargs):
             if not participants:
                 return _text_response("Участники не найдены.")
             lines = [f"Участники {chat_id} ({len(participants)}):"]
-            for p in participants[:50]:
+            for p in participants:
                 name = " ".join(filter(None, [
                     getattr(p, "first_name", None) or "",
                     getattr(p, "last_name", None) or "",
                 ]))
                 username = f" (@{p.username})" if getattr(p, "username", None) else ""
                 lines.append(f"  {p.id}: {name}{username}")
-            if len(participants) > 50:
-                lines.append(f"  ... и ещё {len(participants) - 50}")
             return _text_response("\n".join(lines))
         except Exception as e:
             return _text_response(f"Ошибка получения участников: {e}")

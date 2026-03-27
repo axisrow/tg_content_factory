@@ -649,4 +649,45 @@ async def run_migrations(db: aiosqlite.Connection) -> bool:
         """)
     await db.commit()
 
+    # Rename tool key list_dialogs → search_my_telegram in agent_tool_permissions (issue #272)
+    await _migrate_tool_permission_key(db, "list_dialogs", "search_my_telegram")
+
     return fts_available
+
+
+async def _migrate_tool_permission_key(db: aiosqlite.Connection, old_key: str, new_key: str) -> None:
+    """Rename a tool name key inside the agent_tool_permissions JSON setting (both flat and per-phone formats)."""
+    import json
+
+    cur = await db.execute("SELECT value FROM settings WHERE key = 'agent_tool_permissions' LIMIT 1")
+    row = await cur.fetchone()
+    if not row or not row["value"]:
+        return
+    try:
+        data = json.loads(row["value"])
+    except (json.JSONDecodeError, TypeError):
+        return
+    if not isinstance(data, dict):
+        return
+
+    changed = False
+    first_val = next(iter(data.values()), None) if data else None
+    if isinstance(first_val, dict):
+        # Per-phone format: {"phone": {"tool_name": bool, ...}, ...}
+        for phone, perms in data.items():
+            if isinstance(perms, dict) and old_key in perms:
+                perms[new_key] = perms.pop(old_key)
+                changed = True
+    else:
+        # Flat format: {"tool_name": bool, ...}
+        if old_key in data:
+            data[new_key] = data.pop(old_key)
+            changed = True
+
+    if changed:
+        await db.execute(
+            "UPDATE settings SET value = ? WHERE key = 'agent_tool_permissions'",
+            (json.dumps(data, ensure_ascii=False),),
+        )
+        await db.commit()
+        logger.info("Migrated tool permission key %r → %r in agent_tool_permissions", old_key, new_key)

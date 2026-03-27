@@ -113,7 +113,7 @@ def register(db, client_pool, embedding_service, **kwargs):
             if not models:
                 return _text_response(f"Модели для {provider} не найдены.")
             lines = [f"Модели {provider} ({len(models)}):"]
-            for m in models[:30]:
+            for m in models:
                 name = m.get("id", m.get("name", "?"))
                 parts = [f"- {name}"]
                 rc = m.get("run_count")
@@ -123,8 +123,6 @@ def register(db, client_pool, embedding_service, **kwargs):
                 if rank is not None:
                     parts.append(f"[rank {rank}]")
                 lines.append(" ".join(parts))
-            if len(models) > 30:
-                lines.append(f"... и ещё {len(models) - 30}")
             return _text_response("\n".join(lines))
         except Exception as e:
             return _text_response(f"Ошибка поиска моделей: {e}")
