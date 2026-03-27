@@ -310,3 +310,7 @@ class AgentTuiApp(App):
             await self.db.delete_last_agent_exchange(thread_id)
             if widget.is_attached:
                 await widget.remove()
+        except Exception as exc:
+            logger.exception("Unexpected error in stream worker")
+            widget.set_error(str(exc))
+            await self.db.delete_last_agent_exchange(thread_id)
