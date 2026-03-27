@@ -14,6 +14,7 @@ from textual.css.query import NoMatches
 from textual.reactive import reactive
 from textual.widget import Widget
 from textual.widgets import Button, Footer, Header, Label, Markdown, Static, TextArea
+from textual.worker import WorkerState
 
 if TYPE_CHECKING:
     from src.agent.manager import AgentManager
@@ -247,7 +248,7 @@ class AgentTuiApp(App):
             self._stream_worker.cancel()
 
     async def action_send_message(self) -> None:
-        if self._stream_worker is not None and not self._stream_worker.is_cancelled:
+        if self._stream_worker is not None and self._stream_worker.state in (WorkerState.PENDING, WorkerState.RUNNING):
             return  # prevent double-send while streaming to avoid delete_last_agent_exchange deleting next user message
         input_area = self.query_one("#input", TextArea)
         message = input_area.text.strip()
