@@ -513,7 +513,7 @@ class TestCLIAgentDbProviders:
             patch("langchain.chat_models.init_chat_model", side_effect=fake_init_chat_model),
             patch("deepagents.create_deep_agent", return_value=fake_agent),
         ):
-            run(_ns(agent_action="chat", thread_id=thread_id, message="hello", model=None))
+            run(_ns(agent_action="chat", thread_id=thread_id, prompt="hello", model=None))
 
         assert "ok-from-db-provider" in capsys.readouterr().out
 
@@ -1189,7 +1189,7 @@ class TestCLIAgent:
             run(
                 _ns(
                     agent_action="chat",
-                    message="hello",
+                    prompt="hello",
                     thread_id=None,
                     model="claude-haiku-4-5-20251001",
                 )
@@ -1260,9 +1260,18 @@ class TestCLIAgent:
         assert args.channel_id == 100
         assert args.topic_id == 42
 
-        args = parser.parse_args(["agent", "chat", "hi", "--model", "claude-haiku-4-5-20251001"])
+        args = parser.parse_args(["agent", "chat", "--prompt", "hi", "--model", "claude-haiku-4-5-20251001"])
         assert args.agent_action == "chat"
+        assert args.prompt == "hi"
         assert args.model == "claude-haiku-4-5-20251001"
+
+        args = parser.parse_args(["agent", "chat", "-p", "hi"])
+        assert args.agent_action == "chat"
+        assert args.prompt == "hi"
+
+        args = parser.parse_args(["agent", "chat"])
+        assert args.agent_action == "chat"
+        assert args.prompt is None
 
 
 # ---------------------------------------------------------------------------
