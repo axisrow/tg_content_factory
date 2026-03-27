@@ -120,8 +120,7 @@ class TestSchedulerGetJobNextRun:
         await mgr.start()
         try:
             result = mgr.get_job_next_run("collect_all")
-            # job was registered; next_run_time should be a datetime or None
-            assert result is not None or result is None  # just assert no exception
+            assert result is not None
         finally:
             await mgr.stop()
 
@@ -914,14 +913,8 @@ class TestAgentManagerInit:
         from src.agent.manager import AgentManager
 
         with patch.dict(os.environ, {}, clear=True):
-            # Remove any API keys
-            env_clean = {k: v for k, v in os.environ.items()
-                         if k not in ("ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN")}
-            with patch.dict(os.environ, env_clean, clear=True):
-                mgr = AgentManager(db)
-                # Claude available depends on env vars
-                claude_avail = mgr._claude_backend.available
-                assert isinstance(claude_avail, bool)
+            mgr = AgentManager(db)
+            assert mgr._claude_backend.available is False
 
 
 class TestAgentManagerRefreshSettingsCache:
