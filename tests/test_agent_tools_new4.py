@@ -618,7 +618,7 @@ class TestSendMessage:
         # no recipient, no text
         result = await handlers["send_message"]({"phone": "+79001234567"})
         text = _text(result)
-        assert "обязательны" in text or "confirm=true" in text
+        assert "обязательны" in text
 
 
 class TestEditMessage:
@@ -658,7 +658,7 @@ class TestEditMessage:
         handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
         result = await handlers["edit_message"]({"phone": "+79001234567", "chat_id": "123", "text": "new"})
         text = _text(result)
-        assert "обязательны" in text or "confirm=true" in text
+        assert "обязательны" in text
 
 
 class TestDeleteMessage:
@@ -953,7 +953,7 @@ class TestEditPermissions:
         handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
         result = await handlers["edit_permissions"]({"phone": "+79001234567", "chat_id": "chat", "user_id": "111"})
         text = _text(result)
-        assert "флаг" in text or "confirm=true" in text
+        assert "флаг" in text
 
     @pytest.mark.asyncio
     async def test_with_confirm_success(self, mock_db):
