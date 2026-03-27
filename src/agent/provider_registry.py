@@ -183,7 +183,7 @@ PROVIDER_SPECS: dict[str, ProviderSpec] = {
         name="ollama",
         display_name="Ollama",
         package_name="langchain-ollama",
-        static_models=("llama3.2", "qwen2.5", "deepseek-r1", "gpt-oss:120b"),
+        static_models=("qwen3", "deepseek-v3.2", "gemma3", "mistral-large3", "glm4.7"),
         plain_fields=(
             _field(
                 "base_url",

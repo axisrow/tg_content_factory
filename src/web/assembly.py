@@ -127,6 +127,7 @@ def register_routes(app: FastAPI) -> None:
     from src.web.routes.my_telegram import router as my_telegram_router
     from src.web.routes.photo_loader import router as photo_loader_router
     from src.web.routes.pipelines import router as pipelines_router
+    from src.web.routes.rss import router as rss_router
     from src.web.routes.scheduler import router as scheduler_router
     from src.web.routes.search import router as search_router
     from src.web.routes.search_queries import router as search_queries_router
@@ -153,6 +154,7 @@ def register_routes(app: FastAPI) -> None:
     app.include_router(debug_router, prefix="/debug")
     app.include_router(images_router, prefix="/images")
     app.include_router(pipelines_router, prefix="/pipelines")
+    app.include_router(rss_router)
 
 
 def build_timing_buffer():

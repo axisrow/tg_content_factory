@@ -221,3 +221,53 @@ class ChannelsRepository:
             await self._db.execute("DELETE FROM forum_topics WHERE channel_id = ?", (channel_id,))
         await self._db.execute("DELETE FROM channels WHERE id = ?", (pk,))
         await self._db.commit()
+
+    # ── Tag helpers ──────────────────────────────────────────────────────────
+
+    async def list_all_tags(self) -> list[str]:
+        cur = await self._db.execute("SELECT name FROM tags ORDER BY name")
+        return [row["name"] for row in await cur.fetchall()]
+
+    async def create_tag(self, name: str) -> None:
+        name = name.strip()
+        if not name:
+            return
+        await self._db.execute("INSERT OR IGNORE INTO tags (name) VALUES (?)", (name,))
+        await self._db.commit()
+
+    async def delete_tag(self, name: str) -> None:
+        await self._db.execute("DELETE FROM tags WHERE name = ?", (name,))
+        await self._db.commit()
+
+    async def get_channel_tags(self, channel_pk: int) -> list[str]:
+        cur = await self._db.execute(
+            """SELECT t.name FROM tags t
+               JOIN channel_tags ct ON ct.tag_id = t.id
+               WHERE ct.channel_pk = ?
+               ORDER BY t.name""",
+            (channel_pk,),
+        )
+        return [row["name"] for row in await cur.fetchall()]
+
+    async def set_channel_tags(self, channel_pk: int, tag_names: list[str]) -> None:
+        tag_names = [n.strip() for n in tag_names if n.strip()]
+        await self._db.execute("DELETE FROM channel_tags WHERE channel_pk = ?", (channel_pk,))
+        for name in tag_names:
+            await self._db.execute("INSERT OR IGNORE INTO tags (name) VALUES (?)", (name,))
+            await self._db.execute(
+                """INSERT OR IGNORE INTO channel_tags (channel_pk, tag_id)
+                   SELECT ?, id FROM tags WHERE name = ?""",
+                (channel_pk, name),
+            )
+        await self._db.commit()
+
+    async def get_channels_by_tag(self, tag: str) -> list[Channel]:
+        cur = await self._db.execute(
+            """SELECT c.* FROM channels c
+               JOIN channel_tags ct ON ct.channel_pk = c.id
+               JOIN tags t ON t.id = ct.tag_id
+               WHERE t.name = ?
+               ORDER BY c.id""",
+            (tag,),
+        )
+        return [self._map_channel(r) for r in await cur.fetchall()]

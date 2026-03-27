@@ -157,16 +157,20 @@ class TestGetSearchResultFloodWait:
 
 class TestRunBenchmarkStep:
     def test_success(self):
+        import sys
+
         from src.cli.commands.test import BenchmarkStep, _run_benchmark_step
 
-        step = BenchmarkStep("test", ("python", "-c", "pass"))
+        step = BenchmarkStep("test", (sys.executable, "-c", "pass"))
         elapsed = _run_benchmark_step(step)
         assert elapsed >= 0
 
     def test_failure_exits(self):
+        import sys
+
         from src.cli.commands.test import BenchmarkStep, _run_benchmark_step
 
-        step = BenchmarkStep("fail", ("python", "-c", "import sys; sys.exit(1)"))
+        step = BenchmarkStep("fail", (sys.executable, "-c", "import sys; sys.exit(1)"))
         with pytest.raises(SystemExit):
             _run_benchmark_step(step)
 
