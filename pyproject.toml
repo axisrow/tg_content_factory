@@ -41,6 +41,7 @@ dependencies = [
     "openpyxl==3.1.5",
     "aiohttp==3.13.3",
     "numpy==2.4.3",
+    "textual[syntax]>=1.0.0",
     "claude-agent-sdk==0.1.50",
     "deepagents==0.4.12",
     "langchain==1.2.12",
@@ -76,6 +77,7 @@ include = ["src*"]
 src = [
     "web/templates/*.html",
     "web/static/*.css",
+    "cli/commands/*.tcss",
 ]
 
 [tool.ruff]

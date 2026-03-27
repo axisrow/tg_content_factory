@@ -1,0 +1,110 @@
+AgentTuiApp {
+    background: $background;
+}
+
+#sidebar {
+    width: 30;
+    border-right: solid $primary-darken-2;
+    background: $surface;
+}
+
+#sidebar-title {
+    width: 1fr;
+    height: 1;
+    content-align: center middle;
+    background: $primary-darken-3;
+    color: $text;
+    text-style: bold;
+}
+
+#new-thread-btn {
+    width: 1fr;
+    margin: 1 1 0 1;
+}
+
+#thread-list {
+    width: 1fr;
+    height: 1fr;
+    margin-top: 1;
+}
+
+ThreadItem {
+    width: 1fr;
+    height: 2;
+    padding: 0 1;
+    border-bottom: solid $primary-darken-3;
+}
+
+ThreadItem:hover {
+    background: $primary-darken-2;
+}
+
+ThreadItem.active {
+    background: $primary-darken-1;
+}
+
+ThreadItem Label {
+    width: 1fr;
+    overflow: hidden hidden;
+}
+
+#chat-area {
+    width: 1fr;
+    background: $background;
+}
+
+#messages {
+    width: 1fr;
+    height: 1fr;
+    padding: 0 1;
+}
+
+.user-bubble {
+    margin: 1 0;
+    padding: 1 2;
+    background: $surface;
+    border: solid $primary-darken-2;
+    border-title-color: $accent;
+    color: $text;
+}
+
+.assistant-bubble {
+    margin: 1 0;
+    padding: 1 2;
+    background: $background;
+    border: solid $success-darken-2;
+    border-title-color: $success;
+    color: $text;
+}
+
+.streaming-bubble {
+    margin: 1 0;
+    padding: 1 2;
+    background: $background;
+    border: dashed $warning-darken-1;
+    border-title-color: $warning;
+}
+
+#input-bar {
+    height: auto;
+    max-height: 8;
+    min-height: 3;
+    dock: bottom;
+    border-top: solid $primary-darken-2;
+    padding: 0 1;
+    background: $surface;
+}
+
+#input {
+    width: 1fr;
+    height: auto;
+    min-height: 1;
+    max-height: 6;
+    margin: 0 1 0 0;
+    border: solid $primary-darken-2;
+}
+
+#send-btn {
+    width: 12;
+    height: 3;
+}

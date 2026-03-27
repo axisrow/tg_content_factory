@@ -98,40 +98,48 @@ def run(args: argparse.Namespace) -> None:
             elif action == "chat":
                 from src.agent.manager import AgentManager
 
-                if args.thread_id:
-                    thread_id = args.thread_id
-                else:
-                    thread_id = await db.create_agent_thread("Новый тред")
-                    print(f"(создан тред #{thread_id})")
-
-                await db.save_agent_message(thread_id, "user", args.message)
-
                 mgr = AgentManager(db, config)
                 await mgr.refresh_settings_cache(preflight=True)
                 mgr.initialize()
 
-                model = getattr(args, "model", None)
-                print("Агент: ", end="", flush=True)
-                full_text = ""
-                async for chunk in mgr.chat_stream(thread_id, args.message, model=model):
-                    raw = chunk.removeprefix("data: ").strip()
-                    try:
-                        payload = json.loads(raw)
-                    except Exception:
-                        continue
-                    if "text" in payload:
-                        print(payload["text"], end="", flush=True)
-                        full_text += payload.get("text", "")
-                    if payload.get("done"):
-                        print()
-                        break
-                    if "error" in payload:
-                        print(f"\nОшибка: {payload['error']}")
-                        await db.delete_last_agent_exchange(thread_id)
-                        break
+                if args.prompt:
+                    # One-shot mode
+                    if args.thread_id:
+                        thread_id = args.thread_id
+                    else:
+                        thread_id = await db.create_agent_thread("Новый тред")
+                        print(f"(создан тред #{thread_id})")
 
-                if full_text:
-                    await db.save_agent_message(thread_id, "assistant", full_text)
+                    await db.save_agent_message(thread_id, "user", args.prompt)
+
+                    model = getattr(args, "model", None)
+                    print("Агент: ", end="", flush=True)
+                    full_text = ""
+                    async for chunk in mgr.chat_stream(thread_id, args.prompt, model=model):
+                        raw = chunk.removeprefix("data: ").strip()
+                        try:
+                            payload = json.loads(raw)
+                        except Exception:
+                            continue
+                        if "text" in payload:
+                            print(payload["text"], end="", flush=True)
+                            full_text += payload.get("text", "")
+                        if payload.get("done"):
+                            print()
+                            break
+                        if "error" in payload:
+                            print(f"\nОшибка: {payload['error']}")
+                            await db.delete_last_agent_exchange(thread_id)
+                            break
+
+                    if full_text:
+                        await db.save_agent_message(thread_id, "assistant", full_text)
+                else:
+                    # Interactive TUI mode
+                    from src.cli.commands.agent_tui import AgentTuiApp
+
+                    app = AgentTuiApp(db=db, config=config, agent_manager=mgr)
+                    await app.run_async()
 
             elif action == "thread-rename":
                 await db.rename_agent_thread(args.thread_id, args.title[:100])

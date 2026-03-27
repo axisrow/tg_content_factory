@@ -15,4 +15,5 @@ def test_packaging_config_keeps_src_namespace_for_console_script() -> None:
     assert data["tool"]["setuptools"]["package-data"]["src"] == [
         "web/templates/*.html",
         "web/static/*.css",
+        "cli/commands/*.tcss",
     ]

@@ -549,8 +549,8 @@ def build_parser() -> argparse.ArgumentParser:
     agent_delete = agent_sub.add_parser("thread-delete", help="Delete thread")
     agent_delete.add_argument("thread_id", type=int, help="Thread ID")
 
-    agent_chat = agent_sub.add_parser("chat", help="Send message to agent")
-    agent_chat.add_argument("message", help="Message text")
+    agent_chat = agent_sub.add_parser("chat", help="Interactive TUI chat or one-shot message (with -p)")
+    agent_chat.add_argument("-p", "--prompt", default=None, dest="prompt", help="Message text (non-interactive mode)")
     agent_chat.add_argument("--thread-id", type=int, default=None, dest="thread_id")
     agent_chat.add_argument("--model", default=None, help="Model name")
 
