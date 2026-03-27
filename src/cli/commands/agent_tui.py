@@ -305,7 +305,7 @@ class AgentTuiApp(App):
                     return
             if full_text:
                 await self.db.save_agent_message(thread_id, "assistant", full_text)
-                widget.finalize()
+            widget.finalize()
         except asyncio.CancelledError:
             await self.db.delete_last_agent_exchange(thread_id)
             if widget.is_attached:
