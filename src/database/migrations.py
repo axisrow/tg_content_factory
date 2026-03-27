@@ -626,6 +626,13 @@ async def run_migrations(db: aiosqlite.Connection) -> bool:
         """)
     await db.commit()
 
+    # Multi-step pipeline refinement (issue #240)
+    cur = await db.execute("PRAGMA table_info(content_pipelines)")
+    cp2_columns = {row["name"] for row in await cur.fetchall()}
+    if "refinement_steps" not in cp2_columns:
+        await db.execute("ALTER TABLE content_pipelines ADD COLUMN refinement_steps TEXT")
+        await db.commit()
+
     # Channel tags (issue #230)
     await db.execute("""
         CREATE TABLE IF NOT EXISTS tags (
