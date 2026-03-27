@@ -626,4 +626,20 @@ async def run_migrations(db: aiosqlite.Connection) -> bool:
         """)
     await db.commit()
 
+    # Channel tags (issue #230)
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS tags (
+            id   INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT UNIQUE NOT NULL
+        )
+        """)
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS channel_tags (
+            channel_pk INTEGER NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+            tag_id     INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+            PRIMARY KEY (channel_pk, tag_id)
+        )
+        """)
+    await db.commit()
+
     return fts_available

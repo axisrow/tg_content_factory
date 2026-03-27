@@ -45,6 +45,7 @@ class Channel(BaseModel):
     last_collected_id: int = 0
     added_at: datetime | None = None
     message_count: int = 0
+    tags: list[str] = []
 
 
 class Message(BaseModel):
