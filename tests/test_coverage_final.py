@@ -2639,10 +2639,20 @@ class TestWriteChecks:
         assert at.status == Status.SKIP
 
     async def test_init_db_copy_error(self, tmp_path):
-        """_init_db_copy should raise on missing config file."""
+        """_init_db_copy should raise when the DB file cannot be copied."""
+        from unittest.mock import AsyncMock, patch
+
         from src.cli.commands.test import _init_db_copy
-        with pytest.raises(Exception):
-            await _init_db_copy(str(tmp_path / "nonexistent.yaml"))
+
+        mock_config = MagicMock()
+        mock_db = MagicMock()
+        mock_db._db_path = str(tmp_path / "does_not_exist.db")
+        mock_db._session_encryption_secret = None
+        mock_db.close = AsyncMock()
+
+        with patch("src.cli.runtime.init_db", new_callable=AsyncMock, return_value=(mock_config, mock_db)):
+            with pytest.raises(Exception):
+                await _init_db_copy("any_config.yaml")
 
 
 # ===========================================================================
