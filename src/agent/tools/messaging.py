@@ -645,4 +645,51 @@ def register(db, client_pool, embedding_service, **kwargs):
 
     tools.append(mark_read)
 
+    @tool(
+        "read_messages",
+        "Read the last N messages from any Telegram chat or channel without storing them in the database. "
+        "Useful to preview content before deciding whether to collect it. "
+        "chat_id can be a username (@channel), t.me link, numeric ID, or 'me' for Saved Messages. "
+        "Default limit is 100 messages.",
+        {"phone": str, "chat_id": str, "limit": int},
+    )
+    async def read_messages(args):
+        pool_gate = require_pool(client_pool, "Чтение сообщений")
+        if pool_gate:
+            return pool_gate
+        phone, err = await resolve_phone(db, args.get("phone", ""))
+        if err:
+            return err
+        perm_gate = await require_phone_permission(db, phone, "read_messages")
+        if perm_gate:
+            return perm_gate
+        chat_id = args.get("chat_id", "")
+        limit = args.get("limit") or 100
+        if not chat_id:
+            return _text_response("Ошибка: chat_id обязателен.")
+        try:
+            result = await client_pool.get_native_client_by_phone(phone)
+            if result is None:
+                return _text_response(f"Клиент для {phone} не найден или flood-wait активен.")
+            client, _ = result
+            entity = await client.get_entity(chat_id)
+            lines = [f"Последние {limit} сообщений из {chat_id}:\n"]
+            count = 0
+            async for msg in client.iter_messages(entity, limit=limit):
+                if not msg.text:
+                    continue
+                sender = f" [id:{msg.sender_id}]" if msg.sender_id else ""
+                date_str = msg.date.strftime("%Y-%m-%d %H:%M") if msg.date else ""
+                preview = msg.text[:500]
+                lines.append(f"#{msg.id} {date_str}{sender}: {preview}")
+                count += 1
+            if count == 0:
+                return _text_response("Сообщений с текстом не найдено.")
+            lines.append(f"\nИтого: {count} сообщений.")
+            return _text_response("\n".join(lines))
+        except Exception as e:
+            return _text_response(f"Ошибка чтения сообщений: {e}")
+
+    tools.append(read_messages)
+
     return tools
