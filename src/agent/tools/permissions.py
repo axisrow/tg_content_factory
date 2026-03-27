@@ -97,6 +97,9 @@ TOOL_CATEGORIES: dict[str, ToolCategory] = {
     "get_message_velocity": ToolCategory.READ,
     "get_peak_hours": ToolCategory.READ,
     "get_calendar": ToolCategory.READ,
+    "get_top_messages": ToolCategory.READ,
+    "get_content_type_stats": ToolCategory.READ,
+    "get_hourly_activity": ToolCategory.READ,
     # Scheduler
     "get_scheduler_status": ToolCategory.READ,
     "start_scheduler": ToolCategory.WRITE,
@@ -207,6 +210,7 @@ MODULE_GROUPS: OrderedDict[str, list[str]] = OrderedDict([
         "get_analytics_summary", "get_pipeline_stats", "get_daily_stats",
         "get_trending_topics", "get_trending_channels", "get_message_velocity",
         "get_peak_hours", "get_calendar",
+        "get_top_messages", "get_content_type_stats", "get_hourly_activity",
     ]),
     ("Планировщик", [
         "get_scheduler_status", "start_scheduler", "stop_scheduler",
