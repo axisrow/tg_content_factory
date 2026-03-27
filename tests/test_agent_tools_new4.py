@@ -228,7 +228,7 @@ class TestSendPhotosNow:
                 {"phone": "+79001234567", "target": "12345", "file_paths": "a.jpg,b.jpg", "confirm": True}
             )
         text = _text(result)
-        assert "Фото отправлены" in text or "id=42" in text
+        assert "Фото отправлены" in text
 
 
 class TestSchedulePhotos:
@@ -271,7 +271,7 @@ class TestSchedulePhotos:
                 }
             )
         text = _text(result)
-        assert "запланированы" in text or "id=" in text
+        assert "запланированы" in text
 
 
 class TestCancelPhotoItem:
@@ -458,7 +458,7 @@ class TestCreatePhotoBatch:
                 {"phone": "+79001234567", "target": "12345", "file_paths": "a.jpg,b.jpg", "confirm": True}
             )
         text = _text(result)
-        assert "Батч создан" in text or "id=99" in text
+        assert "Батч создан" in text
 
 
 class TestRunPhotoDue:
@@ -535,7 +535,7 @@ class TestCreateAutoUpload:
                 }
             )
         text = _text(result)
-        assert "Автозагрузка создана" in text or "id=5" in text
+        assert "Автозагрузка создана" in text
 
 
 class TestUpdateAutoUpload:
@@ -649,7 +649,7 @@ class TestEditMessage:
             {"phone": "+79001234567", "chat_id": "123", "message_id": 5, "text": "updated text", "confirm": True}
         )
         text = _text(result)
-        assert "отредактировано" in text or "#5" in text
+        assert "отредактировано" in text
 
     @pytest.mark.asyncio
     async def test_missing_message_id_returns_error(self, mock_db):
@@ -1034,7 +1034,7 @@ class TestSetupNotificationBot:
             handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
             result = await handlers["setup_notification_bot"]({"confirm": True})
         text = _text(result)
-        assert "test_notify_bot" in text or "создан" in text
+        assert "создан" in text
 
 
 class TestDeleteNotificationBot:

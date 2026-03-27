@@ -301,7 +301,7 @@ class TestAddChannelTool:
             mock_svc.return_value.add_by_identifier = AsyncMock(return_value=False)
             handlers = _get_tool_handlers(mock_db)
             result = await handlers["add_channel"]({"identifier": "@existing", "confirm": True})
-        assert "уже существует" in _text(result) or "не удалось добавить" in _text(result)
+        assert "уже существует" in _text(result)
 
     @pytest.mark.asyncio
     async def test_error_returns_text(self, mock_db):
