@@ -29,6 +29,10 @@ TOOL_CATEGORIES: dict[str, ToolCategory] = {
     "search_messages": ToolCategory.READ,
     "semantic_search": ToolCategory.READ,
     "index_messages": ToolCategory.WRITE,
+    "search_telegram": ToolCategory.READ,
+    "search_my_chats": ToolCategory.READ,
+    "search_in_channel": ToolCategory.READ,
+    "search_hybrid": ToolCategory.READ,
     # Channels
     "list_channels": ToolCategory.READ,
     "get_channel_stats": ToolCategory.READ,
@@ -169,6 +173,7 @@ TOOL_CATEGORIES: dict[str, ToolCategory] = {
 MODULE_GROUPS: OrderedDict[str, list[str]] = OrderedDict([
     ("Поиск", [
         "search_messages", "semantic_search", "index_messages",
+        "search_telegram", "search_my_chats", "search_in_channel", "search_hybrid",
     ]),
     ("Каналы", [
         "list_channels", "get_channel_stats", "add_channel", "delete_channel",
