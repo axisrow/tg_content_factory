@@ -664,7 +664,10 @@ def register(db, client_pool, embedding_service, **kwargs):
         if perm_gate:
             return perm_gate
         chat_id = args.get("chat_id", "")
-        limit = max(1, min(int(args.get("limit") or 100), 500))
+        try:
+            limit = max(1, min(int(args.get("limit") or 100), 500))
+        except (TypeError, ValueError):
+            limit = 100
         if not chat_id:
             return _text_response("Ошибка: chat_id обязателен.")
         try:
