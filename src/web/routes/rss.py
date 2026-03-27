@@ -50,6 +50,7 @@ async def rss_feed(
         else:
             messages = await db.get_messages(limit=limit)
     except Exception:
+        logger.exception("Failed to fetch messages for RSS feed")
         messages = []
 
     title = "TG Content Factory"
@@ -108,6 +109,7 @@ async def atom_feed(
         else:
             messages = await db.get_messages(limit=limit)
     except Exception:
+        logger.exception("Failed to fetch messages for Atom feed")
         messages = []
 
     entries: list[str] = []

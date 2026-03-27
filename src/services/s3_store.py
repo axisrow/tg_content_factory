@@ -39,7 +39,7 @@ class S3Store:
                 s3.upload_file(local_path, self._bucket, key)
                 return f"{self._endpoint}/{self._bucket}/{key}"
 
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             return await loop.run_in_executor(None, _upload)
         except ImportError:
             logger.warning("boto3 not installed; S3 upload skipped for %s", local_path)
