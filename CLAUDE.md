@@ -73,6 +73,9 @@ Three layers: **CLI/Web** → **Telegram + Search + Scheduler + Agent/Pipeline**
 - **Image generation**: `ImageGenerationService` routes to provider-specific HTTP adapters (Together/HuggingFace/OpenAI/Replicate) via `provider:model_id` convention; auto-registers from env vars; adapters defined in `src/services/provider_adapters.py`
 - **UnifiedDispatcher** (`src/services/unified_dispatcher.py`): polls DB for generic tasks (CONTENT_GENERATE, CONTENT_PUBLISH, PIPELINE_RUN, PHOTO_DUE, etc.) and dispatches to handler methods; recovers interrupted tasks on startup
 - **Photo publishing**: `PhotoAutoUploadService` / `PhotoPublishService` / `PhotoTaskService` — separate upload, schedule, publish tasks tracked in DB
+- **Agent tools**: `src/agent/tools/` — modular tool files (channels, search, pipelines, images, etc.); `_registry.py` provides `require_confirmation()` gate for destructive ops and `normalize_phone()`; `react_agent.py` is ReAct fallback when claude-agent-sdk is unavailable; `manager.py` orchestrates backend selection
+- **Agent tool permissions**: `TOOL_CATEGORIES` in `src/agent/tools/permissions.py` classifies every tool as read/write/delete; per-phone ACL overrides stored in DB setting `agent_tool_permissions` (JSON); `get_all_allowed_tools()` derives MCP-prefixed allow-list
+- **S3 storage**: `src/services/s3_store.py` — optional S3-compatible backend for media (images); used by `ImageGenerationService` when S3 config is present
 
 ### Database access pattern
 
@@ -107,6 +110,7 @@ Each repository has a `_to_<model>(row)` static helper that maps `aiosqlite.Row`
 - **Collection service**: `enqueue_channel_by_pk(pk, force)` respects `is_filtered` flag; `enqueue_all_channels()` uses `full=False` for incremental collection
 - **Image adapter convention**: `ImageAdapter = Callable[[str, str], Awaitable[str | None]]` — signature is `(prompt, model_id) → URL/path`; model string format `provider:model_id` (e.g. `together:black-forest-labs/FLUX.1-schnell`); without prefix falls back to first registered adapter
 - **Content pipeline flow**: CONTENT_GENERATE task → `ContentGenerationService.generate()` → LLM text → optional image → `generation_runs` record → if AUTO publish mode, enqueues CONTENT_PUBLISH → `PublishService.publish_run()` sends to target channel
+- **Destructive tool confirmation**: agent tools that delete data require `confirm=true` argument; `require_confirmation()` in `_registry.py` returns a warning response if not confirmed
 - **HTMX progressive enhancement**: collect routes check `HX-Request` header to return HTML fragments vs redirects
 - **Identifier parsing**: `parse_identifiers()` splits text by comma/semicolon/newline; `extract_identifiers()` regex-extracts t.me links, @usernames, negative IDs; `parse_file()` handles txt/csv/xlsx
 - **aiosqlite connection cleanup**: in tests using raw `aiosqlite.connect()`, always wrap in `try/finally` with `await conn.close()` — an unclosed worker-thread blocks pytest process exit
@@ -125,6 +129,11 @@ Each repository has a `_to_<model>(row)` static helper that maps `aiosqlite.Row`
 - ruff for linting: line-length=120, target py311, rules E/F/I/N/W
 - Tests: pytest-asyncio with `asyncio_mode="auto"`
 - Session strings stored as `enc:v2:*` when `SESSION_ENCRYPTION_KEY` is set; legacy `enc:v1:*` auto-migrated; startup fails fast if encrypted rows exist without key
+
+## CI
+
+- GitHub Actions: `.github/workflows/ci.yml` — ruff lint + pytest on push to `main`/`fix/**`/`codex/**` and all PRs
+- CI runs parallel tests first (`-n auto -m "not aiosqlite_serial"`), then serial (`-m aiosqlite_serial`)
 
 ## Real Telegram Testing
 

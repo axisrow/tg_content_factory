@@ -98,7 +98,7 @@ def build_deepagents_tools(db, client_pool=None, config=None) -> list[Callable]:
         if not channels:
             return "Каналы не найдены."
         lines = [f"Каналы ({len(channels)}):"]
-        for ch in channels[:200]:
+        for ch in channels:
             status = "активен" if ch.is_active else "неактивен"
             lines.append(f"- {ch.title} (id={ch.channel_id}, {status})")
         return "\n".join(lines)

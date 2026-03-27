@@ -2015,7 +2015,7 @@ class TestMyTelegramToolErrors:
         handlers, _, _ = mytg_setup
         with patch("src.services.channel_service.ChannelService.get_my_dialogs",
                     new_callable=AsyncMock, side_effect=RuntimeError("fail")):
-            result = await handlers["list_dialogs"]({"phone": "+1111"})
+            result = await handlers["search_my_telegram"]({"phone": "+1111"})
             assert "ошибка" in _text(result).lower()
 
     async def test_refresh_dialogs_exception(self, mytg_setup):
@@ -3502,7 +3502,7 @@ class TestMyTelegramToolPhoneGates:
 
     async def test_list_dialogs_phone_err(self, mytg_phone_err):
         handlers, _ = mytg_phone_err
-        r = await handlers["list_dialogs"]({"phone": ""})
+        r = await handlers["search_my_telegram"]({"phone": ""})
         assert "аккаунт" in _text(r).lower()
 
     async def test_refresh_dialogs_phone_err(self, mytg_phone_err):

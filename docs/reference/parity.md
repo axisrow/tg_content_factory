@@ -143,7 +143,7 @@
 
 | Операция | CLI | Web Endpoint | Agent Tool |
 |----------|-----|-------------|------------|
-| Список диалогов | `my-telegram list` | `GET /my-telegram/` | `list_dialogs` |
+| Список диалогов | `my-telegram list` | `GET /my-telegram/` | `search_my_telegram` |
 | Обновить кеш | `my-telegram refresh` | `POST /my-telegram/refresh` | `refresh_dialogs` |
 | Покинуть диалоги | `my-telegram leave` | `POST /my-telegram/leave` | `leave_dialogs` |
 | Статус кеша | `my-telegram cache-status` | `GET /my-telegram/cache-status` | `get_cache_status` |

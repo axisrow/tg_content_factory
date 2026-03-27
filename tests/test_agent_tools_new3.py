@@ -848,11 +848,11 @@ class TestImagesToolListGeneratedImages:
 # ---------------------------------------------------------------------------
 
 
-class TestMyTelegramToolListDialogs:
+class TestMyTelegramToolSearchMyTelegram:
     @pytest.mark.asyncio
     async def test_no_pool(self, mock_db):
         handlers = _get_tool_handlers(mock_db, client_pool=None)
-        result = await handlers["list_dialogs"]({"phone": "+7123456"})
+        result = await handlers["search_my_telegram"]({"phone": "+7123456"})
         assert "CLI-режиме" in _text(result)
 
     @pytest.mark.asyncio
@@ -866,7 +866,7 @@ class TestMyTelegramToolListDialogs:
         ch_svc.get_my_dialogs = AsyncMock(return_value=[])
         with patch("src.services.channel_service.ChannelService", return_value=ch_svc):
             handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
-            result = await handlers["list_dialogs"]({"phone": "+79001234567"})
+            result = await handlers["search_my_telegram"]({"phone": "+79001234567"})
         assert "не найдены" in _text(result)
 
     @pytest.mark.asyncio
@@ -884,7 +884,7 @@ class TestMyTelegramToolListDialogs:
         ch_svc.get_my_dialogs = AsyncMock(return_value=dialogs)
         with patch("src.services.channel_service.ChannelService", return_value=ch_svc):
             handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
-            result = await handlers["list_dialogs"]({"phone": "+79001234567"})
+            result = await handlers["search_my_telegram"]({"phone": "+79001234567"})
         text = _text(result)
         assert "My Channel" in text
         assert "id=111" in text

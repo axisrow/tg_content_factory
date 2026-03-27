@@ -439,11 +439,11 @@ def _make_pool_with_account(phone="+79001234567"):
     return pool
 
 
-class TestListDialogs:
+class TestSearchMyTelegram:
     @pytest.mark.asyncio
     async def test_no_pool_returns_gate(self, mock_db):
         handlers = _get_tool_handlers(mock_db, client_pool=None)
-        result = await handlers["list_dialogs"]({"phone": "+79001234567"})
+        result = await handlers["search_my_telegram"]({"phone": "+79001234567"})
         assert "CLI-режиме" in _text(result)
 
     @pytest.mark.asyncio
@@ -459,7 +459,7 @@ class TestListDialogs:
         with patch("src.services.channel_service.ChannelService") as mock_svc:
             mock_svc.return_value.get_my_dialogs = AsyncMock(return_value=dialogs)
             handlers = _get_tool_handlers(mock_db, client_pool=pool)
-            result = await handlers["list_dialogs"]({"phone": "+79001234567"})
+            result = await handlers["search_my_telegram"]({"phone": "+79001234567"})
         text = _text(result)
         assert "Диалоги (2)" in text
 
@@ -472,11 +472,11 @@ class TestListDialogs:
         with patch("src.services.channel_service.ChannelService") as mock_svc:
             mock_svc.return_value.get_my_dialogs = AsyncMock(return_value=[])
             handlers = _get_tool_handlers(mock_db, client_pool=pool)
-            result = await handlers["list_dialogs"]({"phone": "+79001234567"})
+            result = await handlers["search_my_telegram"]({"phone": "+79001234567"})
         assert "не найдены" in _text(result)
 
     @pytest.mark.asyncio
-    async def test_more_than_100_dialogs(self, mock_db):
+    async def test_all_dialogs_shown_without_limit(self, mock_db):
         pool = _make_pool_with_account()
         mock_db.get_accounts = AsyncMock(
             return_value=[SimpleNamespace(phone="+79001234567", is_primary=True)]
@@ -487,9 +487,104 @@ class TestListDialogs:
         with patch("src.services.channel_service.ChannelService") as mock_svc:
             mock_svc.return_value.get_my_dialogs = AsyncMock(return_value=dialogs)
             handlers = _get_tool_handlers(mock_db, client_pool=pool)
-            result = await handlers["list_dialogs"]({"phone": "+79001234567"})
+            result = await handlers["search_my_telegram"]({"phone": "+79001234567"})
         text = _text(result)
-        assert "и ещё 5" in text
+        assert "Диалоги (105)" in text
+        assert "и ещё" not in text
+
+    @pytest.mark.asyncio
+    async def test_limit_param(self, mock_db):
+        pool = _make_pool_with_account()
+        mock_db.get_accounts = AsyncMock(
+            return_value=[SimpleNamespace(phone="+79001234567", is_primary=True)]
+        )
+        dialogs = [
+            {"channel_id": i, "title": f"Chan{i}", "channel_type": "channel"} for i in range(10)
+        ]
+        with patch("src.services.channel_service.ChannelService") as mock_svc:
+            mock_svc.return_value.get_my_dialogs = AsyncMock(return_value=dialogs)
+            handlers = _get_tool_handlers(mock_db, client_pool=pool)
+            result = await handlers["search_my_telegram"]({"phone": "+79001234567", "limit": 3})
+        text = _text(result)
+        assert "Диалоги (3)" in text
+
+    @pytest.mark.asyncio
+    async def test_search_param(self, mock_db):
+        pool = _make_pool_with_account()
+        mock_db.get_accounts = AsyncMock(
+            return_value=[SimpleNamespace(phone="+79001234567", is_primary=True)]
+        )
+        dialogs = [
+            {"channel_id": 1, "title": "Python News", "channel_type": "channel"},
+            {"channel_id": 2, "title": "Golang Daily", "channel_type": "channel"},
+            {"channel_id": 3, "title": "Python Weekly", "channel_type": "channel"},
+        ]
+        with patch("src.services.channel_service.ChannelService") as mock_svc:
+            mock_svc.return_value.get_my_dialogs = AsyncMock(return_value=dialogs)
+            handlers = _get_tool_handlers(mock_db, client_pool=pool)
+            result = await handlers["search_my_telegram"]({"phone": "+79001234567", "search": "python"})
+        text = _text(result)
+        assert "Диалоги (2)" in text
+        assert "Python News" in text
+        assert "Python Weekly" in text
+        assert "Golang Daily" not in text
+
+    @pytest.mark.asyncio
+    async def test_type_alias_channels(self, mock_db):
+        pool = _make_pool_with_account()
+        mock_db.get_accounts = AsyncMock(
+            return_value=[SimpleNamespace(phone="+79001234567", is_primary=True)]
+        )
+        dialogs = [
+            {"channel_id": 1, "title": "Chan", "channel_type": "channel"},
+            {"channel_id": 2, "title": "Group", "channel_type": "supergroup"},
+            {"channel_id": 3, "title": "DM", "channel_type": "dm"},
+        ]
+        with patch("src.services.channel_service.ChannelService") as mock_svc:
+            mock_svc.return_value.get_my_dialogs = AsyncMock(return_value=dialogs)
+            handlers = _get_tool_handlers(mock_db, client_pool=pool)
+            result = await handlers["search_my_telegram"]({"phone": "+79001234567", "type": "channels"})
+        text = _text(result)
+        assert "Диалоги (1)" in text
+        assert "Chan" in text
+        assert "Group" not in text
+
+    @pytest.mark.asyncio
+    async def test_type_alias_groups(self, mock_db):
+        pool = _make_pool_with_account()
+        mock_db.get_accounts = AsyncMock(
+            return_value=[SimpleNamespace(phone="+79001234567", is_primary=True)]
+        )
+        dialogs = [
+            {"channel_id": 1, "title": "Chan", "channel_type": "channel"},
+            {"channel_id": 2, "title": "SuperG", "channel_type": "supergroup"},
+            {"channel_id": 3, "title": "Forum", "channel_type": "forum"},
+        ]
+        with patch("src.services.channel_service.ChannelService") as mock_svc:
+            mock_svc.return_value.get_my_dialogs = AsyncMock(return_value=dialogs)
+            handlers = _get_tool_handlers(mock_db, client_pool=pool)
+            result = await handlers["search_my_telegram"]({"phone": "+79001234567", "type": "groups"})
+        text = _text(result)
+        assert "Диалоги (2)" in text
+        assert "Chan" not in text
+
+    @pytest.mark.asyncio
+    async def test_type_exact(self, mock_db):
+        pool = _make_pool_with_account()
+        mock_db.get_accounts = AsyncMock(
+            return_value=[SimpleNamespace(phone="+79001234567", is_primary=True)]
+        )
+        dialogs = [
+            {"channel_id": 1, "title": "Chan", "channel_type": "channel"},
+            {"channel_id": 2, "title": "Bot1", "channel_type": "bot"},
+        ]
+        with patch("src.services.channel_service.ChannelService") as mock_svc:
+            mock_svc.return_value.get_my_dialogs = AsyncMock(return_value=dialogs)
+            handlers = _get_tool_handlers(mock_db, client_pool=pool)
+            result = await handlers["search_my_telegram"]({"phone": "+79001234567", "type": "bot"})
+        text = _text(result)
+        assert "Диалоги (1)" in text
+        assert "Bot1" in text
 
     @pytest.mark.asyncio
     async def test_exception(self, mock_db):
@@ -500,7 +595,7 @@ class TestListDialogs:
         with patch("src.services.channel_service.ChannelService") as mock_svc:
             mock_svc.return_value.get_my_dialogs = AsyncMock(side_effect=Exception("fail"))
             handlers = _get_tool_handlers(mock_db, client_pool=pool)
-            result = await handlers["list_dialogs"]({"phone": "+79001234567"})
+            result = await handlers["search_my_telegram"]({"phone": "+79001234567"})
         assert "Ошибка получения диалогов" in _text(result)
 
 
