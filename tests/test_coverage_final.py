@@ -6858,7 +6858,6 @@ class TestSessionMaterializerCoverage:
         """Line 35-36: session without auth_key raises ValueError."""
         import importlib
         import uuid
-        from unittest.mock import patch as _patch
 
         import src.telegram.session_materializer as sm_module
 
