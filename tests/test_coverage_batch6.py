@@ -588,9 +588,10 @@ class TestProcessControlAdditional:
         """_process_command returns '' on OSError in subprocess.run."""
         from src.cli.process_control import _process_command
 
-        with patch("subprocess.run", side_effect=OSError("no ps")):
-            result = _process_command(os.getpid())
-            assert result == ""
+        with patch("src.cli.process_control.sys.platform", "darwin"):
+            with patch("subprocess.run", side_effect=OSError("no ps")):
+                result = _process_command(os.getpid())
+                assert result == ""
 
     def test_process_command_nonzero_rc_returns_empty(self):
         """_process_command returns '' on non-zero returncode."""
@@ -600,9 +601,10 @@ class TestProcessControlAdditional:
         mock_result = MagicMock()
         mock_result.returncode = 1
         mock_result.stdout = ""
-        with patch("subprocess.run", return_value=mock_result):
-            result = _process_command(os.getpid())
-            assert result == ""
+        with patch("src.cli.process_control.sys.platform", "darwin"):
+            with patch("subprocess.run", return_value=mock_result):
+                result = _process_command(os.getpid())
+                assert result == ""
 
     def test_stop_server_permission_denied_sigterm(self, tmp_path):
         """stop_server raises ProcessControlError on PermissionError during SIGTERM."""
