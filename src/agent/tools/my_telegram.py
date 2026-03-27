@@ -14,24 +14,34 @@ from src.agent.tools._registry import (
     resolve_phone,
 )
 
+_TYPE_ALIASES: dict[str, set[str]] = {
+    "channels": {"channel"},
+    "groups": {"group", "supergroup", "gigagroup", "forum", "monoforum"},
+    "chats": {"dm", "bot", "saved"},
+}
+
 
 def register(db, client_pool, embedding_service, **kwargs):
     tools = []
 
     @tool(
-        "list_dialogs",
-        "List Telegram dialogs (chats/channels) for an account. "
-        "Saved Messages shown as type='saved'.",
-        {"phone": str},
+        "search_my_telegram",
+        "Search your Telegram account dialogs by title — channels, groups, private chats, bots, "
+        "saved messages. This does NOT search message content (use search_messages for that). "
+        "Params: search — filter by title (case-insensitive substring); "
+        "type — filter: 'channels' (channel), 'groups' (group/supergroup/gigagroup/forum/monoforum), "
+        "'chats' (dm/bot/saved), or exact type like 'supergroup', 'dm', 'bot'; "
+        "limit — cap results (default: all).",
+        {"phone": str, "search": str, "type": str, "limit": int},
     )
-    async def list_dialogs(args):
-        pool_gate = require_pool(client_pool, "Список диалогов")
+    async def search_my_telegram(args):
+        pool_gate = require_pool(client_pool, "Поиск диалогов")
         if pool_gate:
             return pool_gate
         phone, err = await resolve_phone(db, args.get("phone", ""))
         if err:
             return err
-        perm_gate = await require_phone_permission(db, phone, "list_dialogs")
+        perm_gate = await require_phone_permission(db, phone, "search_my_telegram")
         if perm_gate:
             return perm_gate
         try:
@@ -39,21 +49,45 @@ def register(db, client_pool, embedding_service, **kwargs):
 
             svc = ChannelService(db, client_pool, None)
             dialogs = await svc.get_my_dialogs(phone)
+            total = len(dialogs)
+            type_filter = (args.get("type") or "").strip().lower()
+            if type_filter:
+                allowed = _TYPE_ALIASES.get(type_filter, {type_filter})
+                dialogs = [d for d in dialogs if (d.get("channel_type") or "") in allowed]
+            search_query = (args.get("search") or "").strip().lower()
+            if search_query:
+                dialogs = [d for d in dialogs if search_query in (d.get("title") or "").lower()]
+            limit = args.get("limit")
+            if limit is not None:
+                try:
+                    limit = max(1, int(limit))
+                    dialogs = dialogs[:limit]
+                except (TypeError, ValueError):
+                    pass
             if not dialogs:
-                return _text_response(f"Диалоги для {phone} не найдены.")
+                if total == 0:
+                    return _text_response(f"Диалоги для {phone} не найдены.")
+                parts = []
+                if type_filter:
+                    parts.append(f"тип: {type_filter}")
+                if search_query:
+                    parts.append(f"поиск: '{search_query}'")
+                filters_desc = ", ".join(parts)
+                return _text_response(
+                    f"Нет диалогов по запросу ({filters_desc}). "
+                    f"Всего диалогов для {phone}: {total}."
+                )
             lines = [f"Диалоги ({len(dialogs)}):"]
-            for d in dialogs[:100]:
+            for d in dialogs:
                 title = d.get("title", "?")
                 did = d.get("channel_id", "?")
                 dtype = d.get("channel_type", "?")
                 lines.append(f"- id={did}, type={dtype}: {title}")
-            if len(dialogs) > 100:
-                lines.append(f"... и ещё {len(dialogs) - 100}")
             return _text_response("\n".join(lines))
         except Exception as e:
             return _text_response(f"Ошибка получения диалогов: {e}")
 
-    tools.append(list_dialogs)
+    tools.append(search_my_telegram)
 
     @tool(
         "refresh_dialogs",

@@ -25,11 +25,9 @@ def register(db, client_pool, embedding_service, **kwargs):
                 f"Анализ фильтров: {len(report.results)} каналов проверено, "
                 f"{len(flagged)} рекомендовано к фильтрации."
             ]
-            for r in flagged[:30]:
+            for r in flagged:
                 flags = ", ".join(r.flags) if r.flags else "—"
                 lines.append(f"- {r.title} (id={r.channel_id}): {flags}")
-            if len(flagged) > 30:
-                lines.append(f"... и ещё {len(flagged) - 30}")
             return _text_response("\n".join(lines))
         except Exception as e:
             return _text_response(f"Ошибка анализа фильтров: {e}")

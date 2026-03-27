@@ -106,8 +106,8 @@ class TestAnalyzeFiltersTool:
         assert "1 рекомендовано" in text
 
     @pytest.mark.asyncio
-    async def test_report_truncates_beyond_30(self, mock_db):
-        """More than 30 flagged channels triggers truncation message."""
+    async def test_report_shows_all_beyond_30(self, mock_db):
+        """More than 30 flagged channels are all shown without truncation."""
 
         def _make_result(i):
             r = MagicMock()
@@ -124,7 +124,8 @@ class TestAnalyzeFiltersTool:
             handlers = _get_tool_handlers(mock_db)
             result = await handlers["analyze_filters"]({})
         text = _text(result)
-        assert "и ещё 5" in text
+        assert "35 рекомендовано" in text
+        assert "и ещё" not in text
 
     @pytest.mark.asyncio
     async def test_report_non_flagged_not_listed(self, mock_db):
