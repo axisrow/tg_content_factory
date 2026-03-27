@@ -131,7 +131,7 @@ def make_ollama_adapter(
         **kwargs: Any,
     ) -> str:
         payload: Dict[str, Any] = {
-            "model": model or os.environ.get("OLLAMA_DEFAULT_MODEL", "llama3.2"),
+            "model": model or os.environ.get("OLLAMA_DEFAULT_MODEL", "qwen3"),
             "prompt": prompt,
         }
         headers = {"Content-Type": "application/json"}
