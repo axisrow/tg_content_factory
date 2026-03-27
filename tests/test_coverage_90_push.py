@@ -36,7 +36,7 @@ class TestMainCmdWrappers:
     def test_run_with_legacy_runtime_restored(self):
         """Lines 34-42: monkey-patched init_db → restore after run."""
         from src.cli import runtime
-        from src.main import _run_with_legacy_runtime
+        from src.main import _init_db, _init_pool, _run_with_legacy_runtime
 
         fake_db = MagicMock()
         fake_pool = MagicMock()
@@ -44,13 +44,20 @@ class TestMainCmdWrappers:
         original_pool = runtime.init_pool
         runtime.init_db = fake_db
         runtime.init_pool = fake_pool
+        observed: dict = {}
+
+        def capturing_handler(args):
+            observed["init_db"] = runtime.init_db
+            observed["init_pool"] = runtime.init_pool
+
         try:
-            handler = MagicMock()
-            _run_with_legacy_runtime(handler, MagicMock())
-            handler.assert_called_once()
-            # After call, runtime should be restored to originals
-            assert runtime.init_db == fake_db  # restored to the patched version
-            assert runtime.init_pool == fake_pool
+            _run_with_legacy_runtime(capturing_handler, MagicMock())
+            # During handler, runtime should have been swapped to real defaults
+            assert observed["init_db"] is _init_db
+            assert observed["init_pool"] is _init_pool
+            # After call, runtime should be back to the monkey-patched values
+            assert runtime.init_db is fake_db
+            assert runtime.init_pool is fake_pool
         finally:
             runtime.init_db = original_db
             runtime.init_pool = original_pool

@@ -425,9 +425,11 @@ class TestCLIPipelineRuns:
             # list to get id
             db = Database(db_path)
             asyncio.run(db.initialize())
-            pipelines = asyncio.run(db.repos.content_pipelines.get_all())
-            pid = pipelines[0].id
-            asyncio.run(db.close())
+            try:
+                pipelines = asyncio.run(db.repos.content_pipelines.get_all())
+                pid = pipelines[0].id
+            finally:
+                asyncio.run(db.close())
 
             run(_ns(pipeline_action="runs", id=pid, limit=10, status=None))
         assert "No generation runs found." in capsys.readouterr().out
@@ -456,12 +458,14 @@ class TestCLIPipelineRuns:
 
         db = Database(db_path)
         asyncio.run(db.initialize())
-        pipelines = asyncio.run(db.repos.content_pipelines.get_all())
-        pid = pipelines[0].id
-        # create a run
-        run_id = asyncio.run(db.repos.generation_runs.create_run(pid, "tmpl"))
-        asyncio.run(db.repos.generation_runs.set_status(run_id, "completed"))
-        asyncio.run(db.close())
+        try:
+            pipelines = asyncio.run(db.repos.content_pipelines.get_all())
+            pid = pipelines[0].id
+            # create a run
+            run_id = asyncio.run(db.repos.generation_runs.create_run(pid, "tmpl"))
+            asyncio.run(db.repos.generation_runs.set_status(run_id, "completed"))
+        finally:
+            asyncio.run(db.close())
 
         with patch("src.cli.runtime.init_db", side_effect=_pipeline_fake_init_db(db_path)):
             from src.cli.commands.pipeline import run
@@ -523,9 +527,11 @@ class TestCLIPipelineEdit:
 
         db = Database(db_path)
         asyncio.run(db.initialize())
-        pipelines = asyncio.run(db.repos.content_pipelines.get_all())
-        pid = pipelines[0].id
-        asyncio.run(db.close())
+        try:
+            pipelines = asyncio.run(db.repos.content_pipelines.get_all())
+            pid = pipelines[0].id
+        finally:
+            asyncio.run(db.close())
 
         with patch("src.cli.runtime.init_db", side_effect=_pipeline_fake_init_db(db_path)):
             from src.cli.commands.pipeline import run
@@ -678,9 +684,11 @@ class TestCLIPipelineDelete:
 
         db = Database(db_path)
         asyncio.run(db.initialize())
-        pipelines = asyncio.run(db.repos.content_pipelines.get_all())
-        pid = pipelines[0].id
-        asyncio.run(db.close())
+        try:
+            pipelines = asyncio.run(db.repos.content_pipelines.get_all())
+            pid = pipelines[0].id
+        finally:
+            asyncio.run(db.close())
 
         with patch("src.cli.runtime.init_db", side_effect=_pipeline_fake_init_db(db_path)):
             from src.cli.commands.pipeline import run
