@@ -208,10 +208,13 @@ class TestResolveAnyEntityClientPool:
 
     @pytest.mark.asyncio
     async def test_negative_numeric_id_uses_peer_channel(self):
-        """Negative numeric ID → PeerChannel."""
+        """Negative Bot API format ID → PeerChannel with stripped MTProto ID.
+
+        Bot API: -1001234567890 → Telethon MTProto ID: 1234567890 (strip leading '100').
+        """
         from telethon.tl.types import PeerChannel
         pool = _make_pool()
-        entity = _channel_entity(1001234567890, "Chan")
+        entity = _channel_entity(1234567890, "Chan")
         mock_session = AsyncMock()
         mock_session.resolve_entity = AsyncMock(return_value=entity)
         pool.get_available_client = AsyncMock(return_value=(mock_session, "+1"))
@@ -222,7 +225,7 @@ class TestResolveAnyEntityClientPool:
 
         peer_arg = mock_session.resolve_entity.call_args[0][0]
         assert isinstance(peer_arg, PeerChannel)
-        assert peer_arg.channel_id == 1001234567890
+        assert peer_arg.channel_id == 1234567890
 
     @pytest.mark.asyncio
     async def test_username_not_found_returns_none(self):
