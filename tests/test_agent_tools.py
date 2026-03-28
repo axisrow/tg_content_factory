@@ -924,3 +924,42 @@ class TestClearPendingTasksTool:
         handlers = _get_tool_handlers(mock_db)
         result = await handlers["clear_pending_tasks"]({"confirm": True})
         assert "5" in _text(result)
+
+
+# ---------------------------------------------------------------------------
+# get_search_query_stats tool
+# ---------------------------------------------------------------------------
+
+
+class TestGetSearchQueryStatsTool:
+    @pytest.mark.asyncio
+    async def test_returns_stats(self, mock_db):
+        fake_stats = [
+            SimpleNamespace(day="2025-01-01", count=10),
+            SimpleNamespace(day="2025-01-02", count=25),
+        ]
+
+        with patch("src.services.search_query_service.SearchQueryService") as mock_svc_cls:
+            mock_svc_cls.return_value.get_daily_stats = AsyncMock(return_value=fake_stats)
+            handlers = _get_tool_handlers(mock_db)
+            result = await handlers["get_search_query_stats"]({"sq_id": 1, "days": 7})
+
+        text = _text(result)
+        assert "2025-01-01" in text
+        assert "2025-01-02" in text
+        assert "25" in text
+
+    @pytest.mark.asyncio
+    async def test_missing_sq_id(self, mock_db):
+        handlers = _get_tool_handlers(mock_db)
+        result = await handlers["get_search_query_stats"]({})
+        assert "sq_id обязателен" in _text(result)
+
+    @pytest.mark.asyncio
+    async def test_empty_stats(self, mock_db):
+        with patch("src.services.search_query_service.SearchQueryService") as mock_svc_cls:
+            mock_svc_cls.return_value.get_daily_stats = AsyncMock(return_value=[])
+            handlers = _get_tool_handlers(mock_db)
+            result = await handlers["get_search_query_stats"]({"sq_id": 99, "days": 30})
+
+        assert "Нет статистики" in _text(result)

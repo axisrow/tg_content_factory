@@ -75,6 +75,7 @@ TOOL_CATEGORIES: dict[str, ToolCategory] = {
     "delete_search_query": ToolCategory.DELETE,
     "toggle_search_query": ToolCategory.WRITE,
     "run_search_query": ToolCategory.WRITE,
+    "get_search_query_stats": ToolCategory.READ,
     # Accounts
     "list_accounts": ToolCategory.READ,
     "toggle_account": ToolCategory.WRITE,
@@ -202,6 +203,7 @@ MODULE_GROUPS: OrderedDict[str, list[str]] = OrderedDict([
     ("Поисковые запросы", [
         "list_search_queries", "get_search_query", "add_search_query", "edit_search_query",
         "delete_search_query", "toggle_search_query", "run_search_query",
+        "get_search_query_stats",
     ]),
     ("Аккаунты", [
         "list_accounts", "toggle_account", "delete_account", "get_flood_status",
