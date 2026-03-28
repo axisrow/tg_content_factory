@@ -176,7 +176,7 @@ class AgentTuiApp(App):
         self._clipboard = text
         if sys.platform == "darwin":
             try:
-                subprocess.run(["pbcopy"], input=text.encode(), check=True)
+                subprocess.run(["pbcopy"], input=text.encode(), check=True, timeout=2)
                 return
             except Exception:
                 pass
@@ -186,9 +186,9 @@ class AgentTuiApp(App):
                 ["xsel", "--clipboard", "--input"],
             ):
                 try:
-                    subprocess.run(cmd, input=text.encode(), check=True)
+                    subprocess.run(cmd, input=text.encode(), check=True, timeout=2)
                     return
-                except FileNotFoundError:
+                except (FileNotFoundError, subprocess.SubprocessError):
                     continue
         super().copy_to_clipboard(text)
 
@@ -197,7 +197,7 @@ class AgentTuiApp(App):
         """Read from the system clipboard so Ctrl+V pastes external content too."""
         if sys.platform == "darwin":
             try:
-                r = subprocess.run(["pbpaste"], capture_output=True, text=True, check=True)
+                r = subprocess.run(["pbpaste"], capture_output=True, text=True, check=True, timeout=2)
                 return r.stdout
             except Exception:
                 pass
@@ -207,9 +207,9 @@ class AgentTuiApp(App):
                 ["xsel", "--clipboard", "--output"],
             ):
                 try:
-                    r = subprocess.run(cmd, capture_output=True, text=True, check=True)
+                    r = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=2)
                     return r.stdout
-                except FileNotFoundError:
+                except (FileNotFoundError, subprocess.SubprocessError):
                     continue
         return self._clipboard
 
