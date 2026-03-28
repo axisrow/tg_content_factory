@@ -563,6 +563,12 @@ def register(db, client_pool, embedding_service, **kwargs):
                 for s in steps
                 if isinstance(s, dict) and str(s.get("prompt", "")).strip()
             ]
+            dropped = len(steps) - len(validated)
+            if dropped > 0:
+                return _text_response(
+                    f"Ошибка: {dropped} из {len(steps)} шагов не содержат поле 'prompt' и не могут быть сохранены. "
+                    f"Убедитесь что каждый элемент имеет ключ 'prompt' с непустым значением."
+                )
             pipeline = await db.repos.content_pipelines.get_by_id(int(pipeline_id))
             if pipeline is None:
                 return _text_response(f"Пайплайн id={pipeline_id} не найден.")

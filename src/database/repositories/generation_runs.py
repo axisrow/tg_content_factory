@@ -183,6 +183,8 @@ class GenerationRunsRepository:
 
     async def list_by_status(self, statuses: list[str], limit: int = 20) -> list[GenerationRun]:
         """List runs filtered by execution status (pending/running/completed/failed)."""
+        if not statuses:
+            return []
         placeholders = ",".join("?" * len(statuses))
         cur = await self._db.execute(
             f"SELECT * FROM generation_runs WHERE status IN ({placeholders}) ORDER BY id DESC LIMIT ?",
