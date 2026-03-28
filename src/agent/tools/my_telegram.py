@@ -13,6 +13,7 @@ from src.agent.tools._registry import (
     require_pool,
     resolve_phone,
 )
+from src.parsers import normalize_identifier
 
 _TYPE_ALIASES: dict[str, set[str]] = {
     "channels": {"channel"},
@@ -26,9 +27,10 @@ def register(db, client_pool, embedding_service, **kwargs):
 
     @tool(
         "search_my_telegram",
-        "Search your Telegram account dialogs by title — channels, groups, private chats, bots, "
-        "saved messages. This does NOT search message content (use search_messages for that). "
-        "Params: search — filter by title (case-insensitive substring); "
+        "Search your Telegram account dialogs — channels, groups, private chats, bots, saved messages. "
+        "This does NOT search message content (use search_messages for that). "
+        "Params: search — find by @username, t.me/username, https://t.me/username, numeric ID, "
+        "or title substring (case-insensitive); matches username field exactly or title as substring; "
         "type — filter: 'channels' (channel), 'groups' (group/supergroup/gigagroup/forum/monoforum), "
         "'chats' (dm/bot/saved), or exact type like 'supergroup', 'dm', 'bot'; "
         "limit — cap results (default: all).",
@@ -54,9 +56,27 @@ def register(db, client_pool, embedding_service, **kwargs):
             if type_filter:
                 allowed = _TYPE_ALIASES.get(type_filter, {type_filter})
                 dialogs = [d for d in dialogs if (d.get("channel_type") or "") in allowed]
-            search_query = (args.get("search") or "").strip().lower()
-            if search_query:
-                dialogs = [d for d in dialogs if search_query in (d.get("title") or "").lower()]
+            raw_query = (args.get("search") or "").strip()
+            search_query = raw_query.lower()  # kept for error message display
+            if raw_query:
+                clean, kind = normalize_identifier(raw_query)
+                if kind == "username":
+                    dialogs = [
+                        d for d in dialogs
+                        if clean == (d.get("username") or "").lower()
+                        or clean in (d.get("title") or "").lower()
+                    ]
+                elif kind == "numeric_id":
+                    # channel_id stores Telethon entity.id (bare positive int).
+                    # Users may provide Bot API format (-1001234567890) where -100 is a prefix.
+                    bare_id = clean[4:] if clean.startswith("-100") else clean.lstrip("-")
+                    dialogs = [d for d in dialogs if str(d.get("channel_id", "")) == bare_id]
+                else:
+                    dialogs = [
+                        d for d in dialogs
+                        if clean in (d.get("title") or "").lower()
+                        or clean in (d.get("username") or "").lower()
+                    ]
             limit = args.get("limit")
             if limit is not None:
                 try:
