@@ -457,4 +457,76 @@ def register(db, client_pool, embedding_service, **kwargs):
 
     tools.append(update_auto_upload)
 
+    # ------------------------------------------------------------------
+    # list_photo_dialogs (READ) — list Telegram dialogs for photo targeting
+    # ------------------------------------------------------------------
+
+    @tool(
+        "list_photo_dialogs",
+        "List Telegram dialogs available as photo upload targets (channels, groups, chats).",
+        {"phone": str},
+    )
+    async def list_photo_dialogs(args):
+        pool_gate = require_pool(client_pool, "Список диалогов для фото")
+        if pool_gate:
+            return pool_gate
+        phone, err = await resolve_phone(db, args.get("phone", ""))
+        if err:
+            return err
+        perm_gate = await require_phone_permission(db, phone, "list_photo_dialogs")
+        if perm_gate:
+            return perm_gate
+        try:
+            from src.services.channel_service import ChannelService
+
+            svc = ChannelService(db, client_pool, None)
+            dialogs = await svc.get_my_dialogs(phone)
+            if not dialogs:
+                return _text_response(f"Диалоги для {phone} не найдены.")
+            lines = [f"Диалоги ({len(dialogs)}):"]
+            for d in dialogs:
+                lines.append(
+                    f"- id={d['channel_id']}, type={d.get('channel_type', '?')}: "
+                    f"{d.get('title', '?')}"
+                )
+            return _text_response("\n".join(lines))
+        except Exception as e:
+            return _text_response(f"Ошибка получения диалогов: {e}")
+
+    tools.append(list_photo_dialogs)
+
+    # ------------------------------------------------------------------
+    # refresh_photo_dialogs (WRITE) — refresh dialog cache
+    # ------------------------------------------------------------------
+
+    @tool(
+        "refresh_photo_dialogs",
+        "Refresh the Telegram dialog cache for photo upload targeting. "
+        "Use when new channels/groups are not appearing in the list.",
+        {"phone": str, "confirm": bool},
+    )
+    async def refresh_photo_dialogs(args):
+        pool_gate = require_pool(client_pool, "Обновление кэша диалогов")
+        if pool_gate:
+            return pool_gate
+        phone, err = await resolve_phone(db, args.get("phone", ""))
+        if err:
+            return err
+        perm_gate = await require_phone_permission(db, phone, "refresh_photo_dialogs")
+        if perm_gate:
+            return perm_gate
+        gate = require_confirmation(f"обновит кэш диалогов для {phone}", args)
+        if gate:
+            return gate
+        try:
+            from src.services.channel_service import ChannelService
+
+            svc = ChannelService(db, client_pool, None)
+            dialogs = await svc.get_my_dialogs(phone, refresh=True)
+            return _text_response(f"Кэш диалогов обновлён: {len(dialogs)} диалогов.")
+        except Exception as e:
+            return _text_response(f"Ошибка обновления кэша диалогов: {e}")
+
+    tools.append(refresh_photo_dialogs)
+
     return tools
