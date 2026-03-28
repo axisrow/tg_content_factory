@@ -124,6 +124,7 @@ class ClaudeSdkBackend:
         logger.info("claude-cli path: %s", cli_path)
 
         from src.agent.tools.permissions import (
+            BUILTIN_TOOLS,
             MCP_PREFIX,
             filter_allowed_tools,
             get_all_allowed_tools,
@@ -139,9 +140,12 @@ class ClaudeSdkBackend:
         else:
             logger.debug("Agent tools: all %d tools allowed", len(allowed))
 
+        enabled_builtins = [t for t in BUILTIN_TOOLS if t in allowed]
+
         options = ClaudeAgentOptions(
             system_prompt=system_prompt,
             mcp_servers={"telegram_db": self._server},
+            tools=enabled_builtins or None,
             allowed_tools=allowed,
             cli_path=cli_path or None,
             stderr=_on_stderr,
