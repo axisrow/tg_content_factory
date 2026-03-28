@@ -108,8 +108,8 @@ class MessagesRepository:
                 """INSERT OR IGNORE INTO messages
                    (channel_id, message_id, sender_id, sender_name,
                     text, media_type, topic_id, reactions_json,
-                    views, forwards, reply_count, date)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    views, forwards, reply_count, date, detected_lang)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     msg.channel_id,
                     msg.message_id,
@@ -123,6 +123,7 @@ class MessagesRepository:
                     msg.forwards,
                     msg.reply_count,
                     msg.date.isoformat(),
+                    msg.detected_lang,
                 ),
             )
             await self._db.commit()
@@ -177,6 +178,7 @@ class MessagesRepository:
                 m.forwards,
                 m.reply_count,
                 m.date.isoformat(),
+                m.detected_lang,
             )
             for m in messages
         ]
@@ -185,8 +187,8 @@ class MessagesRepository:
                 """INSERT OR IGNORE INTO messages
                    (channel_id, message_id, sender_id, sender_name,
                     text, media_type, topic_id, reactions_json,
-                    views, forwards, reply_count, date)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    views, forwards, reply_count, date, detected_lang)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 data,
             )
             await self._db.commit()
@@ -694,6 +696,9 @@ class MessagesRepository:
                 collected_at=(
                     datetime.fromisoformat(r["collected_at"]) if r["collected_at"] else None
                 ),
+                detected_lang=r["detected_lang"] if "detected_lang" in r.keys() else None,
+                translation_en=r["translation_en"] if "translation_en" in r.keys() else None,
+                translation_custom=r["translation_custom"] if "translation_custom" in r.keys() else None,
                 channel_title=r["channel_title"],
                 channel_username=r["channel_username"],
             )
@@ -1121,3 +1126,98 @@ class MessagesRepository:
         )
         rows = await cur.fetchall()
         return [dict(r) for r in rows]
+
+    async def get_message_by_id(self, message_db_id: int) -> Message | None:
+        """Get a single message by its DB primary key (id)."""
+        cur = await self._db.execute(
+            """SELECT m.*, c.title AS channel_title, c.username AS channel_username
+               FROM messages m
+               LEFT JOIN channels c ON m.channel_id = c.channel_id
+               WHERE m.id = ?""",
+            (message_db_id,),
+        )
+        row = await cur.fetchone()
+        if row is None:
+            return None
+        msgs = self._rows_to_messages([row])
+        return msgs[0] if msgs else None
+
+    async def update_detected_lang(self, message_db_id: int, lang: str) -> None:
+        """Update detected_lang for a message."""
+        await self._db.execute("UPDATE messages SET detected_lang = ? WHERE id = ?", (lang, message_db_id))
+        await self._db.commit()
+
+    # ── translation helpers ──────────────────────────────────────────
+
+    async def get_untranslated_messages(
+        self,
+        target: str,
+        source_langs: list[str] | None = None,
+        limit: int = 20,
+        after_id: int = 0,
+    ) -> list[Message]:
+        """Get messages needing translation for a given target ('en' or 'custom')."""
+        col = "translation_en" if target == "en" else "translation_custom"
+        conditions = [f"m.{col} IS NULL", "m.text IS NOT NULL", "m.text != ''", "m.detected_lang IS NOT NULL"]
+        params: list = []
+        if after_id:
+            conditions.append("m.id > ?")
+            params.append(after_id)
+        if source_langs:
+            placeholders = ", ".join("?" for _ in source_langs)
+            conditions.append(f"m.detected_lang IN ({placeholders})")
+            params.extend(source_langs)
+        where = " AND ".join(conditions)
+        cur = await self._db.execute(
+            f"""SELECT m.*, c.title AS channel_title, c.username AS channel_username
+                FROM messages m
+                LEFT JOIN channels c ON m.channel_id = c.channel_id
+                WHERE {where}
+                ORDER BY m.id ASC
+                LIMIT ?""",
+            (*params, limit),
+        )
+        rows = await cur.fetchall()
+        return self._rows_to_messages(rows)
+
+    async def update_translation(self, message_db_id: int, target: str, translated_text: str) -> None:
+        """Update translation_en or translation_custom for a message."""
+        col = "translation_en" if target == "en" else "translation_custom"
+        await self._db.execute(f"UPDATE messages SET {col} = ? WHERE id = ?", (translated_text, message_db_id))
+        await self._db.commit()
+
+    async def get_language_stats(self) -> list[tuple[str, int]]:
+        """Return (lang_code, count) pairs for detected languages."""
+        cur = await self._db.execute(
+            """SELECT detected_lang, COUNT(*) AS cnt
+               FROM messages
+               WHERE detected_lang IS NOT NULL
+               GROUP BY detected_lang
+               ORDER BY cnt DESC"""
+        )
+        rows = await cur.fetchall()
+        return [(r["detected_lang"], r["cnt"]) for r in rows]
+
+    async def backfill_language_detection(self, batch_size: int = 1000) -> int:
+        """Detect language for messages with detected_lang IS NULL and text IS NOT NULL."""
+        import asyncio
+
+        from src.services.translation_service import TranslationService
+
+        cur = await self._db.execute(
+            "SELECT id, text FROM messages WHERE detected_lang IS NULL AND text IS NOT NULL AND text != '' LIMIT ?",
+            (batch_size,),
+        )
+        rows = await cur.fetchall()
+        # Run CPU-bound detection in thread to avoid blocking the event loop
+        detect_results = await asyncio.to_thread(
+            lambda: [(row["id"], TranslationService.detect_language(row["text"])) for row in rows]
+        )
+        updated = 0
+        for row_id, lang in detect_results:
+            if lang:
+                await self._db.execute("UPDATE messages SET detected_lang = ? WHERE id = ?", (lang, row_id))
+                updated += 1
+        if updated:
+            await self._db.commit()
+        return updated

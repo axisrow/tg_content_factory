@@ -445,6 +445,14 @@ async def settings_page(request: Request):
     ]
     semantic_context = await _semantic_settings_context(request)
 
+    # Translation settings
+    translation_provider = await db.get_setting("translation_provider") or ""
+    translation_model = await db.get_setting("translation_model") or ""
+    translation_target_lang = await db.get_setting("translation_target_lang") or ""
+    translation_source_filter = await db.get_setting("translation_source_filter") or ""
+    translation_auto_on_collect = await db.get_setting("translation_auto_on_collect") or "0"
+    language_stats = await db.repos.messages.get_language_stats()
+
     from src.agent.tools.permissions import (
         build_template_context,
         load_tool_permissions_all_phones,
@@ -491,6 +499,12 @@ async def settings_page(request: Request):
             "default_image_model": await db.get_setting("default_image_model") or "",
             **semantic_context,
             "phone_perm_contexts": phone_perm_contexts,
+            "translation_provider": translation_provider,
+            "translation_model": translation_model,
+            "translation_target_lang": translation_target_lang,
+            "translation_source_filter": translation_source_filter,
+            "translation_auto_on_collect": translation_auto_on_collect,
+            "language_stats": language_stats,
         },
     )
 
@@ -1180,6 +1194,49 @@ async def delete_image_provider(request: Request, provider_name: str):
     configs = [cfg for cfg in configs if cfg.provider != provider_name]
     await service.save_provider_configs(configs)
     return RedirectResponse(url="/settings?msg=image_saved", status_code=303)
+
+
+@router.post("/save-translation")
+async def save_translation_settings(request: Request):
+    form = await request.form()
+    db = deps.get_db(request)
+    await db.set_setting("translation_provider", str(form.get("translation_provider", "")).strip())
+    await db.set_setting("translation_model", str(form.get("translation_model", "")).strip())
+    await db.set_setting("translation_target_lang", str(form.get("translation_target_lang", "")).strip().lower())
+    await db.set_setting("translation_source_filter", str(form.get("translation_source_filter", "")).strip().lower())
+    await db.set_setting("translation_auto_on_collect", "1" if form.get("translation_auto_on_collect") else "0")
+    return RedirectResponse(url="/settings?msg=translation_saved#pane-translation", status_code=303)
+
+
+@router.post("/translation-backfill")
+async def translation_backfill_lang(request: Request):
+    db = deps.get_db(request)
+    updated = await db.repos.messages.backfill_language_detection(batch_size=5000)
+    return RedirectResponse(
+        url=f"/settings?msg=translation_backfill_done&count={updated}#pane-translation", status_code=303
+    )
+
+
+@router.post("/translation-run")
+async def translation_run_batch(request: Request):
+    form = await request.form()
+    db = deps.get_db(request)
+    target_lang = str(form.get("target_lang", "en")).strip().lower() or "en"
+    source_filter_raw = await db.get_setting("translation_source_filter") or ""
+    source_filter = [s.strip() for s in source_filter_raw.split(",") if s.strip()]
+
+    from src.models import CollectionTaskType, TranslateBatchTaskPayload
+
+    payload = TranslateBatchTaskPayload(
+        target_lang=target_lang,
+        source_filter=source_filter,
+    )
+    await db.repos.tasks.create_generic_task(
+        CollectionTaskType.TRANSLATE_BATCH,
+        title=f"Translation batch ({target_lang})",
+        payload=payload,
+    )
+    return RedirectResponse(url="/settings?msg=translation_run_started#pane-translation", status_code=303)
 
 
     # Account toggle/delete endpoints moved to src/web/routes/accounts.py

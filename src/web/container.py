@@ -29,6 +29,7 @@ from src.services.photo_auto_upload_service import PhotoAutoUploadService
 from src.services.photo_publish_service import PhotoPublishService
 from src.services.photo_task_service import PhotoTaskService
 from src.services.task_enqueuer import TaskEnqueuer
+from src.services.translation_service import TranslationService
 from src.services.unified_dispatcher import UnifiedDispatcher
 from src.telegram.auth import TelegramAuth
 from src.telegram.client_pool import ClientPool
@@ -72,4 +73,5 @@ class AppContainer:
     session_secret: str
     bg_tasks: set[asyncio.Task]
     agent_manager: AgentManager | None = None
+    translation_service: TranslationService | None = None
     shutting_down: bool = False

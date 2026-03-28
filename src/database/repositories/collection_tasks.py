@@ -15,6 +15,7 @@ from src.models import (
     PipelineRunTaskPayload,
     SqStatsTaskPayload,
     StatsAllTaskPayload,
+    TranslateBatchTaskPayload,
 )
 
 _ALLOWED_PAYLOAD_FILTER_KEYS = frozenset({"sq_id", "pipeline_id"})
@@ -34,7 +35,10 @@ class CollectionTasksRepository:
     @staticmethod
     def _deserialize_payload(
         raw: str | None,
-    ) -> dict[str, Any] | StatsAllTaskPayload | SqStatsTaskPayload | PipelineRunTaskPayload | None:
+    ) -> (
+        dict[str, Any] | StatsAllTaskPayload | SqStatsTaskPayload | PipelineRunTaskPayload
+        | TranslateBatchTaskPayload | None
+    ):
         if not raw:
             return None
         try:
@@ -54,6 +58,8 @@ class CollectionTasksRepository:
             return ContentGenerateTaskPayload.model_validate(parsed)
         if task_kind == CollectionTaskType.CONTENT_PUBLISH.value:
             return ContentPublishTaskPayload.model_validate(parsed)
+        if task_kind == CollectionTaskType.TRANSLATE_BATCH.value:
+            return TranslateBatchTaskPayload.model_validate(parsed)
         return parsed
 
     @staticmethod
@@ -65,6 +71,7 @@ class CollectionTasksRepository:
             | PipelineRunTaskPayload
             | ContentGenerateTaskPayload
             | ContentPublishTaskPayload
+            | TranslateBatchTaskPayload
             | None
         ),
     ) -> str | None:
@@ -78,6 +85,7 @@ class CollectionTasksRepository:
                 PipelineRunTaskPayload,
                 ContentGenerateTaskPayload,
                 ContentPublishTaskPayload,
+                TranslateBatchTaskPayload,
             ),
         ):
             return payload.model_dump_json()
@@ -438,6 +446,7 @@ class CollectionTasksRepository:
             | PipelineRunTaskPayload
             | ContentGenerateTaskPayload
             | ContentPublishTaskPayload
+            | TranslateBatchTaskPayload
             | None
         ) = None,
         run_after: datetime | None = None,

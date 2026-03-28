@@ -117,7 +117,16 @@
             <td>{{ msg.channel_title or msg.channel_username or msg.channel_id }}</td>
             <td>{{ msg.sender_name or "—" }}</td>
             <td>{{ msg.media_type or "—" }}</td>
-            <td>{{ msg.text[:300] if msg.text else "—" }}{{ "..." if msg.text and msg.text|length > 300 else "" }}</td>
+            <td>
+                {% if msg.detected_lang %}<span class="badge bg-secondary me-1" style="font-size:0.65rem">{{ msg.detected_lang }}</span>{% endif %}
+                <span>{{ msg.text[:300] if msg.text else "—" }}{{ "..." if msg.text and msg.text|length > 300 else "" }}</span>
+                {% if msg.translation_en %}
+                <div class="text-muted mt-1" style="font-size:0.8rem"><i class="bi bi-translate me-1"></i>{{ msg.translation_en[:300] }}{{ "..." if msg.translation_en|length > 300 else "" }}</div>
+                {% elif msg.text and msg.detected_lang and msg.detected_lang != 'en' %}
+                <button class="btn btn-link btn-sm p-0 ms-1 translate-btn" data-msg-id="{{ msg.id }}" title="Перевести"><i class="bi bi-translate"></i></button>
+                <div class="translation-result text-muted mt-1" style="font-size:0.8rem;display:none" data-target="translation-{{ msg.id }}"></div>
+                {% endif %}
+            </td>
             <td class="text-nowrap text-muted" style="font-size:0.8rem">
                 {%- if msg.views is not none %}👁 {{ msg.views }}{% endif %}
                 {%- if msg.forwards is not none %} ↗ {{ msg.forwards }}{% endif %}
@@ -141,7 +150,16 @@
                 {% if msg.channel_username %}<a href="https://t.me/{{ msg.channel_username }}/{{ msg.message_id }}" target="_blank" rel="noopener">&#8599;</a>{% else %}<a href="https://t.me/c/{{ msg.channel_id }}/{{ msg.message_id }}" target="_blank" rel="noopener">&#8599;</a>{% endif %}
             </div>
             <small class="text-muted">{{ msg.date|local_dt }}{% if msg.sender_name %} &middot; {{ msg.sender_name }}{% endif %}{% if msg.media_type %} &middot; {{ msg.media_type }}{% endif %}</small>
-            <p class="mb-0 mt-1" style="font-size:0.85rem">{{ msg.text[:200] if msg.text else "—" }}{{ "..." if msg.text and msg.text|length > 200 else "" }}</p>
+            <p class="mb-0 mt-1" style="font-size:0.85rem">
+                {% if msg.detected_lang %}<span class="badge bg-secondary me-1" style="font-size:0.6rem">{{ msg.detected_lang }}</span>{% endif %}
+                {{ msg.text[:200] if msg.text else "—" }}{{ "..." if msg.text and msg.text|length > 200 else "" }}
+                {% if msg.translation_en %}
+                <span class="text-muted d-block mt-1" style="font-size:0.8rem"><i class="bi bi-translate me-1"></i>{{ msg.translation_en[:200] }}{{ "..." if msg.translation_en|length > 200 else "" }}</span>
+                {% elif msg.text and msg.detected_lang and msg.detected_lang != 'en' %}
+                <button class="btn btn-link btn-sm p-0 ms-1 translate-btn" data-msg-id="{{ msg.id }}" title="Перевести"><i class="bi bi-translate"></i></button>
+                <span class="translation-result text-muted d-block mt-1" style="font-size:0.8rem;display:none" data-target="translation-{{ msg.id }}"></span>
+                {% endif %}
+            </p>
             {%- if msg.views is not none or msg.forwards is not none or msg.reply_count is not none %}
             <small class="text-muted">
                 {%- if msg.views is not none %}👁 {{ msg.views }}{% endif %}
@@ -200,5 +218,42 @@
 
     updateState();
 })();
+
+// Translation on-demand
+document.addEventListener('click', function(e) {
+    var btn = e.target.closest('.translate-btn');
+    if (!btn) return;
+    e.preventDefault();
+    var msgId = btn.dataset.msgId;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+    btn.disabled = true;
+    fetch('/search/translate/' + msgId, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({target_lang: 'en'})
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+        if (data.ok && data.translation) {
+            var container = btn.parentElement.querySelector('[data-target="translation-' + msgId + '"]');
+            if (container) {
+                var icon = document.createElement('i');
+                icon.className = 'bi bi-translate me-1';
+                container.innerHTML = '';
+                container.appendChild(icon);
+                container.appendChild(document.createTextNode(data.translation));
+                container.style.display = '';
+            }
+            btn.remove();
+        } else if (data.same_lang) {
+            btn.innerHTML = '<i class="bi bi-check"></i>';
+        } else {
+            btn.innerHTML = '<i class="bi bi-x text-danger"></i>';
+        }
+    })
+    .catch(function() {
+        btn.innerHTML = '<i class="bi bi-x text-danger"></i>';
+    });
+});
 </script>
 {% endblock %}

@@ -2,7 +2,7 @@ import logging
 import re
 
 from fastapi import APIRouter, Query, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from src.models import SearchResult
 from src.web import deps
@@ -149,3 +149,62 @@ async def search_page(
         is_fts=is_fts,
         page=page,
     )
+
+
+@router.post("/search/translate/{message_db_id}")
+async def translate_message_endpoint(message_db_id: int, request: Request):
+    """Translate a single message on demand. Returns JSON."""
+    db = deps.get_db(request)
+    translation_service = getattr(request.app.state, "container", None)
+    if translation_service:
+        translation_service = translation_service.translation_service
+
+    body = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
+    target_lang = body.get("target_lang", "en")
+
+    # Get the message
+    msg = await db.repos.messages.get_message_by_id(message_db_id)
+    if not msg:
+        return JSONResponse({"ok": False, "error": "Message not found"}, status_code=404)
+
+    # Check if translation already cached
+    cached = msg.translation_en if target_lang == "en" else msg.translation_custom
+    if cached:
+        return JSONResponse({"ok": True, "translation": cached, "detected_lang": msg.detected_lang, "cached": True})
+
+    if not msg.text:
+        return JSONResponse({"ok": False, "error": "Message has no text"}, status_code=400)
+
+    # Detect language if missing
+    detected = msg.detected_lang
+    if not detected:
+        from src.services.translation_service import TranslationService
+
+        detected = TranslationService.detect_language(msg.text)
+        if detected:
+            await db.repos.messages.update_detected_lang(message_db_id, detected)
+
+    if not detected:
+        return JSONResponse({"ok": False, "error": "Cannot detect language"}, status_code=400)
+
+    if detected == target_lang:
+        return JSONResponse({"ok": True, "translation": None, "detected_lang": detected, "same_lang": True})
+
+    if not translation_service:
+        return JSONResponse({"ok": False, "error": "Translation service not configured"}, status_code=503)
+
+    translated = await translation_service.translate_message(
+        msg.text, detected, target_lang,
+        provider_name=await db.get_setting("translation_provider"),
+        model=await db.get_setting("translation_model"),
+    )
+    if translated:
+        target = "en" if target_lang == "en" else "custom"
+        await db.repos.messages.update_translation(message_db_id, target, translated)
+
+    return JSONResponse({
+        "ok": bool(translated),
+        "translation": translated,
+        "detected_lang": detected,
+        "cached": False,
+    })

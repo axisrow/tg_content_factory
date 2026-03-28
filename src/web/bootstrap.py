@@ -174,6 +174,12 @@ async def build_container_with_templates(
     )
     agent_manager = AgentManager(db, config, client_pool=pool, scheduler_manager=scheduler)
 
+    from src.services.provider_service import AgentProviderService
+    from src.services.translation_service import TranslationService
+
+    translation_provider_service = AgentProviderService(db)
+    translation_service = TranslationService(db, provider_service=translation_provider_service)
+
     _templates = configure_template_globals(
         templates or Jinja2Templates(directory=str(TEMPLATES_DIR)),
         config,
@@ -215,6 +221,7 @@ async def build_container_with_templates(
         session_secret=session_secret,
         bg_tasks=set(),
         agent_manager=agent_manager,
+        translation_service=translation_service,
         shutting_down=False,
     )
 

@@ -78,6 +78,18 @@ async def run_migrations(db: aiosqlite.Connection) -> bool:
     if "reply_count" not in msg_columns:
         await db.execute("ALTER TABLE messages ADD COLUMN reply_count INTEGER")
         await db.commit()
+    if "detected_lang" not in msg_columns:
+        await db.execute("ALTER TABLE messages ADD COLUMN detected_lang TEXT")
+        await db.commit()
+    if "translation_en" not in msg_columns:
+        await db.execute("ALTER TABLE messages ADD COLUMN translation_en TEXT")
+        await db.commit()
+    if "translation_custom" not in msg_columns:
+        await db.execute("ALTER TABLE messages ADD COLUMN translation_custom TEXT")
+        await db.commit()
+
+    await db.execute("CREATE INDEX IF NOT EXISTS idx_messages_detected_lang ON messages(detected_lang)")
+    await db.commit()
 
     cur = await db.execute("PRAGMA table_info(accounts)")
     acc_columns = {row["name"] for row in await cur.fetchall()}
