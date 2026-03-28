@@ -210,4 +210,90 @@ def register(db, client_pool, embedding_service, **kwargs):
 
     tools.append(get_calendar)
 
+    # ------------------------------------------------------------------
+    # get_top_messages  (top messages by reactions)
+    # ------------------------------------------------------------------
+
+    @tool(
+        "get_top_messages",
+        "Get top messages ranked by total reactions count. "
+        "Optional date filters: date_from, date_to (YYYY-MM-DD).",
+        {"limit": int, "date_from": str, "date_to": str},
+    )
+    async def get_top_messages(args):
+        try:
+            limit = min(int(args.get("limit", 20)), 200)
+            date_from = args.get("date_from")
+            date_to = args.get("date_to")
+            rows = await db.get_top_messages(limit=limit, date_from=date_from, date_to=date_to)
+            if not rows:
+                return _text_response("Сообщения с реакциями не найдены.")
+            lines = [f"Топ-{len(rows)} сообщений по реакциям:"]
+            for i, row in enumerate(rows, 1):
+                channel = row.get("channel_title") or row.get("channel_username") or str(row.get("channel_id", ""))
+                text = (row.get("text") or "")[:80].replace("\n", " ")
+                lines.append(f"{i}. [{row['total_reactions']} реакций] {channel}: {text}")
+            return _text_response("\n".join(lines))
+        except Exception as e:
+            return _text_response(f"Ошибка получения топ-сообщений: {e}")
+
+    tools.append(get_top_messages)
+
+    # ------------------------------------------------------------------
+    # get_content_type_stats  (engagement by media type)
+    # ------------------------------------------------------------------
+
+    @tool(
+        "get_content_type_stats",
+        "Get message counts and average reactions grouped by content type (text, photo, video, etc.).",
+        {"date_from": str, "date_to": str},
+    )
+    async def get_content_type_stats(args):
+        try:
+            date_from = args.get("date_from")
+            date_to = args.get("date_to")
+            rows = await db.get_engagement_by_media_type(date_from=date_from, date_to=date_to)
+            if not rows:
+                return _text_response("Нет данных по типам контента.")
+            lines = ["Статистика по типам контента:"]
+            for row in rows:
+                lines.append(
+                    f"- {row['content_type']}: {row['message_count']} сообщений, "
+                    f"ср. реакций: {row['avg_reactions']:.1f}"
+                )
+            return _text_response("\n".join(lines))
+        except Exception as e:
+            return _text_response(f"Ошибка получения статистики контента: {e}")
+
+    tools.append(get_content_type_stats)
+
+    # ------------------------------------------------------------------
+    # get_hourly_activity  (message distribution by hour)
+    # ------------------------------------------------------------------
+
+    @tool(
+        "get_hourly_activity",
+        "Get message distribution by hour of day (UTC). Shows when channels are most active.",
+        {"date_from": str, "date_to": str},
+    )
+    async def get_hourly_activity(args):
+        try:
+            date_from = args.get("date_from")
+            date_to = args.get("date_to")
+            rows = await db.get_hourly_activity(date_from=date_from, date_to=date_to)
+            if not rows:
+                return _text_response("Нет данных по часовой активности.")
+            lines = ["Активность по часам (UTC):"]
+            for row in rows:
+                bar = "█" * min(max(1, row["message_count"] // 10), 30)
+                lines.append(
+                    f"- {row['hour']:02d}:00 — {row['message_count']} сообщений, "
+                    f"ср. реакций: {row['avg_reactions']:.1f} {bar}"
+                )
+            return _text_response("\n".join(lines))
+        except Exception as e:
+            return _text_response(f"Ошибка получения часовой активности: {e}")
+
+    tools.append(get_hourly_activity)
+
     return tools
