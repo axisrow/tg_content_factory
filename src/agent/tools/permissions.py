@@ -4,10 +4,14 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from collections import OrderedDict
 from enum import Enum
 
 logger = logging.getLogger(__name__)
+
+_PERMISSIONS_CACHE_TTL = 60.0  # seconds
+_permissions_cache: tuple[dict[str, bool], float] | None = None
 
 TOOL_PERMISSIONS_SETTING = "agent_tool_permissions"
 MCP_PREFIX = "mcp__telegram_db__"
@@ -367,6 +371,9 @@ async def save_tool_permissions(db, permissions: dict[str, bool], phone: str | N
     If *phone* is given, saves under the per-phone key without touching other phones.
     If *phone* is ``None``, saves in legacy flat format (backward compat).
     """
+    global _permissions_cache  # noqa: PLW0603
+    _permissions_cache = None  # invalidate cache on save
+
     if phone is None:
         await db.set_setting(TOOL_PERMISSIONS_SETTING, json.dumps(permissions, ensure_ascii=False))
         return
@@ -388,37 +395,57 @@ async def save_tool_permissions(db, permissions: dict[str, bool], phone: str | N
     await db.set_setting(TOOL_PERMISSIONS_SETTING, json.dumps(saved, ensure_ascii=False))
 
 
-async def load_tool_permissions_union(db) -> dict[str, bool]:
+async def load_tool_permissions_union(db, *, use_cache: bool = False) -> dict[str, bool]:
     """Union across all phones — True if ANY phone allows the tool.
 
     Used by agent backends so that tools visible to at least one account
     remain available for the session.  Per-phone handler gates do fine-grained blocking.
+
+    When *use_cache* is True, returns a cached result for up to 60 seconds
+    to avoid repeated DB queries during agent chat.
     """
+    global _permissions_cache  # noqa: PLW0603
+    if use_cache and _permissions_cache is not None:
+        cached_value, expires = _permissions_cache
+        if time.monotonic() < expires:
+            return cached_value
+
     defaults = _default_permissions()
     saved = await _load_raw_permissions(db)
     if not saved:
-        return defaults
+        result = defaults
+    elif not _is_per_phone_format(saved):
+        result = {name: saved.get(name, defaults[name]) for name in TOOL_CATEGORIES}
+    else:
+        phone_dicts = [v for v in saved.values() if isinstance(v, dict)]
+        if not phone_dicts:
+            result = defaults
+        else:
+            result = {name: any(pd.get(name, defaults[name]) for pd in phone_dicts) for name in TOOL_CATEGORIES}
 
-    if not _is_per_phone_format(saved):
-        return {name: saved.get(name, defaults[name]) for name in TOOL_CATEGORIES}
+    _permissions_cache = (result, time.monotonic() + _PERMISSIONS_CACHE_TTL)
+    return result
 
-    phone_dicts = [v for v in saved.values() if isinstance(v, dict)]
-    if not phone_dicts:
-        return defaults
-    return {name: any(pd.get(name, defaults[name]) for pd in phone_dicts) for name in TOOL_CATEGORIES}
+
+_all_allowed_tools_cache: list[str] | None = None
 
 
 def get_all_allowed_tools() -> list[str]:
     """Build the full list of tool names from TOOL_CATEGORIES.
 
     MCP tools get the prefix; built-in tools use bare names.
+    Result is computed once and cached (TOOL_CATEGORIES is static).
     """
+    global _all_allowed_tools_cache  # noqa: PLW0603
+    if _all_allowed_tools_cache is not None:
+        return _all_allowed_tools_cache
     result = []
     for name in TOOL_CATEGORIES:
         if name in BUILTIN_TOOLS:
             result.append(name)
         else:
             result.append(f"{MCP_PREFIX}{name}")
+    _all_allowed_tools_cache = result
     return result
 
 

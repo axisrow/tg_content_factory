@@ -53,7 +53,7 @@ class UnifiedDispatcher:
         photo_task_service: PhotoTaskService | None = None,
         photo_auto_upload_service: PhotoAutoUploadService | None = None,
         default_batch_size: int = 20,
-        poll_interval_sec: float = 1.0,
+        poll_interval_sec: float = 5.0,
         channel_timeout_sec: float = 120.0,
         search_engine: "SearchEngine" | None = None,
         pipeline_bundle: PipelineBundle | None = None,
@@ -125,6 +125,10 @@ class UnifiedDispatcher:
         self._task = None
 
     async def _run_loop(self) -> None:
+        idle_interval = self._poll_interval_sec
+        active_interval = max(1.0, self._poll_interval_sec / 5)
+        current_interval = idle_interval
+
         while not self._stop_event.is_set():
             task: CollectionTask | None = None
             try:
@@ -132,9 +136,11 @@ class UnifiedDispatcher:
                     datetime.now(timezone.utc), HANDLED_TYPES
                 )
                 if task is None:
-                    await asyncio.sleep(self._poll_interval_sec)
+                    current_interval = idle_interval
+                    await asyncio.sleep(current_interval)
                     continue
 
+                current_interval = active_interval
                 await self._dispatch(task)
             except asyncio.CancelledError:
                 raise
@@ -151,18 +157,25 @@ class UnifiedDispatcher:
                             )
                     except Exception:
                         logger.exception("Failed to mark broken task as failed")
-                await asyncio.sleep(self._poll_interval_sec)
+                await asyncio.sleep(current_interval)
+
+    def _handler_map(self) -> dict:
+        try:
+            return self.__handler_map
+        except AttributeError:
+            self.__handler_map = {
+                CollectionTaskType.STATS_ALL: self._handle_stats_all,
+                CollectionTaskType.SQ_STATS: self._handle_sq_stats,
+                CollectionTaskType.PHOTO_DUE: self._handle_photo_due,
+                CollectionTaskType.PHOTO_AUTO: self._handle_photo_auto,
+                CollectionTaskType.PIPELINE_RUN: self._handle_pipeline_run,
+                CollectionTaskType.CONTENT_GENERATE: self._handle_content_generate,
+                CollectionTaskType.CONTENT_PUBLISH: self._handle_content_publish,
+            }
+            return self.__handler_map
 
     async def _dispatch(self, task: CollectionTask) -> None:
-        handler = {
-            CollectionTaskType.STATS_ALL: self._handle_stats_all,
-            CollectionTaskType.SQ_STATS: self._handle_sq_stats,
-            CollectionTaskType.PHOTO_DUE: self._handle_photo_due,
-            CollectionTaskType.PHOTO_AUTO: self._handle_photo_auto,
-            CollectionTaskType.PIPELINE_RUN: self._handle_pipeline_run,
-            CollectionTaskType.CONTENT_GENERATE: self._handle_content_generate,
-            CollectionTaskType.CONTENT_PUBLISH: self._handle_content_publish,
-        }.get(task.task_type)
+        handler = self._handler_map().get(task.task_type)
         if handler is None:
             await self._tasks.update_collection_task(
                 task.id,
