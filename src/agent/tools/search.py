@@ -118,6 +118,8 @@ def register(db, client_pool, embedding_service, **kwargs):
     async def index_messages(args):
         try:
             indexed = await embedding_service.index_pending_messages()
+            if _engine_cache:
+                _engine_cache[0].invalidate_numpy_index()
             text = f"Индексация завершена. Проиндексировано сообщений: {indexed}"
         except Exception as e:
             text = f"Ошибка индексации: {e}"
