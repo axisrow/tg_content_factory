@@ -301,4 +301,48 @@ def register(db, client_pool, embedding_service, **kwargs):
 
     tools.append(get_cache_status)
 
+    @tool(
+        "resolve_entity",
+        "Resolve any Telegram entity by @username, t.me/ link, or numeric ID via live Telegram API. "
+        "Returns type (dm/bot/channel/group/supergroup), id, title, and username. "
+        "Use when you need to identify what @username is (user, bot, channel, group) "
+        "or when search_my_telegram cannot find a dialog by username. "
+        "Does NOT require the entity to be in your dialogs. "
+        "Params: identifier — @username, t.me/username, or numeric ID; phone — preferred account (optional).",
+        {"identifier": str, "phone": str},
+    )
+    async def resolve_entity(args):
+        pool_gate = require_pool(client_pool, "Resolve entity")
+        if pool_gate:
+            return pool_gate
+        identifier = (args.get("identifier") or "").strip()
+        if not identifier:
+            return _text_response("Ошибка: identifier обязателен.")
+        phone_raw = (args.get("phone") or "").strip()
+        phone = normalize_phone(phone_raw) if phone_raw else None
+        if phone:
+            perm_gate = await require_phone_permission(db, phone, "resolve_entity")
+            if perm_gate:
+                return perm_gate
+        try:
+            entity = await client_pool.resolve_any_entity(identifier, phone=phone)
+            if not entity:
+                return _text_response(f"Сущность '{identifier}' не найдена в Telegram.")
+            lines = [
+                f"Найдено: {entity['title']}",
+                f"- Тип: {entity['channel_type']}",
+                f"- ID: {entity['channel_id']}",
+            ]
+            if entity.get("username"):
+                lines.append(f"- Username: @{entity['username']}")
+            return _text_response("\n".join(lines))
+        except RuntimeError as e:
+            if "no_client" in str(e):
+                return _text_response("Нет доступных Telegram-аккаунтов.")
+            return _text_response(f"Ошибка: {e}")
+        except Exception as e:
+            return _text_response(f"Ошибка resolve: {e}")
+
+    tools.append(resolve_entity)
+
     return tools
