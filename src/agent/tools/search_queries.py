@@ -263,4 +263,37 @@ def register(db, client_pool, embedding_service, **kwargs):
 
     tools.append(run_search_query)
 
+    # ------------------------------------------------------------------
+    # get_search_query_stats (READ)
+    # ------------------------------------------------------------------
+
+    @tool(
+        "get_search_query_stats",
+        "Get daily match statistics for a search query over the last N days.",
+        {"sq_id": int, "days": int},
+    )
+    async def get_search_query_stats(args):
+        sq_id = args.get("sq_id")
+        if sq_id is None:
+            return _text_response("Ошибка: sq_id обязателен.")
+        days = int(args.get("days", 30))
+        try:
+            from src.services.search_query_service import SearchQueryService
+
+            svc = SearchQueryService(db)
+            stats = await svc.get_daily_stats(int(sq_id), days)
+            if not stats:
+                return _text_response(f"Нет статистики для запроса id={sq_id} за {days} дней.")
+            max_count = max(s.count for s in stats)
+            lines = [f"Статистика запроса id={sq_id} за {days} дней:"]
+            for s in stats:
+                bar_len = int(s.count / max_count * 30) if max_count else 0
+                bar = "█" * bar_len
+                lines.append(f"  {s.day}  {bar} {s.count}")
+            return _text_response("\n".join(lines))
+        except Exception as e:
+            return _text_response(f"Ошибка получения статистики: {e}")
+
+    tools.append(get_search_query_stats)
+
     return tools
