@@ -131,7 +131,7 @@ class ChatInput(TextArea):
             event.prevent_default()
             event.stop()
             await self.app.action_send_message()
-        elif event.key in ("shift+enter", "meta+enter"):
+        elif event.key in ("shift+enter", "meta+enter", "alt+enter", "escape+enter"):
             event.prevent_default()
             event.stop()
             self.insert("\n")
