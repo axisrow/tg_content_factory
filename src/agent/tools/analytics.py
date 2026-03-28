@@ -222,7 +222,7 @@ def register(db, client_pool, embedding_service, **kwargs):
     )
     async def get_top_messages(args):
         try:
-            limit = int(args.get("limit", 20))
+            limit = min(int(args.get("limit", 20)), 200)
             date_from = args.get("date_from")
             date_to = args.get("date_to")
             rows = await db.get_top_messages(limit=limit, date_from=date_from, date_to=date_to)
@@ -285,7 +285,7 @@ def register(db, client_pool, embedding_service, **kwargs):
                 return _text_response("Нет данных по часовой активности.")
             lines = ["Активность по часам (UTC):"]
             for row in rows:
-                bar = "█" * max(1, row["message_count"] // 10)
+                bar = "█" * min(max(1, row["message_count"] // 10), 30)
                 lines.append(
                     f"- {row['hour']:02d}:00 — {row['message_count']} сообщений, "
                     f"ср. реакций: {row['avg_reactions']:.1f} {bar}"
