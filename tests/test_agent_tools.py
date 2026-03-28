@@ -981,7 +981,7 @@ class TestNotificationDryRunTool:
         assert "Нет активных" in _text(result)
 
     @pytest.mark.asyncio
-    async def test_returns_match_counts(self, mock_db):
+    async def test_returns_zero_when_no_since(self, mock_db):
         mock_db.repos = MagicMock()
         mock_db.repos.tasks.get_last_completed_collect_task = AsyncMock(return_value=None)
         sq = SimpleNamespace(id=1, query="test", name="Test Query")
@@ -992,6 +992,25 @@ class TestNotificationDryRunTool:
         text = _text(result)
         assert "Test Query" in text
         assert "0 совпадений" in text
+
+    @pytest.mark.asyncio
+    async def test_returns_actual_match_counts(self, mock_db):
+        from datetime import datetime, timezone
+
+        mock_db.repos = MagicMock()
+        completed_task = SimpleNamespace(
+            completed_at=datetime(2025, 1, 15, 12, 0, tzinfo=timezone.utc)
+        )
+        mock_db.repos.tasks.get_last_completed_collect_task = AsyncMock(return_value=completed_task)
+        sq = SimpleNamespace(id=1, query="test", name="Test Query")
+        mock_db.get_notification_queries = AsyncMock(return_value=[sq])
+        mock_db.repos.settings.get_setting = AsyncMock(return_value=None)
+        mock_db.search_messages_for_query_since = AsyncMock(return_value=([], 5))
+        handlers = _get_tool_handlers(mock_db)
+        result = await handlers["notification_dry_run"]({})
+        text = _text(result)
+        assert "5 совпадений" in text
+        mock_db.search_messages_for_query_since.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------
