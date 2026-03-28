@@ -35,6 +35,7 @@ from src.filters.criteria import (
     PRECHECK_CROSS_DUPE_SAMPLE,
 )
 from src.models import Channel, ChannelStats, Message
+from src.services.translation_service import TranslationService
 from src.settings_utils import parse_int_setting
 from src.telegram.backends import adapt_transport_session
 from src.telegram.client_pool import ClientPool
@@ -544,8 +545,6 @@ class Collector:
                             )
                         elif reply_to:
                             pass
-                        from src.services.translation_service import TranslationService
-
                         message = Message(
                             channel_id=channel_id,
                             message_id=msg.id,
