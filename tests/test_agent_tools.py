@@ -873,9 +873,17 @@ class TestSetSchedulerIntervalTool:
         mock_db.repos.settings.set_setting = AsyncMock()
         handlers = _get_tool_handlers(mock_db)
         result = await handlers["set_scheduler_interval"](
-            {"job_id": "custom_job", "minutes": 9999, "confirm": True}
+            {"job_id": "collect_all", "minutes": 9999, "confirm": True}
         )
         assert "1440 мин" in _text(result)
+
+    @pytest.mark.asyncio
+    async def test_rejects_non_collect_all(self, mock_db):
+        handlers = _get_tool_handlers(mock_db)
+        result = await handlers["set_scheduler_interval"](
+            {"job_id": "custom_job", "minutes": 30, "confirm": True}
+        )
+        assert "только для 'collect_all'" in _text(result)
 
 
 class TestCancelSchedulerTaskTool:

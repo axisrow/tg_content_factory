@@ -126,29 +126,28 @@ def register(db, client_pool, embedding_service, **kwargs):
 
     @tool(
         "set_scheduler_interval",
-        "Set the collection interval (in minutes) for a scheduler job. "
-        "job_id can be 'collect_all' or a specific job name. Range: 1–1440.",
+        "Set the collection interval (in minutes). Currently only 'collect_all' is supported. Range: 1–1440.",
         {"job_id": str, "minutes": int, "confirm": bool},
     )
     async def set_scheduler_interval(args):
         job_id = args.get("job_id", "")
         if not job_id:
             return _text_response("Ошибка: job_id обязателен.")
+        if job_id != "collect_all":
+            return _text_response(
+                f"Ошибка: интервал можно установить только для 'collect_all'. "
+                f"Получено: '{job_id}'."
+            )
         minutes = args.get("minutes")
         if minutes is None:
             return _text_response("Ошибка: minutes обязателен.")
         minutes = max(1, min(int(minutes), 1440))
-        gate = require_confirmation(f"установит интервал задачи '{job_id}' = {minutes} мин", args)
+        gate = require_confirmation(f"установит интервал сбора = {minutes} мин", args)
         if gate:
             return gate
         try:
-            if job_id == "collect_all":
-                await db.repos.settings.set_setting("collect_interval_minutes", str(minutes))
-            else:
-                await db.repos.settings.set_setting(
-                    f"scheduler_job_{job_id}_interval", str(minutes)
-                )
-            return _text_response(f"Интервал задачи '{job_id}' установлен: {minutes} мин.")
+            await db.repos.settings.set_setting("collect_interval_minutes", str(minutes))
+            return _text_response(f"Интервал сбора установлен: {minutes} мин.")
         except Exception as e:
             return _text_response(f"Ошибка установки интервала: {e}")
 
@@ -160,7 +159,9 @@ def register(db, client_pool, embedding_service, **kwargs):
 
     @tool(
         "cancel_scheduler_task",
-        "Cancel a pending collection task by task_id. Requires confirmation.",
+        "Cancel a collection task by task_id. Works for pending tasks; running tasks will be "
+        "marked cancelled in DB but the active collection may continue until completion. "
+        "Requires confirmation.",
         {"task_id": int, "confirm": bool},
     )
     async def cancel_scheduler_task(args):
