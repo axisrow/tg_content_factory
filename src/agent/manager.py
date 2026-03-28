@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, TypeVar
 
-from claude_agent_sdk import AssistantMessage, ClaudeAgentOptions, ResultMessage, TextBlock, query
+from claude_agent_sdk import AssistantMessage, ClaudeAgentOptions, ResultMessage, StreamEvent, TextBlock, query
 
 from src.agent.models import CLAUDE_MODEL_IDS
 from src.agent.prompt_template import (
@@ -166,6 +166,7 @@ class ClaudeSdkBackend:
             allowed_tools=allowed,
             cli_path=cli_path or None,
             stderr=_on_stderr,
+            include_partial_messages=True,
             **extra,
         )
 
@@ -173,19 +174,33 @@ class ClaudeSdkBackend:
         for attempt in range(2):
             draining = False
             full_text = ""
+            streamed = False
             try:
                 async for msg in query(prompt=prompt, options=options):
                     if draining:
                         continue
                     try:
-                        if isinstance(msg, AssistantMessage):
-                            for block in msg.content:
-                                if isinstance(block, TextBlock):
-                                    full_text += block.text
-                                    chunk_payload = json.dumps(
-                                        {"text": block.text}, ensure_ascii=False
-                                    )
+                        if isinstance(msg, StreamEvent):
+                            event = msg.event
+                            if (
+                                event.get("type") == "content_block_delta"
+                                and event.get("delta", {}).get("type") == "text_delta"
+                            ):
+                                text_chunk = event["delta"].get("text", "")
+                                if text_chunk:
+                                    full_text += text_chunk
+                                    streamed = True
+                                    chunk_payload = json.dumps({"text": text_chunk}, ensure_ascii=False)
                                     await queue.put(f"data: {chunk_payload}\n\n")
+                        elif isinstance(msg, AssistantMessage):
+                            if not streamed:
+                                for block in msg.content:
+                                    if isinstance(block, TextBlock):
+                                        full_text += block.text
+                                        chunk_payload = json.dumps(
+                                            {"text": block.text}, ensure_ascii=False
+                                        )
+                                        await queue.put(f"data: {chunk_payload}\n\n")
                         elif isinstance(msg, ResultMessage):
                             done_payload = json.dumps(
                                 {"done": True, "full_text": full_text, "backend": "claude"},
