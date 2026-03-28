@@ -47,6 +47,10 @@ TOOL_CATEGORIES: dict[str, ToolCategory] = {
     "import_channels": ToolCategory.WRITE,
     "refresh_channel_types": ToolCategory.WRITE,
     "refresh_channel_meta": ToolCategory.WRITE,
+    "list_tags": ToolCategory.READ,
+    "create_tag": ToolCategory.WRITE,
+    "delete_tag": ToolCategory.DELETE,
+    "set_channel_tags": ToolCategory.WRITE,
     # Collection
     "collect_channel": ToolCategory.WRITE,
     "collect_all_channels": ToolCategory.WRITE,
@@ -64,8 +68,12 @@ TOOL_CATEGORIES: dict[str, ToolCategory] = {
     "list_pipeline_runs": ToolCategory.READ,
     "get_pipeline_run": ToolCategory.READ,
     "publish_pipeline_run": ToolCategory.WRITE,
+    "get_pipeline_queue": ToolCategory.READ,
+    "get_refinement_steps": ToolCategory.READ,
+    "set_refinement_steps": ToolCategory.WRITE,
     # Moderation
     "list_pending_moderation": ToolCategory.READ,
+    "view_moderation_run": ToolCategory.READ,
     "approve_run": ToolCategory.WRITE,
     "reject_run": ToolCategory.WRITE,
     "bulk_approve_runs": ToolCategory.WRITE,
@@ -168,6 +176,7 @@ TOOL_CATEGORIES: dict[str, ToolCategory] = {
     "list_generated_images": ToolCategory.READ,
     # Settings
     "get_settings": ToolCategory.READ,
+    "save_scheduler_settings": ToolCategory.WRITE,
     "save_agent_settings": ToolCategory.WRITE,
     "save_filter_settings": ToolCategory.WRITE,
     "get_system_info": ToolCategory.READ,
@@ -195,6 +204,7 @@ MODULE_GROUPS: OrderedDict[str, list[str]] = OrderedDict([
     ("Каналы", [
         "list_channels", "get_channel_stats", "add_channel", "delete_channel",
         "toggle_channel", "import_channels", "refresh_channel_types", "refresh_channel_meta",
+        "list_tags", "create_tag", "delete_tag", "set_channel_tags",
     ]),
     ("Сбор", [
         "collect_channel", "collect_all_channels", "collect_channel_stats", "collect_all_stats",
@@ -202,7 +212,8 @@ MODULE_GROUPS: OrderedDict[str, list[str]] = OrderedDict([
     ("Пайплайны", [
         "list_pipelines", "get_pipeline_detail", "add_pipeline", "edit_pipeline",
         "toggle_pipeline", "delete_pipeline", "run_pipeline", "generate_draft",
-        "list_pipeline_runs", "get_pipeline_run", "publish_pipeline_run", "get_pipeline_queue",
+        "list_pipeline_runs", "get_pipeline_run", "publish_pipeline_run",
+        "get_pipeline_queue", "get_refinement_steps", "set_refinement_steps",
     ]),
     ("Модерация", [
         "list_pending_moderation", "view_moderation_run", "approve_run", "reject_run",

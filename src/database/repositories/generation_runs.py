@@ -181,6 +181,16 @@ class GenerationRunsRepository:
         rows = await cur.fetchall()
         return [self._to_generation_run(row) for row in rows]
 
+    async def list_by_status(self, statuses: list[str], limit: int = 20) -> list[GenerationRun]:
+        """List runs filtered by execution status (pending/running/completed/failed)."""
+        placeholders = ",".join("?" * len(statuses))
+        cur = await self._db.execute(
+            f"SELECT * FROM generation_runs WHERE status IN ({placeholders}) ORDER BY id DESC LIMIT ?",
+            (*statuses, limit),
+        )
+        rows = await cur.fetchall()
+        return [self._to_generation_run(row) for row in rows]
+
     async def get_calendar_stats(self) -> dict:
         """Return counts grouped by moderation_status, plus published count."""
         cur = await self._db.execute(
