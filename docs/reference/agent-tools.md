@@ -9,6 +9,10 @@
 | `search_messages` | READ | Полнотекстовый поиск по FTS5 |
 | `semantic_search` | READ | Семантический поиск через векторные эмбеддинги |
 | `index_messages` | WRITE | Индексация сообщений для семантического поиска |
+| `search_telegram` | READ | Глобальный поиск через Telegram API (Premium) |
+| `search_my_chats` | READ | Поиск по личным чатам аккаунта |
+| `search_in_channel` | READ | Поиск внутри конкретного канала через Telegram |
+| `search_hybrid` | READ | Гибридный поиск (FTS + семантика) |
 
 ## Каналы
 
@@ -21,6 +25,7 @@
 | `toggle_channel` | WRITE | Вкл/выкл канал |
 | `import_channels` | WRITE | Массовый импорт |
 | `refresh_channel_types` | WRITE | Обновить типы каналов |
+| `refresh_channel_meta` | WRITE | Обновить метаданные (about, linked_chat_id, has_comments) |
 
 ## Сбор
 
@@ -70,6 +75,7 @@
 | `delete_search_query` | DELETE | Удалить |
 | `toggle_search_query` | WRITE | Вкл/выкл |
 | `run_search_query` | WRITE | Запустить вручную |
+| `get_search_query_stats` | READ | Статистика совпадений за период |
 
 ## Аккаунты
 
@@ -80,6 +86,7 @@
 | `delete_account` | DELETE | Удалить |
 | `get_flood_status` | READ | Статус flood wait |
 | `clear_flood_status` | WRITE | Сбросить flood wait |
+| `get_account_info` | READ | Информация об аккаунте (имя, username, premium) |
 
 ## Фильтры
 
@@ -105,6 +112,9 @@
 | `get_message_velocity` | READ | Скорость сообщений |
 | `get_peak_hours` | READ | Пиковые часы |
 | `get_calendar` | READ | Календарь |
+| `get_top_messages` | READ | Топ сообщений по реакциям |
+| `get_content_type_stats` | READ | Статистика по типам контента |
+| `get_hourly_activity` | READ | Почасовая активность |
 
 ## Планировщик
 
@@ -115,6 +125,9 @@
 | `stop_scheduler` | WRITE | Остановить |
 | `trigger_collection` | WRITE | Запустить сбор |
 | `toggle_scheduler_job` | WRITE | Вкл/выкл job |
+| `set_scheduler_interval` | WRITE | Установить интервал сбора |
+| `cancel_scheduler_task` | WRITE | Отменить задачу сбора |
+| `clear_pending_tasks` | WRITE | Очистить очередь ожидающих |
 
 ## Уведомления
 
@@ -124,6 +137,7 @@
 | `setup_notification_bot` | WRITE | Настроить бота |
 | `delete_notification_bot` | DELETE | Удалить бота |
 | `test_notification` | WRITE | Тест уведомления |
+| `notification_dry_run` | READ | Превью совпадений без отправки |
 
 ## Фото
 
@@ -141,6 +155,8 @@
 | `run_photo_due` | WRITE | Запустить due |
 | `create_auto_upload` | WRITE | Создать авто |
 | `update_auto_upload` | WRITE | Обновить авто |
+| `list_photo_dialogs` | READ | Список диалогов для фото |
+| `refresh_photo_dialogs` | WRITE | Обновить кеш диалогов |
 
 ## Мой Telegram
 
