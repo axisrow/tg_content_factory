@@ -97,6 +97,7 @@ class ClientPool:
         self._dialogs_fetched: set[str] = set()
         self._dialogs_cache: dict[tuple[str, str], DialogCacheEntry] = {}
         self._dialogs_cache_ttl_sec = 60.0
+        self._dialogs_db_cache_ttl_sec = 3600.0  # 1 hour; stale DB cache triggers fresh Telegram fetch
         self._premium_flood_wait_until: dict[str, datetime] = {}
 
     def is_dialogs_fetched(self, phone: str) -> bool:
@@ -119,6 +120,17 @@ class ClientPool:
         full_dialogs = await self._db.repos.dialog_cache.list_dialogs(phone)
         if not full_dialogs:
             return None
+        cached_at = await self._db.repos.dialog_cache.get_cached_at(phone)
+        if cached_at is not None:
+            age_sec = (datetime.now(timezone.utc) - cached_at).total_seconds()
+            if age_sec > self._dialogs_db_cache_ttl_sec:
+                logger.info(
+                    "_get_db_cached_dialogs: stale cache for %s age=%.0fs > ttl=%.0fs, forcing refresh",
+                    phone,
+                    age_sec,
+                    self._dialogs_db_cache_ttl_sec,
+                )
+                return None
         if mode == "channels_only":
             filtered = [
                 dict(dialog)

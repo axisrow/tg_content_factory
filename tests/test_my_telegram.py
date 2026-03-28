@@ -82,6 +82,7 @@ def _bind_dialog_cache_methods(pool):
 
     pool._dialogs_cache = {}
     pool._dialogs_cache_ttl_sec = 60.0
+    pool._dialogs_db_cache_ttl_sec = 3600.0
     pool.invalidate_dialogs_cache = ClientPool.invalidate_dialogs_cache.__get__(pool, ClientPool)
     pool._get_cached_dialogs = ClientPool._get_cached_dialogs.__get__(pool, ClientPool)
     pool._get_db_cached_dialogs = ClientPool._get_db_cached_dialogs.__get__(pool, ClientPool)

@@ -8,9 +8,43 @@ Usage::
 
 from __future__ import annotations
 
-from claude_agent_sdk import create_sdk_mcp_server
+import functools
+
+from claude_agent_sdk import SdkMcpTool, create_sdk_mcp_server
 
 from src.agent.tools._registry import _text_response  # noqa: F401
+
+
+def _wrap_with_session_gate(tool: SdkMcpTool) -> SdkMcpTool:
+    """Wrap a SdkMcpTool with a session-level permission check.
+
+    If the tool is disabled in DB settings for all phones (db_permissions[tool_name] == False)
+    and a PermissionGate is active, shows an interactive dialog instead of blocking silently.
+    Phone-level checks are handled separately inside require_phone_permission().
+    """
+    tool_name = tool.name
+    original_handler = tool.handler
+
+    @functools.wraps(original_handler)
+    async def wrapped_handler(*args, **kwargs):
+        from src.agent.permission_gate import get_gate, get_request_context
+
+        gate = get_gate()
+        if gate is not None:
+            ctx = get_request_context()
+            if ctx is not None and not ctx.db_permissions.get(tool_name, True):
+                result = await gate.check(tool_name, kwargs.get("phone", ""))
+                if result is not None:
+                    return result
+        return await original_handler(*args, **kwargs)
+
+    return SdkMcpTool(
+        name=tool.name,
+        description=tool.description,
+        input_schema=tool.input_schema,
+        handler=wrapped_handler,
+        annotations=tool.annotations,
+    )
 
 
 def make_mcp_server(db, client_pool=None, scheduler_manager=None, config=None):
@@ -71,7 +105,8 @@ def make_mcp_server(db, client_pool=None, scheduler_manager=None, config=None):
         settings,
         agent_threads,
     ]:
-        all_tools.extend(module.register(db, client_pool, embedding_service, **extras))
+        for tool_obj in module.register(db, client_pool, embedding_service, **extras):
+            all_tools.append(_wrap_with_session_gate(tool_obj))
 
     return create_sdk_mcp_server(
         name="telegram_db",

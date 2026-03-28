@@ -142,12 +142,20 @@ class ClaudeSdkBackend:
 
         all_tools = get_all_allowed_tools()
         permissions = await load_tool_permissions_union(self._db, use_cache=True)
-        allowed = filter_allowed_tools(all_tools, permissions)
-        if len(allowed) < len(all_tools):
-            denied = [t.removeprefix(MCP_PREFIX) for t in all_tools if t not in allowed]
-            logger.debug("Agent tools: %d/%d allowed, denied: %s", len(allowed), len(all_tools), denied[:20])
+        # When a PermissionGate is active (TUI/web mode), pass ALL tools to the LLM —
+        # the gate intercepts restricted calls at runtime instead of hiding them.
+        from src.agent.permission_gate import get_gate
+
+        if get_gate() is not None:
+            allowed = all_tools
+            logger.debug("Agent tools: gate active, all %d tools visible to LLM", len(all_tools))
         else:
-            logger.debug("Agent tools: all %d tools allowed", len(allowed))
+            allowed = filter_allowed_tools(all_tools, permissions)
+            if len(allowed) < len(all_tools):
+                denied = [t.removeprefix(MCP_PREFIX) for t in all_tools if t not in allowed]
+                logger.debug("Agent tools: %d/%d allowed, denied: %s", len(allowed), len(all_tools), denied[:20])
+            else:
+                logger.debug("Agent tools: all %d tools allowed", len(allowed))
 
         enabled_builtins = [t for t in BUILTIN_TOOLS if t in allowed]
 
@@ -986,6 +994,29 @@ class AgentManager:
         self._settings_cache = _SettingsCache()
         self._cached_allowed_tools: list[str] | None = None
         self._cached_filtered_tools: tuple[list[str], dict[str, bool]] | None = None
+        from src.agent.permission_gate import PermissionGate
+
+        self._permission_gate = PermissionGate()
+
+    @property
+    def permission_gate(self):
+        """Return the PermissionGate for this manager (used by TUI/web to resolve dialogs)."""
+        return self._permission_gate
+
+    def enable_permission_gate(self) -> None:
+        """Activate the permission gate (registers it globally for tool handlers).
+
+        Call this in TUI/web mode to enable interactive permission dialogs.
+        """
+        from src.agent.permission_gate import set_gate
+
+        set_gate(self._permission_gate)
+
+    def disable_permission_gate(self) -> None:
+        """Deactivate the permission gate (reverts to text-error behaviour)."""
+        from src.agent.permission_gate import set_gate
+
+        set_gate(None)
 
     async def refresh_settings_cache(self, *, preflight: bool = False) -> None:
         await self._deepagents_backend.refresh_settings_cache()
@@ -1137,7 +1168,7 @@ class AgentManager:
         return await self._deepagents_backend.probe_config(cfg, probe_kind=probe_kind)
 
     async def chat_stream(
-        self, thread_id: int, message: str, model: str | None = None
+        self, thread_id: int, message: str, model: str | None = None, session_id: str = "web",
     ) -> AsyncGenerator[str, None]:
         history = await self._db.get_agent_messages(thread_id)
         assert (
@@ -1197,10 +1228,35 @@ class AgentManager:
 
         queue: asyncio.Queue[str | None] = asyncio.Queue()
 
+        # Capture gate state and compute DB permissions before spawning the task.
+        # The ContextVar token must be created AND reset inside the same asyncio task,
+        # so the actual set/reset happens inside _run_backend (not in the generator).
+        from src.agent.permission_gate import (
+            AgentRequestContext,
+            get_gate,
+            reset_request_context,
+            set_request_context,
+        )
+
+        _gate = get_gate()
+        _req_ctx: AgentRequestContext | None = None
+        if _gate is not None:
+            from src.agent.tools.permissions import load_tool_permissions_union
+
+            _db_perms = await load_tool_permissions_union(self._db, use_cache=True)
+            _req_ctx = AgentRequestContext(
+                session_id=session_id,
+                thread_id=thread_id,
+                queue=queue,
+                db_permissions=_db_perms,
+            )
+
         async def _run_backend(
             selected_backend: ClaudeSdkBackend | DeepagentsBackend,
             failure_prefix: Callable[[str], str],
         ) -> None:
+            # Set ContextVar here so token is created and reset in the same task context.
+            _token = set_request_context(_req_ctx) if _req_ctx is not None else None
             try:
                 await selected_backend.chat_stream(
                     thread_id=thread_id,
@@ -1238,6 +1294,9 @@ class AgentManager:
                     ensure_ascii=False,
                 )
                 await queue.put(f"data: {err_payload}\n\n")
+            finally:
+                if _token is not None:
+                    reset_request_context(_token)
             await queue.put(None)
 
         # Cleanup stale done tasks before adding new one
