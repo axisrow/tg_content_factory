@@ -179,10 +179,11 @@ class ClaudeSdkBackend:
                                 and event.get("delta", {}).get("type") == "text_delta"
                             ):
                                 text_chunk = event["delta"].get("text", "")
-                                full_text += text_chunk
-                                streamed = True
-                                chunk_payload = json.dumps({"text": text_chunk}, ensure_ascii=False)
-                                await queue.put(f"data: {chunk_payload}\n\n")
+                                if text_chunk:
+                                    full_text += text_chunk
+                                    streamed = True
+                                    chunk_payload = json.dumps({"text": text_chunk}, ensure_ascii=False)
+                                    await queue.put(f"data: {chunk_payload}\n\n")
                         elif isinstance(msg, AssistantMessage):
                             if not streamed:
                                 for block in msg.content:
