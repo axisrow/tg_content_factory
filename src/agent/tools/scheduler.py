@@ -120,4 +120,85 @@ def register(db, client_pool, embedding_service, **kwargs):
 
     tools.append(toggle_scheduler_job)
 
+    # ------------------------------------------------------------------
+    # set_scheduler_interval (WRITE + confirm)
+    # ------------------------------------------------------------------
+
+    @tool(
+        "set_scheduler_interval",
+        "Set the collection interval (in minutes) for a scheduler job. "
+        "job_id can be 'collect_all' or a specific job name. Range: 1–1440.",
+        {"job_id": str, "minutes": int, "confirm": bool},
+    )
+    async def set_scheduler_interval(args):
+        job_id = args.get("job_id", "")
+        if not job_id:
+            return _text_response("Ошибка: job_id обязателен.")
+        minutes = args.get("minutes")
+        if minutes is None:
+            return _text_response("Ошибка: minutes обязателен.")
+        minutes = max(1, min(int(minutes), 1440))
+        gate = require_confirmation(f"установит интервал задачи '{job_id}' = {minutes} мин", args)
+        if gate:
+            return gate
+        try:
+            if job_id == "collect_all":
+                await db.repos.settings.set_setting("collect_interval_minutes", str(minutes))
+            else:
+                await db.repos.settings.set_setting(
+                    f"scheduler_job_{job_id}_interval", str(minutes)
+                )
+            return _text_response(f"Интервал задачи '{job_id}' установлен: {minutes} мин.")
+        except Exception as e:
+            return _text_response(f"Ошибка установки интервала: {e}")
+
+    tools.append(set_scheduler_interval)
+
+    # ------------------------------------------------------------------
+    # cancel_scheduler_task (WRITE + confirm)
+    # ------------------------------------------------------------------
+
+    @tool(
+        "cancel_scheduler_task",
+        "Cancel a pending collection task by task_id. Requires confirmation.",
+        {"task_id": int, "confirm": bool},
+    )
+    async def cancel_scheduler_task(args):
+        task_id = args.get("task_id")
+        if task_id is None:
+            return _text_response("Ошибка: task_id обязателен.")
+        gate = require_confirmation(f"отменит задачу id={task_id}", args)
+        if gate:
+            return gate
+        try:
+            ok = await db.repos.tasks.cancel_collection_task(int(task_id))
+            if ok:
+                return _text_response(f"Задача {task_id} отменена.")
+            return _text_response(f"Задача {task_id} не найдена или уже завершена.")
+        except Exception as e:
+            return _text_response(f"Ошибка отмены задачи: {e}")
+
+    tools.append(cancel_scheduler_task)
+
+    # ------------------------------------------------------------------
+    # clear_pending_tasks (WRITE + confirm)
+    # ------------------------------------------------------------------
+
+    @tool(
+        "clear_pending_tasks",
+        "Clear all pending collection tasks from the queue. Requires confirmation.",
+        {"confirm": bool},
+    )
+    async def clear_pending_tasks(args):
+        gate = require_confirmation("удалит все ожидающие задачи сбора из очереди", args)
+        if gate:
+            return gate
+        try:
+            deleted = await db.repos.tasks.delete_pending_channel_tasks()
+            return _text_response(f"Удалено ожидающих задач: {deleted}.")
+        except Exception as e:
+            return _text_response(f"Ошибка очистки очереди: {e}")
+
+    tools.append(clear_pending_tasks)
+
     return tools
