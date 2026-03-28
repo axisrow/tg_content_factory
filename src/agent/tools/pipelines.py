@@ -106,6 +106,58 @@ def register(db, client_pool, embedding_service, **kwargs):
 
     tools.append(get_pipeline_detail)
 
+    @tool(
+        "get_pipeline_queue",
+        "List pending and running generation runs across all pipelines (the generation queue). "
+        "Shows run_id, pipeline_id, status, and text preview. "
+        "Use get_pipeline_run to see full text of a specific run.",
+        {"limit": int},
+    )
+    async def get_pipeline_queue(args):
+        try:
+            limit = int(args.get("limit", 20))
+            runs = await db.repos.generation_runs.list_by_status(["pending", "running"], limit=limit)
+            if not runs:
+                return _text_response("Очередь генерации пуста.")
+            lines = [f"Очередь генерации ({len(runs)} шт.):"]
+            for r in runs:
+                preview = (r.generated_text or "")[:100]
+                lines.append(
+                    f"- run_id={r.id}, pipeline_id={r.pipeline_id}, status={r.status}: {preview}"
+                )
+            return _text_response("\n".join(lines))
+        except Exception as e:
+            return _text_response(f"Ошибка получения очереди: {e}")
+
+    tools.append(get_pipeline_queue)
+
+    @tool(
+        "get_refinement_steps",
+        "Get the refinement (post-processing) steps for a pipeline. "
+        "Each step has a name and a prompt template with {text} placeholder.",
+        {"pipeline_id": int},
+    )
+    async def get_refinement_steps(args):
+        pipeline_id = args.get("pipeline_id")
+        if pipeline_id is None:
+            return _text_response("Ошибка: pipeline_id обязателен.")
+        try:
+            pipeline = await db.repos.content_pipelines.get_by_id(int(pipeline_id))
+            if pipeline is None:
+                return _text_response(f"Пайплайн id={pipeline_id} не найден.")
+            steps = pipeline.refinement_steps or []
+            if not steps:
+                return _text_response(f"Пайплайн id={pipeline_id} не имеет шагов рефайнмента.")
+            lines = [f"Шаги рефайнмента пайплайна id={pipeline_id} ({len(steps)} шт.):"]
+            for i, step in enumerate(steps, 1):
+                prompt_preview = step.get("prompt", "")[:150]
+                lines.append(f"  {i}. {step.get('name', '—')}: {prompt_preview}")
+            return _text_response("\n".join(lines))
+        except Exception as e:
+            return _text_response(f"Ошибка получения шагов рефайнмента: {e}")
+
+    tools.append(get_refinement_steps)
+
     # ------------------------------------------------------------------
     # Write tools
     # ------------------------------------------------------------------
@@ -485,5 +537,50 @@ def register(db, client_pool, embedding_service, **kwargs):
             return _text_response(f"Ошибка публикации: {e}")
 
     tools.append(publish_pipeline_run)
+
+    @tool(
+        "set_refinement_steps",
+        "⚠️ Set the refinement (post-processing) steps for a pipeline. "
+        "steps_json is a JSON array: [{\"name\": \"Step name\", \"prompt\": \"...{text}...\"}]. "
+        "Pass an empty array to clear all steps. Requires confirm=true.",
+        {"pipeline_id": int, "steps_json": str, "confirm": bool},
+    )
+    async def set_refinement_steps(args):
+        pipeline_id = args.get("pipeline_id")
+        if pipeline_id is None:
+            return _text_response("Ошибка: pipeline_id обязателен.")
+        gate = require_confirmation(f"обновит шаги рефайнмента пайплайна id={pipeline_id}", args)
+        if gate:
+            return gate
+        try:
+            import json as _json
+            raw = args.get("steps_json", "[]")
+            steps = _json.loads(raw)
+            if not isinstance(steps, list):
+                return _text_response("Ошибка: steps_json должен быть JSON-массивом.")
+            validated = [
+                {"name": str(s.get("name", "")).strip(), "prompt": str(s.get("prompt", "")).strip()}
+                for s in steps
+                if isinstance(s, dict) and str(s.get("prompt", "")).strip()
+            ]
+            dropped = len(steps) - len(validated)
+            if dropped > 0:
+                return _text_response(
+                    f"Ошибка: {dropped} из {len(steps)} шагов не содержат поле 'prompt' и не могут быть сохранены. "
+                    f"Убедитесь что каждый элемент имеет ключ 'prompt' с непустым значением."
+                )
+            pipeline = await db.repos.content_pipelines.get_by_id(int(pipeline_id))
+            if pipeline is None:
+                return _text_response(f"Пайплайн id={pipeline_id} не найден.")
+            await db.repos.content_pipelines.set_refinement_steps(int(pipeline_id), validated)
+            return _text_response(
+                f"Шаги рефайнмента пайплайна id={pipeline_id} обновлены ({len(validated)} шт.)."
+            )
+        except _json.JSONDecodeError as e:
+            return _text_response(f"Ошибка парсинга steps_json: {e}")
+        except Exception as e:
+            return _text_response(f"Ошибка обновления шагов рефайнмента: {e}")
+
+    tools.append(set_refinement_steps)
 
     return tools

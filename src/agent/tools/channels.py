@@ -333,4 +333,91 @@ def register(db, client_pool, embedding_service, **kwargs):
 
     tools.append(refresh_channel_meta)
 
+    # ------------------------------------------------------------------
+    # Tags
+    # ------------------------------------------------------------------
+
+    @tool(
+        "list_tags",
+        "List all channel tags defined in the system. "
+        "Use set_channel_tags to assign tags to a channel.",
+        {},
+    )
+    async def list_tags(args):
+        try:
+            tags = await db.repos.channels.list_all_tags()
+            if not tags:
+                return _text_response("Теги не найдены.")
+            return _text_response(f"Теги ({len(tags)}): {', '.join(tags)}")
+        except Exception as e:
+            return _text_response(f"Ошибка получения тегов: {e}")
+
+    tools.append(list_tags)
+
+    @tool(
+        "create_tag",
+        "Create a new channel tag. Requires confirm=true.",
+        {"name": str, "confirm": bool},
+    )
+    async def create_tag(args):
+        name = (args.get("name") or "").strip()
+        if not name:
+            return _text_response("Ошибка: name обязателен.")
+        gate = require_confirmation(f"создаст тег '{name}'", args)
+        if gate:
+            return gate
+        try:
+            await db.repos.channels.create_tag(name)
+            return _text_response(f"Тег '{name}' создан.")
+        except Exception as e:
+            return _text_response(f"Ошибка создания тега: {e}")
+
+    tools.append(create_tag)
+
+    @tool(
+        "delete_tag",
+        "⚠️ DANGEROUS: Delete a tag and remove it from all channels. Requires confirm=true.",
+        {"name": str, "confirm": bool},
+        annotations=ToolAnnotations(destructiveHint=True),
+    )
+    async def delete_tag(args):
+        name = (args.get("name") or "").strip()
+        if not name:
+            return _text_response("Ошибка: name обязателен.")
+        gate = require_confirmation(f"удалит тег '{name}' у всех каналов", args)
+        if gate:
+            return gate
+        try:
+            await db.repos.channels.delete_tag(name)
+            return _text_response(f"Тег '{name}' удалён.")
+        except Exception as e:
+            return _text_response(f"Ошибка удаления тега: {e}")
+
+    tools.append(delete_tag)
+
+    @tool(
+        "set_channel_tags",
+        "Assign tags to a channel (replaces all existing tags). "
+        "pk = DB primary key from list_channels. tags = comma-separated tag names (empty to clear all).",
+        {"pk": int, "tags": str},
+    )
+    async def set_channel_tags(args):
+        pk = args.get("pk")
+        if pk is None:
+            return _text_response("Ошибка: pk обязателен.")
+        raw = args.get("tags", "")
+        tag_names = [t.strip() for t in str(raw).split(",") if t.strip()]
+        try:
+            ch = await db.get_channel_by_pk(int(pk))
+            if ch is None:
+                return _text_response(f"Канал pk={pk} не найден.")
+            await db.repos.channels.set_channel_tags(int(pk), tag_names)
+            if tag_names:
+                return _text_response(f"Теги канала '{ch.title}' обновлены: {', '.join(tag_names)}")
+            return _text_response(f"Теги канала '{ch.title}' очищены.")
+        except Exception as e:
+            return _text_response(f"Ошибка установки тегов: {e}")
+
+    tools.append(set_channel_tags)
+
     return tools

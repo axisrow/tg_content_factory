@@ -8,6 +8,7 @@ from src.agent.tools._registry import _text_response, require_confirmation
 
 
 def register(db, client_pool, embedding_service, **kwargs):
+    scheduler_manager = kwargs.get("scheduler_manager")
     tools = []
 
     @tool("get_settings", "Get current system settings (scheduler, agent, filters, etc.)", {})
@@ -71,6 +72,28 @@ def register(db, client_pool, embedding_service, **kwargs):
             return _text_response(f"Ошибка сохранения настроек фильтров: {e}")
 
     tools.append(save_filter_settings)
+
+    @tool(
+        "save_scheduler_settings",
+        "⚠️ Update scheduler collection interval (1–1440 minutes). "
+        "Changes take effect immediately if the scheduler is running. Requires confirm=true.",
+        {"collect_interval_minutes": int, "confirm": bool},
+    )
+    async def save_scheduler_settings(args):
+        gate = require_confirmation("изменит интервал планировщика сбора", args)
+        if gate:
+            return gate
+        try:
+            interval = int(args.get("collect_interval_minutes", 60))
+            interval = max(1, min(1440, interval))
+            await db.set_setting("collect_interval_minutes", str(interval))
+            if scheduler_manager is not None:
+                scheduler_manager.update_interval(interval)
+            return _text_response(f"Интервал сбора установлен: {interval} мин.")
+        except Exception as e:
+            return _text_response(f"Ошибка сохранения настроек планировщика: {e}")
+
+    tools.append(save_scheduler_settings)
 
     @tool("get_system_info", "Get system diagnostics: DB stats, memory, active tasks", {})
     async def get_system_info(args):
