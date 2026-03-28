@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import subprocess
+import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -161,7 +163,55 @@ class AgentTuiApp(App):
     """Interactive TUI chat with agent."""
 
     CSS_PATH = str(CSS_PATH)
-    MOUSE_SUPPORT = False  # disable mouse tracking so native terminal selection + Cmd+C works
+    ALLOW_SELECT = True  # built-in text selection; ctrl+c / super+c (Cmd+C) copies
+
+    # ------------------------------------------------------------------
+    # Native system clipboard (pbcopy/pbpaste on macOS, xclip/xsel on Linux)
+    # Textual's default uses OSC 52 which doesn't work in Terminal.app
+    # and has patchy Linux support (e.g. Gnome Terminal).
+    # ------------------------------------------------------------------
+
+    def copy_to_clipboard(self, text: str) -> None:
+        """Write *text* to the system clipboard via native OS tools."""
+        self._clipboard = text
+        if sys.platform == "darwin":
+            try:
+                subprocess.run(["pbcopy"], input=text.encode(), check=True)
+                return
+            except Exception:
+                pass
+        else:
+            for cmd in (
+                ["xclip", "-selection", "clipboard"],
+                ["xsel", "--clipboard", "--input"],
+            ):
+                try:
+                    subprocess.run(cmd, input=text.encode(), check=True)
+                    return
+                except FileNotFoundError:
+                    continue
+        super().copy_to_clipboard(text)
+
+    @property
+    def clipboard(self) -> str:
+        """Read from the system clipboard so Ctrl+V pastes external content too."""
+        if sys.platform == "darwin":
+            try:
+                r = subprocess.run(["pbpaste"], capture_output=True, text=True, check=True)
+                return r.stdout
+            except Exception:
+                pass
+        else:
+            for cmd in (
+                ["xclip", "-selection", "clipboard", "-o"],
+                ["xsel", "--clipboard", "--output"],
+            ):
+                try:
+                    r = subprocess.run(cmd, capture_output=True, text=True, check=True)
+                    return r.stdout
+                except FileNotFoundError:
+                    continue
+        return self._clipboard
 
     BINDINGS = [
         Binding("ctrl+n", "new_thread", "Новый тред", show=True),
