@@ -767,7 +767,11 @@ class ClientPool:
         """
         identifier = re.sub(r"(t\.me/[^/\s]+)/\d+$", r"\1", identifier)
         if identifier.lstrip("-").isdigit():
-            peer: str | PeerChannel | PeerUser = PeerChannel(abs(int(identifier)))
+            raw_id = int(identifier)
+            # Positive IDs are users/bots; negative are groups/channels
+            peer: str | int | PeerChannel | PeerUser = (
+                PeerUser(raw_id) if raw_id > 0 else PeerChannel(abs(raw_id))
+            )
         else:
             peer = identifier
 
