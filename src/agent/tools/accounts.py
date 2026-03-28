@@ -11,7 +11,12 @@ from src.agent.tools._registry import _text_response, require_confirmation, requ
 def register(db, client_pool, embedding_service, **kwargs):
     tools = []
 
-    @tool("list_accounts", "List all connected Telegram accounts with their status", {})
+    @tool(
+        "list_accounts",
+        "List all connected Telegram accounts with their status. "
+        "Returns id (account_id used by toggle_account/delete_account), phone, and flood_wait status.",
+        {},
+    )
     async def list_accounts(args):
         try:
             accounts = await db.get_accounts()
@@ -30,7 +35,11 @@ def register(db, client_pool, embedding_service, **kwargs):
 
     tools.append(list_accounts)
 
-    @tool("toggle_account", "Toggle account active/inactive status", {"account_id": int})
+    @tool(
+        "toggle_account",
+        "Toggle account active/inactive status. account_id = id from list_accounts.",
+        {"account_id": int},
+    )
     async def toggle_account(args):
         account_id = args.get("account_id")
         if account_id is None:
@@ -51,7 +60,8 @@ def register(db, client_pool, embedding_service, **kwargs):
 
     @tool(
         "delete_account",
-        "⚠️ DANGEROUS: Delete a Telegram account from the system. Always ask user for confirmation first.",
+        "⚠️ DANGEROUS: Delete a Telegram account from the system. "
+        "account_id = id from list_accounts. Always ask user for confirmation first.",
         {"account_id": int, "confirm": bool},
         annotations=ToolAnnotations(destructiveHint=True),
     )

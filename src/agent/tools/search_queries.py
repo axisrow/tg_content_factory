@@ -52,7 +52,7 @@ def register(db, client_pool, embedding_service, **kwargs):
 
     @tool(
         "get_search_query",
-        "Get full details of a saved search query by its ID.",
+        "Get full details of a saved search query. sq_id from list_search_queries.",
         {"sq_id": int},
     )
     async def get_search_query(args):
@@ -87,7 +87,9 @@ def register(db, client_pool, embedding_service, **kwargs):
 
     @tool(
         "add_search_query",
-        "Add a new saved search query. Requires confirm=true.",
+        "Add a saved search query. is_fts=true for FTS5 full-text search (default: substring). "
+        "notify_on_collect=true to send notification on new matches. "
+        "track_stats=true to record daily match counts for get_search_query_stats. Requires confirm=true.",
         {
             "query": str,
             "interval_minutes": int,
@@ -269,7 +271,8 @@ def register(db, client_pool, embedding_service, **kwargs):
 
     @tool(
         "get_search_query_stats",
-        "Get daily match statistics for a search query over the last N days.",
+        "Get daily match statistics for a search query over the last N days. "
+        "Only works if track_stats=true was set when creating the query. sq_id from list_search_queries.",
         {"sq_id": int, "days": int},
     )
     async def get_search_query_stats(args):

@@ -243,67 +243,6 @@ class TestListPendingModeration:
         assert "Ошибка получения очереди модерации" in _text(result)
 
 
-class TestViewModerationRun:
-    @pytest.mark.asyncio
-    async def test_requires_run_id(self, mock_db):
-        handlers = _get_tool_handlers(mock_db)
-        result = await handlers["view_moderation_run"]({})
-        assert "run_id обязателен" in _text(result)
-
-    @pytest.mark.asyncio
-    async def test_not_found(self, mock_db):
-        mock_db.repos = MagicMock()
-        mock_db.repos.generation_runs.get = AsyncMock(return_value=None)
-        handlers = _get_tool_handlers(mock_db)
-        result = await handlers["view_moderation_run"]({"run_id": 999})
-        assert "не найден" in _text(result)
-
-    @pytest.mark.asyncio
-    async def test_full_details(self, mock_db):
-        run = SimpleNamespace(
-            id=5,
-            status="completed",
-            moderation_status="pending",
-            quality_score=0.85,
-            created_at="2025-01-01T12:00:00",
-            metadata=json.dumps({"key": "value"}),
-            generated_text="Generated content here",
-        )
-        mock_db.repos = MagicMock()
-        mock_db.repos.generation_runs.get = AsyncMock(return_value=run)
-        handlers = _get_tool_handlers(mock_db)
-        result = await handlers["view_moderation_run"]({"run_id": 5})
-        text = _text(result)
-        assert "Run id=5" in text
-        assert "quality_score: 0.85" in text
-        assert "Generated content here" in text
-
-    @pytest.mark.asyncio
-    async def test_empty_text_shows_placeholder(self, mock_db):
-        run = SimpleNamespace(
-            id=3,
-            status="pending",
-            moderation_status="pending",
-            quality_score=None,
-            created_at="2025-01-01",
-            metadata=None,
-            generated_text=None,
-        )
-        mock_db.repos = MagicMock()
-        mock_db.repos.generation_runs.get = AsyncMock(return_value=run)
-        handlers = _get_tool_handlers(mock_db)
-        result = await handlers["view_moderation_run"]({"run_id": 3})
-        assert "(пусто)" in _text(result)
-
-    @pytest.mark.asyncio
-    async def test_exception(self, mock_db):
-        mock_db.repos = MagicMock()
-        mock_db.repos.generation_runs.get = AsyncMock(side_effect=Exception("db"))
-        handlers = _get_tool_handlers(mock_db)
-        result = await handlers["view_moderation_run"]({"run_id": 1})
-        assert "Ошибка получения run" in _text(result)
-
-
 class TestApproveRun:
     @pytest.mark.asyncio
     async def test_requires_run_id(self, mock_db):

@@ -202,7 +202,7 @@ def test_deepagents_tools_can_be_converted_to_structured_tools(db):
     search_tool = StructuredTool.from_function(next(t for t in tools if t.__name__ == "search_messages"))
     channels_tool = StructuredTool.from_function(next(t for t in tools if t.__name__ == "list_channels"))
 
-    assert "Search" in search_tool.description
+    assert "search" in search_tool.description.lower()
     assert "channels" in channels_tool.description.lower()
 
 

@@ -91,7 +91,8 @@ def register(db, client_pool, embedding_service, **kwargs):
 
     @tool(
         "refresh_dialogs",
-        "Refresh cached dialog list for an account (fetches from Telegram)",
+        "Refresh cached dialog list for an account from Telegram. "
+        "Use when messaging tools fail to resolve a numeric chat_id.",
         {"phone": str},
     )
     async def refresh_dialogs(args):
@@ -118,7 +119,8 @@ def register(db, client_pool, embedding_service, **kwargs):
     @tool(
         "leave_dialogs",
         "⚠️ DANGEROUS: Leave (unsubscribe from) Telegram channels/groups. "
-        "Pass phone and dialog_ids (comma-separated). Always ask user for confirmation first.",
+        "dialog_ids = comma-separated Telegram chat IDs (get from search_my_telegram). "
+        "Always ask user for confirmation first.",
         {"phone": str, "dialog_ids": str, "confirm": bool},
         annotations=ToolAnnotations(destructiveHint=True),
     )
@@ -209,8 +211,9 @@ def register(db, client_pool, embedding_service, **kwargs):
 
     @tool(
         "get_forum_topics",
-        "Get forum topics for a channel (supergroup with topics enabled)",
-        {"channel_id": int, "phone": str},
+        "Get forum topics for a supergroup with topics enabled. "
+        "channel_id = Telegram numeric ID (from list_channels or search_my_telegram).",
+        {"channel_id": int},
     )
     async def get_forum_topics(args):
         channel_id = args.get("channel_id")

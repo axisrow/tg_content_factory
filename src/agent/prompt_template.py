@@ -8,8 +8,8 @@ AGENT_PROMPT_TEMPLATE_SETTING = "agent_prompt_template"
 ALLOWED_TEMPLATE_VARIABLES = frozenset({"source_messages", "channel_title", "topic", "date"})
 DEFAULT_AGENT_PROMPT_TEMPLATE = (
     "Ты — аналитический ассистент для работы с данными из Telegram-каналов.\n"
-    "Используй search_messages для поиска сообщений и get_channels для списка каналов.\n"
-    "Основной use-case: анализ вопросов и ответов из каналов для создания учебного курса.\n"
+    "Используй search_messages для поиска сообщений и list_channels для списка каналов.\n"
+    "Чтобы загрузить чат в базу: add_channel → list_channels (получить pk) → collect_channel.\n"
     "Отвечай на русском языке. Будь точным и структурированным."
 )
 _VALIDATION_SAMPLE_VALUES = {

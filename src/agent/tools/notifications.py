@@ -112,8 +112,8 @@ def register(db, client_pool, embedding_service, **kwargs):
 
     @tool(
         "notification_dry_run",
-        "Preview how many matches each active notification query would produce. "
-        "Does NOT send any notifications.",
+        "Preview how many matches each active search query with notify_on_collect=true would produce. "
+        "Does NOT send notifications. Queries managed via add_search_query / list_search_queries.",
         {},
     )
     async def notification_dry_run(args):

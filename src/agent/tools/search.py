@@ -34,8 +34,9 @@ def register(db, client_pool, embedding_service, **kwargs):
 
     @tool(
         "search_messages",
-        "Search messages in Telegram channels by query text. "
-        "Supports optional filters: channel_id, date_from/date_to (YYYY-MM-DD), min_length, max_length, mode.",
+        "Full-text search in collected messages stored in the local DB. "
+        "channel_id is the Telegram numeric ID (from list_channels, not pk). "
+        "Supports date_from/date_to (YYYY-MM-DD), min_length, max_length filters.",
         {
             "query": str,
             "limit": int,
@@ -44,7 +45,6 @@ def register(db, client_pool, embedding_service, **kwargs):
             "date_to": str,
             "min_length": int,
             "max_length": int,
-            "mode": str,
         },
     )
     async def search_messages(args):
@@ -84,7 +84,8 @@ def register(db, client_pool, embedding_service, **kwargs):
 
     @tool(
         "semantic_search",
-        "Search messages in the local database by semantic similarity.",
+        "Search collected messages by semantic (embedding) similarity. "
+        "Requires messages to be indexed first via index_messages, and an OpenAI/embedding API key configured.",
         {"query": str, "limit": int},
     )
     async def semantic_search(args):
@@ -112,7 +113,8 @@ def register(db, client_pool, embedding_service, **kwargs):
 
     @tool(
         "index_messages",
-        "Index pending messages for semantic search. No confirmation required.",
+        "Create semantic embeddings for all not-yet-indexed messages in the DB. "
+        "Required before semantic_search or search_hybrid work. Needs an embedding API key configured.",
         {},
     )
     async def index_messages(args):
@@ -158,8 +160,8 @@ def register(db, client_pool, embedding_service, **kwargs):
 
     @tool(
         "search_telegram",
-        "Search messages across all public Telegram channels via Telegram API. "
-        "Requires a connected Premium account. Use for discovering content beyond collected channels.",
+        "Search messages across all public Telegram channels via Telegram API. Requires a connected "
+        "Premium account. Use for discovering content beyond collected channels.",
         {"query": str, "limit": int},
     )
     async def search_telegram(args):
@@ -183,8 +185,8 @@ def register(db, client_pool, embedding_service, **kwargs):
 
     @tool(
         "search_my_chats",
-        "Search messages in your own Telegram dialogs (private chats, groups, saved messages). "
-        "Requires a connected Telegram account.",
+        "Search messages in your own Telegram dialogs (private chats, groups, saved messages) "
+        "via Telegram API. Uses the primary connected account.",
         {"query": str, "limit": int},
     )
     async def search_my_chats(args):
@@ -208,8 +210,9 @@ def register(db, client_pool, embedding_service, **kwargs):
 
     @tool(
         "search_in_channel",
-        "Search messages within a specific Telegram channel via Telegram API. "
-        "Requires a connected account and channel_id.",
+        "Search messages within a specific channel via Telegram API. "
+        "channel_id = Telegram numeric ID (from list_channels or search_my_telegram). "
+        "Searches live Telegram, not local DB.",
         {"channel_id": int, "query": str, "limit": int},
     )
     async def search_in_channel(args):
@@ -238,8 +241,8 @@ def register(db, client_pool, embedding_service, **kwargs):
 
     @tool(
         "search_hybrid",
-        "Hybrid search combining full-text and semantic similarity on collected messages. "
-        "Works locally, no Telegram connection needed.",
+        "Hybrid search combining FTS and semantic similarity on collected local messages. "
+        "Semantic part requires prior index_messages call. Supports same filters as search_messages.",
         {
             "query": str,
             "limit": int,

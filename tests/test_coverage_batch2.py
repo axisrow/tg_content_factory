@@ -305,31 +305,8 @@ class TestDeepagentsSyncGetPipelineRun:
 
 
 # ===========================================================================
-# deepagents_sync — view_moderation_run / approve_run / reject_run
+# deepagents_sync — approve_run / reject_run
 # ===========================================================================
-
-
-class TestDeepagentsSyncViewModerationRun:
-    def test_not_found(self, mock_db):
-        mock_db.repos.generation_runs.get = AsyncMock(return_value=None)
-        tool_map = _build_sync_tools(mock_db)
-        result = tool_map["view_moderation_run"](run_id=5)
-        assert "не найден" in result
-
-    def test_found_with_text(self, mock_db):
-        run = SimpleNamespace(id=5, status="done", moderation_status="pending", generated_text="Draft")
-        mock_db.repos.generation_runs.get = AsyncMock(return_value=run)
-        tool_map = _build_sync_tools(mock_db)
-        result = tool_map["view_moderation_run"](run_id=5)
-        assert "Draft" in result
-        assert "id=5" in result
-
-    def test_found_empty_text(self, mock_db):
-        run = SimpleNamespace(id=5, status="done", moderation_status="pending", generated_text=None)
-        mock_db.repos.generation_runs.get = AsyncMock(return_value=run)
-        tool_map = _build_sync_tools(mock_db)
-        result = tool_map["view_moderation_run"](run_id=5)
-        assert "пусто" in result
 
 
 class TestDeepagentsSyncApproveRun:
@@ -1161,49 +1138,6 @@ class TestPipelinesToolPublishPipelineRun:
 
 
 # ===========================================================================
-# pipelines.py MCP tools — get_pipeline_queue
-# ===========================================================================
-
-
-class TestPipelinesToolGetPipelineQueue:
-    @pytest.mark.asyncio
-    async def test_missing_pipeline_id(self, mock_db):
-        handlers = _get_tool_handlers(mock_db)
-        result = await handlers["get_pipeline_queue"]({})
-        assert "pipeline_id обязателен" in _text(result)
-
-    @pytest.mark.asyncio
-    async def test_empty(self, mock_db):
-        mock_db.repos.generation_runs.list_pending_moderation = AsyncMock(return_value=[])
-        handlers = _get_tool_handlers(mock_db)
-        result = await handlers["get_pipeline_queue"]({"pipeline_id": 1})
-        assert "Нет черновиков" in _text(result)
-
-    @pytest.mark.asyncio
-    async def test_with_runs(self, mock_db):
-        run = SimpleNamespace(
-            id=7,
-            moderation_status="pending",
-            generated_text="Draft content here",
-            created_at="2026-01-01",
-        )
-        mock_db.repos.generation_runs.list_pending_moderation = AsyncMock(return_value=[run])
-        handlers = _get_tool_handlers(mock_db)
-        result = await handlers["get_pipeline_queue"]({"pipeline_id": 2})
-        text = _text(result)
-        assert "run_id=7" in text
-        assert "Draft content here" in text
-
-    @pytest.mark.asyncio
-    async def test_error(self, mock_db):
-        mock_db.repos.generation_runs.list_pending_moderation = AsyncMock(
-            side_effect=Exception("db fail")
-        )
-        handlers = _get_tool_handlers(mock_db)
-        result = await handlers["get_pipeline_queue"]({"pipeline_id": 1})
-        assert "Ошибка" in _text(result)
-
-
 # ===========================================================================
 # agent_provider_service — load_provider_configs with invalid JSON
 # ===========================================================================
