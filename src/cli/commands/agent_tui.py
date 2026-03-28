@@ -161,6 +161,7 @@ class AgentTuiApp(App):
     """Interactive TUI chat with agent."""
 
     CSS_PATH = str(CSS_PATH)
+    MOUSE_SUPPORT = False  # disable mouse tracking so native terminal selection + Cmd+C works
 
     BINDINGS = [
         Binding("ctrl+n", "new_thread", "Новый тред", show=True),
