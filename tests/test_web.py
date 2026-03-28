@@ -3500,3 +3500,58 @@ async def test_save_agent_accepts_auto_override_always(client):
     assert resp.status_code == 303
     assert "msg=agent_saved" in resp.headers["location"]
     assert await db.get_setting("agent_backend_override") == "auto"
+
+
+@pytest.mark.asyncio
+async def test_flood_status_returns_ok_for_expired(tmp_path, real_pool_harness_factory):
+    """GET /settings/flood-status returns ok/0 when flood_wait_until is in the past."""
+    from datetime import timedelta
+
+    config = make_test_config(tmp_path)
+    harness = real_pool_harness_factory()
+    app, db = await build_web_app(config, harness)
+
+    past = datetime.now(timezone.utc) - timedelta(hours=1)
+    await db.add_account(Account(phone="+70010", session_string="s10", is_active=True))
+    await db.update_account_flood("+70010", past)
+
+    async with make_auth_client(app) as c:
+        resp = await c.get("/settings/flood-status")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    entry = next(d for d in data if d["phone"] == "+70010")
+    assert entry["flood_wait_until"] == "ok"
+    assert entry["remaining_seconds"] == 0
+
+
+@pytest.mark.asyncio
+async def test_settings_clears_stale_flood_on_load(tmp_path, real_pool_harness_factory, monkeypatch):
+    """GET /settings clears flood_wait_until from DB when the timestamp is expired."""
+    from datetime import timedelta
+
+    from src.web.routes import settings as settings_routes
+
+    config = make_test_config(tmp_path)
+    harness = real_pool_harness_factory()
+    app, db = await build_web_app(config, harness)
+
+    past = datetime.now(timezone.utc) - timedelta(hours=1)
+    await db.add_account(Account(phone="+70011", session_string="s11", is_active=True))
+    await db.update_account_flood("+70011", past)
+
+    probe_mock = AsyncMock(return_value=("ok", None))
+    monkeypatch.setattr(settings_routes, "_probe_provider_config", probe_mock)
+    fake_manager = SimpleNamespace(available=False)
+    monkeypatch.setattr(
+        settings_routes, "_settings_agent_manager", lambda request: (fake_manager, False)
+    )
+
+    async with make_auth_client(app) as c:
+        resp = await c.get("/settings")
+
+    assert resp.status_code == 200
+
+    accounts = await db.get_accounts()
+    acc = next(a for a in accounts if a.phone == "+70011")
+    assert acc.flood_wait_until is None

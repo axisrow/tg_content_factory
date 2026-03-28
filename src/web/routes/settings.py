@@ -406,6 +406,15 @@ async def settings_page(request: Request):
         logger=logger,
     )
     accounts = await db.get_accounts()
+    _now = datetime.now(UTC)
+    for _acc in accounts:
+        if _acc.flood_wait_until is not None:
+            _flood_until = _acc.flood_wait_until
+            if _flood_until.tzinfo is None:
+                _flood_until = _flood_until.replace(tzinfo=UTC)
+            if _flood_until <= _now:
+                await db.update_account_flood(_acc.phone, None)
+                _acc.flood_wait_until = None
     connected_phones = set(pool.clients.keys())
     notification_target = await deps.get_notification_target_service(request).describe_target()
     notification_bot = None
