@@ -6,7 +6,7 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from textual import on
+from textual import events, on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
@@ -123,6 +123,20 @@ class StreamingMessage(Static):
             self._md.update(self._content)
 
 
+class ChatInput(TextArea):
+    """TextArea that sends on Enter; inserts newline on Shift+Enter / Alt+Enter."""
+
+    async def _on_key(self, event: events.Key) -> None:
+        if event.key == "enter":
+            event.prevent_default()
+            event.stop()
+            await self.app.action_send_message()
+        elif event.key in ("shift+enter", "meta+enter"):
+            event.prevent_default()
+            event.stop()
+            self.insert("\n")
+
+
 class ThreadSidebar(Container):
     """Left sidebar with thread list."""
 
@@ -175,7 +189,7 @@ class AgentTuiApp(App):
                 with VerticalScroll(id="messages"):
                     pass
                 with Horizontal(id="input-bar"):
-                    yield TextArea(id="input")
+                    yield ChatInput(id="input")
                     yield Button("Отправить", id="send-btn", variant="success")
         yield Footer()
 
@@ -250,7 +264,7 @@ class AgentTuiApp(App):
     async def action_send_message(self) -> None:
         if self._stream_worker is not None and self._stream_worker.state in (WorkerState.PENDING, WorkerState.RUNNING):
             return  # prevent double-send while streaming to avoid delete_last_agent_exchange deleting next user message
-        input_area = self.query_one("#input", TextArea)
+        input_area = self.query_one("#input", ChatInput)
         message = input_area.text.strip()
         if not message or self.current_thread_id is None:
             return
