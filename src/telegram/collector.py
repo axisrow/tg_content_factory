@@ -632,28 +632,29 @@ class Collector:
             if stop_due_to_persistence_error:
                 return total_collected + len(all_messages)
 
-            # Handle FloodWait AFTER finally has flushed progress
+            # Handle FloodWait AFTER finally has flushed progress.
+            # Always attempt rotation to another account regardless of wait
+            # duration — report_flood() was already called, so the next
+            # get_available_client() call will skip the flooded account.
+            # Only skip the channel if the channel no longer exists in DB.
             if flood_wait_sec is not None:
-                if flood_wait_sec <= self._config.max_flood_wait_sec:
-                    # Re-read channel from DB to get updated
-                    # last_collected_id.
-                    # Use get_channel_by_pk (no filtering) — collection
-                    # already started, so we must finish even if the
-                    # channel was filtered in the meantime.
-                    updated = None
-                    if channel.id is not None:
-                        updated = await self._db.get_channel_by_pk(channel.id)
-                    if updated:
-                        total_collected += len(all_messages)
-                        progress_offset += len(all_messages)
-                        channel = updated
-                        continue
-                else:
-                    if self._notifier:
-                        await self._notifier.notify(
-                            f"FloodWait {flood_wait_sec}s on {phone}, "
-                            f"channel {channel_id} skipped"
-                        )
+                if self._notifier and flood_wait_sec > self._config.max_flood_wait_sec:
+                    await self._notifier.notify(
+                        f"FloodWait {flood_wait_sec}s on {phone}, "
+                        f"channel {channel_id} — rotating to another account"
+                    )
+                # Re-read channel from DB to get updated last_collected_id.
+                # Use get_channel_by_pk (no filtering) — collection
+                # already started, so we must finish even if the
+                # channel was filtered in the meantime.
+                updated = None
+                if channel.id is not None:
+                    updated = await self._db.get_channel_by_pk(channel.id)
+                if updated:
+                    total_collected += len(all_messages)
+                    progress_offset += len(all_messages)
+                    channel = updated
+                    continue
                 return total_collected + len(all_messages)
 
             if should_notify and all_messages:

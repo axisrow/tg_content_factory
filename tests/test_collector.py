@@ -621,6 +621,109 @@ async def test_collect_channel_retries_after_short_flood_wait(db):
 
 
 @pytest.mark.asyncio
+async def test_collect_channel_rotates_on_long_flood_wait(db):
+    """FloodWait > max_flood_wait_sec still rotates to the next available account."""
+    ch = Channel(channel_id=-100172, title="LongFlood", username="longflood", last_collected_id=5)
+    ch_id = await db.add_channel(ch)
+    await db.update_channel_last_id(ch.channel_id, 5)
+    stored = await db.get_channel_by_pk(ch_id)
+    assert stored is not None
+
+    client1 = FakeTelethonClient(entity_resolver=lambda _arg: SimpleNamespace())
+    client2 = FakeTelethonClient(entity_resolver=lambda _arg: SimpleNamespace())
+
+    call_index = {"idx": 0}
+
+    def _iter_messages_factory(*_args, **_kwargs):
+        idx = call_index["idx"]
+        call_index["idx"] += 1
+        if idx == 0:
+
+            async def _generator():
+                yield _make_mock_message(6, text="msg 6")
+                raise FloodWaitError(request=None, capture=600)  # > max_flood_wait_sec=10
+
+            return _generator()
+        return _AsyncIterMessages([_make_mock_message(7, text="msg 7")])
+
+    client1.iter_messages = MagicMock(side_effect=_iter_messages_factory)
+    client2.iter_messages = MagicMock(side_effect=_iter_messages_factory)
+
+    pool = make_mock_pool(
+        get_available_client=AsyncMock(
+            side_effect=[
+                (client1, "+70001"),  # first iteration
+                (client2, "+70002"),  # retry after flood
+            ]
+        )
+    )
+    notifier = AsyncMock()
+    collector = Collector(
+        pool,
+        db,
+        SchedulerConfig(delay_between_requests_sec=0, max_flood_wait_sec=10),
+        notifier,
+    )
+    count = await collector._collect_channel(stored)
+
+    assert count == 2
+    updated = await db.get_channel_by_channel_id(stored.channel_id)
+    assert updated is not None
+    assert updated.last_collected_id == 7
+    pool.report_flood.assert_awaited_once()
+    # Notification should mention rotation, not "skipped"
+    notifier.notify.assert_awaited_once()
+    assert "rotating" in notifier.notify.call_args[0][0]
+
+
+@pytest.mark.asyncio
+async def test_collect_channel_long_flood_all_accounts_flooded_returns(db):
+    """FloodWait > max_flood_wait_sec with no other account available — return collected so far."""
+    ch = Channel(channel_id=-100173, title="AllFlood", username="allflood", last_collected_id=5)
+    ch_id = await db.add_channel(ch)
+    await db.update_channel_last_id(ch.channel_id, 5)
+    stored = await db.get_channel_by_pk(ch_id)
+    assert stored is not None
+
+    client1 = FakeTelethonClient(entity_resolver=lambda _arg: SimpleNamespace())
+
+    call_index = {"idx": 0}
+
+    def _iter_messages_factory(*_args, **_kwargs):
+        idx = call_index["idx"]
+        call_index["idx"] += 1
+        if idx == 0:
+
+            async def _generator():
+                yield _make_mock_message(6, text="msg 6")
+                raise FloodWaitError(request=None, capture=600)  # > max_flood_wait_sec=10
+
+            return _generator()
+        return _AsyncIterMessages([])
+
+    client1.iter_messages = MagicMock(side_effect=_iter_messages_factory)
+
+    pool = make_mock_pool(
+        get_available_client=AsyncMock(
+            side_effect=[
+                (client1, "+70001"),  # first iteration
+                None,  # all accounts flooded on retry
+            ]
+        )
+    )
+    collector = Collector(
+        pool,
+        db,
+        SchedulerConfig(delay_between_requests_sec=0, max_flood_wait_sec=10),
+    )
+    count = await collector._collect_channel(stored)
+
+    # Returns what was collected before the flood
+    assert count == 1
+    pool.report_flood.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_collection_queue_skips_filtered_channel(db):
     """CollectionQueue worker skips channels that become filtered after enqueue."""
     from src.collection_queue import CollectionQueue
