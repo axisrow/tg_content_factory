@@ -483,12 +483,15 @@ class TestGetAllAllowedTools:
         assert len(get_all_allowed_tools()) == len(TOOL_CATEGORIES)
 
     def test_all_prefixed(self):
-        from src.agent.tools.permissions import get_all_allowed_tools
+        from src.agent.tools.permissions import BUILTIN_TOOLS, get_all_allowed_tools
 
         for tool in get_all_allowed_tools():
-            assert tool.startswith(MCP_PREFIX), f"{tool} missing prefix"
-            bare = tool.removeprefix(MCP_PREFIX)
-            assert bare in TOOL_CATEGORIES, f"{bare} not in TOOL_CATEGORIES"
+            if tool in BUILTIN_TOOLS:
+                assert tool in TOOL_CATEGORIES, f"{tool} not in TOOL_CATEGORIES"
+            else:
+                assert tool.startswith(MCP_PREFIX), f"{tool} missing prefix"
+                bare = tool.removeprefix(MCP_PREFIX)
+                assert bare in TOOL_CATEGORIES, f"{bare} not in TOOL_CATEGORIES"
 
 
 # ---------------------------------------------------------------------------
