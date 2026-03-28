@@ -755,77 +755,84 @@ class TestConfigPropagation:
 
 
 # ---------------------------------------------------------------------------
-# Analytics tools  (get_top_messages, get_content_type_stats, get_hourly_activity)
+# refresh_channel_meta tool
 # ---------------------------------------------------------------------------
 
 
-class TestGetTopMessagesTool:
+class TestRefreshChannelMetaTool:
     @pytest.mark.asyncio
-    async def test_returns_top_messages(self, mock_db):
-        mock_db.get_top_messages = AsyncMock(return_value=[
-            {"total_reactions": 42, "channel_title": "News", "text": "Breaking news", "channel_id": 1},
-            {"total_reactions": 10, "channel_title": "Tech", "text": "New release", "channel_id": 2},
+    async def test_no_pool_returns_error(self, mock_db):
+        handlers = _get_tool_handlers(mock_db, client_pool=None)
+        result = await handlers["refresh_channel_meta"]({"confirm": True})
+        assert "требует Telegram-клиент" in _text(result)
+
+    @pytest.mark.asyncio
+    async def test_requires_confirmation(self, mock_db):
+        mock_pool = MagicMock()
+        handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
+        result = await handlers["refresh_channel_meta"]({})
+        assert "confirm=true" in _text(result)
+
+    @pytest.mark.asyncio
+    async def test_single_channel(self, mock_db):
+        mock_pool = MagicMock()
+        mock_pool.fetch_channel_meta = AsyncMock(return_value={
+            "about": "Channel description", "linked_chat_id": 123, "has_comments": True,
+        })
+        mock_db.get_channels = AsyncMock(return_value=[
+            SimpleNamespace(id=1, channel_id=100, title="News", username="news", channel_type="channel",
+                            is_active=True, is_filtered=False),
         ])
-        handlers = _get_tool_handlers(mock_db)
-        result = await handlers["get_top_messages"]({"limit": 5})
+        mock_db.update_channel_full_meta = AsyncMock()
+        handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
+        result = await handlers["refresh_channel_meta"]({"identifier": "news", "confirm": True})
         text = _text(result)
-        assert "42 реакций" in text
+        assert "Метаданные обновлены" in text
         assert "News" in text
-        assert "Tech" in text
+        mock_db.update_channel_full_meta.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_empty_result(self, mock_db):
-        mock_db.get_top_messages = AsyncMock(return_value=[])
-        handlers = _get_tool_handlers(mock_db)
-        result = await handlers["get_top_messages"]({})
+    async def test_channel_not_found(self, mock_db):
+        mock_pool = MagicMock()
+        mock_db.get_channels = AsyncMock(return_value=[])
+        handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
+        result = await handlers["refresh_channel_meta"]({"identifier": "unknown", "confirm": True})
+        assert "не найден" in _text(result)
+
+
+# ---------------------------------------------------------------------------
+# get_account_info tool
+# ---------------------------------------------------------------------------
+
+
+class TestGetAccountInfoTool:
+    @pytest.mark.asyncio
+    async def test_no_pool_returns_error(self, mock_db):
+        handlers = _get_tool_handlers(mock_db, client_pool=None)
+        result = await handlers["get_account_info"]({})
+        assert "требует Telegram-клиент" in _text(result)
+
+    @pytest.mark.asyncio
+    async def test_returns_info(self, mock_db):
+        mock_pool = MagicMock()
+        mock_pool.get_users_info = AsyncMock(return_value=[
+            SimpleNamespace(phone="+1234567890", first_name="John", last_name="Doe",
+                            username="johndoe", is_premium=True),
+        ])
+        mock_db.get_accounts = AsyncMock(return_value=[
+            SimpleNamespace(id=1, phone="+1234567890", is_active=True),
+        ])
+        handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
+        result = await handlers["get_account_info"]({})
+        text = _text(result)
+        assert "John Doe" in text
+        assert "@johndoe" in text
+        assert "premium=да" in text
+
+    @pytest.mark.asyncio
+    async def test_no_accounts(self, mock_db):
+        mock_pool = MagicMock()
+        mock_pool.get_users_info = AsyncMock(return_value=[])
+        handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
+        result = await handlers["get_account_info"]({})
         assert "не найдены" in _text(result)
-
-    @pytest.mark.asyncio
-    async def test_error_handling(self, mock_db):
-        mock_db.get_top_messages = AsyncMock(side_effect=RuntimeError("db error"))
-        handlers = _get_tool_handlers(mock_db)
-        result = await handlers["get_top_messages"]({})
-        assert "Ошибка" in _text(result)
-
-
-class TestGetContentTypeStatsTool:
-    @pytest.mark.asyncio
-    async def test_returns_stats(self, mock_db):
-        mock_db.get_engagement_by_media_type = AsyncMock(return_value=[
-            {"content_type": "photo", "message_count": 100, "avg_reactions": 5.2},
-            {"content_type": "text", "message_count": 200, "avg_reactions": 2.1},
-        ])
-        handlers = _get_tool_handlers(mock_db)
-        result = await handlers["get_content_type_stats"]({})
-        text = _text(result)
-        assert "photo" in text
-        assert "100 сообщений" in text
-
-    @pytest.mark.asyncio
-    async def test_empty_result(self, mock_db):
-        mock_db.get_engagement_by_media_type = AsyncMock(return_value=[])
-        handlers = _get_tool_handlers(mock_db)
-        result = await handlers["get_content_type_stats"]({})
-        assert "Нет данных" in _text(result)
-
-
-class TestGetHourlyActivityTool:
-    @pytest.mark.asyncio
-    async def test_returns_activity(self, mock_db):
-        mock_db.get_hourly_activity = AsyncMock(return_value=[
-            {"hour": 9, "message_count": 50, "avg_reactions": 3.0},
-            {"hour": 14, "message_count": 120, "avg_reactions": 4.5},
-        ])
-        handlers = _get_tool_handlers(mock_db)
-        result = await handlers["get_hourly_activity"]({})
-        text = _text(result)
-        assert "09:00" in text
-        assert "14:00" in text
-        assert "120 сообщений" in text
-
-    @pytest.mark.asyncio
-    async def test_empty_result(self, mock_db):
-        mock_db.get_hourly_activity = AsyncMock(return_value=[])
-        handlers = _get_tool_handlers(mock_db)
-        result = await handlers["get_hourly_activity"]({})
-        assert "Нет данных" in _text(result)
