@@ -178,7 +178,7 @@ class ClaudeSdkBackend:
                                 event.get("type") == "content_block_delta"
                                 and event.get("delta", {}).get("type") == "text_delta"
                             ):
-                                text_chunk = event["delta"]["text"]
+                                text_chunk = event["delta"].get("text", "")
                                 full_text += text_chunk
                                 streamed = True
                                 chunk_payload = json.dumps({"text": text_chunk}, ensure_ascii=False)
