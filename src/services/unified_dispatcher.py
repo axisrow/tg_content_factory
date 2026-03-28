@@ -719,6 +719,17 @@ class UnifiedDispatcher:
             model = await self._db.get_setting("translation_model")
 
             provider_service = AgentProviderService(self._db)
+
+            # Fail fast if no real provider is configured (only stub default available)
+            resolved = provider_service.get_provider_callable(provider_name)
+            if resolved is provider_service._registry.get("default"):
+                await self._tasks.update_collection_task(
+                    task.id,
+                    CollectionTaskStatus.FAILED,
+                    error="No translation provider configured (only stub default available)",
+                )
+                return
+
             svc = TranslationService(self._db, provider_service=provider_service)
 
             target_lang = payload.target_lang
