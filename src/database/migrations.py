@@ -652,6 +652,10 @@ async def run_migrations(db: aiosqlite.Connection) -> bool:
     # Rename tool key list_dialogs → search_my_telegram in agent_tool_permissions (issue #272)
     await _migrate_tool_permission_key(db, "list_dialogs", "search_my_telegram")
 
+    # Reset agent prompt template to new default (AI Telegram client)
+    await db.execute("DELETE FROM settings WHERE key = 'agent_prompt_template'")
+    await db.commit()
+
     return fts_available
 
 
