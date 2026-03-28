@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from claude_agent_sdk import tool
 
-from src.agent.tools._registry import _text_response
+from src.agent.tools._registry import _text_response, require_pool
 
 
 def register(db, client_pool, embedding_service, **kwargs):
@@ -118,11 +118,161 @@ def register(db, client_pool, embedding_service, **kwargs):
     async def index_messages(args):
         try:
             indexed = await embedding_service.index_pending_messages()
+            if _engine_cache:
+                _engine_cache[0].invalidate_numpy_index()
             text = f"Индексация завершена. Проиндексировано сообщений: {indexed}"
         except Exception as e:
             text = f"Ошибка индексации: {e}"
         return _text_response(text)
 
     tools.append(index_messages)
+
+    # ------------------------------------------------------------------
+    # Lazy SearchEngine — created once on first Telegram/hybrid search
+    # ------------------------------------------------------------------
+
+    _engine_cache: list = []
+
+    def _get_engine():
+        if not _engine_cache:
+            from src.search.engine import SearchEngine
+
+            _engine_cache.append(SearchEngine(db, pool=client_pool, config=kwargs.get("config")))
+        return _engine_cache[0]
+
+    def _render_search_response(result) -> str:
+        """Render SearchResult into text, handling .error field."""
+        if result.error:
+            return f"Ошибка: {result.error}"
+        return _render_search_result(
+            query=result.query,
+            messages=result.messages,
+            total=result.total,
+            empty_prefix="Ничего не найдено по запросу",
+            found_prefix="Найдено",
+        )
+
+    # ------------------------------------------------------------------
+    # search_telegram  (Telegram Premium global search)
+    # ------------------------------------------------------------------
+
+    @tool(
+        "search_telegram",
+        "Search messages across all public Telegram channels via Telegram API. "
+        "Requires a connected Premium account. Use for discovering content beyond collected channels.",
+        {"query": str, "limit": int},
+    )
+    async def search_telegram(args):
+        pool_gate = require_pool(client_pool, "Telegram-поиск")
+        if pool_gate:
+            return pool_gate
+        query = args.get("query", "")
+        limit = int(args.get("limit", 50))
+        try:
+            result = await _get_engine().search_telegram(query, limit=limit)
+            text = _render_search_response(result)
+        except Exception as e:
+            text = f"Ошибка Telegram-поиска: {e}"
+        return _text_response(text)
+
+    tools.append(search_telegram)
+
+    # ------------------------------------------------------------------
+    # search_my_chats  (search across user's own dialogs)
+    # ------------------------------------------------------------------
+
+    @tool(
+        "search_my_chats",
+        "Search messages in your own Telegram dialogs (private chats, groups, saved messages). "
+        "Requires a connected Telegram account.",
+        {"query": str, "limit": int},
+    )
+    async def search_my_chats(args):
+        pool_gate = require_pool(client_pool, "Поиск по личным чатам")
+        if pool_gate:
+            return pool_gate
+        query = args.get("query", "")
+        limit = int(args.get("limit", 50))
+        try:
+            result = await _get_engine().search_my_chats(query, limit=limit)
+            text = _render_search_response(result)
+        except Exception as e:
+            text = f"Ошибка поиска по чатам: {e}"
+        return _text_response(text)
+
+    tools.append(search_my_chats)
+
+    # ------------------------------------------------------------------
+    # search_in_channel  (search within a specific channel via Telegram)
+    # ------------------------------------------------------------------
+
+    @tool(
+        "search_in_channel",
+        "Search messages within a specific Telegram channel via Telegram API. "
+        "Requires a connected account and channel_id.",
+        {"channel_id": int, "query": str, "limit": int},
+    )
+    async def search_in_channel(args):
+        pool_gate = require_pool(client_pool, "Поиск в канале")
+        if pool_gate:
+            return pool_gate
+        channel_id = args.get("channel_id")
+        if not channel_id:
+            return _text_response("Ошибка: channel_id обязателен.")
+        query = args.get("query", "")
+        limit = int(args.get("limit", 50))
+        try:
+            result = await _get_engine().search_in_channel(
+                int(channel_id), query, limit=limit,
+            )
+            text = _render_search_response(result)
+        except Exception as e:
+            text = f"Ошибка поиска в канале: {e}"
+        return _text_response(text)
+
+    tools.append(search_in_channel)
+
+    # ------------------------------------------------------------------
+    # search_hybrid  (FTS + semantic combined, local DB)
+    # ------------------------------------------------------------------
+
+    @tool(
+        "search_hybrid",
+        "Hybrid search combining full-text and semantic similarity on collected messages. "
+        "Works locally, no Telegram connection needed.",
+        {
+            "query": str,
+            "limit": int,
+            "channel_id": int,
+            "date_from": str,
+            "date_to": str,
+            "min_length": int,
+            "max_length": int,
+        },
+    )
+    async def search_hybrid(args):
+        query = args.get("query", "")
+        limit = int(args.get("limit", 20))
+        channel_id = args.get("channel_id")
+        date_from = args.get("date_from")
+        date_to = args.get("date_to")
+        min_length = args.get("min_length")
+        max_length = args.get("max_length")
+        try:
+            result = await _get_engine().search_hybrid(
+                query=query,
+                channel_id=int(channel_id) if channel_id else None,
+                date_from=date_from,
+                date_to=date_to,
+                limit=limit,
+                min_length=int(min_length) if min_length is not None else None,
+                max_length=int(max_length) if max_length is not None else None,
+            )
+            text = _render_search_response(result)
+        except Exception as e:
+            text = f"Ошибка гибридного поиска: {e}"
+        return _text_response(text)
+
+    tools.append(search_hybrid)
 
     return tools

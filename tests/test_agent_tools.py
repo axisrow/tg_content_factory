@@ -752,3 +752,173 @@ class TestConfigPropagation:
             await handlers["run_pipeline"]({"pipeline_id": 1})
 
             mock_search_cls.assert_called_with(mock_db, config=fake_config)
+
+
+# ---------------------------------------------------------------------------
+# Telegram Search tools  (search_telegram, search_my_chats, search_in_channel, search_hybrid)
+# ---------------------------------------------------------------------------
+
+
+class TestSearchTelegramTool:
+    """Tests for the search_telegram tool handler."""
+
+    @pytest.mark.asyncio
+    async def test_no_pool_returns_error(self, mock_db):
+        handlers = _get_tool_handlers(mock_db, client_pool=None)
+        result = await handlers["search_telegram"]({"query": "test"})
+        assert "требует Telegram-клиент" in _text(result)
+
+    @pytest.mark.asyncio
+    async def test_returns_results(self, mock_db):
+        mock_pool = MagicMock()
+        fake_result = SimpleNamespace(
+            messages=[
+                SimpleNamespace(channel_id=100, message_id=1, text="Global result", date="2025-01-01"),
+            ],
+            total=1,
+            query="test",
+            error=None,
+        )
+
+        with patch("src.search.engine.SearchEngine") as mock_engine_cls:
+            mock_engine_cls.return_value.search_telegram = AsyncMock(return_value=fake_result)
+            handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
+            result = await handlers["search_telegram"]({"query": "test", "limit": 10})
+
+        text = _text(result)
+        assert "Найдено 1 сообщений" in text
+        assert "Global result" in text
+
+    @pytest.mark.asyncio
+    async def test_error_in_search_result(self, mock_db):
+        mock_pool = MagicMock()
+        fake_result = SimpleNamespace(
+            messages=[], total=0, query="test",
+            error="Нет аккаунтов с Telegram Premium.",
+        )
+
+        with patch("src.search.engine.SearchEngine") as mock_engine_cls:
+            mock_engine_cls.return_value.search_telegram = AsyncMock(return_value=fake_result)
+            handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
+            result = await handlers["search_telegram"]({"query": "test"})
+
+        assert "Нет аккаунтов с Telegram Premium" in _text(result)
+
+
+class TestSearchMyChatsTool:
+    """Tests for the search_my_chats tool handler."""
+
+    @pytest.mark.asyncio
+    async def test_no_pool_returns_error(self, mock_db):
+        handlers = _get_tool_handlers(mock_db, client_pool=None)
+        result = await handlers["search_my_chats"]({"query": "test"})
+        assert "требует Telegram-клиент" in _text(result)
+
+    @pytest.mark.asyncio
+    async def test_returns_results(self, mock_db):
+        mock_pool = MagicMock()
+        fake_result = SimpleNamespace(
+            messages=[
+                SimpleNamespace(channel_id=200, message_id=5, text="My chat msg", date="2025-03-01"),
+            ],
+            total=1,
+            query="hello",
+            error=None,
+        )
+
+        with patch("src.search.engine.SearchEngine") as mock_engine_cls:
+            mock_engine_cls.return_value.search_my_chats = AsyncMock(return_value=fake_result)
+            handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
+            result = await handlers["search_my_chats"]({"query": "hello", "limit": 5})
+
+        text = _text(result)
+        assert "Найдено 1 сообщений" in text
+        assert "My chat msg" in text
+
+
+class TestSearchInChannelTool:
+    """Tests for the search_in_channel tool handler."""
+
+    @pytest.mark.asyncio
+    async def test_no_pool_returns_error(self, mock_db):
+        handlers = _get_tool_handlers(mock_db, client_pool=None)
+        result = await handlers["search_in_channel"]({"channel_id": 123, "query": "test"})
+        assert "требует Telegram-клиент" in _text(result)
+
+    @pytest.mark.asyncio
+    async def test_missing_channel_id(self, mock_db):
+        mock_pool = MagicMock()
+        handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
+        result = await handlers["search_in_channel"]({"query": "test"})
+        assert "channel_id обязателен" in _text(result)
+
+    @pytest.mark.asyncio
+    async def test_returns_results(self, mock_db):
+        mock_pool = MagicMock()
+        fake_result = SimpleNamespace(
+            messages=[
+                SimpleNamespace(channel_id=999, message_id=10, text="Channel msg", date="2025-02-01"),
+            ],
+            total=1,
+            query="news",
+            error=None,
+        )
+
+        with patch("src.search.engine.SearchEngine") as mock_engine_cls:
+            mock_engine_cls.return_value.search_in_channel = AsyncMock(return_value=fake_result)
+            handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
+            result = await handlers["search_in_channel"](
+                {"channel_id": 999, "query": "news", "limit": 20}
+            )
+
+        text = _text(result)
+        assert "Найдено 1 сообщений" in text
+        assert "Channel msg" in text
+
+
+class TestSearchHybridTool:
+    """Tests for the search_hybrid tool handler."""
+
+    @pytest.mark.asyncio
+    async def test_returns_results(self, mock_db):
+        fake_result = SimpleNamespace(
+            messages=[
+                SimpleNamespace(channel_id=300, message_id=7, text="Hybrid hit", date="2025-04-01"),
+            ],
+            total=1,
+            query="topic",
+            error=None,
+        )
+
+        with patch("src.search.engine.SearchEngine") as mock_engine_cls:
+            mock_engine_cls.return_value.search_hybrid = AsyncMock(return_value=fake_result)
+            handlers = _get_tool_handlers(mock_db)
+            result = await handlers["search_hybrid"]({"query": "topic", "limit": 10})
+
+        text = _text(result)
+        assert "Найдено 1 сообщений" in text
+        assert "Hybrid hit" in text
+
+    @pytest.mark.asyncio
+    async def test_no_pool_still_works(self, mock_db):
+        """Hybrid search works without pool (local only)."""
+        fake_result = SimpleNamespace(messages=[], total=0, query="empty", error=None)
+
+        with patch("src.search.engine.SearchEngine") as mock_engine_cls:
+            mock_engine_cls.return_value.search_hybrid = AsyncMock(return_value=fake_result)
+            handlers = _get_tool_handlers(mock_db, client_pool=None)
+            result = await handlers["search_hybrid"]({"query": "empty"})
+
+        assert "Ничего не найдено" in _text(result)
+
+    @pytest.mark.asyncio
+    async def test_error_returns_text(self, mock_db):
+        with patch("src.search.engine.SearchEngine") as mock_engine_cls:
+            mock_engine_cls.return_value.search_hybrid = AsyncMock(
+                side_effect=RuntimeError("vec not available")
+            )
+            handlers = _get_tool_handlers(mock_db)
+            result = await handlers["search_hybrid"]({"query": "test"})
+
+        assert "Ошибка гибридного поиска" in _text(result)
+        assert "vec not available" in _text(result)
