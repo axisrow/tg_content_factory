@@ -42,10 +42,10 @@
                     <li class="nav-item"><a class="nav-link" href="/my-telegram">Мой Телеграм</a></li>
                     <li class="nav-item"><a class="nav-link" href="/scheduler">Планировщик</a></li>
                     <li class="nav-item"><a class="nav-link" href="/debug">Дебаг</a></li>
-                    <li class="nav-item"><a class="nav-link" href="/settings">Настройки</a></li>
-                    <li class="nav-item"><a class="nav-link" href="/logout">Выйти</a></li>
-                    <li class="nav-item ms-lg-2 mt-2 mt-lg-0">
-                        <button class="btn btn-sm btn-outline-light" id="theme-toggle" type="button" title="Переключить тему"></button>
+                    <li class="nav-item ms-lg-2 mt-2 mt-lg-0 d-flex align-items-center gap-2">
+                        <a class="btn btn-sm btn-outline-light" href="/settings" title="Настройки"><i class="bi bi-gear"></i></a>
+                        <button class="btn btn-sm btn-outline-light" id="theme-toggle" type="button" title="Тема: авто"></button>
+                        <a class="btn btn-sm btn-outline-light" href="/logout" title="Выйти"><i class="bi bi-box-arrow-right"></i></a>
                     </li>
                 </ul>
                 </div>
@@ -196,19 +196,29 @@
         window.history.replaceState(null, "", url);
         setTimeout(function() { container.innerHTML = ""; }, 5000);
     }
-    // Theme toggle
+    // Theme toggle (3 modes: auto → light → dark → auto)
     var themeBtn = document.getElementById("theme-toggle");
-    function applyTheme(t) {
-        document.documentElement.setAttribute("data-bs-theme", t);
-        themeBtn.textContent = t === "dark" ? "\u2600\uFE0F" : "\uD83C\uDF19";
-        themeBtn.title = t === "dark" ? "Светлая тема" : "Тёмная тема";
+    var THEME_MODES = ["auto", "light", "dark"];
+    var THEME_ICONS = {auto: "\u25D0", light: "\u2600\uFE0F", dark: "\uD83C\uDF19"};
+    var THEME_TITLES = {auto: "Тема: авто", light: "Тема: светлая", dark: "Тема: тёмная"};
+    function getThemeMode() { return localStorage.getItem("theme") || "auto"; }
+    function resolveTheme(mode) {
+        return mode === "auto" ? (matchMedia("(prefers-color-scheme:dark)").matches ? "dark" : "light") : mode;
     }
-    var currentTheme = document.documentElement.getAttribute("data-bs-theme") || "light";
-    applyTheme(currentTheme);
+    function applyThemeMode(mode) {
+        document.documentElement.setAttribute("data-bs-theme", resolveTheme(mode));
+        themeBtn.textContent = THEME_ICONS[mode];
+        themeBtn.title = THEME_TITLES[mode];
+    }
+    applyThemeMode(getThemeMode());
+    matchMedia("(prefers-color-scheme:dark)").addEventListener("change", function() {
+        if (getThemeMode() === "auto") applyThemeMode("auto");
+    });
     themeBtn.addEventListener("click", function() {
-        var next = document.documentElement.getAttribute("data-bs-theme") === "dark" ? "light" : "dark";
-        localStorage.setItem("theme", next);
-        applyTheme(next);
+        var cur = getThemeMode();
+        var next = THEME_MODES[(THEME_MODES.indexOf(cur) + 1) % 3];
+        if (next === "auto") localStorage.removeItem("theme"); else localStorage.setItem("theme", next);
+        applyThemeMode(next);
     });
     // Active nav highlight
     var path = window.location.pathname;
