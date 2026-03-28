@@ -66,6 +66,11 @@ class TranslationService:
             return None
 
         provider = self._provider_service.get_provider_callable(provider_name)
+        # Reject stub default provider to prevent storing garbage translations
+        if provider is self._provider_service._registry.get("default"):
+            logger.warning("Translation skipped: only stub default provider available")
+            return None
+
         prompt = (
             f"Translate the following text from {source_lang} to {target_lang}. "
             "Return ONLY the translation, no explanations.\n\n"
@@ -117,6 +122,10 @@ class TranslationService:
         )
 
         provider = self._provider_service.get_provider_callable(provider_name)
+        if provider is self._provider_service._registry.get("default"):
+            logger.warning("Batch translation skipped: only stub default provider available")
+            return []
+
         try:
             result = await provider(prompt=prompt, model=model, max_tokens=4096, temperature=0.1)
         except Exception:
