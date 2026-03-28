@@ -209,7 +209,7 @@ class TestBulkApproveRunsTool:
     async def test_requires_confirm(self, mock_db):
         handlers = _get_tool_handlers(mock_db)
         result = await handlers["bulk_approve_runs"]({"run_ids": "1,2,3"})
-        assert "подтверждение" in _text(result).lower()
+        assert "confirm=true" in _text(result).lower()
 
     @pytest.mark.asyncio
     async def test_invalid_run_ids(self, mock_db):
@@ -268,7 +268,7 @@ class TestSaveAgentSettingsTool:
     async def test_requires_confirm(self, mock_db):
         handlers = _get_tool_handlers(mock_db)
         result = await handlers["save_agent_settings"]({"prompt_template": "new template"})
-        assert "подтверждение" in _text(result).lower()
+        assert "confirm=true" in _text(result).lower()
 
     @pytest.mark.asyncio
     async def test_saves_prompt_template(self, mock_db):
@@ -296,7 +296,7 @@ class TestSaveFilterSettingsTool:
     async def test_requires_confirm(self, mock_db):
         handlers = _get_tool_handlers(mock_db)
         result = await handlers["save_filter_settings"]({"low_uniqueness_threshold": 0.3})
-        assert "подтверждение" in _text(result).lower()
+        assert "confirm=true" in _text(result).lower()
 
     @pytest.mark.asyncio
     async def test_saves_thresholds(self, mock_db):
@@ -314,7 +314,7 @@ class TestSaveSchedulerSettingsTool:
     async def test_requires_confirm(self, mock_db):
         handlers = _get_tool_handlers(mock_db)
         result = await handlers["save_scheduler_settings"]({"collect_interval_minutes": 30})
-        assert "подтверждение" in _text(result).lower()
+        assert "confirm=true" in _text(result).lower()
 
     @pytest.mark.asyncio
     async def test_saves_interval(self, mock_db):
@@ -395,7 +395,7 @@ class TestCreateTagTool:
     async def test_requires_confirm(self, mock_db):
         handlers = _get_tool_handlers(mock_db)
         result = await handlers["create_tag"]({"name": "newtag"})
-        assert "подтверждение" in _text(result).lower()
+        assert "confirm=true" in _text(result).lower()
 
     @pytest.mark.asyncio
     async def test_creates_tag(self, mock_db):
@@ -411,7 +411,7 @@ class TestDeleteTagTool:
     async def test_requires_confirm(self, mock_db):
         handlers = _get_tool_handlers(mock_db)
         result = await handlers["delete_tag"]({"name": "oldtag"})
-        assert "подтверждение" in _text(result).lower()
+        assert "confirm=true" in _text(result).lower()
 
     @pytest.mark.asyncio
     async def test_deletes_tag(self, mock_db):
@@ -567,7 +567,7 @@ class TestDeletePipelineTool:
         with patch("src.services.pipeline_service.PipelineService.get", AsyncMock(return_value=p)):
             handlers = _get_tool_handlers(mock_db, config=MagicMock())
             result = await handlers["delete_pipeline"]({"pipeline_id": 1})
-            assert "подтверждение" in _text(result).lower()
+            assert "confirm=true" in _text(result).lower()
 
     @pytest.mark.asyncio
     async def test_missing_pipeline_id(self, mock_db):
@@ -625,7 +625,7 @@ class TestSetRefinementStepsTool:
     async def test_requires_confirm(self, mock_db):
         handlers = _get_tool_handlers(mock_db, config=MagicMock())
         result = await handlers["set_refinement_steps"]({"pipeline_id": 1, "steps_json": "[]"})
-        assert "подтверждение" in _text(result).lower()
+        assert "confirm=true" in _text(result).lower()
 
     @pytest.mark.asyncio
     async def test_invalid_json(self, mock_db):
@@ -723,7 +723,7 @@ class TestAddPipelineTool:
     async def test_requires_confirm(self, mock_db):
         handlers = _get_tool_handlers(mock_db, config=MagicMock())
         result = await handlers["add_pipeline"]({"name": "Test"})
-        assert "подтверждение" in _text(result).lower()
+        assert "confirm=true" in _text(result).lower()
 
     @pytest.mark.asyncio
     async def test_missing_required_fields(self, mock_db):
@@ -737,7 +737,7 @@ class TestEditPipelineTool:
     async def test_requires_confirm(self, mock_db):
         handlers = _get_tool_handlers(mock_db, config=MagicMock())
         result = await handlers["edit_pipeline"]({"pipeline_id": 1})
-        assert "подтверждение" in _text(result).lower()
+        assert "confirm=true" in _text(result).lower()
 
     @pytest.mark.asyncio
     async def test_missing_pipeline_id(self, mock_db):
