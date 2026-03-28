@@ -108,6 +108,9 @@ TOOL_CATEGORIES: dict[str, ToolCategory] = {
     "stop_scheduler": ToolCategory.WRITE,
     "trigger_collection": ToolCategory.WRITE,
     "toggle_scheduler_job": ToolCategory.WRITE,
+    "set_scheduler_interval": ToolCategory.WRITE,
+    "cancel_scheduler_task": ToolCategory.WRITE,
+    "clear_pending_tasks": ToolCategory.WRITE,
     # Notifications
     "get_notification_status": ToolCategory.READ,
     "setup_notification_bot": ToolCategory.WRITE,
@@ -217,6 +220,7 @@ MODULE_GROUPS: OrderedDict[str, list[str]] = OrderedDict([
     ("Планировщик", [
         "get_scheduler_status", "start_scheduler", "stop_scheduler",
         "trigger_collection", "toggle_scheduler_job",
+        "set_scheduler_interval", "cancel_scheduler_task", "clear_pending_tasks",
     ]),
     ("Уведомления", [
         "get_notification_status", "setup_notification_bot", "delete_notification_bot",

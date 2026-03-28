@@ -836,3 +836,91 @@ class TestGetAccountInfoTool:
         handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
         result = await handlers["get_account_info"]({})
         assert "не найдены" in _text(result)
+
+
+# ---------------------------------------------------------------------------
+# Scheduler tools  (set_scheduler_interval, cancel_scheduler_task, clear_pending_tasks)
+# ---------------------------------------------------------------------------
+
+
+class TestSetSchedulerIntervalTool:
+    @pytest.mark.asyncio
+    async def test_requires_confirmation(self, mock_db):
+        handlers = _get_tool_handlers(mock_db)
+        result = await handlers["set_scheduler_interval"]({"job_id": "collect_all", "minutes": 30})
+        assert "confirm=true" in _text(result)
+
+    @pytest.mark.asyncio
+    async def test_missing_job_id(self, mock_db):
+        handlers = _get_tool_handlers(mock_db)
+        result = await handlers["set_scheduler_interval"]({"minutes": 30, "confirm": True})
+        assert "job_id обязателен" in _text(result)
+
+    @pytest.mark.asyncio
+    async def test_sets_interval(self, mock_db):
+        mock_db.repos = MagicMock()
+        mock_db.repos.settings.set_setting = AsyncMock()
+        handlers = _get_tool_handlers(mock_db)
+        result = await handlers["set_scheduler_interval"](
+            {"job_id": "collect_all", "minutes": 60, "confirm": True}
+        )
+        assert "60 мин" in _text(result)
+        mock_db.repos.settings.set_setting.assert_awaited_once_with("collect_interval_minutes", "60")
+
+    @pytest.mark.asyncio
+    async def test_clamps_minutes(self, mock_db):
+        mock_db.repos = MagicMock()
+        mock_db.repos.settings.set_setting = AsyncMock()
+        handlers = _get_tool_handlers(mock_db)
+        result = await handlers["set_scheduler_interval"](
+            {"job_id": "collect_all", "minutes": 9999, "confirm": True}
+        )
+        assert "1440 мин" in _text(result)
+
+    @pytest.mark.asyncio
+    async def test_rejects_non_collect_all(self, mock_db):
+        handlers = _get_tool_handlers(mock_db)
+        result = await handlers["set_scheduler_interval"](
+            {"job_id": "custom_job", "minutes": 30, "confirm": True}
+        )
+        assert "только для 'collect_all'" in _text(result)
+
+
+class TestCancelSchedulerTaskTool:
+    @pytest.mark.asyncio
+    async def test_requires_confirmation(self, mock_db):
+        handlers = _get_tool_handlers(mock_db)
+        result = await handlers["cancel_scheduler_task"]({"task_id": 1})
+        assert "confirm=true" in _text(result)
+
+    @pytest.mark.asyncio
+    async def test_cancels_task(self, mock_db):
+        mock_db.repos = MagicMock()
+        mock_db.repos.tasks.cancel_collection_task = AsyncMock(return_value=True)
+        handlers = _get_tool_handlers(mock_db)
+        result = await handlers["cancel_scheduler_task"]({"task_id": 42, "confirm": True})
+        assert "отменена" in _text(result)
+
+    @pytest.mark.asyncio
+    async def test_task_not_found(self, mock_db):
+        mock_db.repos = MagicMock()
+        mock_db.repos.tasks.cancel_collection_task = AsyncMock(return_value=False)
+        handlers = _get_tool_handlers(mock_db)
+        result = await handlers["cancel_scheduler_task"]({"task_id": 999, "confirm": True})
+        assert "не найдена" in _text(result)
+
+
+class TestClearPendingTasksTool:
+    @pytest.mark.asyncio
+    async def test_requires_confirmation(self, mock_db):
+        handlers = _get_tool_handlers(mock_db)
+        result = await handlers["clear_pending_tasks"]({})
+        assert "confirm=true" in _text(result)
+
+    @pytest.mark.asyncio
+    async def test_clears_tasks(self, mock_db):
+        mock_db.repos = MagicMock()
+        mock_db.repos.tasks.delete_pending_channel_tasks = AsyncMock(return_value=5)
+        handlers = _get_tool_handlers(mock_db)
+        result = await handlers["clear_pending_tasks"]({"confirm": True})
+        assert "5" in _text(result)
