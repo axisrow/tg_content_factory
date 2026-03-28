@@ -16,6 +16,7 @@ from src.models import (
     PipelineRunTaskPayload,
     SqStatsTaskPayload,
     StatsAllTaskPayload,
+    TranslateBatchTaskPayload,
 )
 from src.telegram.collector import Collector
 
@@ -37,6 +38,7 @@ HANDLED_TYPES = [
     CollectionTaskType.PIPELINE_RUN.value,
     CollectionTaskType.CONTENT_GENERATE.value,
     CollectionTaskType.CONTENT_PUBLISH.value,
+    CollectionTaskType.TRANSLATE_BATCH.value,
 ]
 
 
@@ -171,6 +173,7 @@ class UnifiedDispatcher:
                 CollectionTaskType.PIPELINE_RUN: self._handle_pipeline_run,
                 CollectionTaskType.CONTENT_GENERATE: self._handle_content_generate,
                 CollectionTaskType.CONTENT_PUBLISH: self._handle_content_publish,
+                CollectionTaskType.TRANSLATE_BATCH: self._handle_translate_batch,
             }
             return self.__handler_map
 
@@ -682,6 +685,103 @@ class UnifiedDispatcher:
             )
         except Exception as exc:
             logger.exception("Content publish handler failed")
+            await self._tasks.update_collection_task(
+                task.id,
+                CollectionTaskStatus.FAILED,
+                error=str(exc)[:500],
+            )
+
+    # ── TRANSLATE_BATCH ──
+
+    async def _handle_translate_batch(self, task: CollectionTask) -> None:
+        if task.id is None:
+            return
+
+        payload = task.payload
+        if not isinstance(payload, TranslateBatchTaskPayload):
+            await self._tasks.update_collection_task(
+                task.id, CollectionTaskStatus.FAILED, error="Invalid TRANSLATE_BATCH payload"
+            )
+            return
+
+        if not self._db:
+            await self._tasks.update_collection_task(
+                task.id, CollectionTaskStatus.FAILED, error="Database not configured"
+            )
+            return
+
+        try:
+            from src.services.provider_service import AgentProviderService
+            from src.services.translation_service import TranslationService
+
+            # Load translation settings
+            provider_name = await self._db.get_setting("translation_provider")
+            model = await self._db.get_setting("translation_model")
+
+            provider_service = AgentProviderService(self._db)
+            svc = TranslationService(self._db, provider_service=provider_service)
+
+            target_lang = payload.target_lang
+            source_filter = payload.source_filter or []
+            batch_size = payload.batch_size or 20
+            last_id = payload.last_processed_id or 0
+
+            # Exclude messages where source == target
+            msgs = await self._db.repos.messages.get_untranslated_messages(
+                target=target_lang,
+                source_langs=source_filter or None,
+                limit=batch_size,
+                after_id=last_id,
+            )
+
+            if not msgs:
+                await self._tasks.update_collection_task(
+                    task.id,
+                    CollectionTaskStatus.COMPLETED,
+                    note="No more messages to translate",
+                )
+                return
+
+            results = await svc.translate_batch(
+                msgs, target_lang, provider_name=provider_name, model=model
+            )
+
+            for msg_id, translated in results:
+                await self._db.repos.messages.update_translation(msg_id, target_lang, translated)
+
+            new_last_id = max(m.id for m in msgs if m.id is not None) if msgs else last_id
+
+            # Check if more messages remain
+            remaining = await self._db.repos.messages.get_untranslated_messages(
+                target=target_lang,
+                source_langs=source_filter or None,
+                limit=1,
+                after_id=new_last_id,
+            )
+
+            await self._tasks.update_collection_task(
+                task.id,
+                CollectionTaskStatus.COMPLETED,
+                messages_collected=len(results),
+                note=f"Translated {len(results)}/{len(msgs)} messages",
+            )
+
+            # Self-chain: create follow-up task if more remain
+            if remaining:
+                follow_up = TranslateBatchTaskPayload(
+                    target_lang=target_lang,
+                    source_filter=source_filter,
+                    batch_size=batch_size,
+                    last_processed_id=new_last_id,
+                )
+                await self._tasks.create_generic_task(
+                    CollectionTaskType.TRANSLATE_BATCH,
+                    title=f"Translation batch ({target_lang}) cont.",
+                    payload=follow_up,
+                )
+
+        except Exception as exc:
+            logger.exception("Translate batch handler failed")
             await self._tasks.update_collection_task(
                 task.id,
                 CollectionTaskStatus.FAILED,

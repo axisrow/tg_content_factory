@@ -544,12 +544,15 @@ class Collector:
                             )
                         elif reply_to:
                             pass
+                        from src.services.translation_service import TranslationService
+
                         message = Message(
                             channel_id=channel_id,
                             message_id=msg.id,
                             sender_id=msg.sender_id,
                             sender_name=self._get_sender_name(msg),
                             text=msg.text,
+                            detected_lang=TranslationService.detect_language(msg.text),
                             media_type=self._get_media_type(msg),
                             topic_id=topic_id,
                             reactions_json=self._extract_reactions(msg),

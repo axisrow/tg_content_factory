@@ -63,6 +63,9 @@ class Message(BaseModel):
     reply_count: int | None = None
     date: datetime
     collected_at: datetime | None = None
+    detected_lang: str | None = None
+    translation_en: str | None = None
+    translation_custom: str | None = None
     channel_title: str | None = None
     channel_username: str | None = None
 
@@ -84,6 +87,7 @@ class CollectionTaskType(StrEnum):
     PIPELINE_RUN = "pipeline_run"
     CONTENT_GENERATE = "content_generate"
     CONTENT_PUBLISH = "content_publish"
+    TRANSLATE_BATCH = "translate_batch"
 
 
 class ContentGenerateTaskPayload(BaseModel):
@@ -110,6 +114,14 @@ class SqStatsTaskPayload(BaseModel):
     sq_id: int
 
 
+class TranslateBatchTaskPayload(BaseModel):
+    task_kind: str = "translate_batch"
+    target_lang: str = "en"
+    source_filter: list[str] = []
+    batch_size: int = 20
+    last_processed_id: int = 0
+
+
 class CollectionTask(BaseModel):
     id: int | None = None
     channel_id: int | None = None
@@ -128,6 +140,7 @@ class CollectionTask(BaseModel):
         | PipelineRunTaskPayload
         | ContentGenerateTaskPayload
         | ContentPublishTaskPayload
+        | TranslateBatchTaskPayload
         | None
     ) = None
     parent_task_id: int | None = None
