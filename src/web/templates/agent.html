@@ -697,15 +697,21 @@
     }
 
     // Permission request dialog — menu style with keyboard shortcuts (1/2/3 + Enter)
+    function escapeHtml(s) {
+        var d = document.createElement('div');
+        d.textContent = s;
+        return d.innerHTML;
+    }
+
     function showPermissionDialog(toolName, phone) {
         return new Promise(function(resolve) {
-            var phoneStr = phone ? ' (' + phone + ')' : '';
+            var phoneStr = phone ? ' (' + escapeHtml(phone) + ')' : '';
             var modal = document.createElement('div');
             modal.id = 'permission-modal';
             modal.innerHTML =
                 '<div id="permission-box">' +
                 '<div class="perm-header">Агент хочет использовать:</div>' +
-                '<div class="perm-tool">' + toolName + phoneStr + '</div>' +
+                '<div class="perm-tool">' + escapeHtml(toolName) + phoneStr + '</div>' +
                 '<div class="perm-menu">' +
                 '<div class="perm-item" data-choice="once" tabindex="0"><span class="perm-cursor">&gt;</span> 1. Разрешить один раз</div>' +
                 '<div class="perm-item" data-choice="session" tabindex="0">  2. Разрешить в этой сессии</div>' +
@@ -908,11 +914,22 @@
                         var data = JSON.parse(jsonStr);
                         if (data.type === 'permission_request') {
                             var choice = await showPermissionDialog(data.tool, data.phone || '');
-                            await fetch('/agent/threads/' + threadId + '/permission/' + data.request_id, {
-                                method: 'POST',
-                                headers: {'Content-Type': 'application/json'},
-                                body: JSON.stringify({choice: choice})
-                            });
+                            try {
+                                await fetch('/agent/threads/' + threadId + '/permission/' + data.request_id, {
+                                    method: 'POST',
+                                    headers: {'Content-Type': 'application/json'},
+                                    body: JSON.stringify({choice: choice})
+                                });
+                            } catch (fetchErr) {
+                                console.error('Permission POST failed, sending deny:', fetchErr);
+                                try {
+                                    await fetch('/agent/threads/' + threadId + '/permission/' + data.request_id, {
+                                        method: 'POST',
+                                        headers: {'Content-Type': 'application/json'},
+                                        body: JSON.stringify({choice: 'deny'})
+                                    });
+                                } catch (_) { /* server-side timeout will handle it */ }
+                            }
                         } else if (data.error) {
                             aiBubble.className = 'message-error';
                             aiBubble.textContent = data.error;
