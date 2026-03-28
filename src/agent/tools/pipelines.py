@@ -39,7 +39,8 @@ def register(db, client_pool, embedding_service, **kwargs):
 
     @tool(
         "list_pipelines",
-        "List all content pipelines with their settings (name, model, publish mode, schedule, backend).",
+        "List all content pipelines with id, name, model, publish_mode (auto/moderated), schedule, "
+        "and backend. Use pipeline_id from this list for other pipeline tools.",
         {"active_only": bool},
     )
     async def list_pipelines(args):
@@ -111,8 +112,9 @@ def register(db, client_pool, embedding_service, **kwargs):
 
     @tool(
         "add_pipeline",
-        "Create a new content pipeline. source_channel_ids and target_refs are comma-separated strings. "
-        "target_refs format: 'phone|dialog_id' per entry. Requires confirm=true.",
+        "Create a new content pipeline. source_channel_ids = comma-separated Telegram channel IDs "
+        "(from list_channels). target_refs = comma-separated 'phone|dialog_id' pairs. "
+        "publish_mode: 'auto' or 'moderated'. Requires confirm=true.",
         {
             "name": str,
             "prompt_template": str,
@@ -296,7 +298,9 @@ def register(db, client_pool, embedding_service, **kwargs):
 
     @tool(
         "run_pipeline",
-        "Trigger content generation for a pipeline by its ID. Returns a preview of the generated text.",
+        "Trigger content generation for a pipeline. Returns a preview of the generated text. "
+        "If publish_mode=auto, the run is published immediately; "
+        "otherwise use approve_run + publish_pipeline_run.",
         {"pipeline_id": int},
     )
     async def run_pipeline(args):
@@ -377,7 +381,9 @@ def register(db, client_pool, embedding_service, **kwargs):
 
     @tool(
         "list_pipeline_runs",
-        "List generation runs for a pipeline. Optionally filter by status.",
+        "List generation runs for a pipeline. "
+        "Filter by status (pending/completed/approved/rejected). "
+        "Use run_id from results with get_pipeline_run, approve_run, publish_pipeline_run.",
         {"pipeline_id": int, "limit": int, "status": str},
     )
     async def list_pipeline_runs(args):
@@ -439,7 +445,9 @@ def register(db, client_pool, embedding_service, **kwargs):
 
     @tool(
         "publish_pipeline_run",
-        "Publish a generation run to its pipeline targets. Requires Telegram client and confirm=true.",
+        "Publish a generation run to its pipeline target channels. "
+        "Approve the run first via approve_run. run_id from list_pipeline_runs. "
+        "Requires Telegram client and confirm=true.",
         {"run_id": int, "confirm": bool},
     )
     async def publish_pipeline_run(args):
@@ -477,34 +485,5 @@ def register(db, client_pool, embedding_service, **kwargs):
             return _text_response(f"Ошибка публикации: {e}")
 
     tools.append(publish_pipeline_run)
-
-    @tool(
-        "get_pipeline_queue",
-        "Get generation runs pending moderation for a pipeline.",
-        {"pipeline_id": int, "limit": int},
-    )
-    async def get_pipeline_queue(args):
-        pipeline_id = args.get("pipeline_id")
-        if pipeline_id is None:
-            return _text_response("Ошибка: pipeline_id обязателен.")
-        try:
-            limit = int(args.get("limit", 20))
-            runs = await db.repos.generation_runs.list_pending_moderation(
-                pipeline_id=int(pipeline_id), limit=limit
-            )
-            if not runs:
-                return _text_response(f"Нет черновиков на модерации для пайплайна id={pipeline_id}.")
-            lines = [f"Очередь модерации пайплайна id={pipeline_id} ({len(runs)} шт.):"]
-            for r in runs:
-                preview = (r.generated_text or "")[:200]
-                lines.append(
-                    f"- run_id={r.id}, moderation={r.moderation_status}, "
-                    f"created={r.created_at}: {preview}"
-                )
-            return _text_response("\n".join(lines))
-        except Exception as e:
-            return _text_response(f"Ошибка получения очереди модерации: {e}")
-
-    tools.append(get_pipeline_queue)
 
     return tools

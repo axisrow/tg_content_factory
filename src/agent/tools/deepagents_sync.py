@@ -34,7 +34,7 @@ def build_deepagents_tools(db, client_pool=None, config=None) -> list[Callable]:
     # === Search ===
 
     def search_messages(query_text: str, limit: int = 20) -> str:
-        """Search recent Telegram messages by free-text query and return short previews."""
+        """Full-text search in collected messages stored in the local DB."""
         try:
             messages, total = _run_sync(
                 "search_messages", lambda: db.search_messages(query_text, limit=limit)
@@ -53,7 +53,10 @@ def build_deepagents_tools(db, client_pool=None, config=None) -> list[Callable]:
     tools.append(search_messages)
 
     def semantic_search(query_text: str, limit: int = 10) -> str:
-        """Search messages by semantic similarity (embedding-based)."""
+        """Search collected messages by semantic (embedding) similarity.
+
+        Requires index_messages first and an embedding API key.
+        """
         try:
             from src.services.embedding_service import EmbeddingService
 
@@ -75,7 +78,7 @@ def build_deepagents_tools(db, client_pool=None, config=None) -> list[Callable]:
     tools.append(semantic_search)
 
     def index_messages() -> str:
-        """Index pending messages for semantic search."""
+        """Create semantic embeddings for all not-yet-indexed messages. Required before semantic_search works."""
         try:
             from src.services.embedding_service import EmbeddingService
 
@@ -90,7 +93,7 @@ def build_deepagents_tools(db, client_pool=None, config=None) -> list[Callable]:
     # === Channels ===
 
     def list_channels(active_only: bool = False) -> str:
-        """List Telegram channels in the database."""
+        """List channels in DB. Each row has pk (for collect/delete/toggle), channel_id (Telegram ID), title."""
         try:
             channels = _run_sync("list_channels", lambda: db.get_channels(active_only=active_only))
         except Exception as exc:
@@ -121,7 +124,10 @@ def build_deepagents_tools(db, client_pool=None, config=None) -> list[Callable]:
     tools.append(get_channel_stats)
 
     def add_channel(identifier: str) -> str:
-        """Add a channel by identifier (t.me link, @username, or numeric ID). Returns result."""
+        """Add a channel to DB by identifier (t.me link, @username, or numeric ID).
+
+        Then use list_channels to get pk and collect_channel to collect messages.
+        """
         try:
             from src.services.channel_service import ChannelService
 
@@ -134,7 +140,7 @@ def build_deepagents_tools(db, client_pool=None, config=None) -> list[Callable]:
     tools.append(add_channel)
 
     def delete_channel(pk: int) -> str:
-        """⚠️ DANGEROUS: Delete a channel permanently."""
+        """⚠️ DANGEROUS: Delete a channel permanently. pk = DB primary key from list_channels."""
         try:
             from src.services.channel_service import ChannelService
 
@@ -147,7 +153,7 @@ def build_deepagents_tools(db, client_pool=None, config=None) -> list[Callable]:
     tools.append(delete_channel)
 
     def toggle_channel(pk: int) -> str:
-        """Toggle channel active/inactive status."""
+        """Toggle channel active/inactive status. pk = DB primary key from list_channels."""
         try:
             from src.services.channel_service import ChannelService
 
@@ -300,24 +306,8 @@ def build_deepagents_tools(db, client_pool=None, config=None) -> list[Callable]:
 
     tools.append(list_pending_moderation)
 
-    def view_moderation_run(run_id: int) -> str:
-        """View full details of a generation run."""
-        try:
-            run = _run_sync("view_run", lambda: db.repos.generation_runs.get(run_id))
-        except Exception as exc:
-            return f"Ошибка: {exc}"
-        if not run:
-            return f"Run id={run_id} не найден."
-        return (
-            f"Run id={run.id}\nStatus: {run.status}\n"
-            f"Moderation: {run.moderation_status}\n"
-            f"Text:\n{run.generated_text or '(пусто)'}"
-        )
-
-    tools.append(view_moderation_run)
-
     def approve_run(run_id: int) -> str:
-        """Approve a generation run for publishing."""
+        """Approve a generation run for publishing. Then use publish_pipeline_run to publish it."""
         try:
             _run_sync("approve_run", lambda: db.repos.generation_runs.set_moderation_status(run_id, "approved"))
             return f"Run id={run_id} одобрен."
@@ -423,7 +413,7 @@ def build_deepagents_tools(db, client_pool=None, config=None) -> list[Callable]:
     # === Accounts ===
 
     def list_accounts() -> str:
-        """List all connected Telegram accounts."""
+        """List all connected Telegram accounts. Returns id (account_id for toggle/delete), phone, status."""
         try:
             accounts = _run_sync("list_accounts", db.get_accounts)
         except Exception as exc:
@@ -439,7 +429,7 @@ def build_deepagents_tools(db, client_pool=None, config=None) -> list[Callable]:
     tools.append(list_accounts)
 
     def toggle_account(account_id: int) -> str:
-        """Toggle account active/inactive."""
+        """Toggle account active/inactive. account_id from list_accounts."""
         try:
             accounts = _run_sync("toggle_acc_get", db.get_accounts)
             acc = next((a for a in accounts if a.id == account_id), None)
@@ -453,7 +443,7 @@ def build_deepagents_tools(db, client_pool=None, config=None) -> list[Callable]:
     tools.append(toggle_account)
 
     def delete_account(account_id: int) -> str:
-        """⚠️ DANGEROUS: Delete a Telegram account from the system."""
+        """⚠️ DANGEROUS: Delete a Telegram account from the system. account_id from list_accounts."""
         try:
             _run_sync("delete_acc", lambda: db.delete_account(account_id))
             return f"Аккаунт id={account_id} удалён."
@@ -481,7 +471,7 @@ def build_deepagents_tools(db, client_pool=None, config=None) -> list[Callable]:
     # === Filters ===
 
     def analyze_filters() -> str:
-        """Analyze channels and compute filter scores."""
+        """Analyze channels and compute filter scores (low_uniqueness, spam, non_cyrillic, etc.)."""
         try:
             from src.filters.analyzer import ChannelAnalyzer
 
@@ -495,7 +485,7 @@ def build_deepagents_tools(db, client_pool=None, config=None) -> list[Callable]:
     tools.append(analyze_filters)
 
     def apply_filters() -> str:
-        """⚠️ DANGEROUS: Apply filter analysis — mark flagged channels as filtered."""
+        """⚠️ DANGEROUS: Run analyze_filters and mark flagged channels as filtered."""
         try:
             from src.filters.analyzer import ChannelAnalyzer
 
@@ -522,7 +512,7 @@ def build_deepagents_tools(db, client_pool=None, config=None) -> list[Callable]:
     tools.append(reset_filters)
 
     def toggle_channel_filter(pk: int) -> str:
-        """Toggle filter status for a channel."""
+        """Toggle filter status for a channel. pk = DB primary key from list_channels."""
         try:
             ch = _run_sync("get_ch", lambda: db.get_channel_by_pk(pk))
             if not ch:
@@ -779,7 +769,7 @@ def build_deepagents_tools(db, client_pool=None, config=None) -> list[Callable]:
     def get_settings() -> str:
         """Get current system settings."""
         try:
-            keys = ["scheduler_interval_minutes", "scheduler_enabled", "agent_backend_override"]
+            keys = ["collect_interval_minutes", "scheduler_enabled", "agent_backend_override"]
             lines = ["Настройки:"]
             for key in keys:
                 val = _run_sync(f"setting_{key}", lambda k=key: db.get_setting(k))

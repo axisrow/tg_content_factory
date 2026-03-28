@@ -17,7 +17,8 @@ def register(db, client_pool, embedding_service, **kwargs):
 
     @tool(
         "list_pending_moderation",
-        "List generation runs awaiting moderation (approval/rejection). Optionally filter by pipeline_id.",
+        "List generation runs awaiting moderation. Filter by pipeline_id. "
+        "Use run_id from results with get_pipeline_run to view full text, then approve_run or reject_run.",
         {"pipeline_id": int, "limit": int},
     )
     async def list_pending_moderation(args):
@@ -43,43 +44,14 @@ def register(db, client_pool, embedding_service, **kwargs):
 
     tools.append(list_pending_moderation)
 
-    @tool(
-        "view_moderation_run",
-        "View full details of a generation run: text, status, quality score, metadata.",
-        {"run_id": int},
-    )
-    async def view_moderation_run(args):
-        run_id = args.get("run_id")
-        if run_id is None:
-            return _text_response("Ошибка: run_id обязателен.")
-        try:
-            run = await db.repos.generation_runs.get(int(run_id))
-            if run is None:
-                return _text_response(f"Run id={run_id} не найден.")
-            lines = [
-                f"Run id={run.id}",
-                f"  status: {run.status}",
-                f"  moderation_status: {run.moderation_status}",
-                f"  quality_score: {run.quality_score}",
-                f"  created_at: {run.created_at}",
-                f"  metadata: {run.metadata}",
-                "",
-                "generated_text:",
-                run.generated_text or "(пусто)",
-            ]
-            return _text_response("\n".join(lines))
-        except Exception as e:
-            return _text_response(f"Ошибка получения run: {e}")
-
-    tools.append(view_moderation_run)
-
     # ------------------------------------------------------------------
     # WRITE
     # ------------------------------------------------------------------
 
     @tool(
         "approve_run",
-        "Approve a generation run for publishing. Provide the run_id.",
+        "Approve a generation run for publishing. Then use publish_pipeline_run to publish it. "
+        "run_id from list_pending_moderation or list_pipeline_runs.",
         {"run_id": int},
     )
     async def approve_run(args):

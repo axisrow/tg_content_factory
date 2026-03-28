@@ -16,7 +16,9 @@ def register(db, client_pool, embedding_service, **kwargs):
 
     @tool(
         "list_channels",
-        "List Telegram channels in the database. Optionally filter by active_only or include_filtered.",
+        "List Telegram channels saved in the local database. Each row includes pk "
+        "(DB primary key used by collect_channel/delete_channel/toggle_channel), "
+        "channel_id (Telegram numeric ID), title, username, channel_type, and is_filtered status.",
         {"active_only": bool, "include_filtered": bool},
     )
     async def list_channels(args):
@@ -47,7 +49,8 @@ def register(db, client_pool, embedding_service, **kwargs):
 
     @tool(
         "get_channel_stats",
-        "Get subscriber counts and statistics for all channels.",
+        "Get latest subscriber counts and avg_views for all channels. "
+        "Run collect_channel_stats first if stats are stale.",
         {},
     )
     async def get_channel_stats(args):
@@ -74,7 +77,9 @@ def register(db, client_pool, embedding_service, **kwargs):
 
     @tool(
         "add_channel",
-        "Add a Telegram channel by identifier (t.me link, @username, or numeric ID). Requires confirmation.",
+        "Add a Telegram channel to the local database by identifier (t.me link, @username, or numeric ID). "
+        "After adding, use list_channels to get the pk, then call collect_channel to start message collection. "
+        "Requires confirmation.",
         {"identifier": str, "confirm": bool},
     )
     async def add_channel(args):
@@ -103,7 +108,8 @@ def register(db, client_pool, embedding_service, **kwargs):
 
     @tool(
         "delete_channel",
-        "DANGEROUS: Permanently delete a channel and all its messages. Always ask user for confirmation first.",
+        "DANGEROUS: Permanently delete a channel and all its messages from the DB. "
+        "pk = DB primary key — get it from list_channels. Always ask user for confirmation first.",
         {"pk": int, "confirm": bool},
         annotations=ToolAnnotations(destructiveHint=True),
     )
@@ -133,7 +139,7 @@ def register(db, client_pool, embedding_service, **kwargs):
 
     @tool(
         "toggle_channel",
-        "Toggle channel active/inactive status by primary key.",
+        "Toggle channel active/inactive status. pk = DB primary key — get it from list_channels.",
         {"pk": int},
     )
     async def toggle_channel(args):
@@ -161,7 +167,8 @@ def register(db, client_pool, embedding_service, **kwargs):
 
     @tool(
         "import_channels",
-        "Bulk import channels from a text string (t.me links, @usernames, numeric IDs). Requires confirmation.",
+        "Bulk-import channels from a text string (t.me links, @usernames, or numeric IDs, any separator). "
+        "After import, use collect_all_channels to start collection. Requires confirmation.",
         {"text": str, "confirm": bool},
     )
     async def import_channels(args):
@@ -206,7 +213,8 @@ def register(db, client_pool, embedding_service, **kwargs):
 
     @tool(
         "refresh_channel_types",
-        "Refresh channel_type for all active channels using Telegram API. Requires a connected Telegram client.",
+        "Refresh channel_type (channel/group/supergroup/unavailable) for all active channels "
+        "via Telegram API. Requires a connected Telegram client. Requires confirmation.",
         {"confirm": bool},
     )
     async def refresh_channel_types(args):
@@ -254,7 +262,8 @@ def register(db, client_pool, embedding_service, **kwargs):
     @tool(
         "refresh_channel_meta",
         "Refresh channel metadata (about, linked_chat_id, has_comments) from Telegram. "
-        "Pass identifier for a single channel, or omit to refresh all active channels. Requires confirmation.",
+        "Pass identifier (channel_id as string, or @username) for one channel, or omit to refresh all. "
+        "Requires confirmation.",
         {"identifier": str, "confirm": bool},
     )
     async def refresh_channel_meta(args):

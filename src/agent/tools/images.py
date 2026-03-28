@@ -36,9 +36,9 @@ def register(db, client_pool, embedding_service, **kwargs):
 
     @tool(
         "generate_image",
-        "Generate an image from a text prompt using configured image providers. "
-        "Model format: 'provider:model_id' (e.g. 'together:black-forest-labs/FLUX.1-schnell'). "
-        "If model is omitted, uses the first registered adapter.",
+        "Generate an image from a text prompt. Model format: 'provider:model_id' "
+        "(e.g. 'together:black-forest-labs/FLUX.1-schnell'). "
+        "Use list_image_providers to see available providers, list_image_models for models.",
         {"prompt": str, "model": str},
     )
     async def generate_image(args):
@@ -99,7 +99,8 @@ def register(db, client_pool, embedding_service, **kwargs):
 
     @tool(
         "list_image_models",
-        "Search available image generation models for a provider",
+        "Search available image models for a provider. "
+        "Get provider name from list_image_providers first. query filters by model name substring.",
         {"provider": str, "query": str},
     )
     async def list_image_models(args):

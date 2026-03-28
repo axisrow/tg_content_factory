@@ -20,9 +20,8 @@ def register(db, client_pool, embedding_service, **kwargs):
 
     @tool(
         "send_message",
-        "Send a direct message to a Telegram user or chat. "
-        "Recipient can be a username (@user), phone number, or numeric ID. "
-        "Ask user for confirmation first.",
+        "Send a message from a connected account (phone = sender's phone). "
+        "recipient accepts @username, phone number, or numeric ID. Ask user for confirmation first.",
         {"phone": str, "recipient": str, "text": str, "confirm": bool},
     )
     async def send_message(args):
@@ -58,8 +57,8 @@ def register(db, client_pool, embedding_service, **kwargs):
 
     @tool(
         "edit_message",
-        "Edit a previously sent message in a Telegram chat. "
-        "Ask user for confirmation first.",
+        "Edit a previously sent message. "
+        "chat_id accepts @username, t.me link, numeric ID, or 'me'. Ask user for confirmation first.",
         {"phone": str, "chat_id": str, "message_id": int, "text": str, "confirm": bool},
     )
     async def edit_message(args):
@@ -97,7 +96,8 @@ def register(db, client_pool, embedding_service, **kwargs):
     @tool(
         "delete_message",
         "⚠️ DANGEROUS: Delete messages from a Telegram chat. "
-        "Pass comma-separated message IDs. Always ask user for confirmation first.",
+        "chat_id accepts @username, numeric ID, or 'me'. "
+        "message_ids = comma-separated integers. Always ask user for confirmation first.",
         {"phone": str, "chat_id": str, "message_ids": str, "confirm": bool},
         annotations=ToolAnnotations(destructiveHint=True),
     )
@@ -179,7 +179,8 @@ def register(db, client_pool, embedding_service, **kwargs):
 
     @tool(
         "pin_message",
-        "Pin a message in a Telegram chat. Ask user for confirmation first.",
+        "Pin a message in a Telegram chat. notify=true sends a notification to all members. "
+        "chat_id accepts @username, numeric ID, or 'me'. Ask user for confirmation first.",
         {"phone": str, "chat_id": str, "message_id": int, "notify": bool, "confirm": bool},
     )
     async def pin_message(args):
@@ -294,7 +295,8 @@ def register(db, client_pool, embedding_service, **kwargs):
 
     @tool(
         "get_participants",
-        "Get list of participants in a Telegram channel or group.",
+        "Get list of participants in a Telegram group (not broadcast channels). "
+        "search filters by name/username substring.",
         {"phone": str, "chat_id": str, "limit": int, "search": str},
     )
     async def get_participants(args):
@@ -335,9 +337,9 @@ def register(db, client_pool, embedding_service, **kwargs):
 
     @tool(
         "edit_admin",
-        "Promote or demote a user as admin in a Telegram channel/group. "
-        "Set is_admin=true to promote (grants all permissions), is_admin=false to demote. "
-        "Ask user for confirmation first.",
+        "Promote (is_admin=true) or demote (is_admin=false) a user as admin. "
+        "user_id accepts @username or numeric ID. title sets a custom admin badge. "
+        "Requires admin rights. Ask for confirmation first.",
         {"phone": str, "chat_id": str, "user_id": str, "is_admin": bool, "title": str, "confirm": bool},
     )
     async def edit_admin(args):
@@ -379,9 +381,9 @@ def register(db, client_pool, embedding_service, **kwargs):
 
     @tool(
         "edit_permissions",
-        "Restrict or unrestrict a user in a Telegram group. "
-        "Set send_messages=false to mute, send_media=false to block media, etc. "
-        "To unrestrict, set all flags to true. Ask user for confirmation first.",
+        "Restrict (send_messages=false) or unrestrict (all true) a user in a Telegram group. "
+        "until_date = ISO datetime (e.g. '2025-12-31T23:59:59') for temporary restriction. "
+        "Ask for confirmation first.",
         {
             "phone": str, "chat_id": str, "user_id": str,
             "send_messages": bool, "send_media": bool,
@@ -438,7 +440,7 @@ def register(db, client_pool, embedding_service, **kwargs):
     @tool(
         "kick_participant",
         "⚠️ DANGEROUS: Kick a participant from a Telegram chat. "
-        "Always ask user for confirmation first.",
+        "user_id accepts @username or numeric ID. Always ask user for confirmation first.",
         {"phone": str, "chat_id": str, "user_id": str, "confirm": bool},
         annotations=ToolAnnotations(destructiveHint=True),
     )
@@ -475,7 +477,8 @@ def register(db, client_pool, embedding_service, **kwargs):
 
     @tool(
         "get_broadcast_stats",
-        "Get broadcast statistics for a Telegram channel.",
+        "Get broadcast statistics (followers, views, reactions) for a Telegram channel. "
+        "Requires admin/owner rights on the channel.",
         {"phone": str, "chat_id": str},
     )
     async def get_broadcast_stats(args):
@@ -594,7 +597,8 @@ def register(db, client_pool, embedding_service, **kwargs):
 
     @tool(
         "mark_read",
-        "Mark messages as read in a Telegram chat.",
+        "Mark messages as read in a Telegram chat. "
+        "max_id marks all messages up to that ID as read; omit to mark all.",
         {"phone": str, "chat_id": str, "max_id": int},
     )
     async def mark_read(args):
@@ -624,10 +628,9 @@ def register(db, client_pool, embedding_service, **kwargs):
 
     @tool(
         "read_messages",
-        "Read the last N messages from any Telegram chat or channel without storing them in the database. "
-        "Useful to preview content before deciding whether to collect it. "
-        "chat_id can be a username (@channel), t.me link, numeric ID, or 'me' for Saved Messages. "
-        "Default limit is 100 messages.",
+        "Preview last N messages from any Telegram chat/channel (not stored in DB). "
+        "chat_id accepts @username, t.me link, numeric ID, or 'me'. "
+        "To save messages to DB for search, use add_channel + collect_channel instead.",
         {"phone": str, "chat_id": str, "limit": int},
     )
     async def read_messages(args):

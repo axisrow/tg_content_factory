@@ -60,10 +60,8 @@ TOOL_CATEGORIES: dict[str, ToolCategory] = {
     "list_pipeline_runs": ToolCategory.READ,
     "get_pipeline_run": ToolCategory.READ,
     "publish_pipeline_run": ToolCategory.WRITE,
-    "get_pipeline_queue": ToolCategory.READ,
     # Moderation
     "list_pending_moderation": ToolCategory.READ,
-    "view_moderation_run": ToolCategory.READ,
     "approve_run": ToolCategory.WRITE,
     "reject_run": ToolCategory.WRITE,
     "bulk_approve_runs": ToolCategory.WRITE,
@@ -166,7 +164,6 @@ TOOL_CATEGORIES: dict[str, ToolCategory] = {
     "list_generated_images": ToolCategory.READ,
     # Settings
     "get_settings": ToolCategory.READ,
-    "save_scheduler_settings": ToolCategory.WRITE,
     "save_agent_settings": ToolCategory.WRITE,
     "save_filter_settings": ToolCategory.WRITE,
     "get_system_info": ToolCategory.READ,

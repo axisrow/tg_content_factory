@@ -720,14 +720,14 @@ class TestGetSettingsTool:
         handlers = _get_tool_handlers(mock_db)
         result = await handlers["get_settings"]({})
         text = _text(result)
-        assert "scheduler_interval_minutes" in text
+        assert "collect_interval_minutes" in text
         assert "agent_prompt_template" in text
         assert "Настройки системы" in text
 
     @pytest.mark.asyncio
     async def test_shows_set_values(self, mock_db):
         async def fake_get(key):
-            return "60" if key == "scheduler_interval_minutes" else None
+            return "60" if key == "collect_interval_minutes" else None
 
         mock_db.get_setting = fake_get
         handlers = _get_tool_handlers(mock_db)
@@ -740,37 +740,6 @@ class TestGetSettingsTool:
         handlers = _get_tool_handlers(mock_db)
         result = await handlers["get_settings"]({})
         assert "Ошибка получения настроек" in _text(result)
-
-
-class TestSaveSchedulerSettingsTool:
-    @pytest.mark.asyncio
-    async def test_no_confirm_returns_gate(self, mock_db):
-        handlers = _get_tool_handlers(mock_db)
-        result = await handlers["save_scheduler_settings"]({"interval_minutes": 30})
-        assert "confirm=true" in _text(result)
-
-    @pytest.mark.asyncio
-    async def test_with_confirm_saves_interval(self, mock_db):
-        mock_db.set_setting = AsyncMock()
-        handlers = _get_tool_handlers(mock_db)
-        result = await handlers["save_scheduler_settings"]({"interval_minutes": 30, "confirm": True})
-        assert "сохранены" in _text(result)
-        mock_db.set_setting.assert_any_await("scheduler_interval_minutes", "30")
-
-    @pytest.mark.asyncio
-    async def test_with_confirm_saves_enabled_flag(self, mock_db):
-        mock_db.set_setting = AsyncMock()
-        handlers = _get_tool_handlers(mock_db)
-        result = await handlers["save_scheduler_settings"]({"enabled": False, "confirm": True})
-        assert "сохранены" in _text(result)
-        mock_db.set_setting.assert_any_await("scheduler_enabled", "false")
-
-    @pytest.mark.asyncio
-    async def test_error_returns_text(self, mock_db):
-        mock_db.set_setting = AsyncMock(side_effect=Exception("write error"))
-        handlers = _get_tool_handlers(mock_db)
-        result = await handlers["save_scheduler_settings"]({"interval_minutes": 10, "confirm": True})
-        assert "Ошибка сохранения настроек" in _text(result)
 
 
 class TestSaveAgentSettingsTool:
