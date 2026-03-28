@@ -117,6 +117,7 @@ TOOL_CATEGORIES: dict[str, ToolCategory] = {
     "setup_notification_bot": ToolCategory.WRITE,
     "delete_notification_bot": ToolCategory.DELETE,
     "test_notification": ToolCategory.WRITE,
+    "notification_dry_run": ToolCategory.READ,
     # Photo Loader
     "list_photo_batches": ToolCategory.READ,
     "list_photo_items": ToolCategory.READ,
@@ -130,6 +131,8 @@ TOOL_CATEGORIES: dict[str, ToolCategory] = {
     "run_photo_due": ToolCategory.WRITE,
     "create_auto_upload": ToolCategory.WRITE,
     "update_auto_upload": ToolCategory.WRITE,
+    "list_photo_dialogs": ToolCategory.READ,
+    "refresh_photo_dialogs": ToolCategory.WRITE,
     # My Telegram
     "search_my_telegram": ToolCategory.READ,
     "refresh_dialogs": ToolCategory.WRITE,
@@ -226,12 +229,13 @@ MODULE_GROUPS: OrderedDict[str, list[str]] = OrderedDict([
     ]),
     ("Уведомления", [
         "get_notification_status", "setup_notification_bot", "delete_notification_bot",
-        "test_notification",
+        "test_notification", "notification_dry_run",
     ]),
     ("Фото", [
         "list_photo_batches", "list_photo_items", "send_photos_now", "schedule_photos",
         "cancel_photo_item", "list_auto_uploads", "toggle_auto_upload", "delete_auto_upload",
         "create_photo_batch", "run_photo_due", "create_auto_upload", "update_auto_upload",
+        "list_photo_dialogs", "refresh_photo_dialogs",
     ]),
     ("Мой Telegram", [
         "search_my_telegram", "refresh_dialogs", "leave_dialogs", "create_telegram_channel",

@@ -106,4 +106,51 @@ def register(db, client_pool, embedding_service, **kwargs):
 
     tools.append(test_notification)
 
+    # ------------------------------------------------------------------
+    # notification_dry_run (READ)
+    # ------------------------------------------------------------------
+
+    @tool(
+        "notification_dry_run",
+        "Preview how many matches each active notification query would produce. "
+        "Does NOT send any notifications.",
+        {},
+    )
+    async def notification_dry_run(args):
+        try:
+            from datetime import timezone
+
+            last_task = await db.repos.tasks.get_last_completed_collect_task()
+            since = None
+            if last_task and last_task.completed_at:
+                since = last_task.completed_at.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+            queries = await db.get_notification_queries(active_only=True)
+            # Filter out disabled jobs
+            filtered = []
+            for sq in queries:
+                val = await db.repos.settings.get_setting(f"scheduler_job_disabled:sq_{sq.id}")
+                if val != "1":
+                    filtered.append(sq)
+            queries = filtered
+            if not queries:
+                return _text_response("Нет активных запросов уведомлений.")
+            total_matches = 0
+            lines = [f"Dry-run уведомлений (с {since or 'N/A'}):"]
+            for sq in queries:
+                count = 0
+                if since:
+                    try:
+                        _, count = await db.search_messages_for_query_since(sq, since, limit=0)
+                    except Exception:
+                        count = 0
+                name = getattr(sq, "name", None) or sq.query
+                lines.append(f"  {name}: {count} совпадений")
+                total_matches += count
+            lines.append(f"\nИтого: {total_matches} совпадений")
+            return _text_response("\n".join(lines))
+        except Exception as e:
+            return _text_response(f"Ошибка dry-run уведомлений: {e}")
+
+    tools.append(notification_dry_run)
+
     return tools

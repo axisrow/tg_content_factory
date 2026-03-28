@@ -963,3 +963,119 @@ class TestGetSearchQueryStatsTool:
             result = await handlers["get_search_query_stats"]({"sq_id": 99, "days": 30})
 
         assert "Нет статистики" in _text(result)
+
+
+# ---------------------------------------------------------------------------
+# notification_dry_run tool
+# ---------------------------------------------------------------------------
+
+
+class TestNotificationDryRunTool:
+    @pytest.mark.asyncio
+    async def test_no_active_queries(self, mock_db):
+        mock_db.repos = MagicMock()
+        mock_db.repos.tasks.get_last_completed_collect_task = AsyncMock(return_value=None)
+        mock_db.get_notification_queries = AsyncMock(return_value=[])
+        handlers = _get_tool_handlers(mock_db)
+        result = await handlers["notification_dry_run"]({})
+        assert "Нет активных" in _text(result)
+
+    @pytest.mark.asyncio
+    async def test_returns_zero_when_no_since(self, mock_db):
+        mock_db.repos = MagicMock()
+        mock_db.repos.tasks.get_last_completed_collect_task = AsyncMock(return_value=None)
+        sq = SimpleNamespace(id=1, query="test", name="Test Query")
+        mock_db.get_notification_queries = AsyncMock(return_value=[sq])
+        mock_db.repos.settings.get_setting = AsyncMock(return_value=None)
+        handlers = _get_tool_handlers(mock_db)
+        result = await handlers["notification_dry_run"]({})
+        text = _text(result)
+        assert "Test Query" in text
+        assert "0 совпадений" in text
+
+    @pytest.mark.asyncio
+    async def test_returns_actual_match_counts(self, mock_db):
+        from datetime import datetime, timezone
+
+        mock_db.repos = MagicMock()
+        completed_task = SimpleNamespace(
+            completed_at=datetime(2025, 1, 15, 12, 0, tzinfo=timezone.utc)
+        )
+        mock_db.repos.tasks.get_last_completed_collect_task = AsyncMock(return_value=completed_task)
+        sq = SimpleNamespace(id=1, query="test", name="Test Query")
+        mock_db.get_notification_queries = AsyncMock(return_value=[sq])
+        mock_db.repos.settings.get_setting = AsyncMock(return_value=None)
+        mock_db.search_messages_for_query_since = AsyncMock(return_value=([], 5))
+        handlers = _get_tool_handlers(mock_db)
+        result = await handlers["notification_dry_run"]({})
+        text = _text(result)
+        assert "5 совпадений" in text
+        mock_db.search_messages_for_query_since.assert_awaited_once()
+
+
+# ---------------------------------------------------------------------------
+# list_photo_dialogs tool
+# ---------------------------------------------------------------------------
+
+
+class TestListPhotoDialogsTool:
+    @pytest.mark.asyncio
+    async def test_no_pool(self, mock_db):
+        handlers = _get_tool_handlers(mock_db, client_pool=None)
+        result = await handlers["list_photo_dialogs"]({})
+        assert "требует Telegram-клиент" in _text(result)
+
+    @pytest.mark.asyncio
+    async def test_returns_dialogs(self, mock_db):
+        mock_pool = MagicMock()
+        mock_db.get_accounts = AsyncMock(return_value=[
+            SimpleNamespace(id=1, phone="+1234", is_primary=True),
+        ])
+        mock_db.get_setting = AsyncMock(return_value=None)
+
+        with patch("src.services.channel_service.ChannelService") as mock_svc_cls:
+            mock_svc_cls.return_value.get_my_dialogs = AsyncMock(return_value=[
+                {"channel_id": 100, "channel_type": "channel", "title": "My Channel"},
+            ])
+            handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
+            result = await handlers["list_photo_dialogs"]({})
+
+        text = _text(result)
+        assert "My Channel" in text
+        assert "id=100" in text
+
+
+# ---------------------------------------------------------------------------
+# refresh_photo_dialogs tool
+# ---------------------------------------------------------------------------
+
+
+class TestRefreshPhotoDialogsTool:
+    @pytest.mark.asyncio
+    async def test_requires_confirmation(self, mock_db):
+        mock_pool = MagicMock()
+        mock_db.get_accounts = AsyncMock(return_value=[
+            SimpleNamespace(id=1, phone="+1234", is_primary=True),
+        ])
+        mock_db.get_setting = AsyncMock(return_value=None)
+        handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
+        result = await handlers["refresh_photo_dialogs"]({})
+        assert "confirm=true" in _text(result)
+
+    @pytest.mark.asyncio
+    async def test_refreshes(self, mock_db):
+        mock_pool = MagicMock()
+        mock_db.get_accounts = AsyncMock(return_value=[
+            SimpleNamespace(id=1, phone="+1234", is_primary=True),
+        ])
+        mock_db.get_setting = AsyncMock(return_value=None)
+
+        with patch("src.services.channel_service.ChannelService") as mock_svc_cls:
+            mock_svc_cls.return_value.get_my_dialogs = AsyncMock(return_value=[
+                {"channel_id": 1, "title": "A"},
+                {"channel_id": 2, "title": "B"},
+            ])
+            handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
+            result = await handlers["refresh_photo_dialogs"]({"confirm": True})
+
+        assert "2 диалогов" in _text(result)
