@@ -72,6 +72,89 @@ async def test_agent_chat_stream_mocked(db):
 
 
 @pytest.mark.asyncio
+async def test_chat_stream_stream_events_yield_incremental_chunks(db):
+    """StreamEvent content_block_delta/text_delta chunks are forwarded as SSE data."""
+    thread_id = await db.create_agent_thread("stream-event thread")
+    await db.save_agent_message(thread_id, "user", "test")
+
+    from claude_agent_sdk import AssistantMessage, ResultMessage, StreamEvent, TextBlock
+
+    # Simulate three incremental text chunks via StreamEvent
+    def _stream_event(text: str) -> MagicMock:
+        ev = MagicMock(spec=StreamEvent)
+        ev.event = {"type": "content_block_delta", "delta": {"type": "text_delta", "text": text}}
+        return ev
+
+    assistant_msg = MagicMock(spec=AssistantMessage)
+    assistant_msg.content = [TextBlock(text="приветмир")]  # full text — should be skipped
+    result_msg = MagicMock(spec=ResultMessage)
+
+    async def mock_query(prompt, options):
+        yield _stream_event("привет")
+        yield _stream_event(" ")
+        yield _stream_event("мир")
+        yield assistant_msg
+        yield result_msg
+
+    mgr = AgentManager(db)
+    mgr.initialize()
+
+    chunks = []
+    with patch("src.agent.manager.query", mock_query):
+        async for chunk in mgr.chat_stream(thread_id, "test"):
+            chunks.append(chunk)
+
+    payloads = [json.loads(c.removeprefix("data: ").strip()) for c in chunks]
+
+    # Incremental text chunks must be present
+    text_payloads = [p for p in payloads if "text" in p and not p.get("done")]
+    assert len(text_payloads) == 3, f"ожидали 3 текстовых чанка, получили: {text_payloads}"
+    assert text_payloads[0]["text"] == "привет"
+    assert text_payloads[1]["text"] == " "
+    assert text_payloads[2]["text"] == "мир"
+
+    # AssistantMessage text must NOT be duplicated when StreamEvents were received
+    all_text = "".join(p["text"] for p in text_payloads)
+    assert all_text == "привет мир", f"суммарный текст не совпадает: {all_text!r}"
+
+    # Done signal must be present with correct full_text
+    done_payloads = [p for p in payloads if p.get("done")]
+    assert done_payloads, "не найден done-payload"
+    assert done_payloads[0]["full_text"] == "привет мир"
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_fallback_to_assistant_message_when_no_stream_events(db):
+    """When no StreamEvents arrive, AssistantMessage text is used as fallback."""
+    thread_id = await db.create_agent_thread("fallback thread")
+    await db.save_agent_message(thread_id, "user", "test")
+
+    from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
+
+    assistant_msg = MagicMock(spec=AssistantMessage)
+    assistant_msg.content = [TextBlock(text="fallback text")]
+    result_msg = MagicMock(spec=ResultMessage)
+
+    async def mock_query(prompt, options):
+        yield assistant_msg
+        yield result_msg
+
+    mgr = AgentManager(db)
+    mgr.initialize()
+
+    chunks = []
+    with patch("src.agent.manager.query", mock_query):
+        async for chunk in mgr.chat_stream(thread_id, "test"):
+            chunks.append(chunk)
+
+    payloads = [json.loads(c.removeprefix("data: ").strip()) for c in chunks]
+    text_payloads = [p for p in payloads if "text" in p and not p.get("done")]
+    assert any(p["text"] == "fallback text" for p in text_payloads), (
+        f"AssistantMessage текст не найден в чанках: {text_payloads}"
+    )
+
+
+@pytest.mark.asyncio
 async def test_agent_chat_stream_renders_saved_prompt_template_variables(db):
     await db.set_setting(
         AGENT_PROMPT_TEMPLATE_SETTING,
