@@ -75,8 +75,11 @@ def _make_mock_pool():
     mock_client.edit_admin = AsyncMock()
     mock_client.edit_permissions = AsyncMock()
 
+    mock_session = MagicMock()
     mock_pool = MagicMock()
     mock_pool.get_native_client_by_phone = AsyncMock(return_value=(mock_client, None))
+    mock_pool.get_client_by_phone = AsyncMock(return_value=(mock_session, None))
+    mock_pool.resolve_dialog_entity = AsyncMock(return_value=MagicMock(id=123456))
     return mock_pool, mock_client
 
 

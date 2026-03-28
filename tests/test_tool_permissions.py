@@ -162,7 +162,18 @@ class TestRequirePhonePermission:
         assert await require_phone_permission(mock_db, "+79990001111", "leave_dialogs") is None
 
     async def test_phone_not_in_allowed(self, mock_db):
+        # A phone absent from the perms dict entirely gets defaults (all enabled).
+        # Only phones that ARE in perms but with tool=False are denied.
         perms = {"+79990002222": {"leave_dialogs": True}}
+        mock_db.get_setting = AsyncMock(return_value=json.dumps(perms))
+        result = await require_phone_permission(mock_db, "+79990001111", "leave_dialogs")
+        assert result is None  # not in perms → defaults (all enabled)
+
+    async def test_phone_explicitly_denied(self, mock_db):
+        perms = {
+            "+79990001111": {"leave_dialogs": False},
+            "+79990002222": {"leave_dialogs": True},
+        }
         mock_db.get_setting = AsyncMock(return_value=json.dumps(perms))
         result = await require_phone_permission(mock_db, "+79990001111", "leave_dialogs")
         text = _text(result)
@@ -541,7 +552,11 @@ class TestEndToEndPermissionFlow:
         assert "покинут" in _text(r2)
 
     async def test_phone_not_allowed(self, mock_db):
-        perms = {"+79990002222": {"leave_dialogs": True}}
+        # Phone explicitly set to False in perms should be denied
+        perms = {
+            "+79990001111": {"leave_dialogs": False},
+            "+79990002222": {"leave_dialogs": True},
+        }
         mock_db.get_setting = AsyncMock(return_value=json.dumps(perms))
         pool = MagicMock()
         handlers = _get_tool_handlers(mock_db, client_pool=pool)
