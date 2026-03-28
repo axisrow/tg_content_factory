@@ -445,6 +445,37 @@
         text-align: left;
     }
 }
+
+/* Permission request dialog */
+#permission-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 2000;
+    background: rgba(0,0,0,0.5);
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    padding-bottom: 1rem;
+}
+#permission-box {
+    background: var(--bs-dark-bg-subtle, #1e1e2e);
+    border: 1px solid var(--bs-primary);
+    border-radius: 6px;
+    padding: 1rem 1.5rem;
+    min-width: 360px;
+    max-width: 520px;
+    font-family: var(--bs-font-monospace, monospace);
+}
+.perm-header { color: var(--bs-secondary-color); margin-bottom: 0.25rem; font-size: 0.85rem; }
+.perm-tool { color: var(--bs-info); font-weight: 600; margin-bottom: 0.75rem; }
+.perm-item {
+    padding: 0.2rem 0;
+    cursor: pointer;
+    white-space: pre;
+    color: var(--bs-body-color);
+}
+.perm-item.perm-selected { color: var(--bs-primary); }
+.perm-hint { margin-top: 0.75rem; color: var(--bs-secondary-color); font-size: 0.8rem; }
 </style>
 {% endblock %}
 
@@ -665,6 +696,66 @@
         return marked.parse(text || '');
     }
 
+    // Permission request dialog — menu style with keyboard shortcuts (1/2/3 + Enter)
+    function escapeHtml(s) {
+        var d = document.createElement('div');
+        d.textContent = s;
+        return d.innerHTML;
+    }
+
+    function showPermissionDialog(toolName, phone) {
+        return new Promise(function(resolve) {
+            var phoneStr = phone ? ' (' + escapeHtml(phone) + ')' : '';
+            var modal = document.createElement('div');
+            modal.id = 'permission-modal';
+            modal.innerHTML =
+                '<div id="permission-box">' +
+                '<div class="perm-header">Агент хочет использовать:</div>' +
+                '<div class="perm-tool">' + escapeHtml(toolName) + phoneStr + '</div>' +
+                '<div class="perm-menu">' +
+                '<div class="perm-item" data-choice="once" tabindex="0"><span class="perm-cursor">&gt;</span> 1. Разрешить один раз</div>' +
+                '<div class="perm-item" data-choice="session" tabindex="0">  2. Разрешить в этой сессии</div>' +
+                '<div class="perm-item" data-choice="deny" tabindex="0">  3. Запретить</div>' +
+                '</div>' +
+                '<div class="perm-hint">↑↓ навигация &nbsp;·&nbsp; Enter выбор &nbsp;·&nbsp; Esc = Запретить</div>' +
+                '</div>';
+            document.body.appendChild(modal);
+
+            var items = modal.querySelectorAll('.perm-item');
+            var selected = 0;
+
+            function highlight() {
+                items.forEach(function(el, i) {
+                    el.querySelector('.perm-cursor').textContent = i === selected ? '>' : ' ';
+                    el.classList.toggle('perm-selected', i === selected);
+                });
+            }
+
+            function pick(choice) {
+                document.body.removeChild(modal);
+                document.removeEventListener('keydown', onKey);
+                resolve(choice);
+            }
+
+            function onKey(e) {
+                if (e.key === 'ArrowUp' || e.key === 'k') { selected = (selected + 2) % 3; highlight(); e.preventDefault(); }
+                else if (e.key === 'ArrowDown' || e.key === 'j') { selected = (selected + 1) % 3; highlight(); e.preventDefault(); }
+                else if (e.key === 'Enter') { pick(items[selected].dataset.choice); e.preventDefault(); }
+                else if (e.key === 'Escape') { pick('deny'); e.preventDefault(); }
+                else if (e.key === '1') pick('once');
+                else if (e.key === '2') pick('session');
+                else if (e.key === '3') pick('deny');
+            }
+
+            items.forEach(function(el, i) {
+                el.addEventListener('click', function() { pick(el.dataset.choice); });
+            });
+
+            document.addEventListener('keydown', onKey);
+            highlight();
+        });
+    }
+
     // Render existing assistant messages loaded from DB
     document.querySelectorAll('[data-md]').forEach(function(el) {
         el.innerHTML = renderMd(el.textContent);
@@ -821,7 +912,25 @@
                     var jsonStr = line.slice(5).trim();
                     try {
                         var data = JSON.parse(jsonStr);
-                        if (data.error) {
+                        if (data.type === 'permission_request') {
+                            var choice = await showPermissionDialog(data.tool, data.phone || '');
+                            try {
+                                await fetch('/agent/threads/' + threadId + '/permission/' + data.request_id, {
+                                    method: 'POST',
+                                    headers: {'Content-Type': 'application/json'},
+                                    body: JSON.stringify({choice: choice})
+                                });
+                            } catch (fetchErr) {
+                                console.error('Permission POST failed, sending deny:', fetchErr);
+                                try {
+                                    await fetch('/agent/threads/' + threadId + '/permission/' + data.request_id, {
+                                        method: 'POST',
+                                        headers: {'Content-Type': 'application/json'},
+                                        body: JSON.stringify({choice: 'deny'})
+                                    });
+                                } catch (_) { /* server-side timeout will handle it */ }
+                            }
+                        } else if (data.error) {
                             aiBubble.className = 'message-error';
                             aiBubble.textContent = data.error;
                             fullText = data.error;

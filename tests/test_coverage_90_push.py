@@ -472,12 +472,14 @@ class TestClientPoolProperties:
         pool = ClientPool.__new__(ClientPool)
         pool._dialogs_cache = {}
         pool._dialogs_cache_ttl_sec = 300
+        pool._dialogs_db_cache_ttl_sec = 3600.0
         pool._db = MagicMock()
         pool._db.repos = MagicMock()
         pool._db.repos.dialog_cache = MagicMock()
         pool._db.repos.dialog_cache.list_dialogs = AsyncMock(
             return_value=[{"id": 1, "channel_type": "channel"}, {"id": 2, "channel_type": "dm"}]
         )
+        pool._db.repos.dialog_cache.get_cached_at = AsyncMock(return_value=datetime.now(timezone.utc))
         result = await pool._get_db_cached_dialogs("+1", "full")
         assert result is not None
         assert len(result) == 2
@@ -489,12 +491,14 @@ class TestClientPoolProperties:
         pool = ClientPool.__new__(ClientPool)
         pool._dialogs_cache = {}
         pool._dialogs_cache_ttl_sec = 300
+        pool._dialogs_db_cache_ttl_sec = 3600.0
         pool._db = MagicMock()
         pool._db.repos = MagicMock()
         pool._db.repos.dialog_cache = MagicMock()
         pool._db.repos.dialog_cache.list_dialogs = AsyncMock(
             return_value=[{"id": 1, "channel_type": "channel"}, {"id": 2, "channel_type": "dm"}]
         )
+        pool._db.repos.dialog_cache.get_cached_at = AsyncMock(return_value=datetime.now(timezone.utc))
         result = await pool._get_db_cached_dialogs("+1", "channels_only")
         assert result is not None
         assert len(result) == 1  # dm filtered out
