@@ -182,6 +182,24 @@ async def inject_context(request: Request, thread_id: int):
     return JSONResponse({"content": content})
 
 
+@router.post("/threads/{thread_id}/permission/{request_id}")
+async def resolve_permission(request: Request, thread_id: int, request_id: str):
+    """Resolve a pending permission request from the agent.
+
+    Called by the browser after the user picks a choice in the permission dialog.
+    Body: {"choice": "once"|"session"|"deny"}
+    """
+    body = await request.json()
+    choice = body.get("choice", "deny")
+    if choice not in ("once", "session", "deny"):
+        raise HTTPException(status_code=400, detail="Invalid choice")
+    agent_manager = deps.get_agent_manager(request)
+    if agent_manager is None:
+        raise HTTPException(status_code=503, detail="AgentManager not initialized")
+    ok = agent_manager.permission_gate.resolve(request_id, choice)
+    return JSONResponse({"ok": ok})
+
+
 @router.post("/threads/{thread_id}/stop")
 async def stop_chat(request: Request, thread_id: int):
     db = deps.get_db(request)
@@ -235,8 +253,11 @@ async def chat(request: Request, thread_id: int):
     if thread["title"] == "Новый тред":
         await db.rename_agent_thread(thread_id, message[:60])
 
+    # Use HTTP session cookie as session_id so per-user overrides are isolated
+    session_id = request.cookies.get("session", "web")
+
     async def generate():
-        async for chunk in agent_manager.chat_stream(thread_id, message, model=model):
+        async for chunk in agent_manager.chat_stream(thread_id, message, model=model, session_id=session_id):
             try:
                 data_str = chunk.removeprefix("data: ").strip()
                 data = json.loads(data_str)

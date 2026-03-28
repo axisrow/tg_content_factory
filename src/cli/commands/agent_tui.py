@@ -14,8 +14,9 @@ from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches
 from textual.reactive import reactive
+from textual.screen import ModalScreen
 from textual.widget import Widget
-from textual.widgets import Button, Footer, Header, Label, Markdown, Static, TextArea
+from textual.widgets import Button, Footer, Header, Label, ListItem, ListView, Markdown, Static, TextArea
 from textual.worker import WorkerState
 
 if TYPE_CHECKING:
@@ -37,6 +38,7 @@ class ThreadItem(Widget):
         super().__init__()
         self.thread_id = thread_id
         self._title = title
+        self.tooltip = "Ctrl+D — удалить тред"
         if active:
             self.add_class("active")
 
@@ -159,6 +161,92 @@ class ThreadSidebar(Container):
             item.set_active(item.thread_id == thread_id)
 
 
+class PermissionDialog(ModalScreen):
+    """Bottom-docked permission request menu in Claude Code style.
+
+    Shows when the agent needs access to a restricted tool.
+    Returns "once", "session", or "deny" via self.dismiss().
+    """
+
+    DEFAULT_CSS = """
+    PermissionDialog {
+        align: center bottom;
+    }
+    #permission-box {
+        background: $surface;
+        border: solid $primary;
+        width: 70;
+        height: auto;
+        padding: 1 2;
+        dock: bottom;
+    }
+    #permission-header {
+        color: $text-muted;
+        margin-bottom: 1;
+    }
+    #permission-tool {
+        color: $accent;
+        text-style: bold;
+        margin-bottom: 1;
+    }
+    #permission-list {
+        height: auto;
+        margin-bottom: 1;
+    }
+    #permission-hint {
+        color: $text-muted;
+    }
+    """
+
+    BINDINGS = [
+        Binding("escape", "deny", "Отмена"),
+        Binding("1", "choose_once", show=False),
+        Binding("2", "choose_session", show=False),
+        Binding("3", "choose_deny", show=False),
+    ]
+
+    def __init__(self, tool_name: str, phone: str) -> None:
+        super().__init__()
+        self._tool_name = tool_name
+        self._phone = phone
+
+    def compose(self) -> ComposeResult:
+        phone_part = f" ({self._phone})" if self._phone else ""
+        with Container(id="permission-box"):
+            yield Label("Агент хочет использовать:", id="permission-header")
+            yield Label(f"{self._tool_name}{phone_part}", id="permission-tool")
+            with ListView(id="permission-list"):
+                yield ListItem(Label("> 1. Разрешить один раз"), id="item-once")
+                yield ListItem(Label("  2. Разрешить в этой сессии"), id="item-session")
+                yield ListItem(Label("  3. Запретить"), id="item-deny")
+            yield Label("Esc · ↑↓ навигация · Enter выбор", id="permission-hint")
+
+    def on_mount(self) -> None:
+        self.query_one(ListView).focus()
+
+    @on(ListView.Selected)
+    def on_list_selected(self, event: ListView.Selected) -> None:
+        item_id = event.item.id
+        if item_id == "item-once":
+            self.dismiss("once")
+        elif item_id == "item-session":
+            self.dismiss("session")
+        else:
+            self.dismiss("deny")
+
+    def action_deny(self) -> None:
+        self.dismiss("deny")
+
+    def action_choose_once(self) -> None:
+        self.dismiss("once")
+
+    def action_choose_session(self) -> None:
+        self.dismiss("session")
+
+    def action_choose_deny(self) -> None:
+        self.dismiss("deny")
+
+
 class AgentTuiApp(App):
     """Interactive TUI chat with agent."""
 
@@ -230,6 +318,11 @@ class AgentTuiApp(App):
         self.config = config
         self.agent_manager = agent_manager
         self._stream_worker = None
+        # Activate interactive permission dialogs for TUI mode
+        self.agent_manager.enable_permission_gate()
+
+    def on_unmount(self) -> None:
+        self.agent_manager.disable_permission_gate()
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
@@ -352,11 +445,19 @@ class AgentTuiApp(App):
         messages_container = self.query_one("#messages", VerticalScroll)
         full_text = ""
         try:
-            async for chunk in self.agent_manager.chat_stream(thread_id, message, model=model):
+            async for chunk in self.agent_manager.chat_stream(
+                thread_id, message, model=model, session_id="tui"
+            ):
                 raw = chunk.removeprefix("data: ").strip()
                 try:
                     payload = json.loads(raw)
                 except json.JSONDecodeError:
+                    continue
+                if payload.get("type") == "permission_request":
+                    # Show interactive permission menu; tool handler is awaiting the Future
+                    dialog = PermissionDialog(payload["tool"], payload.get("phone", ""))
+                    choice = await self.push_screen_wait(dialog)
+                    self.agent_manager.permission_gate.resolve(payload["request_id"], choice)
                     continue
                 if "text" in payload:
                     full_text += payload["text"]
