@@ -180,6 +180,11 @@ class ChannelBundle:
     async def get_previous_subscriber_counts(self) -> dict[int, int | None]:
         return await self.channel_stats.get_previous_subscriber_counts()
 
+    async def get_latest_and_previous_stats(
+        self,
+    ) -> tuple[dict[int, ChannelStats], dict[int, int | None]]:
+        return await self.channel_stats.get_latest_and_previous_stats()
+
     async def create_collection_task(
         self,
         channel_id: int,

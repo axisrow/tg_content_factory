@@ -904,18 +904,22 @@ class MessagesRepository:
         return cur.rowcount or 0
 
     async def get_stats(self) -> dict:
-        stats: dict[str, int] = {}
-        queries = {
-            "accounts": "SELECT COUNT(*) as cnt FROM accounts",
-            "channels": "SELECT COUNT(*) as cnt FROM channels",
-            "messages": "SELECT COUNT(*) as cnt FROM messages",
-            "search_queries": "SELECT COUNT(*) as cnt FROM search_queries",
+        cur = await self._db.execute(
+            "SELECT"
+            " (SELECT COUNT(*) FROM accounts) AS accounts,"
+            " (SELECT COUNT(*) FROM channels) AS channels,"
+            " (SELECT COUNT(*) FROM messages) AS messages,"
+            " (SELECT COUNT(*) FROM search_queries) AS search_queries"
+        )
+        row = await cur.fetchone()
+        if not row:
+            return {"accounts": 0, "channels": 0, "messages": 0, "search_queries": 0}
+        return {
+            "accounts": row["accounts"],
+            "channels": row["channels"],
+            "messages": row["messages"],
+            "search_queries": row["search_queries"],
         }
-        for table, sql in queries.items():
-            cur = await self._db.execute(sql)
-            row = await cur.fetchone()
-            stats[table] = row["cnt"] if row else 0
-        return stats
 
     async def get_trending_emojis(self, limit: int = 10, days: int | None = None) -> list[dict]:
         """Return top emojis by total reaction count across all messages.
