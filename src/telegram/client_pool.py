@@ -758,6 +758,92 @@ class ClientPool:
         logger.warning("resolve_channel: all attempts failed for '%s' (no available clients)", identifier)
         return None
 
+    async def resolve_any_entity(self, identifier: str, phone: str | None = None) -> dict | None:
+        """Resolve any Telegram entity by @username, t.me/ link, or numeric ID.
+
+        Unlike resolve_channel, this returns users, bots, channels, groups, and mini-apps.
+        If phone is given, tries that account first, then falls back to any available client.
+        Returns dict with channel_id, title, username, channel_type or None on failure.
+        """
+        identifier = re.sub(r"(t\.me/[^/\s]+)/\d+$", r"\1", identifier)
+        if identifier.lstrip("-").isdigit():
+            raw_id = int(identifier)
+            # Positive IDs are users/bots; negative are groups/channels
+            peer: str | int | PeerChannel | PeerUser = (
+                PeerUser(raw_id) if raw_id > 0 else PeerChannel(abs(raw_id))
+            )
+        else:
+            peer = identifier
+
+        async def _get_client() -> tuple[TelegramTransportSession, str] | None:
+            if phone:
+                result = await self.get_client_by_phone(phone)
+                if result:
+                    return result
+            return await self.get_available_client()
+
+        last_flood_error: HandledFloodWaitError | None = None
+        for _attempt in range(3):
+            result = await _get_client()
+            if not result:
+                if last_flood_error is not None:
+                    raise last_flood_error
+                raise RuntimeError("no_client")
+            session, used_phone = result
+            session = adapt_transport_session(session, disconnect_on_close=False)
+            try:
+                entity = await run_with_flood_wait(
+                    session.resolve_entity(peer),
+                    operation="resolve_any_entity",
+                    phone=used_phone,
+                    pool=self,
+                    logger_=logger,
+                    timeout=30.0,
+                )
+                if isinstance(entity, ChannelForbidden):
+                    return None
+                # Determine type and title
+                if hasattr(entity, "title"):
+                    # Channel or Chat
+                    channel_type, deactivate = self._classify_entity(entity)
+                    return {
+                        "channel_id": entity.id,
+                        "title": entity.title,
+                        "username": getattr(entity, "username", None),
+                        "channel_type": channel_type,
+                        "deactivate": deactivate,
+                    }
+                else:
+                    # User or Bot
+                    first = getattr(entity, "first_name", "") or ""
+                    last = getattr(entity, "last_name", "") or ""
+                    title = (first + " " + last).strip() or str(entity.id)
+                    is_bot = getattr(entity, "bot", False)
+                    return {
+                        "channel_id": entity.id,
+                        "title": title,
+                        "username": getattr(entity, "username", None),
+                        "channel_type": "bot" if is_bot else "dm",
+                        "deactivate": False,
+                    }
+            except asyncio.TimeoutError:
+                logger.warning("resolve_any_entity: timed out for '%s'", identifier)
+                return None
+            except HandledFloodWaitError as exc:
+                last_flood_error = exc
+                continue
+            except (UsernameNotOccupiedError, UsernameInvalidError) as e:
+                logger.warning("resolve_any_entity: username not found '%s': %s", identifier, e)
+                return None
+            except Exception as e:
+                logger.warning("resolve_any_entity: failed to resolve '%s': %s", identifier, e)
+                return None
+            finally:
+                await self.release_client(used_phone)
+        if last_flood_error is not None:
+            raise last_flood_error
+        return None
+
     @staticmethod
     def _classify_entity(entity) -> tuple[str, bool]:
         """Return (channel_type, deactivate) for a Telegram channel/group entity."""
