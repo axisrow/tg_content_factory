@@ -11,6 +11,7 @@ logger = logging.getLogger(__name__)
 
 TOOL_PERMISSIONS_SETTING = "agent_tool_permissions"
 MCP_PREFIX = "mcp__telegram_db__"
+BUILTIN_TOOLS = ["WebSearch", "WebFetch"]
 
 
 class ToolCategory(str, Enum):
@@ -175,6 +176,9 @@ TOOL_CATEGORIES: dict[str, ToolCategory] = {
     "delete_agent_thread": ToolCategory.DELETE,
     "rename_agent_thread": ToolCategory.WRITE,
     "get_thread_messages": ToolCategory.READ,
+    # Built-in Claude tools (no MCP prefix)
+    "WebSearch": ToolCategory.READ,
+    "WebFetch": ToolCategory.READ,
 }
 
 # ---------------------------------------------------------------------------
@@ -260,6 +264,7 @@ MODULE_GROUPS: OrderedDict[str, list[str]] = OrderedDict([
         "list_agent_threads", "create_agent_thread", "delete_agent_thread",
         "rename_agent_thread", "get_thread_messages",
     ]),
+    ("Веб-поиск", ["WebSearch", "WebFetch"]),
 ])
 
 
@@ -407,20 +412,30 @@ async def load_tool_permissions_union(db) -> dict[str, bool]:
 
 
 def get_all_allowed_tools() -> list[str]:
-    """Build the full list of MCP-prefixed tool names from TOOL_CATEGORIES."""
-    return [f"{MCP_PREFIX}{name}" for name in TOOL_CATEGORIES]
+    """Build the full list of tool names from TOOL_CATEGORIES.
+
+    MCP tools get the prefix; built-in tools use bare names.
+    """
+    result = []
+    for name in TOOL_CATEGORIES:
+        if name in BUILTIN_TOOLS:
+            result.append(name)
+        else:
+            result.append(f"{MCP_PREFIX}{name}")
+    return result
 
 
 def filter_allowed_tools(all_tools: list[str], permissions: dict[str, bool]) -> list[str]:
-    """Filter MCP-prefixed tool names by permissions.
+    """Filter tool names by permissions.
 
+    Handles both MCP-prefixed and bare built-in tool names.
     Unknown tools (not in permissions dict) are denied by default.
     """
     result = []
-    for prefixed_name in all_tools:
-        bare = prefixed_name.removeprefix(MCP_PREFIX)
+    for tool_name in all_tools:
+        bare = tool_name.removeprefix(MCP_PREFIX) if tool_name.startswith(MCP_PREFIX) else tool_name
         if permissions.get(bare, False):
-            result.append(prefixed_name)
+            result.append(tool_name)
     return result
 
 
