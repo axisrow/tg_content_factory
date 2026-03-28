@@ -768,10 +768,15 @@ class ClientPool:
         identifier = re.sub(r"(t\.me/[^/\s]+)/\d+$", r"\1", identifier)
         if identifier.lstrip("-").isdigit():
             raw_id = int(identifier)
-            # Positive IDs are users/bots; negative are groups/channels
-            peer: str | int | PeerChannel | PeerUser = (
-                PeerUser(raw_id) if raw_id > 0 else PeerChannel(abs(raw_id))
-            )
+            if raw_id > 0:
+                # Positive IDs are users/bots
+                peer: str | PeerChannel | PeerUser = PeerUser(raw_id)
+            else:
+                # Negative IDs are groups/channels in Bot API format (-100XXXXXXXXX).
+                # Strip the -100 prefix to get the Telethon MTProto channel ID.
+                str_abs = str(abs(raw_id))
+                channel_id = int(str_abs[3:]) if str_abs.startswith("100") else abs(raw_id)
+                peer = PeerChannel(channel_id)
         else:
             peer = identifier
 

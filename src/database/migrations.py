@@ -667,6 +667,17 @@ async def run_migrations(db: aiosqlite.Connection) -> bool:
     # Reset agent prompt template to new default (AI Telegram client) — one-time migration
     cur = await db.execute("SELECT value FROM settings WHERE key = '_migration_reset_prompt_v2'")
     if not await cur.fetchone():
+        cur = await db.execute("SELECT value FROM settings WHERE key = 'agent_prompt_template'")
+        old_prompt_row = await cur.fetchone()
+        if old_prompt_row and old_prompt_row["value"]:
+            logger.warning(
+                "Resetting agent_prompt_template to new default; old value backed up to "
+                "'agent_prompt_template_pre_v2_backup'. Restore it manually if needed."
+            )
+            await db.execute(
+                "INSERT OR IGNORE INTO settings (key, value) VALUES ('agent_prompt_template_pre_v2_backup', ?)",
+                (old_prompt_row["value"],),
+            )
         await db.execute("DELETE FROM settings WHERE key = 'agent_prompt_template'")
         await db.execute(
             "INSERT OR IGNORE INTO settings (key, value) VALUES ('_migration_reset_prompt_v2', '1')"
