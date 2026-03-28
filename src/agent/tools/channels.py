@@ -247,4 +247,77 @@ def register(db, client_pool, embedding_service, **kwargs):
 
     tools.append(refresh_channel_types)
 
+    # ------------------------------------------------------------------
+    # refresh_channel_meta (WRITE + confirm) — about, linked_chat_id, has_comments
+    # ------------------------------------------------------------------
+
+    @tool(
+        "refresh_channel_meta",
+        "Refresh channel metadata (about, linked_chat_id, has_comments) from Telegram. "
+        "Pass identifier for a single channel, or omit to refresh all active channels. Requires confirmation.",
+        {"identifier": str, "confirm": bool},
+    )
+    async def refresh_channel_meta(args):
+        pool_gate = require_pool(client_pool, "Обновление метаданных каналов")
+        if pool_gate:
+            return pool_gate
+        identifier = args.get("identifier")
+        if identifier:
+            desc = f"обновит метаданные канала '{identifier}'"
+        else:
+            desc = "обновит метаданные всех активных каналов"
+        gate = require_confirmation(desc, args)
+        if gate:
+            return gate
+        try:
+            if identifier:
+                channels = await db.get_channels()
+                ch = next(
+                    (c for c in channels
+                     if str(c.channel_id) == str(identifier)
+                     or (c.username and c.username.lower() == identifier.lstrip("@").lower())),
+                    None,
+                )
+                if not ch:
+                    return _text_response(f"Канал '{identifier}' не найден.")
+                meta = await client_pool.fetch_channel_meta(ch.channel_id, ch.channel_type)
+                if not meta:
+                    return _text_response(f"Не удалось получить метаданные для '{ch.title}'.")
+                await db.update_channel_full_meta(
+                    ch.channel_id,
+                    about=meta["about"],
+                    linked_chat_id=meta["linked_chat_id"],
+                    has_comments=meta["has_comments"],
+                )
+                about_preview = (meta["about"] or "")[:60]
+                return _text_response(
+                    f"Метаданные обновлены: {ch.title}\n"
+                    f"  about: {about_preview}...\n"
+                    f"  linked_chat_id: {meta['linked_chat_id']}\n"
+                    f"  has_comments: {meta['has_comments']}"
+                )
+            else:
+                channels = await db.get_channels(active_only=True)
+                ok = failed = 0
+                for ch in channels:
+                    meta = await client_pool.fetch_channel_meta(ch.channel_id, ch.channel_type)
+                    if meta:
+                        await db.update_channel_full_meta(
+                            ch.channel_id,
+                            about=meta["about"],
+                            linked_chat_id=meta["linked_chat_id"],
+                            has_comments=meta["has_comments"],
+                        )
+                        ok += 1
+                    else:
+                        failed += 1
+                return _text_response(
+                    f"Обновление метаданных завершено.\n"
+                    f"Всего каналов: {len(channels)}. Обновлено: {ok}, не удалось: {failed}."
+                )
+        except Exception as e:
+            return _text_response(f"Ошибка обновления метаданных: {e}")
+
+    tools.append(refresh_channel_meta)
+
     return tools

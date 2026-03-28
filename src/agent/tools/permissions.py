@@ -41,6 +41,7 @@ TOOL_CATEGORIES: dict[str, ToolCategory] = {
     "toggle_channel": ToolCategory.WRITE,
     "import_channels": ToolCategory.WRITE,
     "refresh_channel_types": ToolCategory.WRITE,
+    "refresh_channel_meta": ToolCategory.WRITE,
     # Collection
     "collect_channel": ToolCategory.WRITE,
     "collect_all_channels": ToolCategory.WRITE,
@@ -80,6 +81,7 @@ TOOL_CATEGORIES: dict[str, ToolCategory] = {
     "delete_account": ToolCategory.DELETE,
     "get_flood_status": ToolCategory.READ,
     "clear_flood_status": ToolCategory.WRITE,
+    "get_account_info": ToolCategory.READ,
     # Filters
     "analyze_filters": ToolCategory.READ,
     "apply_filters": ToolCategory.WRITE,
@@ -180,7 +182,7 @@ MODULE_GROUPS: OrderedDict[str, list[str]] = OrderedDict([
     ]),
     ("Каналы", [
         "list_channels", "get_channel_stats", "add_channel", "delete_channel",
-        "toggle_channel", "import_channels", "refresh_channel_types",
+        "toggle_channel", "import_channels", "refresh_channel_types", "refresh_channel_meta",
     ]),
     ("Сбор", [
         "collect_channel", "collect_all_channels", "collect_channel_stats", "collect_all_stats",
@@ -200,7 +202,7 @@ MODULE_GROUPS: OrderedDict[str, list[str]] = OrderedDict([
     ]),
     ("Аккаунты", [
         "list_accounts", "toggle_account", "delete_account", "get_flood_status",
-        "clear_flood_status",
+        "clear_flood_status", "get_account_info",
     ]),
     ("Фильтры", [
         "analyze_filters", "apply_filters", "reset_filters", "toggle_channel_filter",

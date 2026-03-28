@@ -5,7 +5,7 @@ from __future__ import annotations
 from claude_agent_sdk import tool
 from mcp.types import ToolAnnotations
 
-from src.agent.tools._registry import _text_response, require_confirmation, resolve_phone
+from src.agent.tools._registry import _text_response, require_confirmation, require_pool, resolve_phone
 
 
 def register(db, client_pool, embedding_service, **kwargs):
@@ -114,5 +114,47 @@ def register(db, client_pool, embedding_service, **kwargs):
             return _text_response(f"Ошибка сброса flood-wait: {e}")
 
     tools.append(clear_flood_status)
+
+    # ------------------------------------------------------------------
+    # get_account_info (READ) — live Telegram account details
+    # ------------------------------------------------------------------
+
+    @tool(
+        "get_account_info",
+        "Get live Telegram account info (name, username, premium status) for connected accounts. "
+        "Optionally filter by phone number.",
+        {"phone": str},
+    )
+    async def get_account_info(args):
+        pool_gate = require_pool(client_pool, "Информация об аккаунтах")
+        if pool_gate:
+            return pool_gate
+        try:
+            users = await client_pool.get_users_info(include_avatar=False)
+            phone_filter = args.get("phone", "").strip()
+            if phone_filter:
+                from src.agent.tools._registry import normalize_phone
+
+                phone_filter = normalize_phone(phone_filter)
+                users = [u for u in users if u.phone == phone_filter]
+            if not users:
+                return _text_response("Подключённые аккаунты не найдены.")
+            db_accounts = await db.get_accounts()
+            active_by_phone = {a.phone: a.is_active for a in db_accounts}
+            lines = [f"Аккаунты ({len(users)}):"]
+            for u in users:
+                name = f"{u.first_name} {u.last_name}".strip() or "—"
+                username = f"@{u.username}" if u.username else "—"
+                premium = "да" if u.is_premium else "нет"
+                active = "да" if active_by_phone.get(u.phone, False) else "нет"
+                lines.append(
+                    f"- {u.phone}: {name} ({username}), "
+                    f"premium={premium}, активен={active}"
+                )
+            return _text_response("\n".join(lines))
+        except Exception as e:
+            return _text_response(f"Ошибка получения информации об аккаунтах: {e}")
+
+    tools.append(get_account_info)
 
     return tools
