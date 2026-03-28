@@ -67,10 +67,10 @@ def register(db, client_pool, embedding_service, **kwargs):
                         or clean in (d.get("title") or "").lower()
                     ]
                 elif kind == "numeric_id":
-                    dialogs = [
-                        d for d in dialogs
-                        if str(d.get("channel_id", "")) in (clean, clean.lstrip("-"))
-                    ]
+                    # channel_id stores Telethon entity.id (bare positive int).
+                    # Users may provide Bot API format (-1001234567890) where -100 is a prefix.
+                    bare_id = clean[4:] if clean.startswith("-100") else clean.lstrip("-")
+                    dialogs = [d for d in dialogs if str(d.get("channel_id", "")) == bare_id]
                 else:
                     dialogs = [
                         d for d in dialogs
