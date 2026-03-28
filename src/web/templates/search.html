@@ -237,7 +237,11 @@ document.addEventListener('click', function(e) {
         if (data.ok && data.translation) {
             var container = btn.parentElement.querySelector('[data-target="translation-' + msgId + '"]');
             if (container) {
-                container.innerHTML = '<i class="bi bi-translate me-1"></i>' + data.translation;
+                var icon = document.createElement('i');
+                icon.className = 'bi bi-translate me-1';
+                container.innerHTML = '';
+                container.appendChild(icon);
+                container.appendChild(document.createTextNode(data.translation));
                 container.style.display = '';
             }
             btn.remove();

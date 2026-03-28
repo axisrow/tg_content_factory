@@ -109,6 +109,12 @@ def test_parse_numbered_response_with_dots():
     assert result == {0: "Hello world", 1: "Good morning"}
 
 
+def test_parse_numbered_response_multiline():
+    response = "1: First paragraph.\nSecond paragraph continues.\n2: Next message."
+    result = TranslationService._parse_numbered_response(response, 2)
+    assert result == {0: "First paragraph.\nSecond paragraph continues.", 1: "Next message."}
+
+
 def test_parse_numbered_response_partial():
     response = "1: Hello world\n\n3: How are you"
     result = TranslationService._parse_numbered_response(response, 3)

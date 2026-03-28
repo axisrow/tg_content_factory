@@ -1200,6 +1200,8 @@ class MessagesRepository:
 
     async def backfill_language_detection(self, batch_size: int = 1000) -> int:
         """Detect language for messages with detected_lang IS NULL and text IS NOT NULL."""
+        import asyncio
+
         from src.services.translation_service import TranslationService
 
         cur = await self._db.execute(
@@ -1207,11 +1209,14 @@ class MessagesRepository:
             (batch_size,),
         )
         rows = await cur.fetchall()
+        # Run CPU-bound detection in thread to avoid blocking the event loop
+        detect_results = await asyncio.to_thread(
+            lambda: [(row["id"], TranslationService.detect_language(row["text"])) for row in rows]
+        )
         updated = 0
-        for row in rows:
-            lang = TranslationService.detect_language(row["text"])
+        for row_id, lang in detect_results:
             if lang:
-                await self._db.execute("UPDATE messages SET detected_lang = ? WHERE id = ?", (lang, row["id"]))
+                await self._db.execute("UPDATE messages SET detected_lang = ? WHERE id = ?", (lang, row_id))
                 updated += 1
         if updated:
             await self._db.commit()

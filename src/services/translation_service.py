@@ -38,8 +38,9 @@ class TranslationService:
         if not text or len(text.strip()) < 8:
             return None
         try:
-            from langdetect import detect
+            from langdetect import DetectorFactory, detect
 
+            DetectorFactory.seed = 0
             return detect(text)
         except Exception:
             return None
@@ -136,18 +137,43 @@ class TranslationService:
 
     @staticmethod
     def _parse_numbered_response(response: str, expected_count: int) -> dict[int, str]:
-        """Parse '1: translated text' format into {0-based-index: text} dict."""
+        """Parse '1: translated text' format into {0-based-index: text} dict.
+
+        Accumulates multi-line translations: continuation lines (not starting
+        with a number prefix) are appended to the current translation block.
+        """
         result: dict[int, str] = {}
+        current_idx: int | None = None
+        current_lines: list[str] = []
+
         for line in response.strip().splitlines():
-            line = line.strip()
-            if not line:
+            stripped = line.strip()
+            if not stripped:
+                if current_idx is not None:
+                    current_lines.append("")
                 continue
-            match = re.match(r"^(\d+)\s*[:\.]\s*(.+)$", line)
+            match = re.match(r"^(\d+)\s*[:\.]\s*(.+)$", stripped)
             if match:
+                # Save previous block
+                if current_idx is not None:
+                    result[current_idx] = "\n".join(current_lines).strip()
                 num = int(match.group(1))
                 text = match.group(2).strip()
-                if 1 <= num <= expected_count and text:
-                    result[num - 1] = text  # 0-based
+                if 1 <= num <= expected_count:
+                    current_idx = num - 1
+                    current_lines = [text]
+                else:
+                    current_idx = None
+                    current_lines = []
+            elif current_idx is not None:
+                current_lines.append(stripped)
+
+        # Save last block
+        if current_idx is not None:
+            text = "\n".join(current_lines).strip()
+            if text:
+                result[current_idx] = text
+
         return result
 
     # ── settings ────────────────────────────────────────────────────
