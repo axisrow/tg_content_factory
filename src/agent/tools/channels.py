@@ -289,10 +289,11 @@ def register(db, client_pool, embedding_service, **kwargs):
                     linked_chat_id=meta["linked_chat_id"],
                     has_comments=meta["has_comments"],
                 )
-                about_preview = (meta["about"] or "")[:60]
+                about = meta["about"] or ""
+                about_preview = about[:60] + ("..." if len(about) > 60 else "")
                 return _text_response(
                     f"Метаданные обновлены: {ch.title}\n"
-                    f"  about: {about_preview}...\n"
+                    f"  about: {about_preview}\n"
                     f"  linked_chat_id: {meta['linked_chat_id']}\n"
                     f"  has_comments: {meta['has_comments']}"
                 )
@@ -302,13 +303,16 @@ def register(db, client_pool, embedding_service, **kwargs):
                 for ch in channels:
                     meta = await client_pool.fetch_channel_meta(ch.channel_id, ch.channel_type)
                     if meta:
-                        await db.update_channel_full_meta(
-                            ch.channel_id,
-                            about=meta["about"],
-                            linked_chat_id=meta["linked_chat_id"],
-                            has_comments=meta["has_comments"],
-                        )
-                        ok += 1
+                        try:
+                            await db.update_channel_full_meta(
+                                ch.channel_id,
+                                about=meta["about"],
+                                linked_chat_id=meta["linked_chat_id"],
+                                has_comments=meta["has_comments"],
+                            )
+                            ok += 1
+                        except Exception:
+                            failed += 1
                     else:
                         failed += 1
                 return _text_response(
