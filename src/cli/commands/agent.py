@@ -75,6 +75,7 @@ async def _test_escaping(db, config) -> None:
 def run(args: argparse.Namespace) -> None:
     async def _run() -> None:
         config, db = await runtime.init_db(args.config)
+        auth = pool = mgr = None
         try:
             action = args.agent_action
 
@@ -98,7 +99,8 @@ def run(args: argparse.Namespace) -> None:
             elif action == "chat":
                 from src.agent.manager import AgentManager
 
-                mgr = AgentManager(db, config)
+                auth, pool = await runtime.init_pool(config, db)
+                mgr = AgentManager(db, config, client_pool=pool)
                 await mgr.refresh_settings_cache(preflight=True)
                 mgr.initialize()
 
@@ -200,6 +202,12 @@ def run(args: argparse.Namespace) -> None:
             elif action == "test-escaping":
                 await _test_escaping(db, config)
         finally:
+            if mgr is not None:
+                await mgr.close_all()
+            if pool is not None:
+                await pool.disconnect_all()
+            if auth is not None:
+                await auth.cleanup()
             await db.close()
 
     asyncio.run(_run())
