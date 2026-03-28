@@ -44,15 +44,15 @@ def _describe_tools(tools: list[Callable]) -> str:
     return "\n".join(parts)
 
 
-def _try_call_tool(name: str, args: dict, tools: list[Callable]) -> str:
-    for fn in tools:
-        if fn.__name__ == name:
-            try:
-                result = fn(**args)
-                return str(result)
-            except Exception as exc:
-                return f"[Tool error: {exc}]"
-    return f"[Unknown tool: {name}]"
+def _try_call_tool(name: str, args: dict, tool_map: dict[str, Callable]) -> str:
+    fn = tool_map.get(name)
+    if fn is None:
+        return f"[Unknown tool: {name}]"
+    try:
+        result = fn(**args)
+        return str(result)
+    except Exception as exc:
+        return f"[Tool error: {exc}]"
 
 
 def _chat_sync(base_url: str, model: str, messages: list[dict], api_key: str = "") -> str:
@@ -86,7 +86,7 @@ class OllamaReActAgent:
     ) -> None:
         self._base_url = base_url
         self._model = model
-        self._tools = tools
+        self._tool_map = {fn.__name__: fn for fn in tools}
         self._api_key = api_key
         self._max_steps = max_steps
 
@@ -118,7 +118,7 @@ class OllamaReActAgent:
             except (json.JSONDecodeError, AttributeError):
                 return {"messages": [_MockMessage(response)]}
 
-            tool_result = _try_call_tool(tool_name, tool_args, self._tools)
+            tool_result = _try_call_tool(tool_name, tool_args, self._tool_map)
             logger.debug("ReAct tool %r → %r", tool_name, tool_result[:100])
 
             messages.append({"role": "assistant", "content": response})

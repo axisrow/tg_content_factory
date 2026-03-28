@@ -471,21 +471,24 @@ class CollectionTasksRepository:
             return None
         now_iso = now.astimezone(timezone.utc).isoformat()
         placeholders = ", ".join("?" for _ in handled_types)
+
+        # Phase 1: lightweight read-only peek — no write lock
+        cur = await self._db.execute(
+            f"SELECT id FROM collection_tasks "
+            f"WHERE task_type IN ({placeholders}) "
+            "AND status = ? "
+            "AND (run_after IS NULL OR run_after <= ?) "
+            "ORDER BY COALESCE(run_after, ''), id ASC LIMIT 1",
+            (*handled_types, CollectionTaskStatus.PENDING.value, now_iso),
+        )
+        peek = await cur.fetchone()
+        if peek is None:
+            return None
+
+        # Phase 2: acquire write lock only when there is work to claim
         try:
             await self._db.execute("BEGIN IMMEDIATE")
-            cur = await self._db.execute(
-                f"SELECT id FROM collection_tasks "
-                f"WHERE task_type IN ({placeholders}) "
-                "AND status = ? "
-                "AND (run_after IS NULL OR run_after <= ?) "
-                "ORDER BY COALESCE(run_after, ''), id ASC LIMIT 1",
-                (*handled_types, CollectionTaskStatus.PENDING.value, now_iso),
-            )
-            row = await cur.fetchone()
-            if row is None:
-                await self._db.commit()
-                return None
-            selected_id = row["id"]
+            selected_id = peek["id"]
             updated = await self._db.execute(
                 "UPDATE collection_tasks "
                 "SET status = 'running', started_at = ?, completed_at = NULL "

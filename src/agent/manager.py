@@ -5,11 +5,12 @@ import json
 import logging
 import os
 import shutil
+import time
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import TypeVar
+from typing import Any, TypeVar
 
 from claude_agent_sdk import AssistantMessage, ClaudeAgentOptions, ResultMessage, TextBlock, query
 
@@ -79,8 +80,14 @@ class ClaudeSdkBackend:
         self._client_pool = client_pool
         self._scheduler_manager = scheduler_manager
         self._server = None
+        self._initialized = False
 
     def initialize(self) -> None:
+        self._ensure_initialized()
+
+    def _ensure_initialized(self) -> None:
+        if self._initialized:
+            return
         from src.agent.tools import make_mcp_server
 
         os.environ.setdefault("CLAUDE_CODE_STREAM_CLOSE_TIMEOUT", "300000")
@@ -88,6 +95,7 @@ class ClaudeSdkBackend:
             self._db, client_pool=self._client_pool, scheduler_manager=self._scheduler_manager,
             config=self._config,
         )
+        self._initialized = True
         logger.info("Claude SDK backend initialized")
 
     @property
@@ -107,6 +115,7 @@ class ClaudeSdkBackend:
         queue: asyncio.Queue[str | None],
         history_msgs: list[dict] | None = None,
     ) -> None:
+        self._ensure_initialized()
         if history_msgs:
             prompt = _embed_history_in_prompt(history_msgs, prompt)
         resolved_model = model or self._config.agent.model.strip() or os.environ.get("AGENT_MODEL")
@@ -132,7 +141,7 @@ class ClaudeSdkBackend:
         )
 
         all_tools = get_all_allowed_tools()
-        permissions = await load_tool_permissions_union(self._db)
+        permissions = await load_tool_permissions_union(self._db, use_cache=True)
         allowed = filter_allowed_tools(all_tools, permissions)
         if len(allowed) < len(all_tools):
             denied = [t.removeprefix(MCP_PREFIX) for t in all_tools if t not in allowed]
@@ -932,6 +941,37 @@ class DeepagentsBackend:
         raise RuntimeError(self._init_error)
 
 
+_SETTINGS_CACHE_TTL = 60.0  # seconds
+
+
+class _SettingsCache:
+    """Simple TTL cache for DB settings to avoid repeated queries per chat message."""
+
+    __slots__ = ("_entries",)
+
+    def __init__(self) -> None:
+        self._entries: dict[str, tuple[Any, float]] = {}
+
+    def get(self, key: str) -> Any | None:
+        entry = self._entries.get(key)
+        if entry is None:
+            return None
+        value, expires = entry
+        if time.monotonic() > expires:
+            del self._entries[key]
+            return None
+        return value
+
+    def set(self, key: str, value: Any, ttl: float = _SETTINGS_CACHE_TTL) -> None:
+        self._entries[key] = (value, time.monotonic() + ttl)
+
+    def invalidate(self, key: str | None = None) -> None:
+        if key is None:
+            self._entries.clear()
+        else:
+            self._entries.pop(key, None)
+
+
 class AgentManager:
     def __init__(
         self, db: Database, config: AppConfig | None = None, client_pool=None, scheduler_manager=None,
@@ -943,6 +983,9 @@ class AgentManager:
         )
         self._deepagents_backend = DeepagentsBackend(db, self._config)
         self._active_tasks: dict[int, asyncio.Task] = {}
+        self._settings_cache = _SettingsCache()
+        self._cached_allowed_tools: list[str] | None = None
+        self._cached_filtered_tools: tuple[list[str], dict[str, bool]] | None = None
 
     async def refresh_settings_cache(self, *, preflight: bool = False) -> None:
         await self._deepagents_backend.refresh_settings_cache()
@@ -1021,11 +1064,19 @@ class AgentManager:
         }
         return prompt, stats
 
+    async def _get_setting_cached(self, key: str, default: str = "") -> str:
+        cached = self._settings_cache.get(key)
+        if cached is not None:
+            return cached
+        value = await self._db.get_setting(key) or default
+        self._settings_cache.set(key, value)
+        return value
+
     async def _dev_mode_enabled(self) -> bool:
-        return (await self._db.get_setting("agent_dev_mode_enabled") or "0") == "1"
+        return (await self._get_setting_cached("agent_dev_mode_enabled", "0")) == "1"
 
     async def _backend_override(self) -> str:
-        override = (await self._db.get_setting("agent_backend_override") or "auto").strip()
+        override = (await self._get_setting_cached("agent_backend_override", "auto")).strip()
         if override not in {"auto", "claude", "deepagents"}:
             return "auto"
         return override
@@ -1107,8 +1158,7 @@ class AgentManager:
             stats["total_msgs"],
         )
         prompt_template = (
-            await self._db.get_setting(AGENT_PROMPT_TEMPLATE_SETTING)
-            or DEFAULT_AGENT_PROMPT_TEMPLATE
+            await self._get_setting_cached(AGENT_PROMPT_TEMPLATE_SETTING, DEFAULT_AGENT_PROMPT_TEMPLATE)
         )
         try:
             system_prompt = render_prompt_template(

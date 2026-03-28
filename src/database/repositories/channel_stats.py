@@ -87,3 +87,39 @@ class ChannelStatsRepository:
                SELECT channel_id, subscriber_count FROM ranked WHERE rn = 2""")
         rows = await cur.fetchall()
         return {r["channel_id"]: r["subscriber_count"] for r in rows}
+
+    async def get_latest_and_previous_stats(
+        self,
+    ) -> tuple[dict[int, ChannelStats], dict[int, int | None]]:
+        """Fetch latest stats and previous subscriber counts in a single query.
+
+        Returns (latest_stats, prev_subscriber_counts) — same as calling
+        get_latest_stats_for_all() + get_previous_subscriber_counts() but with
+        one DB round-trip instead of two.
+        """
+        cur = await self._db.execute("""WITH ranked AS (
+                   SELECT *, ROW_NUMBER() OVER (
+                       PARTITION BY channel_id ORDER BY collected_at DESC, id DESC
+                   ) AS rn FROM channel_stats
+               )
+               SELECT * FROM ranked WHERE rn <= 2""")
+        rows = await cur.fetchall()
+        latest: dict[int, ChannelStats] = {}
+        previous: dict[int, int | None] = {}
+        for r in rows:
+            rn = r["rn"]
+            if rn == 1:
+                latest[r["channel_id"]] = ChannelStats(
+                    id=r["id"],
+                    channel_id=r["channel_id"],
+                    subscriber_count=r["subscriber_count"],
+                    avg_views=r["avg_views"],
+                    avg_reactions=r["avg_reactions"],
+                    avg_forwards=r["avg_forwards"],
+                    collected_at=(
+                        datetime.fromisoformat(r["collected_at"]) if r["collected_at"] else None
+                    ),
+                )
+            elif rn == 2:
+                previous[r["channel_id"]] = r["subscriber_count"]
+        return latest, previous

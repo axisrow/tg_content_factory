@@ -81,6 +81,9 @@ class DBConnection:
         await self.db.execute("PRAGMA journal_mode=WAL")
         await self.db.execute("PRAGMA synchronous=NORMAL")
         await self.db.execute("PRAGMA foreign_keys=ON")
+        await self.db.execute("PRAGMA cache_size=-64000")  # 64MB
+        await self.db.execute("PRAGMA temp_store=MEMORY")
+        await self.db.execute("PRAGMA mmap_size=30000000")  # 30MB
         if _PROFILING_ENABLED:
             self.db = ProfilingConnection(self.db)  # type: ignore[assignment]
         return self.db
