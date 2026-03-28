@@ -276,7 +276,7 @@ def register(db, client_pool, embedding_service, **kwargs):
         sq_id = args.get("sq_id")
         if sq_id is None:
             return _text_response("Ошибка: sq_id обязателен.")
-        days = int(args.get("days", 30))
+        days = max(1, int(args.get("days", 30)))
         try:
             from src.services.search_query_service import SearchQueryService
 
