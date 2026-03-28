@@ -2690,13 +2690,17 @@ class TestMessagingPhonePermGates:
             Account(id=1, phone="+1111", session_string="s", is_active=True, is_primary=True),
         ])
         mock_db.repos.settings = MagicMock()
-        # Set up tool permission that blocks +1111 but allows +2222
-        perm_data = {"+2222": {"send_message": True, "edit_message": True, "delete_message": True,
-                               "forward_messages": True, "pin_message": True, "unpin_message": True,
-                               "download_media": True, "get_participants": True, "edit_admin": True,
-                               "edit_permissions": True, "kick_participant": True,
-                               "get_broadcast_stats": True, "archive_chat": True,
-                               "unarchive_chat": True, "mark_read": True}}
+        # Set up tool permissions that explicitly block +1111 but allow +2222
+        disabled = {k: False for k in ["send_message", "edit_message", "delete_message",
+                                        "forward_messages", "pin_message", "unpin_message",
+                                        "download_media", "get_participants", "edit_admin",
+                                        "edit_permissions", "kick_participant",
+                                        "get_broadcast_stats", "archive_chat",
+                                        "unarchive_chat", "mark_read"]}
+        perm_data = {
+            "+1111": disabled,
+            "+2222": {k: True for k in disabled},
+        }
         mock_db.get_setting = AsyncMock(return_value=json.dumps(perm_data))
         mock_db.repos.tool_permissions = MagicMock()
         mock_db.repos.tool_permissions.get_by_phone = AsyncMock(return_value=None)

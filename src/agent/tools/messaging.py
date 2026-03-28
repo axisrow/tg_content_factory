@@ -10,6 +10,7 @@ from src.agent.tools._registry import (
     require_confirmation,
     require_phone_permission,
     require_pool,
+    resolve_entity,
     resolve_phone,
 )
 
@@ -45,11 +46,9 @@ def register(db, client_pool, embedding_service, **kwargs):
         if gate:
             return gate
         try:
-            result = await client_pool.get_native_client_by_phone(phone)
-            if result is None:
-                return _text_response(f"Клиент для {phone} не найден или flood-wait активен.")
-            client, _ = result
-            entity = await client.get_entity(recipient)
+            client, entity, err = await resolve_entity(client_pool, phone, recipient)
+            if err:
+                return err
             await client.send_message(entity, text)
             return _text_response(f"Сообщение отправлено: {recipient}")
         except Exception as e:
@@ -85,11 +84,9 @@ def register(db, client_pool, embedding_service, **kwargs):
         if gate:
             return gate
         try:
-            result = await client_pool.get_native_client_by_phone(phone)
-            if result is None:
-                return _text_response(f"Клиент для {phone} не найден или flood-wait активен.")
-            client, _ = result
-            entity = await client.get_entity(chat_id)
+            client, entity, err = await resolve_entity(client_pool, phone, chat_id)
+            if err:
+                return err
             await client.edit_message(entity, int(message_id), text)
             return _text_response(f"Сообщение #{message_id} отредактировано.")
         except Exception as e:
@@ -127,11 +124,9 @@ def register(db, client_pool, embedding_service, **kwargs):
         if gate:
             return gate
         try:
-            result = await client_pool.get_native_client_by_phone(phone)
-            if result is None:
-                return _text_response(f"Клиент для {phone} не найден или flood-wait активен.")
-            client, _ = result
-            entity = await client.get_entity(chat_id)
+            client, entity, err = await resolve_entity(client_pool, phone, chat_id)
+            if err:
+                return err
             await client.delete_messages(entity, ids)
             return _text_response(f"Удалено {len(ids)} сообщений из чата {chat_id}.")
         except Exception as e:
@@ -169,12 +164,12 @@ def register(db, client_pool, embedding_service, **kwargs):
         if gate:
             return gate
         try:
-            result = await client_pool.get_native_client_by_phone(phone)
-            if result is None:
-                return _text_response(f"Клиент для {phone} не найден или flood-wait активен.")
-            client, _ = result
-            from_entity = await client.get_entity(from_chat)
-            to_entity = await client.get_entity(to_chat)
+            client, from_entity, err = await resolve_entity(client_pool, phone, from_chat)
+            if err:
+                return err
+            _, to_entity, err = await resolve_entity(client_pool, phone, to_chat)
+            if err:
+                return err
             await client.forward_messages(to_entity, ids, from_entity)
             return _text_response(f"Переслано {len(ids)} сообщений из {from_chat} в {to_chat}.")
         except Exception as e:
@@ -206,11 +201,9 @@ def register(db, client_pool, embedding_service, **kwargs):
         if gate:
             return gate
         try:
-            result = await client_pool.get_native_client_by_phone(phone)
-            if result is None:
-                return _text_response(f"Клиент для {phone} не найден.")
-            client, _ = result
-            entity = await client.get_entity(chat_id)
+            client, entity, err = await resolve_entity(client_pool, phone, chat_id)
+            if err:
+                return err
             await client.pin_message(entity, int(message_id), notify=notify)
             return _text_response(f"Сообщение #{message_id} закреплено в {chat_id}.")
         except Exception as e:
@@ -243,11 +236,9 @@ def register(db, client_pool, embedding_service, **kwargs):
         if gate:
             return gate
         try:
-            result = await client_pool.get_native_client_by_phone(phone)
-            if result is None:
-                return _text_response(f"Клиент для {phone} не найден.")
-            client, _ = result
-            entity = await client.get_entity(chat_id)
+            client, entity, err = await resolve_entity(client_pool, phone, chat_id)
+            if err:
+                return err
             await client.unpin_message(entity, message_id)
             return _text_response(f"Сообщение(я) откреплено в {chat_id}.")
         except Exception as e:
@@ -278,11 +269,9 @@ def register(db, client_pool, embedding_service, **kwargs):
         if not chat_id or not message_id:
             return _text_response("Ошибка: chat_id и message_id обязательны.")
         try:
-            result = await client_pool.get_native_client_by_phone(phone)
-            if result is None:
-                return _text_response(f"Клиент для {phone} не найден.")
-            client, _ = result
-            entity = await client.get_entity(chat_id)
+            client, entity, err = await resolve_entity(client_pool, phone, chat_id)
+            if err:
+                return err
             msg = None
             async for m in client.iter_messages(entity, ids=int(message_id)):
                 msg = m
@@ -324,11 +313,9 @@ def register(db, client_pool, embedding_service, **kwargs):
         if not chat_id:
             return _text_response("Ошибка: chat_id обязателен.")
         try:
-            result = await client_pool.get_native_client_by_phone(phone)
-            if result is None:
-                return _text_response(f"Клиент для {phone} не найден.")
-            client, _ = result
-            entity = await client.get_entity(chat_id)
+            client, entity, err = await resolve_entity(client_pool, phone, chat_id)
+            if err:
+                return err
             participants = await client.get_participants(entity, limit=limit, search=search)
             if not participants:
                 return _text_response("Участники не найдены.")
@@ -374,12 +361,12 @@ def register(db, client_pool, embedding_service, **kwargs):
         if gate:
             return gate
         try:
-            result = await client_pool.get_native_client_by_phone(phone)
-            if result is None:
-                return _text_response(f"Клиент для {phone} не найден.")
-            client, _ = result
-            entity = await client.get_entity(chat_id)
-            user = await client.get_entity(user_id)
+            client, entity, err = await resolve_entity(client_pool, phone, chat_id)
+            if err:
+                return err
+            _, user, err = await resolve_entity(client_pool, phone, user_id, is_user=True)
+            if err:
+                return err
             kwargs = {"is_admin": is_admin}
             if title:
                 kwargs["title"] = title
@@ -429,12 +416,12 @@ def register(db, client_pool, embedding_service, **kwargs):
         if gate:
             return gate
         try:
-            result = await client_pool.get_native_client_by_phone(phone)
-            if result is None:
-                return _text_response(f"Клиент для {phone} не найден.")
-            client, _ = result
-            entity = await client.get_entity(chat_id)
-            user = await client.get_entity(user_id)
+            client, entity, err = await resolve_entity(client_pool, phone, chat_id)
+            if err:
+                return err
+            _, user, err = await resolve_entity(client_pool, phone, user_id, is_user=True)
+            if err:
+                return err
             until_date = datetime.fromisoformat(until_date_str) if until_date_str else None
             kwargs = {"until_date": until_date}
             if send_messages is not None:
@@ -473,12 +460,12 @@ def register(db, client_pool, embedding_service, **kwargs):
         if gate:
             return gate
         try:
-            result = await client_pool.get_native_client_by_phone(phone)
-            if result is None:
-                return _text_response(f"Клиент для {phone} не найден.")
-            client, _ = result
-            entity = await client.get_entity(chat_id)
-            user = await client.get_entity(user_id)
+            client, entity, err = await resolve_entity(client_pool, phone, chat_id)
+            if err:
+                return err
+            _, user, err = await resolve_entity(client_pool, phone, user_id, is_user=True)
+            if err:
+                return err
             await client.kick_participant(entity, user)
             return _text_response(f"{user_id} исключён из {chat_id}.")
         except Exception as e:
@@ -505,11 +492,9 @@ def register(db, client_pool, embedding_service, **kwargs):
         if not chat_id:
             return _text_response("Ошибка: chat_id обязателен.")
         try:
-            result = await client_pool.get_native_client_by_phone(phone)
-            if result is None:
-                return _text_response(f"Клиент для {phone} не найден.")
-            client, _ = result
-            entity = await client.get_entity(chat_id)
+            client, entity, err = await resolve_entity(client_pool, phone, chat_id)
+            if err:
+                return err
             stats = await client.get_broadcast_stats(entity)
             fields = {}
             for attr in ("followers", "views_per_post", "shares_per_post",
@@ -564,11 +549,9 @@ def register(db, client_pool, embedding_service, **kwargs):
         if gate:
             return gate
         try:
-            result = await client_pool.get_native_client_by_phone(phone)
-            if result is None:
-                return _text_response(f"Клиент для {phone} не найден.")
-            client, _ = result
-            entity = await client.get_entity(chat_id)
+            client, entity, err = await resolve_entity(client_pool, phone, chat_id)
+            if err:
+                return err
             await client.edit_folder(entity, 1)
             return _text_response(f"Чат {chat_id} архивирован.")
         except Exception as e:
@@ -599,11 +582,9 @@ def register(db, client_pool, embedding_service, **kwargs):
         if gate:
             return gate
         try:
-            result = await client_pool.get_native_client_by_phone(phone)
-            if result is None:
-                return _text_response(f"Клиент для {phone} не найден.")
-            client, _ = result
-            entity = await client.get_entity(chat_id)
+            client, entity, err = await resolve_entity(client_pool, phone, chat_id)
+            if err:
+                return err
             await client.edit_folder(entity, 0)
             return _text_response(f"Чат {chat_id} разархивирован.")
         except Exception as e:
@@ -631,11 +612,9 @@ def register(db, client_pool, embedding_service, **kwargs):
         if not chat_id:
             return _text_response("Ошибка: chat_id обязателен.")
         try:
-            result = await client_pool.get_native_client_by_phone(phone)
-            if result is None:
-                return _text_response(f"Клиент для {phone} не найден.")
-            client, _ = result
-            entity = await client.get_entity(chat_id)
+            client, entity, err = await resolve_entity(client_pool, phone, chat_id)
+            if err:
+                return err
             await client.send_read_acknowledge(entity, max_id=max_id)
             return _text_response(f"Сообщения отмечены как прочитанные в {chat_id}.")
         except Exception as e:
@@ -669,11 +648,9 @@ def register(db, client_pool, embedding_service, **kwargs):
         if not chat_id:
             return _text_response("Ошибка: chat_id обязателен.")
         try:
-            result = await client_pool.get_native_client_by_phone(phone)
-            if result is None:
-                return _text_response(f"Клиент для {phone} не найден или flood-wait активен.")
-            client, _ = result
-            entity = await client.get_entity(chat_id)
+            client, entity, err = await resolve_entity(client_pool, phone, chat_id)
+            if err:
+                return err
             lines = [f"Последние {limit} сообщений из {chat_id}:\n"]
             count = 0
             total_chars = 0
