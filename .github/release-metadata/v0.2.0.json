@@ -1,0 +1,38 @@
+{
+  "tag": "v0.2.0",
+  "title": "Content Factory & TUI",
+  "highlights": [
+    {
+      "title": "16 New Agent Tools",
+      "description": "Analytics, scheduler, search queries, Telegram search, notifications, photo loader, channel meta refresh, account info — agent now covers 133+ operations with full CLI/Web parity."
+    },
+    {
+      "title": "WebSearch & WebFetch for Agent",
+      "description": "claude-agent-sdk backend gains built-in web search and fetch tools, enabling the agent to pull live data from the internet during conversations."
+    },
+    {
+      "title": "Interactive TUI Chat",
+      "description": "New `agent chat` command launches a rich terminal UI for conversing with the agent directly from the command line."
+    },
+    {
+      "title": "RSS Feeds, Tags & S3 Storage",
+      "description": "RSS feed generation for channels, tag system for content organization, S3-compatible object storage for media files, and refinement pipeline for content post-processing."
+    },
+    {
+      "title": "ReAct Fallback Agent",
+      "description": "When claude-agent-sdk is unavailable, the system falls back to a built-in ReAct agent loop with provider adapters — no external SDK dependency required."
+    },
+    {
+      "title": "Agent Tool Permissions Hardening",
+      "description": "Union-based permission model across accounts, dynamic tool derivation from TOOL_CATEGORIES, resolve_phone fallback and permission gates on all handlers."
+    },
+    {
+      "title": "90% Test Coverage",
+      "description": "Three batches of coverage tests (agent tools, CLI/web, domain-specific) plus 49 dedicated permission system tests bring overall coverage to 90%."
+    },
+    {
+      "title": "Entity Cache & Numeric Chat ID Fix",
+      "description": "Fixed entity cache warming for channels referenced by numeric ID, and corrected default phone permissions to read-only."
+    }
+  ]
+}
