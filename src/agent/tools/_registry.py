@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json as _json
 import logging
+import re as _re
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +91,9 @@ async def require_phone_permission(db: object, phone: str, tool_name: str) -> di
     allowed_phones = [p for p, tools in perms.items() if isinstance(tools, dict) and tools.get(tool_name, False)]
     if not allowed_phones:
         return None  # tool not restricted for any phone → allow all
+    # Phone not in perms at all → defaults (all enabled), don't deny based on other phones' config
+    if phone and phone not in perms:
+        return None
     if phone in allowed_phones:
         return None  # phone is allowed
     # Phone not allowed — return list of allowed phones so agent can retry
@@ -105,3 +109,67 @@ async def require_phone_permission(db: object, phone: str, tool_name: str) -> di
             f"Разрешённые телефоны: {phones_str}"
         )
     return _text_response(msg)
+
+
+_NUMERIC_ID_RE = _re.compile(r"^-?\d+$")
+
+
+async def resolve_entity(
+    client_pool: object,
+    phone: str,
+    chat_id: str,
+    *,
+    is_user: bool = False,
+) -> tuple[object, object, dict | None]:
+    """Resolve a chat/user entity for Telethon operations with dialog-cache warming fallback.
+
+    For usernames, t.me links, and "me" → uses ``client.get_entity()`` directly (API lookup).
+    For numeric IDs → uses ``ClientPool.resolve_dialog_entity()`` which warms the entity cache
+    automatically when the entity isn't cached yet (e.g. private groups without a username).
+
+    Returns ``(raw_client, entity, None)`` on success or ``(None, None, error_response)`` on failure.
+    Pass ``is_user=True`` when *chat_id* is a user ID (e.g. the ``user_id`` param in admin tools).
+    """
+    result = await client_pool.get_native_client_by_phone(phone)
+    if result is None:
+        return None, None, _text_response(f"Клиент для {phone} не найден или flood-wait активен.")
+    raw_client, _ = result
+
+    # Non-numeric identifiers: let Telethon resolve via API (username/link/self)
+    cid = chat_id.strip()
+    if not _NUMERIC_ID_RE.match(cid):
+        try:
+            entity = await raw_client.get_entity(cid)
+            return raw_client, entity, None
+        except Exception as e:
+            return None, None, _text_response(f"Ошибка: не удалось найти чат/пользователя '{chat_id}': {e}")
+
+    # Numeric ID: use resolve_dialog_entity which handles cache warming
+    dialog_id = int(cid)
+    session_result = await client_pool.get_client_by_phone(phone)
+    if session_result is None:
+        return None, None, _text_response(f"Клиент для {phone} не найден или flood-wait активен.")
+    session, _ = session_result
+
+    target_type = "dm" if is_user else None
+    try:
+        entity = await client_pool.resolve_dialog_entity(session, phone, dialog_id, target_type)
+        if entity is None:
+            raise ValueError("entity is None")
+        return raw_client, entity, None
+    except Exception:
+        pass
+
+    # Fallback: if not is_user, also try as PeerUser (numeric user DMs without username)
+    if not is_user:
+        try:
+            entity = await client_pool.resolve_dialog_entity(session, phone, dialog_id, "dm")
+            if entity is not None:
+                return raw_client, entity, None
+        except Exception:
+            pass
+
+    return None, None, _text_response(
+        f"Ошибка: не удалось найти чат/пользователя с ID {chat_id}. "
+        f"Попробуйте сначала обновить кэш диалогов (refresh_dialogs)."
+    )
