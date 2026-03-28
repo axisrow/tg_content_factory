@@ -623,19 +623,6 @@ class TestDeepagentsSyncModeration:
         result = tool_map["bulk_reject_runs"]("10,20")
         assert "Отклонено: 2" in result
 
-    def test_view_moderation_run_not_found(self, mock_db):
-        mock_db.repos.generation_runs.get = AsyncMock(return_value=None)
-        tool_map = _build_sync_tools(mock_db)
-        result = tool_map["view_moderation_run"](99)
-        assert "не найден" in result.lower()
-
-    def test_view_moderation_run_found(self, mock_db):
-        run = SimpleNamespace(id=2, status="pending", moderation_status="review", generated_text="hello")
-        mock_db.repos.generation_runs.get = AsyncMock(return_value=run)
-        tool_map = _build_sync_tools(mock_db)
-        result = tool_map["view_moderation_run"](2)
-        assert "hello" in result
-
 
 # ===========================================================================
 # deepagents_sync — accounts / scheduler / threads

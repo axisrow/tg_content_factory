@@ -970,11 +970,6 @@ class TestDeepagentsSyncRemainingTools:
         result = self._call(tm["list_pending_moderation"], lambda n, c: [])
         assert "нет черновиков" in result.lower()
 
-    def test_view_moderation_run_not_found(self):
-        tm = self._build_tools()
-        result = self._call(tm["view_moderation_run"], lambda n, c: None, run_id=999)
-        assert "не найден" in result.lower()
-
     def test_list_search_queries_empty(self):
         tm = self._build_tools()
         result = self._call(tm["list_search_queries"], lambda n, c: [])

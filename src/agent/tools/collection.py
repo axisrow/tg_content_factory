@@ -12,8 +12,9 @@ def register(db, client_pool, embedding_service, **kwargs):
 
     @tool(
         "collect_channel",
-        "Enqueue a single channel for message collection by its primary key (pk). "
-        "Use force=true to collect even if the channel is filtered.",
+        "Enqueue a single channel for message collection. pk = DB primary key — get it from list_channels. "
+        "If the channel is not in the DB yet, first add it with add_channel, then use pk from list_channels. "
+        "Use force=true to collect filtered channels.",
         {"pk": int, "force": bool},
     )
     async def collect_channel(args):
@@ -41,7 +42,8 @@ def register(db, client_pool, embedding_service, **kwargs):
 
     @tool(
         "collect_all_channels",
-        "Enqueue all active (non-filtered) channels for message collection.",
+        "Enqueue all active non-filtered channels for incremental message collection. "
+        "Collection is processed by the running server worker.",
         {},
     )
     async def collect_all_channels(args):
@@ -64,7 +66,8 @@ def register(db, client_pool, embedding_service, **kwargs):
 
     @tool(
         "collect_channel_stats",
-        "Enqueue statistics collection for a single channel by its primary key (pk).",
+        "Enqueue subscriber/views statistics collection for a single channel. "
+        "pk = DB primary key — get it from list_channels.",
         {"pk": int},
     )
     async def collect_channel_stats(args):
@@ -90,7 +93,8 @@ def register(db, client_pool, embedding_service, **kwargs):
 
     @tool(
         "collect_all_stats",
-        "Enqueue statistics collection for all active channels.",
+        "Enqueue subscriber/views statistics collection for all active channels. "
+        "After completion, use get_channel_stats to view results.",
         {},
     )
     async def collect_all_stats(args):

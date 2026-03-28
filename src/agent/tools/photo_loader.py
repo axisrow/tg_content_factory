@@ -17,7 +17,11 @@ from src.agent.tools._registry import (
 def register(db, client_pool, embedding_service, **kwargs):
     tools = []
 
-    @tool("list_photo_batches", "List photo upload batches", {"limit": int})
+    @tool(
+        "list_photo_batches",
+        "List photo upload batches with batch_id, phone, target, status, and item count.",
+        {"limit": int},
+    )
     async def list_photo_batches(args):
         try:
             from src.database.bundles import PhotoLoaderBundle
@@ -41,7 +45,12 @@ def register(db, client_pool, embedding_service, **kwargs):
 
     tools.append(list_photo_batches)
 
-    @tool("list_photo_items", "List photo batch items with status", {"limit": int})
+    @tool(
+        "list_photo_items",
+        "List photo batch items with item_id, batch_id, status, and scheduled time. "
+        "Use item_id with cancel_photo_item.",
+        {"limit": int},
+    )
     async def list_photo_items(args):
         try:
             from src.database.bundles import PhotoLoaderBundle
@@ -68,8 +77,9 @@ def register(db, client_pool, embedding_service, **kwargs):
     @tool(
         "send_photos_now",
         "⚠️ Send photos to a Telegram dialog immediately. "
-        "Params: phone, target (dialog_id), file_paths (comma-sep), mode (album/separate), caption. "
-        "Ask user for confirmation first.",
+        "target = dialog_id from list_photo_dialogs (or 'me'). "
+        "file_paths = comma-separated server-local paths. mode: album/separate. "
+        "Ask for confirmation first.",
         {"phone": str, "target": str, "file_paths": str, "mode": str, "caption": str, "confirm": bool},
     )
     async def send_photos_now(args):
@@ -125,8 +135,9 @@ def register(db, client_pool, embedding_service, **kwargs):
     @tool(
         "schedule_photos",
         "⚠️ Schedule photos to be sent at a specific time. "
-        "Params: phone, target (dialog_id), file_paths (comma-sep), schedule_at (ISO datetime), "
-        "mode (album/separate), caption. Ask user for confirmation first.",
+        "target = dialog_id from list_photo_dialogs. "
+        "schedule_at = ISO datetime (e.g. '2025-12-31T10:00:00'). "
+        "file_paths = comma-separated server-local paths. Ask for confirmation first.",
         {
             "phone": str, "target": str, "file_paths": str,
             "schedule_at": str, "mode": str, "caption": str, "confirm": bool,
@@ -177,7 +188,7 @@ def register(db, client_pool, embedding_service, **kwargs):
 
     @tool(
         "cancel_photo_item",
-        "⚠️ Cancel a scheduled photo item. Ask user for confirmation first.",
+        "⚠️ Cancel a scheduled photo item. item_id from list_photo_items. Ask user for confirmation first.",
         {"item_id": int, "confirm": bool},
     )
     async def cancel_photo_item(args):
@@ -202,7 +213,12 @@ def register(db, client_pool, embedding_service, **kwargs):
 
     tools.append(cancel_photo_item)
 
-    @tool("list_auto_uploads", "List automatic photo upload jobs", {})
+    @tool(
+        "list_auto_uploads",
+        "List automatic photo upload jobs with job_id, folder, target, interval, and status. "
+        "Use job_id with toggle_auto_upload / delete_auto_upload.",
+        {},
+    )
     async def list_auto_uploads(args):
         try:
             from src.database.bundles import PhotoLoaderBundle
@@ -226,7 +242,11 @@ def register(db, client_pool, embedding_service, **kwargs):
 
     tools.append(list_auto_uploads)
 
-    @tool("toggle_auto_upload", "Toggle an auto-upload job active/paused", {"job_id": int})
+    @tool(
+        "toggle_auto_upload",
+        "Toggle an auto-upload job active/paused. job_id from list_auto_uploads.",
+        {"job_id": int},
+    )
     async def toggle_auto_upload(args):
         job_id = args.get("job_id")
         if job_id is None:
@@ -250,7 +270,8 @@ def register(db, client_pool, embedding_service, **kwargs):
 
     @tool(
         "delete_auto_upload",
-        "⚠️ DANGEROUS: Delete an auto-upload job. Always ask user for confirmation first.",
+        "⚠️ DANGEROUS: Delete an auto-upload job. job_id from list_auto_uploads. "
+        "Always ask user for confirmation first.",
         {"job_id": int, "confirm": bool},
         annotations=ToolAnnotations(destructiveHint=True),
     )
@@ -355,8 +376,8 @@ def register(db, client_pool, embedding_service, **kwargs):
 
     @tool(
         "create_auto_upload",
-        "⚠️ Create an auto-upload job to send photos from a folder on a schedule. "
-        "Ask user for confirmation first.",
+        "⚠️ Create an auto-upload job to send photos from a server-side folder on a schedule. "
+        "target = dialog_id from list_photo_dialogs. mode: album/separate. Ask for confirmation first.",
         {
             "phone": str, "target": str, "folder_path": str,
             "interval_minutes": int, "mode": str, "caption": str, "confirm": bool,
@@ -407,7 +428,8 @@ def register(db, client_pool, embedding_service, **kwargs):
 
     @tool(
         "update_auto_upload",
-        "⚠️ Update an existing auto-upload job settings. Ask user for confirmation first.",
+        "⚠️ Update an existing auto-upload job settings. job_id from list_auto_uploads. "
+        "mode: album/separate. Ask user for confirmation first.",
         {
             "job_id": int, "folder_path": str, "mode": str,
             "caption": str, "interval_minutes": int, "is_active": bool, "confirm": bool,

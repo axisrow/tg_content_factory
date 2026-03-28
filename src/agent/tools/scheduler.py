@@ -103,7 +103,11 @@ def register(db, client_pool, embedding_service, **kwargs):
 
     tools.append(trigger_collection)
 
-    @tool("toggle_scheduler_job", "Toggle a scheduler job on/off by job_id", {"job_id": str})
+    @tool(
+        "toggle_scheduler_job",
+        "Toggle a scheduler job on/off. Get valid job_ids from get_scheduler_status.",
+        {"job_id": str},
+    )
     async def toggle_scheduler_job(args):
         job_id = args.get("job_id", "")
         if not job_id:
@@ -159,9 +163,9 @@ def register(db, client_pool, embedding_service, **kwargs):
 
     @tool(
         "cancel_scheduler_task",
-        "Cancel a collection task by task_id. Works for pending tasks; running tasks will be "
-        "marked cancelled in DB but the active collection may continue until completion. "
-        "Requires confirmation.",
+        "Cancel a collection task by task_id (from get_scheduler_status or DB). "
+        "Pending tasks are cancelled immediately; running tasks are marked cancelled "
+        "but may continue until the current channel finishes. Requires confirmation.",
         {"task_id": int, "confirm": bool},
     )
     async def cancel_scheduler_task(args):

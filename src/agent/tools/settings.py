@@ -14,7 +14,7 @@ def register(db, client_pool, embedding_service, **kwargs):
     async def get_settings(args):
         try:
             settings_keys = [
-                "scheduler_interval_minutes",
+                "collect_interval_minutes",
                 "scheduler_enabled",
                 "agent_prompt_template",
                 "agent_backend_override",
@@ -31,31 +31,8 @@ def register(db, client_pool, embedding_service, **kwargs):
     tools.append(get_settings)
 
     @tool(
-        "save_scheduler_settings",
-        "⚠️ Update scheduler settings. Ask user for confirmation first.",
-        {"interval_minutes": int, "enabled": bool, "confirm": bool},
-    )
-    async def save_scheduler_settings(args):
-        gate = require_confirmation("изменит настройки планировщика", args)
-        if gate:
-            return gate
-        try:
-            interval = args.get("interval_minutes")
-            enabled = args.get("enabled")
-            if interval is not None:
-                await db.set_setting("scheduler_interval_minutes", str(int(interval)))
-            if enabled is not None:
-                await db.set_setting("scheduler_enabled", str(bool(enabled)).lower())
-            return _text_response("Настройки планировщика сохранены.")
-        except Exception as e:
-            return _text_response(f"Ошибка сохранения настроек: {e}")
-
-    tools.append(save_scheduler_settings)
-
-    @tool(
         "save_agent_settings",
-        "⚠️ Update agent settings (prompt template, backend override). "
-        "Ask user for confirmation first.",
+        "⚠️ Update agent settings. backend values: 'claude-agent-sdk' or 'deepagents'. Ask user for confirmation first.",
         {"prompt_template": str, "backend": str, "confirm": bool},
     )
     async def save_agent_settings(args):

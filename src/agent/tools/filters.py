@@ -11,7 +11,12 @@ from src.agent.tools._registry import _text_response, require_confirmation
 def register(db, client_pool, embedding_service, **kwargs):
     tools = []
 
-    @tool("analyze_filters", "Analyze all channels and compute filter scores (low uniqueness, spam, etc.)", {})
+    @tool(
+        "analyze_filters",
+        "Analyze all channels and compute filter scores (low_uniqueness, low_subscriber_ratio, "
+        "cross_channel_spam, non_cyrillic, chat_noise). Shows which channels should be filtered.",
+        {},
+    )
     async def analyze_filters(args):
         try:
             from src.filters.analyzer import ChannelAnalyzer
@@ -36,7 +41,7 @@ def register(db, client_pool, embedding_service, **kwargs):
 
     @tool(
         "apply_filters",
-        "⚠️ DANGEROUS: Apply filter analysis results — mark flagged channels as filtered. "
+        "⚠️ DANGEROUS: Run analyze_filters and mark flagged channels as filtered (skipped during collection). "
         "Always ask user for confirmation first.",
         {"confirm": bool},
         annotations=ToolAnnotations(destructiveHint=True),
@@ -79,7 +84,11 @@ def register(db, client_pool, embedding_service, **kwargs):
 
     tools.append(reset_filters)
 
-    @tool("toggle_channel_filter", "Toggle filter status for a specific channel", {"pk": int})
+    @tool(
+        "toggle_channel_filter",
+        "Toggle filter status for a specific channel. pk = DB primary key — get it from list_channels.",
+        {"pk": int},
+    )
     async def toggle_channel_filter(args):
         pk = args.get("pk")
         if pk is None:
@@ -99,8 +108,9 @@ def register(db, client_pool, embedding_service, **kwargs):
 
     @tool(
         "purge_filtered_channels",
-        "⚠️ DANGEROUS: Purge messages from filtered channels (soft delete). "
-        "Pass comma-separated pks or empty for all filtered. Always ask user for confirmation first.",
+        "⚠️ DANGEROUS: Soft-delete messages from filtered channels. "
+        "pks = comma-separated DB primary keys from list_channels; "
+        "omit to purge all filtered channels. Always ask user for confirmation first.",
         {"pks": str, "confirm": bool},
         annotations=ToolAnnotations(destructiveHint=True),
     )
@@ -133,7 +143,8 @@ def register(db, client_pool, embedding_service, **kwargs):
     @tool(
         "hard_delete_channels",
         "⚠️ DANGEROUS: Permanently delete channels and ALL their data (irreversible). "
-        "Pass comma-separated pks. Always ask user for confirmation first.",
+        "pks = comma-separated DB primary keys from list_channels. "
+        "Always ask user for confirmation first.",
         {"pks": str, "confirm": bool},
         annotations=ToolAnnotations(destructiveHint=True),
     )
