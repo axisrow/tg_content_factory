@@ -13,7 +13,7 @@
 | Статистика канала | `channel stats` | `POST /channels/{pk}/stats` | `collect_channel_stats` |
 | Импорт каналов | `channel import` | `POST /channels/import` | `import_channels` |
 | Обновить типы | `channel refresh-types` | `POST /channels/refresh-types` | `refresh_channel_types` |
-| Обновить метадата | `channel refresh-meta` | — | — |
+| Обновить метадата | `channel refresh-meta` | — | `refresh_channel_meta` |
 | Список диалогов | — | `GET /channels/dialogs` | — |
 | Массовое добавление | — | `POST /channels/add-bulk` | — |
 
@@ -25,8 +25,8 @@
 | Собрать один канал | `channel collect` | `POST /channels/{pk}/collect` | `collect_channel` |
 | Статистика всех | — | `POST /channels/stats/all` | `collect_all_stats` |
 | Превью (без сохранения) | `collect sample` | — | — |
-| Отменить задачу | `scheduler task-cancel` | `POST /scheduler/tasks/{id}/cancel` | — |
-| Очистить очередь | `scheduler clear-pending` | `POST /scheduler/tasks/clear-pending-collect` | — |
+| Отменить задачу | `scheduler task-cancel` | `POST /scheduler/tasks/{id}/cancel` | `cancel_scheduler_task` |
+| Очистить очередь | `scheduler clear-pending` | `POST /scheduler/tasks/clear-pending-collect` | `clear_pending_tasks` |
 
 ## Поиск
 
@@ -34,6 +34,10 @@
 |----------|-----|-------------|------------|
 | Поиск сообщений | `search` | `GET /search` | `search_messages` |
 | Семантический поиск | `search --mode semantic` | `GET /search?mode=semantic` | `semantic_search` |
+| Гибридный поиск | `search --mode hybrid` | `GET /search?mode=hybrid` | `search_hybrid` |
+| Telegram-поиск | `search --mode telegram` | `GET /search?mode=telegram` | `search_telegram` |
+| Поиск по чатам | `search --mode my_chats` | `GET /search?mode=my_chats` | `search_my_chats` |
+| Поиск в канале | `search --mode channel` | `GET /search?mode=channel` | `search_in_channel` |
 | Индексация | — | `POST /settings/semantic-index` | `index_messages` |
 
 ## Поисковые запросы
@@ -47,7 +51,7 @@
 | Вкл/выкл | `search-query toggle` | `POST /search-queries/{id}/toggle` | `toggle_search_query` |
 | Запустить вручную | `search-query run` | `POST /search-queries/{id}/run` | `run_search_query` |
 | Получить | — | — | `get_search_query` |
-| Статистика | `search-query stats` | — | — |
+| Статистика | `search-query stats` | — | `get_search_query_stats` |
 
 ## Фильтры
 
@@ -96,7 +100,7 @@
 | Остановить | `scheduler stop` | `POST /scheduler/stop` | `stop_scheduler` |
 | Триггер | `scheduler trigger` | `POST /scheduler/trigger` | `trigger_collection` |
 | Вкл/выкл job | `scheduler job-toggle` | `POST /scheduler/jobs/{id}/toggle` | `toggle_scheduler_job` |
-| Изменить интервал | `scheduler set-interval` | `POST /scheduler/jobs/{id}/set-interval` | — |
+| Изменить интервал | `scheduler set-interval` | `POST /scheduler/jobs/{id}/set-interval` | `set_scheduler_interval` |
 
 ## Уведомления
 
@@ -106,7 +110,7 @@
 | Статус | `notification status` | `GET /settings/notifications/status` | `get_notification_status` |
 | Удалить | `notification delete` | `POST /settings/notifications/delete` | `delete_notification_bot` |
 | Тест | `notification test` | `POST /settings/notifications/test` | `test_notification` |
-| Dry-run | `notification dry-run` | `POST /scheduler/dry-run-notifications` | — |
+| Dry-run | `notification dry-run` | `POST /scheduler/dry-run-notifications` | `notification_dry_run` |
 | Тест из scheduler | — | `POST /scheduler/test-notification` | — |
 
 ## Аккаунты
@@ -118,7 +122,7 @@
 | Удалить | `account delete` | `POST /settings/{id}/delete` | `delete_account` |
 | Flood статус | `account flood-status` | — | `get_flood_status` |
 | Сбросить flood | `account flood-clear` | — | `clear_flood_status` |
-| Инфо | `account info` | — | — |
+| Инфо | `account info` | — | `get_account_info` |
 | Авторизация | — | `POST /auth/send-code` | — |
 | Верификация | — | `POST /auth/verify-code` | — |
 
@@ -127,9 +131,9 @@
 | Операция | CLI | Web Endpoint | Agent Tool |
 |----------|-----|-------------|------------|
 | Сводка | `analytics summary` | `GET /analytics/content/api/summary` | `get_analytics_summary` |
-| Топ сообщений | `analytics top` | — | — |
-| Типы контента | `analytics content-types` | `GET /analytics/content` | — |
-| Почасовая активность | `analytics hourly` | — | — |
+| Топ сообщений | `analytics top` | — | `get_top_messages` |
+| Типы контента | `analytics content-types` | `GET /analytics/content` | `get_content_type_stats` |
+| Почасовая активность | `analytics hourly` | — | `get_hourly_activity` |
 | Ежедневная статистика | `analytics daily` | `GET /analytics/content/api/pipelines` | `get_daily_stats` |
 | Статистика пайплайнов | `analytics pipeline-stats` | — | `get_pipeline_stats` |
 | Трендовые темы | `analytics trending-topics` | `GET /analytics/trends` | `get_trending_topics` |
@@ -179,8 +183,8 @@
 
 | Операция | CLI | Web Endpoint | Agent Tool |
 |----------|-----|-------------|------------|
-| Список диалогов | `photo-loader dialogs` | `GET /my-telegram/photos/` | — |
-| Обновить | `photo-loader refresh` | `POST /my-telegram/photos/refresh` | — |
+| Список диалогов | `photo-loader dialogs` | `GET /my-telegram/photos/` | `list_photo_dialogs` |
+| Обновить | `photo-loader refresh` | `POST /my-telegram/photos/refresh` | `refresh_photo_dialogs` |
 | Отправить фото | `photo-loader send` | `POST /my-telegram/photos/send` | `send_photos_now` |
 | Запланировать | `photo-loader schedule-send` | `POST /my-telegram/photos/schedule` | `schedule_photos` |
 | Создать батч | `photo-loader batch-create` | `POST /my-telegram/photos/batch` | `create_photo_batch` |
