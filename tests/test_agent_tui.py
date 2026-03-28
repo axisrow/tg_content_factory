@@ -303,6 +303,78 @@ async def test_tui_error_chunk_cleans_up(db, app_factory):
 
 
 # ---------------------------------------------------------------------------
+# ALLOW_SELECT / copy tests
+# ---------------------------------------------------------------------------
+
+
+def test_allow_select_enabled():
+    """ALLOW_SELECT must be True so Textual's built-in text selection works."""
+    from src.cli.commands.agent_tui import AgentTuiApp
+
+    assert getattr(AgentTuiApp, "ALLOW_SELECT", False) is True
+
+
+def test_ctrl_c_not_bound():
+    """ctrl+c must not be captured by app bindings — it's reserved for copy."""
+    from src.cli.commands.agent_tui import AgentTuiApp
+
+    bound_keys = {b.key for b in AgentTuiApp.BINDINGS}
+    assert "ctrl+c" not in bound_keys
+
+
+@pytest.mark.asyncio
+async def test_copy_to_clipboard_called(db, app_factory, monkeypatch):
+    """action_copy_text() delegates to copy_to_clipboard()."""
+    app = app_factory()
+    captured = []
+    monkeypatch.setattr(app, "copy_to_clipboard", lambda text: captured.append(text))
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        # Manually set selected text on the screen and call the action
+        screen = app.screen
+        monkeypatch.setattr(screen, "get_selected_text", lambda: "copied text")
+        screen.action_copy_text()
+    assert captured == ["copied text"]
+
+
+def test_copy_to_clipboard_uses_native_tool(monkeypatch):
+    """copy_to_clipboard calls pbcopy on macOS / xclip on Linux, not OSC 52."""
+    from src.cli.commands.agent_tui import AgentTuiApp
+
+    app = AgentTuiApp.__new__(AgentTuiApp)
+    app._clipboard = ""
+
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append((cmd, kwargs.get("input")))
+        return MagicMock(returncode=0)
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+    monkeypatch.setattr("sys.platform", "darwin")
+
+    app.copy_to_clipboard("hello")
+    assert calls == [(["pbcopy"], b"hello")]
+    assert app._clipboard == "hello"
+
+
+def test_clipboard_reads_from_native_tool(monkeypatch):
+    """clipboard property reads from pbpaste/xclip instead of internal buffer."""
+    from src.cli.commands.agent_tui import AgentTuiApp
+
+    app = AgentTuiApp.__new__(AgentTuiApp)
+    app._clipboard = "internal"
+
+    monkeypatch.setattr("sys.platform", "darwin")
+    monkeypatch.setattr(
+        "subprocess.run",
+        lambda cmd, **kw: MagicMock(stdout="from-system", returncode=0),
+    )
+
+    assert app.clipboard == "from-system"
+
+
+# ---------------------------------------------------------------------------
 # CLI one-shot mode (prompt=) tests
 # ---------------------------------------------------------------------------
 
