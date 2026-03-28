@@ -157,8 +157,11 @@ async def resolve_entity(
         if entity is None:
             raise ValueError("entity is None")
         return raw_client, entity, None
-    except Exception:
+    except (ValueError, TypeError, KeyError):
         pass
+    except Exception as e:
+        # Propagate flood waits and auth errors — do not retry
+        return None, None, _text_response(f"Ошибка: не удалось получить entity для {chat_id}: {e}")
 
     # Fallback: if not is_user, also try as PeerUser (numeric user DMs without username)
     if not is_user:
@@ -166,8 +169,10 @@ async def resolve_entity(
             entity = await client_pool.resolve_dialog_entity(session, phone, dialog_id, "dm")
             if entity is not None:
                 return raw_client, entity, None
-        except Exception:
+        except (ValueError, TypeError, KeyError):
             pass
+        except Exception as e:
+            return None, None, _text_response(f"Ошибка: не удалось получить entity для {chat_id}: {e}")
 
     return None, None, _text_response(
         f"Ошибка: не удалось найти чат/пользователя с ID {chat_id}. "
