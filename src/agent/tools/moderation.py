@@ -44,6 +44,36 @@ def register(db, client_pool, embedding_service, **kwargs):
 
     tools.append(list_pending_moderation)
 
+    @tool(
+        "view_moderation_run",
+        "View full details of a specific generation run for moderation review: "
+        "generated text, pipeline name, status, quality score. "
+        "run_id from list_pending_moderation. Then use approve_run or reject_run.",
+        {"run_id": int},
+    )
+    async def view_moderation_run(args):
+        run_id = args.get("run_id")
+        if run_id is None:
+            return _text_response("Ошибка: run_id обязателен.")
+        try:
+            run = await db.repos.generation_runs.get(int(run_id))
+            if run is None:
+                return _text_response(f"Run id={run_id} не найден.")
+            lines = [
+                f"Run id={run.id} (pipeline_id={run.pipeline_id})",
+                f"  Статус: {run.status}",
+                f"  Модерация: {run.moderation_status}",
+                f"  Создан: {run.created_at}",
+                "",
+                "Текст для проверки:",
+                run.generated_text or "(пусто)",
+            ]
+            return _text_response("\n".join(lines))
+        except Exception as e:
+            return _text_response(f"Ошибка получения run: {e}")
+
+    tools.append(view_moderation_run)
+
     # ------------------------------------------------------------------
     # WRITE
     # ------------------------------------------------------------------
