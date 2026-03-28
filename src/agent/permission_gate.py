@@ -118,8 +118,7 @@ class PermissionGate:
 
         # Ask user
         request_id = str(uuid.uuid4())
-        loop = asyncio.get_event_loop()
-        future: asyncio.Future = loop.create_future()
+        future: asyncio.Future = asyncio.get_running_loop().create_future()
         self._pending[request_id] = future
 
         event = json.dumps(
@@ -134,10 +133,13 @@ class PermissionGate:
         await ctx.queue.put(f"data: {event}\n\n")
 
         try:
-            choice: str = await future
+            choice: str = await asyncio.wait_for(future, timeout=300)
+        except asyncio.TimeoutError:
+            self._pending.pop(request_id, None)
+            return _text_response(f"❌ Таймаут запроса разрешения для '{tool_name}' (5 мин).")
         except asyncio.CancelledError:
             self._pending.pop(request_id, None)
-            return _text_response(f"❌ Запрос разрешения для '{tool_name}' отменён.")
+            raise
         finally:
             self._pending.pop(request_id, None)
 

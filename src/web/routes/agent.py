@@ -82,6 +82,10 @@ async def create_thread(request: Request):
 async def delete_thread(request: Request, thread_id: int):
     db = deps.get_db(request)
     await db.delete_agent_thread(thread_id)
+    agent_manager = deps.get_agent_manager(request)
+    if agent_manager is not None and agent_manager.permission_gate is not None:
+        session_id = request.cookies.get("session", "web")
+        agent_manager.permission_gate.clear_session(session_id, thread_id)
     return {"ok": True}
 
 
