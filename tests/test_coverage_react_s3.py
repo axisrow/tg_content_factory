@@ -440,8 +440,6 @@ class TestS3StoreFromEnv:
             {"S3_ENDPOINT": "https://example.com", "S3_BUCKET": "bucket"},
             clear=True,
         ):
-            for key in ["S3_ACCESS_KEY", "S3_SECRET_KEY"]:
-                os.environ.pop(key, None)
             result = S3Store.from_env()
             assert result is None
 
@@ -516,18 +514,8 @@ class TestS3StoreUploadFile:
         )
 
         with patch.dict("sys.modules", {"boto3": None, "botocore.config": None}):
-            # Force ImportError by making boto3 import fail
-            import builtins
-            real_import = builtins.__import__
-
-            def mock_import(name, *args, **kwargs):
-                if name == "boto3" or name.startswith("boto"):
-                    raise ImportError("boto3 not installed")
-                return real_import(name, *args, **kwargs)
-
-            with patch("builtins.__import__", side_effect=mock_import):
-                result = await store.upload_file("/tmp/test.jpg")
-                assert result is None
+            result = await store.upload_file("/tmp/test.jpg")
+            assert result is None
 
     @pytest.mark.asyncio
     async def test_upload_file_boto3_exception(self):
@@ -569,8 +557,6 @@ class TestS3StoreUploadFile:
         mock_boto3.client.return_value = mock_client
 
         mock_config = MagicMock()
-        mock_config_instance = MagicMock()
-        mock_config.return_value = mock_config_instance
 
         modules = {
             "boto3": mock_boto3,
