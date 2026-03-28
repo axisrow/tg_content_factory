@@ -1,0 +1,78 @@
+<form method="post" action="/settings/save-translation" data-busy>
+    <div class="row g-3">
+        <div class="col-md-6">
+            <label for="translation_provider" class="form-label">LLM Provider</label>
+            <input type="text" class="form-control" id="translation_provider" name="translation_provider"
+                   value="{{ translation_provider or '' }}" placeholder="openai, ollama, cohere...">
+            <div class="form-text">Имя провайдера из AgentProviderService</div>
+        </div>
+        <div class="col-md-6">
+            <label for="translation_model" class="form-label">Модель</label>
+            <input type="text" class="form-control" id="translation_model" name="translation_model"
+                   value="{{ translation_model or '' }}" placeholder="gpt-4o-mini">
+        </div>
+        <div class="col-md-4">
+            <label for="translation_target_lang" class="form-label">Пользовательский язык (ISO 639-1)</label>
+            <input type="text" class="form-control" id="translation_target_lang" name="translation_target_lang"
+                   value="{{ translation_target_lang or '' }}" placeholder="ru, de, fr...">
+            <div class="form-text">Третий столбец перевода (помимо английского)</div>
+        </div>
+        <div class="col-md-4">
+            <label for="translation_source_filter" class="form-label">Переводить языки</label>
+            <input type="text" class="form-control" id="translation_source_filter" name="translation_source_filter"
+                   value="{{ translation_source_filter or '' }}" placeholder="zh,ko,ja,ar">
+            <div class="form-text">Через запятую. Пусто = все языки</div>
+        </div>
+        <div class="col-md-4 d-flex align-items-end">
+            <div class="form-check">
+                <input class="form-check-input" type="checkbox" id="translation_auto_on_collect"
+                       name="translation_auto_on_collect" value="1"
+                       {{ 'checked' if translation_auto_on_collect == '1' else '' }}>
+                <label class="form-check-label" for="translation_auto_on_collect">Авто-перевод после сбора</label>
+            </div>
+        </div>
+    </div>
+    <button type="submit" class="btn btn-primary mt-3">Сохранить</button>
+</form>
+
+<hr>
+
+<div class="row g-3 mt-1">
+    <div class="col-md-6">
+        <h6>Действия</h6>
+        <form method="post" action="/settings/translation-backfill" class="d-inline" data-busy>
+            <button type="submit" class="btn btn-outline-secondary btn-sm me-2">
+                <i class="bi bi-globe me-1"></i>Определить языки
+            </button>
+        </form>
+        <form method="post" action="/settings/translation-run" class="d-inline" data-busy>
+            <input type="hidden" name="target_lang" value="en">
+            <button type="submit" class="btn btn-outline-primary btn-sm">
+                <i class="bi bi-translate me-1"></i>Запустить перевод (EN)
+            </button>
+        </form>
+        {% if translation_target_lang %}
+        <form method="post" action="/settings/translation-run" class="d-inline" data-busy>
+            <input type="hidden" name="target_lang" value="{{ translation_target_lang }}">
+            <button type="submit" class="btn btn-outline-primary btn-sm">
+                <i class="bi bi-translate me-1"></i>Запустить перевод ({{ translation_target_lang|upper }})
+            </button>
+        </form>
+        {% endif %}
+    </div>
+    <div class="col-md-6">
+        <h6>Статистика языков</h6>
+        {% if language_stats %}
+        <table class="table table-sm table-striped" style="max-width:300px">
+            <thead><tr><th>Язык</th><th>Сообщений</th></tr></thead>
+            <tbody>
+                {% for lang, count in language_stats %}
+                <tr><td><code>{{ lang }}</code></td><td>{{ count }}</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <p class="text-muted">Нет данных. Нажмите «Определить языки».</p>
+        {% endif %}
+    </div>
+</div>

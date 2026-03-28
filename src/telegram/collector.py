@@ -35,6 +35,7 @@ from src.filters.criteria import (
     PRECHECK_CROSS_DUPE_SAMPLE,
 )
 from src.models import Channel, ChannelStats, Message
+from src.services.translation_service import TranslationService
 from src.settings_utils import parse_int_setting
 from src.telegram.backends import adapt_transport_session
 from src.telegram.client_pool import ClientPool
@@ -550,6 +551,7 @@ class Collector:
                             sender_id=msg.sender_id,
                             sender_name=self._get_sender_name(msg),
                             text=msg.text,
+                            detected_lang=TranslationService.detect_language(msg.text),
                             media_type=self._get_media_type(msg),
                             topic_id=topic_id,
                             reactions_json=self._extract_reactions(msg),

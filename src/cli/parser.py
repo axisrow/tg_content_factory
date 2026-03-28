@@ -704,6 +704,16 @@ def build_parser() -> argparse.ArgumentParser:
     analytics_calendar.add_argument("--limit", type=int, default=20)
     analytics_calendar.add_argument("--pipeline-id", dest="pipeline_id", type=int, default=None)
 
+    translate_parser = sub.add_parser("translate", help="Language detection and translation")
+    translate_sub = translate_parser.add_subparsers(dest="translate_action")
+    translate_sub.add_parser("stats", help="Show language distribution")
+    detect_parser = translate_sub.add_parser("detect", help="Backfill language detection")
+    detect_parser.add_argument("--batch-size", type=int, default=5000)
+    run_parser = translate_sub.add_parser("run", help="Run translation batch")
+    run_parser.add_argument("--target", default="en", help="Target language code")
+    run_parser.add_argument("--source-filter", default="", help="Comma-separated source languages")
+    run_parser.add_argument("--limit", type=int, default=100, help="Max messages to translate")
+
     settings_parser = sub.add_parser("settings", help="System settings management")
     settings_sub = settings_parser.add_subparsers(dest="settings_action")
     settings_get = settings_sub.add_parser("get", help="Show settings")
