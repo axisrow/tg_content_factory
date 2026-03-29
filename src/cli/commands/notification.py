@@ -47,6 +47,12 @@ def run(args: argparse.Namespace) -> None:
                 await svc.send_notification(message)
                 print("Test notification sent.")
 
+            elif args.notification_action == "set-account":
+                phone = args.phone
+                await target_svc.set_configured_phone(phone)
+                print(f"Notification bot account set to: {phone}")
+                return
+
             elif args.notification_action == "dry-run":
                 from datetime import timezone
 

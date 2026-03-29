@@ -370,6 +370,32 @@ def run(args: argparse.Namespace) -> None:
                 print(
                     f"Published run id={args.run_id} to {len(results)} target(s)"
                 )
+            elif args.pipeline_action == "refinement-steps":
+                pipeline = await svc.get(args.id)
+                if pipeline is None:
+                    print(f"Pipeline id={args.id} not found")
+                    return
+                if args.steps_json:
+                    import json
+
+                    try:
+                        steps = json.loads(args.steps_json)
+                    except json.JSONDecodeError as exc:
+                        print(f"Invalid JSON: {exc}")
+                        return
+                    if not isinstance(steps, list):
+                        print("Refinement steps must be a JSON array.")
+                        return
+                    await db.repos.content_pipelines.set_refinement_steps(args.id, steps)
+                    print(f"Set {len(steps)} refinement step(s) for pipeline id={args.id}.")
+                else:
+                    steps = pipeline.refinement_steps or []
+                    if not steps:
+                        print(f"Pipeline id={args.id} has no refinement steps.")
+                    else:
+                        import json
+
+                        print(json.dumps(steps, ensure_ascii=False, indent=2))
         finally:
             if pool is not None:
                 await pool.disconnect_all()

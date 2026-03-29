@@ -69,6 +69,25 @@ def build_parser() -> argparse.ArgumentParser:
         help="Drop semantic vector index before --index-now",
     )
 
+    # ── messages ──
+    msg_parser = sub.add_parser("messages", help="Read messages from DB or live Telegram")
+    msg_sub = msg_parser.add_subparsers(dest="messages_action")
+    msg_read = msg_sub.add_parser("read", help="Read messages from a channel/dialog")
+    msg_read.add_argument("identifier", help="Channel pk, channel_id, @username, or dialog ID")
+    msg_read.add_argument("--limit", type=int, default=50, help="Max messages (default: 50)")
+    msg_read.add_argument("--live", action="store_true", help="Read from Telegram instead of DB")
+    msg_read.add_argument("--phone", default=None, help="Account phone (for --live)")
+    msg_read.add_argument("--query", default="", help="Text filter (DB only)")
+    msg_read.add_argument("--date-from", dest="date_from", default=None, help="Start date YYYY-MM-DD (DB only)")
+    msg_read.add_argument("--date-to", dest="date_to", default=None, help="End date YYYY-MM-DD (DB only)")
+    msg_read.add_argument("--topic-id", type=int, default=None, dest="topic_id", help="Forum topic ID")
+    msg_read.add_argument("--offset-id", type=int, default=None, dest="offset_id",
+                          help="Read messages before this message ID (--live)")
+    msg_read.add_argument(
+        "--format", choices=["text", "json", "csv"], default="text", dest="output_format",
+        help="Output format (default: text)",
+    )
+
     ch_parser = sub.add_parser("channel", help="Channel management")
     ch_sub = ch_parser.add_subparsers(dest="channel_action")
 
@@ -116,6 +135,27 @@ def build_parser() -> argparse.ArgumentParser:
     ch_import = ch_sub.add_parser("import", help="Bulk import from file or text")
     ch_import.add_argument("source", help="Path to .txt/.csv file, or comma-separated identifiers")
 
+    ch_add_bulk = ch_sub.add_parser("add-bulk", help="Add channels from account dialogs")
+    ch_add_bulk.add_argument("--phone", required=True, help="Account phone")
+    ch_add_bulk.add_argument(
+        "--dialog-ids", required=True, dest="dialog_ids",
+        help="Comma-separated dialog IDs to add as channels",
+    )
+
+    # ── channel tag ──
+    ch_tag_parser = ch_sub.add_parser("tag", help="Manage channel tags")
+    ch_tag_sub = ch_tag_parser.add_subparsers(dest="tag_action")
+    ch_tag_sub.add_parser("list", help="List all tags")
+    ch_tag_add = ch_tag_sub.add_parser("add", help="Create a tag")
+    ch_tag_add.add_argument("name", help="Tag name")
+    ch_tag_del = ch_tag_sub.add_parser("delete", help="Delete a tag")
+    ch_tag_del.add_argument("name", help="Tag name")
+    ch_tag_set = ch_tag_sub.add_parser("set", help="Set tags for a channel")
+    ch_tag_set.add_argument("pk", type=int, help="Channel primary key")
+    ch_tag_set.add_argument("tags", help="Comma-separated tag names")
+    ch_tag_get = ch_tag_sub.add_parser("get", help="Get tags for a channel")
+    ch_tag_get.add_argument("pk", type=int, help="Channel primary key")
+
     flt_parser = sub.add_parser("filter", help="Channel content filter")
     flt_sub = flt_parser.add_subparsers(dest="filter_action")
     flt_sub.add_parser("analyze", help="Analyze channels and show report")
@@ -126,6 +166,14 @@ def build_parser() -> argparse.ArgumentParser:
     flt_toggle.add_argument("pk", type=int, help="Channel primary key")
     flt_purge = flt_sub.add_parser("purge", help="Purge messages from filtered channels")
     flt_purge.add_argument("--pks", default=None, help="Comma-separated PKs (default: all)")
+    flt_purge_msgs = flt_sub.add_parser(
+        "purge-messages",
+        help="Delete messages for a specific channel from DB",
+    )
+    flt_purge_msgs.add_argument("--channel-id", type=int, required=True, dest="channel_id",
+                                help="Channel ID whose messages to delete")
+    flt_purge_msgs.add_argument("--yes", "-y", action="store_true", help="Skip confirmation prompt")
+
     flt_hard = flt_sub.add_parser(
         "hard-delete",
         help="Hard-delete filtered channels from DB (dev/testing)",
@@ -337,6 +385,11 @@ def build_parser() -> argparse.ArgumentParser:
     pipeline_bulk_reject = pipeline_sub.add_parser("bulk-reject", help="Reject multiple runs")
     pipeline_bulk_reject.add_argument("run_ids", nargs="+", type=int, help="Run IDs to reject")
 
+    pipeline_refine = pipeline_sub.add_parser("refinement-steps", help="View/set refinement steps")
+    pipeline_refine.add_argument("id", type=int, help="Pipeline id")
+    pipeline_refine.add_argument("--set", default=None, dest="steps_json",
+                                 help="Set refinement steps (JSON array)")
+
     # ── image ──
     image_parser = sub.add_parser("image", help="Image generation")
     image_sub = image_parser.add_subparsers(dest="image_action")
@@ -364,6 +417,13 @@ def build_parser() -> argparse.ArgumentParser:
     acc_del = acc_sub.add_parser("delete", help="Delete account")
     acc_del.add_argument("id", type=int, help="Account id")
 
+    acc_add = acc_sub.add_parser("add", help="Add Telegram account (interactive auth)")
+    acc_add.add_argument("--api-id", type=int, default=None, dest="api_id",
+                         help="Telegram API ID (uses stored if omitted)")
+    acc_add.add_argument("--api-hash", default=None, dest="api_hash",
+                         help="Telegram API hash (uses stored if omitted)")
+    acc_add.add_argument("--phone", required=True, help="Phone number with country code")
+
     acc_sub.add_parser("flood-status", help="Show flood wait timers for all accounts")
 
     acc_flood_clear = acc_sub.add_parser("flood-clear", help="Clear flood wait for an account")
@@ -384,8 +444,10 @@ def build_parser() -> argparse.ArgumentParser:
     sched_task_cancel.add_argument("task_id", type=int, help="Task ID to cancel")
     sched_sub.add_parser("clear-pending", help="Clear all pending collection tasks")
 
-    my_tg_parser = sub.add_parser("my-telegram", help="View account dialogs")
+    my_tg_parser = sub.add_parser("dialogs", help="Telegram dialogs management")
     my_tg_sub = my_tg_parser.add_subparsers(dest="my_telegram_action")
+    # Backward-compat: register same parser object under old name
+    sub._name_parser_map["my-telegram"] = my_tg_parser
     my_tg_list = my_tg_sub.add_parser("list", help="List all dialogs for an account")
     my_tg_list.add_argument(
         "--phone", default=None, help="Account phone (default: first connected)"
@@ -537,6 +599,8 @@ def build_parser() -> argparse.ArgumentParser:
     notif_test = notif_sub.add_parser("test", help="Send a test notification message")
     notif_test.add_argument("--message", default="Тестовое уведомление", help="Message text")
     notif_sub.add_parser("dry-run", help="Preview notification matches without sending")
+    notif_set_acc = notif_sub.add_parser("set-account", help="Set account for notification bot")
+    notif_set_acc.add_argument("--phone", required=True, help="Account phone number")
 
     agent_parser = sub.add_parser("agent", help="Agent chat management")
     agent_sub = agent_parser.add_subparsers(dest="agent_action")
@@ -704,6 +768,36 @@ def build_parser() -> argparse.ArgumentParser:
     analytics_calendar.add_argument("--limit", type=int, default=20)
     analytics_calendar.add_argument("--pipeline-id", dest="pipeline_id", type=int, default=None)
 
+    analytics_emojis = analytics_sub.add_parser("trending-emojis", help="Trending emojis in messages")
+    analytics_emojis.add_argument("--days", type=int, default=7, help="Number of days (default: 7)")
+    analytics_emojis.add_argument("--limit", type=int, default=20)
+
+    # ── provider ──
+    provider_parser = sub.add_parser("provider", help="LLM provider management")
+    provider_sub = provider_parser.add_subparsers(dest="provider_action")
+    provider_sub.add_parser("list", help="List configured providers with models and status")
+    provider_add = provider_sub.add_parser("add", help="Add or update a provider")
+    provider_add.add_argument("name", help="Provider name (e.g. openai, groq, anthropic)")
+    provider_add.add_argument("--api-key", required=True, dest="api_key", help="API key")
+    provider_add.add_argument("--base-url", default=None, dest="base_url", help="Custom base URL")
+    provider_del = provider_sub.add_parser("delete", help="Delete a provider")
+    provider_del.add_argument("name", help="Provider name")
+    provider_probe = provider_sub.add_parser("probe", help="Test provider connection")
+    provider_probe.add_argument("name", help="Provider name")
+    provider_refresh = provider_sub.add_parser("refresh", help="Refresh provider models")
+    provider_refresh.add_argument("name", nargs="?", default=None, help="Provider name (default: all)")
+    provider_sub.add_parser("test-all", help="Test all configured providers")
+
+    # ── export ──
+    export_parser = sub.add_parser("export", help="Export collected messages")
+    export_sub = export_parser.add_subparsers(dest="export_action")
+    for fmt_name in ("json", "csv", "rss"):
+        exp = export_sub.add_parser(fmt_name, help=f"Export as {fmt_name.upper()}")
+        exp.add_argument("--channel-id", type=int, default=None, dest="channel_id",
+                         help="Filter by channel ID")
+        exp.add_argument("--limit", type=int, default=200, help="Max messages (default: 200)")
+        exp.add_argument("--output", "-o", default=None, help="Output file (default: stdout)")
+
     translate_parser = sub.add_parser("translate", help="Language detection and translation")
     translate_sub = translate_parser.add_subparsers(dest="translate_action")
     translate_sub.add_parser("stats", help="Show language distribution")
@@ -714,6 +808,10 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--source-filter", default="", help="Comma-separated source languages")
     run_parser.add_argument("--limit", type=int, default=100, help="Max messages to translate")
 
+    translate_msg = translate_sub.add_parser("message", help="Translate a single message")
+    translate_msg.add_argument("message_id", type=int, help="Message DB id")
+    translate_msg.add_argument("--target", default="en", help="Target language code")
+
     settings_parser = sub.add_parser("settings", help="System settings management")
     settings_sub = settings_parser.add_subparsers(dest="settings_action")
     settings_get = settings_sub.add_parser("get", help="Show settings")
@@ -722,5 +820,29 @@ def build_parser() -> argparse.ArgumentParser:
     settings_set.add_argument("key", help="Setting key")
     settings_set.add_argument("value", help="Setting value")
     settings_sub.add_parser("info", help="Show system diagnostics")
+
+    settings_agent = settings_sub.add_parser("agent", help="Configure agent backend and defaults")
+    settings_agent.add_argument("--backend", default=None, help="Agent backend (claude-agent-sdk, deepagents)")
+    settings_agent.add_argument("--prompt-template", default=None, dest="prompt_template",
+                                help="Default prompt template")
+
+    settings_filter = settings_sub.add_parser("filter-criteria", help="Configure filter thresholds")
+    settings_filter.add_argument("--min-uniqueness", type=float, default=None, dest="min_uniqueness")
+    settings_filter.add_argument("--min-sub-ratio", type=float, default=None, dest="min_sub_ratio")
+    settings_filter.add_argument("--max-cross-dupe", type=float, default=None, dest="max_cross_dupe")
+    settings_filter.add_argument("--min-cyrillic", type=float, default=None, dest="min_cyrillic")
+
+    settings_semantic = settings_sub.add_parser("semantic", help="Configure semantic search")
+    settings_semantic.add_argument("--provider", default=None, help="Embedding provider")
+    settings_semantic.add_argument("--model", default=None, help="Embedding model")
+    settings_semantic.add_argument("--api-key", default=None, dest="api_key", help="Embedding API key")
+
+    # ── debug ──
+    debug_parser = sub.add_parser("debug", help="Diagnostic tools")
+    debug_sub = debug_parser.add_subparsers(dest="debug_action")
+    debug_logs = debug_sub.add_parser("logs", help="Show recent log entries")
+    debug_logs.add_argument("--limit", type=int, default=50, help="Number of log lines (default: 50)")
+    debug_sub.add_parser("memory", help="Show memory usage statistics")
+    debug_sub.add_parser("timing", help="Show operation timing stats")
 
     return parser

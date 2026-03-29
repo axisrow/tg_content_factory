@@ -128,6 +128,21 @@ def run(args: argparse.Namespace) -> None:
                     result = await svc.purge_all_filtered()
                 _print_result(result, "Purged messages from")
 
+            elif args.filter_action == "purge-messages":
+                channel_id = args.channel_id
+                channels = await db.get_channels()
+                ch = next((c for c in channels if c.channel_id == channel_id), None)
+                title = ch.title if ch else str(channel_id)
+                if not getattr(args, "yes", False):
+                    confirm = input(
+                        f"Delete all messages for channel {title} ({channel_id}) from DB? [y/N] "
+                    ).strip().lower()
+                    if confirm != "y":
+                        print("Aborted.")
+                        return
+                count = await db.delete_messages_for_channel(channel_id)
+                print(f"Deleted {count} messages for channel {title} ({channel_id}).")
+
             elif args.filter_action == "hard-delete":
                 dev_mode = (await db.get_setting("agent_dev_mode_enabled") or "0") == "1"
                 if not dev_mode:
