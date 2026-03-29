@@ -334,6 +334,14 @@ class ClaudeSdkBackend:
                 # claude_agent_sdk raises RuntimeError with this text; no specific exception type
                 if attempt == 0 and "Control request timeout" in str(exc):
                     logger.warning("Agent init timeout, retrying (thread %d)", thread_id)
+                    if tracker._current_tool is not None:
+                        await tracker._put({
+                            "type": "tool_end",
+                            "tool": tracker._current_tool,
+                            "duration": 0,
+                            "is_error": True,
+                            "summary": "timeout",
+                        })
                     last_err = exc
                     continue
                 last_err = exc
