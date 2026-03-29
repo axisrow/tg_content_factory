@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from telethon_cli.errors import CLIError
@@ -191,3 +191,59 @@ async def test_notification_target_uses_real_pool_native_getter(
         assert phone == "+70000000001"
 
     native_client.disconnect.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_acquire_reconnects_disconnected_client(
+    real_pool_harness_factory,
+):
+    """When cached client is disconnected, _acquire_from_lease auto-reconnects it."""
+    harness = real_pool_harness_factory()
+    cli_client = harness.queue_cli_client(
+        phone="+70000000001",
+        client=FakeCliTelethonClient(),
+    )
+    await harness.add_account("+70000000001", session_string="s1", is_primary=True)
+    await harness.initialize_connected_accounts()
+
+    # Simulate connection drop: is_connected returns False, then True after connect()
+    cli_client.is_connected = MagicMock(side_effect=[False, True])
+
+    acquired = await harness.pool.get_client_by_phone("+70000000001")
+
+    assert acquired is not None
+    _, phone = acquired
+    assert phone == "+70000000001"
+    cli_client.connect.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_acquire_falls_back_to_backend_when_reconnect_fails(
+    real_pool_harness_factory,
+):
+    """When auto-reconnect fails, pool falls back to backend router for a fresh client."""
+    harness = real_pool_harness_factory()
+    cli_client = harness.queue_cli_client(
+        phone="+70000000001",
+        client=FakeCliTelethonClient(),
+    )
+    await harness.add_account("+70000000001", session_string="s1", is_primary=True)
+    await harness.initialize_connected_accounts()
+
+    # Simulate: disconnected + reconnect raises
+    cli_client.is_connected = MagicMock(return_value=False)
+    cli_client.connect = AsyncMock(side_effect=ConnectionError("reconnect failed"))
+
+    # Queue a fresh client for the backend fallback
+    fresh_client = harness.queue_cli_client(
+        phone="+70000000001",
+        client=FakeCliTelethonClient(),
+    )
+
+    acquired = await harness.pool.get_client_by_phone("+70000000001")
+
+    assert acquired is not None
+    _, phone = acquired
+    assert phone == "+70000000001"
+    # The dead client was evicted from self.clients
+    assert harness.pool.clients["+70000000001"].raw_client is fresh_client

@@ -583,6 +583,18 @@ class ClientPool:
         phone = account_lease.account.phone
         # force_native bypasses the persistent pool session — callers need a raw native client
         direct_session = None if force_native else self._direct_session(phone)
+
+        # Auto-reconnect: if the cached session's connection dropped (Stream closed),
+        # attempt to reconnect before using it; fall back to backend on failure.
+        if direct_session is not None and not direct_session.raw_client.is_connected():
+            logger.warning("Client for %s disconnected, attempting auto-reconnect", phone)
+            try:
+                await direct_session.raw_client.connect()
+            except Exception:
+                logger.exception("Auto-reconnect failed for %s, falling back to backend", phone)
+                self.clients.pop(phone, None)
+                direct_session = None
+
         lease: BackendClientLease | None = None
         try:
             if direct_session is not None:
