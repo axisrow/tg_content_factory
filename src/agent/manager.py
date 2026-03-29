@@ -218,10 +218,17 @@ class ClaudeSdkBackend:
             extra["model"] = resolved_model
 
         stderr_lines: list[str] = []
+        debug_lines: list[str] = []
 
         def _on_stderr(line: str) -> None:
-            stderr_lines.append(line)
-            logger.warning("claude-cli stderr: %s", line)
+            # debug-to-stderr produces verbose transport logs; keep them separate
+            # so user-facing error details show real errors, not debug noise.
+            if line.startswith(("[DEBUG]", "[TRACE]", "DEBUG", "TRACE")):
+                debug_lines.append(line)
+                logger.debug("claude-cli debug: %s", line)
+            else:
+                stderr_lines.append(line)
+                logger.warning("claude-cli stderr: %s", line)
 
         cli_path = shutil.which("claude")
         logger.info("claude-cli path: %s", cli_path)
@@ -443,6 +450,13 @@ class ClaudeSdkBackend:
                 last_err = exc
                 break
 
+        if debug_lines:
+            logger.debug(
+                "claude-cli debug dump (thread %d, %d lines):\n%s",
+                thread_id,
+                len(debug_lines),
+                "\n".join(debug_lines[-50:]),
+            )
         if stderr_lines:
             logger.error(
                 "claude-cli stderr dump (thread %d):\n%s",
