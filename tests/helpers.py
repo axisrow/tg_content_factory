@@ -239,6 +239,7 @@ class FakeCliTelethonClient:
         self.flood_sleep_threshold = 60
         self.connect = AsyncMock()
         self.disconnect = AsyncMock()
+        self.is_connected = MagicMock(return_value=True)
         self.is_user_authorized = AsyncMock(return_value=authorized)
         self.get_me = AsyncMock(side_effect=self._get_me)
         self.download_profile_photo = AsyncMock(side_effect=self._download_profile_photo)
