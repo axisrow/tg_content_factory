@@ -37,21 +37,27 @@ python -m src.main [--config CONFIG] serve [--web-pass PASS]
 python -m src.main [--config CONFIG] collect [--channel-id ID]
 python -m src.main [--config CONFIG] search "query" [--limit N] [--mode MODE]
 
-python -m src.main channel list|add|delete|toggle|collect|stats|refresh-types|import
-python -m src.main filter analyze|apply|reset|precheck
+python -m src.main messages read <identifier> [--live] [--phone PHONE] [--format text|json|csv]
+python -m src.main channel list|add|delete|toggle|collect|stats|refresh-types|import|add-bulk|tag
+python -m src.main filter analyze|apply|reset|precheck|purge-messages
 python -m src.main keyword list|add|delete|toggle
-python -m src.main account list|toggle|delete
+python -m src.main account list|toggle|delete|add
 python -m src.main scheduler start|trigger|search
-python -m src.main notification setup|status|delete
+python -m src.main notification setup|status|delete|set-account
 python -m src.main test all|read|write|telegram|benchmark
 
 python -m src.main stop|restart
 python -m src.main search-query list|add|delete|toggle
-python -m src.main pipeline list|add|delete|run|runs
+python -m src.main pipeline list|add|delete|run|runs|refinement-steps
 python -m src.main photo-loader list|upload|schedule|cancel
-python -m src.main my-telegram leave|export
+python -m src.main dialogs list|refresh|leave|send|forward|read|...
 python -m src.main agent chat
-python -m src.main analytics summary|export
+python -m src.main analytics summary|export|trending-emojis
+python -m src.main provider list|add|delete|probe|refresh|test-all
+python -m src.main export json|csv|rss
+python -m src.main translate stats|detect|run|message
+python -m src.main settings get|set|info|agent|filter-criteria|semantic
+python -m src.main debug logs|memory|timing
 ```
 
 ## Architecture

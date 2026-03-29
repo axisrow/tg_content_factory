@@ -9,8 +9,44 @@ from src.cli import runtime
 from src.cli.commands.common import resolve_channel
 from src.models import Channel, CollectionTaskStatus
 from src.parsers import deduplicate_identifiers, parse_file, parse_identifiers
+from src.services.channel_service import ChannelService
 from src.telegram.backends import adapt_transport_session
 from src.telegram.collector import Collector
+
+
+async def _handle_tag(args: argparse.Namespace, db) -> None:
+    tag_action = getattr(args, "tag_action", None)
+    if not tag_action:
+        print("Usage: channel tag {list|add|delete|set|get}")
+        return
+
+    if tag_action == "list":
+        tags = await db.repos.channels.list_all_tags()
+        if not tags:
+            print("No tags found.")
+            return
+        for tag in tags:
+            print(f"  {tag}")
+
+    elif tag_action == "add":
+        await db.repos.channels.create_tag(args.name)
+        print(f"Tag '{args.name}' created.")
+
+    elif tag_action == "delete":
+        await db.repos.channels.delete_tag(args.name)
+        print(f"Tag '{args.name}' deleted.")
+
+    elif tag_action == "set":
+        tag_names = [t.strip() for t in args.tags.split(",") if t.strip()]
+        await db.repos.channels.set_channel_tags(args.pk, tag_names)
+        print(f"Tags for channel pk={args.pk} set to: {', '.join(tag_names)}")
+
+    elif tag_action == "get":
+        tags = await db.repos.channels.get_channel_tags(args.pk)
+        if not tags:
+            print(f"No tags for channel pk={args.pk}.")
+        else:
+            print(f"Tags for channel pk={args.pk}: {', '.join(tags)}")
 
 
 def run(args: argparse.Namespace) -> None:
@@ -328,6 +364,58 @@ def run(args: argparse.Namespace) -> None:
                         print(f"Failed to fetch metadata for {ch.title}")
                 else:
                     print("Please provide --all or a channel identifier")
+
+            elif args.channel_action == "add-bulk":
+                _, pool = await runtime.init_pool(config, db)
+                if not pool.clients:
+                    logging.error("No connected accounts.")
+                    return
+                phone = args.phone
+                if phone not in pool.clients:
+                    print(f"Account {phone} not connected.")
+                    return
+                raw_ids = [i.strip() for i in args.dialog_ids.split(",") if i.strip()]
+                dialog_ids = []
+                for raw in raw_ids:
+                    try:
+                        dialog_ids.append(int(raw))
+                    except ValueError:
+                        print(f"Invalid dialog ID: {raw!r}, skipping.")
+                if not dialog_ids:
+                    print("No valid dialog IDs provided.")
+                    return
+                svc = ChannelService(db, pool, None)  # type: ignore[arg-type]
+                dialogs_info = await svc.get_my_dialogs(phone)
+                info_map = {d["channel_id"]: d for d in dialogs_info}
+                existing = await db.get_channels()
+                existing_ids = {ch.channel_id for ch in existing}
+                added = skipped = failed = 0
+                for did in dialog_ids:
+                    info = info_map.get(did)
+                    if not info:
+                        print(f"SKIP: {did} — not found in dialogs")
+                        failed += 1
+                        continue
+                    if info["channel_id"] in existing_ids:
+                        print(f"SKIP: {did} — already exists ({info.get('title', '')})")
+                        skipped += 1
+                        continue
+                    await db.add_channel(
+                        Channel(
+                            channel_id=info["channel_id"],
+                            title=info["title"],
+                            username=info.get("username"),
+                            channel_type=info.get("channel_type"),
+                            is_active=True,
+                        )
+                    )
+                    existing_ids.add(info["channel_id"])
+                    print(f"OK: {info.get('title', did)} ({info['channel_id']})")
+                    added += 1
+                print(f"\nAdded: {added}, Skipped: {skipped}, Failed: {failed}")
+
+            elif args.channel_action == "tag":
+                await _handle_tag(args, db)
 
             elif args.channel_action == "collect":
                 _, pool = await runtime.init_pool(config, db)

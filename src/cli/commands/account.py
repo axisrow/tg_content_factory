@@ -2,9 +2,13 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import logging
 from datetime import datetime, timezone
 
 from src.cli import runtime
+from src.models import Account
+from src.settings_utils import parse_int_setting
+from src.telegram.auth import TelegramAuth
 
 
 def run(args: argparse.Namespace) -> None:
@@ -12,7 +16,88 @@ def run(args: argparse.Namespace) -> None:
         config, db = await runtime.init_db(args.config)
         pool = None
         try:
-            if args.account_action == "info":
+            if args.account_action == "add":
+                phone = args.phone
+                api_id = args.api_id or config.telegram.api_id
+                api_hash = args.api_hash or config.telegram.api_hash
+                if api_id == 0 or not api_hash:
+                    stored_id = await db.get_setting("tg_api_id")
+                    stored_hash = await db.get_setting("tg_api_hash")
+                    if stored_id and stored_hash:
+                        api_id = parse_int_setting(
+                            stored_id, setting_name="tg_api_id", default=0,
+                            logger=logging.getLogger(__name__),
+                        )
+                        api_hash = stored_hash
+                if api_id == 0 or not api_hash:
+                    print("ERROR: API credentials not configured.")
+                    print("Provide --api-id and --api-hash, or set them in config/DB.")
+                    return
+
+                auth = TelegramAuth(api_id, api_hash)
+                try:
+                    info = await auth.send_code(phone)
+                except Exception as exc:
+                    print(f"Error sending auth code: {exc}")
+                    return
+
+                phone_code_hash = info.phone_code_hash
+                code = input("Enter the code from Telegram: ").strip()
+                if not code:
+                    print("Aborted.")
+                    return
+
+                try:
+                    session_string = await auth.verify_code(phone, code, phone_code_hash)
+                except ValueError as exc:
+                    if "2FA" in str(exc) or "password" in str(exc).lower():
+                        password = input("Enter 2FA password: ").strip()
+                        if not password:
+                            print("Aborted.")
+                            return
+                        try:
+                            session_string = await auth.verify_code(
+                                phone, code, phone_code_hash, password
+                            )
+                        except Exception as exc2:
+                            print(f"Auth failed: {exc2}")
+                            return
+                    else:
+                        print(f"Auth failed: {exc}")
+                        return
+                except Exception as exc:
+                    print(f"Auth failed: {exc}")
+                    return
+
+                existing = await db.get_accounts()
+                is_primary = len(existing) == 0
+
+                _, pool = await runtime.init_pool(config, db)
+                await pool.add_client(phone, session_string)
+
+                is_premium = False
+                acquired = await pool.get_client_by_phone(phone)
+                if acquired:
+                    session, acquired_phone = acquired
+                    try:
+                        me = await session.fetch_me()
+                        is_premium = bool(getattr(me, "premium", False))
+                    except Exception:
+                        pass
+                    finally:
+                        await pool.release_client(acquired_phone)
+
+                account = Account(
+                    phone=phone,
+                    session_string=session_string,
+                    is_primary=is_primary,
+                    is_premium=is_premium,
+                )
+                await db.add_account(account)
+                print(f"Account {phone} added successfully (primary={is_primary}).")
+                return
+
+            elif args.account_action == "info":
                 _, pool = await runtime.init_pool(config, db)
                 users = await pool.get_users_info(include_avatar=False)
                 phone_filter = getattr(args, "phone", None)
