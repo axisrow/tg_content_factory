@@ -288,7 +288,12 @@ class ClientPool:
             for phone in phones:
                 if phone in self.clients:
                     try:
-                        await asyncio.wait_for(self.clients[phone].close(), timeout=2.0)
+                        # close() is a no-op (disconnect_on_close=False), so
+                        # disconnect the underlying Telethon client directly to
+                        # cancel its background tasks (_send_loop, _recv_loop).
+                        await asyncio.wait_for(
+                            self.clients[phone].raw_client.disconnect(), timeout=3.0,
+                        )
                     except Exception:
                         pass
                     del self.clients[phone]

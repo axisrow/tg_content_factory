@@ -502,7 +502,7 @@ class DeepagentsBackend:
         if provider == "ollama":
             bare_model = resolved_model_name.split(":")[0]
             if bare_model in _OLLAMA_NO_NATIVE_FC:
-                logger.info(
+                logger.debug(
                     "Model %r does not support native FC via Ollama; using ReAct fallback",
                     resolved_model_name,
                 )
