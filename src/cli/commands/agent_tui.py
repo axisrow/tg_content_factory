@@ -122,9 +122,12 @@ class StreamingMessage(Static):
         if self._tool_start_time > 0:
             elapsed = round(_time.monotonic() - self._tool_start_time, 1)
             text = f"🔧 {self._status_label}... ({elapsed}s)"
+        elif self._status_label:
+            elapsed = int(_time.monotonic() - self._start_time)
+            text = f"{self._status_label} ({elapsed}s)"
         else:
             elapsed = int(_time.monotonic() - self._start_time)
-            text = self._status_label or f"⏳ ({elapsed}s)"
+            text = f"⏳ ({elapsed}s)"
         if self._elapsed_label is not None:
             self._elapsed_label.update(text)
 

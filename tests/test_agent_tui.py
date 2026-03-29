@@ -99,16 +99,20 @@ def test_streaming_message_tick_elapsed_with_tool():
 
 
 def test_streaming_message_tick_elapsed_with_status_label():
+    import time as _time
+
     from src.cli.commands.agent_tui import StreamingMessage
 
     widget = StreamingMessage()
     widget._elapsed_label = MagicMock()
     widget._loading = True
-    widget._start_time = 100.0
+    widget._start_time = _time.monotonic() - 5.0
     widget._status_label = "⏳ Думает..."
     widget._tool_start_time = 0.0
     widget._tick_elapsed()
-    widget._elapsed_label.update.assert_called_with("⏳ Думает...")
+    call_arg = widget._elapsed_label.update.call_args[0][0]
+    assert "⏳ Думает..." in call_arg
+    assert "(5s)" in call_arg
 
 
 def test_streaming_message_set_error_changes_class():
