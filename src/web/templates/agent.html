@@ -253,15 +253,6 @@
     color: var(--bs-secondary-color);
     font-style: italic;
 }
-.typing-indicator::after {
-    content: "...";
-    animation: dots 1.2s steps(3, end) infinite;
-}
-@keyframes dots {
-    0%, 20% { content: "."; }
-    40% { content: ".."; }
-    60%, 100% { content: "..."; }
-}
 
 .chat-composer {
     padding: 0.95rem 1rem 1rem 1rem;
@@ -876,7 +867,17 @@
         var aiBubble = document.createElement('div');
         aiBubble.className = 'message-bubble message-assistant';
         aiBubble.setAttribute('data-pending', 'true');
-        aiBubble.innerHTML = '<span class="typing-indicator">Думаю</span>';
+        var thinkStart = Date.now();
+        aiBubble.innerHTML = '<span class="typing-indicator">⏳ (0s)</span>';
+        var thinkTimer = setInterval(function() {
+            var el = aiBubble.querySelector('.typing-indicator');
+            if (el) {
+                var sec = Math.floor((Date.now() - thinkStart) / 1000);
+                el.textContent = '⏳ (' + sec + 's)';
+            } else {
+                clearInterval(thinkTimer);
+            }
+        }, 1000);
         container.appendChild(aiBubble);
         container.scrollTop = container.scrollHeight;
 
@@ -931,11 +932,13 @@
                                 } catch (_) { /* server-side timeout will handle it */ }
                             }
                         } else if (data.error) {
+                            clearInterval(thinkTimer);
                             aiBubble.className = 'message-error';
                             aiBubble.textContent = data.error;
                             fullText = data.error;
                             addRegenerateButton(aiBubble, text, true);
                         } else if (data.text !== undefined) {
+                            clearInterval(thinkTimer);
                             fullText += data.text;
                             aiBubble.innerHTML = renderMd(fullText);
                             container.scrollTop = container.scrollHeight;
@@ -948,6 +951,7 @@
                 }
             }
 
+            clearInterval(thinkTimer);
             if (aiBubble.querySelector('.typing-indicator')) {
                 aiBubble.textContent = 'Нет ответа от агента.';
             }
@@ -956,6 +960,7 @@
             aiBubble.removeAttribute('data-pending');
 
         } catch(err) {
+            clearInterval(thinkTimer);
             if (err.name === 'AbortError') return;
             aiBubble.className = 'message-error';
             aiBubble.textContent = 'Ошибка соединения: ' + err.message;

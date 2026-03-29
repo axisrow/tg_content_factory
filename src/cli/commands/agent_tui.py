@@ -87,22 +87,57 @@ class StreamingMessage(Static):
 
     def __init__(self) -> None:
         super().__init__(classes="streaming-bubble")
-        self.border_title = "Агент (печатает…)"
+        self.border_title = "Агент"
         self._content = ""
         self._md: Markdown | None = None
+        self._elapsed_label: Label | None = None
+        self._tick_timer = None
+        self._start_time: float = 0.0
         self._render_timer: asyncio.TimerHandle | None = None
         self._pending_render = False
+        self._loading = True
 
     def compose(self) -> ComposeResult:
+        import time as _time
+
+        self._start_time = _time.monotonic()
+        label = Label("⏳ (0s)")
+        self._elapsed_label = label
+        yield label
         md = Markdown("")
+        md.display = False
         self._md = md
         yield md
 
+    def on_mount(self) -> None:
+        self._tick_timer = self.set_interval(1.0, self._tick_elapsed)
+
+    def _tick_elapsed(self) -> None:
+        if not self._loading:
+            return
+        import time as _time
+
+        elapsed = int(_time.monotonic() - self._start_time)
+        if self._elapsed_label is not None:
+            self._elapsed_label.update(f"⏳ ({elapsed}s)")
+
+    def _stop_loading(self) -> None:
+        self._loading = False
+        if self._tick_timer is not None:
+            self._tick_timer.stop()
+            self._tick_timer = None
+        if self._elapsed_label is not None:
+            self._elapsed_label.display = False
+        if self._md is not None:
+            self._md.display = True
+
     def append_text(self, text: str) -> None:
+        if self._loading:
+            self._stop_loading()
         self._content += text
         if not self._pending_render:
             self._pending_render = True
-            self.set_timer(0.1, self._do_render)
+            self.set_timer(0.03, self._do_render)
 
     def _do_render(self) -> None:
         self._pending_render = False
@@ -111,6 +146,7 @@ class StreamingMessage(Static):
 
     def set_error(self, error: str) -> None:
         self._pending_render = False
+        self._stop_loading()
         self.add_class("user-bubble")
         self.remove_class("streaming-bubble")
         self.border_title = "Ошибка"
@@ -120,6 +156,7 @@ class StreamingMessage(Static):
     def finalize(self) -> None:
         """Convert to static assistant bubble after streaming completes."""
         self._pending_render = False
+        self._stop_loading()
         self.remove_class("streaming-bubble")
         self.add_class("assistant-bubble")
         self.border_title = "Агент"
