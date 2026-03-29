@@ -415,7 +415,10 @@ class AgentTuiApp(App):
 
     @on(Button.Pressed, "#send-btn")
     async def on_send_btn(self) -> None:
-        await self.action_send_message()
+        if self._stream_worker is not None and self._stream_worker.state in (WorkerState.PENDING, WorkerState.RUNNING):
+            self.action_cancel_stream()
+        else:
+            await self.action_send_message()
 
     async def action_new_thread(self) -> None:
         tid = await self.db.create_agent_thread("Новый тред")
@@ -441,6 +444,15 @@ class AgentTuiApp(App):
     def action_cancel_stream(self) -> None:
         if self._stream_worker is not None and not self._stream_worker.is_cancelled:
             self._stream_worker.cancel()
+
+    def _set_button_streaming(self, streaming: bool) -> None:
+        btn = self.query_one("#send-btn", Button)
+        if streaming:
+            btn.label = "■ Стоп (esc)"
+            btn.variant = "error"
+        else:
+            btn.label = "Отправить"
+            btn.variant = "success"
 
     async def action_send_message(self) -> None:
         if self._stream_worker is not None and self._stream_worker.state in (WorkerState.PENDING, WorkerState.RUNNING):
@@ -475,6 +487,7 @@ class AgentTuiApp(App):
             group="chat",
             thread=False,
         )
+        self._set_button_streaming(True)
 
     async def _stream_response(self, thread_id: int, message: str, widget: StreamingMessage) -> None:
         model = None  # let AgentManager pick default
@@ -517,3 +530,5 @@ class AgentTuiApp(App):
             logger.exception("Unexpected error in stream worker")
             widget.set_error(str(exc))
             await self.db.delete_last_agent_exchange(thread_id)
+        finally:
+            self._set_button_streaming(False)

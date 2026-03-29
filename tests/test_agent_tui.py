@@ -482,6 +482,174 @@ class TestAgentChatInteractiveMode:
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# Send/Stop button toggle tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_button_toggles_to_stop_during_streaming(db, app_factory):
+    """Button must show '■ Стоп (esc)' with error variant while streaming."""
+    gate = asyncio.Event()
+
+    async def _slow_stream(*_a, **_kw):
+        yield _make_sse_chunk("hello")
+        await gate.wait()  # block until released
+        yield _make_sse_done("hello")
+
+    config = AppConfig()
+    mgr = MagicMock()
+    mgr.chat_stream = MagicMock(side_effect=_slow_stream)
+
+    from src.cli.commands.agent_tui import AgentTuiApp
+
+    app = AgentTuiApp(db=db, config=config, agent_manager=mgr)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        from textual.widgets import Button, TextArea
+
+        input_area = app.query_one("#input", TextArea)
+        input_area.load_text("test")
+        await pilot.click("#send-btn")
+        await pilot.pause(0.1)
+
+        # Button should be in streaming state
+        btn = app.query_one("#send-btn", Button)
+        assert "Стоп" in str(btn.label)
+        assert btn.variant == "error"
+
+        gate.set()  # release the stream
+        await pilot.pause(0.3)
+
+        # Button should revert after streaming completes
+        assert str(btn.label) == "Отправить"
+        assert btn.variant == "success"
+
+
+@pytest.mark.asyncio
+async def test_button_reverts_after_cancel(db, app_factory):
+    """Pressing ESC during streaming cancels and reverts button to Отправить."""
+    gate = asyncio.Event()
+
+    async def _slow_stream(*_a, **_kw):
+        yield _make_sse_chunk("partial")
+        await gate.wait()
+        yield _make_sse_done("partial")
+
+    config = AppConfig()
+    mgr = MagicMock()
+    mgr.chat_stream = MagicMock(side_effect=_slow_stream)
+
+    from src.cli.commands.agent_tui import AgentTuiApp
+
+    app = AgentTuiApp(db=db, config=config, agent_manager=mgr)
+    db.delete_last_agent_exchange = AsyncMock()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        from textual.widgets import Button, TextArea
+
+        input_area = app.query_one("#input", TextArea)
+        input_area.load_text("test cancel")
+        await pilot.click("#send-btn")
+        await pilot.pause(0.1)
+
+        btn = app.query_one("#send-btn", Button)
+        assert "Стоп" in str(btn.label)
+
+        await pilot.press("escape")
+        await pilot.pause(0.3)
+
+        assert str(btn.label) == "Отправить"
+        assert btn.variant == "success"
+
+    gate.set()  # cleanup
+
+
+@pytest.mark.asyncio
+async def test_stop_button_click_cancels_streaming(db, app_factory):
+    """Clicking the stop button during streaming cancels the stream."""
+    gate = asyncio.Event()
+
+    async def _slow_stream(*_a, **_kw):
+        yield _make_sse_chunk("partial")
+        await gate.wait()
+        yield _make_sse_done("partial")
+
+    config = AppConfig()
+    mgr = MagicMock()
+    mgr.chat_stream = MagicMock(side_effect=_slow_stream)
+
+    from src.cli.commands.agent_tui import AgentTuiApp
+
+    app = AgentTuiApp(db=db, config=config, agent_manager=mgr)
+    db.delete_last_agent_exchange = AsyncMock()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        from textual.widgets import Button, TextArea
+
+        input_area = app.query_one("#input", TextArea)
+        input_area.load_text("click stop")
+        await pilot.click("#send-btn")
+        await pilot.pause(0.1)
+
+        btn = app.query_one("#send-btn", Button)
+        assert "Стоп" in str(btn.label)
+
+        # Click the stop button
+        await pilot.click("#send-btn")
+        await pilot.pause(0.3)
+
+        # Should revert to send state
+        assert str(btn.label) == "Отправить"
+        assert btn.variant == "success"
+
+    gate.set()
+
+
+@pytest.mark.asyncio
+async def test_no_race_condition_button_set_before_worker_runs(db, app_factory):
+    """Verify _set_button_streaming(True) executes before worker starts.
+
+    Reviewer claim: run_worker() could let the worker's finally block run
+    before _set_button_streaming(True). This test verifies the actual order
+    of execution with an instant-completing stream (worst case).
+    """
+    call_order = []
+
+    config = AppConfig()
+    # Instant stream — completes immediately with no awaits
+    chunks = [_make_sse_done("")]
+    mgr = _make_manager(*chunks)
+
+    from src.cli.commands.agent_tui import AgentTuiApp
+
+    app = AgentTuiApp(db=db, config=config, agent_manager=mgr)
+
+    original_set_button = app._set_button_streaming
+
+    def tracking_set_button(streaming: bool):
+        call_order.append(("set_button", streaming))
+        original_set_button(streaming)
+
+    app._set_button_streaming = tracking_set_button
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        from textual.widgets import TextArea
+
+        input_area = app.query_one("#input", TextArea)
+        input_area.load_text("instant")
+        await pilot.click("#send-btn")
+        await pilot.pause(0.5)
+
+    # True must come before False — no race condition
+    true_indices = [i for i, (fn, val) in enumerate(call_order) if val is True]
+    false_indices = [i for i, (fn, val) in enumerate(call_order) if val is False]
+    assert len(true_indices) >= 1, f"set_button(True) never called: {call_order}"
+    assert len(false_indices) >= 1, f"set_button(False) never called: {call_order}"
+    assert true_indices[0] < false_indices[0], f"Race detected! Order: {call_order}"
+
+
 class TestAgentChatParser:
     def test_prompt_flag_long(self):
         from src.cli.parser import build_parser

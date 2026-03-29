@@ -105,6 +105,7 @@ ThreadItem Label {
 }
 
 #send-btn {
-    width: 12;
+    width: auto;
+    min-width: 12;
     height: 3;
 }
