@@ -192,6 +192,7 @@ class ClaudeSdkBackend:
                                     streamed = True
                                     chunk_payload = json.dumps({"text": text_chunk}, ensure_ascii=False)
                                     await queue.put(f"data: {chunk_payload}\n\n")
+                                    await asyncio.sleep(0)
                         elif isinstance(msg, AssistantMessage):
                             if not streamed:
                                 for block in msg.content:
