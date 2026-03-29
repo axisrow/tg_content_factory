@@ -206,8 +206,8 @@ async def test_acquire_reconnects_disconnected_client(
     await harness.add_account("+70000000001", session_string="s1", is_primary=True)
     await harness.initialize_connected_accounts()
 
-    # Simulate connection drop: is_connected returns False, then True after connect()
-    cli_client.is_connected = MagicMock(side_effect=[False, True])
+    # Simulate connection drop: is_connected() is called once in _acquire_from_lease
+    cli_client.is_connected = MagicMock(return_value=False)
 
     acquired = await harness.pool.get_client_by_phone("+70000000001")
 
