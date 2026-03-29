@@ -937,6 +937,7 @@
                             fullText = data.error;
                             addRegenerateButton(aiBubble, text, true);
                         } else if (data.text !== undefined) {
+                            clearInterval(thinkTimer);
                             fullText += data.text;
                             aiBubble.innerHTML = renderMd(fullText);
                             container.scrollTop = container.scrollHeight;
@@ -949,6 +950,7 @@
                 }
             }
 
+            clearInterval(thinkTimer);
             if (aiBubble.querySelector('.typing-indicator')) {
                 aiBubble.textContent = 'Нет ответа от агента.';
             }
