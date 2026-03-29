@@ -1000,11 +1000,11 @@ class DeepagentsBackend:
                 await tracker.on_status(f"Пробую провайдер {cfg.provider}...")
             attempt += 1
             try:
+                agent_start = time.monotonic()
                 await tracker.on_first_event()
                 agent_label = f"{cfg.provider}/{cfg.selected_model or '?'}"
                 await tracker.on_tool_start("agent", 0)
 
-                agent_start = time.monotonic()
                 full_text = await asyncio.to_thread(
                     self._run_agent,
                     prompt,
