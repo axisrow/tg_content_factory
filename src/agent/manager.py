@@ -1469,6 +1469,14 @@ class AgentManager:
                 del self._active_tasks[thread_id]
 
         task.add_done_callback(_cleanup)
+
+        # Immediate feedback before backend connects (can take 10-30s)
+        init_payload = json.dumps(
+            {"type": "status", "text": f"Подключение к {backend_name}..."},
+            ensure_ascii=False,
+        )
+        yield f"data: {init_payload}\n\n"
+
         try:
             while True:
                 item = await queue.get()

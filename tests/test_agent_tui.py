@@ -26,6 +26,10 @@ def _make_sse_error(msg: str) -> str:
     return f"data: {json.dumps({'error': msg})}\n\n"
 
 
+def _make_sse_event(event_type: str, **kwargs) -> str:
+    return f"data: {json.dumps({'type': event_type, **kwargs})}\n\n"
+
+
 async def _fake_stream(*chunks: str):
     """Async generator yielding SSE chunks."""
     for chunk in chunks:
@@ -66,6 +70,45 @@ def test_streaming_message_finalize_changes_class():
     widget.finalize()
     assert "assistant-bubble" in widget.classes
     assert "streaming-bubble" not in widget.classes
+
+
+def test_streaming_message_update_status():
+    from src.cli.commands.agent_tui import StreamingMessage
+
+    widget = StreamingMessage()
+    widget._elapsed_label = MagicMock()
+    widget.update_status("🔧 search_messages ✅ (1.2s)")
+    assert widget._status_label == "🔧 search_messages ✅ (1.2s)"
+    assert widget._tool_start_time == 0.0
+    widget._elapsed_label.update.assert_called_with("🔧 search_messages ✅ (1.2s)")
+
+
+def test_streaming_message_tick_elapsed_with_tool():
+    import time as _time
+
+    from src.cli.commands.agent_tui import StreamingMessage
+
+    widget = StreamingMessage()
+    widget._elapsed_label = MagicMock()
+    widget._loading = True
+    widget._status_label = "search_messages"
+    widget._tool_start_time = _time.monotonic()
+    widget._tick_elapsed()
+    call_arg = widget._elapsed_label.update.call_args[0][0]
+    assert "🔧 search_messages..." in call_arg
+
+
+def test_streaming_message_tick_elapsed_with_status_label():
+    from src.cli.commands.agent_tui import StreamingMessage
+
+    widget = StreamingMessage()
+    widget._elapsed_label = MagicMock()
+    widget._loading = True
+    widget._start_time = 100.0
+    widget._status_label = "⏳ Думает..."
+    widget._tool_start_time = 0.0
+    widget._tick_elapsed()
+    widget._elapsed_label.update.assert_called_with("⏳ Думает...")
 
 
 def test_streaming_message_set_error_changes_class():
@@ -688,3 +731,31 @@ class TestAgentChatParser:
         args = parser.parse_args(["agent", "chat", "-p", "hi", "--thread-id", "5"])
         assert args.prompt == "hi"
         assert args.thread_id == 5
+
+
+@pytest.mark.asyncio
+async def test_tui_stream_shows_tool_status(db, app_factory):
+    """Tool SSE events update the streaming widget status label."""
+    config = AppConfig()
+    chunks = [
+        _make_sse_event("thinking"),
+        _make_sse_event("tool_start", tool="search_messages"),
+        _make_sse_event("tool_end", tool="search_messages", duration=1.5, is_error=False, summary="query='test'"),
+        _make_sse_chunk("result"),
+        _make_sse_done("result"),
+    ]
+    mgr = _make_manager(*chunks)
+
+    from src.cli.commands.agent_tui import AgentTuiApp
+
+    app = AgentTuiApp(db=db, config=config, agent_manager=mgr)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        from textual.widgets import TextArea
+
+        input_area = app.query_one("#input", TextArea)
+        input_area.load_text("test")
+        await pilot.click("#send-btn")
+        await pilot.pause(0.3)
+
+    mgr.chat_stream.assert_called_once()

@@ -106,8 +106,8 @@ async def test_chat_stream_stream_events_yield_incremental_chunks(db):
 
     payloads = [json.loads(c.removeprefix("data: ").strip()) for c in chunks]
 
-    # Incremental text chunks must be present
-    text_payloads = [p for p in payloads if "text" in p and not p.get("done")]
+    # Incremental text chunks must be present (filter out status/tool events)
+    text_payloads = [p for p in payloads if "text" in p and not p.get("done") and "type" not in p]
     assert len(text_payloads) == 3, f"ожидали 3 текстовых чанка, получили: {text_payloads}"
     assert text_payloads[0]["text"] == "привет"
     assert text_payloads[1]["text"] == " "
@@ -293,8 +293,9 @@ async def test_chat_stream_retry_emits_status_event(db):
 
     payloads = [json.loads(c.removeprefix("data: ").strip()) for c in chunks]
     status_events = [p for p in payloads if p.get("type") == "status"]
-    assert len(status_events) >= 1, f"status event not found on retry, payloads: {payloads}"
-    assert "Повтор" in status_events[0]["text"]
+    assert len(status_events) >= 2, f"expected init + retry status events, got: {status_events}"
+    retry_events = [e for e in status_events if "Повтор" in e["text"]]
+    assert retry_events, f"retry status event not found, status_events: {status_events}"
 
 
 @pytest.mark.asyncio
@@ -329,7 +330,7 @@ async def test_chat_stream_text_delta_not_broken_by_tool_tracking(db):
             chunks.append(chunk)
 
     payloads = [json.loads(c.removeprefix("data: ").strip()) for c in chunks]
-    text_payloads = [p for p in payloads if "text" in p and not p.get("done")]
+    text_payloads = [p for p in payloads if "text" in p and not p.get("done") and "type" not in p]
     assert len(text_payloads) == 2
     assert text_payloads[0]["text"] == "привет"
     assert text_payloads[1]["text"] == " мир"
@@ -394,6 +395,36 @@ async def test_chat_stream_multiple_tools_sequence(db):
     assert tool_starts[1]["tool"] == "list_channels"
     assert tool_ends[0]["tool"] == "search_messages"
     assert tool_ends[1]["tool"] == "list_channels"
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_emits_initial_connection_status(db):
+    """First SSE event is always a status event with backend connection info."""
+    thread_id = await db.create_agent_thread("init-status thread")
+    await db.save_agent_message(thread_id, "user", "test")
+
+    from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
+
+    assistant_msg = MagicMock(spec=AssistantMessage)
+    assistant_msg.content = [TextBlock(text="ok")]
+    result_msg = MagicMock(spec=ResultMessage)
+
+    async def mock_query(prompt, options):
+        yield assistant_msg
+        yield result_msg
+
+    mgr = AgentManager(db)
+    mgr.initialize()
+
+    chunks = []
+    with patch("src.agent.manager.query", mock_query):
+        async for chunk in mgr.chat_stream(thread_id, "test"):
+            chunks.append(chunk)
+
+    assert chunks, "должны быть SSE-строки"
+    first_payload = json.loads(chunks[0].removeprefix("data: ").strip())
+    assert first_payload.get("type") == "status", f"first event should be status, got: {first_payload}"
+    assert "Подключение" in first_payload["text"]
 
 
 @pytest.mark.asyncio
