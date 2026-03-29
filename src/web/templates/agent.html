@@ -932,6 +932,7 @@
                                 } catch (_) { /* server-side timeout will handle it */ }
                             }
                         } else if (data.error) {
+                            clearInterval(thinkTimer);
                             aiBubble.className = 'message-error';
                             aiBubble.textContent = data.error;
                             fullText = data.error;
