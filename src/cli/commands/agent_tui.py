@@ -96,6 +96,8 @@ class StreamingMessage(Static):
         self._render_timer: asyncio.TimerHandle | None = None
         self._pending_render = False
         self._loading = True
+        self._status_label: str = ""
+        self._tool_start_time: float = 0.0
 
     def compose(self) -> ComposeResult:
         import time as _time
@@ -117,9 +119,23 @@ class StreamingMessage(Static):
             return
         import time as _time
 
-        elapsed = int(_time.monotonic() - self._start_time)
+        if self._tool_start_time > 0:
+            elapsed = round(_time.monotonic() - self._tool_start_time, 1)
+            text = f"🔧 {self._status_label}... ({elapsed}s)"
+        elif self._status_label:
+            elapsed = int(_time.monotonic() - self._start_time)
+            text = f"{self._status_label} ({elapsed}s)"
+        else:
+            elapsed = int(_time.monotonic() - self._start_time)
+            text = f"⏳ ({elapsed}s)"
         if self._elapsed_label is not None:
-            self._elapsed_label.update(f"⏳ ({elapsed}s)")
+            self._elapsed_label.update(text)
+
+    def update_status(self, label: str) -> None:
+        self._status_label = label
+        self._tool_start_time = 0.0
+        if self._elapsed_label is not None:
+            self._elapsed_label.update(label)
 
     def _stop_loading(self) -> None:
         self._loading = False
@@ -503,11 +519,32 @@ class AgentTuiApp(App):
                     payload = json.loads(raw)
                 except json.JSONDecodeError:
                     continue
-                if payload.get("type") == "permission_request":
+                event_type = payload.get("type")
+                if event_type == "permission_request":
                     # Show interactive permission menu; tool handler is awaiting the Future
                     dialog = PermissionDialog(payload["tool"], payload.get("phone", ""))
                     choice = await self.push_screen_wait(dialog)
                     self.agent_manager.permission_gate.resolve(payload["request_id"], choice)
+                    continue
+                if event_type == "thinking":
+                    widget.update_status("⏳ Думает...")
+                    continue
+                if event_type == "tool_start":
+                    import time as _time
+
+                    widget._status_label = payload.get("tool", "tool")
+                    widget._tool_start_time = _time.monotonic()
+                    continue
+                if event_type == "tool_end":
+                    tool = payload.get("tool", "tool")
+                    dur = payload.get("duration", 0)
+                    icon = "❌" if payload.get("is_error") else "✅"
+                    widget.update_status(f"🔧 {tool} {icon} ({dur}s)")
+                    continue
+                if event_type == "status":
+                    widget.update_status(f"⏳ {payload.get('text', '')}")
+                    continue
+                if event_type in ("tool_result",):
                     continue
                 if "text" in payload:
                     full_text += payload["text"]
