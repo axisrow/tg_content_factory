@@ -155,7 +155,249 @@ async def test_chat_stream_fallback_to_assistant_message_when_no_stream_events(d
 
 
 @pytest.mark.asyncio
-async def test_agent_chat_stream_renders_saved_prompt_template_variables(db):
+async def test_chat_stream_emits_tool_start_and_tool_end_events(db):
+    """StreamEvent content_block_start (tool_use) and content_block_stop emit tool_start/tool_end SSE."""
+    thread_id = await db.create_agent_thread("tool-visibility thread")
+    await db.save_agent_message(thread_id, "user", "test")
+
+    from claude_agent_sdk import AssistantMessage, ResultMessage, StreamEvent, TextBlock
+
+    def _make_event(event_dict):
+        ev = MagicMock(spec=StreamEvent)
+        ev.event = event_dict
+        return ev
+
+    assistant_msg = MagicMock(spec=AssistantMessage)
+    assistant_msg.content = [TextBlock(text="done")]
+    result_msg = MagicMock(spec=ResultMessage)
+
+    async def mock_query(prompt, options):
+        # tool_use block start at index 0
+        yield _make_event({
+            "type": "content_block_start",
+            "index": 0,
+            "content_block": {"type": "tool_use", "id": "tu_1", "name": "search_messages"},
+        })
+        # partial input
+        yield _make_event({
+            "type": "content_block_delta",
+            "index": 0,
+            "delta": {"type": "input_json_delta", "partial_json": '{"query": "test"}'},
+        })
+        # tool block stop
+        yield _make_event({"type": "content_block_stop", "index": 0})
+        # text block
+        yield _make_event({
+            "type": "content_block_delta",
+            "delta": {"type": "text_delta", "text": "result"},
+        })
+        yield assistant_msg
+        yield result_msg
+
+    mgr = AgentManager(db)
+    mgr.initialize()
+
+    chunks = []
+    with patch("src.agent.manager.query", mock_query):
+        async for chunk in mgr.chat_stream(thread_id, "test"):
+            chunks.append(chunk)
+
+    payloads = [json.loads(c.removeprefix("data: ").strip()) for c in chunks]
+    types = [p.get("type") for p in payloads if "type" in p]
+
+    assert "thinking" in types, f"thinking event not found in {types}"
+    assert "tool_start" in types, f"tool_start event not found in {types}"
+    assert "tool_end" in types, f"tool_end event not found in {types}"
+
+    tool_start = next(p for p in payloads if p.get("type") == "tool_start")
+    assert tool_start["tool"] == "search_messages"
+
+    tool_end = next(p for p in payloads if p.get("type") == "tool_end")
+    assert tool_end["tool"] == "search_messages"
+    assert "duration" in tool_end
+    assert tool_end["is_error"] is False
+    assert "query" in tool_end["summary"]
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_emits_tool_result_from_assistant_message(db):
+    """ToolResultBlock in AssistantMessage emits tool_result SSE event."""
+    thread_id = await db.create_agent_thread("tool-result thread")
+    await db.save_agent_message(thread_id, "user", "test")
+
+    from claude_agent_sdk import AssistantMessage, ResultMessage, StreamEvent, TextBlock, ToolResultBlock, ToolUseBlock
+
+    def _make_event(event_dict):
+        ev = MagicMock(spec=StreamEvent)
+        ev.event = event_dict
+        return ev
+
+    # AssistantMessage with ToolUseBlock + ToolResultBlock
+    assistant_msg = MagicMock(spec=AssistantMessage)
+    assistant_msg.content = [
+        ToolUseBlock(id="tu_1", name="list_channels", input={}),
+        ToolResultBlock(tool_use_id="tu_1", content="Found 5 channels", is_error=False),
+        TextBlock(text="Here are the channels"),
+    ]
+    result_msg = MagicMock(spec=ResultMessage)
+
+    async def mock_query(prompt, options):
+        yield assistant_msg
+        yield result_msg
+
+    mgr = AgentManager(db)
+    mgr.initialize()
+
+    chunks = []
+    with patch("src.agent.manager.query", mock_query):
+        async for chunk in mgr.chat_stream(thread_id, "test"):
+            chunks.append(chunk)
+
+    payloads = [json.loads(c.removeprefix("data: ").strip()) for c in chunks]
+    tool_results = [p for p in payloads if p.get("type") == "tool_result"]
+
+    assert len(tool_results) >= 1, f"tool_result event not found, payloads: {payloads}"
+    assert tool_results[0]["tool"] == "list_channels"
+    assert tool_results[0]["is_error"] is False
+    assert "Found 5 channels" in tool_results[0]["summary"]
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_retry_emits_status_event(db):
+    """When Claude SDK retries after timeout, a status SSE event is emitted."""
+    thread_id = await db.create_agent_thread("retry thread")
+    await db.save_agent_message(thread_id, "user", "test")
+
+    from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
+
+    call_count = 0
+
+    async def mock_query(prompt, options):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise RuntimeError("Control request timeout")
+        assistant_msg = MagicMock(spec=AssistantMessage)
+        assistant_msg.content = [TextBlock(text="ok")]
+        result_msg = MagicMock(spec=ResultMessage)
+        yield assistant_msg
+        yield result_msg
+
+    mgr = AgentManager(db)
+    mgr.initialize()
+
+    chunks = []
+    with patch("src.agent.manager.query", mock_query):
+        async for chunk in mgr.chat_stream(thread_id, "test"):
+            chunks.append(chunk)
+
+    payloads = [json.loads(c.removeprefix("data: ").strip()) for c in chunks]
+    status_events = [p for p in payloads if p.get("type") == "status"]
+    assert len(status_events) >= 1, f"status event not found on retry, payloads: {payloads}"
+    assert "Повтор" in status_events[0]["text"]
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_text_delta_not_broken_by_tool_tracking(db):
+    """Existing text streaming still works correctly with tool tracking in place."""
+    thread_id = await db.create_agent_thread("text-delta thread")
+    await db.save_agent_message(thread_id, "user", "test")
+
+    from claude_agent_sdk import AssistantMessage, ResultMessage, StreamEvent, TextBlock
+
+    def _stream_event(text):
+        ev = MagicMock(spec=StreamEvent)
+        ev.event = {"type": "content_block_delta", "delta": {"type": "text_delta", "text": text}}
+        return ev
+
+    assistant_msg = MagicMock(spec=AssistantMessage)
+    assistant_msg.content = [TextBlock(text="привет мир")]
+    result_msg = MagicMock(spec=ResultMessage)
+
+    async def mock_query(prompt, options):
+        yield _stream_event("привет")
+        yield _stream_event(" мир")
+        yield assistant_msg
+        yield result_msg
+
+    mgr = AgentManager(db)
+    mgr.initialize()
+
+    chunks = []
+    with patch("src.agent.manager.query", mock_query):
+        async for chunk in mgr.chat_stream(thread_id, "test"):
+            chunks.append(chunk)
+
+    payloads = [json.loads(c.removeprefix("data: ").strip()) for c in chunks]
+    text_payloads = [p for p in payloads if "text" in p and not p.get("done")]
+    assert len(text_payloads) == 2
+    assert text_payloads[0]["text"] == "привет"
+    assert text_payloads[1]["text"] == " мир"
+
+    done_payloads = [p for p in payloads if p.get("done")]
+    assert done_payloads[0]["full_text"] == "привет мир"
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_multiple_tools_sequence(db):
+    """Multiple tool calls in sequence emit correct tool_start/tool_end pairs."""
+    thread_id = await db.create_agent_thread("multi-tool thread")
+    await db.save_agent_message(thread_id, "user", "test")
+
+    from claude_agent_sdk import AssistantMessage, ResultMessage, StreamEvent, TextBlock
+
+    def _make_event(event_dict):
+        ev = MagicMock(spec=StreamEvent)
+        ev.event = event_dict
+        return ev
+
+    assistant_msg = MagicMock(spec=AssistantMessage)
+    assistant_msg.content = [TextBlock(text="result")]
+    result_msg = MagicMock(spec=ResultMessage)
+
+    async def mock_query(prompt, options):
+        # Tool 1
+        yield _make_event({
+            "type": "content_block_start", "index": 0,
+            "content_block": {"type": "tool_use", "id": "tu_1", "name": "search_messages"},
+        })
+        yield _make_event({"type": "content_block_stop", "index": 0})
+        # Tool 2
+        yield _make_event({
+            "type": "content_block_start", "index": 1,
+            "content_block": {"type": "tool_use", "id": "tu_2", "name": "list_channels"},
+        })
+        yield _make_event({"type": "content_block_stop", "index": 1})
+        # Text
+        yield _make_event({
+            "type": "content_block_delta",
+            "delta": {"type": "text_delta", "text": "result"},
+        })
+        yield assistant_msg
+        yield result_msg
+
+    mgr = AgentManager(db)
+    mgr.initialize()
+
+    chunks = []
+    with patch("src.agent.manager.query", mock_query):
+        async for chunk in mgr.chat_stream(thread_id, "test"):
+            chunks.append(chunk)
+
+    payloads = [json.loads(c.removeprefix("data: ").strip()) for c in chunks]
+    tool_starts = [p for p in payloads if p.get("type") == "tool_start"]
+    tool_ends = [p for p in payloads if p.get("type") == "tool_end"]
+
+    assert len(tool_starts) == 2, f"expected 2 tool_start, got {tool_starts}"
+    assert len(tool_ends) == 2, f"expected 2 tool_end, got {tool_ends}"
+    assert tool_starts[0]["tool"] == "search_messages"
+    assert tool_starts[1]["tool"] == "list_channels"
+    assert tool_ends[0]["tool"] == "search_messages"
+    assert tool_ends[1]["tool"] == "list_channels"
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_renders_saved_prompt_template_variables(db):
     await db.set_setting(
         AGENT_PROMPT_TEMPLATE_SETTING,
         "Дата: {date}\nКанал: {channel_title}\nТема: {topic}\nСообщения:\n{source_messages}",
