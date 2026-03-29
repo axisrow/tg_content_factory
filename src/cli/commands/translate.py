@@ -69,6 +69,36 @@ def run(args: argparse.Namespace) -> None:
                     await db.repos.messages.update_translation(msg_id, target, translated)
                 print(f"Translated {len(results)}/{len(msgs)} messages.")
 
+            elif action == "message":
+                from src.services.provider_service import AgentProviderService
+                from src.services.translation_service import TranslationService
+
+                message_id = args.message_id
+                target = getattr(args, "target", "en")
+
+                msg = await db.repos.messages.get_by_id(message_id)
+                if msg is None:
+                    print(f"Message id={message_id} not found.")
+                    return
+                text = msg.text or ""
+                if not text.strip():
+                    print("Message has no text to translate.")
+                    return
+
+                provider_name = await db.get_setting("translation_provider")
+                model = await db.get_setting("translation_model")
+                provider_service = AgentProviderService(db)
+                svc = TranslationService(db, provider_service=provider_service)
+
+                results = await svc.translate_batch([msg], target, provider_name=provider_name, model=model)
+                if results:
+                    _, translated = results[0]
+                    await db.repos.messages.update_translation(message_id, target, translated)
+                    print(f"Original:\n  {text[:500]}\n")
+                    print(f"Translated ({target}):\n  {translated[:500]}")
+                else:
+                    print("Translation failed.")
+
         finally:
             await db.close()
 
