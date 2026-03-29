@@ -360,3 +360,20 @@ def _enforce_cli_transport(
         )
 
     monkeypatch.setattr(TelegramAuth, "create_client_from_session", _forbid_native_transport)
+
+
+# ---------------------------------------------------------------------------
+# Agent tools shared helpers
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def mock_db():
+    """Mock Database for agent tool tests."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    db = MagicMock(spec=Database)
+    db.get_setting = AsyncMock(return_value=None)
+    db.set_setting = AsyncMock()
+    db.get_stats = AsyncMock(return_value={"channels": 10, "messages": 1000})
+    return db
