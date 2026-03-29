@@ -15,6 +15,11 @@ from typing import Any, TypeVar
 from claude_agent_sdk import (
     AssistantMessage,
     ClaudeAgentOptions,
+    ClaudeSDKError,
+    CLIConnectionError,
+    CLINotFoundError,
+    ProcessError,
+    RateLimitEvent,
     ResultMessage,
     StreamEvent,
     TextBlock,
@@ -256,6 +261,7 @@ class ClaudeSdkBackend:
             cli_path=cli_path or None,
             stderr=_on_stderr,
             include_partial_messages=True,
+            extra_args={"debug-to-stderr": None},
             **extra,
         )
 
@@ -268,12 +274,34 @@ class ClaudeSdkBackend:
             draining = False
             full_text = ""
             streamed = False
+            t0 = time.monotonic()
+            first_event_logged = False
             try:
                 async for msg in query(prompt=prompt, options=options):
+                    if not first_event_logged:
+                        elapsed = time.monotonic() - t0
+                        logger.info(
+                            "First SDK event after %.1fs (thread %d, attempt %d): %s",
+                            elapsed, thread_id, attempt + 1, type(msg).__name__,
+                        )
+                        first_event_logged = True
                     if draining:
                         continue
                     try:
-                        if isinstance(msg, StreamEvent):
+                        if isinstance(msg, RateLimitEvent):
+                            info = msg.rate_limit_info
+                            rl_status = info.status if info else "unknown"
+                            resets = info.resets_at if info else None
+                            utilization = info.utilization if info else None
+                            logger.warning(
+                                "Rate limit event (thread %d): status=%s, resets_at=%s, utilization=%s",
+                                thread_id, rl_status, resets, utilization,
+                            )
+                            parts = [f"Rate limit: {rl_status}"]
+                            if utilization is not None:
+                                parts.append(f"{utilization:.0%}")
+                            await tracker.on_status(", ".join(parts))
+                        elif isinstance(msg, StreamEvent):
                             event = msg.event
                             event_type = event.get("type")
                             await tracker.on_first_event()
@@ -330,10 +358,78 @@ class ClaudeSdkBackend:
                     except asyncio.CancelledError:
                         draining = True
                 return
+
+            except CLINotFoundError as exc:
+                logger.error("Claude CLI not found (thread %d): %s", thread_id, exc)
+                err_msg = (
+                    "Claude CLI не найден. "
+                    "Установите: npm install -g @anthropic-ai/claude-code"
+                )
+                await queue.put(
+                    f"data: {json.dumps({'error': err_msg}, ensure_ascii=False)}\n\n"
+                )
+                await queue.put(None)
+                return
+
+            except ProcessError as exc:
+                logger.error(
+                    "Claude CLI process error (thread %d): exit_code=%s, stderr=%s",
+                    thread_id, exc.exit_code, exc.stderr,
+                )
+                details = exc.stderr or str(exc)
+                # Truncate long stderr for UI
+                if len(details) > 500:
+                    details = details[:500] + "..."
+                err_payload = json.dumps(
+                    {"error": "Ошибка процесса Claude CLI", "details": details},
+                    ensure_ascii=False,
+                )
+                await queue.put(f"data: {err_payload}\n\n")
+                await queue.put(None)
+                return
+
+            except CLIConnectionError as exc:
+                elapsed = time.monotonic() - t0
+                logger.error(
+                    "Claude CLI connection error after %.1fs (thread %d): %s",
+                    elapsed, thread_id, exc,
+                )
+                if attempt == 0:
+                    last_err = exc
+                    continue
+                stderr_summary = "\n".join(stderr_lines[-10:]) if stderr_lines else str(exc)
+                err_payload = json.dumps(
+                    {"error": "Не удалось подключиться к Claude CLI", "details": stderr_summary},
+                    ensure_ascii=False,
+                )
+                await queue.put(f"data: {err_payload}\n\n")
+                await queue.put(None)
+                return
+
+            except ClaudeSDKError as exc:
+                elapsed = time.monotonic() - t0
+                logger.error(
+                    "Claude SDK error after %.1fs (thread %d): %s", elapsed, thread_id, exc,
+                )
+                stderr_summary = "\n".join(stderr_lines[-10:]) if stderr_lines else ""
+                err_payload = json.dumps(
+                    {
+                        "error": f"Ошибка Claude SDK: {exc}",
+                        "details": stderr_summary or None,
+                    },
+                    ensure_ascii=False,
+                )
+                await queue.put(f"data: {err_payload}\n\n")
+                await queue.put(None)
+                return
+
             except Exception as exc:
-                # claude_agent_sdk raises RuntimeError with this text; no specific exception type
+                elapsed = time.monotonic() - t0
                 if attempt == 0 and "Control request timeout" in str(exc):
-                    logger.warning("Agent init timeout, retrying (thread %d)", thread_id)
+                    logger.warning(
+                        "Agent init timeout after %.1fs, retrying (thread %d)",
+                        elapsed, thread_id,
+                    )
                     if tracker._current_tool is not None:
                         await tracker._put({
                             "type": "tool_end",
@@ -353,19 +449,27 @@ class ClaudeSdkBackend:
                 thread_id,
                 "\n".join(stderr_lines),
             )
-        elif last_err is not None:
-            logger.error(
-                (
-                    "claude-cli failed with no stderr (thread %d): %s. "
-                    "Prompt was %d chars (~%dK tokens)."
-                ),
-                thread_id,
-                last_err,
-                stats["prompt_chars"],
-                stats["prompt_chars"] // 4000,
-            )
         if last_err is not None:
-            raise last_err
+            if not stderr_lines:
+                logger.error(
+                    "claude-cli failed with no stderr (thread %d): %s. "
+                    "Prompt was %d chars (~%dK tokens).",
+                    thread_id,
+                    last_err,
+                    stats["prompt_chars"],
+                    stats["prompt_chars"] // 4000,
+                )
+            # Send error details to user via SSE
+            stderr_summary = "\n".join(stderr_lines[-10:]) if stderr_lines else ""
+            err_payload = json.dumps(
+                {
+                    "error": f"Ошибка агента: {last_err}",
+                    "details": stderr_summary or None,
+                },
+                ensure_ascii=False,
+            )
+            await queue.put(f"data: {err_payload}\n\n")
+            await queue.put(None)
 
 
 class DeepagentsBackend:
