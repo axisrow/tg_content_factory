@@ -467,6 +467,47 @@
 }
 .perm-item.perm-selected { color: var(--bs-primary); }
 .perm-hint { margin-top: 0.75rem; color: var(--bs-secondary-color); font-size: 0.8rem; }
+
+/* Tool call visibility */
+.tool-status-line {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.82rem;
+    color: var(--bs-secondary-color);
+    font-style: italic;
+    padding: 0.15rem 0;
+    min-height: 1.4em;
+}
+.tool-status-line.tool-done { color: var(--bs-success-text-emphasis); font-style: normal; }
+
+.tool-log { margin-top: 0.4rem; border-top: 1px dashed var(--bs-border-color); padding-top: 0.35rem; }
+.tool-log summary {
+    cursor: pointer;
+    font-size: 0.78rem;
+    color: var(--bs-secondary-color);
+    user-select: none;
+    list-style: none;
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+}
+.tool-log summary::before { content: "\25b6"; font-size: 0.65rem; transition: transform 0.15s; }
+.tool-log[open] summary::before { transform: rotate(90deg); }
+.tool-log-entry {
+    font-size: 0.78rem;
+    font-family: var(--bs-font-monospace);
+    padding: 0.2rem 0.4rem;
+    margin-top: 0.2rem;
+    border-radius: 4px;
+    background: var(--bs-tertiary-bg);
+    border-left: 2px solid var(--bs-border-color);
+    white-space: pre-wrap;
+    word-break: break-all;
+}
+.tool-log-entry.tool-entry-running { border-left-color: var(--bs-warning); }
+.tool-log-entry.tool-entry-done { border-left-color: var(--bs-success); }
+.tool-log-entry.tool-entry-error { border-left-color: var(--bs-danger); }
 </style>
 {% endblock %}
 
@@ -838,6 +879,124 @@
         bubble.appendChild(btn);
     }
 
+    function createStatusTracker(bubble) {
+        var statusEl = null;
+        var logDetails = null;
+        var logBody = null;
+        var entryCount = 0;
+        var currentEntryEl = null;
+        var timerInterval = null;
+        var timerStart = 0;
+        var destroyed = false;
+
+        function _clearTimer() {
+            if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
+        }
+        function _ensureElements() {
+            if (statusEl) return;
+            statusEl = document.createElement('div');
+            statusEl.className = 'tool-status-line';
+            bubble.innerHTML = '';
+            bubble.appendChild(statusEl);
+            logDetails = document.createElement('details');
+            logDetails.className = 'tool-log';
+            var sum = document.createElement('summary');
+            sum.textContent = 'Вызовы инструментов';
+            logDetails.appendChild(sum);
+            logBody = document.createElement('div');
+            logDetails.appendChild(logBody);
+            logDetails.style.display = 'none';
+            bubble.appendChild(logDetails);
+        }
+        function _startTimer(labelFn) {
+            _clearTimer();
+            timerStart = Date.now();
+            statusEl.textContent = labelFn('0.0');
+            timerInterval = setInterval(function() {
+                if (destroyed || !statusEl) { _clearTimer(); return; }
+                var s = ((Date.now() - timerStart) / 1000).toFixed(1);
+                statusEl.textContent = labelFn(s);
+            }, 200);
+        }
+
+        return {
+            start: function() {
+                _ensureElements();
+                _startTimer(function(s) { return '\u23f3 \u0414\u0443\u043c\u0430\u0435\u0442... (' + s + 's)'; });
+            },
+            onThinking: function() {
+                if (destroyed) return;
+                _ensureElements();
+                _clearTimer();
+                statusEl.textContent = '\ud83d\udcac \u0413\u0435\u043d\u0435\u0440\u0438\u0440\u0443\u0435\u0442 \u043e\u0442\u0432\u0435\u0442...';
+                statusEl.className = 'tool-status-line';
+            },
+            onToolStart: function(toolName) {
+                if (destroyed) return;
+                _ensureElements();
+                entryCount++;
+                logDetails.style.display = '';
+                currentEntryEl = document.createElement('div');
+                currentEntryEl.className = 'tool-log-entry tool-entry-running';
+                currentEntryEl.textContent = '\ud83d\udd27 ' + toolName + ' ...';
+                logBody.appendChild(currentEntryEl);
+                _startTimer(function(s) { return '\ud83d\udd27 ' + toolName + '... (' + s + 's)'; });
+            },
+            onToolEnd: function(toolName, duration, isError, summary) {
+                if (destroyed) return;
+                _ensureElements();
+                _clearTimer();
+                var icon = isError ? '\u274c' : '\u2705';
+                statusEl.textContent = '\ud83d\udd27 ' + toolName + ' ' + icon + ' (' + duration + 's)';
+                statusEl.className = 'tool-status-line' + (isError ? '' : ' tool-done');
+                if (currentEntryEl) {
+                    currentEntryEl.className = 'tool-log-entry ' + (isError ? 'tool-entry-error' : 'tool-entry-done');
+                    var txt = icon + ' ' + toolName + ' (' + duration + 's)';
+                    if (summary) txt += ' \u2192 ' + summary;
+                    currentEntryEl.textContent = txt;
+                    currentEntryEl = null;
+                }
+            },
+            onToolResult: function(toolName, isError, summary) {
+                if (destroyed) return;
+                if (!currentEntryEl && logBody) {
+                    var entries = logBody.querySelectorAll('.tool-log-entry');
+                    if (entries.length > 0) {
+                        var last = entries[entries.length - 1];
+                        if (summary) {
+                            var resultLine = document.createElement('div');
+                            resultLine.style.cssText = 'font-size:0.75rem;color:var(--bs-secondary-color);padding-left:0.4rem;margin-top:0.1rem;word-break:break-all;';
+                            resultLine.textContent = (isError ? '\u274c ' : '\u2192 ') + summary;
+                            last.appendChild(resultLine);
+                        }
+                    }
+                }
+            },
+            onStatus: function(text) {
+                if (destroyed) return;
+                _ensureElements();
+                _clearTimer();
+                statusEl.textContent = '\u23f3 ' + text;
+                statusEl.className = 'tool-status-line';
+            },
+            destroyStatusOnly: function() {
+                destroyed = true;
+                _clearTimer();
+                if (statusEl && statusEl.parentNode) { statusEl.parentNode.removeChild(statusEl); statusEl = null; }
+            },
+            destroy: function() {
+                destroyed = true;
+                _clearTimer();
+                if (statusEl && statusEl.parentNode) { statusEl.parentNode.removeChild(statusEl); statusEl = null; }
+                if (logDetails && logDetails.parentNode && entryCount === 0) {
+                    logDetails.parentNode.removeChild(logDetails);
+                    logDetails = null;
+                }
+            },
+            hasToolEntries: function() { return entryCount > 0; }
+        };
+    }
+
     window.sendMessage = async function(textToRetry) {
         if (sending || !threadId) return;
         var inputEl = document.getElementById('chat-input');
@@ -867,17 +1026,8 @@
         var aiBubble = document.createElement('div');
         aiBubble.className = 'message-bubble message-assistant';
         aiBubble.setAttribute('data-pending', 'true');
-        var thinkStart = Date.now();
-        aiBubble.innerHTML = '<span class="typing-indicator">⏳ (0s)</span>';
-        var thinkTimer = setInterval(function() {
-            var el = aiBubble.querySelector('.typing-indicator');
-            if (el) {
-                var sec = Math.floor((Date.now() - thinkStart) / 1000);
-                el.textContent = '⏳ (' + sec + 's)';
-            } else {
-                clearInterval(thinkTimer);
-            }
-        }, 1000);
+        var statusTracker = createStatusTracker(aiBubble);
+        statusTracker.start();
         container.appendChild(aiBubble);
         container.scrollTop = container.scrollHeight;
 
@@ -931,28 +1081,55 @@
                                     });
                                 } catch (_) { /* server-side timeout will handle it */ }
                             }
+                        } else if (data.type === 'thinking') {
+                            statusTracker.onThinking();
+                        } else if (data.type === 'tool_start') {
+                            statusTracker.onToolStart(data.tool || 'tool');
+                        } else if (data.type === 'tool_end') {
+                            statusTracker.onToolEnd(data.tool || 'tool', data.duration || 0, !!data.is_error, data.summary || '');
+                        } else if (data.type === 'tool_result') {
+                            statusTracker.onToolResult(data.tool || 'tool', !!data.is_error, data.summary || '');
+                        } else if (data.type === 'status') {
+                            statusTracker.onStatus(data.text || '');
                         } else if (data.error) {
-                            clearInterval(thinkTimer);
+                            statusTracker.destroy();
                             aiBubble.className = 'message-error';
                             aiBubble.textContent = data.error;
                             fullText = data.error;
                             addRegenerateButton(aiBubble, text, true);
                         } else if (data.text !== undefined) {
-                            clearInterval(thinkTimer);
+                            var textNode = aiBubble.querySelector('.agent-text-content');
+                            if (!textNode) {
+                                textNode = document.createElement('div');
+                                textNode.className = 'agent-text-content';
+                                aiBubble.appendChild(textNode);
+                            }
                             fullText += data.text;
-                            aiBubble.innerHTML = renderMd(fullText);
+                            textNode.innerHTML = renderMd(fullText);
                             container.scrollTop = container.scrollHeight;
                         } else if (data.done) {
                             fullText = data.full_text || fullText;
-                            aiBubble.innerHTML = renderMd(fullText);
+                            if (statusTracker.hasToolEntries()) {
+                                statusTracker.destroyStatusOnly();
+                                var textNode = aiBubble.querySelector('.agent-text-content');
+                                if (!textNode) {
+                                    textNode = document.createElement('div');
+                                    textNode.className = 'agent-text-content';
+                                    aiBubble.appendChild(textNode);
+                                }
+                                textNode.innerHTML = renderMd(fullText);
+                            } else {
+                                statusTracker.destroy();
+                                aiBubble.innerHTML = renderMd(fullText);
+                            }
                             container.scrollTop = container.scrollHeight;
                         }
                     } catch(e) { /* skip bad JSON */ }
                 }
             }
 
-            clearInterval(thinkTimer);
-            if (aiBubble.querySelector('.typing-indicator')) {
+            statusTracker.destroy();
+            if (!fullText && !aiBubble.querySelector('.agent-text-content')) {
                 aiBubble.textContent = 'Нет ответа от агента.';
             }
 
@@ -960,7 +1137,7 @@
             aiBubble.removeAttribute('data-pending');
 
         } catch(err) {
-            clearInterval(thinkTimer);
+            statusTracker.destroy();
             if (err.name === 'AbortError') return;
             aiBubble.className = 'message-error';
             aiBubble.textContent = 'Ошибка соединения: ' + err.message;

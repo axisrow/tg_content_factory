@@ -8,11 +8,20 @@ import shutil
 import time
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, TypeVar
 
-from claude_agent_sdk import AssistantMessage, ClaudeAgentOptions, ResultMessage, StreamEvent, TextBlock, query
+from claude_agent_sdk import (
+    AssistantMessage,
+    ClaudeAgentOptions,
+    ResultMessage,
+    StreamEvent,
+    TextBlock,
+    ToolResultBlock,
+    ToolUseBlock,
+    query,
+)
 
 from src.agent.models import CLAUDE_MODEL_IDS
 from src.agent.prompt_template import (
@@ -58,6 +67,86 @@ _DEEPAGENTS_PROBE_PROMPT = (
 )
 _DEEPAGENTS_PROBE_TIMEOUT_SECONDS = 45.0
 _ToolResult = TypeVar("_ToolResult")
+
+
+def _summarize_tool_args(args: dict) -> str:
+    if not args:
+        return ""
+    first_key = next(iter(args))
+    first_val = str(args[first_key])
+    if len(first_val) > 60:
+        first_val = first_val[:57] + "..."
+    if len(args) > 1:
+        return f"{first_key}={first_val!r} (+{len(args) - 1})"
+    return f"{first_key}={first_val!r}"
+
+
+def _truncate(text: str, limit: int = 120) -> str:
+    return text[:limit - 3] + "..." if len(text) > limit else text
+
+
+@dataclass
+class _ToolTracker:
+    queue: asyncio.Queue
+    _current_tool: str | None = field(default=None, init=False)
+    _current_index: int | None = field(default=None, init=False)
+    _tool_start_time: float = field(default=0.0, init=False)
+    _input_chunks: list[str] = field(default_factory=list, init=False)
+    _thinking_sent: bool = field(default=False, init=False)
+    _tool_id_to_name: dict[str, str] = field(default_factory=dict, init=False)
+
+    async def _put(self, payload: dict) -> None:
+        await self.queue.put(f"data: {json.dumps(payload, ensure_ascii=False)}\n\n")
+        await asyncio.sleep(0)
+
+    async def on_first_event(self) -> None:
+        if not self._thinking_sent:
+            self._thinking_sent = True
+            await self._put({"type": "thinking"})
+
+    async def on_tool_start(self, name: str, index: int, tool_use_id: str = "") -> None:
+        self._current_tool = name
+        self._current_index = index
+        self._input_chunks = []
+        self._tool_start_time = time.monotonic()
+        if tool_use_id:
+            self._tool_id_to_name[tool_use_id] = name
+        await self._put({"type": "tool_start", "tool": name})
+
+    def accumulate_input(self, chunk: str) -> None:
+        self._input_chunks.append(chunk)
+
+    async def on_block_stop(self, index: int) -> None:
+        if self._current_tool is not None and self._current_index == index:
+            duration = round(time.monotonic() - self._tool_start_time, 1)
+            args_raw = "".join(self._input_chunks)
+            try:
+                args = json.loads(args_raw) if args_raw else {}
+            except json.JSONDecodeError:
+                args = {}
+            summary = _summarize_tool_args(args)
+            await self._put({
+                "type": "tool_end",
+                "tool": self._current_tool,
+                "duration": duration,
+                "is_error": False,
+                "summary": summary,
+            })
+            self._current_tool = None
+            self._current_index = None
+
+    async def on_tool_result(self, tool_use_id: str, content: str | None, is_error: bool) -> None:
+        tool_name = self._tool_id_to_name.get(tool_use_id, "tool")
+        summary = _truncate(content or "", 120) if content else ""
+        await self._put({
+            "type": "tool_result",
+            "tool": tool_name,
+            "is_error": is_error,
+            "summary": summary,
+        })
+
+    async def on_status(self, text: str) -> None:
+        await self._put({"type": "status", "text": text})
 
 
 @dataclass(slots=True)
@@ -172,6 +261,10 @@ class ClaudeSdkBackend:
 
         last_err: Exception | None = None
         for attempt in range(2):
+            if attempt > 0:
+                tracker_retry = _ToolTracker(queue=queue)
+                await tracker_retry.on_status("Повтор подключения к Claude...")
+            tracker = _ToolTracker(queue=queue)
             draining = False
             full_text = ""
             streamed = False
@@ -182,26 +275,52 @@ class ClaudeSdkBackend:
                     try:
                         if isinstance(msg, StreamEvent):
                             event = msg.event
-                            if (
-                                event.get("type") == "content_block_delta"
-                                and event.get("delta", {}).get("type") == "text_delta"
-                            ):
-                                text_chunk = event["delta"].get("text", "")
-                                if text_chunk:
-                                    full_text += text_chunk
-                                    streamed = True
-                                    chunk_payload = json.dumps({"text": text_chunk}, ensure_ascii=False)
-                                    await queue.put(f"data: {chunk_payload}\n\n")
-                                    await asyncio.sleep(0)
-                        elif isinstance(msg, AssistantMessage):
-                            if not streamed:
-                                for block in msg.content:
-                                    if isinstance(block, TextBlock):
-                                        full_text += block.text
+                            event_type = event.get("type")
+                            await tracker.on_first_event()
+
+                            if event_type == "content_block_start":
+                                block = event.get("content_block", {})
+                                if block.get("type") == "tool_use":
+                                    await tracker.on_tool_start(
+                                        block.get("name", "unknown"),
+                                        event.get("index", 0),
+                                        tool_use_id=block.get("id", ""),
+                                    )
+
+                            elif event_type == "content_block_delta":
+                                delta = event.get("delta", {})
+                                delta_type = delta.get("type")
+                                if delta_type == "text_delta":
+                                    text_chunk = delta.get("text", "")
+                                    if text_chunk:
+                                        full_text += text_chunk
+                                        streamed = True
                                         chunk_payload = json.dumps(
-                                            {"text": block.text}, ensure_ascii=False
+                                            {"text": text_chunk}, ensure_ascii=False
                                         )
                                         await queue.put(f"data: {chunk_payload}\n\n")
+                                        await asyncio.sleep(0)
+                                elif delta_type == "input_json_delta":
+                                    tracker.accumulate_input(delta.get("partial_json", ""))
+
+                            elif event_type == "content_block_stop":
+                                await tracker.on_block_stop(event.get("index", 0))
+
+                        elif isinstance(msg, AssistantMessage):
+                            for block in msg.content:
+                                if isinstance(block, TextBlock) and not streamed:
+                                    full_text += block.text
+                                    chunk_payload = json.dumps(
+                                        {"text": block.text}, ensure_ascii=False
+                                    )
+                                    await queue.put(f"data: {chunk_payload}\n\n")
+                                elif isinstance(block, ToolUseBlock):
+                                    tracker._tool_id_to_name[block.id] = block.name
+                                elif isinstance(block, ToolResultBlock):
+                                    content = block.content if isinstance(block.content, str) else ""
+                                    await tracker.on_tool_result(
+                                        block.tool_use_id, content, bool(block.is_error)
+                                    )
                         elif isinstance(msg, ResultMessage):
                             done_payload = json.dumps(
                                 {"done": True, "full_text": full_text, "backend": "claude"},
@@ -215,6 +334,14 @@ class ClaudeSdkBackend:
                 # claude_agent_sdk raises RuntimeError with this text; no specific exception type
                 if attempt == 0 and "Control request timeout" in str(exc):
                     logger.warning("Agent init timeout, retrying (thread %d)", thread_id)
+                    if tracker._current_tool is not None:
+                        await tracker._put({
+                            "type": "tool_end",
+                            "tool": tracker._current_tool,
+                            "duration": 0,
+                            "is_error": True,
+                            "summary": "timeout",
+                        })
                     last_err = exc
                     continue
                 last_err = exc
@@ -869,13 +996,23 @@ class DeepagentsBackend:
             enabled_count, len(permissions),
         )
 
+        tracker = _ToolTracker(queue=queue)
         errors: list[str] = []
+        attempt = 0
         for cfg in await self._candidate_configs():
             validation_error = self._validation_error(cfg)
             if validation_error:
                 errors.append(f"{cfg.provider}: {validation_error}")
                 continue
+            if attempt > 0:
+                await tracker.on_status(f"Пробую провайдер {cfg.provider}...")
+            attempt += 1
             try:
+                agent_start = time.monotonic()
+                await tracker.on_first_event()
+                agent_label = f"{cfg.provider}/{cfg.selected_model or '?'}"
+                await tracker.on_tool_start("agent", 0)
+
                 full_text = await asyncio.to_thread(
                     self._run_agent,
                     prompt,
@@ -884,6 +1021,16 @@ class DeepagentsBackend:
                     system_prompt=system_prompt,
                     permissions=permissions,
                 )
+
+                agent_duration = round(time.monotonic() - agent_start, 1)
+                await tracker._put({
+                    "type": "tool_end",
+                    "tool": "agent",
+                    "duration": agent_duration,
+                    "is_error": False,
+                    "summary": agent_label,
+                })
+
                 self._init_error = None
                 if not full_text:
                     logger.debug("Deepagents returned empty response for provider=%s", cfg.provider)
@@ -903,6 +1050,14 @@ class DeepagentsBackend:
                 await queue.put(f"data: {done_payload}\n\n")
                 return
             except Exception as exc:
+                agent_duration = round(time.monotonic() - agent_start, 1)
+                await tracker._put({
+                    "type": "tool_end",
+                    "tool": "agent",
+                    "duration": agent_duration,
+                    "is_error": True,
+                    "summary": str(exc),
+                })
                 errors.append(f"{cfg.provider}: {exc}")
                 logger.warning("Deepagents provider failed (%s): %s", cfg.provider, exc)
         self._init_error = (
@@ -1330,6 +1485,14 @@ class AgentManager:
                 del self._active_tasks[thread_id]
 
         task.add_done_callback(_cleanup)
+
+        # Immediate feedback before backend connects (can take 10-30s)
+        init_payload = json.dumps(
+            {"type": "status", "text": f"Подключение к {backend_name}..."},
+            ensure_ascii=False,
+        )
+        yield f"data: {init_payload}\n\n"
+
         try:
             while True:
                 item = await queue.get()
