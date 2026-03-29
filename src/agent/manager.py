@@ -1042,6 +1042,14 @@ class DeepagentsBackend:
                 await queue.put(f"data: {done_payload}\n\n")
                 return
             except Exception as exc:
+                agent_duration = round(time.monotonic() - agent_start, 1)
+                await tracker._put({
+                    "type": "tool_end",
+                    "tool": "agent",
+                    "duration": agent_duration,
+                    "is_error": True,
+                    "summary": str(exc),
+                })
                 errors.append(f"{cfg.provider}: {exc}")
                 logger.warning("Deepagents provider failed (%s): %s", cfg.provider, exc)
         self._init_error = (
