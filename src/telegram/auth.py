@@ -168,20 +168,23 @@ class TelegramAuth:
         if stored_hash != phone_code_hash:
             raise ValueError("Phone code hash mismatch")
 
+        needs_2fa = False
         try:
             try:
                 await client.sign_in(phone, code, phone_code_hash=phone_code_hash)
             except SessionPasswordNeededError:
                 if not password_2fa:
+                    needs_2fa = True
                     raise ValueError("2FA password required")
                 await client.sign_in(password=password_2fa)
             session_string = client.session.save()
         finally:
-            del self._pending[phone]
-            try:
-                await client.disconnect()
-            except Exception:
-                logger.warning("Failed to disconnect temporary auth client for %s", phone)
+            if not needs_2fa:
+                del self._pending[phone]
+                try:
+                    await client.disconnect()
+                except Exception:
+                    logger.warning("Failed to disconnect temporary auth client for %s", phone)
 
         logger.info("Successfully authenticated %s", phone)
         return session_string

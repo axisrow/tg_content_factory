@@ -444,10 +444,10 @@ def build_parser() -> argparse.ArgumentParser:
     sched_task_cancel.add_argument("task_id", type=int, help="Task ID to cancel")
     sched_sub.add_parser("clear-pending", help="Clear all pending collection tasks")
 
-    my_tg_parser = sub.add_parser("dialogs", help="Telegram dialogs management")
+    my_tg_parser = sub.add_parser(
+        "dialogs", aliases=["my-telegram"], help="Telegram dialogs management",
+    )
     my_tg_sub = my_tg_parser.add_subparsers(dest="my_telegram_action")
-    # Backward-compat: register same parser object under old name
-    sub._name_parser_map["my-telegram"] = my_tg_parser
     my_tg_list = my_tg_sub.add_parser("list", help="List all dialogs for an account")
     my_tg_list.add_argument(
         "--phone", default=None, help="Account phone (default: first connected)"
