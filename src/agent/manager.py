@@ -358,8 +358,6 @@ class ClaudeSdkBackend:
             prompt = _embed_history_in_prompt(history_msgs, prompt)
         resolved_model = model or self._config.agent.model.strip() or os.environ.get("AGENT_MODEL")
         extra: dict = {}
-        if session_id:
-            extra["session_id"] = session_id
         if resolved_model:
             extra["model"] = resolved_model
         if session_id:
