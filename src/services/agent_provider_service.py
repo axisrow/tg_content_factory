@@ -646,7 +646,6 @@ class AgentProviderService:
             "generated_by": f"tg-agent {self._app_version()}",
             "providers": providers_payload,
         }
-        export_path.parent.mkdir(parents=True, exist_ok=True)
         export_path.write_text(
             json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
             encoding="utf-8",

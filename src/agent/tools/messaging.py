@@ -280,7 +280,6 @@ def register(db, client_pool, embedding_service, **kwargs):
             if msg is None:
                 return _text_response(f"Сообщение #{message_id} не найдено.")
             output_dir = pathlib.Path(__file__).resolve().parents[3] / "data" / "downloads"
-            output_dir.mkdir(parents=True, exist_ok=True)
             path = await client.download_media(msg, file=str(output_dir))
             if not path:
                 return _text_response("В сообщении нет медиа.")
