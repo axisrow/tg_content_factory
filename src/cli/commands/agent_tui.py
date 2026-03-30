@@ -91,6 +91,10 @@ class StreamingMessage(Static):
         self._content = ""
         self._md: Markdown | None = None
         self._elapsed_label: Label | None = None
+        self._activity_log: Static | None = None
+        self._log_lines: list[str] = []
+        self._pending_status: str = ""
+        self._last_log_time: float = 0.0
         self._tick_timer = None
         self._start_time: float = 0.0
         self._render_timer: asyncio.TimerHandle | None = None
@@ -103,6 +107,9 @@ class StreamingMessage(Static):
         import time as _time
 
         self._start_time = _time.monotonic()
+        log = Static("", classes="activity-log")
+        self._activity_log = log
+        yield log
         label = Label("⏳ (0s)")
         self._elapsed_label = label
         yield label
@@ -131,11 +138,53 @@ class StreamingMessage(Static):
         if self._elapsed_label is not None:
             self._elapsed_label.update(text)
 
-    def update_status(self, label: str) -> None:
+    def _flush_pending(self) -> None:
+        """Complete the pending status into the log with elapsed time."""
+        import time as _time
+
+        if self._pending_status:
+            now = _time.monotonic()
+            elapsed = round(now - self._last_log_time, 1) if self._last_log_time else 0
+            self._log_lines.append(f"  {self._pending_status} ({elapsed}s)")
+            self._last_log_time = now
+            self._pending_status = ""
+
+    def _append_log(self, line: str) -> None:
+        """Add a completed line to the activity log."""
+        self._flush_pending()
+        self._log_lines.append(line)
+        if self._activity_log is not None:
+            self._activity_log.update("\n".join(self._log_lines))
+
+    def set_pending_status(self, label: str) -> None:
+        """Set a pending status — shown only in elapsed label, added to log when next event arrives."""
+        import time as _time
+
+        # Skip duplicate
+        if label == self._pending_status:
+            return
+        self._flush_pending()
+        self._pending_status = label
+        self._last_log_time = _time.monotonic()
+        # Update elapsed label (ticking timer shows this)
         self._status_label = label
         self._tool_start_time = 0.0
         if self._elapsed_label is not None:
-            self._elapsed_label.update(label)
+            self._elapsed_label.update(f"⏳ {label}")
+        if self._activity_log is not None:
+            self._activity_log.update("\n".join(self._log_lines))
+
+    def replace_pending_status(self, label: str) -> None:
+        """Replace pending status text WITHOUT flushing old one to log.
+
+        Used by countdown events to update the elapsed label in-place
+        instead of creating a new log line for each tick.
+        """
+        self._pending_status = label
+        self._status_label = label
+        self._tool_start_time = 0.0
+        if self._elapsed_label is not None:
+            self._elapsed_label.update(f"⏳ {label}")
 
     def _stop_loading(self) -> None:
         self._loading = False
@@ -144,6 +193,10 @@ class StreamingMessage(Static):
             self._tick_timer = None
         if self._elapsed_label is not None:
             self._elapsed_label.display = False
+        # Finalize pending status into log
+        self._flush_pending()
+        if self._activity_log is not None and self._log_lines:
+            self._activity_log.update("\n".join(self._log_lines))
         if self._md is not None:
             self._md.display = True
 
@@ -527,24 +580,38 @@ class AgentTuiApp(App):
                     self.agent_manager.permission_gate.resolve(payload["request_id"], choice)
                     continue
                 if event_type == "thinking":
-                    widget.update_status("⏳ Думает...")
+                    widget.set_pending_status("Думает...")
                     continue
                 if event_type == "tool_start":
                     import time as _time
 
-                    widget._status_label = payload.get("tool", "tool")
+                    tool_name = payload.get("tool", "tool")
+                    widget._flush_pending()
+                    widget._append_log(f"  🔧 {tool_name}...")
+                    widget._status_label = tool_name
                     widget._tool_start_time = _time.monotonic()
                     continue
                 if event_type == "tool_end":
                     tool = payload.get("tool", "tool")
                     dur = payload.get("duration", 0)
                     icon = "❌" if payload.get("is_error") else "✅"
-                    widget.update_status(f"🔧 {tool} {icon} ({dur}s)")
+                    summary = payload.get("summary", "")
+                    log_line = f"    {icon} {tool} ({dur}s)"
+                    if summary:
+                        log_line += f" — {summary}"
+                    widget._append_log(log_line)
+                    continue
+                if event_type == "tool_result":
+                    if payload.get("is_error"):
+                        tool = payload.get("tool", "tool")
+                        summary = payload.get("summary", "")
+                        widget._append_log(f"    ❌ {tool}: {summary}")
                     continue
                 if event_type == "status":
-                    widget.update_status(f"⏳ {payload.get('text', '')}")
+                    widget.set_pending_status(payload.get("text", ""))
                     continue
-                if event_type in ("tool_result",):
+                if event_type == "countdown":
+                    widget.replace_pending_status(payload.get("text", ""))
                     continue
                 if "text" in payload:
                     full_text += payload["text"]

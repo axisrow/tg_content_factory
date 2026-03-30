@@ -27,6 +27,30 @@ async def init_db(config_path: str):
     return config, db
 
 
+def redirect_logging_to_file() -> list[logging.Handler]:
+    """Move all root logger handlers to a file handler for TUI mode.
+
+    Returns the removed handlers so they can be restored later.
+    """
+    root = logging.getLogger()
+    removed = list(root.handlers)
+    for h in removed:
+        root.removeHandler(h)
+    fh = logging.FileHandler("agent_tui.log", encoding="utf-8")
+    fh.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s"))
+    root.addHandler(fh)
+    return removed
+
+
+def restore_logging(handlers: list[logging.Handler]) -> None:
+    """Restore previously removed handlers and remove the file handler."""
+    root = logging.getLogger()
+    for h in list(root.handlers):
+        root.removeHandler(h)
+    for h in handlers:
+        root.addHandler(h)
+
+
 async def init_pool(config, db: Database):
     api_id = config.telegram.api_id
     api_hash = config.telegram.api_hash

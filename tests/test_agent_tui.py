@@ -77,10 +77,10 @@ def test_streaming_message_update_status():
 
     widget = StreamingMessage()
     widget._elapsed_label = MagicMock()
-    widget.update_status("🔧 search_messages ✅ (1.2s)")
+    widget.set_pending_status("🔧 search_messages ✅ (1.2s)")
     assert widget._status_label == "🔧 search_messages ✅ (1.2s)"
     assert widget._tool_start_time == 0.0
-    widget._elapsed_label.update.assert_called_with("🔧 search_messages ✅ (1.2s)")
+    widget._elapsed_label.update.assert_called_with("⏳ 🔧 search_messages ✅ (1.2s)")
 
 
 def test_streaming_message_tick_elapsed_with_tool():

@@ -428,6 +428,43 @@ async def test_chat_stream_emits_initial_connection_status(db):
 
 
 @pytest.mark.asyncio
+async def test_chat_stream_emits_stderr_stage_status(db):
+    """Stderr lines with stage keywords emit status events to the stream."""
+    thread_id = await db.create_agent_thread("stderr-status")
+    await db.save_agent_message(thread_id, "user", "test")
+
+    from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
+
+    assistant_msg = MagicMock(spec=AssistantMessage)
+    assistant_msg.content = [TextBlock(text="ok")]
+    result_msg = MagicMock(spec=ResultMessage)
+
+    async def mock_query(prompt, options):
+        # Simulate stderr callback as claude-cli would
+        if options.stderr:
+            options.stderr("2026-03-30T01:28:36.888Z [DEBUG] [API:request] Creating client")
+            options.stderr("2026-03-30T01:28:37.000Z [DEBUG] Hooks: Found 0 hooks")
+        yield assistant_msg
+        yield result_msg
+
+    mgr = AgentManager(db)
+    mgr.initialize()
+
+    chunks = []
+    with patch("src.agent.manager.query", mock_query):
+        async for chunk in mgr.chat_stream(thread_id, "test"):
+            chunks.append(chunk)
+
+    payloads = [json.loads(c.removeprefix("data: ").strip()) for c in chunks if c.startswith("data:")]
+    status_events = [p for p in payloads if p.get("type") == "status"]
+    status_texts = [s["text"] for s in status_events]
+    # Initial "Подключение" status
+    assert any("Подключение" in t for t in status_texts), f"missing initial status: {status_texts}"
+    # Stderr-derived stage status from [API:request] keyword
+    assert any("API" in t for t in status_texts), f"missing stderr-derived status: {status_texts}"
+
+
+@pytest.mark.asyncio
 async def test_chat_stream_renders_saved_prompt_template_variables(db):
     await db.set_setting(
         AGENT_PROMPT_TEMPLATE_SETTING,
@@ -1307,3 +1344,171 @@ async def test_runtime_status_selected_backend_deepagents_override(db, monkeypat
     assert status.claude_available is True
     assert status.selected_backend == "deepagents"
     assert status.using_override is True
+
+
+# ---------------------------------------------------------------------------
+# Atomic timeout tests
+# ---------------------------------------------------------------------------
+
+
+def test_agent_config_timeout_defaults():
+    """AgentConfig has correct default timeout values."""
+    config = AppConfig()
+    assert config.agent.stream_close_timeout == 60
+    assert config.agent.first_event_timeout == 90
+    assert config.agent.idle_timeout == 90
+    assert config.agent.permission_timeout == 120
+    assert config.agent.total_timeout == 600
+
+
+@pytest.mark.asyncio
+async def test_await_with_countdown_normal():
+    """_await_with_countdown returns result when coro completes within timeout."""
+    from src.agent.manager import _await_with_countdown
+
+    queue: asyncio.Queue = asyncio.Queue()
+
+    async def fast_coro():
+        return 42
+
+    result = await _await_with_countdown(fast_coro(), timeout=5, queue=queue, label="test")
+    assert result == 42
+
+
+@pytest.mark.asyncio
+async def test_await_with_countdown_timeout_fires():
+    """_await_with_countdown raises TimeoutError when coro exceeds timeout."""
+    from src.agent.manager import _await_with_countdown
+
+    queue: asyncio.Queue = asyncio.Queue()
+
+    async def slow_coro():
+        await asyncio.sleep(100)
+
+    with pytest.raises(asyncio.TimeoutError):
+        await _await_with_countdown(slow_coro(), timeout=0.2, queue=queue, label="test", countdown_interval=1)
+
+
+@pytest.mark.asyncio
+async def test_await_with_countdown_emits_status():
+    """_await_with_countdown pushes countdown status events to queue."""
+    from src.agent.manager import _await_with_countdown
+
+    queue: asyncio.Queue = asyncio.Queue()
+
+    async def slow_coro():
+        await asyncio.sleep(100)
+
+    with pytest.raises(asyncio.TimeoutError):
+        await _await_with_countdown(
+            slow_coro(), timeout=3.0, queue=queue, label="Ожидание", countdown_interval=0.5,
+        )
+
+    items = []
+    while not queue.empty():
+        items.append(queue.get_nowait())
+
+    countdown_items = [i for i in items if "countdown" in i and "до таймаута" in i]
+    assert len(countdown_items) >= 1, f"ожидали хотя бы один countdown event, получили: {items}"
+
+
+@pytest.mark.asyncio
+async def test_first_event_timeout_fires(db):
+    """When query() yields no events, first_event_timeout triggers with error."""
+    thread_id = await db.create_agent_thread("timeout thread")
+    await db.save_agent_message(thread_id, "user", "test")
+
+    async def stalling_query(prompt, options):
+        await asyncio.sleep(100)
+        # Never yields — simulates stalled connection
+        if False:
+            yield  # noqa: F841 — make it an async generator
+
+    config = AppConfig()
+    config.agent.first_event_timeout = 1
+    config.agent.idle_timeout = 1
+    config.agent.total_timeout = 5
+
+    mgr = AgentManager(db, config=config)
+    mgr.initialize()
+
+    chunks = []
+    with patch("src.agent.manager.query", stalling_query):
+        async for chunk in mgr.chat_stream(thread_id, "test"):
+            chunks.append(chunk)
+
+    payloads = [json.loads(c.removeprefix("data: ").strip()) for c in chunks if c.startswith("data: ")]
+    errors = [p for p in payloads if "error" in p]
+    assert errors, f"ожидали ошибку таймаута, получили: {payloads}"
+    assert "90" not in errors[0]["error"], "должен использовать конфиг first_event_timeout=1, не дефолт 90"
+
+
+@pytest.mark.asyncio
+async def test_idle_timeout_fires(db):
+    """When query() stops yielding mid-stream, idle_timeout triggers."""
+    thread_id = await db.create_agent_thread("idle-timeout thread")
+    await db.save_agent_message(thread_id, "user", "test")
+
+    from claude_agent_sdk import StreamEvent
+
+    def _stream_event(text: str) -> MagicMock:
+        ev = MagicMock(spec=StreamEvent)
+        ev.event = {"type": "content_block_delta", "delta": {"type": "text_delta", "text": text}}
+        return ev
+
+    async def stalling_after_first(prompt, options):
+        yield _stream_event("hello")
+        await asyncio.sleep(100)  # stalls after first event
+
+    config = AppConfig()
+    config.agent.first_event_timeout = 5
+    config.agent.idle_timeout = 1
+    config.agent.total_timeout = 10
+
+    mgr = AgentManager(db, config=config)
+    mgr.initialize()
+
+    chunks = []
+    with patch("src.agent.manager.query", stalling_after_first):
+        async for chunk in mgr.chat_stream(thread_id, "test"):
+            chunks.append(chunk)
+
+    payloads = [json.loads(c.removeprefix("data: ").strip()) for c in chunks if c.startswith("data: ")]
+    errors = [p for p in payloads if "error" in p]
+    assert errors, f"ожидали ошибку idle таймаута, получили: {payloads}"
+    assert "замолчал" in errors[0]["error"]
+
+
+@pytest.mark.asyncio
+async def test_permission_timeout_from_config(db):
+    """permission_timeout from AgentConfig is passed to AgentRequestContext."""
+    from src.agent.permission_gate import AgentRequestContext
+
+    config = AppConfig()
+    config.agent.permission_timeout = 77
+
+    ctx = AgentRequestContext(
+        session_id="test",
+        thread_id=1,
+        queue=asyncio.Queue(),
+        db_permissions={},
+        permission_timeout=config.agent.permission_timeout,
+    )
+    assert ctx.permission_timeout == 77
+
+
+@pytest.mark.asyncio
+async def test_stream_close_timeout_from_config(db, monkeypatch):
+    """stream_close_timeout from config is used for CLAUDE_CODE_STREAM_CLOSE_TIMEOUT env var."""
+    monkeypatch.delenv("CLAUDE_CODE_STREAM_CLOSE_TIMEOUT", raising=False)
+    config = AppConfig()
+    config.agent.stream_close_timeout = 42
+
+    from src.agent.manager import ClaudeSdkBackend
+
+    backend = ClaudeSdkBackend(db, config)
+    with patch("src.agent.tools.make_mcp_server", return_value=MagicMock()):
+        backend.initialize()
+
+    import os
+    assert os.environ.get("CLAUDE_CODE_STREAM_CLOSE_TIMEOUT") == "42000"
