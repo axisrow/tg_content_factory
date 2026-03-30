@@ -75,10 +75,13 @@ async def _test_escaping(db, config) -> None:
 
 def run(args: argparse.Namespace) -> None:
     async def _run() -> None:
+        removed_log_handler = None
+        action = args.agent_action
+        if action == "chat":
+            removed_log_handler = runtime.redirect_logging_to_file()
         config, db = await runtime.init_db(args.config)
         auth = pool = mgr = None
         try:
-            action = args.agent_action
 
             if action == "threads":
                 threads = await db.get_agent_threads()
@@ -106,7 +109,6 @@ def run(args: argparse.Namespace) -> None:
                 mgr.initialize()
 
                 if args.prompt:
-                    # One-shot mode
                     if args.thread_id:
                         thread_id = args.thread_id
                     else:
@@ -118,6 +120,7 @@ def run(args: argparse.Namespace) -> None:
                     model = getattr(args, "model", None)
                     full_text = ""
                     text_started = False
+                    inline_status = False  # True when \r status is on screen
                     async for chunk in mgr.chat_stream(thread_id, args.prompt, model=model):
                         raw = chunk.removeprefix("data: ").strip()
                         try:
@@ -125,11 +128,18 @@ def run(args: argparse.Namespace) -> None:
                         except Exception:
                             continue
                         event_type = payload.get("type")
-                        if event_type == "status":
+                        if event_type in ("status", "countdown"):
                             if not text_started:
-                                print(f"⏳ {payload.get('text', '')}",
-                                      file=sys.stderr, flush=True)
+                                text = payload.get("text", "")
+                                print(f"\r⏳ {text:<60}",
+                                      end="", file=sys.stderr, flush=True)
+                                inline_status = True
                             continue
+                        # Clear inline status before any other output
+                        if inline_status:
+                            print(f"\r{' ' * 64}\r",
+                                  end="", file=sys.stderr, flush=True)
+                            inline_status = False
                         if event_type == "tool_start":
                             print(f"🔧 {payload.get('tool', 'tool')}...",
                                   file=sys.stderr, flush=True)
@@ -163,16 +173,11 @@ def run(args: argparse.Namespace) -> None:
                     if full_text:
                         await db.save_agent_message(thread_id, "assistant", full_text)
                 else:
-                    # Interactive TUI mode — redirect logs to file
+                    # Interactive TUI mode
                     from src.cli.commands.agent_tui import AgentTuiApp
-                    from src.cli.runtime import redirect_logging_to_file, restore_logging
 
-                    removed = redirect_logging_to_file()
-                    try:
-                        app = AgentTuiApp(db=db, config=config, agent_manager=mgr)
-                        await app.run_async()
-                    finally:
-                        restore_logging(removed)
+                    app = AgentTuiApp(db=db, config=config, agent_manager=mgr)
+                    await app.run_async()
 
             elif action == "thread-rename":
                 await db.rename_agent_thread(args.thread_id, args.title[:100])
@@ -252,5 +257,7 @@ def run(args: argparse.Namespace) -> None:
                 await db.close()
             except Exception:
                 logger.debug("Failed to close database", exc_info=True)
+            if removed_log_handler is not None:
+                runtime.restore_logging(removed_log_handler)
 
     asyncio.run(_run())

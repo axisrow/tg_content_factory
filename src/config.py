@@ -51,7 +51,7 @@ class AgentConfig(BaseModel):
     fallback_model: str = ""
     fallback_api_key: str = ""
     stream_close_timeout: int = 60
-    first_event_timeout: int = 90
+    first_event_timeout: int = 120
     idle_timeout: int = 90
     permission_timeout: int = 120
     total_timeout: int = 600

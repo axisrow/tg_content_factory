@@ -202,38 +202,168 @@ async def _await_with_countdown(
     queue: asyncio.Queue,
     label: str,
     countdown_interval: int = 10,
+    activity_ts: list[float] | None = None,
+    activity_extend: float = 30.0,
+    max_timeout: float | None = None,
 ) -> Any:
-    """Await *coro* with periodic countdown status updates pushed to *queue*."""
+    """Await *coro* with periodic countdown status updates pushed to *queue*.
+
+    IMPORTANT: *coro* is awaited directly in the current task via
+    ``asyncio.timeout()`` — NOT wrapped in ``ensure_future``.
+    ``claude_agent_sdk`` uses anyio cancel-scopes that are bound to the task
+    they were entered in; moving the await into a separate Task causes
+    "Attempted to exit cancel scope in a different task" errors.
+
+    When *activity_ts* (a mutable ``[float]``) is provided, the deadline is
+    automatically extended by *activity_extend* seconds when fresh stderr
+    activity is detected and the deadline is close.  *max_timeout* is a hard
+    ceiling — the deadline will never exceed ``now + max_timeout`` from the
+    initial call, preventing runaway extensions from repeated CLI retries.
+    """
+    start = time.monotonic()
+    loop = asyncio.get_event_loop()
+    absolute_max = loop.time() + (max_timeout if max_timeout is not None else timeout)
+
+    async def _ticker(cm: asyncio.Timeout) -> None:
+        try:
+            last_extended_at = start
+            extensions_remaining = 3  # max 3 extensions (e.g., 90 + 3*30 = 180s)
+            while True:
+                await asyncio.sleep(countdown_interval)
+                # Extend deadline when CLI activity is fresh AND deadline is close.
+                if (
+                    extensions_remaining > 0
+                    and activity_ts is not None
+                    and activity_ts[0] > last_extended_at
+                ):
+                    current = cm.when()
+                    if current is not None:
+                        remaining = current - loop.time()
+                        if remaining < activity_extend:
+                            new_deadline = min(loop.time() + activity_extend, absolute_max)
+                            if new_deadline > current:
+                                cm.reschedule(new_deadline)
+                                last_extended_at = activity_ts[0]
+                                extensions_remaining -= 1
+                                ext_secs = int(new_deadline - loop.time())
+                                logger.info(
+                                    "Timeout extended +%.0fs (CLI activity, was %.0fs left, %d extensions left)",
+                                    activity_extend, remaining, extensions_remaining,
+                                )
+                                ext_payload = json.dumps(
+                                    {
+                                        "type": "status",
+                                        "text": f"CLI активен — продлён (+{int(activity_extend)}с, {ext_secs}с)",
+                                    },
+                                    ensure_ascii=False,
+                                )
+                                try:
+                                    queue.put_nowait(f"data: {ext_payload}\n\n")
+                                except Exception:
+                                    pass
+                # Show countdown based on actual deadline
+                when = cm.when()
+                if when is not None:
+                    remaining_int = int(when - loop.time())
+                else:
+                    remaining_int = int(timeout - (time.monotonic() - start))
+                if remaining_int > 0:
+                    payload = json.dumps(
+                        {"type": "countdown", "text": f"{label} ({remaining_int}с до таймаута)"},
+                        ensure_ascii=False,
+                    )
+                    try:
+                        queue.put_nowait(f"data: {payload}\n\n")
+                    except Exception:
+                        pass
+        except asyncio.CancelledError:
+            pass
+
+    # We must wrap coro in a separate Task for timeout to work.
+    # claude_agent_sdk swallows CancelledError internally (anyio task groups),
+    # so asyncio.timeout() on the same task is useless — the cancellation
+    # never propagates out.  Using ensure_future + asyncio.wait is the only
+    # way to enforce a hard deadline.
+    #
+    # NOTE: this re-introduces the "cancel scope in different task" risk,
+    # but only on the TIMEOUT path (task.cancel).  The happy path (task
+    # completes normally) is unaffected because the result is returned
+    # before any cancel-scope cleanup.
     task = asyncio.ensure_future(coro)
     start = time.monotonic()
+    deadline = start + timeout
+    if max_timeout is not None:
+        hard_ceiling = start + max_timeout
+    else:
+        hard_ceiling = deadline
+
+    async def _ticker() -> None:
+        nonlocal deadline
+        try:
+            last_extended_at = start
+            extensions_remaining = 3
+            while True:
+                await asyncio.sleep(countdown_interval)
+                now = time.monotonic()
+                # Extend deadline when CLI activity is fresh AND deadline is close.
+                if (
+                    extensions_remaining > 0
+                    and activity_ts is not None
+                    and activity_ts[0] > last_extended_at
+                ):
+                    remaining = deadline - now
+                    if remaining < activity_extend:
+                        new_deadline = min(now + activity_extend, hard_ceiling)
+                        if new_deadline > deadline:
+                            deadline = new_deadline
+                            last_extended_at = activity_ts[0]
+                            extensions_remaining -= 1
+                            logger.info(
+                                "Timeout extended +%.0fs (CLI activity, was %.0fs left, %d extensions left)",
+                                activity_extend, remaining, extensions_remaining,
+                            )
+                            ext_payload = json.dumps(
+                                {
+                                    "type": "status",
+                                    "text": f"CLI активен — продлён (+{int(activity_extend)}с, {int(deadline - now)}с)",
+                                },
+                                ensure_ascii=False,
+                            )
+                            try:
+                                queue.put_nowait(f"data: {ext_payload}\n\n")
+                            except Exception:
+                                pass
+                # Show countdown
+                remaining_int = int(deadline - time.monotonic())
+                if remaining_int > 0:
+                    payload = json.dumps(
+                        {"type": "countdown", "text": f"{label} ({remaining_int}с до таймаута)"},
+                        ensure_ascii=False,
+                    )
+                    try:
+                        queue.put_nowait(f"data: {payload}\n\n")
+                    except Exception:
+                        pass
+        except asyncio.CancelledError:
+            pass
+
+    ticker = asyncio.create_task(_ticker())
     try:
         while True:
-            elapsed = time.monotonic() - start
-            remaining = timeout - elapsed
+            remaining = deadline - time.monotonic()
             if remaining <= 0:
                 task.cancel()
-                with suppress(asyncio.CancelledError):
-                    await task
                 raise asyncio.TimeoutError()
-            wait_time = min(countdown_interval, remaining)
-            done, _ = await asyncio.wait({task}, timeout=wait_time)
+            done, _ = await asyncio.wait({task}, timeout=min(countdown_interval, remaining))
             if done:
                 return task.result()
-            remaining_int = int(timeout - (time.monotonic() - start))
-            if remaining_int > 0:
-                payload = json.dumps(
-                    {"type": "countdown", "text": f"{label} ({remaining_int}с до таймаута)"},
-                    ensure_ascii=False,
-                )
-                try:
-                    queue.put_nowait(f"data: {payload}\n\n")
-                except Exception:
-                    pass
     except asyncio.CancelledError:
         task.cancel()
-        with suppress(asyncio.CancelledError, Exception):
-            await task
         raise
+    finally:
+        ticker.cancel()
+        with suppress(asyncio.CancelledError):
+            await ticker
 
 
 class ClaudeSdkBackend:
@@ -253,8 +383,10 @@ class ClaudeSdkBackend:
             return
         from src.agent.tools import make_mcp_server
 
-        timeout_ms = str(self._config.agent.stream_close_timeout * 1000)
-        os.environ.setdefault("CLAUDE_CODE_STREAM_CLOSE_TIMEOUT", timeout_ms)
+        # stream_close_timeout must be >= total_timeout: the CLI needs stdin open
+        # for the entire conversation to receive MCP tool-call responses.
+        effective = max(self._config.agent.stream_close_timeout, self._config.agent.total_timeout)
+        os.environ.setdefault("CLAUDE_CODE_STREAM_CLOSE_TIMEOUT", str(effective * 1000))
         self._server = make_mcp_server(
             self._db, client_pool=self._client_pool, scheduler_manager=self._scheduler_manager,
             config=self._config,
@@ -290,6 +422,9 @@ class ClaudeSdkBackend:
 
         stderr_lines: list[str] = []
         debug_lines: list[str] = []
+        # Heartbeat: updated by _on_stderr on any meaningful event.
+        # _await_with_countdown checks this to extend the deadline while CLI is active.
+        _last_activity: list[float] = [time.monotonic()]
 
         # Stable stage keywords from claude-cli bootstrap sequence.
         # Checked case-insensitively; first match wins.
@@ -332,6 +467,7 @@ class ClaudeSdkBackend:
                     break
             if label and label != _last_emitted[0]:
                 _last_emitted[0] = label
+                _last_activity[0] = time.monotonic()  # stage transition = real progress
                 payload = json.dumps({"type": "status", "text": label}, ensure_ascii=False)
                 try:
                     queue.put_nowait(f"data: {payload}\n\n")
@@ -420,6 +556,8 @@ class ClaudeSdkBackend:
                             timeout=effective_timeout,
                             queue=queue,
                             label=iter_label,
+                            activity_ts=_last_activity,
+                            max_timeout=remaining_total,
                         )
                     except StopAsyncIteration:
                         break
@@ -600,6 +738,28 @@ class ClaudeSdkBackend:
                 await queue.put(f"data: {err_payload}\n\n")
                 await queue.put(None)
                 return
+
+            except BaseExceptionGroup as eg:
+                # anyio TaskGroup wraps sub-exceptions in ExceptionGroup;
+                # unwrap for a readable error message and retry on transient failures.
+                flat = [str(e) for e in eg.exceptions]
+                summary = "; ".join(flat)
+                elapsed = time.monotonic() - t0
+                # Never retry if the group contains a timeout — it's our deadline, not transient.
+                has_timeout = any(isinstance(e, (TimeoutError, asyncio.TimeoutError)) for e in eg.exceptions)
+                retryable = not has_timeout and any(
+                    kw in summary.lower()
+                    for kw in ("stream closed", "control request timeout", "connection")
+                )
+                logger.error(
+                    "ExceptionGroup after %.1fs (thread %d, attempt %d, retryable=%s): %s",
+                    elapsed, thread_id, attempt + 1, retryable, summary,
+                )
+                if attempt == 0 and retryable:
+                    last_err = eg
+                    continue
+                last_err = Exception(summary)
+                break
 
             except Exception as exc:
                 elapsed = time.monotonic() - t0
