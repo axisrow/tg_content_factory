@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+from typing import Annotated
 
 from claude_agent_sdk import tool
 
@@ -39,7 +40,10 @@ def register(db, client_pool, embedding_service, **kwargs):
         "Generate an image from a text prompt. Model format: 'provider:model_id' "
         "(e.g. 'together:black-forest-labs/FLUX.1-schnell'). "
         "Use list_image_providers to see available providers, list_image_models for models.",
-        {"prompt": str, "model": str},
+        {
+            "prompt": Annotated[str, "Текстовый промпт для генерации изображения"],
+            "model": Annotated[str, "Модель в формате provider:model_id (например together:FLUX.1-schnell)"],
+        },
     )
     async def generate_image(args):
         prompt = args.get("prompt", "")
@@ -99,7 +103,10 @@ def register(db, client_pool, embedding_service, **kwargs):
         "list_image_models",
         "Search available image models for a provider. "
         "Get provider name from list_image_providers first. query filters by model name substring.",
-        {"provider": str, "query": str},
+        {
+            "provider": Annotated[str, "Название провайдера из list_image_providers"],
+            "query": Annotated[str, "Подстрока для фильтрации моделей по имени"],
+        },
     )
     async def list_image_models(args):
         provider = args.get("provider", "")
@@ -148,7 +155,7 @@ def register(db, client_pool, embedding_service, **kwargs):
         "list_generated_images",
         "List recently generated images stored in the database. "
         "Returns image ID, prompt, model, local file path, and creation date.",
-        {"limit": int},
+        {"limit": Annotated[int, "Максимальное количество результатов"]},
     )
     async def list_generated_images(args):
         limit = args.get("limit") or 20
