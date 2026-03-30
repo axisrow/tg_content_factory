@@ -362,6 +362,8 @@ class ClaudeSdkBackend:
             extra["session_id"] = session_id
         if resolved_model:
             extra["model"] = resolved_model
+        if session_id:
+            extra["session_id"] = session_id
 
         stderr_lines: list[str] = []
         debug_lines: list[str] = []

@@ -30,13 +30,13 @@ def ensure_data_dirs() -> None:
         (_DATA_ROOT / sub).mkdir(parents=True, exist_ok=True)
 
 
-def redirect_logging_to_file(path: str | Path = _TUI_LOG_PATH) -> logging.Handler | None:
-    """Replace console handler with file handler for TUI mode. Returns removed handler."""
+def redirect_logging_to_file(path: str | Path = _TUI_LOG_PATH) -> list[logging.Handler]:
+    """Replace console handlers with file handler for TUI mode. Returns removed handlers."""
     root = logging.getLogger()
-    removed = None
+    removed: list[logging.Handler] = []
     for h in root.handlers[:]:
         if isinstance(h, logging.StreamHandler) and not isinstance(h, logging.FileHandler):
-            removed = h
+            removed.append(h)
             root.removeHandler(h)
     fh = logging.FileHandler(str(path), encoding="utf-8")
     fh.setFormatter(logging.Formatter(_LOG_FORMAT, datefmt=_LOG_DATEFMT))
@@ -44,15 +44,18 @@ def redirect_logging_to_file(path: str | Path = _TUI_LOG_PATH) -> logging.Handle
     return removed
 
 
-def restore_logging(removed_handler: logging.Handler | None) -> None:
-    """Restore console handler after TUI exits."""
+def restore_logging(removed_handlers: list[logging.Handler] | logging.Handler | None) -> None:
+    """Restore console handlers after TUI exits."""
     root = logging.getLogger()
     for h in root.handlers[:]:
         if isinstance(h, logging.FileHandler):
             h.close()
             root.removeHandler(h)
-    if removed_handler:
-        root.addHandler(removed_handler)
+    if isinstance(removed_handlers, list):
+        for h in removed_handlers:
+            root.addHandler(h)
+    elif removed_handlers:
+        root.addHandler(removed_handlers)
 
 
 async def init_db(config_path: str):

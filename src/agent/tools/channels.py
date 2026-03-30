@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Annotated
+
 from claude_agent_sdk import tool
 from mcp.types import ToolAnnotations
 
@@ -19,7 +21,10 @@ def register(db, client_pool, embedding_service, **kwargs):
         "List Telegram channels saved in the local database. Each row includes pk "
         "(DB primary key used by collect_channel/delete_channel/toggle_channel), "
         "channel_id (Telegram numeric ID), title, username, channel_type, and is_filtered status.",
-        {"active_only": bool, "include_filtered": bool},
+        {
+            "active_only": Annotated[bool, "Показывать только активные записи"],
+            "include_filtered": Annotated[bool, "Включить отфильтрованные каналы в результат"],
+        },
     )
     async def list_channels(args):
         active_only = bool(args.get("active_only", False))
@@ -80,7 +85,10 @@ def register(db, client_pool, embedding_service, **kwargs):
         "Add a Telegram channel to the local database by identifier (t.me link, @username, or numeric ID). "
         "After adding, use list_channels to get the pk, then call collect_channel to start message collection. "
         "Requires confirmation.",
-        {"identifier": str, "confirm": bool},
+        {
+            "identifier": Annotated[str, "Идентификатор канала (t.me ссылка, @username или числовой ID)"],
+            "confirm": Annotated[bool, "Установите true для подтверждения действия"],
+        },
     )
     async def add_channel(args):
         identifier = args.get("identifier")
@@ -110,7 +118,10 @@ def register(db, client_pool, embedding_service, **kwargs):
         "delete_channel",
         "DANGEROUS: Permanently delete a channel and all its messages from the DB. "
         "pk = DB primary key — get it from list_channels. Always ask user for confirmation first.",
-        {"pk": int, "confirm": bool},
+        {
+            "pk": Annotated[int, "ID записи в БД (первичный ключ из list_channels)"],
+            "confirm": Annotated[bool, "Установите true для подтверждения действия"],
+        },
         annotations=ToolAnnotations(destructiveHint=True),
     )
     async def delete_channel(args):
@@ -140,7 +151,7 @@ def register(db, client_pool, embedding_service, **kwargs):
     @tool(
         "toggle_channel",
         "Toggle channel active/inactive status. pk = DB primary key — get it from list_channels.",
-        {"pk": int},
+        {"pk": Annotated[int, "ID записи в БД (первичный ключ из list_channels)"]},
     )
     async def toggle_channel(args):
         pk = args.get("pk")
@@ -169,7 +180,10 @@ def register(db, client_pool, embedding_service, **kwargs):
         "import_channels",
         "Bulk-import channels from a text string (t.me links, @usernames, or numeric IDs, any separator). "
         "After import, use collect_all_channels to start collection. Requires confirmation.",
-        {"text": str, "confirm": bool},
+        {
+            "text": Annotated[str, "Идентификаторы каналов (t.me ссылки, @username, ID через любой разделитель)"],
+            "confirm": Annotated[bool, "Установите true для подтверждения действия"],
+        },
     )
     async def import_channels(args):
         text = args.get("text")
@@ -215,7 +229,7 @@ def register(db, client_pool, embedding_service, **kwargs):
         "refresh_channel_types",
         "Refresh channel_type (channel/group/supergroup/unavailable) for all active channels "
         "via Telegram API. Requires a connected Telegram client. Requires confirmation.",
-        {"confirm": bool},
+        {"confirm": Annotated[bool, "Установите true для подтверждения действия"]},
     )
     async def refresh_channel_types(args):
         pool_gate = require_pool(client_pool, "Обновление типов каналов")
@@ -264,7 +278,10 @@ def register(db, client_pool, embedding_service, **kwargs):
         "Refresh channel metadata (about, linked_chat_id, has_comments) from Telegram. "
         "Pass identifier (channel_id as string, or @username) for one channel, or omit to refresh all. "
         "Requires confirmation.",
-        {"identifier": str, "confirm": bool},
+        {
+            "identifier": Annotated[str, "Идентификатор канала (t.me ссылка, @username или числовой ID)"],
+            "confirm": Annotated[bool, "Установите true для подтверждения действия"],
+        },
     )
     async def refresh_channel_meta(args):
         pool_gate = require_pool(client_pool, "Обновление метаданных каналов")
@@ -357,7 +374,10 @@ def register(db, client_pool, embedding_service, **kwargs):
     @tool(
         "create_tag",
         "Create a new channel tag. Requires confirm=true.",
-        {"name": str, "confirm": bool},
+        {
+            "name": Annotated[str, "Название тега"],
+            "confirm": Annotated[bool, "Установите true для подтверждения действия"],
+        },
     )
     async def create_tag(args):
         name = (args.get("name") or "").strip()
@@ -377,7 +397,10 @@ def register(db, client_pool, embedding_service, **kwargs):
     @tool(
         "delete_tag",
         "⚠️ DANGEROUS: Delete a tag and remove it from all channels. Requires confirm=true.",
-        {"name": str, "confirm": bool},
+        {
+            "name": Annotated[str, "Название тега"],
+            "confirm": Annotated[bool, "Установите true для подтверждения действия"],
+        },
         annotations=ToolAnnotations(destructiveHint=True),
     )
     async def delete_tag(args):
@@ -399,7 +422,10 @@ def register(db, client_pool, embedding_service, **kwargs):
         "set_channel_tags",
         "Assign tags to a channel (replaces all existing tags). "
         "pk = DB primary key from list_channels. tags = comma-separated tag names (empty to clear all).",
-        {"pk": int, "tags": str},
+        {
+            "pk": Annotated[int, "ID записи в БД (первичный ключ из list_channels)"],
+            "tags": Annotated[str, "Теги через запятую (пустая строка — очистить)"],
+        },
     )
     async def set_channel_tags(args):
         pk = args.get("pk")

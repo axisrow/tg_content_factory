@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Annotated
+
 from claude_agent_sdk import tool
 from mcp.types import ToolAnnotations
 
@@ -20,7 +22,7 @@ def register(db, client_pool, embedding_service, **kwargs):
     @tool(
         "list_photo_batches",
         "List photo upload batches with batch_id, phone, target, status, and item count.",
-        {"limit": int},
+        {"limit": Annotated[int, "Максимальное количество результатов"]},
     )
     async def list_photo_batches(args):
         try:
@@ -49,7 +51,7 @@ def register(db, client_pool, embedding_service, **kwargs):
         "list_photo_items",
         "List photo batch items with item_id, batch_id, status, and scheduled time. "
         "Use item_id with cancel_photo_item.",
-        {"limit": int},
+        {"limit": Annotated[int, "Максимальное количество результатов"]},
     )
     async def list_photo_items(args):
         try:
@@ -80,7 +82,14 @@ def register(db, client_pool, embedding_service, **kwargs):
         "target = dialog_id from list_photo_dialogs (or 'me'). "
         "file_paths = comma-separated server-local paths. mode: album/separate. "
         "Ask for confirmation first.",
-        {"phone": str, "target": str, "file_paths": str, "mode": str, "caption": str, "confirm": bool},
+        {
+            "phone": Annotated[str, "Номер телефона аккаунта (например +79001234567)"],
+            "target": Annotated[str, "ID диалога-получателя (из list_photo_dialogs или me)"],
+            "file_paths": Annotated[str, "Пути к файлам через запятую (серверные пути)"],
+            "mode": Annotated[str, "Режим отправки: album или separate"],
+            "caption": Annotated[str, "Подпись к фото"],
+            "confirm": Annotated[bool, "Установите true для подтверждения действия"],
+        },
     )
     async def send_photos_now(args):
         pool_gate = require_pool(client_pool, "Отправка фото")
@@ -139,8 +148,13 @@ def register(db, client_pool, embedding_service, **kwargs):
         "schedule_at = ISO datetime (e.g. '2025-12-31T10:00:00'). "
         "file_paths = comma-separated server-local paths. Ask for confirmation first.",
         {
-            "phone": str, "target": str, "file_paths": str,
-            "schedule_at": str, "mode": str, "caption": str, "confirm": bool,
+            "phone": Annotated[str, "Номер телефона аккаунта (например +79001234567)"],
+            "target": Annotated[str, "ID диалога-получателя (из list_photo_dialogs или me)"],
+            "file_paths": Annotated[str, "Пути к файлам через запятую (серверные пути)"],
+            "schedule_at": Annotated[str, "Дата/время отправки в формате ISO (YYYY-MM-DDTHH:MM:SS)"],
+            "mode": Annotated[str, "Режим отправки: album или separate"],
+            "caption": Annotated[str, "Подпись к фото"],
+            "confirm": Annotated[bool, "Установите true для подтверждения действия"],
         },
     )
     async def schedule_photos(args):
@@ -189,7 +203,10 @@ def register(db, client_pool, embedding_service, **kwargs):
     @tool(
         "cancel_photo_item",
         "⚠️ Cancel a scheduled photo item. item_id from list_photo_items. Ask user for confirmation first.",
-        {"item_id": int, "confirm": bool},
+        {
+            "item_id": Annotated[int, "ID элемента из list_photo_items"],
+            "confirm": Annotated[bool, "Установите true для подтверждения действия"],
+        },
     )
     async def cancel_photo_item(args):
         item_id = args.get("item_id")
@@ -245,7 +262,7 @@ def register(db, client_pool, embedding_service, **kwargs):
     @tool(
         "toggle_auto_upload",
         "Toggle an auto-upload job active/paused. job_id from list_auto_uploads.",
-        {"job_id": int},
+        {"job_id": Annotated[int, "ID автозагрузки из list_auto_uploads"]},
     )
     async def toggle_auto_upload(args):
         job_id = args.get("job_id")
@@ -272,7 +289,10 @@ def register(db, client_pool, embedding_service, **kwargs):
         "delete_auto_upload",
         "⚠️ DANGEROUS: Delete an auto-upload job. job_id from list_auto_uploads. "
         "Always ask user for confirmation first.",
-        {"job_id": int, "confirm": bool},
+        {
+            "job_id": Annotated[int, "ID автозагрузки из list_auto_uploads"],
+            "confirm": Annotated[bool, "Установите true для подтверждения действия"],
+        },
         annotations=ToolAnnotations(destructiveHint=True),
     )
     async def delete_auto_upload(args):
@@ -300,7 +320,13 @@ def register(db, client_pool, embedding_service, **kwargs):
         "⚠️ Create a photo batch for sending to a Telegram dialog. "
         "Params: phone, target (dialog_id), file_paths (comma-sep), caption. "
         "Ask user for confirmation first.",
-        {"phone": str, "target": str, "file_paths": str, "caption": str, "confirm": bool},
+        {
+            "phone": Annotated[str, "Номер телефона аккаунта (например +79001234567)"],
+            "target": Annotated[str, "ID диалога-получателя (из list_photo_dialogs или me)"],
+            "file_paths": Annotated[str, "Пути к файлам через запятую (серверные пути)"],
+            "caption": Annotated[str, "Подпись к фото"],
+            "confirm": Annotated[bool, "Установите true для подтверждения действия"],
+        },
     )
     async def create_photo_batch(args):
         pool_gate = require_pool(client_pool, "Создание батча фото")
@@ -347,7 +373,7 @@ def register(db, client_pool, embedding_service, **kwargs):
         "run_photo_due",
         "⚠️ Process all due photo items and auto-upload jobs (sends to Telegram). "
         "Ask user for confirmation first.",
-        {"confirm": bool},
+        {"confirm": Annotated[bool, "Установите true для подтверждения действия"]},
     )
     async def run_photo_due(args):
         pool_gate = require_pool(client_pool, "Обработка фото")
@@ -379,8 +405,13 @@ def register(db, client_pool, embedding_service, **kwargs):
         "⚠️ Create an auto-upload job to send photos from a server-side folder on a schedule. "
         "target = dialog_id from list_photo_dialogs. mode: album/separate. Ask for confirmation first.",
         {
-            "phone": str, "target": str, "folder_path": str,
-            "interval_minutes": int, "mode": str, "caption": str, "confirm": bool,
+            "phone": Annotated[str, "Номер телефона аккаунта (например +79001234567)"],
+            "target": Annotated[str, "ID диалога-получателя (из list_photo_dialogs или me)"],
+            "folder_path": Annotated[str, "Путь к папке на сервере"],
+            "interval_minutes": Annotated[int, "Интервал автозагрузки в минутах"],
+            "mode": Annotated[str, "Режим отправки: album или separate"],
+            "caption": Annotated[str, "Подпись к фото"],
+            "confirm": Annotated[bool, "Установите true для подтверждения действия"],
         },
     )
     async def create_auto_upload(args):
@@ -431,8 +462,13 @@ def register(db, client_pool, embedding_service, **kwargs):
         "⚠️ Update an existing auto-upload job settings. job_id from list_auto_uploads. "
         "mode: album/separate. Ask user for confirmation first.",
         {
-            "job_id": int, "folder_path": str, "mode": str,
-            "caption": str, "interval_minutes": int, "is_active": bool, "confirm": bool,
+            "job_id": Annotated[int, "ID автозагрузки из list_auto_uploads"],
+            "folder_path": Annotated[str, "Путь к папке на сервере"],
+            "mode": Annotated[str, "Режим отправки: album или separate"],
+            "caption": Annotated[str, "Подпись к фото"],
+            "interval_minutes": Annotated[int, "Интервал автозагрузки в минутах"],
+            "is_active": Annotated[bool, "Активна ли автозагрузка"],
+            "confirm": Annotated[bool, "Установите true для подтверждения действия"],
         },
     )
     async def update_auto_upload(args):
@@ -486,7 +522,7 @@ def register(db, client_pool, embedding_service, **kwargs):
     @tool(
         "list_photo_dialogs",
         "List Telegram dialogs available as photo upload targets (channels, groups, chats).",
-        {"phone": str},
+        {"phone": Annotated[str, "Номер телефона аккаунта (например +79001234567)"]},
     )
     async def list_photo_dialogs(args):
         pool_gate = require_pool(client_pool, "Список диалогов для фото")
@@ -525,7 +561,10 @@ def register(db, client_pool, embedding_service, **kwargs):
         "refresh_photo_dialogs",
         "Refresh the Telegram dialog cache for photo upload targeting. "
         "Use when new channels/groups are not appearing in the list.",
-        {"phone": str, "confirm": bool},
+        {
+            "phone": Annotated[str, "Номер телефона аккаунта (например +79001234567)"],
+            "confirm": Annotated[bool, "Установите true для подтверждения действия"],
+        },
     )
     async def refresh_photo_dialogs(args):
         pool_gate = require_pool(client_pool, "Обновление кэша диалогов")
