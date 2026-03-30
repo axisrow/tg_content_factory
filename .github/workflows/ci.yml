@@ -9,6 +9,23 @@ on:
   pull_request:
 
 jobs:
+  check-branch-name:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Reject branch names with "+"
+        if: contains(github.head_ref, '+')
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: '⛔ Символ `+` недопустим в названии ветки (`' + context.payload.pull_request.head.ref + '`). Переименуйте ветку без `+` (используйте `-` или `.`).'
+            });
+            core.setFailed('Branch name contains "+", which is not allowed.');
+
   lint-and-test:
     runs-on: ubuntu-latest
 
