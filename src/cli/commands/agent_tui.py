@@ -613,8 +613,6 @@ class AgentTuiApp(App):
                 if event_type == "countdown":
                     widget.replace_pending_status(payload.get("text", ""))
                     continue
-                if event_type in ("tool_result",):
-                    continue
                 if "text" in payload:
                     full_text += payload["text"]
                     widget.append_text(payload["text"])

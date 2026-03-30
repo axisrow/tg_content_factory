@@ -206,28 +206,34 @@ async def _await_with_countdown(
     """Await *coro* with periodic countdown status updates pushed to *queue*."""
     task = asyncio.ensure_future(coro)
     start = time.monotonic()
-    while True:
-        elapsed = time.monotonic() - start
-        remaining = timeout - elapsed
-        if remaining <= 0:
-            task.cancel()
-            with suppress(asyncio.CancelledError):
-                await task
-            raise asyncio.TimeoutError()
-        wait_time = min(countdown_interval, remaining)
-        done, _ = await asyncio.wait({task}, timeout=wait_time)
-        if done:
-            return task.result()
-        remaining_int = int(timeout - (time.monotonic() - start))
-        if remaining_int > 0:
-            payload = json.dumps(
-                {"type": "countdown", "text": f"{label} ({remaining_int}с до таймаута)"},
-                ensure_ascii=False,
-            )
-            try:
-                queue.put_nowait(f"data: {payload}\n\n")
-            except Exception:
-                pass
+    try:
+        while True:
+            elapsed = time.monotonic() - start
+            remaining = timeout - elapsed
+            if remaining <= 0:
+                task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await task
+                raise asyncio.TimeoutError()
+            wait_time = min(countdown_interval, remaining)
+            done, _ = await asyncio.wait({task}, timeout=wait_time)
+            if done:
+                return task.result()
+            remaining_int = int(timeout - (time.monotonic() - start))
+            if remaining_int > 0:
+                payload = json.dumps(
+                    {"type": "countdown", "text": f"{label} ({remaining_int}с до таймаута)"},
+                    ensure_ascii=False,
+                )
+                try:
+                    queue.put_nowait(f"data: {payload}\n\n")
+                except Exception:
+                    pass
+    except asyncio.CancelledError:
+        task.cancel()
+        with suppress(asyncio.CancelledError, Exception):
+            await task
+        raise
 
 
 class ClaudeSdkBackend:
@@ -284,7 +290,6 @@ class ClaudeSdkBackend:
 
         stderr_lines: list[str] = []
         debug_lines: list[str] = []
-        _stderr_count = [0]  # mutable counter for closure
 
         # Stable stage keywords from claude-cli bootstrap sequence.
         # Checked case-insensitively; first match wins.
@@ -320,7 +325,6 @@ class ClaudeSdkBackend:
             # Emit connection progress to TUI/web queue.
             # _on_stderr is called from an anyio task in the same event loop,
             # so put_nowait on asyncio.Queue is safe here.
-            _stderr_count[0] += 1
             label: str | None = None
             for keyword, stage in _stage_map:
                 if keyword in _lower:
