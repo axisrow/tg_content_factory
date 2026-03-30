@@ -1355,7 +1355,7 @@ def test_agent_config_timeout_defaults():
     """AgentConfig has correct default timeout values."""
     config = AppConfig()
     assert config.agent.stream_close_timeout == 60
-    assert config.agent.first_event_timeout == 90
+    assert config.agent.first_event_timeout == 120
     assert config.agent.idle_timeout == 90
     assert config.agent.permission_timeout == 120
     assert config.agent.total_timeout == 600
@@ -1503,6 +1503,7 @@ async def test_stream_close_timeout_from_config(db, monkeypatch):
     monkeypatch.delenv("CLAUDE_CODE_STREAM_CLOSE_TIMEOUT", raising=False)
     config = AppConfig()
     config.agent.stream_close_timeout = 42
+    config.agent.total_timeout = 30  # ensure stream_close_timeout > total_timeout
 
     from src.agent.manager import ClaudeSdkBackend
 
@@ -1511,4 +1512,5 @@ async def test_stream_close_timeout_from_config(db, monkeypatch):
         backend.initialize()
 
     import os
+    # effective = max(42, 30) = 42 → 42000ms
     assert os.environ.get("CLAUDE_CODE_STREAM_CLOSE_TIMEOUT") == "42000"
