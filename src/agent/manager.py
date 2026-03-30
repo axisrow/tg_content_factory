@@ -208,77 +208,13 @@ async def _await_with_countdown(
 ) -> Any:
     """Await *coro* with periodic countdown status updates pushed to *queue*.
 
-    IMPORTANT: *coro* is awaited directly in the current task via
-    ``asyncio.timeout()`` — NOT wrapped in ``ensure_future``.
-    ``claude_agent_sdk`` uses anyio cancel-scopes that are bound to the task
-    they were entered in; moving the await into a separate Task causes
-    "Attempted to exit cancel scope in a different task" errors.
-
-    When *activity_ts* (a mutable ``[float]``) is provided, the deadline is
-    automatically extended by *activity_extend* seconds when fresh stderr
-    activity is detected and the deadline is close.  *max_timeout* is a hard
-    ceiling — the deadline will never exceed ``now + max_timeout`` from the
-    initial call, preventing runaway extensions from repeated CLI retries.
+    The coroutine is wrapped in ``ensure_future`` + ``asyncio.wait`` to enforce
+    a hard deadline.  When *activity_ts* (a mutable ``[float]``) is provided,
+    the deadline is automatically extended by *activity_extend* seconds when
+    fresh stderr activity is detected and the deadline is close.  *max_timeout*
+    is a hard ceiling — the deadline will never exceed ``start + max_timeout``,
+    preventing runaway extensions from repeated CLI retries.
     """
-    start = time.monotonic()
-    loop = asyncio.get_event_loop()
-    absolute_max = loop.time() + (max_timeout if max_timeout is not None else timeout)
-
-    async def _ticker(cm: asyncio.Timeout) -> None:
-        try:
-            last_extended_at = start
-            extensions_remaining = 3  # max 3 extensions (e.g., 90 + 3*30 = 180s)
-            while True:
-                await asyncio.sleep(countdown_interval)
-                # Extend deadline when CLI activity is fresh AND deadline is close.
-                if (
-                    extensions_remaining > 0
-                    and activity_ts is not None
-                    and activity_ts[0] > last_extended_at
-                ):
-                    current = cm.when()
-                    if current is not None:
-                        remaining = current - loop.time()
-                        if remaining < activity_extend:
-                            new_deadline = min(loop.time() + activity_extend, absolute_max)
-                            if new_deadline > current:
-                                cm.reschedule(new_deadline)
-                                last_extended_at = activity_ts[0]
-                                extensions_remaining -= 1
-                                ext_secs = int(new_deadline - loop.time())
-                                logger.info(
-                                    "Timeout extended +%.0fs (CLI activity, was %.0fs left, %d extensions left)",
-                                    activity_extend, remaining, extensions_remaining,
-                                )
-                                ext_payload = json.dumps(
-                                    {
-                                        "type": "status",
-                                        "text": f"CLI активен — продлён (+{int(activity_extend)}с, {ext_secs}с)",
-                                    },
-                                    ensure_ascii=False,
-                                )
-                                try:
-                                    queue.put_nowait(f"data: {ext_payload}\n\n")
-                                except Exception:
-                                    pass
-                # Show countdown based on actual deadline
-                when = cm.when()
-                if when is not None:
-                    remaining_int = int(when - loop.time())
-                else:
-                    remaining_int = int(timeout - (time.monotonic() - start))
-                if remaining_int > 0:
-                    payload = json.dumps(
-                        {"type": "countdown", "text": f"{label} ({remaining_int}с до таймаута)"},
-                        ensure_ascii=False,
-                    )
-                    try:
-                        queue.put_nowait(f"data: {payload}\n\n")
-                    except Exception:
-                        pass
-        except asyncio.CancelledError:
-            pass
-
     # We must wrap coro in a separate Task for timeout to work.
     # claude_agent_sdk swallows CancelledError internally (anyio task groups),
     # so asyncio.timeout() on the same task is useless — the cancellation
@@ -353,12 +289,16 @@ async def _await_with_countdown(
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await task
                 raise asyncio.TimeoutError()
             done, _ = await asyncio.wait({task}, timeout=min(countdown_interval, remaining))
             if done:
                 return task.result()
     except asyncio.CancelledError:
         task.cancel()
+        with suppress(asyncio.CancelledError, Exception):
+            await task
         raise
     finally:
         ticker.cancel()
@@ -410,6 +350,7 @@ class ClaudeSdkBackend:
         model: str | None,
         queue: asyncio.Queue[str | None],
         history_msgs: list[dict] | None = None,
+        session_id: str = "web",
     ) -> None:
         self._ensure_initialized()
         original_prompt = prompt
@@ -417,6 +358,8 @@ class ClaudeSdkBackend:
             prompt = _embed_history_in_prompt(history_msgs, prompt)
         resolved_model = model or self._config.agent.model.strip() or os.environ.get("AGENT_MODEL")
         extra: dict = {}
+        if session_id:
+            extra["session_id"] = session_id
         if resolved_model:
             extra["model"] = resolved_model
 
@@ -652,10 +595,27 @@ class ClaudeSdkBackend:
                                         block.tool_use_id, content, bool(block.is_error)
                                     )
                         elif isinstance(msg, ResultMessage):
-                            done_payload = json.dumps(
-                                {"done": True, "full_text": full_text, "backend": "claude"},
-                                ensure_ascii=False,
-                            )
+                            done_data: dict = {
+                                "done": True,
+                                "full_text": full_text,
+                                "backend": "claude",
+                            }
+                            _usage = getattr(msg, "usage", None)
+                            if isinstance(_usage, dict):
+                                done_data["usage"] = _usage
+                            _model_usage = getattr(msg, "model_usage", None)
+                            if isinstance(_model_usage, dict):
+                                done_data["model_usage"] = _model_usage
+                            _cost = getattr(msg, "total_cost_usd", None)
+                            if isinstance(_cost, (int, float)):
+                                done_data["total_cost_usd"] = _cost
+                            _turns = getattr(msg, "num_turns", None)
+                            if isinstance(_turns, int) and _turns > 0:
+                                done_data["num_turns"] = _turns
+                            _sid = getattr(msg, "session_id", None)
+                            if isinstance(_sid, str) and _sid:
+                                done_data["session_id"] = _sid
+                            done_payload = json.dumps(done_data, ensure_ascii=False)
                             await queue.put(f"data: {done_payload}\n\n")
                     except asyncio.CancelledError:
                         draining = True
@@ -1879,7 +1839,7 @@ class AgentManager:
             # Set ContextVar here so token is created and reset in the same task context.
             _token = set_request_context(_req_ctx) if _req_ctx is not None else None
             try:
-                await selected_backend.chat_stream(
+                kwargs: dict = dict(
                     thread_id=thread_id,
                     prompt=prompt,
                     system_prompt=system_prompt,
@@ -1888,6 +1848,9 @@ class AgentManager:
                     queue=queue,
                     history_msgs=history_for_backend,
                 )
+                if isinstance(selected_backend, ClaudeSdkBackend):
+                    kwargs["session_id"] = session_id
+                await selected_backend.chat_stream(**kwargs)
             except Exception as exc:
                 logger.exception("Agent chat error for thread %d", thread_id)
                 error_text = str(exc)
