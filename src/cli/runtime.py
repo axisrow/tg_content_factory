@@ -1,20 +1,61 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
 from src.config import load_config, resolve_session_encryption_secret
 from src.database import Database
 from src.settings_utils import parse_int_setting
 from src.telegram.auth import TelegramAuth
 from src.telegram.client_pool import ClientPool
+from src.web.paths import PROJECT_ROOT
+
+_DATA_ROOT = PROJECT_ROOT / "data"
+_LOG_FORMAT = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+_LOG_DATEFMT = "%Y-%m-%d %H:%M:%S"
+_TUI_LOG_PATH = _DATA_ROOT / "agent_tui.log"
 
 
 def setup_logging() -> None:
     logging.basicConfig(
         level=logging.INFO,
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
+        format=_LOG_FORMAT,
+        datefmt=_LOG_DATEFMT,
     )
+
+
+def ensure_data_dirs() -> None:
+    """Create all data subdirectories once at startup."""
+    for sub in ("image", "images", "downloads", "photo_uploads", "telegram_sessions"):
+        (_DATA_ROOT / sub).mkdir(parents=True, exist_ok=True)
+
+
+def redirect_logging_to_file(path: str | Path = _TUI_LOG_PATH) -> list[logging.Handler]:
+    """Replace console handlers with file handler for TUI mode. Returns removed handlers."""
+    root = logging.getLogger()
+    removed: list[logging.Handler] = []
+    for h in root.handlers[:]:
+        if isinstance(h, logging.StreamHandler) and not isinstance(h, logging.FileHandler):
+            removed.append(h)
+            root.removeHandler(h)
+    fh = logging.FileHandler(str(path), encoding="utf-8")
+    fh.setFormatter(logging.Formatter(_LOG_FORMAT, datefmt=_LOG_DATEFMT))
+    root.addHandler(fh)
+    return removed
+
+
+def restore_logging(removed_handlers: list[logging.Handler] | logging.Handler | None) -> None:
+    """Restore console handlers after TUI exits."""
+    root = logging.getLogger()
+    for h in root.handlers[:]:
+        if isinstance(h, logging.FileHandler):
+            h.close()
+            root.removeHandler(h)
+    if isinstance(removed_handlers, list):
+        for h in removed_handlers:
+            root.addHandler(h)
+    elif removed_handlers:
+        root.addHandler(removed_handlers)
 
 
 async def init_db(config_path: str):
@@ -25,30 +66,6 @@ async def init_db(config_path: str):
     )
     await db.initialize()
     return config, db
-
-
-def redirect_logging_to_file() -> list[logging.Handler]:
-    """Move all root logger handlers to a file handler for TUI mode.
-
-    Returns the removed handlers so they can be restored later.
-    """
-    root = logging.getLogger()
-    removed = list(root.handlers)
-    for h in removed:
-        root.removeHandler(h)
-    fh = logging.FileHandler("agent_tui.log", encoding="utf-8")
-    fh.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s"))
-    root.addHandler(fh)
-    return removed
-
-
-def restore_logging(handlers: list[logging.Handler]) -> None:
-    """Restore previously removed handlers and remove the file handler."""
-    root = logging.getLogger()
-    for h in list(root.handlers):
-        root.removeHandler(h)
-    for h in handlers:
-        root.addHandler(h)
 
 
 async def init_pool(config, db: Database):

@@ -53,11 +53,9 @@ def register(db, client_pool, embedding_service, **kwargs):
             result = await svc.generate(model=model, text=prompt)
             if result and (result.startswith("https://") or result.startswith("http://")):
                 import hashlib
+                from urllib.parse import urlparse
 
                 import httpx
-
-                DATA_IMAGE_DIR.mkdir(parents=True, exist_ok=True)
-                from urllib.parse import urlparse
 
                 url_path = urlparse(result).path
                 _, dot, suffix = url_path.rpartition(".")

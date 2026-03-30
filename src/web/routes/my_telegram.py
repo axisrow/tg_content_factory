@@ -360,7 +360,6 @@ async def download_media(request: Request):
                 url=f"/my-telegram/?phone={quote(phone, safe='')}&error=message_not_found", status_code=303
             )
         output_dir = pathlib.Path(__file__).resolve().parents[3] / "data" / "downloads"
-        output_dir.mkdir(parents=True, exist_ok=True)
         path = await client.download_media(msg, file=str(output_dir))
         if not path:
             return RedirectResponse(

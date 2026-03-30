@@ -51,8 +51,7 @@ def configure_app(app: FastAPI, container: AppContainer | None) -> None:
         if "static" not in mount_names:
             app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
     # Serve generated images from data/image/
-    DATA_IMAGE_DIR.mkdir(parents=True, exist_ok=True)
-    if "data-image" not in {r.name for r in app.routes}:
+    if DATA_IMAGE_DIR.exists() and "data-image" not in {r.name for r in app.routes}:
         app.mount("/data/image", StaticFiles(directory=str(DATA_IMAGE_DIR)), name="data-image")
 
 

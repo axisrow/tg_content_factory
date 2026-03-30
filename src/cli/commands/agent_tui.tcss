@@ -85,6 +85,11 @@ ThreadItem Label {
     border-title-color: $warning;
 }
 
+.activity-log {
+    color: #666666;
+    margin-bottom: 0;
+}
+
 #input-bar {
     height: auto;
     max-height: 8;

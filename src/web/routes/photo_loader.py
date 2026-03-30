@@ -28,12 +28,7 @@ def _redirect(phone: str, code: str, error: bool = False) -> RedirectResponse:
     )
 
 
-def _ensure_upload_root() -> None:
-    UPLOAD_ROOT.mkdir(parents=True, exist_ok=True)
-
-
 async def _persist_uploads(files: list[UploadFile], folder_name: str) -> list[str]:
-    _ensure_upload_root()
     target_dir = UPLOAD_ROOT / folder_name
     target_dir.mkdir(parents=True, exist_ok=True)
     stored: list[str] = []

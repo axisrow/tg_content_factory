@@ -72,15 +72,17 @@ def test_streaming_message_finalize_changes_class():
     assert "streaming-bubble" not in widget.classes
 
 
-def test_streaming_message_update_status():
+def test_streaming_message_set_pending_status():
     from src.cli.commands.agent_tui import StreamingMessage
 
     widget = StreamingMessage()
     widget._elapsed_label = MagicMock()
-    widget.set_pending_status("🔧 search_messages ✅ (1.2s)")
-    assert widget._status_label == "🔧 search_messages ✅ (1.2s)"
+    widget._activity_log = MagicMock()
+    widget.set_pending_status("Жду ответ Claude API")
+    assert widget._status_label == "Жду ответ Claude API"
+    assert widget._pending_status == "Жду ответ Claude API"
     assert widget._tool_start_time == 0.0
-    widget._elapsed_label.update.assert_called_with("⏳ 🔧 search_messages ✅ (1.2s)")
+    widget._elapsed_label.update.assert_called_with("⏳ Жду ответ Claude API")
 
 
 def test_streaming_message_tick_elapsed_with_tool():
@@ -490,6 +492,36 @@ class TestAgentChatOneShotMode:
         finally:
             conn.close()
         assert any(r["role"] == "user" and r["content"] == "hi" for r in rows)
+
+    def test_one_shot_prints_status_to_stderr(self, cli_env, capsys, monkeypatch):
+        """Status events are printed to stderr, not stdout, in one-shot mode."""
+        from unittest.mock import patch as _patch
+
+        from src.cli.commands.agent import run
+        from tests.helpers import cli_ns as _ns
+
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+
+        async def fake_init_db(_path):
+            return AppConfig(), cli_env
+
+        async def fake_chat_stream(*_a, **_kw):
+            yield 'data: {"type": "status", "text": "Создание клиента"}\n\n'
+            yield 'data: {"type": "status", "text": "Запрос к API"}\n\n'
+            yield 'data: {"text": "reply text"}\n\n'
+            yield 'data: {"done": true, "full_text": "reply text"}\n\n'
+
+        with (
+            _patch("src.cli.runtime.init_db", side_effect=fake_init_db),
+            _patch("src.agent.manager.AgentManager.chat_stream", fake_chat_stream),
+        ):
+            run(_ns(agent_action="chat", prompt="test", thread_id=None, model=None))
+
+        captured = capsys.readouterr()
+        assert "reply text" in captured.out
+        # Status events must NOT leak into stdout
+        assert "Создание клиента" not in captured.out
+        assert "Запрос к API" not in captured.out
 
 
 # ---------------------------------------------------------------------------

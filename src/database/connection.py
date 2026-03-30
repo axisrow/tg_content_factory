@@ -75,7 +75,8 @@ class DBConnection:
         self.db: aiosqlite.Connection | None = None
 
     async def connect(self) -> aiosqlite.Connection:
-        Path(self._db_path).parent.mkdir(parents=True, exist_ok=True)
+        if self._db_path != ":memory:":
+            Path(self._db_path).parent.mkdir(parents=True, exist_ok=True)
         self.db = await aiosqlite.connect(self._db_path, timeout=10.0, isolation_level=None)
         self.db.row_factory = aiosqlite.Row
         await self.db.execute("PRAGMA journal_mode=WAL")
