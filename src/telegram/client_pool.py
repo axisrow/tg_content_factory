@@ -509,7 +509,14 @@ class ClientPool:
 
     async def disconnect_all(self) -> None:
         for phone in list(self.clients):
-            await self.remove_client(phone)
+            try:
+                await asyncio.wait_for(self.remove_client(phone), timeout=5.0)
+            except asyncio.TimeoutError:
+                logger.warning("Timeout disconnecting %s, forcing cleanup", phone)
+                self.clients.pop(phone, None)
+                self._in_use.discard(phone)
+            except Exception:
+                logger.debug("Error disconnecting %s", phone, exc_info=True)
 
     @staticmethod
     def _normalize_runtime_config(
