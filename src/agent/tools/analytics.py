@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Annotated
+
 from claude_agent_sdk import tool
 
 from src.agent.tools._registry import _text_response
@@ -34,7 +36,7 @@ def register(db, client_pool, embedding_service, **kwargs):
     @tool(
         "get_pipeline_stats",
         "Get detailed statistics for a specific pipeline or all pipelines",
-        {"pipeline_id": int},
+        {"pipeline_id": Annotated[int, "ID пайплайна для фильтрации"]},
     )
     async def get_pipeline_stats(args):
         try:
@@ -64,7 +66,10 @@ def register(db, client_pool, embedding_service, **kwargs):
     @tool(
         "get_daily_stats",
         "Get daily content generation statistics over a time period",
-        {"days": int, "pipeline_id": int},
+        {
+            "days": Annotated[int, "Количество дней для анализа"],
+            "pipeline_id": Annotated[int, "ID пайплайна для фильтрации"],
+        },
     )
     async def get_daily_stats(args):
         try:
@@ -91,7 +96,10 @@ def register(db, client_pool, embedding_service, **kwargs):
     @tool(
         "get_trending_topics",
         "Get trending topics/keywords from collected messages over the last N days",
-        {"days": int, "limit": int},
+        {
+            "days": Annotated[int, "Количество дней для анализа"],
+            "limit": Annotated[int, "Максимальное количество результатов"],
+        },
     )
     async def get_trending_topics(args):
         try:
@@ -115,7 +123,10 @@ def register(db, client_pool, embedding_service, **kwargs):
     @tool(
         "get_trending_channels",
         "Get top channels by message activity over the last N days",
-        {"days": int, "limit": int},
+        {
+            "days": Annotated[int, "Количество дней для анализа"],
+            "limit": Annotated[int, "Максимальное количество результатов"],
+        },
     )
     async def get_trending_channels(args):
         try:
@@ -139,7 +150,7 @@ def register(db, client_pool, embedding_service, **kwargs):
     @tool(
         "get_message_velocity",
         "Get message volume over time (messages per day) for the last N days",
-        {"days": int},
+        {"days": Annotated[int, "Количество дней для анализа"]},
     )
     async def get_message_velocity(args):
         try:
@@ -181,7 +192,10 @@ def register(db, client_pool, embedding_service, **kwargs):
     @tool(
         "get_calendar",
         "Get upcoming scheduled content publications",
-        {"limit": int, "pipeline_id": int},
+        {
+            "limit": Annotated[int, "Максимальное количество результатов"],
+            "pipeline_id": Annotated[int, "ID пайплайна для фильтрации"],
+        },
     )
     async def get_calendar(args):
         try:
@@ -218,7 +232,11 @@ def register(db, client_pool, embedding_service, **kwargs):
         "get_top_messages",
         "Get top messages ranked by total reactions count. "
         "Optional date filters: date_from, date_to (YYYY-MM-DD).",
-        {"limit": int, "date_from": str, "date_to": str},
+        {
+            "limit": Annotated[int, "Максимальное количество результатов"],
+            "date_from": Annotated[str, "Начало периода в формате YYYY-MM-DD"],
+            "date_to": Annotated[str, "Конец периода в формате YYYY-MM-DD"],
+        },
     )
     async def get_top_messages(args):
         try:
@@ -246,7 +264,10 @@ def register(db, client_pool, embedding_service, **kwargs):
     @tool(
         "get_content_type_stats",
         "Get message counts and average reactions grouped by content type (text, photo, video, etc.).",
-        {"date_from": str, "date_to": str},
+        {
+            "date_from": Annotated[str, "Начало периода в формате YYYY-MM-DD"],
+            "date_to": Annotated[str, "Конец периода в формате YYYY-MM-DD"],
+        },
     )
     async def get_content_type_stats(args):
         try:
@@ -274,7 +295,10 @@ def register(db, client_pool, embedding_service, **kwargs):
     @tool(
         "get_hourly_activity",
         "Get message distribution by hour of day (UTC). Shows when channels are most active.",
-        {"date_from": str, "date_to": str},
+        {
+            "date_from": Annotated[str, "Начало периода в формате YYYY-MM-DD"],
+            "date_to": Annotated[str, "Конец периода в формате YYYY-MM-DD"],
+        },
     )
     async def get_hourly_activity(args):
         try:

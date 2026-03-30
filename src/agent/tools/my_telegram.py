@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Annotated
+
 from claude_agent_sdk import tool
 from mcp.types import ToolAnnotations
 
@@ -34,7 +36,12 @@ def register(db, client_pool, embedding_service, **kwargs):
         "type — filter: 'channels' (channel), 'groups' (group/supergroup/gigagroup/forum/monoforum), "
         "'chats' (dm/bot/saved), or exact type like 'supergroup', 'dm', 'bot'; "
         "limit — cap results (default: all).",
-        {"phone": str, "search": str, "type": str, "limit": int},
+        {
+            "phone": Annotated[str, "Номер телефона аккаунта (например +79001234567)"],
+            "search": Annotated[str, "Поиск по @username, t.me ссылке, числовому ID или подстроке названия"],
+            "type": Annotated[str, "Фильтр по типу: channels, groups, chats или точный тип (supergroup, dm, bot)"],
+            "limit": Annotated[int, "Максимальное количество результатов"],
+        },
     )
     async def search_my_telegram(args):
         pool_gate = require_pool(client_pool, "Поиск диалогов")
@@ -113,7 +120,7 @@ def register(db, client_pool, embedding_service, **kwargs):
         "refresh_dialogs",
         "Refresh cached dialog list for an account from Telegram. "
         "Use when messaging tools fail to resolve a numeric chat_id.",
-        {"phone": str},
+        {"phone": Annotated[str, "Номер телефона аккаунта (например +79001234567)"]},
     )
     async def refresh_dialogs(args):
         pool_gate = require_pool(client_pool, "Обновление диалогов")
@@ -141,7 +148,11 @@ def register(db, client_pool, embedding_service, **kwargs):
         "⚠️ DANGEROUS: Leave (unsubscribe from) Telegram channels/groups. "
         "dialog_ids = comma-separated Telegram chat IDs (get from search_my_telegram). "
         "Always ask user for confirmation first.",
-        {"phone": str, "dialog_ids": str, "confirm": bool},
+        {
+            "phone": Annotated[str, "Номер телефона аккаунта (например +79001234567)"],
+            "dialog_ids": Annotated[str, "Telegram ID диалогов через запятую"],
+            "confirm": Annotated[bool, "Установите true для подтверждения действия"],
+        },
         annotations=ToolAnnotations(destructiveHint=True),
     )
     async def leave_dialogs(args):
@@ -179,7 +190,13 @@ def register(db, client_pool, embedding_service, **kwargs):
         "create_telegram_channel",
         "⚠️ Create a new Telegram channel via a connected account. "
         "Ask user for confirmation first.",
-        {"phone": str, "title": str, "about": str, "username": str, "confirm": bool},
+        {
+            "phone": Annotated[str, "Номер телефона аккаунта (например +79001234567)"],
+            "title": Annotated[str, "Название канала"],
+            "about": Annotated[str, "Описание канала"],
+            "username": Annotated[str, "Username канала (без @)"],
+            "confirm": Annotated[bool, "Установите true для подтверждения действия"],
+        },
     )
     async def create_telegram_channel(args):
         pool_gate = require_pool(client_pool, "Создание канала")
@@ -233,7 +250,7 @@ def register(db, client_pool, embedding_service, **kwargs):
         "get_forum_topics",
         "Get forum topics for a supergroup with topics enabled. "
         "channel_id = Telegram numeric ID (from list_channels or search_my_telegram).",
-        {"channel_id": int},
+        {"channel_id": Annotated[int, "Числовой Telegram ID канала"]},
     )
     async def get_forum_topics(args):
         channel_id = args.get("channel_id")
@@ -255,7 +272,10 @@ def register(db, client_pool, embedding_service, **kwargs):
     @tool(
         "clear_dialog_cache",
         "⚠️ Clear cached dialog list for an account. Ask user for confirmation first.",
-        {"phone": str, "confirm": bool},
+        {
+            "phone": Annotated[str, "Номер телефона аккаунта (например +79001234567)"],
+            "confirm": Annotated[bool, "Установите true для подтверждения действия"],
+        },
     )
     async def clear_dialog_cache(args):
         phone = normalize_phone(args.get("phone", ""))
@@ -309,7 +329,10 @@ def register(db, client_pool, embedding_service, **kwargs):
         "or when search_my_telegram cannot find a dialog by username. "
         "Does NOT require the entity to be in your dialogs. "
         "Params: identifier — @username, t.me/username, or numeric ID; phone — preferred account (optional).",
-        {"identifier": str, "phone": str},
+        {
+            "identifier": Annotated[str, "Идентификатор (@username, t.me ссылка или числовой ID)"],
+            "phone": Annotated[str, "Номер телефона аккаунта (например +79001234567)"],
+        },
     )
     async def resolve_entity(args):
         pool_gate = require_pool(client_pool, "Resolve entity")

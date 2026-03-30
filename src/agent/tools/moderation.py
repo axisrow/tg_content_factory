@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Annotated
+
 from claude_agent_sdk import tool
 from mcp.types import ToolAnnotations
 
@@ -19,7 +21,10 @@ def register(db, client_pool, embedding_service, **kwargs):
         "list_pending_moderation",
         "List generation runs awaiting moderation. Filter by pipeline_id. "
         "Use run_id from results with get_pipeline_run to view full text, then approve_run or reject_run.",
-        {"pipeline_id": int, "limit": int},
+        {
+            "pipeline_id": Annotated[int, "ID пайплайна для фильтрации"],
+            "limit": Annotated[int, "Максимальное количество результатов"],
+        },
     )
     async def list_pending_moderation(args):
         try:
@@ -49,7 +54,7 @@ def register(db, client_pool, embedding_service, **kwargs):
         "View full details of a specific generation run for moderation review: "
         "generated text, pipeline name, status, quality score. "
         "run_id from list_pending_moderation. Then use approve_run or reject_run.",
-        {"run_id": int},
+        {"run_id": Annotated[int, "ID генерации из list_pipeline_runs"]},
     )
     async def view_moderation_run(args):
         run_id = args.get("run_id")
@@ -82,7 +87,7 @@ def register(db, client_pool, embedding_service, **kwargs):
         "approve_run",
         "Approve a generation run for publishing. Then use publish_pipeline_run to publish it. "
         "run_id from list_pending_moderation or list_pipeline_runs.",
-        {"run_id": int},
+        {"run_id": Annotated[int, "ID генерации из list_pipeline_runs"]},
     )
     async def approve_run(args):
         run_id = args.get("run_id")
@@ -102,7 +107,7 @@ def register(db, client_pool, embedding_service, **kwargs):
     @tool(
         "reject_run",
         "Reject a generation run. Provide the run_id.",
-        {"run_id": int},
+        {"run_id": Annotated[int, "ID генерации из list_pipeline_runs"]},
     )
     async def reject_run(args):
         run_id = args.get("run_id")
@@ -127,7 +132,10 @@ def register(db, client_pool, embedding_service, **kwargs):
         "bulk_approve_runs",
         "Approve multiple generation runs at once. Provide comma-separated run_ids (e.g. '1,2,3'). "
         "Requires confirm=true.",
-        {"run_ids": str, "confirm": bool},
+        {
+            "run_ids": Annotated[str, "ID генераций через запятую (например 1,2,3)"],
+            "confirm": Annotated[bool, "Установите true для подтверждения действия"],
+        },
         annotations=ToolAnnotations(destructiveHint=False),
     )
     async def bulk_approve_runs(args):
@@ -156,7 +164,10 @@ def register(db, client_pool, embedding_service, **kwargs):
         "bulk_reject_runs",
         "Reject multiple generation runs at once. Provide comma-separated run_ids (e.g. '1,2,3'). "
         "Requires confirm=true.",
-        {"run_ids": str, "confirm": bool},
+        {
+            "run_ids": Annotated[str, "ID генераций через запятую (например 1,2,3)"],
+            "confirm": Annotated[bool, "Установите true для подтверждения действия"],
+        },
         annotations=ToolAnnotations(destructiveHint=False),
     )
     async def bulk_reject_runs(args):

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Annotated
+
 from claude_agent_sdk import tool
 from mcp.types import ToolAnnotations
 
@@ -26,7 +28,7 @@ def register(db, client_pool, embedding_service, **kwargs):
 
     tools.append(list_agent_threads)
 
-    @tool("create_agent_thread", "Create a new agent chat thread", {"title": str})
+    @tool("create_agent_thread", "Create a new agent chat thread", {"title": Annotated[str, "Название треда"]})
     async def create_agent_thread(args):
         try:
             title = args.get("title", "Новый тред")
@@ -41,7 +43,10 @@ def register(db, client_pool, embedding_service, **kwargs):
         "delete_agent_thread",
         "⚠️ DANGEROUS: Delete an agent chat thread and all its messages. "
         "Always ask user for confirmation first.",
-        {"thread_id": int, "confirm": bool},
+        {
+            "thread_id": Annotated[int, "ID треда агента"],
+            "confirm": Annotated[bool, "Установите true для подтверждения действия"],
+        },
         annotations=ToolAnnotations(destructiveHint=True),
     )
     async def delete_agent_thread(args):
@@ -61,7 +66,11 @@ def register(db, client_pool, embedding_service, **kwargs):
 
     tools.append(delete_agent_thread)
 
-    @tool("rename_agent_thread", "Rename an agent chat thread", {"thread_id": int, "title": str})
+    @tool(
+        "rename_agent_thread",
+        "Rename an agent chat thread",
+        {"thread_id": Annotated[int, "ID треда агента"], "title": Annotated[str, "Название треда"]},
+    )
     async def rename_agent_thread(args):
         thread_id = args.get("thread_id")
         title = args.get("title", "")
@@ -78,7 +87,10 @@ def register(db, client_pool, embedding_service, **kwargs):
     @tool(
         "get_thread_messages",
         "Get messages from an agent chat thread",
-        {"thread_id": int, "limit": int},
+        {
+            "thread_id": Annotated[int, "ID треда агента"],
+            "limit": Annotated[int, "Максимальное количество результатов"],
+        },
     )
     async def get_thread_messages(args):
         thread_id = args.get("thread_id")

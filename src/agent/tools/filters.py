@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Annotated
+
 from claude_agent_sdk import tool
 from mcp.types import ToolAnnotations
 
@@ -43,7 +45,7 @@ def register(db, client_pool, embedding_service, **kwargs):
         "apply_filters",
         "⚠️ DANGEROUS: Run analyze_filters and mark flagged channels as filtered (skipped during collection). "
         "Always ask user for confirmation first.",
-        {"confirm": bool},
+        {"confirm": Annotated[bool, "Установите true для подтверждения действия"]},
         annotations=ToolAnnotations(destructiveHint=True),
     )
     async def apply_filters(args):
@@ -66,7 +68,7 @@ def register(db, client_pool, embedding_service, **kwargs):
         "reset_filters",
         "⚠️ DANGEROUS: Reset all channel filters — unmark all filtered channels. "
         "Always ask user for confirmation first.",
-        {"confirm": bool},
+        {"confirm": Annotated[bool, "Установите true для подтверждения действия"]},
         annotations=ToolAnnotations(destructiveHint=True),
     )
     async def reset_filters(args):
@@ -87,7 +89,7 @@ def register(db, client_pool, embedding_service, **kwargs):
     @tool(
         "toggle_channel_filter",
         "Toggle filter status for a specific channel. pk = DB primary key — get it from list_channels.",
-        {"pk": int},
+        {"pk": Annotated[int, "ID записи в БД (первичный ключ из list_channels)"]},
     )
     async def toggle_channel_filter(args):
         pk = args.get("pk")
@@ -111,7 +113,10 @@ def register(db, client_pool, embedding_service, **kwargs):
         "⚠️ DANGEROUS: Soft-delete messages from filtered channels. "
         "pks = comma-separated DB primary keys from list_channels; "
         "omit to purge all filtered channels. Always ask user for confirmation first.",
-        {"pks": str, "confirm": bool},
+        {
+            "pks": Annotated[str, "ID записей через запятую (первичные ключи из list_channels)"],
+            "confirm": Annotated[bool, "Установите true для подтверждения действия"],
+        },
         annotations=ToolAnnotations(destructiveHint=True),
     )
     async def purge_filtered_channels(args):
@@ -145,7 +150,10 @@ def register(db, client_pool, embedding_service, **kwargs):
         "⚠️ DANGEROUS: Permanently delete channels and ALL their data (irreversible). "
         "pks = comma-separated DB primary keys from list_channels. "
         "Always ask user for confirmation first.",
-        {"pks": str, "confirm": bool},
+        {
+            "pks": Annotated[str, "ID записей через запятую (первичные ключи из list_channels)"],
+            "confirm": Annotated[bool, "Установите true для подтверждения действия"],
+        },
         annotations=ToolAnnotations(destructiveHint=True),
     )
     async def hard_delete_channels(args):
@@ -173,7 +181,7 @@ def register(db, client_pool, embedding_service, **kwargs):
         "precheck_filters",
         "⚠️ Pre-filter channels by subscriber ratio (no Telegram API needed). "
         "Marks channels as filtered. Ask user for confirmation first.",
-        {"confirm": bool},
+        {"confirm": Annotated[bool, "Установите true для подтверждения действия"]},
     )
     async def precheck_filters(args):
         gate = require_confirmation(
