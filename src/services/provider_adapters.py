@@ -296,7 +296,6 @@ def make_huggingface_image_adapter(api_token: str, output_dir: str = "data/image
                     )
                 image_bytes = await resp.read()
                 out = Path(output_dir)
-                out.mkdir(parents=True, exist_ok=True)
                 filename = f"{uuid.uuid4().hex}.png"
                 filepath = out / filename
                 filepath.write_bytes(image_bytes)
