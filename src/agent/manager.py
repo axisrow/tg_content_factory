@@ -90,6 +90,35 @@ def _truncate(text: str, limit: int = 120) -> str:
     return text[:limit - 3] + "..." if len(text) > limit else text
 
 
+def _diagnose_connection(cli_path: str | None, stderr_lines: list[str]) -> str:
+    """Build a concrete diagnostic message by checking environment and stderr."""
+    problems: list[str] = []
+
+    if not cli_path:
+        problems.append("Claude CLI не найден в PATH")
+
+    has_key = bool(os.environ.get("ANTHROPIC_API_KEY"))
+    has_oauth = bool(os.environ.get("CLAUDE_CODE_OAUTH_TOKEN"))
+    if not has_key and not has_oauth:
+        problems.append("Ни ANTHROPIC_API_KEY, ни CLAUDE_CODE_OAUTH_TOKEN не заданы")
+
+    stderr_lower = " ".join(stderr_lines[-5:]).lower() if stderr_lines else ""
+    if "invalid" in stderr_lower and "key" in stderr_lower:
+        problems.append("API ключ невалиден (см. stderr)")
+    if "rate limit" in stderr_lower or "429" in stderr_lower:
+        problems.append("Сработал rate limit на API")
+    if "network" in stderr_lower or "dns" in stderr_lower or "econnrefused" in stderr_lower:
+        problems.append("Проблема с сетевым подключением")
+    if "permission" in stderr_lower or "403" in stderr_lower:
+        problems.append("Нет прав доступа к API (403)")
+    if "401" in stderr_lower or "unauthorized" in stderr_lower:
+        problems.append("API ключ отклонён (401)")
+
+    if problems:
+        return "Диагностика: " + "; ".join(problems) + "."
+    return "Проверьте подключение к сети и API ключ."
+
+
 @dataclass
 class _ToolTracker:
     queue: asyncio.Queue
@@ -167,6 +196,46 @@ class AgentRuntimeStatus:
     error: str | None = None
 
 
+async def _await_with_countdown(
+    coro: Awaitable,
+    timeout: float,
+    queue: asyncio.Queue,
+    label: str,
+    countdown_interval: int = 10,
+) -> Any:
+    """Await *coro* with periodic countdown status updates pushed to *queue*."""
+    task = asyncio.ensure_future(coro)
+    start = time.monotonic()
+    try:
+        while True:
+            elapsed = time.monotonic() - start
+            remaining = timeout - elapsed
+            if remaining <= 0:
+                task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await task
+                raise asyncio.TimeoutError()
+            wait_time = min(countdown_interval, remaining)
+            done, _ = await asyncio.wait({task}, timeout=wait_time)
+            if done:
+                return task.result()
+            remaining_int = int(timeout - (time.monotonic() - start))
+            if remaining_int > 0:
+                payload = json.dumps(
+                    {"type": "countdown", "text": f"{label} ({remaining_int}с до таймаута)"},
+                    ensure_ascii=False,
+                )
+                try:
+                    queue.put_nowait(f"data: {payload}\n\n")
+                except Exception:
+                    pass
+    except asyncio.CancelledError:
+        task.cancel()
+        with suppress(asyncio.CancelledError, Exception):
+            await task
+        raise
+
+
 class ClaudeSdkBackend:
     def __init__(self, db: Database, config: AppConfig, client_pool=None, scheduler_manager=None) -> None:
         self._db = db
@@ -184,7 +253,8 @@ class ClaudeSdkBackend:
             return
         from src.agent.tools import make_mcp_server
 
-        os.environ.setdefault("CLAUDE_CODE_STREAM_CLOSE_TIMEOUT", "300000")
+        timeout_ms = str(self._config.agent.stream_close_timeout * 1000)
+        os.environ.setdefault("CLAUDE_CODE_STREAM_CLOSE_TIMEOUT", timeout_ms)
         self._server = make_mcp_server(
             self._db, client_pool=self._client_pool, scheduler_manager=self._scheduler_manager,
             config=self._config,
@@ -210,6 +280,7 @@ class ClaudeSdkBackend:
         history_msgs: list[dict] | None = None,
     ) -> None:
         self._ensure_initialized()
+        original_prompt = prompt
         if history_msgs:
             prompt = _embed_history_in_prompt(history_msgs, prompt)
         resolved_model = model or self._config.agent.model.strip() or os.environ.get("AGENT_MODEL")
@@ -220,15 +291,52 @@ class ClaudeSdkBackend:
         stderr_lines: list[str] = []
         debug_lines: list[str] = []
 
+        # Stable stage keywords from claude-cli bootstrap sequence.
+        # Checked case-insensitively; first match wins.
+        _prompt_short = original_prompt[:100].replace("\n", " ")
+        if len(original_prompt) > 100:
+            _prompt_short += "…"
+        _stage_map: list[tuple[str, str]] = [
+            ("[api:request]", f"Жду ответ Claude API: «{_prompt_short}»"),
+            ("creating client", "Создание клиента"),
+            ("installplugins", "Установка плагинов"),
+            ("refreshed marketplace", "Обновление плагинов"),
+            ("hooks:", "Загрузка хуков"),
+            ("lsp server", "LSP"),
+            ("settings changed", "Применение настроек"),
+            ("rate limit event", "Rate limit"),
+        ]
+        _last_emitted: list[str] = [""]
+
         def _on_stderr(line: str) -> None:
-            # debug-to-stderr produces verbose transport logs; keep them separate
-            # so user-facing error details show real errors, not debug noise.
-            if line.startswith(("[DEBUG]", "[TRACE]", "DEBUG", "TRACE")):
+            # claude-cli stderr format: "2026-03-30T01:28:36.888Z [DEBUG] ..."
+            # Level tag is NOT at the start — check anywhere in the line.
+            _lower = line.lower()
+            if "[debug]" in _lower or "[trace]" in _lower:
                 debug_lines.append(line)
                 logger.debug("claude-cli debug: %s", line)
+            elif "[warn" in _lower:
+                debug_lines.append(line)
+                logger.debug("claude-cli warn: %s", line)
             else:
                 stderr_lines.append(line)
                 logger.warning("claude-cli stderr: %s", line)
+
+            # Emit connection progress to TUI/web queue.
+            # _on_stderr is called from an anyio task in the same event loop,
+            # so put_nowait on asyncio.Queue is safe here.
+            label: str | None = None
+            for keyword, stage in _stage_map:
+                if keyword in _lower:
+                    label = stage
+                    break
+            if label and label != _last_emitted[0]:
+                _last_emitted[0] = label
+                payload = json.dumps({"type": "status", "text": label}, ensure_ascii=False)
+                try:
+                    queue.put_nowait(f"data: {payload}\n\n")
+                except Exception:
+                    pass
 
         cli_path = shutil.which("claude")
         logger.info("claude-cli path: %s", cli_path)
@@ -272,6 +380,7 @@ class ClaudeSdkBackend:
             **extra,
         )
 
+        cfg = self._config.agent
         last_err: Exception | None = None
         for attempt in range(2):
             if attempt > 0:
@@ -284,12 +393,60 @@ class ClaudeSdkBackend:
             t0 = time.monotonic()
             first_event_logged = False
             try:
-                async for msg in query(prompt=prompt, options=options):
+                aiter = query(prompt=prompt, options=options).__aiter__()
+                while True:
                     if not first_event_logged:
-                        elapsed = time.monotonic() - t0
+                        iter_timeout = cfg.first_event_timeout
+                        iter_label = "Ожидание ответа Claude"
+                    else:
+                        iter_timeout = cfg.idle_timeout
+                        iter_label = "Ожидание данных от Claude"
+
+                    elapsed = time.monotonic() - t0
+                    remaining_total = cfg.total_timeout - elapsed
+                    if remaining_total <= 0:
+                        logger.error(
+                            "Total timeout %ds exceeded after %.1fs (thread %d)",
+                            cfg.total_timeout, elapsed, thread_id,
+                        )
+                        raise TimeoutError(
+                            f"Общий таймаут запроса ({cfg.total_timeout}с)"
+                        )
+                    effective_timeout = min(iter_timeout, remaining_total)
+
+                    try:
+                        msg = await _await_with_countdown(
+                            aiter.__anext__(),
+                            timeout=effective_timeout,
+                            queue=queue,
+                            label=iter_label,
+                        )
+                    except StopAsyncIteration:
+                        break
+                    except asyncio.TimeoutError:
+                        if not first_event_logged:
+                            logger.error(
+                                "First event timeout %ds fired after %.1fs (thread %d)",
+                                cfg.first_event_timeout, time.monotonic() - t0, thread_id,
+                            )
+                            diag = _diagnose_connection(cli_path, stderr_lines)
+                            raise TimeoutError(
+                                f"Claude не ответил за {cfg.first_event_timeout}с. {diag}"
+                            )
+                        logger.error(
+                            "Idle timeout %ds fired after %.1fs total (thread %d)",
+                            cfg.idle_timeout, time.monotonic() - t0, thread_id,
+                        )
+                        raise TimeoutError(
+                            f"Стрим Claude замолчал на {cfg.idle_timeout}с. "
+                            "Возможно, соединение потеряно."
+                        )
+
+                    if not first_event_logged:
+                        elapsed_fe = time.monotonic() - t0
                         logger.info(
                             "First SDK event after %.1fs (thread %d, attempt %d): %s",
-                            elapsed, thread_id, attempt + 1, type(msg).__name__,
+                            elapsed_fe, thread_id, attempt + 1, type(msg).__name__,
                         )
                         first_event_logged = True
                     if draining:
@@ -364,6 +521,20 @@ class ClaudeSdkBackend:
                             await queue.put(f"data: {done_payload}\n\n")
                     except asyncio.CancelledError:
                         draining = True
+                return
+
+            except TimeoutError as exc:
+                elapsed = time.monotonic() - t0
+                logger.error(
+                    "Agent timeout after %.1fs (thread %d): %s", elapsed, thread_id, exc,
+                )
+                stderr_summary = "\n".join(stderr_lines[-10:]) if stderr_lines else None
+                err_payload = json.dumps(
+                    {"error": str(exc), "details": stderr_summary},
+                    ensure_ascii=False,
+                )
+                await queue.put(f"data: {err_payload}\n\n")
+                await queue.put(None)
                 return
 
             except CLINotFoundError as exc:
@@ -1538,6 +1709,7 @@ class AgentManager:
                 thread_id=thread_id,
                 queue=queue,
                 db_permissions=_db_perms,
+                permission_timeout=self._config.agent.permission_timeout,
             )
 
         async def _run_backend(
@@ -1636,6 +1808,7 @@ class AgentManager:
         self._active_tasks.clear()
         for task in tasks:
             task.cancel()
-        for task in tasks:
-            with suppress(asyncio.CancelledError):
-                await task
+        if tasks:
+            _, pending = await asyncio.wait(tasks, timeout=5.0)
+            for task in pending:
+                logger.debug("Agent task did not finish within timeout: %s", task.get_name())

@@ -4,6 +4,7 @@ import argparse
 import asyncio
 import json
 import logging
+import sys
 
 from src.cli import runtime
 
@@ -115,15 +116,40 @@ def run(args: argparse.Namespace) -> None:
                     await db.save_agent_message(thread_id, "user", args.prompt)
 
                     model = getattr(args, "model", None)
-                    print("Агент: ", end="", flush=True)
                     full_text = ""
+                    text_started = False
                     async for chunk in mgr.chat_stream(thread_id, args.prompt, model=model):
                         raw = chunk.removeprefix("data: ").strip()
                         try:
                             payload = json.loads(raw)
                         except Exception:
                             continue
+                        event_type = payload.get("type")
+                        if event_type == "status":
+                            if not text_started:
+                                print(f"⏳ {payload.get('text', '')}",
+                                      file=sys.stderr, flush=True)
+                            continue
+                        if event_type == "tool_start":
+                            print(f"🔧 {payload.get('tool', 'tool')}...",
+                                  file=sys.stderr, flush=True)
+                            continue
+                        if event_type == "tool_end":
+                            tool = payload.get("tool", "tool")
+                            dur = payload.get("duration", 0)
+                            icon = "❌" if payload.get("is_error") else "✅"
+                            summary = payload.get("summary", "")
+                            line = f"  {icon} {tool} ({dur}s)"
+                            if summary:
+                                line += f" — {summary}"
+                            print(line, file=sys.stderr, flush=True)
+                            continue
+                        if event_type in ("thinking", "tool_result"):
+                            continue
                         if "text" in payload:
+                            if not text_started:
+                                print("Агент: ", end="", flush=True)
+                                text_started = True
                             print(payload["text"], end="", flush=True)
                             full_text += payload.get("text", "")
                         if payload.get("done"):
@@ -137,11 +163,16 @@ def run(args: argparse.Namespace) -> None:
                     if full_text:
                         await db.save_agent_message(thread_id, "assistant", full_text)
                 else:
-                    # Interactive TUI mode
+                    # Interactive TUI mode — redirect logs to file
                     from src.cli.commands.agent_tui import AgentTuiApp
+                    from src.cli.runtime import redirect_logging_to_file, restore_logging
 
-                    app = AgentTuiApp(db=db, config=config, agent_manager=mgr)
-                    await app.run_async()
+                    removed = redirect_logging_to_file()
+                    try:
+                        app = AgentTuiApp(db=db, config=config, agent_manager=mgr)
+                        await app.run_async()
+                    finally:
+                        restore_logging(removed)
 
             elif action == "thread-rename":
                 await db.rename_agent_thread(args.thread_id, args.title[:100])
@@ -203,11 +234,23 @@ def run(args: argparse.Namespace) -> None:
                 await _test_escaping(db, config)
         finally:
             if mgr is not None:
-                await mgr.close_all()
+                try:
+                    await mgr.close_all()
+                except Exception:
+                    logger.debug("Failed to close agent manager", exc_info=True)
             if pool is not None:
-                await pool.disconnect_all()
+                try:
+                    await pool.disconnect_all()
+                except Exception:
+                    logger.debug("Failed to disconnect pool", exc_info=True)
             if auth is not None:
-                await auth.cleanup()
-            await db.close()
+                try:
+                    await auth.cleanup()
+                except Exception:
+                    logger.debug("Failed to cleanup auth", exc_info=True)
+            try:
+                await db.close()
+            except Exception:
+                logger.debug("Failed to close database", exc_info=True)
 
     asyncio.run(_run())

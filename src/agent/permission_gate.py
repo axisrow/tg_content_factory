@@ -35,6 +35,7 @@ class AgentRequestContext:
     thread_id: int
     queue: asyncio.Queue              # SSE queue for this request
     db_permissions: dict[str, bool]   # from load_tool_permissions_union at call time
+    permission_timeout: int = 120     # seconds to wait for user response
 
 
 _request_ctx: ContextVar[AgentRequestContext | None] = ContextVar(
@@ -121,22 +122,29 @@ class PermissionGate:
         future: asyncio.Future = asyncio.get_running_loop().create_future()
         self._pending[request_id] = future
 
+        timeout = ctx.permission_timeout
         event = json.dumps(
             {
                 "type": "permission_request",
                 "request_id": request_id,
                 "tool": tool_name,
                 "phone": phone,
+                "timeout": timeout,
             },
             ensure_ascii=False,
         )
         await ctx.queue.put(f"data: {event}\n\n")
 
         try:
-            choice: str = await asyncio.wait_for(future, timeout=300)
+            choice: str = await asyncio.wait_for(future, timeout=timeout)
         except asyncio.TimeoutError:
             self._pending.pop(request_id, None)
-            return _text_response(f"❌ Таймаут запроса разрешения для '{tool_name}' (5 мин).")
+            logger.warning(
+                "Permission timeout %ds fired for tool '%s' (thread %d, session %s)",
+                timeout, tool_name, ctx.thread_id, ctx.session_id,
+            )
+            mins = timeout // 60
+            return _text_response(f"❌ Таймаут запроса разрешения для '{tool_name}' ({mins} мин).")
         except asyncio.CancelledError:
             self._pending.pop(request_id, None)
             raise
