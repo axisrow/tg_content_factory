@@ -43,7 +43,7 @@ dependencies = [
     "numpy==2.4.3",
     "langdetect==1.0.9",
     "textual[syntax]>=1.0.0",
-    "claude-agent-sdk==0.1.50",
+    "claude-agent-sdk==0.1.52",
     "deepagents==0.4.12",
     "langchain==1.2.12",
     "langchain-core==1.2.19",

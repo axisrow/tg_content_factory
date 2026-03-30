@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Annotated
+
 from claude_agent_sdk import tool
 from mcp.types import ToolAnnotations
 
@@ -36,7 +38,7 @@ def register(db, client_pool, embedding_service, **kwargs):
         "setup_notification_bot",
         "⚠️ Set up a notification bot via BotFather. Requires Telegram client. "
         "Ask user for confirmation first.",
-        {"confirm": bool},
+        {"confirm": Annotated[bool, "Установите true для подтверждения действия"]},
     )
     async def setup_notification_bot(args):
         pool_gate = require_pool(client_pool, "Настройка бота уведомлений")
@@ -64,7 +66,7 @@ def register(db, client_pool, embedding_service, **kwargs):
     @tool(
         "delete_notification_bot",
         "⚠️ DANGEROUS: Delete the notification bot. Always ask user for confirmation first.",
-        {"confirm": bool},
+        {"confirm": Annotated[bool, "Установите true для подтверждения действия"]},
         annotations=ToolAnnotations(destructiveHint=True),
     )
     async def delete_notification_bot(args):

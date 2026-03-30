@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Annotated
+
 from claude_agent_sdk import tool
 from mcp.types import ToolAnnotations
 
@@ -38,7 +40,7 @@ def register(db, client_pool, embedding_service, **kwargs):
     @tool(
         "toggle_account",
         "Toggle account active/inactive status. account_id = id from list_accounts.",
-        {"account_id": int},
+        {"account_id": Annotated[int, "ID аккаунта из list_accounts"]},
     )
     async def toggle_account(args):
         account_id = args.get("account_id")
@@ -62,7 +64,10 @@ def register(db, client_pool, embedding_service, **kwargs):
         "delete_account",
         "⚠️ DANGEROUS: Delete a Telegram account from the system. "
         "account_id = id from list_accounts. Always ask user for confirmation first.",
-        {"account_id": int, "confirm": bool},
+        {
+            "account_id": Annotated[int, "ID аккаунта из list_accounts"],
+            "confirm": Annotated[bool, "Установите true для подтверждения действия"],
+        },
         annotations=ToolAnnotations(destructiveHint=True),
     )
     async def delete_account(args):
@@ -104,7 +109,10 @@ def register(db, client_pool, embedding_service, **kwargs):
     @tool(
         "clear_flood_status",
         "Clear flood wait restriction for a specific account. Ask user for confirmation first.",
-        {"phone": str, "confirm": bool},
+        {
+            "phone": Annotated[str, "Номер телефона аккаунта (например +79001234567)"],
+            "confirm": Annotated[bool, "Установите true для подтверждения действия"],
+        },
     )
     async def clear_flood_status(args):
         phone, err = await resolve_phone(db, args.get("phone", ""))
@@ -133,7 +141,7 @@ def register(db, client_pool, embedding_service, **kwargs):
         "get_account_info",
         "Get live Telegram account info (name, username, premium status) for connected accounts. "
         "Optionally filter by phone number.",
-        {"phone": str},
+        {"phone": Annotated[str, "Номер телефона аккаунта (например +79001234567)"]},
     )
     async def get_account_info(args):
         pool_gate = require_pool(client_pool, "Информация об аккаунтах")

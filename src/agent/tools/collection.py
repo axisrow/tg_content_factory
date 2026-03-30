@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Annotated
+
 from claude_agent_sdk import tool
 
 from src.agent.tools._registry import _text_response, require_pool
@@ -15,7 +17,10 @@ def register(db, client_pool, embedding_service, **kwargs):
         "Enqueue a single channel for message collection. pk = DB primary key — get it from list_channels. "
         "If the channel is not in the DB yet, first add it with add_channel, then use pk from list_channels. "
         "Use force=true to collect filtered channels.",
-        {"pk": int, "force": bool},
+        {
+            "pk": Annotated[int, "ID записи в БД (первичный ключ из list_channels)"],
+            "force": Annotated[bool, "Принудительно собрать отфильтрованный канал"],
+        },
     )
     async def collect_channel(args):
         gate = require_pool(client_pool, "Сбор сообщений")
@@ -68,7 +73,7 @@ def register(db, client_pool, embedding_service, **kwargs):
         "collect_channel_stats",
         "Enqueue subscriber/views statistics collection for a single channel. "
         "pk = DB primary key — get it from list_channels.",
-        {"pk": int},
+        {"pk": Annotated[int, "ID записи в БД (первичный ключ из list_channels)"]},
     )
     async def collect_channel_stats(args):
         gate = require_pool(client_pool, "Сбор статистики")

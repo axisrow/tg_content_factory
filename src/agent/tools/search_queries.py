@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Annotated
+
 from claude_agent_sdk import tool
 from mcp.types import ToolAnnotations
 
@@ -18,7 +20,7 @@ def register(db, client_pool, embedding_service, **kwargs):
     @tool(
         "list_search_queries",
         "List saved search queries. Optionally show only active ones.",
-        {"active_only": bool},
+        {"active_only": Annotated[bool, "Показывать только активные запросы"]},
     )
     async def list_search_queries(args):
         try:
@@ -53,7 +55,7 @@ def register(db, client_pool, embedding_service, **kwargs):
     @tool(
         "get_search_query",
         "Get full details of a saved search query. sq_id from list_search_queries.",
-        {"sq_id": int},
+        {"sq_id": Annotated[int, "ID поискового запроса из list_search_queries"]},
     )
     async def get_search_query(args):
         sq_id = args.get("sq_id")
@@ -91,15 +93,15 @@ def register(db, client_pool, embedding_service, **kwargs):
         "notify_on_collect=true to send notification on new matches. "
         "track_stats=true to record daily match counts for get_search_query_stats. Requires confirm=true.",
         {
-            "query": str,
-            "interval_minutes": int,
-            "is_regex": bool,
-            "is_fts": bool,
-            "notify_on_collect": bool,
-            "track_stats": bool,
-            "exclude_patterns": str,
-            "max_length": int,
-            "confirm": bool,
+            "query": Annotated[str, "Текст поискового запроса"],
+            "interval_minutes": Annotated[int, "Интервал выполнения запроса в минутах"],
+            "is_regex": Annotated[bool, "Использовать регулярное выражение"],
+            "is_fts": Annotated[bool, "Использовать полнотекстовый поиск FTS5"],
+            "notify_on_collect": Annotated[bool, "Отправлять уведомление при новых совпадениях"],
+            "track_stats": Annotated[bool, "Записывать ежедневную статистику совпадений"],
+            "exclude_patterns": Annotated[str, "Паттерны исключения через запятую"],
+            "max_length": Annotated[int, "Максимальная длина сообщения для совпадения"],
+            "confirm": Annotated[bool, "Установите true для подтверждения действия"],
         },
     )
     async def add_search_query(args):
@@ -140,16 +142,16 @@ def register(db, client_pool, embedding_service, **kwargs):
         "edit_search_query",
         "Edit an existing search query. Provide sq_id and fields to change. Requires confirm=true.",
         {
-            "sq_id": int,
-            "query": str,
-            "interval_minutes": int,
-            "is_regex": bool,
-            "is_fts": bool,
-            "notify_on_collect": bool,
-            "track_stats": bool,
-            "exclude_patterns": str,
-            "max_length": int,
-            "confirm": bool,
+            "sq_id": Annotated[int, "ID поискового запроса из list_search_queries"],
+            "query": Annotated[str, "Текст поискового запроса"],
+            "interval_minutes": Annotated[int, "Интервал выполнения запроса в минутах"],
+            "is_regex": Annotated[bool, "Использовать регулярное выражение"],
+            "is_fts": Annotated[bool, "Использовать полнотекстовый поиск FTS5"],
+            "notify_on_collect": Annotated[bool, "Отправлять уведомление при новых совпадениях"],
+            "track_stats": Annotated[bool, "Записывать ежедневную статистику совпадений"],
+            "exclude_patterns": Annotated[str, "Паттерны исключения через запятую"],
+            "max_length": Annotated[int, "Максимальная длина сообщения для совпадения"],
+            "confirm": Annotated[bool, "Установите true для подтверждения действия"],
         },
     )
     async def edit_search_query(args):
@@ -196,7 +198,10 @@ def register(db, client_pool, embedding_service, **kwargs):
     @tool(
         "delete_search_query",
         "⚠️ DANGEROUS: Delete a saved search query. Requires confirm=true.",
-        {"sq_id": int, "confirm": bool},
+        {
+            "sq_id": Annotated[int, "ID поискового запроса из list_search_queries"],
+            "confirm": Annotated[bool, "Установите true для подтверждения действия"],
+        },
         annotations=ToolAnnotations(destructiveHint=True),
     )
     async def delete_search_query(args):
@@ -224,7 +229,7 @@ def register(db, client_pool, embedding_service, **kwargs):
     @tool(
         "toggle_search_query",
         "Toggle a search query active/inactive.",
-        {"sq_id": int},
+        {"sq_id": Annotated[int, "ID поискового запроса из list_search_queries"]},
     )
     async def toggle_search_query(args):
         sq_id = args.get("sq_id")
@@ -248,7 +253,7 @@ def register(db, client_pool, embedding_service, **kwargs):
     @tool(
         "run_search_query",
         "Run a search query once and return the number of matches found today.",
-        {"sq_id": int},
+        {"sq_id": Annotated[int, "ID поискового запроса из list_search_queries"]},
     )
     async def run_search_query(args):
         sq_id = args.get("sq_id")
@@ -273,7 +278,10 @@ def register(db, client_pool, embedding_service, **kwargs):
         "get_search_query_stats",
         "Get daily match statistics for a search query over the last N days. "
         "Only works if track_stats=true was set when creating the query. sq_id from list_search_queries.",
-        {"sq_id": int, "days": int},
+        {
+            "sq_id": Annotated[int, "ID поискового запроса из list_search_queries"],
+            "days": Annotated[int, "Количество дней для анализа"],
+        },
     )
     async def get_search_query_stats(args):
         sq_id = args.get("sq_id")

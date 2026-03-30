@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Annotated
+
 from claude_agent_sdk import tool
 
 from src.agent.tools._registry import _text_response, require_confirmation, require_pool
@@ -46,7 +48,7 @@ def register(db, client_pool, embedding_service, **kwargs):
     @tool(
         "start_scheduler",
         "⚠️ Start the scheduler for periodic message collection. Ask user for confirmation first.",
-        {"confirm": bool},
+        {"confirm": Annotated[bool, "Установите true для подтверждения действия"]},
     )
     async def start_scheduler(args):
         pool_gate = require_pool(client_pool, "Запуск планировщика")
@@ -67,7 +69,7 @@ def register(db, client_pool, embedding_service, **kwargs):
     @tool(
         "stop_scheduler",
         "⚠️ Stop the scheduler. Ask user for confirmation first.",
-        {"confirm": bool},
+        {"confirm": Annotated[bool, "Установите true для подтверждения действия"]},
     )
     async def stop_scheduler(args):
         gate = require_confirmation("остановит планировщик", args)
@@ -85,7 +87,7 @@ def register(db, client_pool, embedding_service, **kwargs):
     @tool(
         "trigger_collection",
         "⚠️ Trigger immediate collection run. Ask user for confirmation first.",
-        {"confirm": bool},
+        {"confirm": Annotated[bool, "Установите true для подтверждения действия"]},
     )
     async def trigger_collection(args):
         pool_gate = require_pool(client_pool, "Запуск сбора")
@@ -106,7 +108,7 @@ def register(db, client_pool, embedding_service, **kwargs):
     @tool(
         "toggle_scheduler_job",
         "Toggle a scheduler job on/off. Get valid job_ids from get_scheduler_status.",
-        {"job_id": str},
+        {"job_id": Annotated[str, "ID задачи планировщика из get_scheduler_status"]},
     )
     async def toggle_scheduler_job(args):
         job_id = args.get("job_id", "")
@@ -131,7 +133,11 @@ def register(db, client_pool, embedding_service, **kwargs):
     @tool(
         "set_scheduler_interval",
         "Set the collection interval (in minutes). Currently only 'collect_all' is supported. Range: 1–1440.",
-        {"job_id": str, "minutes": int, "confirm": bool},
+        {
+            "job_id": Annotated[str, "ID задачи планировщика из get_scheduler_status"],
+            "minutes": Annotated[int, "Интервал сбора в минутах (1–1440)"],
+            "confirm": Annotated[bool, "Установите true для подтверждения действия"],
+        },
     )
     async def set_scheduler_interval(args):
         job_id = args.get("job_id", "")
@@ -166,7 +172,10 @@ def register(db, client_pool, embedding_service, **kwargs):
         "Cancel a collection task by task_id (from get_scheduler_status or DB). "
         "Pending tasks are cancelled immediately; running tasks are marked cancelled "
         "but may continue until the current channel finishes. Requires confirmation.",
-        {"task_id": int, "confirm": bool},
+        {
+            "task_id": Annotated[int, "ID задачи сбора"],
+            "confirm": Annotated[bool, "Установите true для подтверждения действия"],
+        },
     )
     async def cancel_scheduler_task(args):
         task_id = args.get("task_id")
@@ -192,7 +201,7 @@ def register(db, client_pool, embedding_service, **kwargs):
     @tool(
         "clear_pending_tasks",
         "Clear all pending collection tasks from the queue. Requires confirmation.",
-        {"confirm": bool},
+        {"confirm": Annotated[bool, "Установите true для подтверждения действия"]},
     )
     async def clear_pending_tasks(args):
         gate = require_confirmation("удалит все ожидающие задачи сбора из очереди", args)

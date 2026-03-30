@@ -278,6 +278,7 @@ class ClaudeSdkBackend:
         model: str | None,
         queue: asyncio.Queue[str | None],
         history_msgs: list[dict] | None = None,
+        session_id: str = "web",
     ) -> None:
         self._ensure_initialized()
         original_prompt = prompt
@@ -287,6 +288,8 @@ class ClaudeSdkBackend:
         extra: dict = {}
         if resolved_model:
             extra["model"] = resolved_model
+        if session_id:
+            extra["session_id"] = session_id
 
         stderr_lines: list[str] = []
         debug_lines: list[str] = []
@@ -514,10 +517,27 @@ class ClaudeSdkBackend:
                                         block.tool_use_id, content, bool(block.is_error)
                                     )
                         elif isinstance(msg, ResultMessage):
-                            done_payload = json.dumps(
-                                {"done": True, "full_text": full_text, "backend": "claude"},
-                                ensure_ascii=False,
-                            )
+                            done_data: dict = {
+                                "done": True,
+                                "full_text": full_text,
+                                "backend": "claude",
+                            }
+                            _usage = getattr(msg, "usage", None)
+                            if isinstance(_usage, dict):
+                                done_data["usage"] = _usage
+                            _model_usage = getattr(msg, "model_usage", None)
+                            if isinstance(_model_usage, dict):
+                                done_data["model_usage"] = _model_usage
+                            _cost = getattr(msg, "total_cost_usd", None)
+                            if isinstance(_cost, (int, float)):
+                                done_data["total_cost_usd"] = _cost
+                            _turns = getattr(msg, "num_turns", None)
+                            if isinstance(_turns, int) and _turns > 0:
+                                done_data["num_turns"] = _turns
+                            _sid = getattr(msg, "session_id", None)
+                            if isinstance(_sid, str) and _sid:
+                                done_data["session_id"] = _sid
+                            done_payload = json.dumps(done_data, ensure_ascii=False)
                             await queue.put(f"data: {done_payload}\n\n")
                     except asyncio.CancelledError:
                         draining = True
@@ -1719,7 +1739,7 @@ class AgentManager:
             # Set ContextVar here so token is created and reset in the same task context.
             _token = set_request_context(_req_ctx) if _req_ctx is not None else None
             try:
-                await selected_backend.chat_stream(
+                kwargs: dict = dict(
                     thread_id=thread_id,
                     prompt=prompt,
                     system_prompt=system_prompt,
@@ -1728,6 +1748,9 @@ class AgentManager:
                     queue=queue,
                     history_msgs=history_for_backend,
                 )
+                if isinstance(selected_backend, ClaudeSdkBackend):
+                    kwargs["session_id"] = session_id
+                await selected_backend.chat_stream(**kwargs)
             except Exception as exc:
                 logger.exception("Agent chat error for thread %d", thread_id)
                 error_text = str(exc)

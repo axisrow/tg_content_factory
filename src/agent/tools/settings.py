@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Annotated
+
 from claude_agent_sdk import tool
 
 from src.agent.tools._registry import _text_response, require_confirmation
@@ -34,7 +36,11 @@ def register(db, client_pool, embedding_service, **kwargs):
     @tool(
         "save_agent_settings",
         "⚠️ Update agent settings. backend values: 'claude-agent-sdk' or 'deepagents'. Ask user for confirmation first.",
-        {"prompt_template": str, "backend": str, "confirm": bool},
+        {
+            "prompt_template": Annotated[str, "Шаблон системного промпта агента"],
+            "backend": Annotated[str, "Бэкенд агента: claude-agent-sdk или deepagents"],
+            "confirm": Annotated[bool, "Установите true для подтверждения действия"],
+        },
     )
     async def save_agent_settings(args):
         gate = require_confirmation("изменит настройки агента", args)
@@ -56,7 +62,11 @@ def register(db, client_pool, embedding_service, **kwargs):
     @tool(
         "save_filter_settings",
         "⚠️ Update channel filter thresholds. Ask user for confirmation first.",
-        {"low_uniqueness_threshold": float, "low_subscriber_ratio_threshold": float, "confirm": bool},
+        {
+            "low_uniqueness_threshold": Annotated[float, "Порог уникальности контента (0.0–1.0)"],
+            "low_subscriber_ratio_threshold": Annotated[float, "Порог соотношения подписчиков (0.0–1.0)"],
+            "confirm": Annotated[bool, "Установите true для подтверждения действия"],
+        },
     )
     async def save_filter_settings(args):
         gate = require_confirmation("изменит пороги фильтров каналов", args)
@@ -77,7 +87,10 @@ def register(db, client_pool, embedding_service, **kwargs):
         "save_scheduler_settings",
         "⚠️ Update scheduler collection interval (1–1440 minutes). "
         "Changes take effect immediately if the scheduler is running. Requires confirm=true.",
-        {"collect_interval_minutes": int, "confirm": bool},
+        {
+            "collect_interval_minutes": Annotated[int, "Интервал сбора в минутах (1–1440)"],
+            "confirm": Annotated[bool, "Установите true для подтверждения действия"],
+        },
     )
     async def save_scheduler_settings(args):
         gate = require_confirmation("изменит интервал планировщика сбора", args)

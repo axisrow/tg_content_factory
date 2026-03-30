@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Annotated
+
 from claude_agent_sdk import tool
 
 from src.agent.tools._registry import _text_response, require_pool
@@ -38,13 +40,13 @@ def register(db, client_pool, embedding_service, **kwargs):
         "channel_id is the Telegram numeric ID (from list_channels, not pk). "
         "Supports date_from/date_to (YYYY-MM-DD), min_length, max_length filters.",
         {
-            "query": str,
-            "limit": int,
-            "channel_id": int,
-            "date_from": str,
-            "date_to": str,
-            "min_length": int,
-            "max_length": int,
+            "query": Annotated[str, "Поисковый запрос"],
+            "limit": Annotated[int, "Максимальное количество результатов"],
+            "channel_id": Annotated[int, "Числовой Telegram ID канала для фильтрации"],
+            "date_from": Annotated[str, "Начало периода в формате YYYY-MM-DD"],
+            "date_to": Annotated[str, "Конец периода в формате YYYY-MM-DD"],
+            "min_length": Annotated[int, "Минимальная длина текста сообщения в символах"],
+            "max_length": Annotated[int, "Максимальная длина текста сообщения в символах"],
         },
     )
     async def search_messages(args):
@@ -86,7 +88,7 @@ def register(db, client_pool, embedding_service, **kwargs):
         "semantic_search",
         "Search collected messages by semantic (embedding) similarity. "
         "Requires messages to be indexed first via index_messages, and an OpenAI/embedding API key configured.",
-        {"query": str, "limit": int},
+        {"query": Annotated[str, "Поисковый запрос"], "limit": Annotated[int, "Максимальное количество результатов"]},
     )
     async def semantic_search(args):
         query = args.get("query", "")
@@ -162,7 +164,7 @@ def register(db, client_pool, embedding_service, **kwargs):
         "search_telegram",
         "Search messages across all public Telegram channels via Telegram API. Requires a connected "
         "Premium account. Use for discovering content beyond collected channels.",
-        {"query": str, "limit": int},
+        {"query": Annotated[str, "Поисковый запрос"], "limit": Annotated[int, "Максимальное количество результатов"]},
     )
     async def search_telegram(args):
         pool_gate = require_pool(client_pool, "Telegram-поиск")
@@ -187,7 +189,7 @@ def register(db, client_pool, embedding_service, **kwargs):
         "search_my_chats",
         "Search messages in your own Telegram dialogs (private chats, groups, saved messages) "
         "via Telegram API. Uses the primary connected account.",
-        {"query": str, "limit": int},
+        {"query": Annotated[str, "Поисковый запрос"], "limit": Annotated[int, "Максимальное количество результатов"]},
     )
     async def search_my_chats(args):
         pool_gate = require_pool(client_pool, "Поиск по личным чатам")
@@ -213,7 +215,11 @@ def register(db, client_pool, embedding_service, **kwargs):
         "Search messages within a specific channel via Telegram API. "
         "channel_id = Telegram numeric ID (from list_channels or search_my_telegram). "
         "Searches live Telegram, not local DB.",
-        {"channel_id": int, "query": str, "limit": int},
+        {
+            "channel_id": Annotated[int, "Числовой Telegram ID канала для фильтрации"],
+            "query": Annotated[str, "Поисковый запрос"],
+            "limit": Annotated[int, "Максимальное количество результатов"],
+        },
     )
     async def search_in_channel(args):
         pool_gate = require_pool(client_pool, "Поиск в канале")
@@ -244,13 +250,13 @@ def register(db, client_pool, embedding_service, **kwargs):
         "Hybrid search combining FTS and semantic similarity on collected local messages. "
         "Semantic part requires prior index_messages call. Supports same filters as search_messages.",
         {
-            "query": str,
-            "limit": int,
-            "channel_id": int,
-            "date_from": str,
-            "date_to": str,
-            "min_length": int,
-            "max_length": int,
+            "query": Annotated[str, "Поисковый запрос"],
+            "limit": Annotated[int, "Максимальное количество результатов"],
+            "channel_id": Annotated[int, "Числовой Telegram ID канала для фильтрации"],
+            "date_from": Annotated[str, "Начало периода в формате YYYY-MM-DD"],
+            "date_to": Annotated[str, "Конец периода в формате YYYY-MM-DD"],
+            "min_length": Annotated[int, "Минимальная длина текста сообщения в символах"],
+            "max_length": Annotated[int, "Максимальная длина текста сообщения в символах"],
         },
     )
     async def search_hybrid(args):

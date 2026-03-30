@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Annotated
 
 from claude_agent_sdk import tool
 from mcp.types import ToolAnnotations
@@ -41,7 +42,7 @@ def register(db, client_pool, embedding_service, **kwargs):
         "list_pipelines",
         "List all content pipelines with id, name, model, publish_mode (auto/moderated), schedule, "
         "and backend. Use pipeline_id from this list for other pipeline tools.",
-        {"active_only": bool},
+        {"active_only": Annotated[bool, "Показывать только активные"]},
     )
     async def list_pipelines(args):
         try:
@@ -72,7 +73,7 @@ def register(db, client_pool, embedding_service, **kwargs):
     @tool(
         "get_pipeline_detail",
         "Get detailed information about a specific pipeline including sources, targets, and channel names.",
-        {"pipeline_id": int},
+        {"pipeline_id": Annotated[int, "ID пайплайна из list_pipelines"]},
     )
     async def get_pipeline_detail(args):
         pipeline_id = args.get("pipeline_id")
@@ -111,7 +112,7 @@ def register(db, client_pool, embedding_service, **kwargs):
         "List pending and running generation runs across all pipelines (the generation queue). "
         "Shows run_id, pipeline_id, status, and text preview. "
         "Use get_pipeline_run to see full text of a specific run.",
-        {"limit": int},
+        {"limit": Annotated[int, "Максимальное количество результатов"]},
     )
     async def get_pipeline_queue(args):
         try:
@@ -135,7 +136,7 @@ def register(db, client_pool, embedding_service, **kwargs):
         "get_refinement_steps",
         "Get the refinement (post-processing) steps for a pipeline. "
         "Each step has a name and a prompt template with {text} placeholder.",
-        {"pipeline_id": int},
+        {"pipeline_id": Annotated[int, "ID пайплайна из list_pipelines"]},
     )
     async def get_refinement_steps(args):
         pipeline_id = args.get("pipeline_id")
@@ -168,13 +169,13 @@ def register(db, client_pool, embedding_service, **kwargs):
         "(from list_channels). target_refs = comma-separated 'phone|dialog_id' pairs. "
         "publish_mode: 'auto' or 'moderated'. Requires confirm=true.",
         {
-            "name": str,
-            "prompt_template": str,
-            "source_channel_ids": str,
-            "target_refs": str,
-            "llm_model": str,
-            "publish_mode": str,
-            "confirm": bool,
+            "name": Annotated[str, "Название пайплайна"],
+            "prompt_template": Annotated[str, "Шаблон промпта для генерации контента"],
+            "source_channel_ids": Annotated[str, "Telegram ID каналов-источников через запятую"],
+            "target_refs": Annotated[str, "Цели публикации через запятую в формате phone|dialog_id"],
+            "llm_model": Annotated[str, "Модель LLM для генерации (например claude-sonnet-4-20250514)"],
+            "publish_mode": Annotated[str, "Режим публикации: auto или moderated"],
+            "confirm": Annotated[bool, "Установите true для подтверждения действия"],
         },
     )
     async def add_pipeline(args):
@@ -223,14 +224,14 @@ def register(db, client_pool, embedding_service, **kwargs):
         "Edit an existing pipeline. All fields are optional except pipeline_id. "
         "source_channel_ids and target_refs are comma-separated strings. Requires confirm=true.",
         {
-            "pipeline_id": int,
-            "name": str,
-            "prompt_template": str,
-            "source_channel_ids": str,
-            "target_refs": str,
-            "llm_model": str,
-            "publish_mode": str,
-            "confirm": bool,
+            "pipeline_id": Annotated[int, "ID пайплайна из list_pipelines"],
+            "name": Annotated[str, "Название пайплайна"],
+            "prompt_template": Annotated[str, "Шаблон промпта для генерации контента"],
+            "source_channel_ids": Annotated[str, "Telegram ID каналов-источников через запятую"],
+            "target_refs": Annotated[str, "Цели публикации через запятую в формате phone|dialog_id"],
+            "llm_model": Annotated[str, "Модель LLM для генерации (например claude-sonnet-4-20250514)"],
+            "publish_mode": Annotated[str, "Режим публикации: auto или moderated"],
+            "confirm": Annotated[bool, "Установите true для подтверждения действия"],
         },
     )
     async def edit_pipeline(args):
@@ -296,7 +297,7 @@ def register(db, client_pool, embedding_service, **kwargs):
     @tool(
         "toggle_pipeline",
         "Toggle pipeline active/inactive status.",
-        {"pipeline_id": int},
+        {"pipeline_id": Annotated[int, "ID пайплайна из list_pipelines"]},
     )
     async def toggle_pipeline(args):
         pipeline_id = args.get("pipeline_id")
@@ -321,7 +322,10 @@ def register(db, client_pool, embedding_service, **kwargs):
     @tool(
         "delete_pipeline",
         "⚠️ DANGEROUS: Delete a content pipeline permanently. Requires confirm=true.",
-        {"pipeline_id": int, "confirm": bool},
+        {
+            "pipeline_id": Annotated[int, "ID пайплайна из list_pipelines"],
+            "confirm": Annotated[bool, "Установите true для подтверждения действия"],
+        },
         annotations=ToolAnnotations(destructiveHint=True),
     )
     async def delete_pipeline(args):
@@ -353,7 +357,7 @@ def register(db, client_pool, embedding_service, **kwargs):
         "Trigger content generation for a pipeline. Returns a preview of the generated text. "
         "If publish_mode=auto, the run is published immediately; "
         "otherwise use approve_run + publish_pipeline_run.",
-        {"pipeline_id": int},
+        {"pipeline_id": Annotated[int, "ID пайплайна из list_pipelines"]},
     )
     async def run_pipeline(args):
         pipeline_id = args.get("pipeline_id")
@@ -392,7 +396,11 @@ def register(db, client_pool, embedding_service, **kwargs):
         "generate_draft",
         "Generate a draft from a query using RAG (returns draft text and citations). "
         "Optionally use a pipeline's prompt template and model.",
-        {"query": str, "pipeline_id": int, "limit": int},
+        {
+            "query": Annotated[str, "Запрос для генерации черновика"],
+            "pipeline_id": Annotated[int, "ID пайплайна из list_pipelines"],
+            "limit": Annotated[int, "Максимальное количество результатов"],
+        },
     )
     async def generate_draft(args):
         query = args.get("query", "")
@@ -436,7 +444,11 @@ def register(db, client_pool, embedding_service, **kwargs):
         "List generation runs for a pipeline. "
         "Filter by status (pending/completed/approved/rejected). "
         "Use run_id from results with get_pipeline_run, approve_run, publish_pipeline_run.",
-        {"pipeline_id": int, "limit": int, "status": str},
+        {
+            "pipeline_id": Annotated[int, "ID пайплайна из list_pipelines"],
+            "limit": Annotated[int, "Максимальное количество результатов"],
+            "status": Annotated[str, "Фильтр по статусу (pending/completed/approved/rejected)"],
+        },
     )
     async def list_pipeline_runs(args):
         pipeline_id = args.get("pipeline_id")
@@ -468,7 +480,7 @@ def register(db, client_pool, embedding_service, **kwargs):
     @tool(
         "get_pipeline_run",
         "Get full details of a specific generation run including generated text, status, and quality score.",
-        {"run_id": int},
+        {"run_id": Annotated[int, "ID генерации из list_pipeline_runs"]},
     )
     async def get_pipeline_run(args):
         run_id = args.get("run_id")
@@ -500,7 +512,10 @@ def register(db, client_pool, embedding_service, **kwargs):
         "Publish a generation run to its pipeline target channels. "
         "Approve the run first via approve_run. run_id from list_pipeline_runs. "
         "Requires Telegram client and confirm=true.",
-        {"run_id": int, "confirm": bool},
+        {
+            "run_id": Annotated[int, "ID генерации из list_pipeline_runs"],
+            "confirm": Annotated[bool, "Установите true для подтверждения действия"],
+        },
     )
     async def publish_pipeline_run(args):
         gate = require_pool(client_pool, "Публикация контента")
@@ -543,7 +558,11 @@ def register(db, client_pool, embedding_service, **kwargs):
         "⚠️ Set the refinement (post-processing) steps for a pipeline. "
         "steps_json is a JSON array: [{\"name\": \"Step name\", \"prompt\": \"...{text}...\"}]. "
         "Pass an empty array to clear all steps. Requires confirm=true.",
-        {"pipeline_id": int, "steps_json": str, "confirm": bool},
+        {
+            "pipeline_id": Annotated[int, "ID пайплайна из list_pipelines"],
+            "steps_json": Annotated[str, "JSON-массив шагов: [{name, prompt}]"],
+            "confirm": Annotated[bool, "Установите true для подтверждения действия"],
+        },
     )
     async def set_refinement_steps(args):
         pipeline_id = args.get("pipeline_id")

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Annotated
+
 from claude_agent_sdk import tool
 from mcp.types import ToolAnnotations
 
@@ -22,7 +24,12 @@ def register(db, client_pool, embedding_service, **kwargs):
         "send_message",
         "Send a message from a connected account (phone = sender's phone). "
         "recipient accepts @username, phone number, or numeric ID. Ask user for confirmation first.",
-        {"phone": str, "recipient": str, "text": str, "confirm": bool},
+        {
+            "phone": Annotated[str, "Номер телефона аккаунта (например +79001234567)"],
+            "recipient": Annotated[str, "Получатель (@username, телефон или числовой ID)"],
+            "text": Annotated[str, "Текст сообщения"],
+            "confirm": Annotated[bool, "Установите true для подтверждения действия"],
+        },
     )
     async def send_message(args):
         pool_gate = require_pool(client_pool, "Отправка сообщения")
@@ -59,7 +66,13 @@ def register(db, client_pool, embedding_service, **kwargs):
         "edit_message",
         "Edit a previously sent message. "
         "chat_id accepts @username, t.me link, numeric ID, or 'me'. Ask user for confirmation first.",
-        {"phone": str, "chat_id": str, "message_id": int, "text": str, "confirm": bool},
+        {
+            "phone": Annotated[str, "Номер телефона аккаунта (например +79001234567)"],
+            "chat_id": Annotated[str, "ID чата (@username, t.me ссылка, числовой ID или me)"],
+            "message_id": Annotated[int, "ID сообщения в Telegram"],
+            "text": Annotated[str, "Текст сообщения"],
+            "confirm": Annotated[bool, "Установите true для подтверждения действия"],
+        },
     )
     async def edit_message(args):
         pool_gate = require_pool(client_pool, "Редактирование сообщения")
@@ -98,7 +111,12 @@ def register(db, client_pool, embedding_service, **kwargs):
         "⚠️ DANGEROUS: Delete messages from a Telegram chat. "
         "chat_id accepts @username, numeric ID, or 'me'. "
         "message_ids = comma-separated integers. Always ask user for confirmation first.",
-        {"phone": str, "chat_id": str, "message_ids": str, "confirm": bool},
+        {
+            "phone": Annotated[str, "Номер телефона аккаунта (например +79001234567)"],
+            "chat_id": Annotated[str, "ID чата (@username, t.me ссылка, числовой ID или me)"],
+            "message_ids": Annotated[str, "ID сообщений через запятую"],
+            "confirm": Annotated[bool, "Установите true для подтверждения действия"],
+        },
         annotations=ToolAnnotations(destructiveHint=True),
     )
     async def delete_message(args):
@@ -138,7 +156,13 @@ def register(db, client_pool, embedding_service, **kwargs):
         "forward_messages",
         "Forward messages from one Telegram chat to another. "
         "Pass comma-separated message IDs. Always ask user for confirmation first.",
-        {"phone": str, "from_chat": str, "to_chat": str, "message_ids": str, "confirm": bool},
+        {
+            "phone": Annotated[str, "Номер телефона аккаунта (например +79001234567)"],
+            "from_chat": Annotated[str, "ID чата-источника (@username, числовой ID)"],
+            "to_chat": Annotated[str, "ID чата-получателя (@username, числовой ID)"],
+            "message_ids": Annotated[str, "ID сообщений через запятую"],
+            "confirm": Annotated[bool, "Установите true для подтверждения действия"],
+        },
     )
     async def forward_messages(args):
         pool_gate = require_pool(client_pool, "Пересылка сообщений")
@@ -181,7 +205,13 @@ def register(db, client_pool, embedding_service, **kwargs):
         "pin_message",
         "Pin a message in a Telegram chat. notify=true sends a notification to all members. "
         "chat_id accepts @username, numeric ID, or 'me'. Ask user for confirmation first.",
-        {"phone": str, "chat_id": str, "message_id": int, "notify": bool, "confirm": bool},
+        {
+            "phone": Annotated[str, "Номер телефона аккаунта (например +79001234567)"],
+            "chat_id": Annotated[str, "ID чата (@username, t.me ссылка, числовой ID или me)"],
+            "message_id": Annotated[int, "ID сообщения в Telegram"],
+            "notify": Annotated[bool, "Отправить уведомление участникам"],
+            "confirm": Annotated[bool, "Установите true для подтверждения действия"],
+        },
     )
     async def pin_message(args):
         pool_gate = require_pool(client_pool, "Закрепление сообщения")
@@ -216,7 +246,12 @@ def register(db, client_pool, embedding_service, **kwargs):
         "unpin_message",
         "Unpin a message in a Telegram chat. Omit message_id to unpin all. "
         "Ask user for confirmation first.",
-        {"phone": str, "chat_id": str, "message_id": int, "confirm": bool},
+        {
+            "phone": Annotated[str, "Номер телефона аккаунта (например +79001234567)"],
+            "chat_id": Annotated[str, "ID чата (@username, t.me ссылка, числовой ID или me)"],
+            "message_id": Annotated[int, "ID сообщения в Telegram"],
+            "confirm": Annotated[bool, "Установите true для подтверждения действия"],
+        },
     )
     async def unpin_message(args):
         pool_gate = require_pool(client_pool, "Открепление сообщения")
@@ -251,7 +286,11 @@ def register(db, client_pool, embedding_service, **kwargs):
         "download_media",
         "Download media from a Telegram message. Returns the local file path. "
         "Use chat_id='me' for Saved Messages (Избранное).",
-        {"phone": str, "chat_id": str, "message_id": int},
+        {
+            "phone": Annotated[str, "Номер телефона аккаунта (например +79001234567)"],
+            "chat_id": Annotated[str, "ID чата (@username, t.me ссылка, числовой ID или me)"],
+            "message_id": Annotated[int, "ID сообщения в Telegram"],
+        },
     )
     async def download_media(args):
         import pathlib
@@ -296,7 +335,12 @@ def register(db, client_pool, embedding_service, **kwargs):
         "get_participants",
         "Get list of participants in a Telegram group (not broadcast channels). "
         "search filters by name/username substring.",
-        {"phone": str, "chat_id": str, "limit": int, "search": str},
+        {
+            "phone": Annotated[str, "Номер телефона аккаунта (например +79001234567)"],
+            "chat_id": Annotated[str, "ID чата (@username, t.me ссылка, числовой ID или me)"],
+            "limit": Annotated[int, "Максимальное количество результатов"],
+            "search": Annotated[str, "Фильтр по имени/username участника"],
+        },
     )
     async def get_participants(args):
         pool_gate = require_pool(client_pool, "Получение участников")
@@ -339,7 +383,14 @@ def register(db, client_pool, embedding_service, **kwargs):
         "Promote (is_admin=true) or demote (is_admin=false) a user as admin. "
         "user_id accepts @username or numeric ID. title sets a custom admin badge. "
         "Requires admin rights. Ask for confirmation first.",
-        {"phone": str, "chat_id": str, "user_id": str, "is_admin": bool, "title": str, "confirm": bool},
+        {
+            "phone": Annotated[str, "Номер телефона аккаунта (например +79001234567)"],
+            "chat_id": Annotated[str, "ID чата (@username, t.me ссылка, числовой ID или me)"],
+            "user_id": Annotated[str, "ID пользователя (@username или числовой ID)"],
+            "is_admin": Annotated[bool, "true — назначить админом, false — снять права"],
+            "title": Annotated[str, "Кастомный бейдж администратора"],
+            "confirm": Annotated[bool, "Установите true для подтверждения действия"],
+        },
     )
     async def edit_admin(args):
         pool_gate = require_pool(client_pool, "Изменение прав администратора")
@@ -384,9 +435,13 @@ def register(db, client_pool, embedding_service, **kwargs):
         "until_date = ISO datetime (e.g. '2025-12-31T23:59:59') for temporary restriction. "
         "Ask for confirmation first.",
         {
-            "phone": str, "chat_id": str, "user_id": str,
-            "send_messages": bool, "send_media": bool,
-            "until_date": str, "confirm": bool,
+            "phone": Annotated[str, "Номер телефона аккаунта (например +79001234567)"],
+            "chat_id": Annotated[str, "ID чата (@username, t.me ссылка, числовой ID или me)"],
+            "user_id": Annotated[str, "ID пользователя (@username или числовой ID)"],
+            "send_messages": Annotated[bool, "Разрешить отправку сообщений"],
+            "send_media": Annotated[bool, "Разрешить отправку медиа"],
+            "until_date": Annotated[str, "Дата окончания ограничения в формате ISO (YYYY-MM-DDTHH:MM:SS)"],
+            "confirm": Annotated[bool, "Установите true для подтверждения действия"],
         },
     )
     async def edit_permissions(args):
@@ -440,7 +495,12 @@ def register(db, client_pool, embedding_service, **kwargs):
         "kick_participant",
         "⚠️ DANGEROUS: Kick a participant from a Telegram chat. "
         "user_id accepts @username or numeric ID. Always ask user for confirmation first.",
-        {"phone": str, "chat_id": str, "user_id": str, "confirm": bool},
+        {
+            "phone": Annotated[str, "Номер телефона аккаунта (например +79001234567)"],
+            "chat_id": Annotated[str, "ID чата (@username, t.me ссылка, числовой ID или me)"],
+            "user_id": Annotated[str, "ID пользователя (@username или числовой ID)"],
+            "confirm": Annotated[bool, "Установите true для подтверждения действия"],
+        },
         annotations=ToolAnnotations(destructiveHint=True),
     )
     async def kick_participant(args):
@@ -478,7 +538,10 @@ def register(db, client_pool, embedding_service, **kwargs):
         "get_broadcast_stats",
         "Get broadcast statistics (followers, views, reactions) for a Telegram channel. "
         "Requires admin/owner rights on the channel.",
-        {"phone": str, "chat_id": str},
+        {
+            "phone": Annotated[str, "Номер телефона аккаунта (например +79001234567)"],
+            "chat_id": Annotated[str, "ID чата (@username, t.me ссылка, числовой ID или me)"],
+        },
     )
     async def get_broadcast_stats(args):
         pool_gate = require_pool(client_pool, "Получение статистики")
@@ -532,7 +595,11 @@ def register(db, client_pool, embedding_service, **kwargs):
         "archive_chat",
         "Archive a Telegram dialog (move to archive folder). "
         "Ask user for confirmation first.",
-        {"phone": str, "chat_id": str, "confirm": bool},
+        {
+            "phone": Annotated[str, "Номер телефона аккаунта (например +79001234567)"],
+            "chat_id": Annotated[str, "ID чата (@username, t.me ссылка, числовой ID или me)"],
+            "confirm": Annotated[bool, "Установите true для подтверждения действия"],
+        },
     )
     async def archive_chat(args):
         pool_gate = require_pool(client_pool, "Архивирование чата")
@@ -565,7 +632,11 @@ def register(db, client_pool, embedding_service, **kwargs):
         "unarchive_chat",
         "Unarchive a Telegram dialog (move back to main folder). "
         "Ask user for confirmation first.",
-        {"phone": str, "chat_id": str, "confirm": bool},
+        {
+            "phone": Annotated[str, "Номер телефона аккаунта (например +79001234567)"],
+            "chat_id": Annotated[str, "ID чата (@username, t.me ссылка, числовой ID или me)"],
+            "confirm": Annotated[bool, "Установите true для подтверждения действия"],
+        },
     )
     async def unarchive_chat(args):
         pool_gate = require_pool(client_pool, "Разархивирование чата")
@@ -598,7 +669,11 @@ def register(db, client_pool, embedding_service, **kwargs):
         "mark_read",
         "Mark messages as read in a Telegram chat. "
         "max_id marks all messages up to that ID as read; omit to mark all.",
-        {"phone": str, "chat_id": str, "max_id": int},
+        {
+            "phone": Annotated[str, "Номер телефона аккаунта (например +79001234567)"],
+            "chat_id": Annotated[str, "ID чата (@username, t.me ссылка, числовой ID или me)"],
+            "max_id": Annotated[int, "Отметить прочитанными до этого ID включительно"],
+        },
     )
     async def mark_read(args):
         pool_gate = require_pool(client_pool, "Отметка сообщений как прочитанных")
@@ -630,7 +705,11 @@ def register(db, client_pool, embedding_service, **kwargs):
         "Preview last N messages from any Telegram chat/channel (not stored in DB). "
         "chat_id accepts @username, t.me link, numeric ID, or 'me'. "
         "To save messages to DB for search, use add_channel + collect_channel instead.",
-        {"phone": str, "chat_id": str, "limit": int},
+        {
+            "phone": Annotated[str, "Номер телефона аккаунта (например +79001234567)"],
+            "chat_id": Annotated[str, "ID чата (@username, t.me ссылка, числовой ID или me)"],
+            "limit": Annotated[int, "Максимальное количество результатов"],
+        },
     )
     async def read_messages(args):
         pool_gate = require_pool(client_pool, "Чтение сообщений")
