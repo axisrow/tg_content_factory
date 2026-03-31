@@ -307,6 +307,68 @@ async def test_chat_stream_passes_prompt_as_async_iterable(db):
 
 
 @pytest.mark.asyncio
+async def test_chat_stream_closes_sdk_generator(db):
+    """aiter.aclose() must be called to kill the Claude CLI subprocess."""
+    from claude_agent_sdk import ResultMessage, TextBlock, AssistantMessage
+
+    thread_id = await db.create_agent_thread("aclose thread")
+    await db.save_agent_message(thread_id, "user", "test")
+
+    assistant_msg = MagicMock(spec=AssistantMessage)
+    assistant_msg.content = [TextBlock(text="ok")]
+    result_msg = MagicMock(spec=ResultMessage)
+    result_msg.usage = {}
+    result_msg.model_usage = {}
+
+    aclose_called = False
+
+    async def mock_query(prompt, options):
+        nonlocal aclose_called
+        try:
+            yield assistant_msg
+            yield result_msg
+        finally:
+            aclose_called = True
+
+    mgr = AgentManager(db)
+    mgr.initialize()
+
+    with patch("src.agent.manager.query", mock_query):
+        async for _ in mgr.chat_stream(thread_id, "test"):
+            pass
+
+    assert aclose_called, "aiter.aclose() was never called — subprocess may leak"
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_closes_sdk_generator_on_timeout(db):
+    """aiter.aclose() must be called even when timeout fires."""
+    thread_id = await db.create_agent_thread("aclose-timeout thread")
+    await db.save_agent_message(thread_id, "user", "test")
+
+    aclose_called = False
+
+    async def mock_query(prompt, options):
+        nonlocal aclose_called
+        try:
+            # Never yield anything — will trigger first_event_timeout
+            await asyncio.sleep(9999)
+            yield  # make it a generator
+        finally:
+            aclose_called = True
+
+    mgr = AgentManager(db)
+    mgr.initialize()
+    mgr._config.agent.first_event_timeout = 1  # 1s for fast test
+
+    with patch("src.agent.manager.query", mock_query):
+        async for _ in mgr.chat_stream(thread_id, "test"):
+            pass
+
+    assert aclose_called, "aiter.aclose() not called on timeout — subprocess may leak"
+
+
+@pytest.mark.asyncio
 async def test_stderr_errors_surfaced_as_warnings(db):
     """Errors from claude-cli stderr are emitted as warning events to the user."""
     from claude_agent_sdk import ResultMessage, TextBlock, AssistantMessage

@@ -550,7 +550,8 @@ class ClaudeSdkBackend:
             first_event_logged = False
             try:
                 aiter = query(prompt=_as_prompt_stream(prompt), options=options).__aiter__()
-                while True:
+                try:
+                  while True:
                     if not first_event_logged:
                         iter_timeout = cfg.first_event_timeout
                         iter_label = "Ожидание ответа Claude"
@@ -717,6 +718,9 @@ class ClaudeSdkBackend:
                             await queue.put(f"data: {done_payload}\n\n")
                     except asyncio.CancelledError:
                         draining = True
+                finally:
+                    with suppress(Exception):
+                        await aiter.aclose()
                 return
 
             except TimeoutError as exc:
