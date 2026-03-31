@@ -656,11 +656,12 @@ class ClaudeSdkBackend:
                                 "Rate limit event (thread %d): status=%s, resets_at=%s, utilization=%s",
                                 thread_id, rl_status, resets, utilization,
                             )
-                            parts = [f"Rate limit: {rl_status}"]
+                            rl_parts = [rl_status]
                             if utilization is not None:
-                                parts.append(f"{utilization:.0%}")
-                            rl_text = ", ".join(parts)
-                            _last_rate_limit[0] = rl_text
+                                rl_parts.append(f"{utilization:.0%}")
+                            rl_summary = ", ".join(rl_parts)
+                            rl_text = f"Rate limit: {rl_summary}"
+                            _last_rate_limit[0] = rl_summary
                             if rl_status == "rejected":
                                 # Hard reject — surface as warning, not just status
                                 warn_payload = json.dumps(
