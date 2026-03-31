@@ -6,7 +6,8 @@ import logging
 import os
 import shutil
 import time
-from collections.abc import AsyncGenerator, Awaitable, Callable
+import uuid
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
 from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -205,15 +206,19 @@ async def _await_with_countdown(
     activity_ts: list[float] | None = None,
     activity_extend: float = 30.0,
     max_timeout: float | None = None,
+    api_request_ts: list[float] | None = None,
 ) -> Any:
     """Await *coro* with periodic countdown status updates pushed to *queue*.
 
     The coroutine is wrapped in ``ensure_future`` + ``asyncio.wait`` to enforce
     a hard deadline.  When *activity_ts* (a mutable ``[float]``) is provided,
     the deadline is automatically extended by *activity_extend* seconds when
-    fresh stderr activity is detected and the deadline is close.  *max_timeout*
-    is a hard ceiling — the deadline will never exceed ``start + max_timeout``,
-    preventing runaway extensions from repeated CLI retries.
+    fresh SDK activity (text, tools) is detected and the deadline is close.
+    *max_timeout* is a hard ceiling — the deadline will never exceed
+    ``start + max_timeout``.
+
+    *api_request_ts* tracks the last [api:request] stderr timestamp; when set,
+    the ticker shows "Думает..." if Claude API is processing for >15s.
     """
     # We must wrap coro in a separate Task for timeout to work.
     # claude_agent_sdk swallows CancelledError internally (anyio task groups),
@@ -233,15 +238,18 @@ async def _await_with_countdown(
     else:
         hard_ceiling = deadline
 
+    thinking_delay = 15  # seconds after [api:request] before showing "Думает..."
+
     async def _ticker() -> None:
         nonlocal deadline
         try:
             last_extended_at = start
             extensions_remaining = 3
+            _thinking_shown = False
             while True:
                 await asyncio.sleep(countdown_interval)
                 now = time.monotonic()
-                # Extend deadline when CLI activity is fresh AND deadline is close.
+                # Extend deadline when real SDK activity is fresh AND deadline is close.
                 if (
                     extensions_remaining > 0
                     and activity_ts is not None
@@ -255,13 +263,13 @@ async def _await_with_countdown(
                             last_extended_at = activity_ts[0]
                             extensions_remaining -= 1
                             logger.info(
-                                "Timeout extended +%.0fs (CLI activity, was %.0fs left, %d extensions left)",
+                                "Timeout extended +%.0fs (SDK activity, was %.0fs left, %d extensions left)",
                                 activity_extend, remaining, extensions_remaining,
                             )
                             ext_payload = json.dumps(
                                 {
                                     "type": "status",
-                                    "text": f"CLI активен — продлён (+{int(activity_extend)}с, {int(deadline - now)}с)",
+                                    "text": f"Агент активен — продлён (+{int(activity_extend)}с)",
                                 },
                                 ensure_ascii=False,
                             )
@@ -269,6 +277,22 @@ async def _await_with_countdown(
                                 queue.put_nowait(f"data: {ext_payload}\n\n")
                             except Exception:
                                 pass
+                # Show "Думает..." when API request was sent but no SDK events yet
+                if (
+                    not _thinking_shown
+                    and api_request_ts is not None
+                    and api_request_ts[0] > 0
+                    and (now - api_request_ts[0]) > thinking_delay
+                ):
+                    _thinking_shown = True
+                    thinking_payload = json.dumps(
+                        {"type": "thinking", "text": "Думает..."},
+                        ensure_ascii=False,
+                    )
+                    try:
+                        queue.put_nowait(f"data: {thinking_payload}\n\n")
+                    except Exception:
+                        pass
                 # Show countdown
                 remaining_int = int(deadline - time.monotonic())
                 if remaining_int > 0:
@@ -289,21 +313,39 @@ async def _await_with_countdown(
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 task.cancel()
-                with suppress(asyncio.CancelledError):
-                    await task
+                # SDK (anyio task groups) swallows CancelledError internally,
+                # so `await task` would block forever.  Give it a short grace
+                # period and proceed regardless — the task becomes a zombie but
+                # the TimeoutError propagates correctly to the caller.
+                await asyncio.wait({task}, timeout=5.0)
                 raise asyncio.TimeoutError()
             done, _ = await asyncio.wait({task}, timeout=min(countdown_interval, remaining))
             if done:
                 return task.result()
     except asyncio.CancelledError:
         task.cancel()
-        with suppress(asyncio.CancelledError, Exception):
-            await task
+        await asyncio.wait({task}, timeout=5.0)
         raise
     finally:
         ticker.cancel()
         with suppress(asyncio.CancelledError):
             await ticker
+
+
+async def _as_prompt_stream(text: str) -> AsyncIterator[dict]:
+    """Wrap a string prompt as a single-message async iterable.
+
+    claude-agent-sdk blocks the generator on string prompts until the entire
+    conversation completes (wait_for_result_and_end_input).  Using an
+    AsyncIterable makes the SDK spawn stream_input in a background task,
+    allowing receive_messages to yield events immediately.
+    """
+    yield {
+        "type": "user",
+        "session_id": "",
+        "message": {"role": "user", "content": text},
+        "parent_tool_use_id": None,
+    }
 
 
 class ClaudeSdkBackend:
@@ -360,20 +402,26 @@ class ClaudeSdkBackend:
         extra: dict = {}
         if resolved_model:
             extra["model"] = resolved_model
-        if session_id:
-            extra["session_id"] = session_id
+        # claude-agent-sdk ≥0.1.52 requires a fresh valid UUID per call
+        extra["session_id"] = str(uuid.uuid4())
 
         stderr_lines: list[str] = []
         debug_lines: list[str] = []
-        # Heartbeat: updated by _on_stderr on any meaningful event.
-        # _await_with_countdown checks this to extend the deadline while CLI is active.
+        # Heartbeat: updated when real SDK events arrive (text, tools, results).
+        # _await_with_countdown checks this to extend the deadline while the agent
+        # is making actual progress.
         _last_activity: list[float] = [time.monotonic()]
+        # Timestamp of the last [api:request] stderr event — used to show
+        # "Думает..." status when Claude API is processing for a long time.
+        _api_request_ts: list[float] = [0.0]
 
         # Stable stage keywords from claude-cli bootstrap sequence.
         # Checked case-insensitively; first match wins.
         _prompt_short = original_prompt[:100].replace("\n", " ")
         if len(original_prompt) > 100:
             _prompt_short += "…"
+        # stderr stage labels — none extend timeouts (_last_activity is updated
+        # only when real SDK events arrive: text deltas, tool results, etc.)
         _stage_map: list[tuple[str, str]] = [
             ("[api:request]", f"Жду ответ Claude API: «{_prompt_short}»"),
             ("creating client", "Создание клиента"),
@@ -410,7 +458,8 @@ class ClaudeSdkBackend:
                     break
             if label and label != _last_emitted[0]:
                 _last_emitted[0] = label
-                _last_activity[0] = time.monotonic()  # stage transition = real progress
+                if "[api:request]" in _lower:
+                    _api_request_ts[0] = time.monotonic()
                 payload = json.dumps({"type": "status", "text": label}, ensure_ascii=False)
                 try:
                     queue.put_nowait(f"data: {payload}\n\n")
@@ -472,7 +521,7 @@ class ClaudeSdkBackend:
             t0 = time.monotonic()
             first_event_logged = False
             try:
-                aiter = query(prompt=prompt, options=options).__aiter__()
+                aiter = query(prompt=_as_prompt_stream(prompt), options=options).__aiter__()
                 while True:
                     if not first_event_logged:
                         iter_timeout = cfg.first_event_timeout
@@ -501,6 +550,7 @@ class ClaudeSdkBackend:
                             label=iter_label,
                             activity_ts=_last_activity,
                             max_timeout=remaining_total,
+                            api_request_ts=_api_request_ts,
                         )
                     except StopAsyncIteration:
                         break
@@ -553,11 +603,18 @@ class ClaudeSdkBackend:
 
                             if event_type == "content_block_start":
                                 block = event.get("content_block", {})
-                                if block.get("type") == "tool_use":
+                                block_type = block.get("type")
+                                if block_type == "tool_use":
+                                    _last_activity[0] = time.monotonic()
                                     await tracker.on_tool_start(
                                         block.get("name", "unknown"),
                                         event.get("index", 0),
                                         tool_use_id=block.get("id", ""),
+                                    )
+                                else:
+                                    logger.debug(
+                                        "content_block_start type=%s (thread %d)",
+                                        block_type, thread_id,
                                     )
 
                             elif event_type == "content_block_delta":
@@ -566,6 +623,7 @@ class ClaudeSdkBackend:
                                 if delta_type == "text_delta":
                                     text_chunk = delta.get("text", "")
                                     if text_chunk:
+                                        _last_activity[0] = time.monotonic()
                                         full_text += text_chunk
                                         streamed = True
                                         chunk_payload = json.dumps(
@@ -574,13 +632,16 @@ class ClaudeSdkBackend:
                                         await queue.put(f"data: {chunk_payload}\n\n")
                                         await asyncio.sleep(0)
                                 elif delta_type == "input_json_delta":
+                                    _last_activity[0] = time.monotonic()
                                     tracker.accumulate_input(delta.get("partial_json", ""))
 
                             elif event_type == "content_block_stop":
+                                _last_activity[0] = time.monotonic()
                                 await tracker.on_block_stop(event.get("index", 0))
 
                         elif isinstance(msg, AssistantMessage):
-                            for block in msg.content:
+                            _last_activity[0] = time.monotonic()
+                            for _idx, block in enumerate(msg.content):
                                 if isinstance(block, TextBlock) and not streamed:
                                     full_text += block.text
                                     chunk_payload = json.dumps(
@@ -588,7 +649,16 @@ class ClaudeSdkBackend:
                                     )
                                     await queue.put(f"data: {chunk_payload}\n\n")
                                 elif isinstance(block, ToolUseBlock):
-                                    tracker._tool_id_to_name[block.id] = block.name
+                                    # SDK delivers tool calls via AssistantMessage (not
+                                    # StreamEvent content_block_start), so we must
+                                    # manually emit tool_start / tool_end events here.
+                                    await tracker.on_tool_start(
+                                        block.name, _idx, tool_use_id=block.id
+                                    )
+                                    tracker.accumulate_input(
+                                        json.dumps(block.input or {}, ensure_ascii=False)
+                                    )
+                                    await tracker.on_block_stop(_idx)
                                 elif isinstance(block, ToolResultBlock):
                                     content = block.content if isinstance(block.content, str) else ""
                                     await tracker.on_tool_result(
@@ -652,7 +722,9 @@ class ClaudeSdkBackend:
                     "Claude CLI process error (thread %d): exit_code=%s, stderr=%s",
                     thread_id, exc.exit_code, exc.stderr,
                 )
-                details = exc.stderr or str(exc)
+                # exc.stderr is often generic; captured stderr_lines have the real output
+                captured = "\n".join(stderr_lines[-20:]) if stderr_lines else None
+                details = captured or exc.stderr or str(exc)
                 # Truncate long stderr for UI
                 if len(details) > 500:
                     details = details[:500] + "..."
