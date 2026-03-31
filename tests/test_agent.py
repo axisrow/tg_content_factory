@@ -307,6 +307,43 @@ async def test_chat_stream_passes_prompt_as_async_iterable(db):
 
 
 @pytest.mark.asyncio
+async def test_chat_stream_options_have_can_use_tool(db):
+    """ClaudeAgentOptions must include can_use_tool to auto-approve CLI permissions.
+
+    Without it, CLI sends can_use_tool control requests for network tools
+    (read_messages, etc.) and the SDK raises "canUseTool callback is not provided",
+    causing tools to fail with "Tool permission stream closed".
+    """
+    from claude_agent_sdk import ResultMessage
+
+    thread_id = await db.create_agent_thread("can-use-tool thread")
+    await db.save_agent_message(thread_id, "user", "test")
+
+    result_msg = MagicMock(spec=ResultMessage)
+    result_msg.usage = {}
+    result_msg.model_usage = {}
+
+    captured_options = None
+
+    async def mock_query(prompt, options):
+        nonlocal captured_options
+        captured_options = options
+        yield result_msg
+
+    mgr = AgentManager(db)
+    mgr.initialize()
+
+    with patch("src.agent.manager.query", mock_query):
+        async for _ in mgr.chat_stream(thread_id, "test"):
+            pass
+
+    assert captured_options is not None, "query() was never called"
+    assert captured_options.can_use_tool is not None, (
+        "can_use_tool must be set to auto-approve CLI permission requests"
+    )
+
+
+@pytest.mark.asyncio
 async def test_chat_stream_closes_sdk_generator(db):
     """aiter.aclose() must be called to kill the Claude CLI subprocess."""
     from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
