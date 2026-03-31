@@ -578,6 +578,7 @@ class ClaudeSdkBackend:
             streamed = False
             t0 = time.monotonic()
             first_event_logged = False
+            _api_request_count[0] = 0
             try:
                 aiter = query(prompt=_as_prompt_stream(prompt), options=options).__aiter__()
                 try:
