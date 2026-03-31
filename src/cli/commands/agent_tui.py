@@ -609,6 +609,9 @@ class AgentTuiApp(App):
                         summary = payload.get("summary", "")
                         widget._append_log(f"    ❌ {tool}: {summary}")
                     continue
+                if event_type == "warning":
+                    widget._append_log(f"  ⚠️ {payload.get('text', '')}")
+                    continue
                 if event_type == "status":
                     widget.set_pending_status(payload.get("text", ""))
                     continue
