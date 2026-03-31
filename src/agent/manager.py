@@ -438,15 +438,24 @@ class ClaudeSdkBackend:
             # claude-cli stderr format: "2026-03-30T01:28:36.888Z [DEBUG] ..."
             # Level tag is NOT at the start — check anywhere in the line.
             _lower = line.lower()
+            is_error = False
             if "[debug]" in _lower or "[trace]" in _lower:
                 debug_lines.append(line)
                 logger.debug("claude-cli debug: %s", line)
             elif "[warn" in _lower:
                 debug_lines.append(line)
-                logger.debug("claude-cli warn: %s", line)
+                logger.warning("claude-cli warn: %s", line)
+                is_error = True
+            elif "[error]" in _lower or _lower.startswith("error"):
+                stderr_lines.append(line)
+                logger.error("claude-cli error: %s", line)
+                is_error = True
             else:
                 stderr_lines.append(line)
                 logger.warning("claude-cli stderr: %s", line)
+                # Treat untagged stderr as potential errors (e.g. "Error: Invalid URL")
+                if "error" in _lower:
+                    is_error = True
 
             # Emit connection progress to TUI/web queue.
             # _on_stderr is called from an anyio task in the same event loop,
@@ -465,6 +474,25 @@ class ClaudeSdkBackend:
                     queue.put_nowait(f"data: {payload}\n\n")
                 except Exception:
                     pass
+
+            # Surface errors/warnings to user — don't swallow them silently.
+            if is_error and not label:
+                # Strip timestamp prefix (ISO format) for cleaner display
+                display = line.strip()
+                if len(display) > 25 and display[10] == "T" and display[23] == "Z":
+                    display = display[25:].strip()
+                # Remove level tags for cleaner output
+                for tag in ("[WARN]", "[warn]", "[ERROR]", "[error]"):
+                    display = display.replace(tag, "").strip()
+                if display:
+                    warn_payload = json.dumps(
+                        {"type": "warning", "text": display},
+                        ensure_ascii=False,
+                    )
+                    try:
+                        queue.put_nowait(f"data: {warn_payload}\n\n")
+                    except Exception:
+                        pass
 
         cli_path = shutil.which("claude")
         logger.info("claude-cli path: %s", cli_path)
