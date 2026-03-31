@@ -1090,7 +1090,7 @@
                         } else if (data.type === 'tool_result') {
                             statusTracker.onToolResult(data.tool || 'tool', !!data.is_error, data.summary || '');
                         } else if (data.type === 'warning') {
-                            statusTracker.onToolResult('⚠️ ' + (data.text || ''), true, '');
+                            statusTracker.onToolResult('', true, '⚠️ ' + (data.text || ''));
                         } else if (data.type === 'status' || data.type === 'countdown') {
                             statusTracker.onStatus(data.text || '');
                         } else if (data.error) {
