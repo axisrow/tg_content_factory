@@ -309,7 +309,7 @@ async def test_chat_stream_passes_prompt_as_async_iterable(db):
 @pytest.mark.asyncio
 async def test_chat_stream_closes_sdk_generator(db):
     """aiter.aclose() must be called to kill the Claude CLI subprocess."""
-    from claude_agent_sdk import ResultMessage, TextBlock, AssistantMessage
+    from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
 
     thread_id = await db.create_agent_thread("aclose thread")
     await db.save_agent_message(thread_id, "user", "test")
@@ -371,7 +371,7 @@ async def test_chat_stream_closes_sdk_generator_on_timeout(db):
 @pytest.mark.asyncio
 async def test_stderr_errors_surfaced_as_warnings(db):
     """Errors from claude-cli stderr are emitted as warning events to the user."""
-    from claude_agent_sdk import ResultMessage, TextBlock, AssistantMessage
+    from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
 
     thread_id = await db.create_agent_thread("stderr-warning thread")
     await db.save_agent_message(thread_id, "user", "test")
@@ -414,7 +414,7 @@ async def test_stderr_errors_surfaced_as_warnings(db):
 @pytest.mark.asyncio
 async def test_stderr_debug_lines_not_surfaced(db):
     """DEBUG/TRACE stderr lines must NOT be shown to the user."""
-    from claude_agent_sdk import ResultMessage, TextBlock, AssistantMessage
+    from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
 
     thread_id = await db.create_agent_thread("stderr-debug thread")
     await db.save_agent_message(thread_id, "user", "test")
@@ -448,7 +448,7 @@ async def test_stderr_debug_lines_not_surfaced(db):
 @pytest.mark.asyncio
 async def test_stderr_stage_keywords_not_duplicated_as_warnings(db):
     """stderr lines matching stage keywords should emit status, not warning."""
-    from claude_agent_sdk import ResultMessage, TextBlock, AssistantMessage
+    from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
 
     thread_id = await db.create_agent_thread("stderr-stage thread")
     await db.save_agent_message(thread_id, "user", "test")
