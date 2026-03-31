@@ -972,6 +972,15 @@
                     }
                 }
             },
+            onWarning: function(text) {
+                if (destroyed) return;
+                _ensureElements();
+                logDetails.style.display = '';
+                var warnLine = document.createElement('div');
+                warnLine.className = 'tool-log-entry tool-entry-error';
+                warnLine.textContent = '\u26a0\ufe0f ' + text;
+                logBody.appendChild(warnLine);
+            },
             onStatus: function(text) {
                 if (destroyed) return;
                 _ensureElements();
@@ -1090,7 +1099,7 @@
                         } else if (data.type === 'tool_result') {
                             statusTracker.onToolResult(data.tool || 'tool', !!data.is_error, data.summary || '');
                         } else if (data.type === 'warning') {
-                            statusTracker.onToolResult('', true, '⚠️ ' + (data.text || ''));
+                            statusTracker.onWarning(data.text || '');
                         } else if (data.type === 'status' || data.type === 'countdown') {
                             statusTracker.onStatus(data.text || '');
                         } else if (data.error) {
