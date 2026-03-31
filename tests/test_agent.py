@@ -307,6 +307,43 @@ async def test_chat_stream_passes_prompt_as_async_iterable(db):
 
 
 @pytest.mark.asyncio
+async def test_chat_stream_options_have_can_use_tool(db):
+    """ClaudeAgentOptions must include can_use_tool to auto-approve CLI permissions.
+
+    Without it, CLI sends can_use_tool control requests for network tools
+    (read_messages, etc.) and the SDK raises "canUseTool callback is not provided",
+    causing tools to fail with "Tool permission stream closed".
+    """
+    from claude_agent_sdk import ResultMessage
+
+    thread_id = await db.create_agent_thread("can-use-tool thread")
+    await db.save_agent_message(thread_id, "user", "test")
+
+    result_msg = MagicMock(spec=ResultMessage)
+    result_msg.usage = {}
+    result_msg.model_usage = {}
+
+    captured_options = None
+
+    async def mock_query(prompt, options):
+        nonlocal captured_options
+        captured_options = options
+        yield result_msg
+
+    mgr = AgentManager(db)
+    mgr.initialize()
+
+    with patch("src.agent.manager.query", mock_query):
+        async for _ in mgr.chat_stream(thread_id, "test"):
+            pass
+
+    assert captured_options is not None, "query() was never called"
+    assert captured_options.can_use_tool is not None, (
+        "can_use_tool must be set to auto-approve CLI permission requests"
+    )
+
+
+@pytest.mark.asyncio
 async def test_chat_stream_closes_sdk_generator(db):
     """aiter.aclose() must be called to kill the Claude CLI subprocess."""
     from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
@@ -482,6 +519,82 @@ async def test_stderr_stage_keywords_not_duplicated_as_warnings(db):
     assert any("Rate limit" in s.get("text", "") for s in statuses), (
         f"Stage keyword should produce status event: {statuses}"
     )
+
+
+@pytest.mark.asyncio
+async def test_stderr_api_request_counter_not_deduped(db):
+    """Each [api:request] event gets a unique counter, not deduped."""
+    from claude_agent_sdk import ResultMessage, TextBlock, AssistantMessage
+
+    thread_id = await db.create_agent_thread("api-counter thread")
+    await db.save_agent_message(thread_id, "user", "test")
+
+    assistant_msg = MagicMock(spec=AssistantMessage)
+    assistant_msg.content = [TextBlock(text="ok")]
+    result_msg = MagicMock(spec=ResultMessage)
+    result_msg.usage = {}
+    result_msg.model_usage = {}
+
+    async def mock_query(prompt, options):
+        if options.stderr:
+            options.stderr("2026-03-30T01:28:36.000Z [INFO] [api:request] POST /messages")
+            options.stderr("2026-03-30T01:28:40.000Z [INFO] [api:request] POST /messages")
+            options.stderr("2026-03-30T01:28:50.000Z [INFO] [api:request] POST /messages")
+        yield assistant_msg
+        yield result_msg
+
+    mgr = AgentManager(db)
+    mgr.initialize()
+
+    chunks = []
+    with patch("src.agent.manager.query", mock_query):
+        async for chunk in mgr.chat_stream(thread_id, "test"):
+            chunks.append(chunk)
+
+    payloads = [json.loads(c.removeprefix("data: ").strip()) for c in chunks]
+    api_statuses = [
+        p for p in payloads
+        if p.get("type") == "status" and "API #" in p.get("text", "")
+    ]
+
+    assert len(api_statuses) == 3, f"Expected 3 API request statuses, got {api_statuses}"
+    assert "API #1" in api_statuses[0]["text"]
+    assert "API #2" in api_statuses[1]["text"]
+    assert "API #3" in api_statuses[2]["text"]
+
+
+@pytest.mark.asyncio
+async def test_user_message_does_not_break_stream(db):
+    """UserMessage (tool results sent to Claude) should not break the stream."""
+    from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock, UserMessage
+
+    thread_id = await db.create_agent_thread("user-message thread")
+    await db.save_agent_message(thread_id, "user", "test")
+
+    assistant_msg = MagicMock(spec=AssistantMessage)
+    assistant_msg.content = [TextBlock(text="hello")]
+    user_msg = MagicMock(spec=UserMessage)
+    result_msg = MagicMock(spec=ResultMessage)
+    result_msg.usage = {}
+    result_msg.model_usage = {}
+
+    async def mock_query(prompt, options):
+        yield assistant_msg
+        yield user_msg
+        yield result_msg
+
+    mgr = AgentManager(db)
+    mgr.initialize()
+
+    chunks = []
+    with patch("src.agent.manager.query", mock_query):
+        async for chunk in mgr.chat_stream(thread_id, "test"):
+            chunks.append(chunk)
+
+    payloads = [json.loads(c.removeprefix("data: ").strip()) for c in chunks]
+    texts = [p.get("text", "") for p in payloads if "text" in p and "type" not in p]
+    assert any("hello" in t for t in texts), f"Text should flow through: {texts}"
+    assert any(p.get("done") for p in payloads), "Stream should complete with done"
 
 
 @pytest.mark.asyncio
