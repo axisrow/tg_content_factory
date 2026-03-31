@@ -524,7 +524,7 @@ async def test_stderr_stage_keywords_not_duplicated_as_warnings(db):
 @pytest.mark.asyncio
 async def test_stderr_api_request_counter_not_deduped(db):
     """Each [api:request] event gets a unique counter, not deduped."""
-    from claude_agent_sdk import ResultMessage, TextBlock, AssistantMessage
+    from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
 
     thread_id = await db.create_agent_thread("api-counter thread")
     await db.save_agent_message(thread_id, "user", "test")
