@@ -307,6 +307,122 @@ async def test_chat_stream_passes_prompt_as_async_iterable(db):
 
 
 @pytest.mark.asyncio
+async def test_stderr_errors_surfaced_as_warnings(db):
+    """Errors from claude-cli stderr are emitted as warning events to the user."""
+    from claude_agent_sdk import ResultMessage, TextBlock, AssistantMessage
+
+    thread_id = await db.create_agent_thread("stderr-warning thread")
+    await db.save_agent_message(thread_id, "user", "test")
+
+    assistant_msg = MagicMock(spec=AssistantMessage)
+    assistant_msg.content = [TextBlock(text="ok")]
+    result_msg = MagicMock(spec=ResultMessage)
+    result_msg.usage = {}
+    result_msg.model_usage = {}
+
+    async def mock_query(prompt, options):
+        # Simulate stderr errors from claude-cli
+        if options.stderr:
+            options.stderr("2026-03-30T01:28:36.888Z [ERROR] Invalid URL")
+            options.stderr("Error: connection refused")
+            options.stderr("2026-03-30T01:28:37.000Z [WARN] rate limit approaching")
+            options.stderr("2026-03-30T01:28:37.100Z [DEBUG] normal debug line")
+        yield assistant_msg
+        yield result_msg
+
+    mgr = AgentManager(db)
+    mgr.initialize()
+
+    chunks = []
+    with patch("src.agent.manager.query", mock_query):
+        async for chunk in mgr.chat_stream(thread_id, "test"):
+            chunks.append(chunk)
+
+    payloads = [json.loads(c.removeprefix("data: ").strip()) for c in chunks]
+    warnings = [p for p in payloads if p.get("type") == "warning"]
+
+    assert len(warnings) >= 2, f"Expected at least 2 warnings, got {warnings}"
+    warning_texts = [w["text"] for w in warnings]
+    # [ERROR] tagged line should surface
+    assert any("Invalid URL" in t for t in warning_texts), f"Missing 'Invalid URL' in {warning_texts}"
+    # Untagged "Error:" line should surface
+    assert any("connection refused" in t for t in warning_texts), f"Missing 'connection refused' in {warning_texts}"
+
+
+@pytest.mark.asyncio
+async def test_stderr_debug_lines_not_surfaced(db):
+    """DEBUG/TRACE stderr lines must NOT be shown to the user."""
+    from claude_agent_sdk import ResultMessage, TextBlock, AssistantMessage
+
+    thread_id = await db.create_agent_thread("stderr-debug thread")
+    await db.save_agent_message(thread_id, "user", "test")
+
+    assistant_msg = MagicMock(spec=AssistantMessage)
+    assistant_msg.content = [TextBlock(text="ok")]
+    result_msg = MagicMock(spec=ResultMessage)
+    result_msg.usage = {}
+    result_msg.model_usage = {}
+
+    async def mock_query(prompt, options):
+        if options.stderr:
+            options.stderr("2026-03-30T01:28:36.888Z [DEBUG] some debug info")
+            options.stderr("2026-03-30T01:28:36.888Z [TRACE] trace data")
+        yield assistant_msg
+        yield result_msg
+
+    mgr = AgentManager(db)
+    mgr.initialize()
+
+    chunks = []
+    with patch("src.agent.manager.query", mock_query):
+        async for chunk in mgr.chat_stream(thread_id, "test"):
+            chunks.append(chunk)
+
+    payloads = [json.loads(c.removeprefix("data: ").strip()) for c in chunks]
+    warnings = [p for p in payloads if p.get("type") == "warning"]
+    assert len(warnings) == 0, f"DEBUG/TRACE should not produce warnings: {warnings}"
+
+
+@pytest.mark.asyncio
+async def test_stderr_stage_keywords_not_duplicated_as_warnings(db):
+    """stderr lines matching stage keywords should emit status, not warning."""
+    from claude_agent_sdk import ResultMessage, TextBlock, AssistantMessage
+
+    thread_id = await db.create_agent_thread("stderr-stage thread")
+    await db.save_agent_message(thread_id, "user", "test")
+
+    assistant_msg = MagicMock(spec=AssistantMessage)
+    assistant_msg.content = [TextBlock(text="ok")]
+    result_msg = MagicMock(spec=ResultMessage)
+    result_msg.usage = {}
+    result_msg.model_usage = {}
+
+    async def mock_query(prompt, options):
+        if options.stderr:
+            # "rate limit event" matches _stage_map → should be status, not warning
+            options.stderr("rate limit event [WARN] utilization 82%")
+        yield assistant_msg
+        yield result_msg
+
+    mgr = AgentManager(db)
+    mgr.initialize()
+
+    chunks = []
+    with patch("src.agent.manager.query", mock_query):
+        async for chunk in mgr.chat_stream(thread_id, "test"):
+            chunks.append(chunk)
+
+    payloads = [json.loads(c.removeprefix("data: ").strip()) for c in chunks]
+    warnings = [p for p in payloads if p.get("type") == "warning"]
+    statuses = [p for p in payloads if p.get("type") == "status"]
+
+    assert len(warnings) == 0, f"Stage keywords should not produce warnings: {warnings}"
+    assert any("Rate limit" in s.get("text", "") for s in statuses), (
+        f"Stage keyword should produce status event: {statuses}"
+    )
+
+
+@pytest.mark.asyncio
 async def test_chat_stream_emits_tool_result_from_assistant_message(db):
     """ToolResultBlock in AssistantMessage emits tool_result SSE event."""
     thread_id = await db.create_agent_thread("tool-result thread")
