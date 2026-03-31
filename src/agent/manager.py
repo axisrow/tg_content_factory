@@ -19,13 +19,16 @@ from claude_agent_sdk import (
     ClaudeSDKError,
     CLIConnectionError,
     CLINotFoundError,
+    PermissionResultAllow,
     ProcessError,
     RateLimitEvent,
     ResultMessage,
     StreamEvent,
     TextBlock,
+    ToolPermissionContext,
     ToolResultBlock,
     ToolUseBlock,
+    UserMessage,
     query,
 )
 
@@ -348,6 +351,20 @@ async def _as_prompt_stream(text: str) -> AsyncIterator[dict]:
     }
 
 
+async def _auto_approve_tool(
+    tool_name: str, tool_input: dict, context: ToolPermissionContext,
+) -> PermissionResultAllow:
+    """Auto-approve all CLI tool permission requests.
+
+    Claude CLI sends can_use_tool control requests for tools that access the
+    network (read_messages, send_message, etc.).  Without this callback the
+    SDK raises "canUseTool callback is not provided" and the tool silently
+    fails with "Tool permission stream closed before response received".
+    We manage permissions through our own PermissionGate instead.
+    """
+    return PermissionResultAllow()
+
+
 class ClaudeSdkBackend:
     def __init__(self, db: Database, config: AppConfig, client_pool=None, scheduler_manager=None) -> None:
         self._db = db
@@ -414,6 +431,9 @@ class ClaudeSdkBackend:
         # Timestamp of the last [api:request] stderr event — used to show
         # "Думает..." status when Claude API is processing for a long time.
         _api_request_ts: list[float] = [0.0]
+        _api_request_count: list[int] = [0]
+        # Last rate limit status — included in timeout error message for diagnostics.
+        _last_rate_limit: list[str] = [""]
 
         # Stable stage keywords from claude-cli bootstrap sequence.
         # Checked case-insensitively; first match wins.
@@ -422,8 +442,8 @@ class ClaudeSdkBackend:
             _prompt_short += "…"
         # stderr stage labels — none extend timeouts (_last_activity is updated
         # only when real SDK events arrive: text deltas, tool results, etc.)
+        # NOTE: [api:request] label is dynamic (includes counter), handled separately.
         _stage_map: list[tuple[str, str]] = [
-            ("[api:request]", f"Жду ответ Claude API: «{_prompt_short}»"),
             ("creating client", "Создание клиента"),
             ("installplugins", "Установка плагинов"),
             ("refreshed marketplace", "Обновление плагинов"),
@@ -460,6 +480,19 @@ class ClaudeSdkBackend:
             # Emit connection progress to TUI/web queue.
             # _on_stderr is called from an anyio task in the same event loop,
             # so put_nowait on asyncio.Queue is safe here.
+            # [api:request] is handled separately — each occurrence is unique
+            # (counter incremented) so it must not be deduped.
+            if "[api:request]" in _lower:
+                _api_request_count[0] += 1
+                _api_request_ts[0] = time.monotonic()
+                label = f"Жду ответ Claude API #{_api_request_count[0]}: «{_prompt_short}»"
+                payload = json.dumps({"type": "status", "text": label}, ensure_ascii=False)
+                try:
+                    queue.put_nowait(f"data: {payload}\n\n")
+                except Exception:
+                    pass
+                return  # skip stage_map + error checks for api:request
+
             label: str | None = None
             for keyword, stage in _stage_map:
                 if keyword in _lower:
@@ -467,8 +500,6 @@ class ClaudeSdkBackend:
                     break
             if label and label != _last_emitted[0]:
                 _last_emitted[0] = label
-                if "[api:request]" in _lower:
-                    _api_request_ts[0] = time.monotonic()
                 payload = json.dumps({"type": "status", "text": label}, ensure_ascii=False)
                 try:
                     queue.put_nowait(f"data: {payload}\n\n")
@@ -532,6 +563,7 @@ class ClaudeSdkBackend:
             cli_path=cli_path or None,
             stderr=_on_stderr,
             include_partial_messages=True,
+            can_use_tool=_auto_approve_tool,
             extra_args={"debug-to-stderr": None},
             **extra,
         )
@@ -548,6 +580,7 @@ class ClaudeSdkBackend:
             streamed = False
             t0 = time.monotonic()
             first_event_logged = False
+            _api_request_count[0] = 0
             try:
                 aiter = query(prompt=_as_prompt_stream(prompt), options=options).__aiter__()
                 try:
@@ -597,9 +630,11 @@ class ClaudeSdkBackend:
                             "Idle timeout %ds fired after %.1fs total (thread %d)",
                             cfg.idle_timeout, time.monotonic() - t0, thread_id,
                         )
+                        reason = "Возможно, соединение потеряно."
+                        if _last_rate_limit[0]:
+                            reason = f"Последний rate limit: {_last_rate_limit[0]}."
                         raise TimeoutError(
-                            f"Стрим Claude замолчал на {cfg.idle_timeout}с. "
-                            "Возможно, соединение потеряно."
+                            f"Стрим Claude замолчал на {cfg.idle_timeout}с. {reason}"
                         )
 
                     if not first_event_logged:
@@ -621,10 +656,21 @@ class ClaudeSdkBackend:
                                 "Rate limit event (thread %d): status=%s, resets_at=%s, utilization=%s",
                                 thread_id, rl_status, resets, utilization,
                             )
-                            parts = [f"Rate limit: {rl_status}"]
+                            rl_parts = [rl_status]
                             if utilization is not None:
-                                parts.append(f"{utilization:.0%}")
-                            await tracker.on_status(", ".join(parts))
+                                rl_parts.append(f"{utilization:.0%}")
+                            rl_summary = ", ".join(rl_parts)
+                            rl_text = f"Rate limit: {rl_summary}"
+                            _last_rate_limit[0] = rl_summary
+                            if rl_status == "rejected":
+                                # Hard reject — surface as warning, not just status
+                                warn_payload = json.dumps(
+                                    {"type": "warning", "text": f"⛔ {rl_text}. API отклоняет запросы."},
+                                    ensure_ascii=False,
+                                )
+                                await queue.put(f"data: {warn_payload}\n\n")
+                            else:
+                                await tracker.on_status(rl_text)
                         elif isinstance(msg, StreamEvent):
                             event = msg.event
                             event_type = event.get("type")
@@ -693,6 +739,9 @@ class ClaudeSdkBackend:
                                     await tracker.on_tool_result(
                                         block.tool_use_id, content, bool(block.is_error)
                                     )
+                        elif isinstance(msg, UserMessage):
+                            # Tool results sent back to Claude — real progress.
+                            _last_activity[0] = time.monotonic()
                         elif isinstance(msg, ResultMessage):
                             done_data: dict = {
                                 "done": True,
@@ -716,6 +765,11 @@ class ClaudeSdkBackend:
                                 done_data["session_id"] = _sid
                             done_payload = json.dumps(done_data, ensure_ascii=False)
                             await queue.put(f"data: {done_payload}\n\n")
+                        else:
+                            logger.warning(
+                                "Unhandled SDK message type: %s (thread %d)",
+                                type(msg).__name__, thread_id,
+                            )
                     except asyncio.CancelledError:
                         draining = True
                 finally:
