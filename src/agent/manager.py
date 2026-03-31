@@ -432,6 +432,8 @@ class ClaudeSdkBackend:
         # "Думает..." status when Claude API is processing for a long time.
         _api_request_ts: list[float] = [0.0]
         _api_request_count: list[int] = [0]
+        # Last rate limit status — included in timeout error message for diagnostics.
+        _last_rate_limit: list[str] = [""]
 
         # Stable stage keywords from claude-cli bootstrap sequence.
         # Checked case-insensitively; first match wins.
@@ -628,9 +630,11 @@ class ClaudeSdkBackend:
                             "Idle timeout %ds fired after %.1fs total (thread %d)",
                             cfg.idle_timeout, time.monotonic() - t0, thread_id,
                         )
+                        reason = "Возможно, соединение потеряно."
+                        if _last_rate_limit[0]:
+                            reason = f"Последний rate limit: {_last_rate_limit[0]}."
                         raise TimeoutError(
-                            f"Стрим Claude замолчал на {cfg.idle_timeout}с. "
-                            "Возможно, соединение потеряно."
+                            f"Стрим Claude замолчал на {cfg.idle_timeout}с. {reason}"
                         )
 
                     if not first_event_logged:
@@ -655,7 +659,17 @@ class ClaudeSdkBackend:
                             parts = [f"Rate limit: {rl_status}"]
                             if utilization is not None:
                                 parts.append(f"{utilization:.0%}")
-                            await tracker.on_status(", ".join(parts))
+                            rl_text = ", ".join(parts)
+                            _last_rate_limit[0] = rl_text
+                            if rl_status == "rejected":
+                                # Hard reject — surface as warning, not just status
+                                warn_payload = json.dumps(
+                                    {"type": "warning", "text": f"⛔ {rl_text}. API отклоняет запросы."},
+                                    ensure_ascii=False,
+                                )
+                                await queue.put(f"data: {warn_payload}\n\n")
+                            else:
+                                await tracker.on_status(rl_text)
                         elif isinstance(msg, StreamEvent):
                             event = msg.event
                             event_type = event.get("type")
