@@ -220,6 +220,93 @@ async def test_chat_stream_emits_tool_start_and_tool_end_events(db):
 
 
 @pytest.mark.asyncio
+async def test_chat_stream_emits_tool_start_end_from_assistant_message(db):
+    """ToolUseBlock inside AssistantMessage emits tool_start and tool_end SSE events.
+
+    The SDK delivers tool calls via AssistantMessage (not StreamEvent
+    content_block_start), so the manager must emit these events manually.
+    """
+    thread_id = await db.create_agent_thread("tool-via-assistant-msg thread")
+    await db.save_agent_message(thread_id, "user", "test")
+
+    from claude_agent_sdk import AssistantMessage, ResultMessage, ToolUseBlock
+
+    assistant_msg = MagicMock(spec=AssistantMessage)
+    assistant_msg.content = [
+        ToolUseBlock(id="tu_42", name="list_channels", input={"limit": 10}),
+    ]
+    result_msg = MagicMock(spec=ResultMessage)
+    result_msg.usage = {}
+    result_msg.model_usage = {}
+
+    async def mock_query(prompt, options):
+        yield assistant_msg
+        yield result_msg
+
+    mgr = AgentManager(db)
+    mgr.initialize()
+
+    chunks = []
+    with patch("src.agent.manager.query", mock_query):
+        async for chunk in mgr.chat_stream(thread_id, "test"):
+            chunks.append(chunk)
+
+    payloads = [json.loads(c.removeprefix("data: ").strip()) for c in chunks]
+    types = [p.get("type") for p in payloads]
+
+    assert "tool_start" in types, f"tool_start missing in {types}"
+    assert "tool_end" in types, f"tool_end missing in {types}"
+
+    tool_start = next(p for p in payloads if p.get("type") == "tool_start")
+    assert tool_start["tool"] == "list_channels"
+
+    tool_end = next(p for p in payloads if p.get("type") == "tool_end")
+    assert tool_end["tool"] == "list_channels"
+    assert tool_end["is_error"] is False
+    assert "limit" in tool_end["summary"]
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_passes_prompt_as_async_iterable(db):
+    """query() receives an AsyncIterable prompt, not a plain string.
+
+    claude-agent-sdk blocks string prompts until result (wait_for_result_and_end_input).
+    Using AsyncIterable makes SDK spawn stream_input in background, allowing
+    events to flow immediately.
+    """
+    from collections.abc import AsyncIterable
+
+    from claude_agent_sdk import ResultMessage
+
+    thread_id = await db.create_agent_thread("prompt-type thread")
+    await db.save_agent_message(thread_id, "user", "hello")
+
+    result_msg = MagicMock(spec=ResultMessage)
+    result_msg.usage = {}
+    result_msg.model_usage = {}
+
+    captured_prompt = None
+
+    async def mock_query(prompt, options):
+        nonlocal captured_prompt
+        captured_prompt = prompt
+        yield result_msg
+
+    mgr = AgentManager(db)
+    mgr.initialize()
+
+    with patch("src.agent.manager.query", mock_query):
+        async for _ in mgr.chat_stream(thread_id, "hello"):
+            pass
+
+    assert captured_prompt is not None, "query() was never called"
+    assert isinstance(captured_prompt, AsyncIterable), (
+        f"prompt should be AsyncIterable, got {type(captured_prompt).__name__}"
+    )
+    assert not isinstance(captured_prompt, str), "prompt must not be a plain string"
+
+
+@pytest.mark.asyncio
 async def test_chat_stream_emits_tool_result_from_assistant_message(db):
     """ToolResultBlock in AssistantMessage emits tool_result SSE event."""
     thread_id = await db.create_agent_thread("tool-result thread")
@@ -1358,7 +1445,7 @@ def test_agent_config_timeout_defaults():
     assert config.agent.first_event_timeout == 120
     assert config.agent.idle_timeout == 90
     assert config.agent.permission_timeout == 120
-    assert config.agent.total_timeout == 600
+    assert config.agent.total_timeout == 300
 
 
 @pytest.mark.asyncio

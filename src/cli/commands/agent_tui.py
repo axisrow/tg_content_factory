@@ -5,6 +5,7 @@ import json
 import logging
 import subprocess
 import sys
+import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -424,6 +425,7 @@ class AgentTuiApp(App):
         self.config = config
         self.agent_manager = agent_manager
         self._stream_worker = None
+        self._session_id = str(uuid.uuid4())
         # Activate interactive permission dialogs for TUI mode
         self.agent_manager.enable_permission_gate()
 
@@ -565,7 +567,7 @@ class AgentTuiApp(App):
         full_text = ""
         try:
             async for chunk in self.agent_manager.chat_stream(
-                thread_id, message, model=model, session_id="tui"
+                thread_id, message, model=model, session_id=self._session_id
             ):
                 raw = chunk.removeprefix("data: ").strip()
                 try:

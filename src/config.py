@@ -54,7 +54,7 @@ class AgentConfig(BaseModel):
     first_event_timeout: int = 120
     idle_timeout: int = 90
     permission_timeout: int = 120
-    total_timeout: int = 600
+    total_timeout: int = 300
 
 
 class SecurityConfig(BaseModel):

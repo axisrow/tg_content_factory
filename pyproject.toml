@@ -40,7 +40,7 @@ dependencies = [
     "cryptography==46.0.5",
     "openpyxl==3.1.5",
     "aiohttp==3.13.3",
-    "numpy==2.4.3",
+    "numpy==2.2.6",
     "langdetect==1.0.9",
     "textual[syntax]>=1.0.0",
     "claude-agent-sdk==0.1.52",

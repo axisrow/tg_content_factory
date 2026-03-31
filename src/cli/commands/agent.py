@@ -73,6 +73,84 @@ async def _test_escaping(db, config) -> None:
     print(f"\nИтого: {passed} passed, {failed} failed из {len(_ESCAPING_CASES)}")
 
 
+async def _test_tools(db, config) -> None:
+    """Send a prompt that guarantees a tool call and verify tool_start/tool_end events arrive."""
+    from src.agent.manager import AgentManager
+
+    mgr = AgentManager(db, config)
+    await mgr.refresh_settings_cache(preflight=True)
+    if not mgr.available:
+        print("Агент не настроен (нет API-ключа) — пропуск.")
+        return
+    mgr.initialize()
+
+    # Prompts ordered from most to least likely to trigger a tool call.
+    # We stop at the first one that succeeds.
+    cases = [
+        ("list_channels", "Перечисли все каналы в базе данных. Используй инструмент list_channels."),
+        ("search_messages", "Найди сообщения в базе данных по слову 'test'. Используй поиск."),
+    ]
+
+    thread_id = await db.create_agent_thread("test-tools")
+    passed = failed = 0
+
+    try:
+        for name, prompt in cases:
+            print(f"  [{name}] ", end="", flush=True)
+            await db.save_agent_message(thread_id, "user", prompt)
+            try:
+                tool_starts: list[str] = []
+                tool_ends: list[str] = []
+                full_text = ""
+                error = None
+
+                async for chunk in mgr.chat_stream(thread_id, prompt):
+                    raw = chunk.removeprefix("data: ").strip()
+                    try:
+                        payload = json.loads(raw)
+                    except Exception:
+                        continue
+                    t = payload.get("type")
+                    if t == "tool_start":
+                        tool_starts.append(payload.get("tool", ""))
+                    elif t == "tool_end":
+                        tool_ends.append(payload.get("tool", ""))
+                    elif "text" in payload:
+                        full_text += payload["text"]
+                    if payload.get("done"):
+                        break
+                    if "error" in payload:
+                        error = payload["error"]
+                        break
+
+                if error:
+                    print(f"FAIL — ошибка агента: {error}")
+                    failed += 1
+                elif not tool_starts:
+                    preview = full_text[:80].replace("\n", "\\n")
+                    print(f"FAIL — tool_start не получен. Ответ: {preview}...")
+                    failed += 1
+                elif tool_starts != tool_ends:
+                    print(f"FAIL — tool_start={tool_starts} не совпадает с tool_end={tool_ends}")
+                    failed += 1
+                else:
+                    tools_str = ", ".join(tool_starts)
+                    print(f"OK — инструменты вызваны: {tools_str}")
+                    passed += 1
+
+                await db.save_agent_message(thread_id, "assistant", full_text)
+
+            except Exception as e:
+                print(f"FAIL — исключение: {e}")
+                failed += 1
+    finally:
+        await db.delete_agent_thread(thread_id)
+
+    print(f"\nИтого: {passed} passed, {failed} failed из {len(cases)}")
+    if failed:
+        sys.exit(1)
+
+
 def run(args: argparse.Namespace) -> None:
     async def _run() -> None:
         removed_log_handler = None
@@ -167,6 +245,8 @@ def run(args: argparse.Namespace) -> None:
                             break
                         if "error" in payload:
                             print(f"\nОшибка: {payload['error']}")
+                            if payload.get("details"):
+                                print(f"Детали: {payload['details']}", file=sys.stderr)
                             await db.delete_last_agent_exchange(thread_id)
                             break
 
@@ -237,6 +317,9 @@ def run(args: argparse.Namespace) -> None:
 
             elif action == "test-escaping":
                 await _test_escaping(db, config)
+
+            elif action == "test-tools":
+                await _test_tools(db, config)
         finally:
             if mgr is not None:
                 try:

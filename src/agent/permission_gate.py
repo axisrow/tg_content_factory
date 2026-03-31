@@ -8,7 +8,7 @@ Flow:
 4. TUI: _stream_response() intercepts the event, shows PermissionDialog, resolves the future.
    Web: JS intercepts the event, shows a menu, POSTs to /agent/threads/.../permission/<request_id>.
 5. choice "once"  → allow this single call (no override stored)
-   choice "session" → store in _session_overrides[(session_id, thread_id)], allow
+   choice "session" → store in _session_overrides[session_id], allow
    choice "deny"  → return _text_response error to the LLM
 """
 
@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class AgentRequestContext:
-    session_id: str                   # "tui" in TUI mode, HTTP session cookie in web
+    session_id: str                   # UUID — unique per TUI launch / web session
     thread_id: int
     queue: asyncio.Queue              # SSE queue for this request
     db_permissions: dict[str, bool]   # from load_tool_permissions_union at call time
@@ -85,18 +85,17 @@ class PermissionGate:
     """Manages runtime permission overrides for agent tool access.
 
     Session overrides are in-memory only, never persisted to DB.
-    Each (session_id, thread_id) pair has its own set of approved tools.
+    Each session_id (UUID) has its own set of approved tools.
     """
 
-    # (session_id, thread_id) → set of tool bare names approved for the session
-    _session_overrides: dict[tuple[str, int], set[str]] = field(default_factory=dict)
+    # session_id → set of tool bare names approved for the session
+    _session_overrides: dict[str, set[str]] = field(default_factory=dict)
     # request_id (UUID str) → Future that resolves with "once"|"session"|"deny"
     _pending: dict[str, asyncio.Future] = field(default_factory=dict)
 
-    def is_session_approved(self, tool_name: str, session_id: str, thread_id: int) -> bool:
-        """True if tool was previously approved for this (session_id, thread_id)."""
-        key = (session_id, thread_id)
-        return tool_name in self._session_overrides.get(key, set())
+    def is_session_approved(self, tool_name: str, session_id: str) -> bool:
+        """True if tool was previously approved for this session_id."""
+        return tool_name in self._session_overrides.get(session_id, set())
 
     async def check(self, tool_name: str, phone: str) -> dict | None:
         """Check if tool/phone is allowed; show permission dialog if not.
@@ -113,8 +112,8 @@ class PermissionGate:
             # No context set (e.g. one-shot CLI mode) — fall through to caller
             return None
 
-        # Already approved for this session+thread?
-        if self.is_session_approved(tool_name, ctx.session_id, ctx.thread_id):
+        # Already approved for this session?
+        if self.is_session_approved(tool_name, ctx.session_id):
             return None
 
         # Ask user
@@ -152,9 +151,8 @@ class PermissionGate:
             self._pending.pop(request_id, None)
 
         if choice == "session":
-            key = (ctx.session_id, ctx.thread_id)
-            self._session_overrides.setdefault(key, set()).add(tool_name)
-            logger.info("Session permission granted: %s for (%s, %d)", tool_name, ctx.session_id, ctx.thread_id)
+            self._session_overrides.setdefault(ctx.session_id, set()).add(tool_name)
+            logger.info("Session permission granted: %s for session %s", tool_name, ctx.session_id)
             return None
         elif choice == "once":
             logger.info("One-time permission granted: %s", tool_name)
@@ -180,12 +178,9 @@ class PermissionGate:
             future.set_result(choice)
         return True
 
-    def clear_session(self, session_id: str, thread_id: int) -> None:
-        """Clear session overrides for a specific (session_id, thread_id) pair.
-
-        Called when switching threads in TUI.
-        """
-        self._session_overrides.pop((session_id, thread_id), None)
+    def clear_session(self, session_id: str) -> None:
+        """Clear session overrides for a specific session_id."""
+        self._session_overrides.pop(session_id, None)
 
 
 def _text_response(text: str) -> dict:

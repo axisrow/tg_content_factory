@@ -633,6 +633,7 @@ def build_parser() -> argparse.ArgumentParser:
     agent_ctx.add_argument("--topic-id", type=int, default=None, dest="topic_id")
 
     agent_sub.add_parser("test-escaping", help="Test agent with special characters")
+    agent_sub.add_parser("test-tools", help="Test that agent tool calls produce tool_start/tool_end events")
 
     photo_parser = sub.add_parser("photo-loader", help="Photo upload automation")
     photo_sub = photo_parser.add_subparsers(dest="photo_loader_action")
