@@ -98,10 +98,10 @@ async def require_phone_permission(db: object, phone: str, tool_name: str) -> di
     if phone in allowed_phones:
         return None  # phone is allowed
     # Phone not allowed — try permission gate first
-    from src.agent.permission_gate import get_gate
+    from src.agent.permission_gate import get_gate, get_request_context
 
     gate = get_gate()
-    if gate is not None:
+    if gate is not None and get_request_context() is not None:
         return await gate.check(tool_name, phone)
     # No gate (one-shot CLI mode) — return text error with allowed phones
     phones_str = ", ".join(allowed_phones)

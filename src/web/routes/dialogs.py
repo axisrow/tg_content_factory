@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 
 @router.get("/", response_class=HTMLResponse)
-async def my_telegram_page(
+async def dialogs_page(
     request: Request,
     phone: str | None = None,
     left: int = 0,
@@ -33,7 +33,7 @@ async def my_telegram_page(
         )
     elapsed_ms = int((time.perf_counter() - started_at) * 1000)
     logger.info(
-        "my_telegram_page: phone=%s accounts=%d dialogs=%d duration_ms=%d",
+        "dialogs_page: phone=%s accounts=%d dialogs=%d duration_ms=%d",
         selected_phone,
         len(accounts),
         len(dialogs),
@@ -41,7 +41,7 @@ async def my_telegram_page(
     )
     return deps.get_templates(request).TemplateResponse(
         request,
-        "my_telegram.html",
+        "dialogs.html",
         {
             "accounts": accounts,
             "selected_phone": selected_phone,
@@ -57,7 +57,7 @@ async def my_telegram_page(
 async def refresh_dialogs(request: Request, phone: str = Form(...)):
     await deps.channel_service(request).get_my_dialogs(phone, refresh=True)
     return RedirectResponse(
-        url=f"/my-telegram/?phone={quote(phone, safe='')}",
+        url=f"/dialogs/?phone={quote(phone, safe='')}",
         status_code=303,
     )
 
@@ -90,7 +90,7 @@ async def cache_clear(request: Request, phone: str = Form("")):
         await db.repos.dialog_cache.clear_all_dialogs()
     redirect_phone = f"?phone={quote(phone, safe='')}" if phone else ""
     return RedirectResponse(
-        url=f"/my-telegram/{redirect_phone}&msg=cache_cleared" if phone else "/my-telegram/?msg=cache_cleared",
+        url=f"/dialogs/{redirect_phone}&msg=cache_cleared" if phone else "/dialogs/?msg=cache_cleared",
         status_code=303,
     )
 
@@ -108,7 +108,7 @@ async def leave_dialogs(request: Request):
     left = sum(1 for v in results.values() if v)
     failed = len(results) - left
     return RedirectResponse(
-        url=f"/my-telegram/?phone={quote(phone, safe='')}&left={left}&failed={failed}",
+        url=f"/dialogs/?phone={quote(phone, safe='')}&left={left}&failed={failed}",
         status_code=303,
     )
 
@@ -122,13 +122,13 @@ async def send_message(request: Request):
     pool = deps.get_pool(request)
     if not phone or not recipient or not text:
         return RedirectResponse(
-            url=f"/my-telegram/?phone={quote(phone, safe='')}&error=missing_fields",
+            url=f"/dialogs/?phone={quote(phone, safe='')}&error=missing_fields",
             status_code=303,
         )
     result = await pool.get_native_client_by_phone(phone)
     if result is None:
         return RedirectResponse(
-            url=f"/my-telegram/?phone={quote(phone, safe='')}&error=client_unavailable",
+            url=f"/dialogs/?phone={quote(phone, safe='')}&error=client_unavailable",
             status_code=303,
         )
     client, _ = result
@@ -137,13 +137,13 @@ async def send_message(request: Request):
         await client.send_message(entity, text)
         logger.info("Message sent from %s to %s", phone, recipient)
         return RedirectResponse(
-            url=f"/my-telegram/?phone={quote(phone, safe='')}&msg=message_sent",
+            url=f"/dialogs/?phone={quote(phone, safe='')}&msg=message_sent",
             status_code=303,
         )
     except Exception as exc:
         logger.exception("Failed to send message: %s", exc)
         return RedirectResponse(
-            url=f"/my-telegram/?phone={quote(phone, safe='')}&error=send_failed",
+            url=f"/dialogs/?phone={quote(phone, safe='')}&error=send_failed",
             status_code=303,
         )
 
@@ -158,13 +158,13 @@ async def edit_message(request: Request):
     pool = deps.get_pool(request)
     if not phone or not chat_id or not message_id or not text:
         return RedirectResponse(
-            url=f"/my-telegram/?phone={quote(phone, safe='')}&error=missing_fields",
+            url=f"/dialogs/?phone={quote(phone, safe='')}&error=missing_fields",
             status_code=303,
         )
     result = await pool.get_native_client_by_phone(phone)
     if result is None:
         return RedirectResponse(
-            url=f"/my-telegram/?phone={quote(phone, safe='')}&error=client_unavailable",
+            url=f"/dialogs/?phone={quote(phone, safe='')}&error=client_unavailable",
             status_code=303,
         )
     client, _ = result
@@ -172,13 +172,13 @@ async def edit_message(request: Request):
         entity = await client.get_entity(chat_id)
         await client.edit_message(entity, int(message_id), text)
         return RedirectResponse(
-            url=f"/my-telegram/?phone={quote(phone, safe='')}&msg=message_edited",
+            url=f"/dialogs/?phone={quote(phone, safe='')}&msg=message_edited",
             status_code=303,
         )
     except Exception as exc:
         logger.exception("Failed to edit message: %s", exc)
         return RedirectResponse(
-            url=f"/my-telegram/?phone={quote(phone, safe='')}&error=edit_failed",
+            url=f"/dialogs/?phone={quote(phone, safe='')}&error=edit_failed",
             status_code=303,
         )
 
@@ -192,19 +192,19 @@ async def delete_message(request: Request):
     pool = deps.get_pool(request)
     if not phone or not chat_id or not message_ids_str:
         return RedirectResponse(
-            url=f"/my-telegram/?phone={quote(phone, safe='')}&error=missing_fields",
+            url=f"/dialogs/?phone={quote(phone, safe='')}&error=missing_fields",
             status_code=303,
         )
     ids = [int(x.strip()) for x in message_ids_str.split(",") if x.strip().isdigit()]
     if not ids:
         return RedirectResponse(
-            url=f"/my-telegram/?phone={quote(phone, safe='')}&error=invalid_ids",
+            url=f"/dialogs/?phone={quote(phone, safe='')}&error=invalid_ids",
             status_code=303,
         )
     result = await pool.get_native_client_by_phone(phone)
     if result is None:
         return RedirectResponse(
-            url=f"/my-telegram/?phone={quote(phone, safe='')}&error=client_unavailable",
+            url=f"/dialogs/?phone={quote(phone, safe='')}&error=client_unavailable",
             status_code=303,
         )
     client, _ = result
@@ -212,13 +212,13 @@ async def delete_message(request: Request):
         entity = await client.get_entity(chat_id)
         await client.delete_messages(entity, ids)
         return RedirectResponse(
-            url=f"/my-telegram/?phone={quote(phone, safe='')}&msg=messages_deleted",
+            url=f"/dialogs/?phone={quote(phone, safe='')}&msg=messages_deleted",
             status_code=303,
         )
     except Exception as exc:
         logger.exception("Failed to delete messages: %s", exc)
         return RedirectResponse(
-            url=f"/my-telegram/?phone={quote(phone, safe='')}&error=delete_failed",
+            url=f"/dialogs/?phone={quote(phone, safe='')}&error=delete_failed",
             status_code=303,
         )
 
@@ -233,19 +233,19 @@ async def forward_messages(request: Request):
     pool = deps.get_pool(request)
     if not phone or not from_chat or not to_chat or not message_ids_str:
         return RedirectResponse(
-            url=f"/my-telegram/?phone={quote(phone, safe='')}&error=missing_fields",
+            url=f"/dialogs/?phone={quote(phone, safe='')}&error=missing_fields",
             status_code=303,
         )
     ids = [int(x.strip()) for x in message_ids_str.split(",") if x.strip().isdigit()]
     if not ids:
         return RedirectResponse(
-            url=f"/my-telegram/?phone={quote(phone, safe='')}&error=invalid_ids",
+            url=f"/dialogs/?phone={quote(phone, safe='')}&error=invalid_ids",
             status_code=303,
         )
     result = await pool.get_native_client_by_phone(phone)
     if result is None:
         return RedirectResponse(
-            url=f"/my-telegram/?phone={quote(phone, safe='')}&error=client_unavailable",
+            url=f"/dialogs/?phone={quote(phone, safe='')}&error=client_unavailable",
             status_code=303,
         )
     client, _ = result
@@ -254,13 +254,13 @@ async def forward_messages(request: Request):
         to_entity = await client.get_entity(to_chat)
         await client.forward_messages(to_entity, ids, from_entity)
         return RedirectResponse(
-            url=f"/my-telegram/?phone={quote(phone, safe='')}&msg=messages_forwarded",
+            url=f"/dialogs/?phone={quote(phone, safe='')}&msg=messages_forwarded",
             status_code=303,
         )
     except Exception as exc:
         logger.exception("Failed to forward messages: %s", exc)
         return RedirectResponse(
-            url=f"/my-telegram/?phone={quote(phone, safe='')}&error=forward_failed",
+            url=f"/dialogs/?phone={quote(phone, safe='')}&error=forward_failed",
             status_code=303,
         )
 
@@ -275,24 +275,24 @@ async def pin_message(request: Request):
     pool = deps.get_pool(request)
     if not phone or not chat_id or not message_id:
         return RedirectResponse(
-            url=f"/my-telegram/?phone={quote(phone, safe='')}&error=missing_fields", status_code=303
+            url=f"/dialogs/?phone={quote(phone, safe='')}&error=missing_fields", status_code=303
         )
     result = await pool.get_native_client_by_phone(phone)
     if result is None:
         return RedirectResponse(
-            url=f"/my-telegram/?phone={quote(phone, safe='')}&error=client_unavailable", status_code=303
+            url=f"/dialogs/?phone={quote(phone, safe='')}&error=client_unavailable", status_code=303
         )
     client, _ = result
     try:
         entity = await client.get_entity(chat_id)
         await client.pin_message(entity, int(message_id), notify=notify)
         return RedirectResponse(
-            url=f"/my-telegram/?phone={quote(phone, safe='')}&msg=message_pinned", status_code=303
+            url=f"/dialogs/?phone={quote(phone, safe='')}&msg=message_pinned", status_code=303
         )
     except Exception as exc:
         logger.exception("Failed to pin message: %s", exc)
         return RedirectResponse(
-            url=f"/my-telegram/?phone={quote(phone, safe='')}&error=pin_failed", status_code=303
+            url=f"/dialogs/?phone={quote(phone, safe='')}&error=pin_failed", status_code=303
         )
 
 
@@ -306,24 +306,24 @@ async def unpin_message(request: Request):
     pool = deps.get_pool(request)
     if not phone or not chat_id:
         return RedirectResponse(
-            url=f"/my-telegram/?phone={quote(phone, safe='')}&error=missing_fields", status_code=303
+            url=f"/dialogs/?phone={quote(phone, safe='')}&error=missing_fields", status_code=303
         )
     result = await pool.get_native_client_by_phone(phone)
     if result is None:
         return RedirectResponse(
-            url=f"/my-telegram/?phone={quote(phone, safe='')}&error=client_unavailable", status_code=303
+            url=f"/dialogs/?phone={quote(phone, safe='')}&error=client_unavailable", status_code=303
         )
     client, _ = result
     try:
         entity = await client.get_entity(chat_id)
         await client.unpin_message(entity, message_id)
         return RedirectResponse(
-            url=f"/my-telegram/?phone={quote(phone, safe='')}&msg=message_unpinned", status_code=303
+            url=f"/dialogs/?phone={quote(phone, safe='')}&msg=message_unpinned", status_code=303
         )
     except Exception as exc:
         logger.exception("Failed to unpin message: %s", exc)
         return RedirectResponse(
-            url=f"/my-telegram/?phone={quote(phone, safe='')}&error=unpin_failed", status_code=303
+            url=f"/dialogs/?phone={quote(phone, safe='')}&error=unpin_failed", status_code=303
         )
 
 
@@ -341,12 +341,12 @@ async def download_media(request: Request):
     pool = deps.get_pool(request)
     if not phone or not chat_id or not message_id:
         return RedirectResponse(
-            url=f"/my-telegram/?phone={quote(phone, safe='')}&error=missing_fields", status_code=303
+            url=f"/dialogs/?phone={quote(phone, safe='')}&error=missing_fields", status_code=303
         )
     result = await pool.get_native_client_by_phone(phone)
     if result is None:
         return RedirectResponse(
-            url=f"/my-telegram/?phone={quote(phone, safe='')}&error=client_unavailable", status_code=303
+            url=f"/dialogs/?phone={quote(phone, safe='')}&error=client_unavailable", status_code=303
         )
     client, _ = result
     try:
@@ -357,24 +357,24 @@ async def download_media(request: Request):
             break
         if msg is None:
             return RedirectResponse(
-                url=f"/my-telegram/?phone={quote(phone, safe='')}&error=message_not_found", status_code=303
+                url=f"/dialogs/?phone={quote(phone, safe='')}&error=message_not_found", status_code=303
             )
         output_dir = pathlib.Path(__file__).resolve().parents[3] / "data" / "downloads"
         path = await client.download_media(msg, file=str(output_dir))
         if not path:
             return RedirectResponse(
-                url=f"/my-telegram/?phone={quote(phone, safe='')}&error=no_media", status_code=303
+                url=f"/dialogs/?phone={quote(phone, safe='')}&error=no_media", status_code=303
             )
         resolved = pathlib.Path(path).resolve()
         if not resolved.is_relative_to(output_dir.resolve()):
             return RedirectResponse(
-                url=f"/my-telegram/?phone={quote(phone, safe='')}&error=path_escape", status_code=303
+                url=f"/dialogs/?phone={quote(phone, safe='')}&error=path_escape", status_code=303
             )
         return FileResponse(path=path, filename=os.path.basename(path))
     except Exception as exc:
         logger.exception("Failed to download media: %s", exc)
         return RedirectResponse(
-            url=f"/my-telegram/?phone={quote(phone, safe='')}&error=download_failed", status_code=303
+            url=f"/dialogs/?phone={quote(phone, safe='')}&error=download_failed", status_code=303
         )
 
 
@@ -421,12 +421,12 @@ async def edit_admin(request: Request):
     pool = deps.get_pool(request)
     if not phone or not chat_id or not user_id:
         return RedirectResponse(
-            url=f"/my-telegram/?phone={quote(phone, safe='')}&error=missing_fields", status_code=303
+            url=f"/dialogs/?phone={quote(phone, safe='')}&error=missing_fields", status_code=303
         )
     result = await pool.get_native_client_by_phone(phone)
     if result is None:
         return RedirectResponse(
-            url=f"/my-telegram/?phone={quote(phone, safe='')}&error=client_unavailable", status_code=303
+            url=f"/dialogs/?phone={quote(phone, safe='')}&error=client_unavailable", status_code=303
         )
     client, _ = result
     try:
@@ -437,12 +437,12 @@ async def edit_admin(request: Request):
             kwargs["title"] = title
         await client.edit_admin(entity, user, **kwargs)
         return RedirectResponse(
-            url=f"/my-telegram/?phone={quote(phone, safe='')}&msg=admin_updated", status_code=303
+            url=f"/dialogs/?phone={quote(phone, safe='')}&msg=admin_updated", status_code=303
         )
     except Exception as exc:
         logger.exception("Failed to edit admin: %s", exc)
         return RedirectResponse(
-            url=f"/my-telegram/?phone={quote(phone, safe='')}&error=edit_admin_failed", status_code=303
+            url=f"/dialogs/?phone={quote(phone, safe='')}&error=edit_admin_failed", status_code=303
         )
 
 
@@ -460,16 +460,16 @@ async def edit_permissions(request: Request):
     pool = deps.get_pool(request)
     if send_messages_str is None and send_media_str is None:
         return RedirectResponse(
-            url=f"/my-telegram/?phone={quote(phone, safe='')}&error=no_permission_flags", status_code=303
+            url=f"/dialogs/?phone={quote(phone, safe='')}&error=no_permission_flags", status_code=303
         )
     if not phone or not chat_id or not user_id:
         return RedirectResponse(
-            url=f"/my-telegram/?phone={quote(phone, safe='')}&error=missing_fields", status_code=303
+            url=f"/dialogs/?phone={quote(phone, safe='')}&error=missing_fields", status_code=303
         )
     result = await pool.get_native_client_by_phone(phone)
     if result is None:
         return RedirectResponse(
-            url=f"/my-telegram/?phone={quote(phone, safe='')}&error=client_unavailable", status_code=303
+            url=f"/dialogs/?phone={quote(phone, safe='')}&error=client_unavailable", status_code=303
         )
     client, _ = result
     try:
@@ -483,12 +483,12 @@ async def edit_permissions(request: Request):
             kwargs["send_media"] = send_media_str in ("1", "true", "on")
         await client.edit_permissions(entity, user, **kwargs)
         return RedirectResponse(
-            url=f"/my-telegram/?phone={quote(phone, safe='')}&msg=permissions_updated", status_code=303
+            url=f"/dialogs/?phone={quote(phone, safe='')}&msg=permissions_updated", status_code=303
         )
     except Exception as exc:
         logger.exception("Failed to edit permissions: %s", exc)
         return RedirectResponse(
-            url=f"/my-telegram/?phone={quote(phone, safe='')}&error=edit_permissions_failed", status_code=303
+            url=f"/dialogs/?phone={quote(phone, safe='')}&error=edit_permissions_failed", status_code=303
         )
 
 
@@ -501,12 +501,12 @@ async def kick_participant(request: Request):
     pool = deps.get_pool(request)
     if not phone or not chat_id or not user_id:
         return RedirectResponse(
-            url=f"/my-telegram/?phone={quote(phone, safe='')}&error=missing_fields", status_code=303
+            url=f"/dialogs/?phone={quote(phone, safe='')}&error=missing_fields", status_code=303
         )
     result = await pool.get_native_client_by_phone(phone)
     if result is None:
         return RedirectResponse(
-            url=f"/my-telegram/?phone={quote(phone, safe='')}&error=client_unavailable", status_code=303
+            url=f"/dialogs/?phone={quote(phone, safe='')}&error=client_unavailable", status_code=303
         )
     client, _ = result
     try:
@@ -514,12 +514,12 @@ async def kick_participant(request: Request):
         user = await client.get_entity(user_id)
         await client.kick_participant(entity, user)
         return RedirectResponse(
-            url=f"/my-telegram/?phone={quote(phone, safe='')}&msg=user_kicked", status_code=303
+            url=f"/dialogs/?phone={quote(phone, safe='')}&msg=user_kicked", status_code=303
         )
     except Exception as exc:
         logger.exception("Failed to kick participant: %s", exc)
         return RedirectResponse(
-            url=f"/my-telegram/?phone={quote(phone, safe='')}&error=kick_failed", status_code=303
+            url=f"/dialogs/?phone={quote(phone, safe='')}&error=kick_failed", status_code=303
         )
 
 
@@ -575,24 +575,24 @@ async def archive_dialog(request: Request):
     pool = deps.get_pool(request)
     if not phone or not chat_id:
         return RedirectResponse(
-            url=f"/my-telegram/?phone={quote(phone, safe='')}&error=missing_fields", status_code=303
+            url=f"/dialogs/?phone={quote(phone, safe='')}&error=missing_fields", status_code=303
         )
     result = await pool.get_native_client_by_phone(phone)
     if result is None:
         return RedirectResponse(
-            url=f"/my-telegram/?phone={quote(phone, safe='')}&error=client_unavailable", status_code=303
+            url=f"/dialogs/?phone={quote(phone, safe='')}&error=client_unavailable", status_code=303
         )
     client, _ = result
     try:
         entity = await client.get_entity(chat_id)
         await client.edit_folder(entity, 1)
         return RedirectResponse(
-            url=f"/my-telegram/?phone={quote(phone, safe='')}&msg=dialog_archived", status_code=303
+            url=f"/dialogs/?phone={quote(phone, safe='')}&msg=dialog_archived", status_code=303
         )
     except Exception as exc:
         logger.exception("Failed to archive dialog: %s", exc)
         return RedirectResponse(
-            url=f"/my-telegram/?phone={quote(phone, safe='')}&error=archive_failed", status_code=303
+            url=f"/dialogs/?phone={quote(phone, safe='')}&error=archive_failed", status_code=303
         )
 
 
@@ -604,24 +604,24 @@ async def unarchive_dialog(request: Request):
     pool = deps.get_pool(request)
     if not phone or not chat_id:
         return RedirectResponse(
-            url=f"/my-telegram/?phone={quote(phone, safe='')}&error=missing_fields", status_code=303
+            url=f"/dialogs/?phone={quote(phone, safe='')}&error=missing_fields", status_code=303
         )
     result = await pool.get_native_client_by_phone(phone)
     if result is None:
         return RedirectResponse(
-            url=f"/my-telegram/?phone={quote(phone, safe='')}&error=client_unavailable", status_code=303
+            url=f"/dialogs/?phone={quote(phone, safe='')}&error=client_unavailable", status_code=303
         )
     client, _ = result
     try:
         entity = await client.get_entity(chat_id)
         await client.edit_folder(entity, 0)
         return RedirectResponse(
-            url=f"/my-telegram/?phone={quote(phone, safe='')}&msg=dialog_unarchived", status_code=303
+            url=f"/dialogs/?phone={quote(phone, safe='')}&msg=dialog_unarchived", status_code=303
         )
     except Exception as exc:
         logger.exception("Failed to unarchive dialog: %s", exc)
         return RedirectResponse(
-            url=f"/my-telegram/?phone={quote(phone, safe='')}&error=unarchive_failed", status_code=303
+            url=f"/dialogs/?phone={quote(phone, safe='')}&error=unarchive_failed", status_code=303
         )
 
 
@@ -635,24 +635,24 @@ async def mark_read(request: Request):
     pool = deps.get_pool(request)
     if not phone or not chat_id:
         return RedirectResponse(
-            url=f"/my-telegram/?phone={quote(phone, safe='')}&error=missing_fields", status_code=303
+            url=f"/dialogs/?phone={quote(phone, safe='')}&error=missing_fields", status_code=303
         )
     result = await pool.get_native_client_by_phone(phone)
     if result is None:
         return RedirectResponse(
-            url=f"/my-telegram/?phone={quote(phone, safe='')}&error=client_unavailable", status_code=303
+            url=f"/dialogs/?phone={quote(phone, safe='')}&error=client_unavailable", status_code=303
         )
     client, _ = result
     try:
         entity = await client.get_entity(chat_id)
         await client.send_read_acknowledge(entity, max_id=max_id)
         return RedirectResponse(
-            url=f"/my-telegram/?phone={quote(phone, safe='')}&msg=messages_marked_read", status_code=303
+            url=f"/dialogs/?phone={quote(phone, safe='')}&msg=messages_marked_read", status_code=303
         )
     except Exception as exc:
         logger.exception("Failed to mark messages as read: %s", exc)
         return RedirectResponse(
-            url=f"/my-telegram/?phone={quote(phone, safe='')}&error=mark_read_failed", status_code=303
+            url=f"/dialogs/?phone={quote(phone, safe='')}&error=mark_read_failed", status_code=303
         )
 
 
@@ -662,7 +662,7 @@ async def create_channel_page(request: Request):
     accounts = sorted(pool.clients.keys())
     return deps.get_templates(request).TemplateResponse(
         request,
-        "my_telegram_create_channel.html",
+        "dialogs_create_channel.html",
         {"accounts": accounts},
     )
 
@@ -679,7 +679,7 @@ async def create_channel(
     client = pool.clients.get(phone)
     if client is None:
         return RedirectResponse(
-            url="/my-telegram/create-channel?error=no_client",
+            url="/dialogs/create-channel?error=no_client",
             status_code=303,
         )
     try:
@@ -714,7 +714,7 @@ async def create_channel(
         invite_link = f"https://t.me/{channel_username}" if channel_username else ""
         return deps.get_templates(request).TemplateResponse(
             request,
-            "my_telegram_create_channel.html",
+            "dialogs_create_channel.html",
             {
                 "accounts": sorted(pool.clients.keys()),
                 "created": True,
@@ -728,7 +728,7 @@ async def create_channel(
         logger.exception("Failed to create channel: %s", exc)
         return deps.get_templates(request).TemplateResponse(
             request,
-            "my_telegram_create_channel.html",
+            "dialogs_create_channel.html",
             {
                 "accounts": sorted(pool.clients.keys()),
                 "error": str(exc)[:200],

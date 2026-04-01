@@ -13,8 +13,8 @@
     ```
 
 === "Web"
-    `POST /my-telegram/photos/send` · `POST /my-telegram/photos/schedule`
-    `POST /my-telegram/photos/batch` · `POST /my-telegram/photos/run-due`
+    `POST /dialogs/photos/send` · `POST /dialogs/photos/schedule`
+    `POST /dialogs/photos/batch` · `POST /dialogs/photos/run-due`
 
 ## Управление батчами
 
@@ -25,7 +25,7 @@
     ```
 
 === "Web"
-    `POST /my-telegram/photos/items/{item_id}/cancel`
+    `POST /dialogs/photos/items/{item_id}/cancel`
 
 ## Авто-загрузка
 
@@ -39,8 +39,8 @@
     ```
 
 === "Web"
-    `POST /my-telegram/photos/auto` · `POST /my-telegram/photos/auto/{job_id}/toggle`
-    `POST /my-telegram/photos/auto/{job_id}/delete`
+    `POST /dialogs/photos/auto` · `POST /dialogs/photos/auto/{job_id}/toggle`
+    `POST /dialogs/photos/auto/{job_id}/delete`
 
 ## Просмотр диалогов
 
@@ -51,4 +51,4 @@
     ```
 
 === "Web"
-    `GET /my-telegram/photos/` · `POST /my-telegram/photos/refresh`
+    `GET /dialogs/photos/` · `POST /dialogs/photos/refresh`

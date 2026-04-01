@@ -1,4 +1,4 @@
-"""Agent tools for My Telegram — dialogs, topics, channel creation."""
+"""Agent tools for Dialogs, topics, and channel creation."""
 
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ def register(db, client_pool, embedding_service, **kwargs):
     tools = []
 
     @tool(
-        "search_my_telegram",
+        "search_dialogs",
         "Search your Telegram account dialogs — channels, groups, private chats, bots, saved messages. "
         "This does NOT search message content (use search_messages for that). "
         "Params: search — find by @username, t.me/username, https://t.me/username, numeric ID, "
@@ -43,14 +43,14 @@ def register(db, client_pool, embedding_service, **kwargs):
             "limit": Annotated[int, "Максимальное количество результатов"],
         },
     )
-    async def search_my_telegram(args):
+    async def search_dialogs(args):
         pool_gate = require_pool(client_pool, "Поиск диалогов")
         if pool_gate:
             return pool_gate
         phone, err = await resolve_phone(db, args.get("phone", ""))
         if err:
             return err
-        perm_gate = await require_phone_permission(db, phone, "search_my_telegram")
+        perm_gate = await require_phone_permission(db, phone, "search_dialogs")
         if perm_gate:
             return perm_gate
         try:
@@ -114,7 +114,7 @@ def register(db, client_pool, embedding_service, **kwargs):
         except Exception as e:
             return _text_response(f"Ошибка получения диалогов: {e}")
 
-    tools.append(search_my_telegram)
+    tools.append(search_dialogs)
 
     @tool(
         "refresh_dialogs",
@@ -146,7 +146,7 @@ def register(db, client_pool, embedding_service, **kwargs):
     @tool(
         "leave_dialogs",
         "⚠️ DANGEROUS: Leave (unsubscribe from) Telegram channels/groups. "
-        "dialog_ids = comma-separated Telegram chat IDs (get from search_my_telegram). "
+        "dialog_ids = comma-separated Telegram chat IDs (get from search_dialogs). "
         "Always ask user for confirmation first.",
         {
             "phone": Annotated[str, "Номер телефона аккаунта (например +79001234567)"],
@@ -249,7 +249,7 @@ def register(db, client_pool, embedding_service, **kwargs):
     @tool(
         "get_forum_topics",
         "Get forum topics for a supergroup with topics enabled. "
-        "channel_id = Telegram numeric ID (from list_channels or search_my_telegram).",
+        "channel_id = Telegram numeric ID (from list_channels or search_dialogs).",
         {"channel_id": Annotated[int, "Числовой Telegram ID канала"]},
     )
     async def get_forum_topics(args):
@@ -326,7 +326,7 @@ def register(db, client_pool, embedding_service, **kwargs):
         "Resolve any Telegram entity by @username, t.me/ link, or numeric ID via live Telegram API. "
         "Returns type (dm/bot/channel/group/supergroup), id, title, and username. "
         "Use when you need to identify what @username is (user, bot, channel, group) "
-        "or when search_my_telegram cannot find a dialog by username. "
+        "or when search_dialogs cannot find a dialog by username. "
         "Does NOT require the entity to be in your dialogs. "
         "Params: identifier — @username, t.me/username, or numeric ID; phone — preferred account (optional).",
         {

@@ -37,37 +37,37 @@ def _ns(**kwargs) -> argparse.Namespace:
 
 
 # ---------------------------------------------------------------------------
-# my_telegram command
+# dialogs command
 # ---------------------------------------------------------------------------
 
 
 class TestMyTelegramCommand:
-    """Tests for my-telegram CLI command."""
+    """Tests for dialogs CLI command."""
 
     def test_list_no_accounts(self, cli_env_with_pool, capsys):
-        """Test my-telegram list when no accounts connected."""
+        """Test dialogs list when no accounts connected."""
         cli_env, fake_pool = cli_env_with_pool
         fake_pool.clients = {}
 
-        from src.cli.commands.my_telegram import run
+        from src.cli.commands.dialogs import run
 
-        run(_ns(my_telegram_action="list", phone=None))
+        run(_ns(dialogs_action="list", phone=None))
         out = capsys.readouterr().out
         assert "No connected accounts" in out
 
     def test_list_account_not_connected(self, cli_env_with_pool, capsys):
-        """Test my-telegram list when specified account not connected."""
+        """Test dialogs list when specified account not connected."""
         cli_env, fake_pool = cli_env_with_pool
         fake_pool.clients = {"+70001112233": AsyncMock()}
 
-        from src.cli.commands.my_telegram import run
+        from src.cli.commands.dialogs import run
 
-        run(_ns(my_telegram_action="list", phone="+70009999999"))
+        run(_ns(dialogs_action="list", phone="+70009999999"))
         out = capsys.readouterr().out
         assert "not connected" in out
 
     def test_list_success(self, cli_env_with_pool, capsys):
-        """Test my-telegram list with dialogs."""
+        """Test dialogs list with dialogs."""
         cli_env, fake_pool = cli_env_with_pool
         fake_pool.clients = {"+70001112233": AsyncMock()}
 
@@ -91,9 +91,9 @@ class TestMyTelegramCommand:
         with patch.object(
             ChannelService, "get_my_dialogs", new_callable=AsyncMock, return_value=mock_dialogs
         ):
-            from src.cli.commands.my_telegram import run
+            from src.cli.commands.dialogs import run
 
-            run(_ns(my_telegram_action="list", phone="+70001112233"))
+            run(_ns(dialogs_action="list", phone="+70001112233"))
 
         out = capsys.readouterr().out
         assert "Test Channel" in out
@@ -102,7 +102,7 @@ class TestMyTelegramCommand:
         assert "Yes" in out
 
     def test_list_no_dialogs(self, cli_env_with_pool, capsys):
-        """Test my-telegram list when no dialogs found."""
+        """Test dialogs list when no dialogs found."""
         cli_env, fake_pool = cli_env_with_pool
         fake_pool.clients = {"+70001112233": AsyncMock()}
 
@@ -111,15 +111,15 @@ class TestMyTelegramCommand:
         with patch.object(
             ChannelService, "get_my_dialogs", new_callable=AsyncMock, return_value=[]
         ):
-            from src.cli.commands.my_telegram import run
+            from src.cli.commands.dialogs import run
 
-            run(_ns(my_telegram_action="list", phone="+70001112233"))
+            run(_ns(dialogs_action="list", phone="+70001112233"))
 
         out = capsys.readouterr().out
         assert "No dialogs found" in out
 
     def test_list_uses_first_account_by_default(self, cli_env_with_pool, capsys):
-        """Test my-telegram list uses first available account when phone not specified."""
+        """Test dialogs list uses first available account when phone not specified."""
         cli_env, fake_pool = cli_env_with_pool
         fake_pool.clients = {
             "+70001112233": AsyncMock(),
@@ -131,37 +131,37 @@ class TestMyTelegramCommand:
         with patch.object(
             ChannelService, "get_my_dialogs", new_callable=AsyncMock, return_value=[]
         ) as mock_get:
-            from src.cli.commands.my_telegram import run
+            from src.cli.commands.dialogs import run
 
-            run(_ns(my_telegram_action="list", phone=None))
+            run(_ns(dialogs_action="list", phone=None))
 
         # Should use first account alphabetically
         mock_get.assert_awaited_once_with("+70001112233")
 
     def test_leave_no_accounts(self, cli_env_with_pool, capsys):
-        """Test my-telegram leave when no accounts connected."""
+        """Test dialogs leave when no accounts connected."""
         cli_env, fake_pool = cli_env_with_pool
         fake_pool.clients = {}
 
-        from src.cli.commands.my_telegram import run
+        from src.cli.commands.dialogs import run
 
-        run(_ns(my_telegram_action="leave", phone=None, dialog_ids=["-100123"], yes=True))
+        run(_ns(dialogs_action="leave", phone=None, dialog_ids=["-100123"], yes=True))
         out = capsys.readouterr().out
         assert "No connected accounts" in out
 
     def test_leave_account_not_connected(self, cli_env_with_pool, capsys):
-        """Test my-telegram leave when specified account not connected."""
+        """Test dialogs leave when specified account not connected."""
         cli_env, fake_pool = cli_env_with_pool
         fake_pool.clients = {"+10001112233": AsyncMock()}
 
-        from src.cli.commands.my_telegram import run
+        from src.cli.commands.dialogs import run
 
-        run(_ns(my_telegram_action="leave", phone="+10009999999", dialog_ids=["-100123"], yes=True))
+        run(_ns(dialogs_action="leave", phone="+10009999999", dialog_ids=["-100123"], yes=True))
         out = capsys.readouterr().out
         assert "not connected" in out
 
     def test_leave_invalid_ids(self, cli_env_with_pool, capsys):
-        """Test my-telegram leave with non-numeric dialog IDs."""
+        """Test dialogs leave with non-numeric dialog IDs."""
         cli_env, fake_pool = cli_env_with_pool
         fake_pool.clients = {"+10001112233": AsyncMock()}
 
@@ -170,11 +170,11 @@ class TestMyTelegramCommand:
         with patch.object(
             ChannelService, "get_my_dialogs", new_callable=AsyncMock, return_value=[]
         ):
-            from src.cli.commands.my_telegram import run
+            from src.cli.commands.dialogs import run
 
             run(
                 _ns(
-                    my_telegram_action="leave",
+                    dialogs_action="leave",
                     phone="+10001112233",
                     dialog_ids=["notanid"],
                     yes=True,
@@ -186,7 +186,7 @@ class TestMyTelegramCommand:
         assert "No valid dialog IDs" in out
 
     def test_leave_success_with_yes_flag(self, cli_env_with_pool, capsys):
-        """Test my-telegram leave succeeds when --yes skips confirmation."""
+        """Test dialogs leave succeeds when --yes skips confirmation."""
         cli_env, fake_pool = cli_env_with_pool
         fake_pool.clients = {"+10001112233": AsyncMock()}
 
@@ -212,11 +212,11 @@ class TestMyTelegramCommand:
                 return_value={-100123456: True},
             ),
         ):
-            from src.cli.commands.my_telegram import run
+            from src.cli.commands.dialogs import run
 
             run(
                 _ns(
-                    my_telegram_action="leave",
+                    dialogs_action="leave",
                     phone="+10001112233",
                     dialog_ids=["-100123456"],
                     yes=True,
@@ -228,7 +228,7 @@ class TestMyTelegramCommand:
         assert "Done:" in out
 
     def test_leave_comma_separated_ids(self, cli_env_with_pool, capsys):
-        """Test my-telegram leave accepts comma-separated dialog IDs in a single arg."""
+        """Test dialogs leave accepts comma-separated dialog IDs in a single arg."""
         cli_env, fake_pool = cli_env_with_pool
         fake_pool.clients = {"+10001112233": AsyncMock()}
 
@@ -243,11 +243,11 @@ class TestMyTelegramCommand:
                 return_value={-100111: True, -100222: False},
             ) as mock_leave,
         ):
-            from src.cli.commands.my_telegram import run
+            from src.cli.commands.dialogs import run
 
             run(
                 _ns(
-                    my_telegram_action="leave",
+                    dialogs_action="leave",
                     phone="+10001112233",
                     dialog_ids=["-100111,-100222"],
                     yes=True,
@@ -259,7 +259,7 @@ class TestMyTelegramCommand:
         assert (-100222, "channel") in called_dialogs
 
     def test_leave_aborted_on_no_confirmation(self, cli_env_with_pool, capsys):
-        """Test my-telegram leave aborts when user answers 'n' to confirmation."""
+        """Test dialogs leave aborts when user answers 'n' to confirmation."""
         cli_env, fake_pool = cli_env_with_pool
         fake_pool.clients = {"+10001112233": AsyncMock()}
 
@@ -280,11 +280,11 @@ class TestMyTelegramCommand:
             ),
             patch("builtins.input", return_value="n"),
         ):
-            from src.cli.commands.my_telegram import run
+            from src.cli.commands.dialogs import run
 
             run(
                 _ns(
-                    my_telegram_action="leave",
+                    dialogs_action="leave",
                     phone="+10001112233",
                     dialog_ids=["-100123456"],
                     yes=False,
@@ -295,7 +295,7 @@ class TestMyTelegramCommand:
         assert "Aborted" in out
 
     def test_leave_confirms_on_yes(self, cli_env_with_pool, capsys):
-        """Test my-telegram leave proceeds when user answers 'y' to confirmation."""
+        """Test dialogs leave proceeds when user answers 'y' to confirmation."""
         cli_env, fake_pool = cli_env_with_pool
         fake_pool.clients = {"+10001112233": AsyncMock()}
 
@@ -322,11 +322,11 @@ class TestMyTelegramCommand:
             ),
             patch("builtins.input", return_value="y"),
         ):
-            from src.cli.commands.my_telegram import run
+            from src.cli.commands.dialogs import run
 
             run(
                 _ns(
-                    my_telegram_action="leave",
+                    dialogs_action="leave",
                     phone="+10001112233",
                     dialog_ids=["-100123456"],
                     yes=False,
@@ -337,7 +337,7 @@ class TestMyTelegramCommand:
         assert "Done:" in out
 
     def test_leave_uses_first_account_by_default(self, cli_env_with_pool, capsys):
-        """Test my-telegram leave uses first available account when phone not specified."""
+        """Test dialogs leave uses first available account when phone not specified."""
         cli_env, fake_pool = cli_env_with_pool
         fake_pool.clients = {
             "+10001112233": AsyncMock(),
@@ -355,9 +355,9 @@ class TestMyTelegramCommand:
                 return_value={-100123456: True},
             ) as mock_leave,
         ):
-            from src.cli.commands.my_telegram import run
+            from src.cli.commands.dialogs import run
 
-            run(_ns(my_telegram_action="leave", phone=None, dialog_ids=["-100123456"], yes=True))
+            run(_ns(dialogs_action="leave", phone=None, dialog_ids=["-100123456"], yes=True))
 
         # First account alphabetically should be used
         mock_leave.assert_awaited_once()
@@ -365,7 +365,7 @@ class TestMyTelegramCommand:
         assert called_phone == "+10001112233"
 
     def test_leave_dm_uses_dm_type(self, cli_env_with_pool, capsys):
-        """Test my-telegram leave infers 'dm' type for positive IDs not in cache."""
+        """Test dialogs leave infers 'dm' type for positive IDs not in cache."""
         cli_env, fake_pool = cli_env_with_pool
         fake_pool.clients = {"+10001112233": AsyncMock()}
 
@@ -380,11 +380,11 @@ class TestMyTelegramCommand:
                 return_value={123456: True},
             ) as mock_leave,
         ):
-            from src.cli.commands.my_telegram import run
+            from src.cli.commands.dialogs import run
 
             run(
                 _ns(
-                    my_telegram_action="leave",
+                    dialogs_action="leave",
                     phone="+10001112233",
                     dialog_ids=["123456"],
                     yes=True,
@@ -400,9 +400,9 @@ class TestMyTelegramCommand:
         fake_pool.invalidate_dialogs_cache = MagicMock()
         fake_pool._dialogs_cache = {}
 
-        from src.cli.commands.my_telegram import run
+        from src.cli.commands.dialogs import run
 
-        run(_ns(my_telegram_action="cache-clear", phone=None))
+        run(_ns(dialogs_action="cache-clear", phone=None))
         out = capsys.readouterr().out
         fake_pool.invalidate_dialogs_cache.assert_called_once_with()
         assert "all accounts" in out
@@ -413,9 +413,9 @@ class TestMyTelegramCommand:
         fake_pool.invalidate_dialogs_cache = MagicMock()
         fake_pool._dialogs_cache = {}
 
-        from src.cli.commands.my_telegram import run
+        from src.cli.commands.dialogs import run
 
-        run(_ns(my_telegram_action="cache-clear", phone="+10001112233"))
+        run(_ns(dialogs_action="cache-clear", phone="+10001112233"))
         out = capsys.readouterr().out
         fake_pool.invalidate_dialogs_cache.assert_called_once_with("+10001112233")
         assert "+10001112233" in out
@@ -426,9 +426,9 @@ class TestMyTelegramCommand:
         fake_pool._dialogs_cache = {}
         fake_pool._dialogs_cache_ttl_sec = 60.0
 
-        from src.cli.commands.my_telegram import run
+        from src.cli.commands.dialogs import run
 
-        run(_ns(my_telegram_action="cache-status"))
+        run(_ns(dialogs_action="cache-status"))
         out = capsys.readouterr().out
         assert "No cached dialogs" in out
 
@@ -454,9 +454,9 @@ class TestMyTelegramCommand:
         ]
         asyncio.run(db.repos.dialog_cache.replace_dialogs("+10001112233", dialogs))
 
-        from src.cli.commands.my_telegram import run
+        from src.cli.commands.dialogs import run
 
-        run(_ns(my_telegram_action="cache-status"))
+        run(_ns(dialogs_action="cache-status"))
         out = capsys.readouterr().out
         assert "+10001112233" in out
         assert "1" in out  # 1 DB entry

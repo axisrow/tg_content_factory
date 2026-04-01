@@ -31,21 +31,32 @@ async def pool_mock(base_app):
 @pytest.mark.asyncio
 async def test_photo_loader_page_no_phone(client):
     """Test photo loader page without phone param."""
-    resp = await client.get("/my-telegram/photos")
+    resp = await client.get("/dialogs/photos")
     assert resp.status_code == 200
 
 
 @pytest.mark.asyncio
 async def test_photo_loader_page_with_phone(client):
     """Test photo loader page with phone param."""
-    resp = await client.get("/my-telegram/photos?phone=%2B1234567890")
+    resp = await client.get("/dialogs/photos?phone=%2B1234567890")
     assert resp.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_legacy_photo_loader_route_redirects_to_dialogs(client):
+    legacy_prefix = "/my" + "-telegram"
+    resp = await client.get(
+        f"{legacy_prefix}/photos?phone=%2B1234567890",
+        follow_redirects=False,
+    )
+    assert resp.status_code == 308
+    assert resp.headers["location"] == "/dialogs/photos?phone=%2B1234567890"
 
 
 @pytest.mark.asyncio
 async def test_photo_loader_page_shows_no_jobs(client, db):
     """Test photo loader page shows no auto jobs."""
-    resp = await client.get("/my-telegram/photos?phone=%2B1234567890")
+    resp = await client.get("/dialogs/photos?phone=%2B1234567890")
     assert resp.status_code == 200
 
 
@@ -55,7 +66,7 @@ async def test_photo_refresh_redirects(client):
     with patch("src.web.routes.photo_loader.deps.channel_service") as mock_svc:
         mock_svc.return_value.get_my_dialogs = AsyncMock(return_value=[])
         resp = await client.post(
-            "/my-telegram/photos/refresh",
+            "/dialogs/photos/refresh",
             data={"phone": "+1234567890"},
             follow_redirects=False,
         )
@@ -75,7 +86,7 @@ async def test_photo_send_missing_target(client):
 
         file_content = BytesIO(b"fake image")
         resp = await client.post(
-            "/my-telegram/photos/send",
+            "/dialogs/photos/send",
             data={"phone": "+1234567890"},
             files={"photos": ("test.jpg", file_content, "image/jpeg")},
             follow_redirects=False,
@@ -96,7 +107,7 @@ async def test_photo_send_invalid_target_id(client):
         mock_svc.return_value.get_my_dialogs = AsyncMock(return_value=[])
         file_content = BytesIO(b"fake image")
         resp = await client.post(
-            "/my-telegram/photos/send",
+            "/dialogs/photos/send",
             data={
                 "phone": "+1234567890",
                 "target_dialog_id": "not_a_number",
@@ -125,7 +136,7 @@ async def test_photo_send_no_files(client):
         mock_task_svc.return_value.send_now = AsyncMock()
         file_content = BytesIO(b"fake image")
         resp = await client.post(
-            "/my-telegram/photos/send",
+            "/dialogs/photos/send",
             data={
                 "phone": "+1234567890",
                 "target_dialog_id": "200",
@@ -146,7 +157,7 @@ async def test_photo_schedule_missing_target(client):
     future_date = (datetime.now(tz=timezone.utc) + timedelta(days=30)).strftime("%Y-%m-%dT%H:%M:%S")
     file_content = BytesIO(b"fake image")
     resp = await client.post(
-        "/my-telegram/photos/schedule",
+        "/dialogs/photos/schedule",
         data={
             "phone": "+1234567890",
             "schedule_at": future_date,
@@ -170,7 +181,7 @@ async def test_photo_run_due_redirects(client):
         mock_task_svc.return_value.run_due = AsyncMock()
         mock_auto_svc.return_value.run_due = AsyncMock()
         resp = await client.post(
-            "/my-telegram/photos/run-due",
+            "/dialogs/photos/run-due",
             data={"phone": "+1234567890"},
             follow_redirects=False,
         )
@@ -185,7 +196,7 @@ async def test_photo_cancel_item_not_found(client):
     ) as mock_svc:
         mock_svc.return_value.cancel_item = AsyncMock(return_value=False)
         resp = await client.post(
-            "/my-telegram/photos/items/999999/cancel",
+            "/dialogs/photos/items/999999/cancel",
             data={"phone": "+1234567890"},
             follow_redirects=False,
         )
@@ -200,7 +211,7 @@ async def test_photo_toggle_auto_not_found(client):
     ) as mock_svc:
         mock_svc.return_value.get_job = AsyncMock(return_value=None)
         resp = await client.post(
-            "/my-telegram/photos/auto/999999/toggle",
+            "/dialogs/photos/auto/999999/toggle",
             data={"phone": "+1234567890"},
             follow_redirects=False,
         )
@@ -216,7 +227,7 @@ async def test_photo_delete_auto(client):
     ) as mock_svc:
         mock_svc.return_value.delete_job = AsyncMock()
         resp = await client.post(
-            "/my-telegram/photos/auto/1/delete",
+            "/dialogs/photos/auto/1/delete",
             data={"phone": "+1234567890"},
             follow_redirects=False,
         )
@@ -228,7 +239,7 @@ async def test_photo_delete_auto(client):
 async def test_photo_batch_missing_target(client):
     """Test photo batch with missing target."""
     resp = await client.post(
-        "/my-telegram/photos/batch",
+        "/dialogs/photos/batch",
         data={
             "phone": "+1234567890",
             "manifest_text": "[]",
@@ -243,7 +254,7 @@ async def test_photo_batch_missing_target(client):
 async def test_photo_auto_missing_target(client):
     """Test photo auto with missing target."""
     resp = await client.post(
-        "/my-telegram/photos/auto",
+        "/dialogs/photos/auto",
         data={
             "phone": "+1234567890",
             "folder_path": "/tmp/photos",

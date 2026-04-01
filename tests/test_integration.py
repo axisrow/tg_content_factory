@@ -141,7 +141,7 @@ class TestAuthFlow:
             "/dashboard/",
             "/scheduler/",
             "/search-queries/",
-            "/my-telegram/",
+            "/dialogs/",
             "/debug/",
         ]:
             resp = await noauth_client.get(path, follow_redirects=False)

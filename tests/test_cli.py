@@ -1275,14 +1275,14 @@ class TestCLIAgent:
 
 
 # ---------------------------------------------------------------------------
-# my-telegram topics
+# dialogs topics
 # ---------------------------------------------------------------------------
 
 
-class TestCLIMyTelegramTopics:
+class TestCLIDialogsTopics:
     def test_topics_from_pool(self, cli_env_with_pool, capsys):
         """Topics fetched from Telegram pool are displayed in a table."""
-        from src.cli.commands.my_telegram import run
+        from src.cli.commands.dialogs import run
 
         fp = AsyncMock()
         fp.clients = {}
@@ -1310,7 +1310,7 @@ class TestCLIMyTelegramTopics:
             return TelegramAuth(0, ""), fp
 
         with patch("src.cli.runtime.init_pool", side_effect=fake_init_pool):
-            run(_ns(my_telegram_action="topics", channel_id=500, phone=None))
+            run(_ns(dialogs_action="topics", channel_id=500, phone=None))
 
         out = capsys.readouterr().out
         assert "General" in out
@@ -1320,7 +1320,7 @@ class TestCLIMyTelegramTopics:
 
     def test_topics_fallback_to_db(self, cli_env_with_pool, capsys):
         """When pool returns no topics, falls back to DB cache."""
-        from src.cli.commands.my_telegram import run
+        from src.cli.commands.dialogs import run
 
         _add_channel(cli_env_with_pool, channel_id=501, title="ForumChan")
         asyncio.run(
@@ -1343,14 +1343,14 @@ class TestCLIMyTelegramTopics:
             return TelegramAuth(0, ""), fp
 
         with patch("src.cli.runtime.init_pool", side_effect=fake_init_pool):
-            run(_ns(my_telegram_action="topics", channel_id=501, phone=None))
+            run(_ns(dialogs_action="topics", channel_id=501, phone=None))
 
         out = capsys.readouterr().out
         assert "Cached Topic" in out
 
     def test_topics_not_forum(self, cli_env_with_pool, capsys):
         """Channel with no topics prints a descriptive message."""
-        from src.cli.commands.my_telegram import run
+        from src.cli.commands.dialogs import run
 
         fp = AsyncMock()
         fp.clients = {}
@@ -1363,19 +1363,19 @@ class TestCLIMyTelegramTopics:
             return TelegramAuth(0, ""), fp
 
         with patch("src.cli.runtime.init_pool", side_effect=fake_init_pool):
-            run(_ns(my_telegram_action="topics", channel_id=999, phone=None))
+            run(_ns(dialogs_action="topics", channel_id=999, phone=None))
 
         out = capsys.readouterr().out
         assert "No forum topics" in out
 
     def test_parser_topics_subcommand(self):
-        """Parser correctly handles my-telegram topics arguments."""
+        """Parser correctly handles the legacy alias for dialogs topics."""
         from src.cli.parser import build_parser
 
         parser = build_parser()
 
         args = parser.parse_args(["my-telegram", "topics", "--channel-id", "123"])
-        assert args.my_telegram_action == "topics"
+        assert args.dialogs_action == "topics"
         assert args.channel_id == 123
         assert args.phone is None
 

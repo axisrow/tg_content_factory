@@ -1,15 +1,15 @@
 {% extends "base.html" %}
-{% block title %}Мой Телеграм — TG Agent{% endblock %}
+{% block title %}Диалоги — TG Agent{% endblock %}
 {% block content %}
 <div class="d-flex align-items-center gap-3 mb-1">
-    <h1 class="mb-0">Мой Телеграм</h1>
-    <a href="/my-telegram/create-channel" class="btn btn-outline-primary btn-sm">+ Создать канал</a>
+    <h1 class="mb-0">Диалоги</h1>
+    <a href="/dialogs/create-channel" class="btn btn-outline-primary btn-sm">+ Создать канал</a>
 </div>
 
 <div class="d-flex flex-column flex-md-row align-items-md-start gap-3 mb-4">
     {% if accounts %}
     <div class="d-flex flex-column gap-1">
-        <a class="btn btn-outline-primary btn-sm align-self-start" href="/my-telegram/photos{% if selected_phone %}?phone={{ selected_phone|urlencode }}{% endif %}">Открыть Photo Loader</a>
+        <a class="btn btn-outline-primary btn-sm align-self-start" href="/dialogs/photos{% if selected_phone %}?phone={{ selected_phone|urlencode }}{% endif %}">Открыть Photo Loader</a>
         <small class="text-muted">Если аккаунт не выбран, откроется первый доступный профиль.</small>
     </div>
     {% else %}
@@ -23,7 +23,7 @@
     <div class="mb-0" style="max-width:400px">
         <label class="form-label">Аккаунт</label>
         <select name="phone" class="form-select"
-                hx-get="/my-telegram/"
+                hx-get="/dialogs/"
                 hx-include="this"
                 hx-target="body"
                 hx-push-url="true"
@@ -35,7 +35,7 @@
             {% endfor %}
         </select>
         <span id="dialogs-loading" class="htmx-indicator d-inline-block mt-2">&#9203; Загрузка диалогов…</span>
-        <form method="post" action="/my-telegram/refresh" class="mt-2" data-busy>
+        <form method="post" action="/dialogs/refresh" class="mt-2" data-busy>
             <input type="hidden" name="phone" value="{{ selected_phone or '' }}">
             <button class="btn btn-outline-secondary btn-sm" type="submit" {% if not selected_phone %}disabled{% endif %}>Обновить диалоги</button>
         </form>
@@ -67,7 +67,7 @@
 
 <p class="text-muted">Всего диалогов: <strong>{{ dialogs|length }}</strong></p>
 
-<form method="post" action="/my-telegram/leave" id="leave-form" data-busy>
+<form method="post" action="/dialogs/leave" id="leave-form" data-busy>
 <input type="hidden" name="phone" value="{{ selected_phone }}">
 
 <div id="leave-bar" class="d-none gap-3 align-items-center mb-3">

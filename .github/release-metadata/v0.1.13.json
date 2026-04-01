@@ -15,8 +15,8 @@
       "description": "Add account auth/info/flood-status/flood-clear and channel resolve subcommands for full Telegram account management from the terminal."
     },
     {
-      "title": "CLI my-telegram & collect Commands",
-      "description": "Add my-telegram leave/topics/cache-status/cache-clear and collect sample — read-only message preview without DB writes."
+      "title": "CLI dialogs & collect Commands",
+      "description": "Add dialogs leave/topics/cache-status/cache-clear and collect sample — read-only message preview without DB writes."
     }
   ]
 }

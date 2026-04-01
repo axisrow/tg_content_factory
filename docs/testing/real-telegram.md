@@ -95,7 +95,7 @@
 - photo send/schedule/batch
 - direct notifier sends
 - auth login flows
-- `my_telegram leave` / `leave_channels`
+- `dialogs leave` / `leave_channels`
 
 ## Env contract для live tests
 

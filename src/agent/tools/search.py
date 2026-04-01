@@ -213,7 +213,7 @@ def register(db, client_pool, embedding_service, **kwargs):
     @tool(
         "search_in_channel",
         "Search messages within a specific channel via Telegram API. "
-        "channel_id = Telegram numeric ID (from list_channels or search_my_telegram). "
+        "channel_id = Telegram numeric ID (from list_channels or search_dialogs). "
         "Searches live Telegram, not local DB.",
         {
             "channel_id": Annotated[int, "Числовой Telegram ID канала для фильтрации"],

@@ -2,7 +2,7 @@
 
 Targets:
 - cli/commands/test.py: read/write/telegram check helpers
-- cli/commands/my_telegram.py: all action branches
+- cli/commands/dialogs.py: all action branches
 - telegram/client_pool.py: dialog cache
 - agent/tools/messaging.py: all messaging tool handlers
 - agent/tools/deepagents_sync.py: remaining sync wrappers
@@ -80,7 +80,7 @@ def _text(result) -> str:
 def _make_args(**kwargs):
     defaults = {
         "config": "config.yaml",
-        "my_telegram_action": "list",
+        "dialogs_action": "list",
         "phone": None,
         "yes": True,
     }
@@ -403,15 +403,15 @@ class TestWaitForAvailableClientWindow:
 
 
 # ===========================================================================
-# 2. cli/commands/my_telegram.py — action branches
+# 2. cli/commands/dialogs.py — action branches
 # ===========================================================================
 
 
 class TestMyTelegramActions:
-    """Test my_telegram CLI actions by mocking pool/db and calling run()."""
+    """Test dialogs CLI actions by mocking pool/db and calling run()."""
 
     def _run_action(self, action, pool=None, db=None, extra_args=None):
-        from src.cli.commands import my_telegram
+        from src.cli.commands import dialogs
 
         pool = pool or _make_pool_with_clients()
         db = db or _make_mock_db()
@@ -426,7 +426,7 @@ class TestMyTelegramActions:
 
         args_dict = {
             "config": "config.yaml",
-            "my_telegram_action": action,
+            "dialogs_action": action,
             "phone": "+1111",
             "yes": True,
         }
@@ -443,18 +443,20 @@ class TestMyTelegramActions:
             return cfg, pool
 
         with (
-            patch("src.cli.commands.my_telegram.runtime.init_db", side_effect=fake_init_db),
-            patch("src.cli.commands.my_telegram.runtime.init_pool", side_effect=fake_init_pool),
+            patch("src.cli.commands.dialogs.runtime.init_db", side_effect=fake_init_db),
+            patch("src.cli.commands.dialogs.runtime.init_pool", side_effect=fake_init_pool),
         ):
-            my_telegram.run(args)
+            dialogs.run(args)
 
     def test_refresh_action(self, capsys):
         pool = _make_pool_with_clients()
         db = _make_mock_db()
         db.close = AsyncMock()
-        mock_svc = MagicMock()
-        mock_svc.get_my_dialogs = AsyncMock(return_value=[{"channel_id": 1, "title": "t"}])
-        with patch("src.cli.commands.my_telegram.ChannelService", return_value=mock_svc):
+        with patch(
+            "src.cli.commands.dialogs.ChannelService.get_my_dialogs",
+            new_callable=AsyncMock,
+            return_value=[{"channel_id": 1, "title": "t"}],
+        ):
             self._run_action("refresh", pool=pool, db=db)
         out = capsys.readouterr().out
         assert "refreshed" in out.lower() or "1 total" in out.lower()
@@ -463,12 +465,19 @@ class TestMyTelegramActions:
         pool = _make_pool_with_clients()
         db = _make_mock_db()
         db.close = AsyncMock()
-        mock_svc = MagicMock()
-        mock_svc.get_my_dialogs = AsyncMock(return_value=[
-            {"channel_type": "channel", "title": "Test", "username": "test_ch",
-             "already_added": True, "channel_id": 1},
-        ])
-        with patch("src.cli.commands.my_telegram.ChannelService", return_value=mock_svc):
+        with patch(
+            "src.cli.commands.dialogs.ChannelService.get_my_dialogs",
+            new_callable=AsyncMock,
+            return_value=[
+                {
+                    "channel_type": "channel",
+                    "title": "Test",
+                    "username": "test_ch",
+                    "already_added": True,
+                    "channel_id": 1,
+                },
+            ],
+        ):
             self._run_action("list", pool=pool, db=db)
         out = capsys.readouterr().out
         assert "Test" in out
@@ -477,9 +486,11 @@ class TestMyTelegramActions:
         pool = _make_pool_with_clients()
         db = _make_mock_db()
         db.close = AsyncMock()
-        mock_svc = MagicMock()
-        mock_svc.get_my_dialogs = AsyncMock(return_value=[])
-        with patch("src.cli.commands.my_telegram.ChannelService", return_value=mock_svc):
+        with patch(
+            "src.cli.commands.dialogs.ChannelService.get_my_dialogs",
+            new_callable=AsyncMock,
+            return_value=[],
+        ):
             self._run_action("list", pool=pool, db=db)
         out = capsys.readouterr().out
         assert "No dialogs" in out
@@ -1976,7 +1987,7 @@ class TestSearchQueryToolErrors:
 
 
 # ===========================================================================
-# 18. agent/tools/my_telegram.py — error paths
+# 18. agent/tools/dialogs.py — error paths
 # ===========================================================================
 
 
@@ -2010,7 +2021,7 @@ class TestMyTelegramToolErrors:
         handlers, _, _ = mytg_setup
         with patch("src.services.channel_service.ChannelService.get_my_dialogs",
                     new_callable=AsyncMock, side_effect=RuntimeError("fail")):
-            result = await handlers["search_my_telegram"]({"phone": "+1111"})
+            result = await handlers["search_dialogs"]({"phone": "+1111"})
             assert "ошибка" in _text(result).lower()
 
     async def test_refresh_dialogs_exception(self, mytg_setup):
@@ -2956,7 +2967,7 @@ class TestMessagingPhonePermGates:
 
 
 # ===========================================================================
-# 27. cli/commands/my_telegram.py — no accounts + client unavailable branches
+# 27. cli/commands/dialogs.py — no accounts + client unavailable branches
 # ===========================================================================
 
 
@@ -2964,7 +2975,7 @@ class TestMyTelegramNoAccounts:
     """Cover the 'no connected accounts' and 'client unavailable' branches."""
 
     def _run_action(self, action, pool=None, db=None, extra_args=None):
-        from src.cli.commands import my_telegram
+        from src.cli.commands import dialogs
 
         pool = pool or _make_pool_with_clients()
         db = db or _make_mock_db()
@@ -2979,7 +2990,7 @@ class TestMyTelegramNoAccounts:
 
         args_dict = {
             "config": "config.yaml",
-            "my_telegram_action": action,
+            "dialogs_action": action,
             "phone": None,
             "yes": True,
         }
@@ -2996,10 +3007,10 @@ class TestMyTelegramNoAccounts:
             return cfg, pool
 
         with (
-            patch("src.cli.commands.my_telegram.runtime.init_db", side_effect=fake_init_db),
-            patch("src.cli.commands.my_telegram.runtime.init_pool", side_effect=fake_init_pool),
+            patch("src.cli.commands.dialogs.runtime.init_db", side_effect=fake_init_db),
+            patch("src.cli.commands.dialogs.runtime.init_pool", side_effect=fake_init_pool),
         ):
-            my_telegram.run(args)
+            dialogs.run(args)
 
     def test_delete_no_accounts(self, capsys):
         pool = MagicMock()
@@ -3126,13 +3137,13 @@ class TestMyTelegramNoAccounts:
 
 
 # ===========================================================================
-# 26. cli/commands/my_telegram.py — additional action branches
+# 26. cli/commands/dialogs.py — additional action branches
 # ===========================================================================
 
 
 class TestMyTelegramMoreBranches:
     def _run_action(self, action, pool=None, db=None, extra_args=None):
-        from src.cli.commands import my_telegram
+        from src.cli.commands import dialogs
 
         pool = pool or _make_pool_with_clients()
         db = db or _make_mock_db()
@@ -3147,7 +3158,7 @@ class TestMyTelegramMoreBranches:
 
         args_dict = {
             "config": "config.yaml",
-            "my_telegram_action": action,
+            "dialogs_action": action,
             "phone": "+1111",
             "yes": True,
         }
@@ -3164,10 +3175,10 @@ class TestMyTelegramMoreBranches:
             return cfg, pool
 
         with (
-            patch("src.cli.commands.my_telegram.runtime.init_db", side_effect=fake_init_db),
-            patch("src.cli.commands.my_telegram.runtime.init_pool", side_effect=fake_init_pool),
+            patch("src.cli.commands.dialogs.runtime.init_db", side_effect=fake_init_db),
+            patch("src.cli.commands.dialogs.runtime.init_pool", side_effect=fake_init_pool),
         ):
-            my_telegram.run(args)
+            dialogs.run(args)
 
     def test_forward_phone_not_connected(self, capsys):
         pool = _make_pool_with_clients(["+2222"])  # only +2222 connected
@@ -3472,7 +3483,7 @@ class TestMessagingFinalEdgeCases:
 
 
 # ===========================================================================
-# 29. my_telegram tools — phone/perm gate paths
+# 29. dialogs tools — phone/perm gate paths
 # ===========================================================================
 
 
@@ -3501,7 +3512,7 @@ class TestMyTelegramToolPhoneGates:
 
     async def test_list_dialogs_phone_err(self, mytg_phone_err):
         handlers, _ = mytg_phone_err
-        r = await handlers["search_my_telegram"]({"phone": ""})
+        r = await handlers["search_dialogs"]({"phone": ""})
         assert "аккаунт" in _text(r).lower()
 
     async def test_refresh_dialogs_phone_err(self, mytg_phone_err):

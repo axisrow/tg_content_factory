@@ -144,46 +144,46 @@
 | POST | `/settings/{id}/toggle` | Вкл/выкл аккаунт |
 | POST | `/settings/{id}/delete` | Удалить аккаунт |
 
-## My Telegram
+## Dialogs
 
 | Method | Path | Описание |
 |--------|------|----------|
-| GET | `/my-telegram/` | Главная страница |
-| POST | `/my-telegram/refresh` | Обновить диалоги |
-| GET | `/my-telegram/cache-status` | Статус кеша |
-| POST | `/my-telegram/cache-clear` | Очистить кеш |
-| POST | `/my-telegram/leave` | Покинуть диалоги |
-| POST | `/my-telegram/send` | Отправить сообщение |
-| POST | `/my-telegram/edit-message` | Редактировать |
-| POST | `/my-telegram/delete-message` | Удалить |
-| POST | `/my-telegram/pin-message` | Закрепить |
-| POST | `/my-telegram/unpin-message` | Открепить |
-| POST | `/my-telegram/download-media` | Скачать медиа |
-| GET | `/my-telegram/participants` | Список участников (JSON) |
-| POST | `/my-telegram/edit-admin` | Права администратора |
-| POST | `/my-telegram/edit-permissions` | Ограничения |
-| POST | `/my-telegram/kick` | Кик |
-| GET | `/my-telegram/broadcast-stats` | Статистика канала (JSON) |
-| POST | `/my-telegram/archive` | Архивировать |
-| POST | `/my-telegram/unarchive` | Разархивировать |
-| POST | `/my-telegram/mark-read` | Отметить прочитанными |
-| GET | `/my-telegram/create-channel` | Страница создания канала |
-| POST | `/my-telegram/create-channel` | Создать канал |
+| GET | `/dialogs/` | Главная страница |
+| POST | `/dialogs/refresh` | Обновить диалоги |
+| GET | `/dialogs/cache-status` | Статус кеша |
+| POST | `/dialogs/cache-clear` | Очистить кеш |
+| POST | `/dialogs/leave` | Покинуть диалоги |
+| POST | `/dialogs/send` | Отправить сообщение |
+| POST | `/dialogs/edit-message` | Редактировать |
+| POST | `/dialogs/delete-message` | Удалить |
+| POST | `/dialogs/pin-message` | Закрепить |
+| POST | `/dialogs/unpin-message` | Открепить |
+| POST | `/dialogs/download-media` | Скачать медиа |
+| GET | `/dialogs/participants` | Список участников (JSON) |
+| POST | `/dialogs/edit-admin` | Права администратора |
+| POST | `/dialogs/edit-permissions` | Ограничения |
+| POST | `/dialogs/kick` | Кик |
+| GET | `/dialogs/broadcast-stats` | Статистика канала (JSON) |
+| POST | `/dialogs/archive` | Архивировать |
+| POST | `/dialogs/unarchive` | Разархивировать |
+| POST | `/dialogs/mark-read` | Отметить прочитанными |
+| GET | `/dialogs/create-channel` | Страница создания канала |
+| POST | `/dialogs/create-channel` | Создать канал |
 
 ## Photo Loader
 
 | Method | Path | Описание |
 |--------|------|----------|
-| GET | `/my-telegram/photos/` | Страница фото-загрузчика |
-| POST | `/my-telegram/photos/refresh` | Обновить |
-| POST | `/my-telegram/photos/send` | Отправить |
-| POST | `/my-telegram/photos/schedule` | Запланировать |
-| POST | `/my-telegram/photos/batch` | Батч |
-| POST | `/my-telegram/photos/auto` | Авто-загрузка |
-| POST | `/my-telegram/photos/run-due` | Запустить due |
-| POST | `/my-telegram/photos/items/{id}/cancel` | Отменить |
-| POST | `/my-telegram/photos/auto/{id}/toggle` | Вкл/выкл авто |
-| POST | `/my-telegram/photos/auto/{id}/delete` | Удалить авто |
+| GET | `/dialogs/photos/` | Страница фото-загрузчика |
+| POST | `/dialogs/photos/refresh` | Обновить |
+| POST | `/dialogs/photos/send` | Отправить |
+| POST | `/dialogs/photos/schedule` | Запланировать |
+| POST | `/dialogs/photos/batch` | Батч |
+| POST | `/dialogs/photos/auto` | Авто-загрузка |
+| POST | `/dialogs/photos/run-due` | Запустить due |
+| POST | `/dialogs/photos/items/{id}/cancel` | Отменить |
+| POST | `/dialogs/photos/auto/{id}/toggle` | Вкл/выкл авто |
+| POST | `/dialogs/photos/auto/{id}/delete` | Удалить авто |
 
 ## Agent
 

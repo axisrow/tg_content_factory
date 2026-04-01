@@ -144,8 +144,8 @@ TOOL_CATEGORIES: dict[str, ToolCategory] = {
     "update_auto_upload": ToolCategory.WRITE,
     "list_photo_dialogs": ToolCategory.READ,
     "refresh_photo_dialogs": ToolCategory.WRITE,
-    # My Telegram
-    "search_my_telegram": ToolCategory.READ,
+    # Dialogs
+    "search_dialogs": ToolCategory.READ,
     "refresh_dialogs": ToolCategory.WRITE,
     "leave_dialogs": ToolCategory.DELETE,
     "create_telegram_channel": ToolCategory.WRITE,
@@ -253,8 +253,8 @@ MODULE_GROUPS: OrderedDict[str, list[str]] = OrderedDict([
         "create_photo_batch", "run_photo_due", "create_auto_upload", "update_auto_upload",
         "list_photo_dialogs", "refresh_photo_dialogs",
     ]),
-    ("Мой Telegram", [
-        "search_my_telegram", "refresh_dialogs", "leave_dialogs", "create_telegram_channel",
+    ("Диалоги", [
+        "search_dialogs", "refresh_dialogs", "leave_dialogs", "create_telegram_channel",
         "get_forum_topics", "clear_dialog_cache", "get_cache_status",
     ]),
     ("Сообщения", [

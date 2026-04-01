@@ -342,11 +342,11 @@ async def test_photo_loader_page_renders(tmp_path, telethon_cli_spy, native_auth
         follow_redirects=True,
         headers={"Authorization": f"Basic {auth_header}", "Origin": "http://test"},
     ) as client:
-        resp = await client.get("/my-telegram/photos?phone=%2B7000")
+        resp = await client.get("/dialogs/photos?phone=%2B7000")
         assert resp.status_code == 200
         assert "Photo Loader" in resp.text
         assert "Автозагрузка из папки" in resp.text
-        assert 'action="/my-telegram/photos/refresh"' in resp.text
+        assert 'action="/dialogs/photos/refresh"' in resp.text
         assert "Обновить диалоги" in resp.text
         assert "Используется сохранённый список диалогов" in resp.text
         assert resp.text.count('option value="separate" selected') >= 3
@@ -497,7 +497,7 @@ async def test_photo_loader_page_feedback_panel_and_highlight_hooks(
         follow_redirects=True,
         headers={"Authorization": f"Basic {auth_header}", "Origin": "http://test"},
     ) as client:
-        resp = await client.get(f"/my-telegram/photos?phone=%2B7000&{query}")
+        resp = await client.get(f"/dialogs/photos?phone=%2B7000&{query}")
 
     assert resp.status_code == 200
     assert expected_title in resp.text
@@ -556,7 +556,7 @@ async def test_photo_loader_page_without_phone_selects_first_account(
         follow_redirects=True,
         headers={"Authorization": f"Basic {auth_header}", "Origin": "http://test"},
     ) as client:
-        resp = await client.get("/my-telegram/photos")
+        resp = await client.get("/dialogs/photos")
         assert resp.status_code == 200
         assert "Photo Loader" in resp.text
         assert 'option value="+7000" selected' in resp.text
@@ -615,7 +615,7 @@ async def test_photo_loader_page_without_selectable_targets_disables_forms(
         follow_redirects=True,
         headers={"Authorization": f"Basic {auth_header}", "Origin": "http://test"},
     ) as client:
-        resp = await client.get("/my-telegram/photos?phone=%2B7000")
+        resp = await client.get("/dialogs/photos?phone=%2B7000")
         assert resp.status_code == 200
         assert "нет доступных целей отправки" in resp.text.lower()
         assert 'id="photo-target-picker"' not in resp.text
@@ -663,7 +663,7 @@ async def test_photo_loader_page_without_accounts_renders_empty_state(
         follow_redirects=True,
         headers={"Authorization": f"Basic {auth_header}", "Origin": "http://test"},
     ) as client:
-        resp = await client.get("/my-telegram/photos")
+        resp = await client.get("/dialogs/photos")
         assert resp.status_code == 200
         assert "Нет подключённых аккаунтов." in resp.text
         assert "Добавьте аккаунт" in resp.text
@@ -715,7 +715,7 @@ async def test_photo_loader_refresh_warms_dialog_cache(
         follow_redirects=True,
         headers={"Authorization": f"Basic {auth_header}", "Origin": "http://test"},
     ) as client:
-        resp = await client.post("/my-telegram/photos/refresh", data={"phone": "+7000"})
+        resp = await client.post("/dialogs/photos/refresh", data={"phone": "+7000"})
         assert resp.status_code == 200
         assert "Photo Loader" in resp.text
         assert "Target Channel" in resp.text
@@ -817,7 +817,7 @@ async def test_photo_schedule_logs_exception(tmp_path, caplog, telethon_cli_spy,
     ) as client:
         with caplog.at_level(logging.ERROR, logger="src.web.routes.photo_loader"):
             resp = await client.post(
-                "/my-telegram/photos/schedule",
+                "/dialogs/photos/schedule",
                 data={
                     "phone": "+7000",
                     "target_dialog_id": "-1001",
@@ -863,7 +863,7 @@ async def test_photo_schedule_redirects_when_target_validation_raises(
     ) as client:
         with caplog.at_level(logging.ERROR, logger="src.web.routes.photo_loader"):
             resp = await client.post(
-                "/my-telegram/photos/schedule",
+                "/dialogs/photos/schedule",
                 data={
                     "phone": "+7000",
                     "target_dialog_id": "-1001",
@@ -903,7 +903,7 @@ async def test_photo_schedule_requires_target_selection(
         headers={"Authorization": f"Basic {auth_header}", "Origin": "http://test"},
     ) as client:
         resp = await client.post(
-            "/my-telegram/photos/schedule",
+            "/dialogs/photos/schedule",
             data={
                 "phone": "+7000",
                 "target_dialog_id": "",
@@ -938,7 +938,7 @@ async def test_photo_schedule_rejects_unknown_target(tmp_path, telethon_cli_spy,
         headers={"Authorization": f"Basic {auth_header}", "Origin": "http://test"},
     ) as client:
         resp = await client.post(
-            "/my-telegram/photos/schedule",
+            "/dialogs/photos/schedule",
             data={
                 "phone": "+7000",
                 "target_dialog_id": "9999",
@@ -974,7 +974,7 @@ async def test_photo_send_logs_exception(tmp_path, caplog, telethon_cli_spy, nat
     ) as client:
         with caplog.at_level(logging.ERROR, logger="src.web.routes.photo_loader"):
             resp = await client.post(
-                "/my-telegram/photos/send",
+                "/dialogs/photos/send",
                 data={
                     "phone": "+7000",
                     "target_dialog_id": "-1001",
@@ -1019,7 +1019,7 @@ async def test_photo_send_redirects_when_target_validation_raises(
     ) as client:
         with caplog.at_level(logging.ERROR, logger="src.web.routes.photo_loader"):
             resp = await client.post(
-                "/my-telegram/photos/send",
+                "/dialogs/photos/send",
                 data={
                     "phone": "+7000",
                     "target_dialog_id": "-1001",
@@ -1054,7 +1054,7 @@ async def test_photo_send_requires_target_selection(tmp_path, telethon_cli_spy, 
         headers={"Authorization": f"Basic {auth_header}", "Origin": "http://test"},
     ) as client:
         resp = await client.post(
-            "/my-telegram/photos/send",
+            "/dialogs/photos/send",
             data={
                 "phone": "+7000",
                 "target_dialog_id": "",
@@ -1089,7 +1089,7 @@ async def test_photo_batch_logs_exception(tmp_path, caplog, telethon_cli_spy, na
     ) as client:
         with caplog.at_level(logging.ERROR, logger="src.web.routes.photo_loader"):
             resp = await client.post(
-                "/my-telegram/photos/batch",
+                "/dialogs/photos/batch",
                 data={
                     "phone": "+7000",
                     "target_dialog_id": "-1001",
@@ -1133,7 +1133,7 @@ async def test_photo_batch_redirects_when_target_validation_raises(
     ) as client:
         with caplog.at_level(logging.ERROR, logger="src.web.routes.photo_loader"):
             resp = await client.post(
-                "/my-telegram/photos/batch",
+                "/dialogs/photos/batch",
                 data={
                     "phone": "+7000",
                     "target_dialog_id": "-1001",
@@ -1167,7 +1167,7 @@ async def test_photo_batch_rejects_unknown_target(tmp_path, telethon_cli_spy, na
         headers={"Authorization": f"Basic {auth_header}", "Origin": "http://test"},
     ) as client:
         resp = await client.post(
-            "/my-telegram/photos/batch",
+            "/dialogs/photos/batch",
             data={
                 "phone": "+7000",
                 "target_dialog_id": "9999",
@@ -1208,7 +1208,7 @@ async def test_photo_send_rejects_bot_target(tmp_path, telethon_cli_spy, native_
         headers={"Authorization": f"Basic {auth_header}", "Origin": "http://test"},
     ) as client:
         resp = await client.post(
-            "/my-telegram/photos/send",
+            "/dialogs/photos/send",
             data={
                 "phone": "+7000",
                 "target_dialog_id": "99",
@@ -1243,7 +1243,7 @@ async def test_photo_auto_logs_exception(tmp_path, caplog, telethon_cli_spy, nat
     ) as client:
         with caplog.at_level(logging.ERROR, logger="src.web.routes.photo_loader"):
             resp = await client.post(
-                "/my-telegram/photos/auto",
+                "/dialogs/photos/auto",
                 data={
                     "phone": "+7000",
                     "target_dialog_id": "-1001",
@@ -1289,7 +1289,7 @@ async def test_photo_auto_redirects_when_target_validation_raises(
     ) as client:
         with caplog.at_level(logging.ERROR, logger="src.web.routes.photo_loader"):
             resp = await client.post(
-                "/my-telegram/photos/auto",
+                "/dialogs/photos/auto",
                 data={
                     "phone": "+7000",
                     "target_dialog_id": "-1001",
@@ -1325,7 +1325,7 @@ async def test_photo_auto_requires_target_selection(tmp_path, telethon_cli_spy, 
         headers={"Authorization": f"Basic {auth_header}", "Origin": "http://test"},
     ) as client:
         resp = await client.post(
-            "/my-telegram/photos/auto",
+            "/dialogs/photos/auto",
             data={
                 "phone": "+7000",
                 "target_dialog_id": "",
@@ -1364,7 +1364,7 @@ async def test_photo_run_due_logs_exception(tmp_path, caplog, telethon_cli_spy, 
     ) as client:
         with caplog.at_level(logging.ERROR, logger="src.web.routes.photo_loader"):
             resp = await client.post(
-                "/my-telegram/photos/run-due",
+                "/dialogs/photos/run-due",
                 data={"phone": "+7000"},
                 follow_redirects=False,
             )

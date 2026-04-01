@@ -23,7 +23,7 @@ UPLOAD_ROOT = Path("data/photo_uploads")
 def _redirect(phone: str, code: str, error: bool = False) -> RedirectResponse:
     key = "error" if error else "msg"
     return RedirectResponse(
-        url=f"/my-telegram/photos?phone={quote(phone, safe='')}&{key}={code}",
+        url=f"/dialogs/photos?phone={quote(phone, safe='')}&{key}={code}",
         status_code=303,
     )
 
@@ -278,7 +278,7 @@ async def photo_loader_page(request: Request, phone: str | None = None):
 async def photo_loader_refresh(request: Request, phone: str = Form(...)):
     await deps.channel_service(request).get_my_dialogs(phone, refresh=True)
     return RedirectResponse(
-        url=f"/my-telegram/photos?phone={quote(phone, safe='')}",
+        url=f"/dialogs/photos?phone={quote(phone, safe='')}",
         status_code=303,
     )
 

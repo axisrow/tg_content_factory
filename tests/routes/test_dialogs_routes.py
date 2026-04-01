@@ -1,4 +1,4 @@
-"""Tests for my_telegram routes."""
+"""Tests for dialogs routes."""
 
 from __future__ import annotations
 
@@ -99,32 +99,55 @@ async def client(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_my_telegram_page_no_phone(client):
-    """Test my_telegram page without phone selection."""
-    resp = await client.get("/my-telegram/")
+async def test_dialogs_page_no_phone(client):
+    """Test dialogs page without phone selection."""
+    resp = await client.get("/dialogs/")
     assert resp.status_code == 200
     # Should show account list
     assert "+1234567890" in resp.text or "account" in resp.text.lower()
 
 
 @pytest.mark.asyncio
-async def test_my_telegram_page_with_phone(client):
-    """Test my_telegram page with phone selection."""
-    resp = await client.get("/my-telegram/?phone=%2B1234567890")
+async def test_dialogs_page_with_phone(client):
+    """Test dialogs page with phone selection."""
+    resp = await client.get("/dialogs/?phone=%2B1234567890")
     assert resp.status_code == 200
 
 
 @pytest.mark.asyncio
-async def test_my_telegram_page_invalid_phone(client):
-    """Test my_telegram page with invalid phone."""
-    resp = await client.get("/my-telegram/?phone=invalid")
+async def test_legacy_dialogs_route_redirects_to_dialogs(client):
+    legacy_prefix = "/my" + "-telegram"
+    resp = await client.get(f"{legacy_prefix}/?phone=%2B1234567890", follow_redirects=False)
+    assert resp.status_code == 308
+    assert resp.headers["location"] == "/dialogs/?phone=%2B1234567890"
+
+
+@pytest.mark.asyncio
+async def test_legacy_dialogs_post_route_redirects_to_dialogs(client):
+    legacy_prefix = "/my" + "-telegram"
+    resp = await client.post(
+        f"{legacy_prefix}/leave",
+        data={
+            "phone": "+1234567890",
+            "channel_ids": ["-100111:Dialog 1"],
+        },
+        follow_redirects=False,
+    )
+    assert resp.status_code == 308
+    assert resp.headers["location"] == "/dialogs/leave"
+
+
+@pytest.mark.asyncio
+async def test_dialogs_page_invalid_phone(client):
+    """Test dialogs page with invalid phone."""
+    resp = await client.get("/dialogs/?phone=invalid")
     assert resp.status_code == 200
 
 
 @pytest.mark.asyncio
-async def test_my_telegram_page_shows_accounts(client):
-    """Test my_telegram page shows available accounts."""
-    resp = await client.get("/my-telegram/")
+async def test_dialogs_page_shows_accounts(client):
+    """Test dialogs page shows available accounts."""
+    resp = await client.get("/dialogs/")
     assert resp.status_code == 200
 
 
@@ -132,7 +155,7 @@ async def test_my_telegram_page_shows_accounts(client):
 async def test_leave_dialogs_redirect(client):
     """Test leave dialogs redirects."""
     resp = await client.post(
-        "/my-telegram/leave",
+        "/dialogs/leave",
         data={
             "phone": "+1234567890",
             "channel_ids": ["-100111:Dialog 1", "-100222:Dialog 2"],
@@ -140,14 +163,14 @@ async def test_leave_dialogs_redirect(client):
         follow_redirects=False,
     )
     assert resp.status_code == 303
-    assert "/my-telegram/" in resp.headers.get("location", "")
+    assert "/dialogs/" in resp.headers.get("location", "")
 
 
 @pytest.mark.asyncio
 async def test_leave_dialogs_empty(client):
     """Test leave dialogs with no selections."""
     resp = await client.post(
-        "/my-telegram/leave",
+        "/dialogs/leave",
         data={
             "phone": "+1234567890",
         },
@@ -160,7 +183,7 @@ async def test_leave_dialogs_empty(client):
 async def test_leave_dialogs_malformed_channel_id(client):
     """Test leave dialogs handles malformed channel IDs."""
     resp = await client.post(
-        "/my-telegram/leave",
+        "/dialogs/leave",
         data={
             "phone": "+1234567890",
             "channel_ids": ["invalid", "also-invalid"],
@@ -175,7 +198,7 @@ async def test_leave_dialogs_malformed_channel_id(client):
 async def test_leave_dialogs_negative_channel_id(client):
     """Test leave dialogs with negative channel IDs."""
     resp = await client.post(
-        "/my-telegram/leave",
+        "/dialogs/leave",
         data={
             "phone": "+1234567890",
             "channel_ids": ["-1001234567890:Test Channel"],
@@ -189,7 +212,7 @@ async def test_leave_dialogs_negative_channel_id(client):
 async def test_leave_dialogs_no_colon(client):
     """Test leave dialogs with malformed ID (no colon)."""
     resp = await client.post(
-        "/my-telegram/leave",
+        "/dialogs/leave",
         data={
             "phone": "+1234567890",
             "channel_ids": ["-1001234567890"],  # No colon
@@ -201,29 +224,29 @@ async def test_leave_dialogs_no_colon(client):
 
 
 @pytest.mark.asyncio
-async def test_my_telegram_shows_left_count(client):
-    """Test my_telegram page shows left count from query param."""
-    resp = await client.get("/my-telegram/?left=2&failed=0")
+async def test_dialogs_shows_left_count(client):
+    """Test dialogs page shows left count from query param."""
+    resp = await client.get("/dialogs/?left=2&failed=0")
     assert resp.status_code == 200
 
 
 @pytest.mark.asyncio
-async def test_my_telegram_shows_failed_count(client):
-    """Test my_telegram page shows failed count from query param."""
-    resp = await client.get("/my-telegram/?left=0&failed=1")
+async def test_dialogs_shows_failed_count(client):
+    """Test dialogs page shows failed count from query param."""
+    resp = await client.get("/dialogs/?left=0&failed=1")
     assert resp.status_code == 200
 
 
 @pytest.mark.asyncio
-async def test_my_telegram_phone_url_encoded(client):
-    """Test my_telegram with URL-encoded phone number."""
-    resp = await client.get("/my-telegram/?phone=%2B1234567890")
+async def test_dialogs_phone_url_encoded(client):
+    """Test dialogs with URL-encoded phone number."""
+    resp = await client.get("/dialogs/?phone=%2B1234567890")
     assert resp.status_code == 200
 
 
 @pytest.mark.asyncio
-async def test_my_telegram_no_accounts(client):
-    """Test my_telegram with no connected accounts."""
+async def test_dialogs_no_accounts(client):
+    """Test dialogs with no connected accounts."""
     # Remove accounts
     db = client._transport.app.state.db
     accounts = await db.get_accounts()
@@ -233,7 +256,7 @@ async def test_my_telegram_no_accounts(client):
     # Update pool mock
     client._transport.app.state.pool.clients = {}
 
-    resp = await client.get("/my-telegram/")
+    resp = await client.get("/dialogs/")
     assert resp.status_code == 200
 
 
@@ -241,7 +264,7 @@ async def test_my_telegram_no_accounts(client):
 async def test_leave_dialogs_preserves_phone(client):
     """Test leave dialogs preserves phone in redirect."""
     resp = await client.post(
-        "/my-telegram/leave",
+        "/dialogs/leave",
         data={
             "phone": "+9876543210",
             "channel_ids": ["-100111:Test"],
@@ -255,18 +278,18 @@ async def test_leave_dialogs_preserves_phone(client):
 
 
 @pytest.mark.asyncio
-async def test_my_telegram_logs_request(client, caplog):
-    """Test my_telegram logs request details."""
+async def test_dialogs_logs_request(client, caplog):
+    """Test dialogs logs request details."""
     import logging
 
     with caplog.at_level(logging.INFO):
-        resp = await client.get("/my-telegram/?phone=%2B1234567890")
+        resp = await client.get("/dialogs/?phone=%2B1234567890")
         assert resp.status_code == 200
 
 
 @pytest.mark.asyncio
-async def test_my_telegram_shows_already_added(client):
-    """Test my_telegram shows already added flag."""
+async def test_dialogs_shows_already_added(client):
+    """Test dialogs shows already added flag."""
     # Add a channel that matches one of the dialogs
     db = client._transport.app.state.db
     await db.add_channel(
@@ -277,16 +300,16 @@ async def test_my_telegram_shows_already_added(client):
         )
     )
 
-    resp = await client.get("/my-telegram/?phone=%2B1234567890")
+    resp = await client.get("/dialogs/?phone=%2B1234567890")
     assert resp.status_code == 200
 
 
 @pytest.mark.asyncio
-async def test_my_telegram_empty_dialogs(client):
-    """Test my_telegram with no dialogs."""
+async def test_dialogs_empty_dialogs(client):
+    """Test dialogs with no dialogs."""
     client._transport.app.state.pool.get_dialogs_for_phone = AsyncMock(return_value=[])
 
-    resp = await client.get("/my-telegram/?phone=%2B1234567890")
+    resp = await client.get("/dialogs/?phone=%2B1234567890")
     assert resp.status_code == 200
 
 
@@ -294,7 +317,7 @@ async def test_my_telegram_empty_dialogs(client):
 async def test_leave_dialogs_single(client):
     """Test leaving single dialog."""
     resp = await client.post(
-        "/my-telegram/leave",
+        "/dialogs/leave",
         data={
             "phone": "+1234567890",
             "channel_ids": ["-100111:Test"],
@@ -308,7 +331,7 @@ async def test_leave_dialogs_single(client):
 async def test_leave_dialogs_multiple(client):
     """Test leaving multiple dialogs."""
     resp = await client.post(
-        "/my-telegram/leave",
+        "/dialogs/leave",
         data={
             "phone": "+1234567890",
             "channel_ids": ["-100111:First", "-100222:Second", "-100333:Third"],

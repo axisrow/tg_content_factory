@@ -10,7 +10,7 @@
 | `tests/routes/test_auth_routes.py` | есть |
 | `tests/routes/test_debug_routes.py` | есть |
 | `tests/routes/test_import_channels_routes.py` | есть |
-| `tests/routes/test_my_telegram_routes.py` | есть |
+| `tests/routes/test_dialogs_routes.py` | есть |
 | `tests/routes/test_scheduler_routes.py` | **эталон** (474 строки, 44 теста) |
 | `tests/routes/test_pipelines_routes.py` | **эталон** (136 строк, 6 тестов) |
 | `tests/routes/test_moderation_routes.py` | **эталон** (154 строки, 3 теста) |
@@ -498,7 +498,7 @@ def agent_manager_mock():
 ### 3.9 `tests/routes/test_photo_loader_routes.py` (новый, 12 тестов)
 
 **Маршруты:**
-- `GET /my-telegram/photos`
+- `GET /dialogs/photos`
 - `POST /photos/refresh`
 - `POST /photos/send`
 - `POST /photos/schedule`

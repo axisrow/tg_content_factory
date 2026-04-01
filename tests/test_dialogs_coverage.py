@@ -1,4 +1,4 @@
-"""Extended coverage tests for src/cli/commands/my_telegram.py and src/web/routes/my_telegram.py."""
+"""Extended coverage tests for dialogs CLI and /dialogs web routes."""
 
 from __future__ import annotations
 
@@ -59,7 +59,7 @@ def _mock_pool(*, clients=None, native_result=None, get_forum_topics=None):
 
 def _run_cli(action, pool, db, extra_ns=None):
     """Run a CLI action with mocked runtime."""
-    ns_kwargs = {"my_telegram_action": action}
+    ns_kwargs = {"dialogs_action": action}
     if extra_ns:
         ns_kwargs.update(extra_ns)
     ns = cli_ns(**ns_kwargs)
@@ -75,7 +75,7 @@ def _run_cli(action, pool, db, extra_ns=None):
         patch("src.cli.runtime.init_db", side_effect=fake_init_db),
         patch("src.cli.runtime.init_pool", side_effect=fake_init_pool),
     ):
-        from src.cli.commands.my_telegram import run
+        from src.cli.commands.dialogs import run
         run(ns)
 
 
@@ -85,7 +85,7 @@ def _run_cli(action, pool, db, extra_ns=None):
 
 
 class TestCliList:
-    """CLI my-telegram list."""
+    """CLI dialogs list."""
 
     def test_list_no_accounts(self, cli_db, capsys):
         pool, _ = _mock_pool(clients={})
@@ -137,7 +137,7 @@ class TestCliList:
 
 
 class TestCliRefresh:
-    """CLI my-telegram refresh."""
+    """CLI dialogs refresh."""
 
     def test_refresh_no_accounts(self, cli_db, capsys):
         pool, _ = _mock_pool(clients={})
@@ -157,7 +157,7 @@ class TestCliRefresh:
 
 
 class TestCliCacheClear:
-    """CLI my-telegram cache-clear."""
+    """CLI dialogs cache-clear."""
 
     def test_cache_clear_single_phone(self, cli_db, capsys):
         pool, _ = _mock_pool()
@@ -178,7 +178,7 @@ class TestCliCacheClear:
 
 
 class TestCliCacheStatus:
-    """CLI my-telegram cache-status."""
+    """CLI dialogs cache-status."""
 
     def test_cache_status_no_cache(self, cli_db, capsys):
         pool, _ = _mock_pool()
@@ -195,7 +195,7 @@ class TestCliCacheStatus:
 
 
 class TestCliSend:
-    """CLI my-telegram send."""
+    """CLI dialogs send."""
 
     def test_send_no_accounts(self, cli_db, capsys):
         pool, _ = _mock_pool(clients={})
@@ -252,7 +252,7 @@ class TestCliSend:
 
 
 class TestCliForward:
-    """CLI my-telegram forward."""
+    """CLI dialogs forward."""
 
     def test_forward_no_accounts(self, cli_db, capsys):
         pool, _ = _mock_pool(clients={})
@@ -303,7 +303,7 @@ class TestCliForward:
 
 
 class TestCliEditMessage:
-    """CLI my-telegram edit-message."""
+    """CLI dialogs edit-message."""
 
     def test_edit_message_ok(self, cli_db, capsys):
         pool, client = _mock_pool()
@@ -347,7 +347,7 @@ class TestCliEditMessage:
 
 
 class TestCliDeleteMessage:
-    """CLI my-telegram delete-message."""
+    """CLI dialogs delete-message."""
 
     def test_delete_message_ok(self, cli_db, capsys):
         pool, client = _mock_pool()
@@ -383,7 +383,7 @@ class TestCliDeleteMessage:
 
 
 class TestCliPinUnpin:
-    """CLI my-telegram pin-message / unpin-message."""
+    """CLI dialogs pin-message / unpin-message."""
 
     def test_pin_ok(self, cli_db, capsys):
         pool, client = _mock_pool()
@@ -454,7 +454,7 @@ class TestCliPinUnpin:
 
 
 class TestCliParticipants:
-    """CLI my-telegram participants."""
+    """CLI dialogs participants."""
 
     def test_participants_ok(self, cli_db, capsys):
         pool, client = _mock_pool()
@@ -496,7 +496,7 @@ class TestCliParticipants:
 
 
 class TestCliEditAdmin:
-    """CLI my-telegram edit-admin."""
+    """CLI dialogs edit-admin."""
 
     def test_edit_admin_ok(self, cli_db, capsys):
         pool, client = _mock_pool()
@@ -525,7 +525,7 @@ class TestCliEditAdmin:
 
 
 class TestCliEditPermissions:
-    """CLI my-telegram edit-permissions."""
+    """CLI dialogs edit-permissions."""
 
     def test_edit_permissions_ok(self, cli_db, capsys):
         pool, client = _mock_pool()
@@ -566,7 +566,7 @@ class TestCliEditPermissions:
 
 
 class TestCliKick:
-    """CLI my-telegram kick."""
+    """CLI dialogs kick."""
 
     def test_kick_ok(self, cli_db, capsys):
         pool, client = _mock_pool()
@@ -595,7 +595,7 @@ class TestCliKick:
 
 
 class TestCliArchiveUnarchiveMarkRead:
-    """CLI my-telegram archive, unarchive, mark-read."""
+    """CLI dialogs archive, unarchive, mark-read."""
 
     def test_archive_ok(self, cli_db, capsys):
         pool, client = _mock_pool()
@@ -656,7 +656,7 @@ class TestCliArchiveUnarchiveMarkRead:
 
 
 class TestCliTopics:
-    """CLI my-telegram topics."""
+    """CLI dialogs topics."""
 
     def test_topics_from_pool(self, cli_db, capsys):
         topics = [{"id": 1, "title": "General", "icon_emoji_id": None, "date": "2025-01-01"}]
@@ -681,7 +681,7 @@ class TestCliTopics:
 
 
 class TestCliDownloadMedia:
-    """CLI my-telegram download-media."""
+    """CLI dialogs download-media."""
 
     def test_download_media_ok(self, cli_db, capsys):
         pool, client = _mock_pool()
@@ -737,7 +737,7 @@ class TestCliDownloadMedia:
 
 
 class TestCliBroadcastStats:
-    """CLI my-telegram broadcast-stats."""
+    """CLI dialogs broadcast-stats."""
 
     def test_broadcast_stats_ok(self, cli_db, capsys):
         pool, client = _mock_pool()
@@ -777,7 +777,7 @@ class TestCliBroadcastStats:
 
 
 class TestCliLeave:
-    """CLI my-telegram leave."""
+    """CLI dialogs leave."""
 
     def test_leave_ok(self, cli_db, capsys):
         pool, _ = _mock_pool()
@@ -832,7 +832,7 @@ class TestCliLeave:
 
 
 class TestCliCreateChannel:
-    """CLI my-telegram create-channel."""
+    """CLI dialogs create-channel."""
 
     def test_create_channel_ok(self, cli_db, capsys):
         pool, _ = _mock_pool()
@@ -848,7 +848,7 @@ class TestCliCreateChannel:
 
         mock_client.side_effect = fake_call
 
-        with patch("src.cli.commands.my_telegram.pool", pool, create=True):
+        with patch("src.cli.commands.dialogs.pool", pool, create=True):
             _run_cli("create-channel", pool, cli_db, {
                 "phone": _PHONE, "title": "New Channel", "about": "test", "username": "",
             })
@@ -869,7 +869,7 @@ class TestCliCreateChannel:
 
 
 async def _build_web_app(db, real_pool_harness_factory, *, with_account=True):
-    """Build a web app for my-telegram route tests."""
+    """Build a web app for dialogs route tests."""
     from tests.helpers import AsyncIterMessages, FakeCliTelethonClient
 
     config = AppConfig()
@@ -906,73 +906,73 @@ async def web_client(db, real_pool_harness_factory):
 
 
 class TestWebPage:
-    """GET /my-telegram/."""
+    """GET /dialogs/."""
 
     @pytest.mark.asyncio
     async def test_page_renders(self, web_client):
         c, app = web_client
-        resp = await c.get("/my-telegram/")
+        resp = await c.get("/dialogs/")
         assert resp.status_code == 200
 
     @pytest.mark.asyncio
     async def test_page_with_phone(self, web_client):
         c, app = web_client
         phone_encoded = "%2B79001234567"
-        resp = await c.get(f"/my-telegram/?phone={phone_encoded}")
+        resp = await c.get(f"/dialogs/?phone={phone_encoded}")
         assert resp.status_code == 200
 
     @pytest.mark.asyncio
     async def test_page_invalid_phone_shows_no_dialogs(self, web_client):
         c, app = web_client
-        resp = await c.get("/my-telegram/?phone=%2B00000")
+        resp = await c.get("/dialogs/?phone=%2B00000")
         assert resp.status_code == 200
 
 
 class TestWebRefresh:
-    """POST /my-telegram/refresh."""
+    """POST /dialogs/refresh."""
 
     @pytest.mark.asyncio
     async def test_refresh_ok(self, web_client):
         c, app = web_client
-        resp = await c.post("/my-telegram/refresh", data={"phone": _PHONE})
+        resp = await c.post("/dialogs/refresh", data={"phone": _PHONE})
         assert resp.status_code == 200
 
 
 class TestWebCacheStatus:
-    """GET /my-telegram/cache-status."""
+    """GET /dialogs/cache-status."""
 
     @pytest.mark.asyncio
     async def test_cache_status_empty(self, web_client):
         c, app = web_client
-        resp = await c.get("/my-telegram/cache-status")
+        resp = await c.get("/dialogs/cache-status")
         assert resp.status_code == 200
         data = resp.json()
         assert isinstance(data, list)
 
 
 class TestWebCacheClear:
-    """POST /my-telegram/cache-clear."""
+    """POST /dialogs/cache-clear."""
 
     @pytest.mark.asyncio
     async def test_cache_clear_all(self, web_client):
         c, app = web_client
-        resp = await c.post("/my-telegram/cache-clear", data={"phone": ""})
+        resp = await c.post("/dialogs/cache-clear", data={"phone": ""})
         assert resp.status_code == 200
 
     @pytest.mark.asyncio
     async def test_cache_clear_single(self, web_client):
         c, app = web_client
-        resp = await c.post("/my-telegram/cache-clear", data={"phone": _PHONE})
+        resp = await c.post("/dialogs/cache-clear", data={"phone": _PHONE})
         assert resp.status_code == 200
 
 
 class TestWebSend:
-    """POST /my-telegram/send."""
+    """POST /dialogs/send."""
 
     @pytest.mark.asyncio
     async def test_send_missing_fields(self, web_client):
         c, app = web_client
-        resp = await c.post("/my-telegram/send", data={"phone": _PHONE, "recipient": "", "text": ""})
+        resp = await c.post("/dialogs/send", data={"phone": _PHONE, "recipient": "", "text": ""})
         assert resp.status_code == 200
         assert "error=missing_fields" in str(resp.url)
 
@@ -981,7 +981,7 @@ class TestWebSend:
         c, app = web_client
         pool = app.state.pool
         pool.get_native_client_by_phone = AsyncMock(return_value=None)
-        resp = await c.post("/my-telegram/send", data={"phone": _PHONE, "recipient": "@u", "text": "hi"})
+        resp = await c.post("/dialogs/send", data={"phone": _PHONE, "recipient": "@u", "text": "hi"})
         assert resp.status_code == 200
         assert "error=client_unavailable" in str(resp.url)
 
@@ -992,7 +992,7 @@ class TestWebSend:
         mock_client.get_entity = AsyncMock(return_value=SimpleNamespace(id=1))
         mock_client.send_message = AsyncMock()
         app.state.pool.get_native_client_by_phone = AsyncMock(return_value=(mock_client, _PHONE))
-        resp = await c.post("/my-telegram/send", data={"phone": _PHONE, "recipient": "@u", "text": "hi"})
+        resp = await c.post("/dialogs/send", data={"phone": _PHONE, "recipient": "@u", "text": "hi"})
         assert resp.status_code == 200
         assert "msg=message_sent" in str(resp.url)
 
@@ -1002,18 +1002,18 @@ class TestWebSend:
         mock_client = AsyncMock()
         mock_client.get_entity = AsyncMock(side_effect=RuntimeError("oops"))
         app.state.pool.get_native_client_by_phone = AsyncMock(return_value=(mock_client, _PHONE))
-        resp = await c.post("/my-telegram/send", data={"phone": _PHONE, "recipient": "@u", "text": "hi"})
+        resp = await c.post("/dialogs/send", data={"phone": _PHONE, "recipient": "@u", "text": "hi"})
         assert resp.status_code == 200
         assert "error=send_failed" in str(resp.url)
 
 
 class TestWebEditMessage:
-    """POST /my-telegram/edit-message."""
+    """POST /dialogs/edit-message."""
 
     @pytest.mark.asyncio
     async def test_edit_missing_fields(self, web_client):
         c, app = web_client
-        resp = await c.post("/my-telegram/edit-message", data={
+        resp = await c.post("/dialogs/edit-message", data={
             "phone": _PHONE, "chat_id": "", "message_id": "", "text": "",
         })
         assert "error=missing_fields" in str(resp.url)
@@ -1025,7 +1025,7 @@ class TestWebEditMessage:
         mock_client.get_entity = AsyncMock(return_value=SimpleNamespace(id=1))
         mock_client.edit_message = AsyncMock()
         app.state.pool.get_native_client_by_phone = AsyncMock(return_value=(mock_client, _PHONE))
-        resp = await c.post("/my-telegram/edit-message", data={
+        resp = await c.post("/dialogs/edit-message", data={
             "phone": _PHONE, "chat_id": "@ch", "message_id": "42", "text": "new",
         })
         assert "msg=message_edited" in str(resp.url)
@@ -1034,7 +1034,7 @@ class TestWebEditMessage:
     async def test_edit_client_unavailable(self, web_client):
         c, app = web_client
         app.state.pool.get_native_client_by_phone = AsyncMock(return_value=None)
-        resp = await c.post("/my-telegram/edit-message", data={
+        resp = await c.post("/dialogs/edit-message", data={
             "phone": _PHONE, "chat_id": "@ch", "message_id": "42", "text": "new",
         })
         assert "error=client_unavailable" in str(resp.url)
@@ -1045,19 +1045,19 @@ class TestWebEditMessage:
         mock_client = AsyncMock()
         mock_client.get_entity = AsyncMock(side_effect=RuntimeError("err"))
         app.state.pool.get_native_client_by_phone = AsyncMock(return_value=(mock_client, _PHONE))
-        resp = await c.post("/my-telegram/edit-message", data={
+        resp = await c.post("/dialogs/edit-message", data={
             "phone": _PHONE, "chat_id": "@ch", "message_id": "42", "text": "new",
         })
         assert "error=edit_failed" in str(resp.url)
 
 
 class TestWebDeleteMessage:
-    """POST /my-telegram/delete-message."""
+    """POST /dialogs/delete-message."""
 
     @pytest.mark.asyncio
     async def test_delete_missing_fields(self, web_client):
         c, app = web_client
-        resp = await c.post("/my-telegram/delete-message", data={
+        resp = await c.post("/dialogs/delete-message", data={
             "phone": _PHONE, "chat_id": "", "message_ids": "",
         })
         assert "error=missing_fields" in str(resp.url)
@@ -1065,7 +1065,7 @@ class TestWebDeleteMessage:
     @pytest.mark.asyncio
     async def test_delete_invalid_ids(self, web_client):
         c, app = web_client
-        resp = await c.post("/my-telegram/delete-message", data={
+        resp = await c.post("/dialogs/delete-message", data={
             "phone": _PHONE, "chat_id": "@ch", "message_ids": "abc",
         })
         assert "error=invalid_ids" in str(resp.url)
@@ -1077,7 +1077,7 @@ class TestWebDeleteMessage:
         mock_client.get_entity = AsyncMock(return_value=SimpleNamespace(id=1))
         mock_client.delete_messages = AsyncMock()
         app.state.pool.get_native_client_by_phone = AsyncMock(return_value=(mock_client, _PHONE))
-        resp = await c.post("/my-telegram/delete-message", data={
+        resp = await c.post("/dialogs/delete-message", data={
             "phone": _PHONE, "chat_id": "@ch", "message_ids": "1,2",
         })
         assert "msg=messages_deleted" in str(resp.url)
@@ -1088,19 +1088,19 @@ class TestWebDeleteMessage:
         mock_client = AsyncMock()
         mock_client.get_entity = AsyncMock(side_effect=RuntimeError("err"))
         app.state.pool.get_native_client_by_phone = AsyncMock(return_value=(mock_client, _PHONE))
-        resp = await c.post("/my-telegram/delete-message", data={
+        resp = await c.post("/dialogs/delete-message", data={
             "phone": _PHONE, "chat_id": "@ch", "message_ids": "1",
         })
         assert "error=delete_failed" in str(resp.url)
 
 
 class TestWebForwardMessages:
-    """POST /my-telegram/forward-messages."""
+    """POST /dialogs/forward-messages."""
 
     @pytest.mark.asyncio
     async def test_forward_missing_fields(self, web_client):
         c, app = web_client
-        resp = await c.post("/my-telegram/forward-messages", data={
+        resp = await c.post("/dialogs/forward-messages", data={
             "phone": _PHONE, "from_chat": "", "to_chat": "", "message_ids": "",
         })
         assert "error=missing_fields" in str(resp.url)
@@ -1108,7 +1108,7 @@ class TestWebForwardMessages:
     @pytest.mark.asyncio
     async def test_forward_invalid_ids(self, web_client):
         c, app = web_client
-        resp = await c.post("/my-telegram/forward-messages", data={
+        resp = await c.post("/dialogs/forward-messages", data={
             "phone": _PHONE, "from_chat": "@a", "to_chat": "@b", "message_ids": "xyz",
         })
         assert "error=invalid_ids" in str(resp.url)
@@ -1120,7 +1120,7 @@ class TestWebForwardMessages:
         mock_client.get_entity = AsyncMock(return_value=SimpleNamespace(id=1))
         mock_client.forward_messages = AsyncMock()
         app.state.pool.get_native_client_by_phone = AsyncMock(return_value=(mock_client, _PHONE))
-        resp = await c.post("/my-telegram/forward-messages", data={
+        resp = await c.post("/dialogs/forward-messages", data={
             "phone": _PHONE, "from_chat": "@a", "to_chat": "@b", "message_ids": "1,2",
         })
         assert "msg=messages_forwarded" in str(resp.url)
@@ -1131,7 +1131,7 @@ class TestWebForwardMessages:
         mock_client = AsyncMock()
         mock_client.get_entity = AsyncMock(side_effect=RuntimeError("err"))
         app.state.pool.get_native_client_by_phone = AsyncMock(return_value=(mock_client, _PHONE))
-        resp = await c.post("/my-telegram/forward-messages", data={
+        resp = await c.post("/dialogs/forward-messages", data={
             "phone": _PHONE, "from_chat": "@a", "to_chat": "@b", "message_ids": "1",
         })
         assert "error=forward_failed" in str(resp.url)
@@ -1140,19 +1140,19 @@ class TestWebForwardMessages:
     async def test_forward_client_unavailable(self, web_client):
         c, app = web_client
         app.state.pool.get_native_client_by_phone = AsyncMock(return_value=None)
-        resp = await c.post("/my-telegram/forward-messages", data={
+        resp = await c.post("/dialogs/forward-messages", data={
             "phone": _PHONE, "from_chat": "@a", "to_chat": "@b", "message_ids": "1",
         })
         assert "error=client_unavailable" in str(resp.url)
 
 
 class TestWebPinMessage:
-    """POST /my-telegram/pin-message."""
+    """POST /dialogs/pin-message."""
 
     @pytest.mark.asyncio
     async def test_pin_missing_fields(self, web_client):
         c, app = web_client
-        resp = await c.post("/my-telegram/pin-message", data={
+        resp = await c.post("/dialogs/pin-message", data={
             "phone": "", "chat_id": "", "message_id": "",
         })
         assert "error=missing_fields" in str(resp.url)
@@ -1164,7 +1164,7 @@ class TestWebPinMessage:
         mock_client.get_entity = AsyncMock(return_value=SimpleNamespace(id=1))
         mock_client.pin_message = AsyncMock()
         app.state.pool.get_native_client_by_phone = AsyncMock(return_value=(mock_client, _PHONE))
-        resp = await c.post("/my-telegram/pin-message", data={
+        resp = await c.post("/dialogs/pin-message", data={
             "phone": _PHONE, "chat_id": "@ch", "message_id": "10", "notify": "1",
         })
         assert "msg=message_pinned" in str(resp.url)
@@ -1175,19 +1175,19 @@ class TestWebPinMessage:
         mock_client = AsyncMock()
         mock_client.get_entity = AsyncMock(side_effect=RuntimeError("err"))
         app.state.pool.get_native_client_by_phone = AsyncMock(return_value=(mock_client, _PHONE))
-        resp = await c.post("/my-telegram/pin-message", data={
+        resp = await c.post("/dialogs/pin-message", data={
             "phone": _PHONE, "chat_id": "@ch", "message_id": "10",
         })
         assert "error=pin_failed" in str(resp.url)
 
 
 class TestWebUnpinMessage:
-    """POST /my-telegram/unpin-message."""
+    """POST /dialogs/unpin-message."""
 
     @pytest.mark.asyncio
     async def test_unpin_missing_fields(self, web_client):
         c, app = web_client
-        resp = await c.post("/my-telegram/unpin-message", data={
+        resp = await c.post("/dialogs/unpin-message", data={
             "phone": "", "chat_id": "",
         })
         assert "error=missing_fields" in str(resp.url)
@@ -1199,7 +1199,7 @@ class TestWebUnpinMessage:
         mock_client.get_entity = AsyncMock(return_value=SimpleNamespace(id=1))
         mock_client.unpin_message = AsyncMock()
         app.state.pool.get_native_client_by_phone = AsyncMock(return_value=(mock_client, _PHONE))
-        resp = await c.post("/my-telegram/unpin-message", data={
+        resp = await c.post("/dialogs/unpin-message", data={
             "phone": _PHONE, "chat_id": "@ch", "message_id": "10",
         })
         assert "msg=message_unpinned" in str(resp.url)
@@ -1211,7 +1211,7 @@ class TestWebUnpinMessage:
         mock_client.get_entity = AsyncMock(return_value=SimpleNamespace(id=1))
         mock_client.unpin_message = AsyncMock()
         app.state.pool.get_native_client_by_phone = AsyncMock(return_value=(mock_client, _PHONE))
-        resp = await c.post("/my-telegram/unpin-message", data={
+        resp = await c.post("/dialogs/unpin-message", data={
             "phone": _PHONE, "chat_id": "@ch",
         })
         assert "msg=message_unpinned" in str(resp.url)
@@ -1222,7 +1222,7 @@ class TestWebUnpinMessage:
         mock_client = AsyncMock()
         mock_client.get_entity = AsyncMock(side_effect=RuntimeError("err"))
         app.state.pool.get_native_client_by_phone = AsyncMock(return_value=(mock_client, _PHONE))
-        resp = await c.post("/my-telegram/unpin-message", data={
+        resp = await c.post("/dialogs/unpin-message", data={
             "phone": _PHONE, "chat_id": "@ch",
         })
         assert "error=unpin_failed" in str(resp.url)
@@ -1231,26 +1231,26 @@ class TestWebUnpinMessage:
     async def test_unpin_client_unavailable(self, web_client):
         c, app = web_client
         app.state.pool.get_native_client_by_phone = AsyncMock(return_value=None)
-        resp = await c.post("/my-telegram/unpin-message", data={
+        resp = await c.post("/dialogs/unpin-message", data={
             "phone": _PHONE, "chat_id": "@ch",
         })
         assert "error=client_unavailable" in str(resp.url)
 
 
 class TestWebParticipants:
-    """GET /my-telegram/participants."""
+    """GET /dialogs/participants."""
 
     @pytest.mark.asyncio
     async def test_participants_missing_params(self, web_client):
         c, app = web_client
-        resp = await c.get("/my-telegram/participants")
+        resp = await c.get("/dialogs/participants")
         assert resp.status_code == 400
 
     @pytest.mark.asyncio
     async def test_participants_client_unavailable(self, web_client):
         c, app = web_client
         app.state.pool.get_native_client_by_phone = AsyncMock(return_value=None)
-        resp = await c.get(f"/my-telegram/participants?phone={_PHONE}&chat_id=@ch")
+        resp = await c.get(f"/dialogs/participants?phone={_PHONE}&chat_id=@ch")
         assert resp.status_code == 503
 
     @pytest.mark.asyncio
@@ -1261,7 +1261,7 @@ class TestWebParticipants:
         mock_client.get_entity = AsyncMock(return_value=SimpleNamespace(id=1))
         mock_client.get_participants = AsyncMock(return_value=[p1])
         app.state.pool.get_native_client_by_phone = AsyncMock(return_value=(mock_client, _PHONE))
-        resp = await c.get(f"/my-telegram/participants?phone={_PHONE}&chat_id=@ch")
+        resp = await c.get(f"/dialogs/participants?phone={_PHONE}&chat_id=@ch")
         assert resp.status_code == 200
         data = resp.json()
         assert data["total"] == 1
@@ -1273,17 +1273,17 @@ class TestWebParticipants:
         mock_client = AsyncMock()
         mock_client.get_entity = AsyncMock(side_effect=RuntimeError("err"))
         app.state.pool.get_native_client_by_phone = AsyncMock(return_value=(mock_client, _PHONE))
-        resp = await c.get(f"/my-telegram/participants?phone={_PHONE}&chat_id=@ch")
+        resp = await c.get(f"/dialogs/participants?phone={_PHONE}&chat_id=@ch")
         assert resp.status_code == 500
 
 
 class TestWebArchive:
-    """POST /my-telegram/archive and /unarchive."""
+    """POST /dialogs/archive and /unarchive."""
 
     @pytest.mark.asyncio
     async def test_archive_missing_fields(self, web_client):
         c, app = web_client
-        resp = await c.post("/my-telegram/archive", data={"phone": "", "chat_id": ""})
+        resp = await c.post("/dialogs/archive", data={"phone": "", "chat_id": ""})
         assert "error=missing_fields" in str(resp.url)
 
     @pytest.mark.asyncio
@@ -1293,7 +1293,7 @@ class TestWebArchive:
         mock_client.get_entity = AsyncMock(return_value=SimpleNamespace(id=1))
         mock_client.edit_folder = AsyncMock()
         app.state.pool.get_native_client_by_phone = AsyncMock(return_value=(mock_client, _PHONE))
-        resp = await c.post("/my-telegram/archive", data={"phone": _PHONE, "chat_id": "@ch"})
+        resp = await c.post("/dialogs/archive", data={"phone": _PHONE, "chat_id": "@ch"})
         assert "msg=dialog_archived" in str(resp.url)
 
     @pytest.mark.asyncio
@@ -1302,14 +1302,14 @@ class TestWebArchive:
         mock_client = AsyncMock()
         mock_client.get_entity = AsyncMock(side_effect=RuntimeError("err"))
         app.state.pool.get_native_client_by_phone = AsyncMock(return_value=(mock_client, _PHONE))
-        resp = await c.post("/my-telegram/archive", data={"phone": _PHONE, "chat_id": "@ch"})
+        resp = await c.post("/dialogs/archive", data={"phone": _PHONE, "chat_id": "@ch"})
         assert "error=archive_failed" in str(resp.url)
 
     @pytest.mark.asyncio
     async def test_archive_client_unavailable(self, web_client):
         c, app = web_client
         app.state.pool.get_native_client_by_phone = AsyncMock(return_value=None)
-        resp = await c.post("/my-telegram/archive", data={"phone": _PHONE, "chat_id": "@ch"})
+        resp = await c.post("/dialogs/archive", data={"phone": _PHONE, "chat_id": "@ch"})
         assert "error=client_unavailable" in str(resp.url)
 
     @pytest.mark.asyncio
@@ -1319,7 +1319,7 @@ class TestWebArchive:
         mock_client.get_entity = AsyncMock(return_value=SimpleNamespace(id=1))
         mock_client.edit_folder = AsyncMock()
         app.state.pool.get_native_client_by_phone = AsyncMock(return_value=(mock_client, _PHONE))
-        resp = await c.post("/my-telegram/unarchive", data={"phone": _PHONE, "chat_id": "@ch"})
+        resp = await c.post("/dialogs/unarchive", data={"phone": _PHONE, "chat_id": "@ch"})
         assert "msg=dialog_unarchived" in str(resp.url)
 
     @pytest.mark.asyncio
@@ -1328,23 +1328,23 @@ class TestWebArchive:
         mock_client = AsyncMock()
         mock_client.get_entity = AsyncMock(side_effect=RuntimeError("err"))
         app.state.pool.get_native_client_by_phone = AsyncMock(return_value=(mock_client, _PHONE))
-        resp = await c.post("/my-telegram/unarchive", data={"phone": _PHONE, "chat_id": "@ch"})
+        resp = await c.post("/dialogs/unarchive", data={"phone": _PHONE, "chat_id": "@ch"})
         assert "error=unarchive_failed" in str(resp.url)
 
     @pytest.mark.asyncio
     async def test_unarchive_missing_fields(self, web_client):
         c, app = web_client
-        resp = await c.post("/my-telegram/unarchive", data={"phone": "", "chat_id": ""})
+        resp = await c.post("/dialogs/unarchive", data={"phone": "", "chat_id": ""})
         assert "error=missing_fields" in str(resp.url)
 
 
 class TestWebMarkRead:
-    """POST /my-telegram/mark-read."""
+    """POST /dialogs/mark-read."""
 
     @pytest.mark.asyncio
     async def test_mark_read_missing_fields(self, web_client):
         c, app = web_client
-        resp = await c.post("/my-telegram/mark-read", data={"phone": "", "chat_id": ""})
+        resp = await c.post("/dialogs/mark-read", data={"phone": "", "chat_id": ""})
         assert "error=missing_fields" in str(resp.url)
 
     @pytest.mark.asyncio
@@ -1354,7 +1354,7 @@ class TestWebMarkRead:
         mock_client.get_entity = AsyncMock(return_value=SimpleNamespace(id=1))
         mock_client.send_read_acknowledge = AsyncMock()
         app.state.pool.get_native_client_by_phone = AsyncMock(return_value=(mock_client, _PHONE))
-        resp = await c.post("/my-telegram/mark-read", data={"phone": _PHONE, "chat_id": "@ch"})
+        resp = await c.post("/dialogs/mark-read", data={"phone": _PHONE, "chat_id": "@ch"})
         assert "msg=messages_marked_read" in str(resp.url)
 
     @pytest.mark.asyncio
@@ -1364,7 +1364,7 @@ class TestWebMarkRead:
         mock_client.get_entity = AsyncMock(return_value=SimpleNamespace(id=1))
         mock_client.send_read_acknowledge = AsyncMock()
         app.state.pool.get_native_client_by_phone = AsyncMock(return_value=(mock_client, _PHONE))
-        resp = await c.post("/my-telegram/mark-read", data={
+        resp = await c.post("/dialogs/mark-read", data={
             "phone": _PHONE, "chat_id": "@ch", "max_id": "100",
         })
         assert "msg=messages_marked_read" in str(resp.url)
@@ -1375,24 +1375,24 @@ class TestWebMarkRead:
         mock_client = AsyncMock()
         mock_client.get_entity = AsyncMock(side_effect=RuntimeError("err"))
         app.state.pool.get_native_client_by_phone = AsyncMock(return_value=(mock_client, _PHONE))
-        resp = await c.post("/my-telegram/mark-read", data={"phone": _PHONE, "chat_id": "@ch"})
+        resp = await c.post("/dialogs/mark-read", data={"phone": _PHONE, "chat_id": "@ch"})
         assert "error=mark_read_failed" in str(resp.url)
 
     @pytest.mark.asyncio
     async def test_mark_read_client_unavailable(self, web_client):
         c, app = web_client
         app.state.pool.get_native_client_by_phone = AsyncMock(return_value=None)
-        resp = await c.post("/my-telegram/mark-read", data={"phone": _PHONE, "chat_id": "@ch"})
+        resp = await c.post("/dialogs/mark-read", data={"phone": _PHONE, "chat_id": "@ch"})
         assert "error=client_unavailable" in str(resp.url)
 
 
 class TestWebEditAdmin:
-    """POST /my-telegram/edit-admin."""
+    """POST /dialogs/edit-admin."""
 
     @pytest.mark.asyncio
     async def test_edit_admin_missing_fields(self, web_client):
         c, app = web_client
-        resp = await c.post("/my-telegram/edit-admin", data={
+        resp = await c.post("/dialogs/edit-admin", data={
             "phone": "", "chat_id": "", "user_id": "",
         })
         assert "error=missing_fields" in str(resp.url)
@@ -1404,7 +1404,7 @@ class TestWebEditAdmin:
         mock_client.get_entity = AsyncMock(return_value=SimpleNamespace(id=1))
         mock_client.edit_admin = AsyncMock()
         app.state.pool.get_native_client_by_phone = AsyncMock(return_value=(mock_client, _PHONE))
-        resp = await c.post("/my-telegram/edit-admin", data={
+        resp = await c.post("/dialogs/edit-admin", data={
             "phone": _PHONE, "chat_id": "@ch", "user_id": "@u", "is_admin": "1", "title": "Boss",
         })
         assert "msg=admin_updated" in str(resp.url)
@@ -1415,7 +1415,7 @@ class TestWebEditAdmin:
         mock_client = AsyncMock()
         mock_client.get_entity = AsyncMock(side_effect=RuntimeError("err"))
         app.state.pool.get_native_client_by_phone = AsyncMock(return_value=(mock_client, _PHONE))
-        resp = await c.post("/my-telegram/edit-admin", data={
+        resp = await c.post("/dialogs/edit-admin", data={
             "phone": _PHONE, "chat_id": "@ch", "user_id": "@u",
         })
         assert "error=edit_admin_failed" in str(resp.url)
@@ -1424,19 +1424,19 @@ class TestWebEditAdmin:
     async def test_edit_admin_client_unavailable(self, web_client):
         c, app = web_client
         app.state.pool.get_native_client_by_phone = AsyncMock(return_value=None)
-        resp = await c.post("/my-telegram/edit-admin", data={
+        resp = await c.post("/dialogs/edit-admin", data={
             "phone": _PHONE, "chat_id": "@ch", "user_id": "@u",
         })
         assert "error=client_unavailable" in str(resp.url)
 
 
 class TestWebEditPermissions:
-    """POST /my-telegram/edit-permissions."""
+    """POST /dialogs/edit-permissions."""
 
     @pytest.mark.asyncio
     async def test_edit_permissions_no_flags(self, web_client):
         c, app = web_client
-        resp = await c.post("/my-telegram/edit-permissions", data={
+        resp = await c.post("/dialogs/edit-permissions", data={
             "phone": _PHONE, "chat_id": "@ch", "user_id": "@u",
         })
         assert "error=no_permission_flags" in str(resp.url)
@@ -1444,7 +1444,7 @@ class TestWebEditPermissions:
     @pytest.mark.asyncio
     async def test_edit_permissions_missing_fields(self, web_client):
         c, app = web_client
-        resp = await c.post("/my-telegram/edit-permissions", data={
+        resp = await c.post("/dialogs/edit-permissions", data={
             "phone": "", "chat_id": "", "user_id": "", "send_messages": "true",
         })
         assert "error=missing_fields" in str(resp.url)
@@ -1456,7 +1456,7 @@ class TestWebEditPermissions:
         mock_client.get_entity = AsyncMock(return_value=SimpleNamespace(id=1))
         mock_client.edit_permissions = AsyncMock()
         app.state.pool.get_native_client_by_phone = AsyncMock(return_value=(mock_client, _PHONE))
-        resp = await c.post("/my-telegram/edit-permissions", data={
+        resp = await c.post("/dialogs/edit-permissions", data={
             "phone": _PHONE, "chat_id": "@ch", "user_id": "@u", "send_messages": "true",
         })
         assert "msg=permissions_updated" in str(resp.url)
@@ -1467,19 +1467,19 @@ class TestWebEditPermissions:
         mock_client = AsyncMock()
         mock_client.get_entity = AsyncMock(side_effect=RuntimeError("err"))
         app.state.pool.get_native_client_by_phone = AsyncMock(return_value=(mock_client, _PHONE))
-        resp = await c.post("/my-telegram/edit-permissions", data={
+        resp = await c.post("/dialogs/edit-permissions", data={
             "phone": _PHONE, "chat_id": "@ch", "user_id": "@u", "send_messages": "1",
         })
         assert "error=edit_permissions_failed" in str(resp.url)
 
 
 class TestWebKick:
-    """POST /my-telegram/kick."""
+    """POST /dialogs/kick."""
 
     @pytest.mark.asyncio
     async def test_kick_missing_fields(self, web_client):
         c, app = web_client
-        resp = await c.post("/my-telegram/kick", data={
+        resp = await c.post("/dialogs/kick", data={
             "phone": "", "chat_id": "", "user_id": "",
         })
         assert "error=missing_fields" in str(resp.url)
@@ -1491,7 +1491,7 @@ class TestWebKick:
         mock_client.get_entity = AsyncMock(return_value=SimpleNamespace(id=1))
         mock_client.kick_participant = AsyncMock()
         app.state.pool.get_native_client_by_phone = AsyncMock(return_value=(mock_client, _PHONE))
-        resp = await c.post("/my-telegram/kick", data={
+        resp = await c.post("/dialogs/kick", data={
             "phone": _PHONE, "chat_id": "@ch", "user_id": "@u",
         })
         assert "msg=user_kicked" in str(resp.url)
@@ -1502,7 +1502,7 @@ class TestWebKick:
         mock_client = AsyncMock()
         mock_client.get_entity = AsyncMock(side_effect=RuntimeError("err"))
         app.state.pool.get_native_client_by_phone = AsyncMock(return_value=(mock_client, _PHONE))
-        resp = await c.post("/my-telegram/kick", data={
+        resp = await c.post("/dialogs/kick", data={
             "phone": _PHONE, "chat_id": "@ch", "user_id": "@u",
         })
         assert "error=kick_failed" in str(resp.url)
@@ -1511,19 +1511,19 @@ class TestWebKick:
     async def test_kick_client_unavailable(self, web_client):
         c, app = web_client
         app.state.pool.get_native_client_by_phone = AsyncMock(return_value=None)
-        resp = await c.post("/my-telegram/kick", data={
+        resp = await c.post("/dialogs/kick", data={
             "phone": _PHONE, "chat_id": "@ch", "user_id": "@u",
         })
         assert "error=client_unavailable" in str(resp.url)
 
 
 class TestWebBroadcastStats:
-    """GET /my-telegram/broadcast-stats."""
+    """GET /dialogs/broadcast-stats."""
 
     @pytest.mark.asyncio
     async def test_broadcast_stats_missing_params(self, web_client):
         c, app = web_client
-        resp = await c.get("/my-telegram/broadcast-stats")
+        resp = await c.get("/dialogs/broadcast-stats")
         assert resp.status_code == 400
 
     @pytest.mark.asyncio
@@ -1542,7 +1542,7 @@ class TestWebBroadcastStats:
         )
         mock_client.get_broadcast_stats = AsyncMock(return_value=stats)
         app.state.pool.get_native_client_by_phone = AsyncMock(return_value=(mock_client, _PHONE))
-        resp = await c.get(f"/my-telegram/broadcast-stats?phone={_PHONE}&chat_id=@ch")
+        resp = await c.get(f"/dialogs/broadcast-stats?phone={_PHONE}&chat_id=@ch")
         assert resp.status_code == 200
         data = resp.json()
         assert "stats" in data
@@ -1554,19 +1554,19 @@ class TestWebBroadcastStats:
         mock_client = AsyncMock()
         mock_client.get_entity = AsyncMock(side_effect=RuntimeError("err"))
         app.state.pool.get_native_client_by_phone = AsyncMock(return_value=(mock_client, _PHONE))
-        resp = await c.get(f"/my-telegram/broadcast-stats?phone={_PHONE}&chat_id=@ch")
+        resp = await c.get(f"/dialogs/broadcast-stats?phone={_PHONE}&chat_id=@ch")
         assert resp.status_code == 500
 
     @pytest.mark.asyncio
     async def test_broadcast_stats_client_unavailable(self, web_client):
         c, app = web_client
         app.state.pool.get_native_client_by_phone = AsyncMock(return_value=None)
-        resp = await c.get(f"/my-telegram/broadcast-stats?phone={_PHONE}&chat_id=@ch")
+        resp = await c.get(f"/dialogs/broadcast-stats?phone={_PHONE}&chat_id=@ch")
         assert resp.status_code == 503
 
 
 class TestWebLeave:
-    """POST /my-telegram/leave."""
+    """POST /dialogs/leave."""
 
     @pytest.mark.asyncio
     async def test_leave_ok(self, web_client):
@@ -1576,7 +1576,7 @@ class TestWebLeave:
             new_callable=AsyncMock,
             return_value={-100111: True, -100222: False},
         ):
-            resp = await c.post("/my-telegram/leave", data={
+            resp = await c.post("/dialogs/leave", data={
                 "phone": _PHONE, "channel_ids": ["-100111:channel", "-100222:supergroup"],
             })
         assert "left=1" in str(resp.url)
@@ -1584,12 +1584,12 @@ class TestWebLeave:
 
 
 class TestWebDownloadMedia:
-    """POST /my-telegram/download-media."""
+    """POST /dialogs/download-media."""
 
     @pytest.mark.asyncio
     async def test_download_missing_fields(self, web_client):
         c, app = web_client
-        resp = await c.post("/my-telegram/download-media", data={
+        resp = await c.post("/dialogs/download-media", data={
             "phone": "", "chat_id": "", "message_id": "",
         })
         assert "error=missing_fields" in str(resp.url)
@@ -1598,7 +1598,7 @@ class TestWebDownloadMedia:
     async def test_download_client_unavailable(self, web_client):
         c, app = web_client
         app.state.pool.get_native_client_by_phone = AsyncMock(return_value=None)
-        resp = await c.post("/my-telegram/download-media", data={
+        resp = await c.post("/dialogs/download-media", data={
             "phone": _PHONE, "chat_id": "@ch", "message_id": "1",
         })
         assert "error=client_unavailable" in str(resp.url)
@@ -1615,7 +1615,7 @@ class TestWebDownloadMedia:
 
         mock_client.iter_messages = MagicMock(return_value=_empty_iter(None, None))
         app.state.pool.get_native_client_by_phone = AsyncMock(return_value=(mock_client, _PHONE))
-        resp = await c.post("/my-telegram/download-media", data={
+        resp = await c.post("/dialogs/download-media", data={
             "phone": _PHONE, "chat_id": "@ch", "message_id": "1",
         })
         assert "error=message_not_found" in str(resp.url)
@@ -1633,7 +1633,7 @@ class TestWebDownloadMedia:
         mock_client.iter_messages = MagicMock(return_value=_iter(None, None))
         mock_client.download_media = AsyncMock(return_value=None)
         app.state.pool.get_native_client_by_phone = AsyncMock(return_value=(mock_client, _PHONE))
-        resp = await c.post("/my-telegram/download-media", data={
+        resp = await c.post("/dialogs/download-media", data={
             "phone": _PHONE, "chat_id": "@ch", "message_id": "1",
         })
         assert "error=no_media" in str(resp.url)
@@ -1644,25 +1644,25 @@ class TestWebDownloadMedia:
         mock_client = AsyncMock()
         mock_client.get_entity = AsyncMock(side_effect=RuntimeError("err"))
         app.state.pool.get_native_client_by_phone = AsyncMock(return_value=(mock_client, _PHONE))
-        resp = await c.post("/my-telegram/download-media", data={
+        resp = await c.post("/dialogs/download-media", data={
             "phone": _PHONE, "chat_id": "@ch", "message_id": "1",
         })
         assert "error=download_failed" in str(resp.url)
 
 
 class TestWebCreateChannel:
-    """GET and POST /my-telegram/create-channel."""
+    """GET and POST /dialogs/create-channel."""
 
     @pytest.mark.asyncio
     async def test_create_channel_page(self, web_client):
         c, app = web_client
-        resp = await c.get("/my-telegram/create-channel")
+        resp = await c.get("/dialogs/create-channel")
         assert resp.status_code == 200
 
     @pytest.mark.asyncio
     async def test_create_channel_no_client(self, web_client):
         c, app = web_client
-        resp = await c.post("/my-telegram/create-channel", data={
+        resp = await c.post("/dialogs/create-channel", data={
             "phone": "+000", "title": "Test", "about": "", "username": "",
         })
         assert resp.status_code == 200
@@ -1675,7 +1675,7 @@ class TestWebCreateChannel:
         mock_client = AsyncMock()
         mock_client.side_effect = RuntimeError("Telegram error")
         app.state.pool.clients[_PHONE] = mock_client
-        resp = await c.post("/my-telegram/create-channel", data={
+        resp = await c.post("/dialogs/create-channel", data={
             "phone": _PHONE, "title": "Test", "about": "", "username": "",
         })
         assert resp.status_code == 200

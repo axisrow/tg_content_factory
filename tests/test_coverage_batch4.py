@@ -1,4 +1,4 @@
-"""Coverage batch 4: agent_threads, moderation, my_telegram, photo_loader,
+"""Coverage batch 4: agent_threads, moderation, dialogs, photo_loader,
 unified_dispatcher, image_generation_service, messages repo, migrations,
 scheduler/manager, telegram_search.
 """
@@ -365,7 +365,7 @@ class TestBulkRejectRuns:
 
 
 # ===========================================================================
-# 3. my_telegram.py
+# 3. dialogs.py
 # ===========================================================================
 
 
@@ -382,7 +382,7 @@ class TestSearchMyTelegram:
     @pytest.mark.asyncio
     async def test_no_pool_returns_gate(self, mock_db):
         handlers = _get_tool_handlers(mock_db, client_pool=None)
-        result = await handlers["search_my_telegram"]({"phone": "+79001234567"})
+        result = await handlers["search_dialogs"]({"phone": "+79001234567"})
         assert "CLI-режиме" in _text(result)
 
     @pytest.mark.asyncio
@@ -398,7 +398,7 @@ class TestSearchMyTelegram:
         with patch("src.services.channel_service.ChannelService") as mock_svc:
             mock_svc.return_value.get_my_dialogs = AsyncMock(return_value=dialogs)
             handlers = _get_tool_handlers(mock_db, client_pool=pool)
-            result = await handlers["search_my_telegram"]({"phone": "+79001234567"})
+            result = await handlers["search_dialogs"]({"phone": "+79001234567"})
         text = _text(result)
         assert "Диалоги (2)" in text
 
@@ -411,7 +411,7 @@ class TestSearchMyTelegram:
         with patch("src.services.channel_service.ChannelService") as mock_svc:
             mock_svc.return_value.get_my_dialogs = AsyncMock(return_value=[])
             handlers = _get_tool_handlers(mock_db, client_pool=pool)
-            result = await handlers["search_my_telegram"]({"phone": "+79001234567"})
+            result = await handlers["search_dialogs"]({"phone": "+79001234567"})
         assert "не найдены" in _text(result)
 
     @pytest.mark.asyncio
@@ -426,7 +426,7 @@ class TestSearchMyTelegram:
         with patch("src.services.channel_service.ChannelService") as mock_svc:
             mock_svc.return_value.get_my_dialogs = AsyncMock(return_value=dialogs)
             handlers = _get_tool_handlers(mock_db, client_pool=pool)
-            result = await handlers["search_my_telegram"]({"phone": "+79001234567"})
+            result = await handlers["search_dialogs"]({"phone": "+79001234567"})
         text = _text(result)
         assert "Диалоги (105)" in text
         assert "и ещё" not in text
@@ -443,7 +443,7 @@ class TestSearchMyTelegram:
         with patch("src.services.channel_service.ChannelService") as mock_svc:
             mock_svc.return_value.get_my_dialogs = AsyncMock(return_value=dialogs)
             handlers = _get_tool_handlers(mock_db, client_pool=pool)
-            result = await handlers["search_my_telegram"]({"phone": "+79001234567", "type": "dm"})
+            result = await handlers["search_dialogs"]({"phone": "+79001234567", "type": "dm"})
         text = _text(result)
         assert "Нет диалогов по запросу" in text
         assert "Всего диалогов" in text
@@ -461,7 +461,7 @@ class TestSearchMyTelegram:
         with patch("src.services.channel_service.ChannelService") as mock_svc:
             mock_svc.return_value.get_my_dialogs = AsyncMock(return_value=dialogs)
             handlers = _get_tool_handlers(mock_db, client_pool=pool)
-            result = await handlers["search_my_telegram"]({"phone": "+79001234567", "limit": 3})
+            result = await handlers["search_dialogs"]({"phone": "+79001234567", "limit": 3})
         text = _text(result)
         assert "Диалоги (3)" in text
 
@@ -479,7 +479,7 @@ class TestSearchMyTelegram:
         with patch("src.services.channel_service.ChannelService") as mock_svc:
             mock_svc.return_value.get_my_dialogs = AsyncMock(return_value=dialogs)
             handlers = _get_tool_handlers(mock_db, client_pool=pool)
-            result = await handlers["search_my_telegram"]({"phone": "+79001234567", "search": "python"})
+            result = await handlers["search_dialogs"]({"phone": "+79001234567", "search": "python"})
         text = _text(result)
         assert "Диалоги (2)" in text
         assert "Python News" in text
@@ -500,7 +500,7 @@ class TestSearchMyTelegram:
         with patch("src.services.channel_service.ChannelService") as mock_svc:
             mock_svc.return_value.get_my_dialogs = AsyncMock(return_value=dialogs)
             handlers = _get_tool_handlers(mock_db, client_pool=pool)
-            result = await handlers["search_my_telegram"]({"phone": "+79001234567", "type": "channels"})
+            result = await handlers["search_dialogs"]({"phone": "+79001234567", "type": "channels"})
         text = _text(result)
         assert "Диалоги (1)" in text
         assert "Chan" in text
@@ -520,7 +520,7 @@ class TestSearchMyTelegram:
         with patch("src.services.channel_service.ChannelService") as mock_svc:
             mock_svc.return_value.get_my_dialogs = AsyncMock(return_value=dialogs)
             handlers = _get_tool_handlers(mock_db, client_pool=pool)
-            result = await handlers["search_my_telegram"]({"phone": "+79001234567", "type": "groups"})
+            result = await handlers["search_dialogs"]({"phone": "+79001234567", "type": "groups"})
         text = _text(result)
         assert "Диалоги (2)" in text
         assert "Chan" not in text
@@ -538,7 +538,7 @@ class TestSearchMyTelegram:
         with patch("src.services.channel_service.ChannelService") as mock_svc:
             mock_svc.return_value.get_my_dialogs = AsyncMock(return_value=dialogs)
             handlers = _get_tool_handlers(mock_db, client_pool=pool)
-            result = await handlers["search_my_telegram"]({"phone": "+79001234567", "type": "bot"})
+            result = await handlers["search_dialogs"]({"phone": "+79001234567", "type": "bot"})
         text = _text(result)
         assert "Диалоги (1)" in text
         assert "Bot1" in text
@@ -552,7 +552,7 @@ class TestSearchMyTelegram:
         with patch("src.services.channel_service.ChannelService") as mock_svc:
             mock_svc.return_value.get_my_dialogs = AsyncMock(side_effect=Exception("fail"))
             handlers = _get_tool_handlers(mock_db, client_pool=pool)
-            result = await handlers["search_my_telegram"]({"phone": "+79001234567"})
+            result = await handlers["search_dialogs"]({"phone": "+79001234567"})
         assert "Ошибка получения диалогов" in _text(result)
 
 
@@ -1294,6 +1294,37 @@ async def test_migrations_adds_missing_columns():
         cols = {row["name"] for row in await cur.fetchall()}
         assert "media_type" in cols
         assert "reactions_json" in cols
+
+
+@pytest.mark.asyncio
+async def test_migrations_renames_legacy_dialog_search_permission_key():
+    import json
+
+    import aiosqlite
+
+    from src.database.migrations import run_migrations
+    from src.database.schema import SCHEMA_SQL
+
+    legacy_key = "_".join(("search", "my", "telegram"))
+
+    async with aiosqlite.connect(":memory:") as conn:
+        conn.row_factory = aiosqlite.Row
+        await conn.executescript(SCHEMA_SQL)
+        await conn.execute(
+            "INSERT INTO settings(key, value) VALUES('agent_tool_permissions', ?)",
+            (json.dumps({legacy_key: True, "refresh_dialogs": False}),),
+        )
+        await conn.commit()
+
+        await run_migrations(conn)
+
+        cur = await conn.execute(
+            "SELECT value FROM settings WHERE key = 'agent_tool_permissions' LIMIT 1"
+        )
+        row = await cur.fetchone()
+        data = json.loads(row["value"])
+        assert data["search_dialogs"] is True
+        assert legacy_key not in data
 
 
 @pytest.mark.asyncio
