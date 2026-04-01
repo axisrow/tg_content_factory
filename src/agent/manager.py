@@ -714,6 +714,18 @@ class ClaudeSdkBackend:
                                 _last_activity[0] = time.monotonic()
                                 await tracker.on_block_stop(event.get("index", 0))
 
+                            elif event_type == "error":
+                                error_info = event.get("error", {})
+                                api_error_type = error_info.get("type", "unknown")
+                                api_error_msg = error_info.get("message", str(error_info))
+                                logger.warning(
+                                    "API stream error event (thread %d): type=%s message=%s",
+                                    thread_id, api_error_type, api_error_msg,
+                                )
+                                if api_error_type == "overloaded_error":
+                                    raise CLIConnectionError(f"API overloaded: {api_error_msg}")
+                                raise ClaudeSDKError(f"{api_error_type}: {api_error_msg}")
+
                         elif isinstance(msg, AssistantMessage):
                             _last_activity[0] = time.monotonic()
                             for _idx, block in enumerate(msg.content):
@@ -832,8 +844,13 @@ class ClaudeSdkBackend:
                     last_err = exc
                     continue
                 stderr_summary = "\n".join(stderr_lines[-10:]) if stderr_lines else str(exc)
+                conn_msg = (
+                    "Сервер Anthropic перегружен, попробуйте позже."
+                    if "overloaded" in str(exc).lower()
+                    else "Не удалось подключиться к Claude CLI"
+                )
                 err_payload = json.dumps(
-                    {"error": "Не удалось подключиться к Claude CLI", "details": stderr_summary},
+                    {"error": conn_msg, "details": stderr_summary},
                     ensure_ascii=False,
                 )
                 await queue.put(f"data: {err_payload}\n\n")
