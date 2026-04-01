@@ -156,7 +156,7 @@ def make_huggingface_adapter(
 ) -> Callable[..., Awaitable[str]]:
     # Use inference endpoint when model is provided in model arg; otherwise use base_url
     base = base_url or os.environ.get(
-        "HUGGINGFACE_API_BASE", "https://api-inference.huggingface.co/models"
+        "HUGGINGFACE_API_BASE", "https://router.huggingface.co/hf-inference/models"
     )
 
     async def provider(
@@ -280,7 +280,7 @@ def make_huggingface_image_adapter(api_token: str, output_dir: str = "data/image
         if model and "/" not in model:
             logger.warning("HuggingFace: model %r lacks '/' separator, falling back to %s", model, default_model)
         model_id = model if model and "/" in model else default_model
-        url = f"https://api-inference.huggingface.co/models/{model_id}"
+        url = f"https://router.huggingface.co/hf-inference/models/{model_id}"
         headers = {"Authorization": f"Bearer {api_token}"}
         payload = {"inputs": prompt}
         async with aiohttp.ClientSession() as session:
