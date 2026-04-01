@@ -115,10 +115,26 @@ async def test_dialogs_page_with_phone(client):
 
 
 @pytest.mark.asyncio
-async def test_legacy_dialogs_route_not_mounted(client):
+async def test_legacy_dialogs_route_redirects_to_dialogs(client):
     legacy_prefix = "/my" + "-telegram"
-    resp = await client.get(f"{legacy_prefix}/", follow_redirects=False)
-    assert resp.status_code == 404
+    resp = await client.get(f"{legacy_prefix}/?phone=%2B1234567890", follow_redirects=False)
+    assert resp.status_code == 308
+    assert resp.headers["location"] == "/dialogs/?phone=%2B1234567890"
+
+
+@pytest.mark.asyncio
+async def test_legacy_dialogs_post_route_redirects_to_dialogs(client):
+    legacy_prefix = "/my" + "-telegram"
+    resp = await client.post(
+        f"{legacy_prefix}/leave",
+        data={
+            "phone": "+1234567890",
+            "channel_ids": ["-100111:Dialog 1"],
+        },
+        follow_redirects=False,
+    )
+    assert resp.status_code == 308
+    assert resp.headers["location"] == "/dialogs/leave"
 
 
 @pytest.mark.asyncio

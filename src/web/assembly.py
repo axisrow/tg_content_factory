@@ -17,6 +17,16 @@ from src.web.template_globals import configure_template_globals
 logger = logging.getLogger(__name__)
 
 
+def _legacy_dialogs_redirect(request: Request) -> RedirectResponse:
+    suffix = request.url.path.removeprefix("/my-telegram")
+    target = f"/dialogs{suffix}" if suffix else "/dialogs/"
+    if target == "/dialogs":
+        target = "/dialogs/"
+    if request.url.query:
+        target = f"{target}?{request.url.query}"
+    return RedirectResponse(url=target, status_code=308)
+
+
 def configure_app(app: FastAPI, container: AppContainer | None) -> None:
     if container is not None:
         app.state.container = container
@@ -56,6 +66,20 @@ def configure_app(app: FastAPI, container: AppContainer | None) -> None:
 
 
 def register_builtin_endpoints(app: FastAPI) -> None:
+    legacy_methods = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]
+
+    @app.api_route("/my-telegram", methods=legacy_methods, include_in_schema=False)
+    @app.api_route(
+        "/my-telegram/{legacy_path:path}",
+        methods=legacy_methods,
+        include_in_schema=False,
+    )
+    async def legacy_dialogs_redirect(
+        request: Request,
+        legacy_path: str = "",
+    ) -> RedirectResponse:
+        return _legacy_dialogs_redirect(request)
+
     @app.get("/health")
     async def health_check(request: Request):
         container = getattr(request.app.state, "container", None)

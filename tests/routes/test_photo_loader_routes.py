@@ -43,10 +43,14 @@ async def test_photo_loader_page_with_phone(client):
 
 
 @pytest.mark.asyncio
-async def test_legacy_photo_loader_route_not_mounted(client):
+async def test_legacy_photo_loader_route_redirects_to_dialogs(client):
     legacy_prefix = "/my" + "-telegram"
-    resp = await client.get(f"{legacy_prefix}/photos", follow_redirects=False)
-    assert resp.status_code == 404
+    resp = await client.get(
+        f"{legacy_prefix}/photos?phone=%2B1234567890",
+        follow_redirects=False,
+    )
+    assert resp.status_code == 308
+    assert resp.headers["location"] == "/dialogs/photos?phone=%2B1234567890"
 
 
 @pytest.mark.asyncio
