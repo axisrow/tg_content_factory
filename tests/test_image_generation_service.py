@@ -61,8 +61,11 @@ async def test_search_models_huggingface_with_token(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_search_models_huggingface_no_token_returns_empty():
+async def test_search_models_huggingface_no_token_returns_empty(monkeypatch):
     """Test HuggingFace search returns empty list when no token available."""
+    monkeypatch.delenv("HUGGINGFACE_API_KEY", raising=False)
+    monkeypatch.delenv("HUGGINGFACE_TOKEN", raising=False)
+
     svc = _make_clean_service()
 
     result = await svc.search_models("huggingface", query="flux", api_key="")
@@ -85,13 +88,6 @@ async def test_search_models_huggingface_exception_returns_empty():
     with patch.dict(sys.modules, {"huggingface_hub": mock_hf_module}):
         result = await svc.search_models("huggingface", query="test", api_key="hf_token")
         assert result == []
-
-
-# ── generate() ──
-    """Create service without env-based auto-registration."""
-    svc = ImageGenerationService.__new__(ImageGenerationService)
-    svc._adapters = {}
-    return svc
 
 
 # ── generate() ──

@@ -166,7 +166,8 @@ class ImageGenerationService:
                 from huggingface_hub import HfApi
 
                 hf_api = HfApi()
-                results = hf_api.list_models(
+                results = await asyncio.to_thread(
+                    hf_api.list_models,
                     filter="text-to-image",
                     search=query if query else None,
                     sort="downloads",
