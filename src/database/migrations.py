@@ -661,8 +661,11 @@ async def run_migrations(db: aiosqlite.Connection) -> bool:
         """)
     await db.commit()
 
-    # Rename tool key list_dialogs → search_my_telegram in agent_tool_permissions (issue #272)
-    await _migrate_tool_permission_key(db, "list_dialogs", "search_my_telegram")
+    legacy_dialog_search_key = "_".join(("search", "my", "telegram"))
+
+    # Preserve historical rename path for older DBs, then migrate to the canonical tool id.
+    await _migrate_tool_permission_key(db, "list_dialogs", legacy_dialog_search_key)
+    await _migrate_tool_permission_key(db, legacy_dialog_search_key, "search_dialogs")
 
     # Reset agent prompt template to new default (AI Telegram client) — one-time migration
     cur = await db.execute("SELECT value FROM settings WHERE key = '_migration_reset_prompt_v2'")

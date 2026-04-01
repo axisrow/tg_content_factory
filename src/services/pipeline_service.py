@@ -252,7 +252,7 @@ class PipelineService:
             if dialog is None:
                 raise PipelineValidationError(
                     f"Диалог {ref.dialog_id} для {ref.phone} не найден в кеше. "
-                    "Сначала откройте 'Мой Телеграм' для этого аккаунта."
+                    "Сначала откройте 'Диалоги' для этого аккаунта."
                 )
             if str(dialog.get("channel_type") or "").strip() == "bot":
                 raise PipelineValidationError("Боты не поддерживаются как pipeline targets.")

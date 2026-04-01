@@ -17,6 +17,16 @@ from src.web.template_globals import configure_template_globals
 logger = logging.getLogger(__name__)
 
 
+def _legacy_dialogs_redirect(request: Request) -> RedirectResponse:
+    suffix = request.url.path.removeprefix("/my-telegram")
+    target = f"/dialogs{suffix}" if suffix else "/dialogs/"
+    if target == "/dialogs":
+        target = "/dialogs/"
+    if request.url.query:
+        target = f"{target}?{request.url.query}"
+    return RedirectResponse(url=target, status_code=308)
+
+
 def configure_app(app: FastAPI, container: AppContainer | None) -> None:
     if container is not None:
         app.state.container = container
@@ -56,6 +66,20 @@ def configure_app(app: FastAPI, container: AppContainer | None) -> None:
 
 
 def register_builtin_endpoints(app: FastAPI) -> None:
+    legacy_methods = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]
+
+    @app.api_route("/my-telegram", methods=legacy_methods, include_in_schema=False)
+    @app.api_route(
+        "/my-telegram/{legacy_path:path}",
+        methods=legacy_methods,
+        include_in_schema=False,
+    )
+    async def legacy_dialogs_redirect(
+        request: Request,
+        legacy_path: str = "",
+    ) -> RedirectResponse:
+        return _legacy_dialogs_redirect(request)
+
     @app.get("/health")
     async def health_check(request: Request):
         container = getattr(request.app.state, "container", None)
@@ -119,11 +143,11 @@ def register_routes(app: FastAPI) -> None:
     from src.web.routes.channels import router as channels_router
     from src.web.routes.dashboard import router as dashboard_router
     from src.web.routes.debug import router as debug_router
+    from src.web.routes.dialogs import router as dialogs_router
     from src.web.routes.filter import router as filter_router
     from src.web.routes.images import router as images_router
     from src.web.routes.import_channels import router as import_router
     from src.web.routes.moderation import router as moderation_router
-    from src.web.routes.my_telegram import router as my_telegram_router
     from src.web.routes.photo_loader import router as photo_loader_router
     from src.web.routes.pipelines import router as pipelines_router
     from src.web.routes.rss import router as rss_router
@@ -148,8 +172,8 @@ def register_routes(app: FastAPI) -> None:
     app.include_router(scheduler_router, prefix="/scheduler")
     app.include_router(settings_router, prefix="/settings")
     app.include_router(accounts_router, prefix="/settings")
-    app.include_router(my_telegram_router, prefix="/my-telegram")
-    app.include_router(photo_loader_router, prefix="/my-telegram/photos")
+    app.include_router(dialogs_router, prefix="/dialogs")
+    app.include_router(photo_loader_router, prefix="/dialogs/photos")
     app.include_router(debug_router, prefix="/debug")
     app.include_router(images_router, prefix="/images")
     app.include_router(pipelines_router, prefix="/pipelines")

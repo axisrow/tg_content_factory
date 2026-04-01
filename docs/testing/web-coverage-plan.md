@@ -2,7 +2,7 @@
 
 ## Контекст
 
-Текущее покрытие веб-маршрутов ~17-20% (~25 из 120+ endpoints). Хорошо покрыты: auth, import_channels, scheduler, my_telegram, debug. Полностью не покрыты: search, search_queries, filter, agent, photo_loader, analytics. Частично: channels, pipelines, moderation, settings.
+Текущее покрытие веб-маршрутов ~17-20% (~25 из 120+ endpoints). Хорошо покрыты: auth, import_channels, scheduler, dialogs, debug. Полностью не покрыты: search, search_queries, filter, agent, photo_loader, analytics. Частично: channels, pipelines, moderation, settings.
 
 Цель — добиться ~80%+ покрытия, написав ~123 новых теста в 9 новых файлах + дополнения к 2 существующим.
 
@@ -312,8 +312,8 @@ agent_manager_mock.chat_stream = _fake_stream
 
 | Тест | Проверяет |
 |------|-----------|
-| `test_page_renders_no_phone` | `GET /my-telegram/photos` → 200 |
-| `test_page_renders_with_phone` | `GET /my-telegram/photos?phone=%2B1234567890` → 200 |
+| `test_page_renders_no_phone` | `GET /dialogs/photos` → 200 |
+| `test_page_renders_with_phone` | `GET /dialogs/photos?phone=%2B1234567890` → 200 |
 | `test_page_shows_no_jobs` | нет jobs в DB → 200, нет краша |
 | `test_refresh_redirects` | `POST /photos/refresh` → 303 |
 | `test_send_missing_target` | без `target_dialog_id` → 303, `error=photo_target_required` |

@@ -3,7 +3,7 @@
 {% block content %}
 <div class="d-flex align-items-center gap-3 mb-3">
     <h1 class="mb-0">Создать Telegram-канал</h1>
-    <a href="/my-telegram/" class="btn btn-outline-secondary btn-sm">← Мой Телеграм</a>
+    <a href="/dialogs/" class="btn btn-outline-secondary btn-sm">← Диалоги</a>
 </div>
 
 {% if created %}
@@ -25,7 +25,7 @@
 <div class="card" style="max-width:520px">
     <div class="card-header fw-semibold">Новый канал</div>
     <div class="card-body">
-        <form method="post" action="/my-telegram/create-channel" data-busy>
+        <form method="post" action="/dialogs/create-channel" data-busy>
             <div class="mb-3">
                 <label class="form-label">Аккаунт</label>
                 <select class="form-select" name="phone" required>

@@ -14,7 +14,7 @@ DEFAULT_AGENT_PROMPT_TEMPLATE = (
     "по Telegram API (search_telegram, search_my_chats, search_in_channel)\n"
     "- Сообщения: отправлять, редактировать, удалять, пересылать, закреплять (send_message, "
     "edit_message, forward_messages, read_messages)\n"
-    "- Диалоги и сущности: поиск чатов (search_my_telegram), определение любой сущности по "
+    "- Диалоги и сущности: поиск чатов (search_dialogs), определение любой сущности по "
     "@username/ссылке/ID (resolve_entity)\n"
     "- Каналы: добавлять, собирать сообщения, получать статистику, создавать новые "
     "(add_channel, collect_channel, create_telegram_channel)\n"

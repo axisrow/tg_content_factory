@@ -384,7 +384,7 @@ class TestResolveAnyEntityClientPool:
 
 
 class TestResolveEntityTool:
-    """Tests for the resolve_entity MCP tool in my_telegram.py."""
+    """Tests for the resolve_entity MCP tool in dialogs.py."""
 
     @pytest.mark.asyncio
     async def test_resolve_user_success(self, mock_db):
