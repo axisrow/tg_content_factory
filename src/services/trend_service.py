@@ -3,6 +3,8 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
+from sklearn.feature_extraction.text import TfidfVectorizer
+
 from src.database import Database
 
 logger = logging.getLogger(__name__)
@@ -48,20 +50,15 @@ class TrendService:
         self._db = db
 
     async def get_trending_topics(self, days: int = 7, limit: int = 20) -> list[TrendingTopic]:
-        """Return top keywords by frequency in messages from the last N days.
+        """Return top keywords by TF-IDF score from messages in the last N days.
 
-        Uses a simple word-frequency approach on the messages table so it works
-        even without FTS5.  Short words (<4 chars) and stop-words are skipped.
-        Processes rows in batches to avoid loading all texts into memory at once.
+        Uses TfidfVectorizer to automatically suppress ubiquitous low-signal words
+        (greetings, filler, stop-words) without a hardcoded list.
         """
         batch_size = 5000
         offset = 0
-        word_counts: dict[str, int] = {}
-        stop_words = {
-            "и", "в", "на", "с", "по", "не", "это", "то", "что",
-            "как", "из", "за", "от", "для", "или", "но", "а",
-            "the", "and", "is", "in", "to", "of", "a", "for",
-        }
+        texts: list[str] = []
+
         while True:
             rows = await self._db.execute_fetchall(
                 """
@@ -74,17 +71,33 @@ class TrendService:
             )
             if not rows:
                 break
-            for row in rows:
-                text = row["text"] or ""
-                for word in text.split():
-                    w = word.lower().strip(".,!?:;\"'()[]{}–—")
-                    if len(w) >= 4 and w not in stop_words and w.isalpha():
-                        word_counts[w] = word_counts.get(w, 0) + 1
+            texts.extend(row["text"] or "" for row in rows)
             if len(rows) < batch_size:
                 break
             offset += batch_size
-        sorted_words = sorted(word_counts.items(), key=lambda x: x[1], reverse=True)
-        return [TrendingTopic(keyword=w, count=c) for w, c in sorted_words[:limit]]
+
+        if not texts:
+            return []
+
+        vectorizer = TfidfVectorizer(
+            token_pattern=r"(?u)\b[а-яёa-z]{4,}\b",  # 4+ символов, RU + EN
+            max_df=0.85,  # слова в >85% сообщений — шум, убираются автоматически
+            min_df=2,  # слова менее чем в 2 сообщениях — слишком редкие
+        )
+        try:
+            tfidf_matrix = vectorizer.fit_transform(texts)
+        except ValueError:
+            # Нет слов после фильтрации (например, корпус слишком мал)
+            return []
+
+        feature_names = vectorizer.get_feature_names_out()
+        scores = tfidf_matrix.sum(axis=0).A1  # суммарный TF-IDF score по всем документам
+
+        top_indices = scores.argsort()[::-1][:limit]
+        return [
+            TrendingTopic(keyword=feature_names[i], count=int(tfidf_matrix.getcol(i).nnz))
+            for i in top_indices
+        ]
 
     async def get_trending_channels(self, days: int = 7, limit: int = 10) -> list[TrendingChannel]:
         """Return channels with the highest average views in the last N days."""
