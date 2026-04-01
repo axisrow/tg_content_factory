@@ -1,6 +1,6 @@
 # CLI / Web / Agent Parity
 
-Каждая операция доступна через все три интерфейса.
+Каждая операция по возможности доступна через CLI, Web и agent tools. Для управления диалогами каноническое имя во всех интерфейсах теперь `dialogs`.
 
 ## Каналы
 
@@ -13,9 +13,14 @@
 | Статистика канала | `channel stats` | `POST /channels/{pk}/stats` | `collect_channel_stats` |
 | Импорт каналов | `channel import` | `POST /channels/import` | `import_channels` |
 | Обновить типы | `channel refresh-types` | `POST /channels/refresh-types` | `refresh_channel_types` |
-| Обновить метадата | `channel refresh-meta` | — | `refresh_channel_meta` |
-| Список диалогов | — | `GET /channels/dialogs` | — |
-| Массовое добавление | — | `POST /channels/add-bulk` | — |
+| Обновить метаданные | `channel refresh-meta` | — | `refresh_channel_meta` |
+| Массовое добавление из диалогов | `channel add-bulk` | `POST /channels/add-bulk` | — |
+| Список тегов | `channel tag list` | `GET /channels/tags` | — |
+| Создать тег | `channel tag add` | `POST /channels/tags` | — |
+| Удалить тег | `channel tag delete` | `DELETE /channels/tags/{name}` | — |
+| Получить теги канала | `channel tag get` | `GET /channels/{pk}/tags` | — |
+| Обновить теги канала | `channel tag set` | `POST /channels/{pk}/tags` | — |
+| Список диалогов для импорта | — | `GET /channels/dialogs` | — |
 
 ## Сбор сообщений
 
@@ -24,7 +29,7 @@
 | Собрать все каналы | `collect` | `POST /channels/collect-all` | `collect_all_channels` |
 | Собрать один канал | `channel collect` | `POST /channels/{pk}/collect` | `collect_channel` |
 | Статистика всех | — | `POST /channels/stats/all` | `collect_all_stats` |
-| Превью (без сохранения) | `collect sample` | — | — |
+| Превью без сохранения | `collect sample` | — | — |
 | Отменить задачу | `scheduler task-cancel` | `POST /scheduler/tasks/{id}/cancel` | `cancel_scheduler_task` |
 | Очистить очередь | `scheduler clear-pending` | `POST /scheduler/tasks/clear-pending-collect` | `clear_pending_tasks` |
 
@@ -39,6 +44,14 @@
 | Поиск по чатам | `search --mode my_chats` | `GET /search?mode=my_chats` | `search_my_chats` |
 | Поиск в канале | `search --mode channel` | `GET /search?mode=channel` | `search_in_channel` |
 | Индексация | — | `POST /settings/semantic-index` | `index_messages` |
+
+## Сообщения
+
+| Операция | CLI | Web Endpoint | Agent Tool |
+|----------|-----|-------------|------------|
+| Чтение сообщений | `messages read` | — | — |
+| Перевод одного сообщения | `translate message` | `POST /search/translate/{message_db_id}` | — |
+| Экспорт сообщений | `export json|csv|rss` | — | — |
 
 ## Поисковые запросы
 
@@ -62,10 +75,10 @@
 | Сбросить | `filter reset` | `POST /channels/filter/reset` | `reset_filters` |
 | Pre-check | `filter precheck` | `POST /channels/filter/precheck` | `precheck_filters` |
 | Вкл/выкл фильтр | `filter toggle` | `POST /channels/{pk}/filter-toggle` | `toggle_channel_filter` |
-| Очистить сообщения | `filter purge` | `POST /channels/filter/purge-all` | `purge_filtered_channels` |
+| Очистить filtered-каналы | `filter purge` | `POST /channels/filter/purge-all` | `purge_filtered_channels` |
 | Выбранные очистить | — | `POST /channels/filter/purge-selected` | — |
 | Hard delete | `filter hard-delete` | `POST /channels/filter/hard-delete-selected` | `hard_delete_channels` |
-| Очистить сообщения канала | — | `POST /channels/{id}/purge-messages` | — |
+| Очистить сообщения канала | `filter purge-messages` | `POST /channels/{id}/purge-messages` | — |
 
 ## Пайплайны
 
@@ -81,12 +94,13 @@
 | Генерация контента | `pipeline generate` | `POST /pipelines/{id}/generate` | `generate_draft` |
 | История запусков | `pipeline runs` | — | `list_pipeline_runs` |
 | Детали запуска | `pipeline run-show` | — | `get_pipeline_run` |
-| Опубликовать | `pipeline publish` | `POST /pipelines/{id}/publish` | `publish_pipeline_run` |
 | Очередь | `pipeline queue` | — | `get_pipeline_queue` |
+| Опубликовать | `pipeline publish` | `POST /pipelines/{id}/publish` | `publish_pipeline_run` |
 | Одобрить | `pipeline approve` | `POST /moderation/{id}/approve` | `approve_run` |
 | Отклонить | `pipeline reject` | `POST /moderation/{id}/reject` | `reject_run` |
 | Одобрить (bulk) | `pipeline bulk-approve` | `POST /moderation/bulk-approve` | `bulk_approve_runs` |
 | Отклонить (bulk) | `pipeline bulk-reject` | `POST /moderation/bulk-reject` | `bulk_reject_runs` |
+| Шаги refinement | `pipeline refinement-steps` | `GET/POST /pipelines/{id}/refinement-steps` | — |
 | Страница модерации | — | `GET /moderation/` | `list_pending_moderation` |
 | Просмотр модерации | — | `GET /moderation/{id}/view` | `view_moderation_run` |
 | Стрим генерации | — | `GET /pipelines/{id}/generate-stream` | — |
@@ -111,6 +125,7 @@
 | Удалить | `notification delete` | `POST /settings/notifications/delete` | `delete_notification_bot` |
 | Тест | `notification test` | `POST /settings/notifications/test` | `test_notification` |
 | Dry-run | `notification dry-run` | `POST /scheduler/dry-run-notifications` | `notification_dry_run` |
+| Выбрать аккаунт | `notification set-account` | `POST /settings/save-notification-account` | — |
 | Тест из scheduler | — | `POST /scheduler/test-notification` | — |
 
 ## Аккаунты
@@ -123,8 +138,7 @@
 | Flood статус | `account flood-status` | — | `get_flood_status` |
 | Сбросить flood | `account flood-clear` | — | `clear_flood_status` |
 | Инфо | `account info` | — | `get_account_info` |
-| Авторизация | — | `POST /auth/send-code` | — |
-| Верификация | — | `POST /auth/verify-code` | — |
+| Добавить аккаунт | `account add` | `POST /auth/send-code`, `POST /auth/verify-code` | — |
 
 ## Аналитика
 
@@ -137,65 +151,55 @@
 | Ежедневная статистика | `analytics daily` | `GET /analytics/content/api/pipelines` | `get_daily_stats` |
 | Статистика пайплайнов | `analytics pipeline-stats` | — | `get_pipeline_stats` |
 | Трендовые темы | `analytics trending-topics` | `GET /analytics/trends` | `get_trending_topics` |
-| Топ каналов | `analytics trending-channels` | — | `get_trending_channels` |
+| Топ каналов | `analytics trending-channels` | `GET /analytics/trends` | `get_trending_channels` |
+| Трендовые эмодзи | `analytics trending-emojis` | `GET /analytics/trends` | — |
 | Скорость сообщений | `analytics velocity` | — | `get_message_velocity` |
 | Пиковые часы | `analytics peak-hours` | — | `get_peak_hours` |
 | Календарь | `analytics calendar` | `GET /calendar/api/calendar` | `get_calendar` |
-| Экспорт | `analytics export` | — | — |
 
-## My Telegram — Диалоги
-
-| Операция | CLI | Web Endpoint | Agent Tool |
-|----------|-----|-------------|------------|
-| Список диалогов | `my-telegram list` | `GET /my-telegram/` | `search_my_telegram` |
-| Обновить кеш | `my-telegram refresh` | `POST /my-telegram/refresh` | `refresh_dialogs` |
-| Покинуть диалоги | `my-telegram leave` | `POST /my-telegram/leave` | `leave_dialogs` |
-| Статус кеша | `my-telegram cache-status` | `GET /my-telegram/cache-status` | `get_cache_status` |
-| Очистить кеш | `my-telegram cache-clear` | `POST /my-telegram/cache-clear` | `clear_dialog_cache` |
-| Топики форума | `my-telegram topics` | `GET /agent/forum-topics` | `get_forum_topics` |
-| Создать канал | `my-telegram create-channel` | `POST /my-telegram/create-channel` | `create_telegram_channel` |
-
-## My Telegram — Сообщения
+## Dialogs
 
 | Операция | CLI | Web Endpoint | Agent Tool |
 |----------|-----|-------------|------------|
-| Отправить сообщение | `my-telegram send` | `POST /my-telegram/send` | `send_message` |
-| Редактировать | `my-telegram edit-message` | `POST /my-telegram/edit-message` | `edit_message` |
-| Удалить | `my-telegram delete-message` | `POST /my-telegram/delete-message` | `delete_message` |
-| Закрепить | `my-telegram pin-message` | `POST /my-telegram/pin-message` | `pin_message` |
-| Открепить | `my-telegram unpin-message` | `POST /my-telegram/unpin-message` | `unpin_message` |
-| Скачать медиа | `my-telegram download-media` | `POST /my-telegram/download-media` | `download_media` |
-| Отметить прочитанным | `my-telegram mark-read` | `POST /my-telegram/mark-read` | `mark_read` |
-
-## My Telegram — Участники
-
-| Операция | CLI | Web Endpoint | Agent Tool |
-|----------|-----|-------------|------------|
-| Список участников | `my-telegram participants` | `GET /my-telegram/participants` | `get_participants` |
-| Права администратора | `my-telegram edit-admin` | `POST /my-telegram/edit-admin` | `edit_admin` |
-| Ограничения | `my-telegram edit-permissions` | `POST /my-telegram/edit-permissions` | `edit_permissions` |
-| Кик | `my-telegram kick` | `POST /my-telegram/kick` | `kick_participant` |
-| Статистика канала | `my-telegram broadcast-stats` | `GET /my-telegram/broadcast-stats` | `get_broadcast_stats` |
-| Архивировать | `my-telegram archive` | `POST /my-telegram/archive` | `archive_chat` |
-| Разархивировать | `my-telegram unarchive` | `POST /my-telegram/unarchive` | `unarchive_chat` |
+| Список диалогов | `dialogs list` | `GET /dialogs/` | `search_dialogs` |
+| Обновить кеш | `dialogs refresh` | `POST /dialogs/refresh` | `refresh_dialogs` |
+| Покинуть диалоги | `dialogs leave` | `POST /dialogs/leave` | `leave_dialogs` |
+| Статус кеша | `dialogs cache-status` | `GET /dialogs/cache-status` | `get_cache_status` |
+| Очистить кеш | `dialogs cache-clear` | `POST /dialogs/cache-clear` | `clear_dialog_cache` |
+| Топики форума | `dialogs topics` | `GET /agent/forum-topics` | `get_forum_topics` |
+| Создать канал | `dialogs create-channel` | `POST /dialogs/create-channel` | `create_telegram_channel` |
+| Отправить сообщение | `dialogs send` | `POST /dialogs/send` | `send_message` |
+| Редактировать | `dialogs edit-message` | `POST /dialogs/edit-message` | `edit_message` |
+| Удалить | `dialogs delete-message` | `POST /dialogs/delete-message` | `delete_message` |
+| Закрепить | `dialogs pin-message` | `POST /dialogs/pin-message` | `pin_message` |
+| Открепить | `dialogs unpin-message` | `POST /dialogs/unpin-message` | `unpin_message` |
+| Скачать медиа | `dialogs download-media` | `POST /dialogs/download-media` | `download_media` |
+| Отметить прочитанным | `dialogs mark-read` | `POST /dialogs/mark-read` | `mark_read` |
+| Список участников | `dialogs participants` | `GET /dialogs/participants` | `get_participants` |
+| Права администратора | `dialogs edit-admin` | `POST /dialogs/edit-admin` | `edit_admin` |
+| Ограничения | `dialogs edit-permissions` | `POST /dialogs/edit-permissions` | `edit_permissions` |
+| Кик | `dialogs kick` | `POST /dialogs/kick` | `kick_participant` |
+| Статистика канала | `dialogs broadcast-stats` | `GET /dialogs/broadcast-stats` | `get_broadcast_stats` |
+| Архивировать | `dialogs archive` | `POST /dialogs/archive` | `archive_chat` |
+| Разархивировать | `dialogs unarchive` | `POST /dialogs/unarchive` | `unarchive_chat` |
 
 ## Фото-загрузчик
 
 | Операция | CLI | Web Endpoint | Agent Tool |
 |----------|-----|-------------|------------|
-| Список диалогов | `photo-loader dialogs` | `GET /my-telegram/photos/` | `list_photo_dialogs` |
-| Обновить | `photo-loader refresh` | `POST /my-telegram/photos/refresh` | `refresh_photo_dialogs` |
-| Отправить фото | `photo-loader send` | `POST /my-telegram/photos/send` | `send_photos_now` |
-| Запланировать | `photo-loader schedule-send` | `POST /my-telegram/photos/schedule` | `schedule_photos` |
-| Создать батч | `photo-loader batch-create` | `POST /my-telegram/photos/batch` | `create_photo_batch` |
+| Список диалогов | `photo-loader dialogs` | `GET /dialogs/photos/` | `list_photo_dialogs` |
+| Обновить | `photo-loader refresh` | `POST /dialogs/photos/refresh` | `refresh_photo_dialogs` |
+| Отправить фото | `photo-loader send` | `POST /dialogs/photos/send` | `send_photos_now` |
+| Запланировать | `photo-loader schedule-send` | `POST /dialogs/photos/schedule` | `schedule_photos` |
+| Создать батч | `photo-loader batch-create` | `POST /dialogs/photos/batch` | `create_photo_batch` |
 | Список батчей | `photo-loader batch-list` | — | `list_photo_batches` |
-| Отменить батч | `photo-loader batch-cancel` | `POST /my-telegram/photos/items/{id}/cancel` | `cancel_photo_item` |
-| Авто-загрузка | `photo-loader auto-create` | `POST /my-telegram/photos/auto` | `create_auto_upload` |
+| Отменить батч | `photo-loader batch-cancel` | `POST /dialogs/photos/items/{id}/cancel` | `cancel_photo_item` |
+| Авто-загрузка | `photo-loader auto-create` | `POST /dialogs/photos/auto` | `create_auto_upload` |
 | Список авто | `photo-loader auto-list` | — | `list_auto_uploads` |
 | Обновить авто | `photo-loader auto-update` | — | `update_auto_upload` |
-| Вкл/выкл авто | `photo-loader auto-toggle` | `POST /my-telegram/photos/auto/{id}/toggle` | `toggle_auto_upload` |
-| Удалить авто | `photo-loader auto-delete` | `POST /my-telegram/photos/auto/{id}/delete` | `delete_auto_upload` |
-| Запустить due | `photo-loader run-due` | `POST /my-telegram/photos/run-due` | `run_photo_due` |
+| Вкл/выкл авто | `photo-loader auto-toggle` | `POST /dialogs/photos/auto/{id}/toggle` | `toggle_auto_upload` |
+| Удалить авто | `photo-loader auto-delete` | `POST /dialogs/photos/auto/{id}/delete` | `delete_auto_upload` |
+| Запустить due | `photo-loader run-due` | `POST /dialogs/photos/run-due` | `run_photo_due` |
 | Список items | — | — | `list_photo_items` |
 
 ## Изображения
@@ -205,6 +209,17 @@
 | Генерация | `image generate` | `POST /images/generate` | `generate_image` |
 | Поиск моделей | `image models` | `GET /images/models/search` | `list_image_models` |
 | Список провайдеров | `image providers` | — | `list_image_providers` |
+
+## LLM-провайдеры
+
+| Операция | CLI | Web Endpoint | Agent Tool |
+|----------|-----|-------------|------------|
+| Список | `provider list` | `GET /settings/` | — |
+| Добавить | `provider add` | `POST /settings/agent-providers/add` | — |
+| Удалить | `provider delete` | `POST /settings/agent-providers/{name}/delete` | — |
+| Probe | `provider probe` | `POST /settings/agent-providers/{name}/probe` | — |
+| Обновить модели | `provider refresh` | `POST /settings/agent-providers/{name}/refresh`, `POST /settings/agent-providers/refresh-all` | — |
+| Тест всех | `provider test-all` | `POST /settings/agent-providers/test-all` | — |
 
 ## AI-агент
 
@@ -224,14 +239,13 @@
 | Операция | CLI | Web Endpoint | Agent Tool |
 |----------|-----|-------------|------------|
 | Получить | `settings get` | `GET /settings/` | `get_settings` |
-| Установить | `settings set` | `POST /settings/save-*` | — |
+| Установить raw key/value | `settings set` | `POST /settings/save-*` | — |
 | Диагностика | `settings info` | — | `get_system_info` |
-| Планировщик | — | `POST /settings/save-scheduler` | `save_scheduler_settings` |
-| Агент | — | `POST /settings/save-agent` | `save_agent_settings` |
-| Фильтры | — | `POST /settings/save-filters` | `save_filter_settings` |
-| Семантический поиск | — | `POST /settings/save-semantic-search` | — |
+| Агент | `settings agent` | `POST /settings/save-agent` | `save_agent_settings` |
+| Фильтры | `settings filter-criteria` | `POST /settings/save-filters` | `save_filter_settings` |
+| Семантический поиск | `settings semantic` | `POST /settings/save-semantic-search` | — |
 
-## Сервер
+## Сервер и диагностика
 
 | Операция | CLI | Web Endpoint |
 |----------|-----|-------------|
@@ -241,6 +255,6 @@
 | Health check | — | `GET /health` |
 | Вход | — | `GET/POST /login` |
 | Выход | — | `GET /logout` |
-| Debug logs | — | `GET /debug/logs` |
-| Timing | — | `GET /debug/timing` |
-| Memory | — | `GET /debug/memory` |
+| Логи | `debug logs` | `GET /debug/logs` |
+| Тайминги | `debug timing` | `GET /debug/timing` |
+| Память | `debug memory` | `GET /debug/memory` |

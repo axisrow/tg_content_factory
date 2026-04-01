@@ -162,7 +162,7 @@
 
 | Tool | Категория | Описание |
 |------|-----------|----------|
-| `search_my_telegram` | READ | Поиск диалогов по названию (search, type, limit) |
+| `search_dialogs` | READ | Поиск диалогов по названию (search, type, limit) |
 | `refresh_dialogs` | WRITE | Обновить кеш |
 | `leave_dialogs` | DELETE | Покинуть диалоги |
 | `create_telegram_channel` | WRITE | Создать канал |

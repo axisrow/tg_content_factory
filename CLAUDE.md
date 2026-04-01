@@ -37,28 +37,29 @@ python -m src.main [--config CONFIG] serve [--web-pass PASS]
 python -m src.main [--config CONFIG] collect [--channel-id ID]
 python -m src.main [--config CONFIG] search "query" [--limit N] [--mode MODE]
 
-python -m src.main messages read <identifier> [--live] [--phone PHONE] [--format text|json|csv]
-python -m src.main channel list|add|delete|toggle|collect|stats|refresh-types|import|add-bulk|tag
-python -m src.main filter analyze|apply|reset|precheck|purge-messages
-python -m src.main keyword list|add|delete|toggle
-python -m src.main account list|toggle|delete|add
-python -m src.main scheduler start|trigger|search
+python -m src.main messages read <identifier> [--limit N] [--live] [--phone PHONE] [--query TEXT] [--date-from DATE] [--date-to DATE] [--topic-id ID] [--offset-id ID] [--format text|json|csv]
+python -m src.main channel list|add|delete|toggle|collect|stats|refresh-types|refresh-meta|import|add-bulk|tag
+python -m src.main filter analyze|apply|reset|precheck|toggle|purge|purge-messages|hard-delete
+python -m src.main account list|info|toggle|delete|add|flood-status|flood-clear
+python -m src.main scheduler start|trigger|status|stop|job-toggle|set-interval|task-cancel|clear-pending
 python -m src.main notification setup|status|delete|set-account
 python -m src.main test all|read|write|telegram|benchmark
 
 python -m src.main stop|restart
-python -m src.main search-query list|add|delete|toggle
-python -m src.main pipeline list|add|delete|run|runs|refinement-steps
-python -m src.main photo-loader list|upload|schedule|cancel
-python -m src.main dialogs list|refresh|leave|send|forward|read|...
-python -m src.main agent chat
-python -m src.main analytics summary|export|trending-emojis
+python -m src.main search-query list|add|edit|delete|toggle|run|stats
+python -m src.main pipeline list|show|add|edit|delete|toggle|run|generate|runs|run-show|queue|publish|approve|reject|bulk-approve|bulk-reject|refinement-steps
+python -m src.main photo-loader dialogs|refresh|send|schedule-send|batch-create|batch-list|batch-cancel|auto-create|auto-list|auto-update|auto-toggle|auto-delete|run-due
+python -m src.main dialogs list|refresh|leave|topics|cache-clear|cache-status|send|forward|edit-message|delete-message|create-channel|pin-message|unpin-message|download-media|participants|edit-admin|edit-permissions|kick|broadcast-stats|archive|unarchive|mark-read
+python -m src.main agent threads|thread-create|thread-delete|chat|thread-rename|messages|context|test-escaping|test-tools
+python -m src.main analytics top|content-types|hourly|summary|daily|pipeline-stats|trending-topics|trending-channels|velocity|peak-hours|calendar|trending-emojis
 python -m src.main provider list|add|delete|probe|refresh|test-all
 python -m src.main export json|csv|rss
 python -m src.main translate stats|detect|run|message
 python -m src.main settings get|set|info|agent|filter-criteria|semantic
 python -m src.main debug logs|memory|timing
 ```
+
+Primary CLI name for Telegram dialogs is `dialogs`; legacy alias `my-telegram` is still accepted for backward compatibility.
 
 ## Architecture
 
