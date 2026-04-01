@@ -62,7 +62,7 @@ nav:
     - Notifications: features/notifications.md
     - Filters: features/filters.md
     - Analytics: features/analytics.md
-    - My Telegram: features/my-telegram.md
+    - Dialogs: features/dialogs.md
   - Reference:
     - CLI Reference: reference/cli.md
     - Web API Reference: reference/web-api.md

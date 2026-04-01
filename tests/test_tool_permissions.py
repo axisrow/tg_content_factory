@@ -468,6 +468,13 @@ class TestBuildTemplateContext:
         leave = next(t for t in delete_tools if t["name"] == "leave_dialogs")
         assert leave["enabled"] is False
 
+    def test_dialogs_module_uses_canonical_name(self):
+        perms = {name: True for name in TOOL_CATEGORIES}
+        ctx = build_template_context(perms)
+        module_names = {module["name"] for module in ctx["tool_permission_modules"]}
+        assert "Диалоги" in module_names
+        assert "Мой Telegram" not in module_names
+
 
 # ---------------------------------------------------------------------------
 # permissions.get_all_allowed_tools

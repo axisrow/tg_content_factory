@@ -253,7 +253,7 @@ MODULE_GROUPS: OrderedDict[str, list[str]] = OrderedDict([
         "create_photo_batch", "run_photo_due", "create_auto_upload", "update_auto_upload",
         "list_photo_dialogs", "refresh_photo_dialogs",
     ]),
-    ("Мой Telegram", [
+    ("Диалоги", [
         "search_dialogs", "refresh_dialogs", "leave_dialogs", "create_telegram_channel",
         "get_forum_topics", "clear_dialog_cache", "get_cache_status",
     ]),
