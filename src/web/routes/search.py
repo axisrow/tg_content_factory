@@ -71,7 +71,28 @@ async def _render_search_page(
     service = deps.search_service(request)
     channels = await db.get_channels()
 
-    if q:
+    # Browse mode: channel_id without query shows latest messages from that channel
+    if not q and channel_id_int and mode in {"local", "semantic", "hybrid"}:
+        try:
+            result = await service.search(
+                mode="local",
+                query="",
+                limit=limit,
+                channel_id=channel_id_int,
+                date_from=None,
+                date_to=None,
+                offset=offset,
+                is_fts=False,
+            )
+        except Exception as exc:
+            logger.exception("Browse mode failed: channel_id=%s", channel_id_int)
+            result = SearchResult(
+                messages=[],
+                total=0,
+                query="",
+                error=f"Ошибка загрузки сообщений: {exc}",
+            )
+    elif q:
         if channel_id_error and mode in {"local", "semantic", "hybrid", "channel"}:
             result = SearchResult(messages=[], total=0, query=q, error=channel_id_error)
         else:
@@ -108,6 +129,12 @@ async def _render_search_page(
     if result and result.total > 0:
         total_pages = (result.total + limit - 1) // limit
 
+    # Browse mode: viewing channel messages without search query
+    browse_mode = bool(not q and channel_id_int and mode in {"local", "semantic", "hybrid"})
+    selected_channel = None
+    if browse_mode and channel_id_int:
+        selected_channel = next((ch for ch in channels if ch.channel_id == channel_id_int), None)
+
     return deps.get_templates(request).TemplateResponse(
         request,
         "search.html",
@@ -124,6 +151,8 @@ async def _render_search_page(
             "total_pages": total_pages,
             "ai_enabled": ai_enabled,
             "search_quota": search_quota,
+            "browse_mode": browse_mode,
+            "selected_channel": selected_channel,
         },
     )
 
