@@ -8,6 +8,7 @@ import re
 import secrets
 import time
 from contextlib import asynccontextmanager
+from urllib.parse import parse_qs, urlparse
 
 from fastapi import FastAPI, Request
 from fastapi.templating import Jinja2Templates
@@ -145,6 +146,24 @@ class ActionLogMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
 
+class ErrorRedirectLogMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        if 300 <= response.status_code < 400:
+            location = response.headers.get("location", "")
+            if location:
+                error_code = parse_qs(urlparse(location).query).get("error", [""])[0]
+                if error_code:
+                    logger.warning(
+                        "Web request redirected with error: method=%s path=%s error=%s location=%s",
+                        request.method,
+                        request.url.path,
+                        error_code,
+                        location,
+                    )
+        return response
+
+
 class BasicAuthMiddleware(BaseHTTPMiddleware):
     def __init__(self, app, password: str):
         super().__init__(app)
@@ -257,6 +276,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
         app.add_middleware(BasicAuthMiddleware, password=config.web.password)
     app.add_middleware(OriginCSRFMiddleware)
     app.add_middleware(ActionLogMiddleware)
+    app.add_middleware(ErrorRedirectLogMiddleware)
     app.add_middleware(TimingMiddleware)
 
     @app.exception_handler(Exception)
