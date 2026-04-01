@@ -158,6 +158,38 @@ class ImageGenerationService:
                 logger.warning("Failed to search Replicate models", exc_info=True)
                 return []
 
+        if provider == "huggingface":
+            token = api_key or os.environ.get("HUGGINGFACE_API_KEY") or os.environ.get("HUGGINGFACE_TOKEN", "")
+            if not token:
+                return []
+            try:
+                from huggingface_hub import HfApi
+
+                hf_api = HfApi()
+                results = hf_api.list_models(
+                    filter="text-to-image",
+                    search=query if query else None,
+                    sort="downloads",
+                    limit=20,
+                    token=token,
+                )
+                models = []
+                for m in results:
+                    model_id = m.id
+                    models.append(
+                        {
+                            "id": model_id,
+                            "model_string": f"huggingface:{model_id}",
+                            "description": (m.cardData or {}).get("description", "")[:200] if m.cardData else "",
+                            "run_count": m.downloads or 0,
+                        }
+                    )
+                models.sort(key=lambda x: x.get("run_count", 0), reverse=True)
+                return models[:20]
+            except Exception:
+                logger.warning("Failed to search HuggingFace models", exc_info=True)
+                return []
+
         # Static catalogs for providers without search API
         def _m(mid: str, provider: str, desc: str) -> dict:
             return {"id": mid, "model_string": f"{provider}:{mid}", "description": desc, "run_count": 0}
@@ -170,10 +202,6 @@ class ImageGenerationService:
             "openai": [
                 _m("dall-e-3", "openai", "DALL-E 3 — OpenAI image generation"),
                 _m("dall-e-2", "openai", "DALL-E 2 — OpenAI image generation"),
-            ],
-            "huggingface": [
-                _m("stabilityai/stable-diffusion-xl-base-1.0", "huggingface", "Stable Diffusion XL"),
-                _m("black-forest-labs/FLUX.1-dev", "huggingface", "FLUX.1 Dev on HuggingFace"),
             ],
         }
         models = catalogs.get(provider, [])
