@@ -660,6 +660,9 @@ async def save_agent_settings(request: Request):
                 cfg.enabled and not service.validate_provider_config(cfg) for cfg in configs
             )
             if not has_valid:
+                logger.warning(
+                    "Rejected deepagents override in dev mode: no valid provider configs are available"
+                )
                 return RedirectResponse(
                     url="/settings?error=agent_backend_no_valid_providers", status_code=303
                 )
@@ -667,6 +670,9 @@ async def save_agent_settings(request: Request):
             if not (
                 os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("CLAUDE_CODE_OAUTH_TOKEN")
             ):
+                logger.warning(
+                    "Rejected claude override in dev mode: no API credentials are available"
+                )
                 return RedirectResponse(
                     url="/settings?error=agent_backend_claude_unavailable", status_code=303
                 )

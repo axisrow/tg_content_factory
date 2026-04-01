@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -403,6 +404,26 @@ async def test_save_agent_dev_mode_without_disclaimer(client, db):
     # Dev mode should NOT be enabled without disclaimer
     enabled = await db.get_setting("agent_dev_mode_enabled")
     assert enabled == "0"
+
+
+@pytest.mark.asyncio
+async def test_save_agent_logs_rejected_deepagents_override(client, db, caplog):
+    """Rejected deepagents override should be written to logs."""
+    await db.set_setting("agent_dev_mode_enabled", "1")
+
+    with caplog.at_level(logging.WARNING, logger="src.web.routes.settings"):
+        resp = await client.post(
+            "/settings/save-agent",
+            data={
+                "agent_form_scope": "backend_override",
+                "agent_backend_override": "deepagents",
+            },
+            follow_redirects=False,
+        )
+
+    assert resp.status_code == 303
+    assert "error=agent_backend_no_valid_providers" in resp.headers["location"]
+    assert "Rejected deepagents override in dev mode" in caplog.text
 
 
 # === Agent Provider tests ===
