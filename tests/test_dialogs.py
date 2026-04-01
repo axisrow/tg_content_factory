@@ -114,8 +114,8 @@ def _strip_extra_dialog_fields(dialogs: list[dict]) -> list[dict]:
     ]
 
 
-async def _build_my_telegram_app(db, real_pool_harness_factory, *, with_account=True):
-    """Build app for my-telegram tests with optional account."""
+async def _build_dialogs_app(db, real_pool_harness_factory, *, with_account=True):
+    """Build app for dialogs tests with optional account."""
     config = AppConfig()
     config.telegram.api_id = 12345
     config.telegram.api_hash = "test_hash"
@@ -139,7 +139,7 @@ async def _build_my_telegram_app(db, real_pool_harness_factory, *, with_account=
 
 @pytest.fixture
 async def client(db, real_pool_harness_factory):
-    app, db, harness = await _build_my_telegram_app(db, real_pool_harness_factory)
+    app, db, harness = await _build_dialogs_app(db, real_pool_harness_factory)
 
     async with make_auth_client(app) as c:
         yield c
@@ -148,19 +148,19 @@ async def client(db, real_pool_harness_factory):
 
 
 @pytest.mark.asyncio
-async def test_my_telegram_page_renders(client):
-    resp = await client.get("/my-telegram/")
+async def test_dialogs_page_renders(client):
+    resp = await client.get("/dialogs/")
     assert resp.status_code == 200
-    assert "Мой Телеграм" in resp.text
-    assert 'href="/my-telegram/photos"' in resp.text
+    assert "Диалоги" in resp.text
+    assert 'href="/dialogs/photos"' in resp.text
     assert "Если аккаунт не выбран, откроется первый доступный профиль." in resp.text
     assert "Выберите аккаунт" in resp.text
     assert "загрузить список диалогов" in resp.text
 
 
 @pytest.mark.asyncio
-async def test_my_telegram_page_shows_dialogs(client):
-    resp = await client.get("/my-telegram/?phone=%2B1234567890")
+async def test_dialogs_page_shows_dialogs(client):
+    resp = await client.get("/dialogs/?phone=%2B1234567890")
     assert resp.status_code == 200
     assert "My Channel" in resp.text
     assert "My Group" in resp.text
@@ -171,21 +171,21 @@ async def test_my_telegram_page_shows_dialogs(client):
     assert "tab-groups" in resp.text
     assert "tab-dms" in resp.text
     assert "tab-bots" in resp.text
-    assert 'action="/my-telegram/refresh"' in resp.text
+    assert 'action="/dialogs/refresh"' in resp.text
     assert "Обновить диалоги" in resp.text
     assert "Показан сохранённый список диалогов" in resp.text
 
 
 @pytest.mark.asyncio
-async def test_my_telegram_page_requires_auth(db, real_pool_harness_factory):
-    app, db, harness = await _build_my_telegram_app(
+async def test_dialogs_page_requires_auth(db, real_pool_harness_factory):
+    app, db, harness = await _build_dialogs_app(
         db,
         real_pool_harness_factory,
         with_account=False,
     )
 
     async with make_auth_client(app, with_auth=False) as c:
-        resp = await c.get("/my-telegram/", follow_redirects=False)
+        resp = await c.get("/dialogs/", follow_redirects=False)
     assert resp.status_code == 401
 
     await app.state.collection_queue.shutdown()
@@ -306,9 +306,9 @@ async def test_leave_channels_flood_breaks_loop():
 
 @pytest.mark.asyncio
 async def test_leave_dialogs_post(client):
-    """POST /my-telegram/leave redirects with left/failed counts."""
+    """POST /dialogs/leave redirects with left/failed counts."""
     resp = await client.post(
-        "/my-telegram/leave",
+        "/dialogs/leave",
         data={"phone": "+1234567890", "channel_ids": ["-100111:channel", "-100222:supergroup"]},
     )
     assert resp.status_code == 200  # follow_redirects=True → final GET
@@ -317,10 +317,10 @@ async def test_leave_dialogs_post(client):
 
 @pytest.mark.asyncio
 async def test_refresh_dialogs_post_warms_cache(db, real_pool_harness_factory):
-    app, db, harness = await _build_my_telegram_app(db, real_pool_harness_factory)
+    app, db, harness = await _build_dialogs_app(db, real_pool_harness_factory)
 
     async with make_auth_client(app) as c:
-        resp = await c.post("/my-telegram/refresh", data={"phone": "+1234567890"})
+        resp = await c.post("/dialogs/refresh", data={"phone": "+1234567890"})
 
     assert resp.status_code == 200
     assert "My Channel" in resp.text
@@ -336,7 +336,7 @@ async def test_refresh_dialogs_post_warms_cache(db, real_pool_harness_factory):
 @pytest.mark.asyncio
 async def test_leave_dialogs_flash_message(client):
     """GET with left/failed params shows flash banner."""
-    resp = await client.get("/my-telegram/?phone=%2B1234567890&left=2&failed=1")
+    resp = await client.get("/dialogs/?phone=%2B1234567890&left=2&failed=1")
     assert resp.status_code == 200
     assert "Отписались" in resp.text
     assert "<strong>2</strong>" in resp.text
@@ -493,40 +493,40 @@ async def test_get_dialogs_for_phone_partial_on_timeout():
 
 
 @pytest.mark.asyncio
-async def test_my_telegram_page_without_phone_does_not_fetch_dialogs(
+async def test_dialogs_page_without_phone_does_not_fetch_dialogs(
     db,
     real_pool_harness_factory,
 ):
-    app, db, harness = await _build_my_telegram_app(db, real_pool_harness_factory)
+    app, db, harness = await _build_dialogs_app(db, real_pool_harness_factory)
 
     async with make_auth_client(app) as c:
-        resp = await c.get("/my-telegram/")
+        resp = await c.get("/dialogs/")
 
     assert resp.status_code == 200
     assert "Выберите аккаунт" in resp.text
-    assert 'href="/my-telegram/photos"' in resp.text
+    assert 'href="/dialogs/photos"' in resp.text
     assert len(harness.telethon_cli_spy.created) == 1
 
     await app.state.collection_queue.shutdown()
 
 
 @pytest.mark.asyncio
-async def test_my_telegram_page_without_accounts_shows_disabled_photo_loader(
+async def test_dialogs_page_without_accounts_shows_disabled_photo_loader(
     db,
     real_pool_harness_factory,
 ):
-    app, db, harness = await _build_my_telegram_app(
+    app, db, harness = await _build_dialogs_app(
         db,
         real_pool_harness_factory,
         with_account=False,
     )
 
     async with make_auth_client(app) as c:
-        resp = await c.get("/my-telegram/")
+        resp = await c.get("/dialogs/")
 
     assert resp.status_code == 200
     assert "Сначала добавьте Telegram-аккаунт в настройках." in resp.text
-    assert 'href="/my-telegram/photos"' not in resp.text
+    assert 'href="/dialogs/photos"' not in resp.text
     assert 'aria-disabled="true"' in resp.text
 
     await app.state.collection_queue.shutdown()

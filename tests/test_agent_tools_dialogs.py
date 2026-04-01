@@ -1,4 +1,4 @@
-"""Tests for agent tools: my_telegram.py MCP tools."""
+"""Tests for agent tools: dialogs.py MCP tools."""
 from __future__ import annotations
 
 from types import SimpleNamespace
@@ -9,11 +9,11 @@ import pytest
 from tests.agent_tools_helpers import _get_tool_handlers, _text
 
 
-class TestMyTelegramToolSearchMyTelegram:
+class TestDialogsToolSearchDialogs:
     @pytest.mark.asyncio
     async def test_no_pool(self, mock_db):
         handlers = _get_tool_handlers(mock_db, client_pool=None)
-        result = await handlers["search_my_telegram"]({"phone": "+7123456"})
+        result = await handlers["search_dialogs"]({"phone": "+7123456"})
         assert "CLI-режиме" in _text(result)
 
     @pytest.mark.asyncio
@@ -27,7 +27,7 @@ class TestMyTelegramToolSearchMyTelegram:
         ch_svc.get_my_dialogs = AsyncMock(return_value=[])
         with patch("src.services.channel_service.ChannelService", return_value=ch_svc):
             handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
-            result = await handlers["search_my_telegram"]({"phone": "+79001234567"})
+            result = await handlers["search_dialogs"]({"phone": "+79001234567"})
         assert "не найдены" in _text(result)
 
     @pytest.mark.asyncio
@@ -45,13 +45,13 @@ class TestMyTelegramToolSearchMyTelegram:
         ch_svc.get_my_dialogs = AsyncMock(return_value=dialogs)
         with patch("src.services.channel_service.ChannelService", return_value=ch_svc):
             handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
-            result = await handlers["search_my_telegram"]({"phone": "+79001234567"})
+            result = await handlers["search_dialogs"]({"phone": "+79001234567"})
         text = _text(result)
         assert "My Channel" in text
         assert "id=111" in text
 
 
-class TestMyTelegramToolRefreshDialogs:
+class TestDialogsToolRefreshDialogs:
     @pytest.mark.asyncio
     async def test_no_pool(self, mock_db):
         handlers = _get_tool_handlers(mock_db, client_pool=None)
@@ -77,7 +77,7 @@ class TestMyTelegramToolRefreshDialogs:
         assert "1" in text
 
 
-class TestMyTelegramToolLeaveDialogs:
+class TestDialogsToolLeaveDialogs:
     @pytest.mark.asyncio
     async def test_no_pool(self, mock_db):
         handlers = _get_tool_handlers(mock_db, client_pool=None)
@@ -111,7 +111,7 @@ class TestMyTelegramToolLeaveDialogs:
         assert "Подтвердите" in _text(result)
 
 
-class TestMyTelegramToolGetForumTopics:
+class TestDialogsToolGetForumTopics:
     @pytest.mark.asyncio
     async def test_missing_channel_id(self, mock_db):
         handlers = _get_tool_handlers(mock_db)
@@ -147,7 +147,7 @@ class TestMyTelegramToolGetForumTopics:
         assert "Ошибка" in _text(result)
 
 
-class TestMyTelegramToolClearDialogCache:
+class TestDialogsToolClearDialogCache:
     @pytest.mark.asyncio
     async def test_requires_confirmation(self, mock_db):
         mock_db.get_setting = AsyncMock(return_value=None)
@@ -177,7 +177,7 @@ class TestMyTelegramToolClearDialogCache:
         mock_db.repos.dialog_cache.clear_all_dialogs.assert_awaited_once()
 
 
-class TestMyTelegramToolGetCacheStatus:
+class TestDialogsToolGetCacheStatus:
     @pytest.mark.asyncio
     async def test_empty_cache(self, mock_db):
         mock_db.repos = MagicMock()
