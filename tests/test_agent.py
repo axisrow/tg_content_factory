@@ -267,6 +267,93 @@ async def test_chat_stream_emits_tool_start_end_from_assistant_message(db):
 
 
 @pytest.mark.asyncio
+async def test_chat_stream_stream_error_event_surfaces_sdk_error(db):
+    """Non-overload stream error events should fail immediately with an SDK error payload."""
+    thread_id = await db.create_agent_thread("stream-error thread")
+    await db.save_agent_message(thread_id, "user", "test")
+
+    from claude_agent_sdk import StreamEvent
+
+    def _make_event(event_dict):
+        ev = MagicMock(spec=StreamEvent)
+        ev.event = event_dict
+        return ev
+
+    calls = 0
+
+    async def mock_query(prompt, options):
+        nonlocal calls
+        calls += 1
+        yield _make_event({
+            "type": "error",
+            "error": {
+                "type": "invalid_request_error",
+                "message": "bad request payload",
+            },
+        })
+
+    mgr = AgentManager(db)
+    mgr.initialize()
+
+    chunks = []
+    with patch("src.agent.manager.query", mock_query):
+        async for chunk in mgr.chat_stream(thread_id, "test"):
+            chunks.append(chunk)
+
+    payloads = [json.loads(c.removeprefix("data: ").strip()) for c in chunks]
+    errors = [p for p in payloads if "error" in p]
+
+    assert calls == 1
+    assert errors, f"ожидали error payload, получили: {payloads}"
+    assert "Ошибка Claude SDK" in errors[0]["error"]
+    assert "invalid_request_error" in errors[0]["error"]
+    assert "bad request payload" in errors[0]["error"]
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_overloaded_error_event_surfaces_overload_message(db):
+    """Overload stream error events should retry once and return the dedicated overload text."""
+    thread_id = await db.create_agent_thread("stream-overload thread")
+    await db.save_agent_message(thread_id, "user", "test")
+
+    from claude_agent_sdk import StreamEvent
+
+    def _make_event(event_dict):
+        ev = MagicMock(spec=StreamEvent)
+        ev.event = event_dict
+        return ev
+
+    calls = 0
+
+    async def mock_query(prompt, options):
+        nonlocal calls
+        calls += 1
+        yield _make_event({
+            "type": "error",
+            "error": {
+                "type": "overloaded_error",
+                "message": "backend busy",
+            },
+        })
+
+    mgr = AgentManager(db)
+    mgr.initialize()
+
+    chunks = []
+    with patch("src.agent.manager.query", mock_query):
+        async for chunk in mgr.chat_stream(thread_id, "test"):
+            chunks.append(chunk)
+
+    payloads = [json.loads(c.removeprefix("data: ").strip()) for c in chunks]
+    errors = [p for p in payloads if "error" in p]
+
+    assert calls == 2
+    assert errors, f"ожидали error payload, получили: {payloads}"
+    assert errors[0]["error"] == "Сервер Anthropic перегружен, попробуйте позже."
+    assert "API overloaded: backend busy" in (errors[0].get("details") or "")
+
+
+@pytest.mark.asyncio
 async def test_chat_stream_passes_prompt_as_async_iterable(db):
     """query() receives an AsyncIterable prompt, not a plain string.
 
