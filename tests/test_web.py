@@ -1838,6 +1838,21 @@ async def test_notification_setup_logs_exception(client, monkeypatch, caplog):
 
 
 @pytest.mark.asyncio
+async def test_error_redirects_are_logged_globally(client, caplog):
+    with caplog.at_level(logging.WARNING, logger="src.web.app"):
+        resp = await client.post(
+            "/settings/save-scheduler",
+            data={"collect_interval_minutes": "abc"},
+            follow_redirects=False,
+        )
+
+    assert resp.status_code == 303
+    assert resp.headers["location"] == "/settings?error=invalid_value"
+    assert "Web request redirected with error" in caplog.text
+    assert "error=invalid_value" in caplog.text
+
+
+@pytest.mark.asyncio
 async def test_csrf_blocks_cross_origin_post(client):
     resp = await client.post(
         "/channels/add",
