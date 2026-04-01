@@ -1,3 +1,6 @@
+import sys
+from unittest.mock import MagicMock, patch
+
 import pytest
 
 from src.services.image_generation_service import ImageGenerationService
@@ -8,6 +11,83 @@ def _make_clean_service():
     svc = ImageGenerationService.__new__(ImageGenerationService)
     svc._adapters = {}
     return svc
+
+
+# ── search_models() huggingface ──
+
+
+@pytest.mark.asyncio
+async def test_search_models_huggingface_with_token(monkeypatch):
+    """Test HuggingFace model search with API token."""
+    monkeypatch.delenv("HUGGINGFACE_API_KEY", raising=False)
+    monkeypatch.delenv("HUGGINGFACE_TOKEN", raising=False)
+
+    svc = _make_clean_service()
+
+    # Mock model objects
+    class MockModel:
+        def __init__(self, model_id, downloads, description):
+            self.id = model_id
+            self.downloads = downloads
+            self.cardData = {"description": description}
+
+    mock_models = [
+        MockModel("stabilityai/sdxl", 1000, "SDXL model"),
+        MockModel("black-forest-labs/flux", 500, "FLUX model"),
+    ]
+
+    # Create mock HfApi class
+    mock_hf_api = MagicMock()
+    mock_hf_api.return_value.list_models.return_value = mock_models
+
+    # Mock the huggingface_hub module
+    mock_hf_module = MagicMock()
+    mock_hf_module.HfApi = mock_hf_api
+
+    with patch.dict(sys.modules, {"huggingface_hub": mock_hf_module}):
+        result = await svc.search_models("huggingface", query="flux", api_key="hf_test_token")
+
+        assert len(result) == 2
+        assert result[0]["id"] == "stabilityai/sdxl"
+        assert result[0]["model_string"] == "huggingface:stabilityai/sdxl"
+        assert result[0]["run_count"] == 1000
+        mock_hf_api.return_value.list_models.assert_called_once_with(
+            filter="text-to-image",
+            search="flux",
+            sort="downloads",
+            limit=20,
+            token="hf_test_token",
+        )
+
+
+@pytest.mark.asyncio
+async def test_search_models_huggingface_no_token_returns_empty(monkeypatch):
+    """Test HuggingFace search returns empty list when no token available."""
+    monkeypatch.delenv("HUGGINGFACE_API_KEY", raising=False)
+    monkeypatch.delenv("HUGGINGFACE_TOKEN", raising=False)
+
+    svc = _make_clean_service()
+
+    result = await svc.search_models("huggingface", query="flux", api_key="")
+    assert result == []
+
+
+@pytest.mark.asyncio
+async def test_search_models_huggingface_exception_returns_empty():
+    """Test HuggingFace search handles exceptions gracefully."""
+    svc = _make_clean_service()
+
+    # Create mock HfApi class that raises an error
+    mock_hf_api = MagicMock()
+    mock_hf_api.return_value.list_models.side_effect = RuntimeError("API error")
+
+    # Mock the huggingface_hub module
+    mock_hf_module = MagicMock()
+    mock_hf_module.HfApi = mock_hf_api
+
+    with patch.dict(sys.modules, {"huggingface_hub": mock_hf_module}):
+        result = await svc.search_models("huggingface", query="test", api_key="hf_token")
+        assert result == []
 
 
 # ── generate() ──
