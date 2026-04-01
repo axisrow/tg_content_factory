@@ -92,7 +92,11 @@
 {% endif %}
 
 {% if not result.error %}
+{% if browse_mode and selected_channel %}
+<p>Сообщения из канала <strong>{{ selected_channel.title or selected_channel.username or selected_channel.channel_id }}</strong>: {{ result.total }}</p>
+{% else %}
 <p>Найдено: <strong>{{ result.total }}</strong> сообщений по запросу «{{ result.query }}»</p>
+{% endif %}
 {% endif %}
 
 {% if result.messages %}

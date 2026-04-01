@@ -122,6 +122,9 @@
                 {% endif %}
             </td>
             <td class="text-nowrap">
+                {% if ch.message_count > 0 %}
+                <a href="/search?channel_id={{ ch.channel_id }}&mode=local" class="btn btn-outline-secondary btn-sm emoji-btn" title="Смотреть сообщения">&#128196;</a>
+                {% endif %}
                 {% if ch.is_filtered %}
                 <form method="post" action="/channels/{{ ch.id }}/filter-toggle" class="d-inline" data-busy>
                     <button type="submit" class="btn btn-outline-secondary btn-sm emoji-btn" title="Вернуть">&#128257;</button>
@@ -198,6 +201,9 @@
                 </div>
             </div>
             <div class="card-actions">
+                {% if ch.message_count > 0 %}
+                <a href="/search?channel_id={{ ch.channel_id }}&mode=local" class="btn btn-outline-secondary btn-sm emoji-btn" title="Смотреть сообщения">&#128196;</a>
+                {% endif %}
                 {% if ch.is_filtered %}
                 <form method="post" action="/channels/{{ ch.id }}/filter-toggle" class="d-inline" data-busy>
                     <button type="submit" class="btn btn-outline-secondary btn-sm emoji-btn" title="Вернуть">&#128257;</button>
