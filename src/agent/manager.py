@@ -724,6 +724,7 @@ class ClaudeSdkBackend:
                                 )
                                 if api_error_type == "overloaded_error":
                                     raise CLIConnectionError(f"API overloaded: {api_error_msg}")
+                                raise ClaudeSDKError(f"{api_error_type}: {api_error_msg}")
 
                         elif isinstance(msg, AssistantMessage):
                             _last_activity[0] = time.monotonic()
