@@ -115,8 +115,13 @@ async def hard_delete_selected(request: Request):
 
 
 @router.post("/filter/analyze")
-async def analyze_channels(request: Request):
+async def analyze_channels(request: Request, with_stats: bool = False):
     db = deps.get_db(request)
+
+    if with_stats:
+        svc = deps.collection_service(request)
+        await svc.collect_all_stats()
+
     analyzer = ChannelAnalyzer(db)
     report = await analyzer.analyze_all()
     await analyzer.apply_filters(report)
@@ -160,6 +165,21 @@ async def apply_filters(request: Request):
 
     count = await analyzer.apply_filters(report)
     return RedirectResponse(url=f"/channels?msg=filter_applied&count={count}", status_code=303)
+
+
+@router.get("/filter/has-stats")
+async def has_stats(request: Request):
+    db = deps.get_db(request)
+    channels = await db.get_channels_with_counts(active_only=True, include_filtered=False)
+    if not channels:
+        return {"has_stats": True}
+
+    stats_map = await db.get_latest_stats_for_all()
+    for ch in channels:
+        if ch.channel_id not in stats_map:
+            return {"has_stats": False}
+
+    return {"has_stats": True}
 
 
 @router.post("/filter/precheck")

@@ -4,9 +4,7 @@
 <h1>Очистка каналов</h1>
 
 <div class="d-flex gap-2 flex-wrap mb-3">
-    <form method="post" action="/channels/filter/analyze" class="d-inline" data-busy>
-        <button type="submit" class="btn btn-primary btn-sm">Обновить фильтры</button>
-    </form>
+    <button type="button" class="btn btn-primary btn-sm" onclick="refreshFilters()">Обновить фильтры</button>
     <form method="post" action="/channels/filter/precheck" class="d-inline" data-busy>
         <button type="submit" class="btn btn-outline-primary btn-sm">Предпроверка подписчиков</button>
     </form>
@@ -137,6 +135,25 @@
         cb.addEventListener('change', updateCount);
     });
 })();
+
+async function refreshFilters() {
+    try {
+        var resp = await fetch('/channels/filter/has-stats');
+        var data = await resp.json();
+
+        if (!data.has_stats) {
+            if (!confirm('У некоторых каналов нет статистики. Сначала собрать статистику?')) {
+                return;
+            }
+            await fetch('/channels/filter/analyze?with_stats=1', {method: 'POST'});
+        } else {
+            await fetch('/channels/filter/analyze', {method: 'POST'});
+        }
+        window.location.reload();
+    } catch (e) {
+        console.error('Failed to refresh filters:', e);
+    }
+}
 
 function confirmPurge() {
     var count = document.querySelectorAll('.ch-check:checked').length;
