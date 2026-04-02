@@ -257,6 +257,14 @@ PROVIDER_SPECS: dict[str, ProviderSpec] = {
         static_models=("sonar", "sonar-pro", "sonar-reasoning"),
         secret_fields=(_field("api_key", "API key", required=True, secret=True),),
     ),
+    "zai": ProviderSpec(
+        name="zai",
+        display_name="Z.AI",
+        package_name="langchain-anthropic",
+        static_models=("glm-5", "glm-5-turbo", "glm-4.7"),
+        secret_fields=(_field("api_key", "API key", required=True, secret=True),),
+        plain_fields=(_field("base_url", "Base URL", placeholder="https://api.z.ai/api/anthropic"),),
+    ),
 }
 
 PROVIDER_ORDER = tuple(PROVIDER_SPECS.keys())

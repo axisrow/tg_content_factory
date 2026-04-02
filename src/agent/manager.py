@@ -44,6 +44,7 @@ from src.agent.provider_registry import ProviderRuntimeConfig
 from src.config import AppConfig
 from src.database import Database
 from src.services.agent_provider_service import (
+    _OPENAI_STYLE_DEFAULT_BASE_URLS,
     AgentProviderService,
     ProviderModelCacheEntry,
     ProviderModelCompatibilityRecord,
@@ -1207,6 +1208,17 @@ class DeepagentsBackend:
                 extra["client_kwargs"] = {"headers": {"Authorization": f"Bearer {api_key}"}}
         else:
             extra.update({key: value for key, value in cfg.secret_fields.items() if value.strip()})
+
+        # z.ai uses Anthropic-compatible API with custom base_url
+        if provider == "zai":
+            from langchain_anthropic import ChatAnthropic
+
+            base_url = cfg.plain_fields.get("base_url", "").strip() or _OPENAI_STYLE_DEFAULT_BASE_URLS["zai"]
+            model = ChatAnthropic(
+                model=resolved_model_name,
+                anthropic_api_url=base_url,
+                api_key=cfg.secret_fields.get("api_key", ""),
+            )
         self._init_attempted_model = cfg.model_name
 
         # ReAct fallback for Ollama models without native function calling

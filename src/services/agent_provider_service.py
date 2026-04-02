@@ -46,6 +46,7 @@ _OPENAI_STYLE_DEFAULT_BASE_URLS = {
     "together": "https://api.together.xyz/v1",
     "fireworks": "https://api.fireworks.ai/inference/v1",
     "mistralai": "https://api.mistral.ai/v1",
+    "zai": "https://api.z.ai/api/anthropic",
 }
 _NON_CANONICAL_EXPORT_PROVIDERS = {
     "azure_openai",
@@ -716,6 +717,12 @@ class AgentProviderService:
         if provider == "huggingface":
             api_key = cfg.secret_fields.get("api_key", "") if cfg else ""
             return await self._fetch_huggingface_models(api_key)
+        if provider == "zai":
+            assert cfg is not None
+            return await self._fetch_zai_models(
+                cfg.plain_fields.get("base_url", ""),
+                cfg.secret_fields.get("api_key", ""),
+            )
         raise RuntimeError("live model fetch adapter is not available for this provider yet")
 
     async def _fetch_json(self, url: str, headers: dict[str, str] | None = None) -> Any:
@@ -785,6 +792,23 @@ class AgentProviderService:
             headers=headers,
         )
         return [str(item.get("id", "")).strip() for item in payload if item.get("id")]
+
+    async def _fetch_zai_models(
+        self, base_url: str, api_key: str
+    ) -> list[str]:
+        base_url = base_url.strip() or _OPENAI_STYLE_DEFAULT_BASE_URLS["zai"]
+        headers = {
+            "x-api-key": api_key,
+            "anthropic-version": "2023-06-01",
+        }
+        payload = await self._fetch_json(
+            base_url.rstrip("/") + "/models", headers=headers
+        )
+        return [
+            str(item.get("id", "")).strip()
+            for item in payload.get("data", [])
+            if item.get("id")
+        ]
 
     def _build_model_option(
         self,
