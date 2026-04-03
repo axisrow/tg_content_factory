@@ -34,6 +34,7 @@ class ContentGenerationService:
         image_service: Any | None = None,
         notification_service: "DraftNotificationService | None" = None,
         quality_service: "QualityScoringService | None" = None,
+        client_pool: Any | None = None,
     ) -> None:
         self._db = db
         self._search = search_engine
@@ -41,6 +42,7 @@ class ContentGenerationService:
         self._image_service = image_service
         self._notification_service = notification_service
         self._quality_service = quality_service
+        self._client_pool = client_pool
 
     async def generate(
         self,
@@ -78,24 +80,41 @@ class ContentGenerationService:
                 temperature=temperature,
             )
             generated_text = result.get("generated_text", "")
-            metadata: dict[str, Any] = {"citations": result.get("citations", [])}
+            effective_publish_mode = result.get("publish_mode") or pipeline.publish_mode.value
+            metadata: dict[str, Any] = {
+                "citations": result.get("citations", []),
+                "effective_publish_mode": effective_publish_mode,
+            }
+            if result.get("publish_reply"):
+                metadata["publish_reply"] = True
+            if result.get("reply_to_message_id") is not None:
+                metadata["reply_to_message_id"] = result["reply_to_message_id"]
 
-            if pipeline.refinement_steps and generated_text:
+            if pipeline.refinement_steps and generated_text and pipeline.pipeline_json is None:
+                # Refinement steps are only applied for legacy pipelines (graph-based ones encode them as nodes)
                 generated_text = await self._apply_refinement_steps(
                     generated_text, pipeline, model, max_tokens, temperature
                 )
                 metadata["refinement_steps_applied"] = len(pipeline.refinement_steps)
 
-            image_model = pipeline.image_model
-            if not image_model:
-                image_model = await self._db.get_setting("default_image_model") or ""
-            if image_model:
-                image_url = await self._generate_image(pipeline, generated_text, model=image_model)
-                if image_url:
-                    await self._db.execute(
-                        "UPDATE generation_runs SET image_url = ? WHERE id = ?",
-                        (image_url, run_id),
-                    )
+            # Use image_url from graph executor if available, otherwise fall back to legacy image gen
+            image_url_from_graph = result.get("image_url")
+            if image_url_from_graph:
+                await self._db.execute(
+                    "UPDATE generation_runs SET image_url = ? WHERE id = ?",
+                    (image_url_from_graph, run_id),
+                )
+            else:
+                image_model = pipeline.image_model
+                if not image_model:
+                    image_model = await self._db.get_setting("default_image_model") or ""
+                if image_model and pipeline.pipeline_json is None:
+                    image_url = await self._generate_image(pipeline, generated_text, model=image_model)
+                    if image_url:
+                        await self._db.execute(
+                            "UPDATE generation_runs SET image_url = ? WHERE id = ?",
+                            (image_url, run_id),
+                        )
 
             await self._db.repos.generation_runs.save_result(run_id, generated_text, metadata)
             if self._quality_service and generated_text:
@@ -115,7 +134,7 @@ class ContentGenerationService:
             if (
                 self._notification_service
                 and run.moderation_status == "pending"
-                and pipeline.publish_mode == PipelinePublishMode.MODERATED
+                and effective_publish_mode == PipelinePublishMode.MODERATED.value
             ):
                 try:
                     await self._notification_service.notify_new_draft(run, pipeline)
@@ -139,10 +158,52 @@ class ContentGenerationService:
         temperature: float,
     ) -> dict[str, Any]:
         """Execute the generation backend."""
+        if pipeline.pipeline_json is not None:
+            return await self._run_graph(pipeline, model, max_tokens, temperature)
+
         if pipeline.generation_backend == PipelineGenerationBackend.DEEP_AGENTS:
             return await self._run_deep_agents(pipeline, model, max_tokens, temperature)
 
         return await self._run_rag(pipeline, model, max_tokens, temperature)
+
+    async def _run_graph(
+        self,
+        pipeline: ContentPipeline,
+        model: str | None,
+        max_tokens: int,
+        temperature: float,
+    ) -> dict[str, Any]:
+        """Execute the pipeline using the node-based DAG executor."""
+        from src.services.pipeline_executor import PipelineExecutor
+        from src.services.provider_service import AgentProviderService
+
+        provider_service = AgentProviderService(self._db)
+        provider_callable = provider_service.get_provider_callable(pipeline.llm_model)
+
+        default_image_model = await self._db.get_setting("default_image_model") or ""
+
+        services = {
+            "search_engine": self._search,
+            "provider_callable": provider_callable,
+            "image_service": self._image_service,
+            "notification_service": self._notification_service,
+            "client_pool": self._client_pool,
+            "default_model": model or pipeline.llm_model or "",
+            "default_image_model": pipeline.image_model or default_image_model,
+            "db": self._db,
+        }
+
+        executor = PipelineExecutor()
+        result = await executor.execute(pipeline, pipeline.pipeline_json, services)
+
+        return {
+            "generated_text": result.get("generated_text", ""),
+            "image_url": result.get("image_url"),
+            "citations": result.get("citations", []),
+            "publish_mode": result.get("publish_mode"),
+            "publish_reply": result.get("publish_reply", False),
+            "reply_to_message_id": result.get("reply_to_message_id"),
+        }
 
     async def _run_rag(
         self,
@@ -235,7 +296,10 @@ class ContentGenerationService:
                     max_tokens=max_tokens,
                     temperature=temperature,
                 )
-                refined = result.get("text") or result.get("generated_text") or ""
+                refined = (
+                    result if isinstance(result, str)
+                    else (result.get("text") or result.get("generated_text") or "")
+                )
                 if refined:
                     text = refined
             except Exception:

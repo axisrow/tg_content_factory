@@ -500,6 +500,7 @@ class UnifiedDispatcher:
                 image_service=image_service,
                 notification_service=notification_service,
                 quality_service=quality_service,
+                client_pool=self._client_pool,
             )
             try:
                 run = await gen.generate(
@@ -582,10 +583,15 @@ class UnifiedDispatcher:
                 image_service=image_service,
                 notification_service=notification_service,
                 quality_service=quality_service,
+                client_pool=self._client_pool,
             )
             run = await gen.generate(pipeline=pipeline, model=pipeline.llm_model)
 
-            if pipeline.publish_mode == PipelinePublishMode.AUTO and run is not None:
+            effective_mode = (
+                (run.metadata or {}).get("effective_publish_mode", pipeline.publish_mode.value)
+                if run is not None else pipeline.publish_mode.value
+            )
+            if effective_mode == PipelinePublishMode.AUTO.value and run is not None:
                 from src.services.publish_service import PublishService
 
                 publish_svc = PublishService(db, self._client_pool)

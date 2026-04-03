@@ -71,6 +71,11 @@ TOOL_CATEGORIES: dict[str, ToolCategory] = {
     "get_pipeline_queue": ToolCategory.READ,
     "get_refinement_steps": ToolCategory.READ,
     "set_refinement_steps": ToolCategory.WRITE,
+    "export_pipeline_json": ToolCategory.READ,
+    "import_pipeline_json": ToolCategory.WRITE,
+    "list_pipeline_templates": ToolCategory.READ,
+    "create_pipeline_from_template": ToolCategory.WRITE,
+    "ai_edit_pipeline": ToolCategory.WRITE,
     # Moderation
     "list_pending_moderation": ToolCategory.READ,
     "view_moderation_run": ToolCategory.READ,
@@ -214,6 +219,8 @@ MODULE_GROUPS: OrderedDict[str, list[str]] = OrderedDict([
         "toggle_pipeline", "delete_pipeline", "run_pipeline", "generate_draft",
         "list_pipeline_runs", "get_pipeline_run", "publish_pipeline_run",
         "get_pipeline_queue", "get_refinement_steps", "set_refinement_steps",
+        "export_pipeline_json", "import_pipeline_json", "list_pipeline_templates",
+        "create_pipeline_from_template", "ai_edit_pipeline",
     ]),
     ("Модерация", [
         "list_pending_moderation", "view_moderation_run", "approve_run", "reject_run",

@@ -644,6 +644,23 @@ async def run_migrations(db: aiosqlite.Connection) -> bool:
     if "refinement_steps" not in cp2_columns:
         await db.execute("ALTER TABLE content_pipelines ADD COLUMN refinement_steps TEXT")
         await db.commit()
+    # Node-based pipeline graph JSON (issue #343)
+    if "pipeline_json" not in cp2_columns:
+        await db.execute("ALTER TABLE content_pipelines ADD COLUMN pipeline_json TEXT")
+        await db.commit()
+
+    # Pipeline templates table (issue #343)
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS pipeline_templates (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            description TEXT,
+            category TEXT,
+            template_json TEXT NOT NULL,
+            is_builtin INTEGER DEFAULT 0,
+            created_at TEXT DEFAULT (datetime('now'))
+        )
+        """)
 
     # Channel tags (issue #230)
     await db.execute("""

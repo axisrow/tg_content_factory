@@ -90,6 +90,23 @@ class TelegramTransportSession:
     async def delete_messages(self, entity: Any, message_ids: list[int]) -> Any:
         return await self._client.delete_messages(entity, message_ids)
 
+    async def send_reaction(self, entity: Any, message_id: int, emoji: str) -> Any:
+        """Send a reaction to a message using the Telethon raw API."""
+        try:
+            from telethon.tl.functions.messages import SendReactionRequest
+            from telethon.tl.types import ReactionEmoji
+
+            return await self._client(
+                SendReactionRequest(
+                    peer=entity,
+                    msg_id=message_id,
+                    reaction=[ReactionEmoji(emoticon=emoji)],
+                )
+            )
+        except ImportError:
+            # Telethon not available (e.g. test env with stub backend)
+            return None
+
     async def download_media(self, message: Any, *, file: Any = None) -> Any:
         return await self._client.download_media(message, file=file)
 

@@ -1,7 +1,45 @@
 {% extends "base.html" %}
 {% block title %}Пайплайны — TG Agent{% endblock %}
 {% block content %}
-<h1>Пайплайны контента</h1>
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h1 class="mb-0">Пайплайны контента</h1>
+    <div class="d-flex gap-2">
+        <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-toggle="modal" data-bs-target="#importModal">Импорт JSON</button>
+        <a class="btn btn-outline-primary btn-sm" href="/pipelines/templates">Шаблоны</a>
+    </div>
+</div>
+
+<!-- Import modal -->
+<div class="modal fade" id="importModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Импорт pipeline из JSON</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <form method="post" action="/pipelines/import" enctype="multipart/form-data">
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label">Название (необязательно — перезаписывает имя из JSON)</label>
+                        <input class="form-control" type="text" name="name_override" placeholder="Оставьте пустым для имени из JSON">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">JSON файл</label>
+                        <input class="form-control" type="file" name="json_file" accept=".json">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Или вставьте JSON текст</label>
+                        <textarea class="form-control font-monospace" name="json_text" rows="8" placeholder='{"name": "...", "nodes": [...], ...}'></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+                    <button type="submit" class="btn btn-primary">Импортировать</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
 
 <div class="card mb-4">
     <div class="card-header fw-semibold">Новый pipeline</div>
@@ -147,7 +185,9 @@
                     {% endif %}
                 </td>
                 <td class="text-nowrap">
+                    {% if not pipeline.pipeline_json %}
                     <button type="button" class="btn btn-outline-secondary btn-sm" onclick="togglePipelineEdit({{ pipeline.id }})">Редактировать</button>
+                    {% endif %}
                     <a class="btn btn-outline-primary btn-sm" href="/pipelines/{{ pipeline.id }}/generate">Generate</a>
                     <form method="post" action="/pipelines/{{ pipeline.id }}/run" class="d-inline" data-busy>
                         <button type="submit" class="btn btn-outline-success btn-sm">Run now</button>
@@ -155,9 +195,28 @@
                     <form method="post" action="/pipelines/{{ pipeline.id }}/toggle" class="d-inline" data-busy>
                         <button type="submit" class="btn btn-outline-secondary btn-sm">{{ "Выключить" if pipeline.is_active else "Включить" }}</button>
                     </form>
+                    <a class="btn btn-outline-dark btn-sm" href="/pipelines/{{ pipeline.id }}/export" title="Экспорт JSON">JSON</a>
+                    {% if pipeline.pipeline_json %}
+                    <button type="button" class="btn btn-outline-info btn-sm" onclick="toggleAiEdit({{ pipeline.id }})" title="Редактировать через AI">AI</button>
+                    {% endif %}
                     <form method="post" action="/pipelines/{{ pipeline.id }}/delete{% if selected_phone %}?phone={{ selected_phone|urlencode }}{% endif %}" class="d-inline" data-busy onsubmit="return confirm('Удалить pipeline?')">
                         <button type="submit" class="btn btn-outline-danger btn-sm">Удалить</button>
                     </form>
+                </td>
+            </tr>
+            <tr id="pipeline-ai-edit-{{ pipeline.id }}" class="d-none">
+                <td colspan="8">
+                    <div class="p-3 border rounded bg-light">
+                        <label class="form-label fw-semibold">Редактировать pipeline через AI</label>
+                        <div class="mb-2">
+                            <pre class="border rounded p-2 bg-white small" style="max-height:300px;overflow:auto" id="pipeline-json-preview-{{ pipeline.id }}">Загрузка...</pre>
+                        </div>
+                        <div class="input-group mb-2">
+                            <input class="form-control" type="text" id="ai-instruction-{{ pipeline.id }}" placeholder="Инструкция для AI (например: добавь шаг рефайна, смени модель на gpt-4o, добавь генерацию картинки)">
+                            <button class="btn btn-primary" type="button" onclick="sendAiEdit({{ pipeline.id }})">Применить</button>
+                        </div>
+                        <div id="ai-edit-result-{{ pipeline.id }}" class="text-muted small"></div>
+                    </div>
                 </td>
             </tr>
             <tr id="pipeline-edit-{{ pipeline.id }}" class="d-none">
@@ -251,6 +310,52 @@
 function togglePipelineEdit(id) {
     document.getElementById("pipeline-row-" + id).classList.toggle("d-none");
     document.getElementById("pipeline-edit-" + id).classList.toggle("d-none");
+}
+
+function toggleAiEdit(id) {
+    const row = document.getElementById("pipeline-ai-edit-" + id);
+    row.classList.toggle("d-none");
+    if (!row.classList.contains("d-none")) {
+        loadPipelineJson(id);
+    }
+}
+
+async function loadPipelineJson(id) {
+    const el = document.getElementById("pipeline-json-preview-" + id);
+    if (!el) return;
+    try {
+        const resp = await fetch("/pipelines/" + id + "/export");
+        const data = await resp.json();
+        el.textContent = JSON.stringify(data.pipeline_json || data, null, 2);
+    } catch(e) {
+        el.textContent = "Ошибка загрузки JSON: " + e;
+    }
+}
+
+async function sendAiEdit(id) {
+    const instruction = document.getElementById("ai-instruction-" + id).value.trim();
+    if (!instruction) return;
+    const resultEl = document.getElementById("ai-edit-result-" + id);
+    resultEl.textContent = "Отправка...";
+    try {
+        const resp = await fetch("/pipelines/" + id + "/ai-edit", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({instruction})
+        });
+        const data = await resp.json();
+        if (data.ok) {
+            document.getElementById("pipeline-json-preview-" + id).textContent = JSON.stringify(data.pipeline_json, null, 2);
+            resultEl.textContent = "Обновлено успешно. Обновите страницу для применения.";
+            resultEl.className = "text-success small";
+        } else {
+            resultEl.textContent = "Ошибка: " + (data.error || "неизвестная ошибка");
+            resultEl.className = "text-danger small";
+        }
+    } catch(e) {
+        resultEl.textContent = "Ошибка: " + e;
+        resultEl.className = "text-danger small";
+    }
 }
 </script>
 {% endblock %}

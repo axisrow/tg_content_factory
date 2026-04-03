@@ -44,15 +44,18 @@ class PublishService:
             logger.warning("Run %s has no generated_text, skipping publish", run.id)
             return [PublishResult(success=False, error="No generated text")]
 
+        effective_mode = (
+            (run.metadata or {}).get("effective_publish_mode", pipeline.publish_mode.value)
+        )
         if (
-            pipeline.publish_mode == PipelinePublishMode.MODERATED
+            effective_mode == PipelinePublishMode.MODERATED.value
             and run.moderation_status not in {"approved", "published"}
         ):
             logger.warning(
                 "Run %s is not eligible for publish: moderation_status=%s publish_mode=%s",
                 run.id,
                 run.moderation_status,
-                pipeline.publish_mode.value,
+                effective_mode,
             )
             return [PublishResult(success=False, error="Run is not approved for publish")]
 
@@ -97,6 +100,10 @@ class PublishService:
                     error=f"Could not resolve dialog_id={target.dialog_id}",
                 )
 
+            reply_to = None
+            if run.metadata and run.metadata.get("publish_reply"):
+                reply_to = run.metadata.get("reply_to_message_id")
+
             if run.image_url:
                 msg = await asyncio.wait_for(
                     session.publish_files(
@@ -107,8 +114,11 @@ class PublishService:
                     timeout=60.0,
                 )
             else:
+                send_kwargs: dict = {}
+                if reply_to is not None:
+                    send_kwargs["reply_to"] = reply_to
                 msg = await asyncio.wait_for(
-                    session.send_message(entity, run.generated_text),
+                    session.send_message(entity, run.generated_text, **send_kwargs),
                     timeout=60.0,
                 )
 
