@@ -34,6 +34,7 @@ class ContentGenerationService:
         image_service: Any | None = None,
         notification_service: "DraftNotificationService | None" = None,
         quality_service: "QualityScoringService | None" = None,
+        client_pool: Any | None = None,
     ) -> None:
         self._db = db
         self._search = search_engine
@@ -41,6 +42,7 @@ class ContentGenerationService:
         self._image_service = image_service
         self._notification_service = notification_service
         self._quality_service = quality_service
+        self._client_pool = client_pool
 
     async def generate(
         self,
@@ -78,7 +80,11 @@ class ContentGenerationService:
                 temperature=temperature,
             )
             generated_text = result.get("generated_text", "")
-            metadata: dict[str, Any] = {"citations": result.get("citations", [])}
+            effective_publish_mode = result.get("publish_mode") or pipeline.publish_mode.value
+            metadata: dict[str, Any] = {
+                "citations": result.get("citations", []),
+                "effective_publish_mode": effective_publish_mode,
+            }
             if result.get("publish_reply"):
                 metadata["publish_reply"] = True
             if result.get("reply_to_message_id") is not None:
@@ -125,7 +131,6 @@ class ContentGenerationService:
             if run is None:
                 raise RuntimeError(f"Generation run {run_id} not found after save")
 
-            effective_publish_mode = result.get("publish_mode") or pipeline.publish_mode.value
             if (
                 self._notification_service
                 and run.moderation_status == "pending"
@@ -182,6 +187,7 @@ class ContentGenerationService:
             "provider_callable": provider_callable,
             "image_service": self._image_service,
             "notification_service": self._notification_service,
+            "client_pool": self._client_pool,
             "default_model": model or pipeline.llm_model or "",
             "default_image_model": pipeline.image_model or default_image_model,
             "db": self._db,
