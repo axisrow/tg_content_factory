@@ -27,8 +27,20 @@ class GenerationService:
         self._default_prompt = default_prompt_template
 
     async def _collect_context(self, query: str, limit: int = 8) -> List[Message]:
-        """Retrieve context messages using the SearchEngine hybrid search."""
-        result: SearchResult = await self._search.search_hybrid(query, limit=limit)
+        """Retrieve context messages using the SearchEngine.
+
+        Uses hybrid (semantic+FTS) search when embeddings are available, falls back to
+        FTS/LIKE local search otherwise so that pipelines still work without a vector backend.
+        """
+        import logging
+
+        if getattr(self._search, "semantic_available", True):
+            result: SearchResult = await self._search.search_hybrid(query, limit=limit)
+        else:
+            logging.getLogger(__name__).warning(
+                "Semantic search unavailable, falling back to FTS local search for context retrieval"
+            )
+            result = await self._search.search_local(query, limit=limit)
         return result.messages
 
     def _build_source_messages(self, messages: List[Message]) -> str:

@@ -393,6 +393,33 @@ def build_parser() -> argparse.ArgumentParser:
     pipeline_refine.add_argument("--set", default=None, dest="steps_json",
                                  help="Set refinement steps (JSON array)")
 
+    # JSON import/export
+    pipeline_export = pipeline_sub.add_parser("export", help="Export pipeline as JSON")
+    pipeline_export.add_argument("id", type=int, help="Pipeline id")
+    pipeline_export.add_argument("--output", "-o", default=None, help="Output file path (default: stdout)")
+
+    pipeline_import = pipeline_sub.add_parser("import", help="Import pipeline from JSON file")
+    pipeline_import.add_argument("file", help="Path to JSON file")
+    pipeline_import.add_argument("--name", default=None, help="Override pipeline name")
+
+    # Templates
+    pipeline_templates = pipeline_sub.add_parser("templates", help="List available pipeline templates")
+    pipeline_templates.add_argument("--category", default=None, help="Filter by category")
+
+    pipeline_from_tpl = pipeline_sub.add_parser("from-template", help="Create pipeline from template")
+    pipeline_from_tpl.add_argument("template_id", type=int, help="Template id from 'pipeline templates'")
+    pipeline_from_tpl.add_argument("name", help="Pipeline name")
+    pipeline_from_tpl.add_argument("--source-ids", default="", dest="source_ids", help="Comma-separated channel IDs")
+    pipeline_from_tpl.add_argument(
+        "--target-refs", default="", dest="target_refs", help="Comma-separated phone|dialog_id targets"
+    )
+
+    # AI edit
+    pipeline_ai_edit = pipeline_sub.add_parser("ai-edit", help="Edit pipeline JSON via LLM instruction")
+    pipeline_ai_edit.add_argument("id", type=int, help="Pipeline id")
+    pipeline_ai_edit.add_argument("instruction", help="Instruction for the LLM (e.g. 'Add an image generation node')")
+    pipeline_ai_edit.add_argument("--show", action="store_true", help="Print updated JSON after edit")
+
     # ── image ──
     image_parser = sub.add_parser("image", help="Image generation")
     image_sub = image_parser.add_subparsers(dest="image_action")

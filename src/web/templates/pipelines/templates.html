@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+{% block title %}Шаблоны пайплайнов — TG Agent{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h1 class="mb-0">Шаблоны пайплайнов</h1>
+    <a class="btn btn-secondary btn-sm" href="/pipelines">← Назад к пайплайнам</a>
+</div>
+
+<p class="text-muted">Выберите шаблон для создания нового пайплайна. Шаблоны содержат готовые наборы нод — вы можете настроить их после создания с помощью AI-редактора.</p>
+
+{% set categories = [] %}
+{% for tpl in templates %}
+    {% if tpl.category not in categories %}
+        {% set _ = categories.append(tpl.category) %}
+    {% endif %}
+{% endfor %}
+
+{% for category in categories %}
+<h3 class="mt-4">{{ category|capitalize }}</h3>
+<div class="row g-3">
+    {% for tpl in templates %}
+    {% if tpl.category == category %}
+    <div class="col-12 col-md-6 col-xl-4">
+        <div class="card h-100">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <span class="fw-semibold">{{ tpl.name }}</span>
+                {% if tpl.is_builtin %}<span class="badge bg-secondary">builtin</span>{% endif %}
+            </div>
+            <div class="card-body">
+                <p class="card-text text-muted small">{{ tpl.description }}</p>
+                <div class="mb-2">
+                    {% for node in tpl.template_json.nodes %}
+                    <span class="badge bg-light text-dark border me-1">{{ node.type.value }}</span>
+                    {% endfor %}
+                </div>
+                <button type="button" class="btn btn-outline-primary btn-sm" data-bs-toggle="modal" data-bs-target="#tplModal{{ tpl.id }}">Использовать</button>
+                <button type="button" class="btn btn-outline-secondary btn-sm" onclick="toggleJsonView('tpl-json-{{ tpl.id }}')">JSON</button>
+                <pre class="d-none small mt-2 p-2 border rounded bg-light" id="tpl-json-{{ tpl.id }}" style="max-height:200px;overflow:auto">{{ tpl.template_json.to_json() }}</pre>
+            </div>
+        </div>
+    </div>
+
+    <!-- Create from template modal -->
+    <div class="modal fade" id="tplModal{{ tpl.id }}" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Создать из шаблона: {{ tpl.name }}</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <form method="post" action="/pipelines/from-template">
+                    <input type="hidden" name="template_id" value="{{ tpl.id }}">
+                    <div class="modal-body">
+                        <div class="mb-3">
+                            <label class="form-label">Название</label>
+                            <input class="form-control" type="text" name="name" value="{{ tpl.name }}" required>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">LLM модель (опционально)</label>
+                            <input class="form-control" type="text" name="llm_model" placeholder="claude-sonnet-4.5">
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Интервал (мин)</label>
+                            <input class="form-control" type="number" name="generate_interval_minutes" min="1" value="60">
+                        </div>
+                        <p class="text-muted small">После создания добавьте источники и цели публикации в разделе редактирования.</p>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+                        <button type="submit" class="btn btn-primary">Создать</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+    {% endfor %}
+</div>
+{% endfor %}
+
+{% if not templates %}
+<p>Шаблонов пока нет.</p>
+{% endif %}
+
+<script>
+function toggleJsonView(id) {
+    document.getElementById(id).classList.toggle("d-none");
+}
+</script>
+{% endblock %}

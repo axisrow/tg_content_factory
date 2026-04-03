@@ -170,6 +170,76 @@ class PipelineGenerationBackend(StrEnum):
     DEEP_AGENTS = "deep_agents"
 
 
+class PipelineNodeType(StrEnum):
+    SOURCE = "source"
+    RETRIEVE_CONTEXT = "retrieve_context"
+    LLM_GENERATE = "llm_generate"
+    LLM_REFINE = "llm_refine"
+    IMAGE_GENERATE = "image_generate"
+    PUBLISH = "publish"
+    NOTIFY = "notify"
+    FILTER = "filter"
+    DELAY = "delay"
+    REACT = "react"
+    FORWARD = "forward"
+    DELETE_MESSAGE = "delete_message"
+    CONDITION = "condition"
+    SEARCH_QUERY_TRIGGER = "search_query_trigger"
+
+
+class PipelineNode(BaseModel):
+    id: str
+    type: PipelineNodeType
+    name: str
+    config: dict[str, Any] = Field(default_factory=dict)
+    position: dict[str, float] = Field(default_factory=lambda: {"x": 0.0, "y": 0.0})
+
+
+class PipelineEdge(BaseModel):
+    model_config = {"populate_by_name": True}
+
+    from_node: str = Field(alias="from")
+    to_node: str = Field(alias="to")
+    condition: str | None = None
+
+
+class PipelineGraph(BaseModel):
+    nodes: list[PipelineNode] = Field(default_factory=list)
+    edges: list[PipelineEdge] = Field(default_factory=list)
+
+    def to_json(self) -> str:
+        import json
+        return json.dumps(
+            {
+                "nodes": [n.model_dump() for n in self.nodes],
+                "edges": [
+                    {"from": e.from_node, "to": e.to_node, **({"condition": e.condition} if e.condition else {})}
+                    for e in self.edges
+                ],
+            },
+            ensure_ascii=False,
+        )
+
+    @classmethod
+    def from_json(cls, data: str | dict) -> "PipelineGraph":
+        import json
+        if isinstance(data, str):
+            data = json.loads(data)
+        nodes = [PipelineNode.model_validate(n) for n in data.get("nodes", [])]
+        edges = [PipelineEdge.model_validate(e) for e in data.get("edges", [])]
+        return cls(nodes=nodes, edges=edges)
+
+
+class PipelineTemplate(BaseModel):
+    id: int | None = None
+    name: str
+    description: str = ""
+    category: str = ""
+    template_json: PipelineGraph
+    is_builtin: bool = False
+    created_at: datetime | None = None
+
+
 class ContentPipeline(BaseModel):
     id: int | None = None
     name: str
@@ -183,6 +253,7 @@ class ContentPipeline(BaseModel):
     generate_interval_minutes: int = Field(60, ge=1)
     publish_times: str | None = None  # JSON array of "HH:MM" times, e.g. '["09:00", "18:00"]'
     refinement_steps: list[dict] = []  # list of {name, prompt} dicts; {text} in prompt is replaced
+    pipeline_json: PipelineGraph | None = None  # node-based DAG config (issue #343)
     created_at: datetime | None = None
 
 

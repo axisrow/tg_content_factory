@@ -21,6 +21,7 @@ from src.database.repositories.generation_runs import GenerationRunsRepository
 from src.database.repositories.messages import MessagesRepository
 from src.database.repositories.notification_bots import NotificationBotsRepository
 from src.database.repositories.photo_loader import PhotoLoaderRepository
+from src.database.repositories.pipeline_templates import PipelineTemplatesRepository
 from src.database.repositories.search_log import SearchLogRepository
 from src.database.repositories.search_queries import SearchQueriesRepository
 from src.database.repositories.settings import SettingsRepository
@@ -121,6 +122,7 @@ class Database:
         self._content_pipelines = ContentPipelinesRepository(self._db)
         self._generation_runs = GenerationRunsRepository(self._db)
         self._generated_images = GeneratedImagesRepository(self._db)
+        self._pipeline_templates = PipelineTemplatesRepository(self._db)
         self._repos = DatabaseRepositories(
             accounts=self._accounts,
             channels=self._channels,
@@ -137,9 +139,17 @@ class Database:
             content_pipelines=self._content_pipelines,
             generation_runs=self._generation_runs,
             generated_images=self._generated_images,
+            pipeline_templates=self._pipeline_templates,
         )
 
         await self._accounts.migrate_sessions()
+
+        # Seed built-in pipeline templates (idempotent)
+        try:
+            from src.services.pipeline_templates_builtin import get_builtin_templates
+            await self._pipeline_templates.ensure_builtins(get_builtin_templates())
+        except Exception:
+            logger.warning("Failed to seed built-in pipeline templates", exc_info=True)
 
     async def close(self) -> None:
         await self._connection.close()

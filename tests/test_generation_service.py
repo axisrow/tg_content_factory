@@ -88,6 +88,72 @@ async def test_generation_service_no_provider():
         await service.generate(query="test")
 
 
+class DummySearchEngineWithFallback:
+    """Search engine where semantic is unavailable — simulates issue #270."""
+
+    def __init__(self, messages):
+        self._messages = messages
+        self._hybrid_called = False
+        self._local_called = False
+
+    @property
+    def semantic_available(self) -> bool:
+        return False
+
+    async def search_hybrid(self, query: str, **kwargs) -> SearchResult:
+        self._hybrid_called = True
+        raise RuntimeError("Semantic search is unavailable: sqlite-vec extension is not loaded")
+
+    async def search_local(self, query: str, **kwargs) -> SearchResult:
+        self._local_called = True
+        return SearchResult(messages=self._messages, total=len(self._messages), query=query)
+
+
+async def test_generation_service_fallback_to_local_when_no_semantic():
+    """Issue #270: _collect_context must fall back to FTS when semantic is unavailable."""
+    from datetime import datetime, timezone
+
+    msg = Message(
+        id=1,
+        channel_id=10,
+        message_id=1,
+        sender_id=None,
+        sender_name="Alice",
+        text="Test message",
+        date=datetime.now(timezone.utc),
+        channel_title="Chan",
+    )
+    engine = DummySearchEngineWithFallback([msg])
+    service = GenerationService(search_engine=engine, provider_callable=fake_provider)
+
+    out = await service.generate(query="test query", prompt_template="Use {source_messages}")
+
+    assert engine._local_called, "Should have called search_local as fallback"
+    assert not engine._hybrid_called, "Should NOT have called search_hybrid when semantic unavailable"
+    assert "GENERATED:" in out["generated_text"]
+
+
+async def test_generation_service_uses_hybrid_when_semantic_available():
+    """When semantic is available, _collect_context should use search_hybrid."""
+
+    class EngineWithSemantic:
+        @property
+        def semantic_available(self):
+            return True
+
+        async def search_hybrid(self, query, **kwargs):
+            return SearchResult(messages=[], total=0, query=query)
+
+        async def search_local(self, query, **kwargs):
+            raise AssertionError("search_local should not be called when semantic is available")
+
+    engine = EngineWithSemantic()
+    service = GenerationService(search_engine=engine, provider_callable=fake_provider)
+    out = await service.generate(query="test")
+    # Should not raise, hybrid was used
+    assert "GENERATED:" in out["generated_text"]
+
+
 async def test_generation_service_uses_default_prompt():
     """Test generation uses default prompt template."""
     engine = DummySearchEngine([])

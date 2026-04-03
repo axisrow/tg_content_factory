@@ -8,6 +8,7 @@ import aiosqlite
 from src.models import (
     ContentPipeline,
     PipelineGenerationBackend,
+    PipelineGraph,
     PipelinePublishMode,
     PipelineSource,
     PipelineTarget,
@@ -24,6 +25,14 @@ class ContentPipelinesRepository:
 
     @staticmethod
     def _to_pipeline(row: aiosqlite.Row) -> ContentPipeline:
+        keys = row.keys()
+        pipeline_json_raw = row["pipeline_json"] if "pipeline_json" in keys else None
+        pipeline_graph: PipelineGraph | None = None
+        if pipeline_json_raw:
+            try:
+                pipeline_graph = PipelineGraph.from_json(pipeline_json_raw)
+            except Exception:
+                pipeline_graph = None
         return ContentPipeline(
             id=row["id"],
             name=row["name"],
@@ -35,12 +44,13 @@ class ContentPipelinesRepository:
             is_active=bool(row["is_active"]),
             last_generated_id=row["last_generated_id"],
             generate_interval_minutes=row["generate_interval_minutes"],
-            publish_times=row["publish_times"] if "publish_times" in row.keys() else None,
+            publish_times=row["publish_times"] if "publish_times" in keys else None,
             refinement_steps=(
                 json.loads(row["refinement_steps"])
-                if "refinement_steps" in row.keys() and row["refinement_steps"]
+                if "refinement_steps" in keys and row["refinement_steps"]
                 else []
             ),
+            pipeline_json=pipeline_graph,
             created_at=_dt(row["created_at"]),
         )
 
@@ -73,13 +83,14 @@ class ContentPipelinesRepository:
     ) -> int:
         await self._db.execute("BEGIN IMMEDIATE")
         try:
+            pipeline_json_str = pipeline.pipeline_json.to_json() if pipeline.pipeline_json else None
             cur = await self._db.execute(
                 """
                 INSERT INTO content_pipelines (
                     name, prompt_template, llm_model, image_model, publish_mode,
                     generation_backend, is_active, last_generated_id, generate_interval_minutes,
-                    publish_times
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    publish_times, pipeline_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     pipeline.name,
@@ -92,6 +103,7 @@ class ContentPipelinesRepository:
                     pipeline.last_generated_id,
                     pipeline.generate_interval_minutes,
                     pipeline.publish_times,
+                    pipeline_json_str,
                 ),
             )
             pipeline_id = cur.lastrowid or 0
@@ -136,12 +148,13 @@ class ContentPipelinesRepository:
     ) -> bool:
         await self._db.execute("BEGIN IMMEDIATE")
         try:
+            pipeline_json_str = pipeline.pipeline_json.to_json() if pipeline.pipeline_json else None
             cur = await self._db.execute(
                 """
                 UPDATE content_pipelines
                 SET name = ?, prompt_template = ?, llm_model = ?, image_model = ?,
                     publish_mode = ?, generation_backend = ?, is_active = ?,
-                    generate_interval_minutes = ?, publish_times = ?
+                    generate_interval_minutes = ?, publish_times = ?, pipeline_json = ?
                 WHERE id = ?
                 """,
                 (
@@ -154,6 +167,7 @@ class ContentPipelinesRepository:
                     int(pipeline.is_active),
                     pipeline.generate_interval_minutes,
                     pipeline.publish_times,
+                    pipeline_json_str,
                     pipeline_id,
                 ),
             )
@@ -172,6 +186,14 @@ class ContentPipelinesRepository:
         await self._db.execute(
             "UPDATE content_pipelines SET refinement_steps = ? WHERE id = ?",
             (json.dumps(steps, ensure_ascii=False), pipeline_id),
+        )
+        await self._db.commit()
+
+    async def set_pipeline_json(self, pipeline_id: int, graph: PipelineGraph | None) -> None:
+        value = graph.to_json() if graph else None
+        await self._db.execute(
+            "UPDATE content_pipelines SET pipeline_json = ? WHERE id = ?",
+            (value, pipeline_id),
         )
         await self._db.commit()
 

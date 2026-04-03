@@ -4,8 +4,8 @@ import json
 import logging
 from urllib.parse import quote
 
-from fastapi import APIRouter, Form, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
+from fastapi import APIRouter, File, Form, Request, UploadFile
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 
 from src.agent.prompt_template import ALLOWED_TEMPLATE_VARIABLES
 from src.models import PipelineGenerationBackend, PipelinePublishMode
@@ -385,6 +385,143 @@ async def get_refinement_steps(request: Request, pipeline_id: int):
     if pipeline is None:
         return _pipeline_redirect("pipeline_not_found", error=True)
     return JSONResponse(content={"steps": pipeline.refinement_steps})
+
+
+# ------------------------------------------------------------------
+# Templates
+# ------------------------------------------------------------------
+
+
+@router.get("/templates", response_class=HTMLResponse)
+async def templates_page(request: Request):
+    svc: PipelineService = deps.pipeline_service(request)
+    templates = await svc.list_templates()
+    return deps.get_templates(request).TemplateResponse(
+        request,
+        "pipelines/templates.html",
+        {"templates": templates},
+    )
+
+
+@router.get("/templates/json", response_class=JSONResponse)
+async def templates_json(request: Request):
+    svc: PipelineService = deps.pipeline_service(request)
+    templates = await svc.list_templates()
+    result = []
+    import json as _json
+    for tpl in templates:
+        result.append({
+            "id": tpl.id,
+            "name": tpl.name,
+            "description": tpl.description,
+            "category": tpl.category,
+            "template_json": _json.loads(tpl.template_json.to_json()),
+        })
+    return JSONResponse(content=result)
+
+
+@router.post("/from-template")
+async def create_from_template(
+    request: Request,
+    template_id: int = Form(...),
+    name: str = Form(...),
+    source_channel_ids: list[int] = Form(default=[]),
+    target_refs: list[str] = Form(default=[]),
+    llm_model: str = Form(""),
+    image_model: str = Form(""),
+    generate_interval_minutes: int = Form(60),
+):
+    svc: PipelineService = deps.pipeline_service(request)
+    try:
+        pipeline_id = await svc.create_from_template(
+            template_id,
+            name=name,
+            source_ids=source_channel_ids,
+            target_refs=_target_refs(target_refs),
+            overrides={
+                "llm_model": llm_model or None,
+                "image_model": image_model or None,
+                "generate_interval_minutes": generate_interval_minutes,
+            },
+        )
+    except PipelineValidationError as exc:
+        return _pipeline_redirect(str(exc), error=True)
+    try:
+        scheduler = deps.get_scheduler(request)
+        await scheduler.sync_pipeline_jobs()
+    except Exception:
+        logger.warning("Scheduler sync failed", exc_info=True)
+    return RedirectResponse(url=f"/pipelines/{pipeline_id}/generate", status_code=303)
+
+
+# ------------------------------------------------------------------
+# JSON import / export
+# ------------------------------------------------------------------
+
+
+@router.get("/{pipeline_id}/export")
+async def export_pipeline(request: Request, pipeline_id: int):
+    svc: PipelineService = deps.pipeline_service(request)
+    data = await svc.export_json(pipeline_id)
+    if data is None:
+        return _pipeline_redirect("pipeline_invalid", error=True)
+    import json as _json
+    filename = f"pipeline_{pipeline_id}.json"
+    content = _json.dumps(data, ensure_ascii=False, indent=2)
+    return Response(
+        content=content,
+        media_type="application/json",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.post("/import")
+async def import_pipeline(
+    request: Request,
+    json_file: UploadFile | None = File(None),
+    json_text: str = Form(""),
+    name_override: str = Form(""),
+):
+    svc: PipelineService = deps.pipeline_service(request)
+    import json as _json
+
+    try:
+        if json_file and json_file.filename:
+            raw = await json_file.read()
+            data = _json.loads(raw)
+        elif json_text.strip():
+            data = _json.loads(json_text.strip())
+        else:
+            return _pipeline_redirect("Не передан JSON файл или текст.", error=True)
+
+        pipeline_id = await svc.import_json(data, name_override=name_override or None)
+    except PipelineValidationError as exc:
+        return _pipeline_redirect(str(exc), error=True)
+    except Exception as exc:
+        return _pipeline_redirect(f"Ошибка импорта: {exc}", error=True)
+
+    try:
+        scheduler = deps.get_scheduler(request)
+        await scheduler.sync_pipeline_jobs()
+    except Exception:
+        logger.warning("Scheduler sync failed", exc_info=True)
+    return RedirectResponse(url=f"/pipelines/{pipeline_id}/generate", status_code=303)
+
+
+@router.post("/{pipeline_id}/ai-edit")
+async def ai_edit_pipeline(request: Request, pipeline_id: int):
+    """Accept JSON body: {"instruction": "..."}. Returns updated pipeline_json."""
+    svc: PipelineService = deps.pipeline_service(request)
+    db = deps.get_db(request)
+    try:
+        body = await request.json()
+        instruction = body.get("instruction", "").strip()
+        if not instruction:
+            return JSONResponse(content={"ok": False, "error": "instruction is required"}, status_code=400)
+        result = await svc.edit_via_llm(pipeline_id, instruction, db)
+        return JSONResponse(content=result)
+    except Exception as exc:
+        return JSONResponse(content={"ok": False, "error": str(exc)}, status_code=500)
 
 
 @router.post("/{pipeline_id}/refinement-steps")
