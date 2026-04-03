@@ -1198,28 +1198,28 @@ class TestDeepagentsSyncTools:
 class TestSchedulerManager:
     @pytest.mark.asyncio
     async def test_is_running_false(self):
-        from src.scheduler.manager import SchedulerManager
+        from src.scheduler.service import SchedulerManager
 
         sm = SchedulerManager(SchedulerConfig())
         assert sm.is_running is False
 
     @pytest.mark.asyncio
     async def test_interval_minutes(self):
-        from src.scheduler.manager import SchedulerManager
+        from src.scheduler.service import SchedulerManager
 
         sm = SchedulerManager(SchedulerConfig(collect_interval_minutes=30))
         assert sm.interval_minutes == 30
 
     @pytest.mark.asyncio
     async def test_is_job_enabled_no_bundle(self):
-        from src.scheduler.manager import SchedulerManager
+        from src.scheduler.service import SchedulerManager
 
         sm = SchedulerManager(SchedulerConfig())
         assert await sm.is_job_enabled("collect_all") is True
 
     @pytest.mark.asyncio
     async def test_update_interval_no_scheduler(self):
-        from src.scheduler.manager import SchedulerManager
+        from src.scheduler.service import SchedulerManager
 
         sm = SchedulerManager(SchedulerConfig())
         sm.update_interval(15)
@@ -1227,28 +1227,28 @@ class TestSchedulerManager:
 
     @pytest.mark.asyncio
     async def test_get_job_next_run_no_scheduler(self):
-        from src.scheduler.manager import SchedulerManager
+        from src.scheduler.service import SchedulerManager
 
         sm = SchedulerManager(SchedulerConfig())
         assert sm.get_job_next_run("collect_all") is None
 
     @pytest.mark.asyncio
     async def test_get_all_jobs_no_scheduler(self):
-        from src.scheduler.manager import SchedulerManager
+        from src.scheduler.service import SchedulerManager
 
         sm = SchedulerManager(SchedulerConfig())
         assert sm.get_all_jobs_next_run() == {}
 
     @pytest.mark.asyncio
     async def test_stop_not_running(self):
-        from src.scheduler.manager import SchedulerManager
+        from src.scheduler.service import SchedulerManager
 
         sm = SchedulerManager(SchedulerConfig())
         await sm.stop()  # Should not raise
 
     @pytest.mark.asyncio
     async def test_trigger_now_no_enqueuer(self):
-        from src.scheduler.manager import SchedulerManager
+        from src.scheduler.service import SchedulerManager
 
         sm = SchedulerManager(SchedulerConfig())
         result = await sm.trigger_now()
@@ -1256,7 +1256,7 @@ class TestSchedulerManager:
 
     @pytest.mark.asyncio
     async def test_trigger_background_no_enqueuer(self):
-        from src.scheduler.manager import SchedulerManager
+        from src.scheduler.service import SchedulerManager
 
         sm = SchedulerManager(SchedulerConfig())
         await sm.trigger_background()
@@ -1266,7 +1266,7 @@ class TestSchedulerManager:
 
     @pytest.mark.asyncio
     async def test_run_photo_due_no_enqueuer(self):
-        from src.scheduler.manager import SchedulerManager
+        from src.scheduler.service import SchedulerManager
 
         sm = SchedulerManager(SchedulerConfig())
         result = await sm._run_photo_due()
@@ -1274,7 +1274,7 @@ class TestSchedulerManager:
 
     @pytest.mark.asyncio
     async def test_run_photo_auto_no_enqueuer(self):
-        from src.scheduler.manager import SchedulerManager
+        from src.scheduler.service import SchedulerManager
 
         sm = SchedulerManager(SchedulerConfig())
         result = await sm._run_photo_auto()
@@ -1282,42 +1282,42 @@ class TestSchedulerManager:
 
     @pytest.mark.asyncio
     async def test_run_pipeline_job_no_enqueuer(self):
-        from src.scheduler.manager import SchedulerManager
+        from src.scheduler.service import SchedulerManager
 
         sm = SchedulerManager(SchedulerConfig())
         await sm._run_pipeline_job(1)  # Should not raise
 
     @pytest.mark.asyncio
     async def test_run_content_generate_no_enqueuer(self):
-        from src.scheduler.manager import SchedulerManager
+        from src.scheduler.service import SchedulerManager
 
         sm = SchedulerManager(SchedulerConfig())
         await sm._run_content_generate_job(1)  # Should not raise
 
     @pytest.mark.asyncio
     async def test_run_search_query_no_enqueuer(self):
-        from src.scheduler.manager import SchedulerManager
+        from src.scheduler.service import SchedulerManager
 
         sm = SchedulerManager(SchedulerConfig())
         await sm._run_search_query(1)  # Should not raise
 
     @pytest.mark.asyncio
     async def test_load_settings_no_bundle(self):
-        from src.scheduler.manager import SchedulerManager
+        from src.scheduler.service import SchedulerManager
 
         sm = SchedulerManager(SchedulerConfig())
         await sm.load_settings()  # Should not raise
 
     @pytest.mark.asyncio
     async def test_sync_job_state_not_running(self):
-        from src.scheduler.manager import SchedulerManager
+        from src.scheduler.service import SchedulerManager
 
         sm = SchedulerManager(SchedulerConfig())
         await sm.sync_job_state("collect_all", True)  # Should not raise
 
     @pytest.mark.asyncio
     async def test_get_potential_jobs(self):
-        from src.scheduler.manager import SchedulerManager
+        from src.scheduler.service import SchedulerManager
 
         sm = SchedulerManager(SchedulerConfig())
         jobs = await sm.get_potential_jobs()

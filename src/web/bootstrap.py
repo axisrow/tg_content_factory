@@ -23,7 +23,7 @@ from src.database.bundles import (
     SearchBundle,
     SearchQueryBundle,
 )
-from src.scheduler.manager import SchedulerManager
+from src.scheduler.service import SchedulerManager
 from src.search.ai_search import AISearchEngine
 from src.search.engine import SearchEngine
 from src.services.notification_target_service import NotificationTargetService
