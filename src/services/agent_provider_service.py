@@ -701,7 +701,6 @@ class AgentProviderService:
         if provider == "zai":
             assert cfg is not None
             return await self._fetch_zai_models(
-                cfg.plain_fields.get("base_url", ""),
                 cfg.secret_fields.get("api_key", ""),
             )
         if provider in _OPENAI_STYLE_DEFAULT_BASE_URLS:
@@ -799,16 +798,12 @@ class AgentProviderService:
         )
         return [str(item.get("id", "")).strip() for item in payload if item.get("id")]
 
-    async def _fetch_zai_models(
-        self, base_url: str, api_key: str
-    ) -> list[str]:
-        base_url = base_url.strip() or ZAI_DEFAULT_BASE_URL
-        headers = {
-            "x-api-key": api_key,
-            "anthropic-version": "2023-06-01",
-        }
+    async def _fetch_zai_models(self, api_key: str) -> list[str]:
+        # The Anthropic-compatible proxy endpoint doesn't expose /models.
+        # Use the native Z.AI API endpoint with Bearer auth instead.
+        headers = {"Authorization": f"Bearer {api_key}"}
         payload = await self._fetch_json(
-            base_url.rstrip("/") + "/models", headers=headers
+            "https://api.z.ai/api/paas/v4/models", headers=headers
         )
         return [
             str(item.get("id", "")).strip()
