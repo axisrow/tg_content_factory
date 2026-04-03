@@ -81,6 +81,8 @@ class ContentGenerationService:
             metadata: dict[str, Any] = {"citations": result.get("citations", [])}
             if result.get("publish_reply"):
                 metadata["publish_reply"] = True
+            if result.get("reply_to_message_id") is not None:
+                metadata["reply_to_message_id"] = result["reply_to_message_id"]
 
             if pipeline.refinement_steps and generated_text and pipeline.pipeline_json is None:
                 # Refinement steps are only applied for legacy pipelines (graph-based ones encode them as nodes)
@@ -194,6 +196,7 @@ class ContentGenerationService:
             "citations": result.get("citations", []),
             "publish_mode": result.get("publish_mode"),
             "publish_reply": result.get("publish_reply", False),
+            "reply_to_message_id": result.get("reply_to_message_id"),
         }
 
     async def _run_rag(

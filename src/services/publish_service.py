@@ -97,6 +97,10 @@ class PublishService:
                     error=f"Could not resolve dialog_id={target.dialog_id}",
                 )
 
+            reply_to = None
+            if run.metadata and run.metadata.get("publish_reply"):
+                reply_to = run.metadata.get("reply_to_message_id")
+
             if run.image_url:
                 msg = await asyncio.wait_for(
                     session.publish_files(
@@ -107,8 +111,11 @@ class PublishService:
                     timeout=60.0,
                 )
             else:
+                send_kwargs: dict = {}
+                if reply_to is not None:
+                    send_kwargs["reply_to"] = reply_to
                 msg = await asyncio.wait_for(
-                    session.send_message(entity, run.generated_text),
+                    session.send_message(entity, run.generated_text, **send_kwargs),
                     timeout=60.0,
                 )
 

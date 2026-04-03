@@ -170,6 +170,12 @@ class PublishHandler(BaseNodeHandler):
         context.set_global("publish_targets", targets)
         context.set_global("publish_mode", mode)
         context.set_global("publish_reply", reply)
+        # When reply=True, capture the first matched message ID as the reply target
+        if reply:
+            messages = context.get_global("context_messages", [])
+            if messages:
+                first = messages[0]
+                context.set_global("reply_to_message_id", getattr(first, "message_id", None))
 
 
 class NotifyHandler(BaseNodeHandler):
