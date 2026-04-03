@@ -6,14 +6,6 @@ import pytest
 
 from src.database.repositories.channels import ChannelsRepository
 from src.models import Channel
-
-
-@pytest.fixture
-async def repo(db):
-    """Create repository instance."""
-    return ChannelsRepository(db.db)
-
-
 def make_channel(channel_id: int, title: str = "Test Channel", **kwargs) -> Channel:
     """Create a test Channel."""
     return Channel(channel_id=channel_id, title=title, **kwargs)

@@ -8,14 +8,6 @@ import pytest
 
 from src.database.repositories.channel_stats import ChannelStatsRepository
 from src.models import Channel, ChannelStats
-
-
-@pytest.fixture
-async def repo(db):
-    """Create repository instance."""
-    return ChannelStatsRepository(db.db)
-
-
 async def _create_channel(db, channel_id):
     """Helper to create a channel for FK constraint."""
     channel = Channel(

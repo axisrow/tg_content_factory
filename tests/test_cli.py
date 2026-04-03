@@ -473,7 +473,7 @@ class TestCLISearch:
 
 
 class TestCLIAgentDbProviders:
-    def test_chat_refreshes_db_backed_provider_cache_before_initialize(self, cli_env, capsys):
+    def test_chat_refreshes_db_backed_provider_cache_before_initialize(self, cli_env, cli_init_patch, capsys):
         from src.agent.provider_registry import ProviderRuntimeConfig
         from src.cli.commands.agent import run
         from src.services.agent_provider_service import AgentProviderService
@@ -497,9 +497,6 @@ class TestCLIAgentDbProviders:
 
         thread_id = asyncio.run(cli_env.create_agent_thread("cli chat"))
 
-        async def fake_init_db(_config_path: str):
-            return config, cli_env
-
         def fake_init_chat_model(*, model, model_provider, **kwargs):
             assert model_provider == "openai"
             assert model == "gpt-4.1-mini"
@@ -509,7 +506,7 @@ class TestCLIAgentDbProviders:
         fake_agent = MagicMock(run=MagicMock(return_value="ok-from-db-provider"))
 
         with (
-            patch("src.cli.runtime.init_db", side_effect=fake_init_db),
+            cli_init_patch(cli_env, "src.cli.runtime.init_db", config=config),
             patch("langchain.chat_models.init_chat_model", side_effect=fake_init_chat_model),
             patch("deepagents.create_deep_agent", return_value=fake_agent),
         ):
@@ -1199,7 +1196,7 @@ class TestCLIAgent:
         assert "model reply" in out
         assert captured_opts.get("model") == "claude-haiku-4-5-20251001"
 
-    def test_test_escaping_uses_runtime_config_for_db_providers(self, cli_db, capsys):
+    def test_test_escaping_uses_runtime_config_for_db_providers(self, cli_db, cli_init_patch, capsys):
         from src.agent.provider_registry import ProviderRuntimeConfig
         from src.cli.commands.agent import run
         from src.services.agent_provider_service import AgentProviderService
@@ -1221,11 +1218,8 @@ class TestCLIAgent:
             )
         )
 
-        async def fake_init_db(config_path: str):
-            return config, cli_db
-
         with (
-            patch("src.cli.runtime.init_db", side_effect=fake_init_db),
+            cli_init_patch(cli_db, "src.cli.runtime.init_db", config=config),
             patch(
                 "src.agent.manager.DeepagentsBackend._build_agent",
                 return_value=MagicMock(run=MagicMock(return_value="ok")),

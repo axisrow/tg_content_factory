@@ -8,14 +8,6 @@ import pytest
 
 from src.database.repositories.notification_bots import NotificationBotsRepository
 from src.models import NotificationBot
-
-
-@pytest.fixture
-async def repo(db):
-    """Create repository instance."""
-    return NotificationBotsRepository(db.db)
-
-
 @pytest.fixture
 def sample_bot():
     """Create sample NotificationBot."""

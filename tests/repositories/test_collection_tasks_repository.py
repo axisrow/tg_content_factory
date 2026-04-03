@@ -8,14 +8,6 @@ import pytest
 
 from src.database.repositories.collection_tasks import CollectionTasksRepository
 from src.models import CollectionTaskStatus, CollectionTaskType, StatsAllTaskPayload
-
-
-@pytest.fixture
-async def repo(db):
-    """Create repository instance."""
-    return CollectionTasksRepository(db.db)
-
-
 # _deserialize_payload tests
 
 

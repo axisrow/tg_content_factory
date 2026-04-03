@@ -21,19 +21,9 @@ from src.web.log_handler import LogBuffer
 
 
 @pytest.fixture
-async def client(tmp_path):
+async def client(base_app):
     """Create test client with log buffer."""
-    config = AppConfig()
-    config.database.path = str(tmp_path / "test.db")
-    config.telegram.api_id = 12345
-    config.telegram.api_hash = "test_hash"
-    config.web.password = "testpass"
-    app = create_app(config)
-
-    db = Database(config.database.path)
-    await db.initialize()
-    app.state.db = db
-
+    app, _, pool = base_app
     async def _resolve_channel(self, identifier):
         return {
             "channel_id": -1001234567890,
@@ -42,27 +32,9 @@ async def client(tmp_path):
             "channel_type": "channel",
         }
 
-    app.state.pool = type(
-        "Pool",
-        (),
-        {
-            "clients": {},
-            "resolve_channel": _resolve_channel,
-        },
-    )()
-
-    app.state.auth = TelegramAuth(12345, "test_hash")
-    app.state.notifier = None
-    collector = Collector(app.state.pool, db, config.scheduler)
-    app.state.collector = collector
-    app.state.collection_queue = CollectionQueue(collector, db)
-    app.state.search_engine = SearchEngine(db)
-    app.state.ai_search = AISearchEngine(config.llm, db)
-    app.state.scheduler = SchedulerManager(config.scheduler)
-    app.state.session_secret = "test_secret_key"
+    pool.clients = {}
+    pool.resolve_channel = _resolve_channel
     app.state.log_buffer = LogBuffer()
-
-    await db.add_account(Account(phone="+1234567890", session_string="test_session"))
 
     transport = ASGITransport(app=app)
     auth_header = base64.b64encode(b":testpass").decode()
@@ -73,25 +45,12 @@ async def client(tmp_path):
         headers={"Authorization": f"Basic {auth_header}", "Origin": "http://test"},
     ) as c:
         yield c
-
-    await app.state.collection_queue.shutdown()
-    await db.close()
 
 
 @pytest.fixture
-async def client_no_buffer(tmp_path):
+async def client_no_buffer(base_app):
     """Create test client without log buffer."""
-    config = AppConfig()
-    config.database.path = str(tmp_path / "test.db")
-    config.telegram.api_id = 12345
-    config.telegram.api_hash = "test_hash"
-    config.web.password = "testpass"
-    app = create_app(config)
-
-    db = Database(config.database.path)
-    await db.initialize()
-    app.state.db = db
-
+    app, _, pool = base_app
     async def _resolve_channel(self, identifier):
         return {
             "channel_id": -1001234567890,
@@ -100,27 +59,9 @@ async def client_no_buffer(tmp_path):
             "channel_type": "channel",
         }
 
-    app.state.pool = type(
-        "Pool",
-        (),
-        {
-            "clients": {},
-            "resolve_channel": _resolve_channel,
-        },
-    )()
-
-    app.state.auth = TelegramAuth(12345, "test_hash")
-    app.state.notifier = None
-    collector = Collector(app.state.pool, db, config.scheduler)
-    app.state.collector = collector
-    app.state.collection_queue = CollectionQueue(collector, db)
-    app.state.search_engine = SearchEngine(db)
-    app.state.ai_search = AISearchEngine(config.llm, db)
-    app.state.scheduler = SchedulerManager(config.scheduler)
-    app.state.session_secret = "test_secret_key"
+    pool.clients = {}
+    pool.resolve_channel = _resolve_channel
     app.state.log_buffer = None  # No buffer
-
-    await db.add_account(Account(phone="+1234567890", session_string="test_session"))
 
     transport = ASGITransport(app=app)
     auth_header = base64.b64encode(b":testpass").decode()
@@ -131,9 +72,6 @@ async def client_no_buffer(tmp_path):
         headers={"Authorization": f"Basic {auth_header}", "Origin": "http://test"},
     ) as c:
         yield c
-
-    await app.state.collection_queue.shutdown()
-    await db.close()
 
 
 @pytest.mark.asyncio

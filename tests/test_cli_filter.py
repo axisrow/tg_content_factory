@@ -9,6 +9,8 @@ from src.config import AppConfig
 from src.database import Database
 from src.models import Account, Channel
 
+_FILTER_INIT_DB_TARGET = "src.cli.commands.filter.runtime.init_db"
+
 
 def _ns(**kwargs) -> argparse.Namespace:
     defaults = {"config": "config.yaml"}
@@ -65,7 +67,7 @@ def test_print_result_with_purged(capsys):
     assert "Skipped: 1" in out
 
 
-def test_filter_analyze(tmp_path, capsys):
+def test_filter_analyze(tmp_path, cli_init_patch, capsys):
     """Test filter analyze action."""
     db_path = str(tmp_path / "filter_analyze.db")
     db = Database(db_path)
@@ -74,13 +76,7 @@ def test_filter_analyze(tmp_path, capsys):
     asyncio.run(db.add_channel(Channel(channel_id=1001, title="Test Channel")))
     asyncio.run(db.close())
 
-    async def fake_init_db(_config_path: str):
-        config = AppConfig()
-        database = Database(db_path)
-        await database.initialize()
-        return config, database
-
-    with patch("src.cli.commands.filter.runtime.init_db", side_effect=fake_init_db):
+    with cli_init_patch(db, _FILTER_INIT_DB_TARGET):
         from src.cli.commands.filter import run
 
         with patch("src.cli.commands.filter.ChannelAnalyzer") as mock_analyzer:
@@ -99,20 +95,14 @@ def test_filter_analyze(tmp_path, capsys):
     assert "No channels found" in out
 
 
-def test_filter_apply(tmp_path, capsys):
+def test_filter_apply(tmp_path, cli_init_patch, capsys):
     """Test filter apply action."""
     db_path = str(tmp_path / "filter_apply.db")
     db = Database(db_path)
     asyncio.run(db.initialize())
     asyncio.run(db.close())
 
-    async def fake_init_db(_config_path: str):
-        config = AppConfig()
-        database = Database(db_path)
-        await database.initialize()
-        return config, database
-
-    with patch("src.cli.commands.filter.runtime.init_db", side_effect=fake_init_db):
+    with cli_init_patch(db, _FILTER_INIT_DB_TARGET):
         from src.cli.commands.filter import run
 
         with patch("src.cli.commands.filter.ChannelAnalyzer") as mock_analyzer:
@@ -128,20 +118,14 @@ def test_filter_apply(tmp_path, capsys):
     assert "Applied filters: 5" in out
 
 
-def test_filter_precheck(tmp_path, capsys):
+def test_filter_precheck(tmp_path, cli_init_patch, capsys):
     """Test filter precheck action."""
     db_path = str(tmp_path / "filter_precheck.db")
     db = Database(db_path)
     asyncio.run(db.initialize())
     asyncio.run(db.close())
 
-    async def fake_init_db(_config_path: str):
-        config = AppConfig()
-        database = Database(db_path)
-        await database.initialize()
-        return config, database
-
-    with patch("src.cli.commands.filter.runtime.init_db", side_effect=fake_init_db):
+    with cli_init_patch(db, _FILTER_INIT_DB_TARGET):
         from src.cli.commands.filter import run
 
         with patch("src.cli.commands.filter.ChannelAnalyzer") as mock_analyzer:
@@ -155,20 +139,14 @@ def test_filter_precheck(tmp_path, capsys):
     assert "Pre-filter applied: 3" in out
 
 
-def test_filter_reset(tmp_path, capsys):
+def test_filter_reset(tmp_path, cli_init_patch, capsys):
     """Test filter reset action."""
     db_path = str(tmp_path / "filter_reset.db")
     db = Database(db_path)
     asyncio.run(db.initialize())
     asyncio.run(db.close())
 
-    async def fake_init_db(_config_path: str):
-        config = AppConfig()
-        database = Database(db_path)
-        await database.initialize()
-        return config, database
-
-    with patch("src.cli.commands.filter.runtime.init_db", side_effect=fake_init_db):
+    with cli_init_patch(db, _FILTER_INIT_DB_TARGET):
         from src.cli.commands.filter import run
 
         with patch("src.cli.commands.filter.ChannelAnalyzer") as mock_analyzer:
@@ -182,20 +160,14 @@ def test_filter_reset(tmp_path, capsys):
     assert "All channel filters have been reset" in out
 
 
-def test_filter_purge_all(tmp_path, capsys):
+def test_filter_purge_all(tmp_path, cli_init_patch, capsys):
     """Test filter purge all action."""
     db_path = str(tmp_path / "filter_purge.db")
     db = Database(db_path)
     asyncio.run(db.initialize())
     asyncio.run(db.close())
 
-    async def fake_init_db(_config_path: str):
-        config = AppConfig()
-        database = Database(db_path)
-        await database.initialize()
-        return config, database
-
-    with patch("src.cli.commands.filter.runtime.init_db", side_effect=fake_init_db):
+    with cli_init_patch(db, _FILTER_INIT_DB_TARGET):
         from src.cli.commands.filter import run
 
         with patch("src.cli.commands.filter._build_deletion_service") as mock_build:
@@ -213,20 +185,14 @@ def test_filter_purge_all(tmp_path, capsys):
     assert "Purged messages from 2 channels" in out
 
 
-def test_filter_purge_by_pks(tmp_path, capsys):
+def test_filter_purge_by_pks(tmp_path, cli_init_patch, capsys):
     """Test filter purge by PKs action."""
     db_path = str(tmp_path / "filter_purge_pks.db")
     db = Database(db_path)
     asyncio.run(db.initialize())
     asyncio.run(db.close())
 
-    async def fake_init_db(_config_path: str):
-        config = AppConfig()
-        database = Database(db_path)
-        await database.initialize()
-        return config, database
-
-    with patch("src.cli.commands.filter.runtime.init_db", side_effect=fake_init_db):
+    with cli_init_patch(db, _FILTER_INIT_DB_TARGET):
         from src.cli.commands.filter import run
 
         with patch("src.cli.commands.filter._build_deletion_service") as mock_build:
@@ -244,20 +210,14 @@ def test_filter_purge_by_pks(tmp_path, capsys):
     assert "Purged messages from 1 channel" in out
 
 
-def test_filter_purge_invalid_pks(tmp_path, capsys):
+def test_filter_purge_invalid_pks(tmp_path, cli_init_patch, capsys):
     """Test filter purge with invalid PKs."""
     db_path = str(tmp_path / "filter_purge_invalid.db")
     db = Database(db_path)
     asyncio.run(db.initialize())
     asyncio.run(db.close())
 
-    async def fake_init_db(_config_path: str):
-        config = AppConfig()
-        database = Database(db_path)
-        await database.initialize()
-        return config, database
-
-    with patch("src.cli.commands.filter.runtime.init_db", side_effect=fake_init_db):
+    with cli_init_patch(db, _FILTER_INIT_DB_TARGET):
         from src.cli.commands.filter import run
 
         run(_ns(filter_action="purge", pks="abc,def"))
@@ -266,20 +226,14 @@ def test_filter_purge_invalid_pks(tmp_path, capsys):
     assert "No valid PKs provided" in out
 
 
-def test_filter_hard_delete_requires_dev_mode(tmp_path, capsys):
+def test_filter_hard_delete_requires_dev_mode(tmp_path, cli_init_patch, capsys):
     """Test filter hard-delete requires dev mode."""
     db_path = str(tmp_path / "filter_hard_delete_dev.db")
     db = Database(db_path)
     asyncio.run(db.initialize())
     asyncio.run(db.close())
 
-    async def fake_init_db(_config_path: str):
-        config = AppConfig()
-        database = Database(db_path)
-        await database.initialize()
-        return config, database
-
-    with patch("src.cli.commands.filter.runtime.init_db", side_effect=fake_init_db):
+    with cli_init_patch(db, _FILTER_INIT_DB_TARGET):
         from src.cli.commands.filter import run
 
         run(_ns(filter_action="hard-delete", pks=None, yes=False))
@@ -288,17 +242,13 @@ def test_filter_hard_delete_requires_dev_mode(tmp_path, capsys):
     assert "Hard-delete requires developer mode" in out
 
 
-def test_filter_no_action(capsys):
+def test_filter_no_action(cli_init_patch, capsys):
     """Test filter without action."""
     from src.cli.commands.filter import run
 
-    async def fake_init_db(_config_path: str):
-        config = AppConfig()
-        db = MagicMock()
-        db.close = AsyncMock()
-        return config, db
-
-    with patch("src.cli.commands.filter.runtime.init_db", side_effect=fake_init_db):
+    db = MagicMock()
+    db.close = AsyncMock()
+    with cli_init_patch(db, _FILTER_INIT_DB_TARGET):
         run(_ns(filter_action=None))
 
     out = capsys.readouterr().out

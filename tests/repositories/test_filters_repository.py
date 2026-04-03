@@ -25,14 +25,6 @@ _INSERT_STATS_NULL = (
     "INSERT INTO channel_stats (channel_id, subscriber_count, collected_at)"
     " VALUES (?, NULL, datetime('now'))"
 )
-
-
-@pytest.fixture
-async def repo(db):
-    """Create repository instance."""
-    return FilterRepository(db.db)
-
-
 @pytest.fixture
 async def channels_repo(db):
     """Create channels repository instance."""

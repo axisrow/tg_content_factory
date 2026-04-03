@@ -32,23 +32,12 @@ def _chan(channel_id, title, username="", ch_type="channel", deactivate=False):
 
 
 @pytest.fixture
-def cli_env(cli_db):
-    config = AppConfig()
-
-    async def fake_init_db(config_path: str):
-        cmd_db = Database(cli_db._db_path)
-        await cmd_db.initialize()
-        return config, cmd_db
-
-    with (
-        patch(
-            "src.cli.commands.channel.runtime.init_db",
-            side_effect=fake_init_db,
-        ),
-        patch(
-            "src.cli.commands.test.runtime.init_db",
-            side_effect=fake_init_db,
-        ),
+def cli_env(cli_db, cli_init_patch):
+    with cli_init_patch(
+        cli_db,
+        "src.cli.commands.channel.runtime.init_db",
+        "src.cli.commands.test.runtime.init_db",
+        config=AppConfig(),
     ):
         yield cli_db
 

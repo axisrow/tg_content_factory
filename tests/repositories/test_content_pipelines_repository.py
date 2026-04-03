@@ -4,15 +4,6 @@ import pytest
 
 from src.database.repositories.content_pipelines import ContentPipelinesRepository
 from src.models import Channel, ContentPipeline, PipelineTarget
-
-
-@pytest.fixture
-async def repo(db):
-    await db.add_channel(Channel(channel_id=1001, title="Source A"))
-    await db.add_channel(Channel(channel_id=1002, title="Source B"))
-    return ContentPipelinesRepository(db.db)
-
-
 def make_pipeline(**kwargs) -> ContentPipeline:
     defaults = {
         "name": "Digest",

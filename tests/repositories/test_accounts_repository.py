@@ -9,14 +9,6 @@ import pytest
 from src.database.repositories.accounts import AccountsRepository
 from src.models import Account
 from src.security.session_cipher import SessionCipher
-
-
-@pytest.fixture
-async def repo(db):
-    """Create repository instance without cipher."""
-    return AccountsRepository(db.db)
-
-
 @pytest.fixture
 def cipher():
     """Create a SessionCipher for encryption tests."""

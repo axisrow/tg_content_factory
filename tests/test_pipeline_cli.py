@@ -17,6 +17,11 @@ from src.models import (
 )
 from src.services.publish_service import PublishResult
 
+_PIPELINE_INIT_DB_TARGETS = (
+    "src.cli.runtime.init_db",
+    "src.cli.commands.pipeline.runtime.init_db",
+)
+
 
 def _ns(**kwargs) -> argparse.Namespace:
     defaults = {"config": "config.yaml"}
@@ -42,20 +47,14 @@ def _add_pipeline_prereqs(db: Database) -> None:
     )
 
 
-def test_pipeline_add_and_list(tmp_path, capsys):
+def test_pipeline_add_and_list(tmp_path, cli_init_patch, capsys):
     db_path = str(tmp_path / "cli_pipeline.db")
     db = Database(db_path)
     asyncio.run(db.initialize())
     _add_pipeline_prereqs(db)
     asyncio.run(db.close())
 
-    async def fake_init_db(_config_path: str):
-        config = AppConfig()
-        database = Database(db_path)
-        await database.initialize()
-        return config, database
-
-    with patch("src.cli.runtime.init_db", side_effect=fake_init_db):
+    with cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS):
         from src.cli.commands.pipeline import run
 
         run(
@@ -80,19 +79,13 @@ def test_pipeline_add_and_list(tmp_path, capsys):
     assert "Digest" in out
 
 
-def test_pipeline_show_not_found(tmp_path, capsys):
+def test_pipeline_show_not_found(tmp_path, cli_init_patch, capsys):
     db_path = str(tmp_path / "cli_pipeline_not_found.db")
     db = Database(db_path)
     asyncio.run(db.initialize())
     asyncio.run(db.close())
 
-    async def fake_init_db(_config_path: str):
-        config = AppConfig()
-        database = Database(db_path)
-        await database.initialize()
-        return config, database
-
-    with patch("src.cli.runtime.init_db", side_effect=fake_init_db):
+    with cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS):
         from src.cli.commands.pipeline import run
 
         run(_ns(pipeline_action="show", id=999))
@@ -101,7 +94,7 @@ def test_pipeline_show_not_found(tmp_path, capsys):
     assert "not found" in out
 
 
-def test_pipeline_queue_approve_reject_and_publish(tmp_path, capsys):
+def test_pipeline_queue_approve_reject_and_publish(tmp_path, cli_init_patch, capsys):
     db_path = str(tmp_path / "cli_pipeline_actions.db")
     db = Database(db_path)
     asyncio.run(db.initialize())
@@ -129,12 +122,6 @@ def test_pipeline_queue_approve_reject_and_publish(tmp_path, capsys):
     asyncio.run(db.repos.generation_runs.save_result(run_id, "Generated draft for CLI"))
     asyncio.run(db.close())
 
-    async def fake_init_db(_config_path: str):
-        config = AppConfig()
-        database = Database(db_path)
-        await database.initialize()
-        return config, database
-
     async def fake_init_pool(_config, _db):
         pool = MagicMock()
         pool.clients = {"+100": object()}
@@ -150,7 +137,7 @@ def test_pipeline_queue_approve_reject_and_publish(tmp_path, capsys):
             return [PublishResult(success=True, message_id=123)]
 
     with (
-        patch("src.cli.commands.pipeline.runtime.init_db", side_effect=fake_init_db),
+        cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS),
         patch("src.cli.commands.pipeline.runtime.init_pool", side_effect=fake_init_pool),
         patch("src.cli.commands.pipeline.PublishService", FakePublishService),
     ):
@@ -175,19 +162,13 @@ def test_pipeline_queue_approve_reject_and_publish(tmp_path, capsys):
     assert run_after.moderation_status == "rejected"
 
 
-def test_pipeline_publish_not_found(tmp_path, capsys):
+def test_pipeline_publish_not_found(tmp_path, cli_init_patch, capsys):
     db_path = str(tmp_path / "cli_pipeline_publish_not_found.db")
     db = Database(db_path)
     asyncio.run(db.initialize())
     asyncio.run(db.close())
 
-    async def fake_init_db(_config_path: str):
-        config = AppConfig()
-        database = Database(db_path)
-        await database.initialize()
-        return config, database
-
-    with patch("src.cli.commands.pipeline.runtime.init_db", side_effect=fake_init_db):
+    with cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS):
         from src.cli.commands.pipeline import run
 
         run(_ns(pipeline_action="publish", run_id=999))
@@ -196,7 +177,7 @@ def test_pipeline_publish_not_found(tmp_path, capsys):
     assert "Run id=999 not found" in out
 
 
-def test_pipeline_generate_prints_draft_preview(tmp_path, capsys):
+def test_pipeline_generate_prints_draft_preview(tmp_path, cli_init_patch, capsys):
     db_path = str(tmp_path / "cli_pipeline_generate.db")
     db = Database(db_path)
     asyncio.run(db.initialize())
@@ -223,12 +204,6 @@ def test_pipeline_generate_prints_draft_preview(tmp_path, capsys):
     )
     asyncio.run(db.close())
 
-    async def fake_init_db(_config_path: str):
-        config = AppConfig()
-        database = Database(db_path)
-        await database.initialize()
-        return config, database
-
     class FakeContentGenerationService:
         def __init__(self, db, engine, agent_manager=None, **kwargs):
             self.db = db
@@ -246,7 +221,7 @@ def test_pipeline_generate_prints_draft_preview(tmp_path, capsys):
             )
 
     with (
-        patch("src.cli.commands.pipeline.runtime.init_db", side_effect=fake_init_db),
+        cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS),
         patch("src.cli.commands.pipeline.ContentGenerationService", FakeContentGenerationService),
     ):
         from src.cli.commands.pipeline import run
@@ -268,7 +243,7 @@ def test_pipeline_generate_prints_draft_preview(tmp_path, capsys):
     assert "Generated draft for CLI" in out
 
 
-def test_pipeline_generate_wires_agent_manager_for_deep_agents(tmp_path, capsys):
+def test_pipeline_generate_wires_agent_manager_for_deep_agents(tmp_path, cli_init_patch, capsys):
     db_path = str(tmp_path / "cli_pipeline_generate_deep_agents.db")
     db = Database(db_path)
     asyncio.run(db.initialize())
@@ -295,12 +270,6 @@ def test_pipeline_generate_wires_agent_manager_for_deep_agents(tmp_path, capsys)
     )
     asyncio.run(db.close())
 
-    async def fake_init_db(_config_path: str):
-        config = AppConfig()
-        database = Database(db_path)
-        await database.initialize()
-        return config, database
-
     captured = {}
 
     class FakeAgentManager:
@@ -323,7 +292,7 @@ def test_pipeline_generate_wires_agent_manager_for_deep_agents(tmp_path, capsys)
             )
 
     with (
-        patch("src.cli.commands.pipeline.runtime.init_db", side_effect=fake_init_db),
+        cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS),
         patch("src.agent.manager.AgentManager", FakeAgentManager),
         patch("src.cli.commands.pipeline.ContentGenerationService", FakeContentGenerationService),
     ):
@@ -346,7 +315,7 @@ def test_pipeline_generate_wires_agent_manager_for_deep_agents(tmp_path, capsys)
     assert "Created generation run id=124" in out
 
 
-def test_pipeline_runs_and_run_show(tmp_path, capsys):
+def test_pipeline_runs_and_run_show(tmp_path, cli_init_patch, capsys):
     db_path = str(tmp_path / "cli_pipeline_runs.db")
     db = Database(db_path)
     asyncio.run(db.initialize())
@@ -374,13 +343,7 @@ def test_pipeline_runs_and_run_show(tmp_path, capsys):
     asyncio.run(db.repos.generation_runs.save_result(run_id, "Generated draft for CLI"))
     asyncio.run(db.close())
 
-    async def fake_init_db(_config_path: str):
-        config = AppConfig()
-        database = Database(db_path)
-        await database.initialize()
-        return config, database
-
-    with patch("src.cli.commands.pipeline.runtime.init_db", side_effect=fake_init_db):
+    with cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS):
         from src.cli.commands.pipeline import run
 
         run(_ns(pipeline_action="runs", id=pipeline_id, limit=20, status=None))
@@ -393,7 +356,7 @@ def test_pipeline_runs_and_run_show(tmp_path, capsys):
     assert "Generated draft for CLI" in out
 
 
-def test_pipeline_show_found(tmp_path, capsys):
+def test_pipeline_show_found(tmp_path, cli_init_patch, capsys):
     """Test show action with existing pipeline."""
     db_path = str(tmp_path / "cli_pipeline_show.db")
     db = Database(db_path)
@@ -424,13 +387,7 @@ def test_pipeline_show_found(tmp_path, capsys):
     )
     asyncio.run(db.close())
 
-    async def fake_init_db(_config_path: str):
-        config = AppConfig()
-        database = Database(db_path)
-        await database.initialize()
-        return config, database
-
-    with patch("src.cli.commands.pipeline.runtime.init_db", side_effect=fake_init_db):
+    with cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS):
         from src.cli.commands.pipeline import run
 
         run(_ns(pipeline_action="show", id=pipeline_id))
@@ -442,7 +399,7 @@ def test_pipeline_show_found(tmp_path, capsys):
     assert "publish_mode=moderated" in out
 
 
-def test_pipeline_edit_found(tmp_path, capsys):
+def test_pipeline_edit_found(tmp_path, cli_init_patch, capsys):
     """Test edit action with existing pipeline."""
     db_path = str(tmp_path / "cli_pipeline_edit.db")
     db = Database(db_path)
@@ -469,13 +426,7 @@ def test_pipeline_edit_found(tmp_path, capsys):
     )
     asyncio.run(db.close())
 
-    async def fake_init_db(_config_path: str):
-        config = AppConfig()
-        database = Database(db_path)
-        await database.initialize()
-        return config, database
-
-    with patch("src.cli.commands.pipeline.runtime.init_db", side_effect=fake_init_db):
+    with cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS):
         from src.cli.commands.pipeline import run
 
         run(
@@ -499,20 +450,14 @@ def test_pipeline_edit_found(tmp_path, capsys):
     assert f"Updated pipeline id={pipeline_id}" in out
 
 
-def test_pipeline_edit_not_found(tmp_path, capsys):
+def test_pipeline_edit_not_found(tmp_path, cli_init_patch, capsys):
     """Test edit action with non-existent pipeline."""
     db_path = str(tmp_path / "cli_pipeline_edit_nf.db")
     db = Database(db_path)
     asyncio.run(db.initialize())
     asyncio.run(db.close())
 
-    async def fake_init_db(_config_path: str):
-        config = AppConfig()
-        database = Database(db_path)
-        await database.initialize()
-        return config, database
-
-    with patch("src.cli.commands.pipeline.runtime.init_db", side_effect=fake_init_db):
+    with cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS):
         from src.cli.commands.pipeline import run
 
         run(
@@ -536,7 +481,7 @@ def test_pipeline_edit_not_found(tmp_path, capsys):
     assert "not found" in out
 
 
-def test_pipeline_toggle_found(tmp_path, capsys):
+def test_pipeline_toggle_found(tmp_path, cli_init_patch, capsys):
     """Test toggle action with existing pipeline."""
     db_path = str(tmp_path / "cli_pipeline_toggle.db")
     db = Database(db_path)
@@ -564,13 +509,7 @@ def test_pipeline_toggle_found(tmp_path, capsys):
     )
     asyncio.run(db.close())
 
-    async def fake_init_db(_config_path: str):
-        config = AppConfig()
-        database = Database(db_path)
-        await database.initialize()
-        return config, database
-
-    with patch("src.cli.commands.pipeline.runtime.init_db", side_effect=fake_init_db):
+    with cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS):
         from src.cli.commands.pipeline import run
 
         run(_ns(pipeline_action="toggle", id=pipeline_id))
@@ -579,20 +518,14 @@ def test_pipeline_toggle_found(tmp_path, capsys):
     assert f"Toggled pipeline id={pipeline_id}" in out
 
 
-def test_pipeline_toggle_not_found(tmp_path, capsys):
+def test_pipeline_toggle_not_found(tmp_path, cli_init_patch, capsys):
     """Test toggle action with non-existent pipeline."""
     db_path = str(tmp_path / "cli_pipeline_toggle_nf.db")
     db = Database(db_path)
     asyncio.run(db.initialize())
     asyncio.run(db.close())
 
-    async def fake_init_db(_config_path: str):
-        config = AppConfig()
-        database = Database(db_path)
-        await database.initialize()
-        return config, database
-
-    with patch("src.cli.commands.pipeline.runtime.init_db", side_effect=fake_init_db):
+    with cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS):
         from src.cli.commands.pipeline import run
 
         run(_ns(pipeline_action="toggle", id=999))
@@ -601,7 +534,7 @@ def test_pipeline_toggle_not_found(tmp_path, capsys):
     assert "not found" in out
 
 
-def test_pipeline_delete(tmp_path, capsys):
+def test_pipeline_delete(tmp_path, cli_init_patch, capsys):
     """Test delete action."""
     db_path = str(tmp_path / "cli_pipeline_delete.db")
     db = Database(db_path)
@@ -628,13 +561,7 @@ def test_pipeline_delete(tmp_path, capsys):
     )
     asyncio.run(db.close())
 
-    async def fake_init_db(_config_path: str):
-        config = AppConfig()
-        database = Database(db_path)
-        await database.initialize()
-        return config, database
-
-    with patch("src.cli.commands.pipeline.runtime.init_db", side_effect=fake_init_db):
+    with cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS):
         from src.cli.commands.pipeline import run
 
         run(_ns(pipeline_action="delete", id=pipeline_id))
@@ -643,7 +570,7 @@ def test_pipeline_delete(tmp_path, capsys):
     assert f"Deleted pipeline id={pipeline_id}" in out
 
 
-def test_pipeline_run_with_preview(tmp_path, capsys):
+def test_pipeline_run_with_preview(tmp_path, cli_init_patch, capsys):
     """Test run action with preview flag."""
     db_path = str(tmp_path / "cli_pipeline_run_preview.db")
     db = Database(db_path)
@@ -671,12 +598,6 @@ def test_pipeline_run_with_preview(tmp_path, capsys):
     )
     asyncio.run(db.close())
 
-    async def fake_init_db(_config_path: str):
-        config = AppConfig()
-        database = Database(db_path)
-        await database.initialize()
-        return config, database
-
     class FakeGenerationService:
         def __init__(self, engine, provider_callable=None):
             pass
@@ -685,7 +606,7 @@ def test_pipeline_run_with_preview(tmp_path, capsys):
             return {"generated_text": "Preview content here", "citations": []}
 
     with (
-        patch("src.cli.commands.pipeline.runtime.init_db", side_effect=fake_init_db),
+        cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS),
         patch("src.cli.commands.pipeline.GenerationService", FakeGenerationService),
     ):
         from src.cli.commands.pipeline import run
@@ -708,20 +629,14 @@ def test_pipeline_run_with_preview(tmp_path, capsys):
     assert "Preview content here" in out
 
 
-def test_pipeline_run_not_found(tmp_path, capsys):
+def test_pipeline_run_not_found(tmp_path, cli_init_patch, capsys):
     """Test run action with non-existent pipeline."""
     db_path = str(tmp_path / "cli_pipeline_run_nf.db")
     db = Database(db_path)
     asyncio.run(db.initialize())
     asyncio.run(db.close())
 
-    async def fake_init_db(_config_path: str):
-        config = AppConfig()
-        database = Database(db_path)
-        await database.initialize()
-        return config, database
-
-    with patch("src.cli.commands.pipeline.runtime.init_db", side_effect=fake_init_db):
+    with cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS):
         from src.cli.commands.pipeline import run
 
         run(_ns(pipeline_action="run", id=999, limit=10, max_tokens=256, temperature=0.7, preview=False, publish=False))
@@ -730,7 +645,7 @@ def test_pipeline_run_not_found(tmp_path, capsys):
     assert "not found" in out
 
 
-def test_pipeline_runs_with_status_filter(tmp_path, capsys):
+def test_pipeline_runs_with_status_filter(tmp_path, cli_init_patch, capsys):
     """Test runs action with status filter."""
     db_path = str(tmp_path / "cli_pipeline_runs_filter.db")
     db = Database(db_path)
@@ -759,13 +674,7 @@ def test_pipeline_runs_with_status_filter(tmp_path, capsys):
     asyncio.run(db.repos.generation_runs.save_result(run_id, "Test output"))
     asyncio.run(db.close())
 
-    async def fake_init_db(_config_path: str):
-        config = AppConfig()
-        database = Database(db_path)
-        await database.initialize()
-        return config, database
-
-    with patch("src.cli.commands.pipeline.runtime.init_db", side_effect=fake_init_db):
+    with cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS):
         from src.cli.commands.pipeline import run
 
         run(_ns(pipeline_action="runs", id=pipeline_id, limit=20, status="completed"))
@@ -775,20 +684,14 @@ def test_pipeline_runs_with_status_filter(tmp_path, capsys):
     assert "completed" in out
 
 
-def test_pipeline_runs_not_found(tmp_path, capsys):
+def test_pipeline_runs_not_found(tmp_path, cli_init_patch, capsys):
     """Test runs action with non-existent pipeline."""
     db_path = str(tmp_path / "cli_pipeline_runs_nf.db")
     db = Database(db_path)
     asyncio.run(db.initialize())
     asyncio.run(db.close())
 
-    async def fake_init_db(_config_path: str):
-        config = AppConfig()
-        database = Database(db_path)
-        await database.initialize()
-        return config, database
-
-    with patch("src.cli.commands.pipeline.runtime.init_db", side_effect=fake_init_db):
+    with cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS):
         from src.cli.commands.pipeline import run
 
         run(_ns(pipeline_action="runs", id=999, limit=20, status=None))
@@ -797,7 +700,7 @@ def test_pipeline_runs_not_found(tmp_path, capsys):
     assert "not found" in out
 
 
-def test_pipeline_queue_empty(tmp_path, capsys):
+def test_pipeline_queue_empty(tmp_path, cli_init_patch, capsys):
     """Test queue action when no pending runs."""
     db_path = str(tmp_path / "cli_pipeline_queue_empty.db")
     db = Database(db_path)
@@ -824,13 +727,7 @@ def test_pipeline_queue_empty(tmp_path, capsys):
     )
     asyncio.run(db.close())
 
-    async def fake_init_db(_config_path: str):
-        config = AppConfig()
-        database = Database(db_path)
-        await database.initialize()
-        return config, database
-
-    with patch("src.cli.commands.pipeline.runtime.init_db", side_effect=fake_init_db):
+    with cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS):
         from src.cli.commands.pipeline import run
 
         run(_ns(pipeline_action="queue", id=pipeline_id, limit=20))
@@ -839,20 +736,14 @@ def test_pipeline_queue_empty(tmp_path, capsys):
     assert "No pending moderation runs" in out
 
 
-def test_pipeline_queue_not_found(tmp_path, capsys):
+def test_pipeline_queue_not_found(tmp_path, cli_init_patch, capsys):
     """Test queue action with non-existent pipeline."""
     db_path = str(tmp_path / "cli_pipeline_queue_nf.db")
     db = Database(db_path)
     asyncio.run(db.initialize())
     asyncio.run(db.close())
 
-    async def fake_init_db(_config_path: str):
-        config = AppConfig()
-        database = Database(db_path)
-        await database.initialize()
-        return config, database
-
-    with patch("src.cli.commands.pipeline.runtime.init_db", side_effect=fake_init_db):
+    with cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS):
         from src.cli.commands.pipeline import run
 
         run(_ns(pipeline_action="queue", id=999, limit=20))
@@ -861,7 +752,7 @@ def test_pipeline_queue_not_found(tmp_path, capsys):
     assert "not found" in out
 
 
-def test_pipeline_publish_no_clients(tmp_path, capsys):
+def test_pipeline_publish_no_clients(tmp_path, cli_init_patch, capsys):
     """Test publish action when no Telegram clients available."""
     db_path = str(tmp_path / "cli_pipeline_publish_no_clients.db")
     db = Database(db_path)
@@ -890,12 +781,6 @@ def test_pipeline_publish_no_clients(tmp_path, capsys):
     asyncio.run(db.repos.generation_runs.save_result(run_id, "Generated text"))
     asyncio.run(db.close())
 
-    async def fake_init_db(_config_path: str):
-        config = AppConfig()
-        database = Database(db_path)
-        await database.initialize()
-        return config, database
-
     async def fake_init_pool(_config, _db):
         pool = MagicMock()
         pool.clients = {}  # No clients available
@@ -903,7 +788,7 @@ def test_pipeline_publish_no_clients(tmp_path, capsys):
         return MagicMock(), pool
 
     with (
-        patch("src.cli.commands.pipeline.runtime.init_db", side_effect=fake_init_db),
+        cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS),
         patch("src.cli.commands.pipeline.runtime.init_pool", side_effect=fake_init_pool),
     ):
         from src.cli.commands.pipeline import run
@@ -914,20 +799,14 @@ def test_pipeline_publish_no_clients(tmp_path, capsys):
     assert "Нет доступных аккаунтов" in out
 
 
-def test_pipeline_run_show_not_found(tmp_path, capsys):
+def test_pipeline_run_show_not_found(tmp_path, cli_init_patch, capsys):
     """Test run-show action with non-existent run."""
     db_path = str(tmp_path / "cli_pipeline_runshow_nf.db")
     db = Database(db_path)
     asyncio.run(db.initialize())
     asyncio.run(db.close())
 
-    async def fake_init_db(_config_path: str):
-        config = AppConfig()
-        database = Database(db_path)
-        await database.initialize()
-        return config, database
-
-    with patch("src.cli.commands.pipeline.runtime.init_db", side_effect=fake_init_db):
+    with cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS):
         from src.cli.commands.pipeline import run
 
         run(_ns(pipeline_action="run-show", run_id=999))
@@ -936,20 +815,14 @@ def test_pipeline_run_show_not_found(tmp_path, capsys):
     assert "not found" in out
 
 
-def test_pipeline_approve_not_found(tmp_path, capsys):
+def test_pipeline_approve_not_found(tmp_path, cli_init_patch, capsys):
     """Test approve action with non-existent run."""
     db_path = str(tmp_path / "cli_pipeline_approve_nf.db")
     db = Database(db_path)
     asyncio.run(db.initialize())
     asyncio.run(db.close())
 
-    async def fake_init_db(_config_path: str):
-        config = AppConfig()
-        database = Database(db_path)
-        await database.initialize()
-        return config, database
-
-    with patch("src.cli.commands.pipeline.runtime.init_db", side_effect=fake_init_db):
+    with cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS):
         from src.cli.commands.pipeline import run
 
         run(_ns(pipeline_action="approve", run_id=999))
@@ -958,20 +831,14 @@ def test_pipeline_approve_not_found(tmp_path, capsys):
     assert "not found" in out
 
 
-def test_pipeline_reject_not_found(tmp_path, capsys):
+def test_pipeline_reject_not_found(tmp_path, cli_init_patch, capsys):
     """Test reject action with non-existent run."""
     db_path = str(tmp_path / "cli_pipeline_reject_nf.db")
     db = Database(db_path)
     asyncio.run(db.initialize())
     asyncio.run(db.close())
 
-    async def fake_init_db(_config_path: str):
-        config = AppConfig()
-        database = Database(db_path)
-        await database.initialize()
-        return config, database
-
-    with patch("src.cli.commands.pipeline.runtime.init_db", side_effect=fake_init_db):
+    with cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS):
         from src.cli.commands.pipeline import run
 
         run(_ns(pipeline_action="reject", run_id=999))
@@ -980,20 +847,14 @@ def test_pipeline_reject_not_found(tmp_path, capsys):
     assert "not found" in out
 
 
-def test_pipeline_generate_not_found(tmp_path, capsys):
+def test_pipeline_generate_not_found(tmp_path, cli_init_patch, capsys):
     """Test generate action with non-existent pipeline."""
     db_path = str(tmp_path / "cli_pipeline_generate_nf.db")
     db = Database(db_path)
     asyncio.run(db.initialize())
     asyncio.run(db.close())
 
-    async def fake_init_db(_config_path: str):
-        config = AppConfig()
-        database = Database(db_path)
-        await database.initialize()
-        return config, database
-
-    with patch("src.cli.commands.pipeline.runtime.init_db", side_effect=fake_init_db):
+    with cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS):
         from src.cli.commands.pipeline import run
 
         run(_ns(pipeline_action="generate", id=999, model=None, max_tokens=256, temperature=0.7))
@@ -1002,7 +863,7 @@ def test_pipeline_generate_not_found(tmp_path, capsys):
     assert "not found" in out
 
 
-def test_pipeline_generate_exception(tmp_path, capsys):
+def test_pipeline_generate_exception(tmp_path, cli_init_patch, capsys):
     """Test generate action handles exception."""
     db_path = str(tmp_path / "cli_pipeline_generate_exc.db")
     db = Database(db_path)
@@ -1029,12 +890,6 @@ def test_pipeline_generate_exception(tmp_path, capsys):
     )
     asyncio.run(db.close())
 
-    async def fake_init_db(_config_path: str):
-        config = AppConfig()
-        database = Database(db_path)
-        await database.initialize()
-        return config, database
-
     class FakeContentGenerationService:
         def __init__(self, *args, **kwargs):
             pass
@@ -1043,7 +898,7 @@ def test_pipeline_generate_exception(tmp_path, capsys):
             raise RuntimeError("Generation failed")
 
     with (
-        patch("src.cli.commands.pipeline.runtime.init_db", side_effect=fake_init_db),
+        cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS),
         patch("src.cli.commands.pipeline.ContentGenerationService", FakeContentGenerationService),
     ):
         from src.cli.commands.pipeline import run
@@ -1054,20 +909,14 @@ def test_pipeline_generate_exception(tmp_path, capsys):
     assert "Generation failed" in out
 
 
-def test_pipeline_list_empty(tmp_path, capsys):
+def test_pipeline_list_empty(tmp_path, cli_init_patch, capsys):
     """Test list action when no pipelines exist."""
     db_path = str(tmp_path / "cli_pipeline_list_empty.db")
     db = Database(db_path)
     asyncio.run(db.initialize())
     asyncio.run(db.close())
 
-    async def fake_init_db(_config_path: str):
-        config = AppConfig()
-        database = Database(db_path)
-        await database.initialize()
-        return config, database
-
-    with patch("src.cli.commands.pipeline.runtime.init_db", side_effect=fake_init_db):
+    with cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS):
         from src.cli.commands.pipeline import run
 
         run(_ns(pipeline_action="list"))
