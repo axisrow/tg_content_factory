@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from src.models import ChannelStats
 from src.services.filter_deletion_service import PurgeResult
 from tests.routes.conftest import _add_channel, _add_filtered_channel, _enable_dev_mode
 
@@ -28,6 +29,9 @@ async def test_filter_manage_renders_empty(client):
     """Test filter manage page renders empty."""
     resp = await client.get("/channels/filter/manage")
     assert resp.status_code == 200
+    assert 'onclick="refreshFilters(this)"' in resp.text
+    assert "async function refreshFilters(button)" in resp.text
+    assert "Сейчас запустится только сбор статистики." in resp.text
 
 
 @pytest.mark.asyncio
@@ -160,6 +164,59 @@ async def test_analyze_redirects(client):
         resp = await client.post("/channels/filter/analyze", follow_redirects=False)
         assert resp.status_code == 303
         assert "/channels/filter/manage" in resp.headers["location"]
+
+
+@pytest.mark.asyncio
+async def test_analyze_ignores_with_stats_query(client):
+    """Test analyze route no longer runs stats collection inline."""
+    with patch("src.web.routes.filter.ChannelAnalyzer") as mock_analyzer:
+        from src.filters.models import FilterReport
+        mock_instance = mock_analyzer.return_value
+        mock_instance.analyze_all = AsyncMock(
+            return_value=FilterReport(results=[], total_channels=0, filtered_count=0)
+        )
+        mock_instance.apply_filters = AsyncMock(return_value=0)
+        with patch("src.web.routes.filter.deps.collection_service") as mock_collection:
+            resp = await client.post("/channels/filter/analyze?with_stats=1", follow_redirects=False)
+
+        assert resp.status_code == 303
+        mock_collection.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_has_stats_true_when_no_active_channels(client, db):
+    """Test has-stats returns true when there are no active channels to inspect."""
+    channel = await db.get_channel_by_channel_id(100)
+    assert channel is not None and channel.id is not None
+    await db.set_channel_active(channel.id, False)
+
+    resp = await client.get("/channels/filter/has-stats")
+
+    assert resp.status_code == 200
+    assert resp.json() == {"has_stats": True}
+
+
+@pytest.mark.asyncio
+async def test_has_stats_false_when_active_channel_lacks_stats(client):
+    """Test has-stats returns false when any active channel has no stats yet."""
+    resp = await client.get("/channels/filter/has-stats")
+
+    assert resp.status_code == 200
+    assert resp.json() == {"has_stats": False}
+
+
+@pytest.mark.asyncio
+async def test_has_stats_true_when_all_active_channels_have_stats(client, db):
+    """Test has-stats returns true when every active channel already has stats."""
+    await db.save_channel_stats(ChannelStats(channel_id=100, subscriber_count=1))
+    extra_channel_id = 101
+    await _add_channel(db, channel_id=extra_channel_id, title="Has Stats")
+    await db.save_channel_stats(ChannelStats(channel_id=extra_channel_id, subscriber_count=2))
+
+    resp = await client.get("/channels/filter/has-stats")
+
+    assert resp.status_code == 200
+    assert resp.json() == {"has_stats": True}
 
 
 @pytest.mark.asyncio

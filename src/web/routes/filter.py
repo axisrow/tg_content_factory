@@ -162,6 +162,21 @@ async def apply_filters(request: Request):
     return RedirectResponse(url=f"/channels?msg=filter_applied&count={count}", status_code=303)
 
 
+@router.get("/filter/has-stats")
+async def has_stats(request: Request):
+    db = deps.get_db(request)
+    channels = await db.get_channels(active_only=True, include_filtered=False)
+    if not channels:
+        return {"has_stats": True}
+
+    stats_map = await db.get_latest_stats_for_all()
+    for ch in channels:
+        if ch.channel_id not in stats_map:
+            return {"has_stats": False}
+
+    return {"has_stats": True}
+
+
 @router.post("/filter/precheck")
 async def precheck_subscriber_ratio(request: Request):
     db = deps.get_db(request)
