@@ -125,5 +125,6 @@ class PipelineExecutor:
             "image_url": context.get_global("image_url"),
             "citations": context.get_global("citations", []),
             "publish_mode": context.get_global("publish_mode", pipeline.publish_mode.value),
+            "publish_reply": context.get_global("publish_reply", False),
             "context": context,
         }

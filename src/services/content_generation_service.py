@@ -79,6 +79,8 @@ class ContentGenerationService:
             )
             generated_text = result.get("generated_text", "")
             metadata: dict[str, Any] = {"citations": result.get("citations", [])}
+            if result.get("publish_reply"):
+                metadata["publish_reply"] = True
 
             if pipeline.refinement_steps and generated_text and pipeline.pipeline_json is None:
                 # Refinement steps are only applied for legacy pipelines (graph-based ones encode them as nodes)
@@ -191,6 +193,7 @@ class ContentGenerationService:
             "image_url": result.get("image_url"),
             "citations": result.get("citations", []),
             "publish_mode": result.get("publish_mode"),
+            "publish_reply": result.get("publish_reply", False),
         }
 
     async def _run_rag(
