@@ -121,10 +121,11 @@ class ContentGenerationService:
             if run is None:
                 raise RuntimeError(f"Generation run {run_id} not found after save")
 
+            effective_publish_mode = result.get("publish_mode") or pipeline.publish_mode.value
             if (
                 self._notification_service
                 and run.moderation_status == "pending"
-                and pipeline.publish_mode == PipelinePublishMode.MODERATED
+                and effective_publish_mode == PipelinePublishMode.MODERATED.value
             ):
                 try:
                     await self._notification_service.notify_new_draft(run, pipeline)
@@ -189,6 +190,7 @@ class ContentGenerationService:
             "generated_text": result.get("generated_text", ""),
             "image_url": result.get("image_url"),
             "citations": result.get("citations", []),
+            "publish_mode": result.get("publish_mode"),
         }
 
     async def _run_rag(
