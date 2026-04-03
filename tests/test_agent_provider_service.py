@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from src.agent.manager import AgentManager
-from src.agent.provider_registry import ZAI_DEFAULT_BASE_URL, ProviderRuntimeConfig, provider_spec
+from src.agent.provider_registry import ProviderRuntimeConfig, provider_spec
 from src.config import AppConfig
 from src.services.agent_provider_service import (
     MODEL_CACHE_SETTINGS_KEY,
@@ -1053,6 +1053,35 @@ def test_build_provider_views_includes_compatibility(db):
     assert views[0]["provider"] == "openai"
     assert views[0]["selected_compatibility"] is not None
     assert views[0]["selected_compatibility"]["status"] == "supported"
+
+
+def test_build_provider_views_keeps_empty_plain_field_value(db):
+    """build_provider_views keeps empty values separate from placeholders."""
+    config = AppConfig()
+    config.security.session_encryption_key = "provider-secret"
+    service = AgentProviderService(db, config)
+
+    cfg = ProviderRuntimeConfig(
+        provider="ollama",
+        enabled=True,
+        priority=0,
+        selected_model="llama3.1",
+        plain_fields={"base_url": ""},
+    )
+
+    cache = {
+        "ollama": ProviderModelCacheEntry(
+            provider="ollama",
+            models=["llama3.1"],
+            source="live",
+        )
+    }
+
+    views = service.build_provider_views([cfg], cache)
+    plain_fields = {field["name"]: field for field in views[0]["plain_fields"]}
+
+    assert plain_fields["base_url"]["value"] == ""
+    assert plain_fields["base_url"]["placeholder"]
 
 
 # === export_compatibility_catalog tests ===
