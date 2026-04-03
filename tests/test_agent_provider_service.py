@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from src.agent.manager import AgentManager
-from src.agent.provider_registry import ProviderRuntimeConfig
+from src.agent.provider_registry import ZAI_DEFAULT_BASE_URL, ProviderRuntimeConfig, provider_spec
 from src.config import AppConfig
 from src.services.agent_provider_service import (
     MODEL_CACHE_SETTINGS_KEY,
@@ -879,6 +879,42 @@ async def test_fetch_live_models_success_updates_cache(db, monkeypatch):
 
     assert "gpt-4.1" in models
     assert "gpt-4.1-mini" in models
+
+
+@pytest.mark.asyncio
+async def test_fetch_live_models_zai_uses_anthropic_headers(db, monkeypatch):
+    """Z.AI live model fetch uses Anthropic-compatible headers and endpoint."""
+    config = AppConfig()
+    config.security.session_encryption_key = "provider-secret"
+    service = AgentProviderService(db, config)
+
+    cfg = ProviderRuntimeConfig(
+        provider="zai",
+        enabled=True,
+        priority=0,
+        selected_model="glm-5",
+        secret_fields={"api_key": "zai-key"},
+    )
+
+    captured: dict[str, object] = {}
+
+    async def _fake_fetch_json(url, headers=None):
+        captured["url"] = url
+        captured["headers"] = headers
+        return {"data": [{"id": "glm-5"}]}
+
+    monkeypatch.setattr(service, "_fetch_json", _fake_fetch_json)
+
+    spec = provider_spec("zai")
+    assert spec is not None
+    models = await service._fetch_live_models(spec, cfg)
+
+    assert models == ["glm-5"]
+    assert captured["url"] == ZAI_DEFAULT_BASE_URL + "/models"
+    assert captured["headers"] == {
+        "x-api-key": "zai-key",
+        "anthropic-version": "2023-06-01",
+    }
 
 
 # === save_provider_configs encryption tests ===

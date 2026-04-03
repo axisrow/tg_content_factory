@@ -17,6 +17,7 @@ import aiohttp
 from src.agent.provider_registry import (
     PROVIDER_ORDER,
     PROVIDER_SPECS,
+    ZAI_DEFAULT_BASE_URL,
     ProviderRuntimeConfig,
     ProviderSpec,
     provider_spec,
@@ -46,7 +47,6 @@ _OPENAI_STYLE_DEFAULT_BASE_URLS = {
     "together": "https://api.together.xyz/v1",
     "fireworks": "https://api.fireworks.ai/inference/v1",
     "mistralai": "https://api.mistral.ai/v1",
-    "zai": "https://api.z.ai/api/anthropic",
 }
 _NON_CANONICAL_EXPORT_PROVIDERS = {
     "azure_openai",
@@ -663,6 +663,12 @@ class AgentProviderService:
             if api_key and base_url == "https://ollama.com":
                 return "ollama://cloud"
             return None
+        if provider == "zai":
+            base_url = cfg.plain_fields.get("base_url", "").strip()
+            normalized = self._normalize_urlish(base_url or ZAI_DEFAULT_BASE_URL)
+            if normalized == ZAI_DEFAULT_BASE_URL:
+                return normalized
+            return None
         if provider in _OPENAI_STYLE_DEFAULT_BASE_URLS:
             base_url = cfg.plain_fields.get("base_url", "").strip()
             default_base_url = _OPENAI_STYLE_DEFAULT_BASE_URLS[provider]
@@ -692,6 +698,12 @@ class AgentProviderService:
         cfg: ProviderRuntimeConfig | None,
     ) -> list[str]:
         provider = spec.name
+        if provider == "zai":
+            assert cfg is not None
+            return await self._fetch_zai_models(
+                cfg.plain_fields.get("base_url", ""),
+                cfg.secret_fields.get("api_key", ""),
+            )
         if provider in _OPENAI_STYLE_DEFAULT_BASE_URLS:
             assert cfg is not None
             base_url = (
@@ -717,12 +729,6 @@ class AgentProviderService:
         if provider == "huggingface":
             api_key = cfg.secret_fields.get("api_key", "") if cfg else ""
             return await self._fetch_huggingface_models(api_key)
-        if provider == "zai":
-            assert cfg is not None
-            return await self._fetch_zai_models(
-                cfg.plain_fields.get("base_url", ""),
-                cfg.secret_fields.get("api_key", ""),
-            )
         raise RuntimeError("live model fetch adapter is not available for this provider yet")
 
     async def _fetch_json(self, url: str, headers: dict[str, str] | None = None) -> Any:
@@ -796,7 +802,7 @@ class AgentProviderService:
     async def _fetch_zai_models(
         self, base_url: str, api_key: str
     ) -> list[str]:
-        base_url = base_url.strip() or _OPENAI_STYLE_DEFAULT_BASE_URLS["zai"]
+        base_url = base_url.strip() or ZAI_DEFAULT_BASE_URL
         headers = {
             "x-api-key": api_key,
             "anthropic-version": "2023-06-01",
@@ -888,6 +894,9 @@ class AgentProviderService:
                     value,
                     secret_fields.get("api_key", ""),
                 )
+                continue
+            if key == "base_url" and provider_name == "zai":
+                normalized[key] = self._normalize_urlish(value or ZAI_DEFAULT_BASE_URL)
                 continue
             if key == "base_url" and provider_name in _OPENAI_STYLE_DEFAULT_BASE_URLS:
                 normalized[key] = self._normalize_urlish(

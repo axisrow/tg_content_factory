@@ -4,6 +4,8 @@ from dataclasses import dataclass, field
 
 from src.agent.models import CLAUDE_MODELS
 
+ZAI_DEFAULT_BASE_URL = "https://api.z.ai/api/anthropic"
+
 
 @dataclass(frozen=True, slots=True)
 class ProviderFieldSpec:
@@ -263,7 +265,7 @@ PROVIDER_SPECS: dict[str, ProviderSpec] = {
         package_name="langchain-anthropic",
         static_models=("glm-5", "glm-5-turbo", "glm-4.7"),
         secret_fields=(_field("api_key", "API key", required=True, secret=True),),
-        plain_fields=(_field("base_url", "Base URL", placeholder="https://api.z.ai/api/anthropic"),),
+        plain_fields=(_field("base_url", "Base URL", placeholder=ZAI_DEFAULT_BASE_URL),),
     ),
 }
 
