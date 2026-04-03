@@ -86,7 +86,7 @@ def get_builtin_templates() -> list[PipelineTemplate]:
                 nodes=[
                     _node(
                         "trigger_1", PipelineNodeType.SEARCH_QUERY_TRIGGER,
-                        "Триггер запроса", {"query": "", "min_score": 0.5}, 0, 0,
+                        "Триггер запроса", {"query": ""}, 0, 0,
                     ),
                     _node(
                         "notify_1", PipelineNodeType.NOTIFY, "Уведомление",
@@ -113,7 +113,7 @@ def get_builtin_templates() -> list[PipelineTemplate]:
                     ),
                     _node(
                         "react_1", PipelineNodeType.REACT, "Реакция",
-                        {"emoji": "👍", "random_emoji": False}, 440, 0,
+                        {"emoji": "👍", "random_emojis": []}, 440, 0,
                     ),
                 ],
                 edges=[

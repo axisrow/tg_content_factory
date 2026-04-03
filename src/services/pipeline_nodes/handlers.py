@@ -89,9 +89,14 @@ class LlmGenerateHandler(BaseNodeHandler):
             max_tokens=max_tokens,
             temperature=temperature,
         )
-        generated_text = result.get("text") or result.get("generated_text") or ""
+        if isinstance(result, str):
+            generated_text = result
+            citations: list = []
+        else:
+            generated_text = result.get("text") or result.get("generated_text") or ""
+            citations = result.get("citations", [])
         context.set_global("generated_text", generated_text)
-        context.set_global("citations", result.get("citations", []))
+        context.set_global("citations", citations)
 
 
 class LlmRefineHandler(BaseNodeHandler):
@@ -125,7 +130,7 @@ class LlmRefineHandler(BaseNodeHandler):
             max_tokens=max_tokens,
             temperature=temperature,
         )
-        refined = result.get("text") or result.get("generated_text") or ""
+        refined = result if isinstance(result, str) else (result.get("text") or result.get("generated_text") or "")
         if refined:
             context.set_global("generated_text", refined)
 

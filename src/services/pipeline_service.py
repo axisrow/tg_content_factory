@@ -375,8 +375,9 @@ class PipelineService:
         )
         pipeline = pipeline.model_copy(update={"pipeline_json": graph})
 
-        sources = await self._normalize_sources(source_ids)
-        targets = await self._normalize_targets(target_refs)
+        # Templates are created inactive; sources/targets are optional at creation time
+        sources = await self._normalize_sources(source_ids) if source_ids else []
+        targets = await self._normalize_targets(target_refs) if target_refs else []
         return await self._bundle.add(pipeline, sources, targets)
 
     async def edit_via_llm(self, pipeline_id: int, instruction: str, db: Database) -> dict:
@@ -413,7 +414,7 @@ class PipelineService:
             provider_service = AgentProviderService(db)
             provider_callable = provider_service.get_provider_callable(pipeline.llm_model)
             result = await provider_callable(prompt, model=pipeline.llm_model or "", max_tokens=4096, temperature=0.2)
-            raw = result.get("text") or result.get("generated_text") or ""
+            raw = result if isinstance(result, str) else (result.get("text") or result.get("generated_text") or "")
             # Strip markdown fences if present
             raw = raw.strip()
             if raw.startswith("```"):
