@@ -4,7 +4,7 @@
 <h1>Очистка каналов</h1>
 
 <div class="d-flex gap-2 flex-wrap mb-3">
-    <button type="button" class="btn btn-primary btn-sm" onclick="refreshFilters()">Обновить фильтры</button>
+    <button type="button" class="btn btn-primary btn-sm" onclick="refreshFilters(this)">Обновить фильтры</button>
     <form method="post" action="/channels/filter/precheck" class="d-inline" data-busy>
         <button type="submit" class="btn btn-outline-primary btn-sm">Предпроверка подписчиков</button>
     </form>
@@ -90,10 +90,15 @@
     </form>
     {% endif %}
 </div>
+{% else %}
+<p class="text-muted">Нет отфильтрованных каналов. Нажмите "Обновить фильтры" для анализа.</p>
+{% endif %}
 
 <script>
 (function() {
     var selectAll = document.getElementById('select-all');
+    if (!selectAll) return;
+
     var checkboxes = document.querySelectorAll('.ch-check');
     var countSpans = document.querySelectorAll('.selected-count');
     var actionBtns = document.querySelectorAll('.action-btn');
@@ -105,7 +110,6 @@
     }
 
     function syncHiddenInputs() {
-        // Copy checked PKs into each form as hidden inputs
         document.querySelectorAll('.synced-pk').forEach(function(el) { el.remove(); });
         var pks = getCheckedPks();
         document.querySelectorAll('#purge-form, #hard-delete-form').forEach(function(form) {
@@ -136,22 +140,29 @@
     });
 })();
 
-async function refreshFilters() {
+async function refreshFilters(button) {
+    setAsyncButtonBusy(button, true, 'Обновляю...');
     try {
         var resp = await fetch('/channels/filter/has-stats');
-        var data = await resp.json();
+        if (!resp.ok) throw new Error('stats probe failed');
 
+        var data = await resp.json();
+        var actionUrl = '/channels/filter/analyze';
         if (!data.has_stats) {
             if (!confirm('У некоторых каналов нет статистики. Сначала собрать статистику?')) {
+                setAsyncButtonBusy(button, false);
                 return;
             }
-            await fetch('/channels/filter/analyze?with_stats=1', {method: 'POST'});
-        } else {
-            await fetch('/channels/filter/analyze', {method: 'POST'});
+            actionUrl = '/channels/stats/all';
         }
-        window.location.reload();
+
+        var actionResp = await fetch(actionUrl, {method: 'POST'});
+        if (!actionResp.ok) throw new Error('refresh action failed');
+        window.location = actionResp.url || window.location.href;
     } catch (e) {
         console.error('Failed to refresh filters:', e);
+        setAsyncButtonBusy(button, false);
+        alert('Не удалось обновить фильтры. Попробуйте еще раз.');
     }
 }
 
@@ -165,8 +176,4 @@ function confirmHardDelete() {
     return confirm('ПОЛНОСТЬЮ удалить ' + count + ' канал(ов) из базы данных? Это действие необратимо.');
 }
 </script>
-
-{% else %}
-<p class="text-muted">Нет отфильтрованных каналов. Нажмите "Обновить фильтры" для анализа.</p>
-{% endif %}
 {% endblock %}
