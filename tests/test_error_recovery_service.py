@@ -277,9 +277,14 @@ async def test_execute_with_recovery_fatal_error_with_fallback():
 
 
 @pytest.mark.asyncio
-async def test_circuit_breaker_recovery_timeout_transition():
+async def test_circuit_breaker_recovery_timeout_transition(monkeypatch):
     """Circuit breaker transitions from open to half_open after recovery timeout."""
-    import asyncio
+    current_time = {"value": 100.0}
+
+    monkeypatch.setattr(
+        "src.services.error_recovery_service.time.time",
+        lambda: current_time["value"],
+    )
 
     breaker = CircuitBreaker(
         CircuitBreakerConfig(failure_threshold=1, recovery_timeout=0.1, half_open_max_calls=1)
@@ -287,8 +292,7 @@ async def test_circuit_breaker_recovery_timeout_transition():
 
     await breaker.record_failure()  # Opens circuit
 
-    # Wait for recovery timeout to pass
-    await asyncio.sleep(0.15)
+    current_time["value"] += 0.15
 
     allowed, state = await breaker.can_execute()
     assert allowed is True
@@ -296,16 +300,21 @@ async def test_circuit_breaker_recovery_timeout_transition():
 
 
 @pytest.mark.asyncio
-async def test_circuit_breaker_half_open_failure_reopens():
+async def test_circuit_breaker_half_open_failure_reopens(monkeypatch):
     """Failure in half_open state transitions back to open."""
-    import asyncio
+    current_time = {"value": 100.0}
+
+    monkeypatch.setattr(
+        "src.services.error_recovery_service.time.time",
+        lambda: current_time["value"],
+    )
 
     breaker = CircuitBreaker(
         CircuitBreakerConfig(failure_threshold=1, recovery_timeout=0.1, half_open_max_calls=1)
     )
 
     await breaker.record_failure()  # Opens circuit
-    await asyncio.sleep(0.15)
+    current_time["value"] += 0.15
     allowed, state = await breaker.can_execute()
     assert allowed is True
     assert state == "half_open"
@@ -316,4 +325,3 @@ async def test_circuit_breaker_half_open_failure_reopens():
     allowed, state = await breaker.can_execute()
     assert allowed is False
     assert state == "open"
-

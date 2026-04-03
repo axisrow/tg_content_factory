@@ -19,6 +19,7 @@ class FakeBundle:
         self._next_id = 1
         self._stats: dict[int, list[SearchQueryDailyStat]] = {}
         self._last_recorded: dict[int, str] = {}
+        self.record_stat_calls: list[tuple[int, int]] = []
 
     async def add(self, sq: SearchQuery) -> int:
         sq_id = self._next_id
@@ -48,7 +49,7 @@ class FakeBundle:
         self._queries.pop(sq_id, None)
 
     async def record_stat(self, sq_id: int, count: int) -> None:
-        pass
+        self.record_stat_calls.append((sq_id, count))
 
     async def get_fts_daily_stats_for_query(
         self, sq: SearchQuery, days: int = 30
@@ -239,6 +240,7 @@ async def test_run_once_fts_query_with_stats(service, bundle):
     result = await service.run_once(sq_id)
 
     assert result == 5
+    assert bundle.record_stat_calls == [(sq_id, 5)]
 
 
 # === _fill_missing_days static method tests ===

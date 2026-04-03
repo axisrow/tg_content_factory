@@ -300,7 +300,7 @@ class TestNormalizeIdentifier:
         assert kind == "username"
 
     def test_bare_username_short(self):
-        # Too short (3 chars) doesn't match bare username pattern (needs 5+ chars)
+        # Too short (3 chars) doesn't match bare username pattern (needs 4+ chars)
         value, kind = normalize_identifier("abc")
         assert kind == "unknown"
 

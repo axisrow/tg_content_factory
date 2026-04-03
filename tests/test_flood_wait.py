@@ -150,20 +150,21 @@ async def test_handle_flood_wait_without_pool():
 
 
 @pytest.mark.asyncio
-async def test_run_with_flood_wait_with_timeout():
-    """Timeout parameter is forwarded to wait_for."""
-    import asyncio
+async def test_run_with_flood_wait_with_timeout(monkeypatch):
+    """Timeout parameter is forwarded to asyncio.wait_for."""
+    captured: dict[str, float] = {}
 
-    err = FloodWaitError(request=None, capture=0)
-    err.seconds = 5
+    async def fake_wait_for(awaitable, timeout):
+        captured["timeout"] = timeout
+        return await awaitable
 
-    async def _raise_after_delay():
-        await asyncio.sleep(0.1)
-        raise err
+    monkeypatch.setattr("src.telegram.flood_wait.asyncio.wait_for", fake_wait_for)
 
-    with pytest.raises(HandledFloodWaitError):
-        await run_with_flood_wait(
-            _raise_after_delay(),
-            operation="test_op",
-            timeout=0.5,
-        )
+    result = await run_with_flood_wait(
+        AsyncMock(return_value="ok")(),
+        operation="test_op",
+        timeout=0.5,
+    )
+
+    assert result == "ok"
+    assert captured == {"timeout": 0.5}

@@ -45,12 +45,14 @@ class FakeGenerationRunsRepo:
 class FakeClientPool:
     def __init__(self, should_succeed=True):
         self._should_succeed = should_succeed
+        self._clients = {}
         self.released = []
 
     async def get_client_by_phone(self, phone):
         if not self._should_succeed:
             return None
-        return (FakeClient(), phone)
+        client = self._clients.setdefault(phone, FakeClient())
+        return (client, phone)
 
     async def release_client(self, phone):
         self.released.append(phone)
@@ -60,6 +62,10 @@ class FakeClientPool:
 
 
 class FakeClient:
+    def __init__(self):
+        self.sent_files = []
+        self.sent_messages = []
+
     @property
     def raw_client(self):
         return FakeRawClient()
@@ -71,9 +77,24 @@ class FakeClient:
         return peer
 
     async def send_file(self, entity, files, caption=None, schedule=None):
+        self.sent_files.append(
+            {
+                "entity": entity,
+                "files": files,
+                "caption": caption,
+                "schedule": schedule,
+            }
+        )
         return FakeMessage()
 
     async def send_message(self, entity, text, **kwargs):
+        self.sent_messages.append(
+            {
+                "entity": entity,
+                "text": text,
+                "kwargs": kwargs,
+            }
+        )
         return FakeMessage()
 
 
@@ -237,9 +258,18 @@ async def test_publish_service_with_image_url():
 
     assert len(results) == 1
     assert results[0].success is True
-    # Verify send_file was called with the image URL
-    client = await pool.get_client_by_phone("+1234567890")
-    assert client is not None
+    client_result = await pool.get_client_by_phone("+1234567890")
+    assert client_result is not None
+    client, _phone = client_result
+    assert client.sent_files == [
+        {
+            "entity": {"phone": "+1234567890", "dialog_id": -1001234567890, "dialog_type": None},
+            "files": run.image_url,
+            "caption": run.generated_text,
+            "schedule": None,
+        }
+    ]
+    assert client.sent_messages == []
 
 
 @pytest.mark.asyncio
