@@ -44,15 +44,18 @@ class PublishService:
             logger.warning("Run %s has no generated_text, skipping publish", run.id)
             return [PublishResult(success=False, error="No generated text")]
 
+        effective_mode = (
+            (run.metadata or {}).get("effective_publish_mode", pipeline.publish_mode.value)
+        )
         if (
-            pipeline.publish_mode == PipelinePublishMode.MODERATED
+            effective_mode == PipelinePublishMode.MODERATED.value
             and run.moderation_status not in {"approved", "published"}
         ):
             logger.warning(
                 "Run %s is not eligible for publish: moderation_status=%s publish_mode=%s",
                 run.id,
                 run.moderation_status,
-                pipeline.publish_mode.value,
+                effective_mode,
             )
             return [PublishResult(success=False, error="Run is not approved for publish")]
 
