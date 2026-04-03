@@ -882,8 +882,8 @@ async def test_fetch_live_models_success_updates_cache(db, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_fetch_live_models_zai_uses_anthropic_headers(db, monkeypatch):
-    """Z.AI live model fetch uses Anthropic-compatible headers and endpoint."""
+async def test_fetch_live_models_zai_uses_bearer_auth(db, monkeypatch):
+    """Z.AI live model fetch uses native API endpoint with Bearer auth."""
     config = AppConfig()
     config.security.session_encryption_key = "provider-secret"
     service = AgentProviderService(db, config)
@@ -910,11 +910,8 @@ async def test_fetch_live_models_zai_uses_anthropic_headers(db, monkeypatch):
     models = await service._fetch_live_models(spec, cfg)
 
     assert models == ["glm-5"]
-    assert captured["url"] == ZAI_DEFAULT_BASE_URL + "/models"
-    assert captured["headers"] == {
-        "x-api-key": "zai-key",
-        "anthropic-version": "2023-06-01",
-    }
+    assert captured["url"] == "https://api.z.ai/api/paas/v4/models"
+    assert captured["headers"] == {"Authorization": "Bearer zai-key"}
 
 
 # === save_provider_configs encryption tests ===
