@@ -1,6 +1,12 @@
 from __future__ import annotations
 
-from src.parsers import deduplicate_identifiers, extract_identifiers, parse_file, parse_identifiers
+from src.parsers import (
+    deduplicate_identifiers,
+    extract_identifiers,
+    normalize_identifier,
+    parse_file,
+    parse_identifiers,
+)
 
 
 class TestParseIdentifiers:
@@ -243,3 +249,77 @@ class TestDeduplicateIdentifiers:
         identifiers = ["@ch1", "@ch2", "@ch3"]
         result = deduplicate_identifiers(identifiers)
         assert result == identifiers
+
+
+class TestNormalizeIdentifier:
+    """Tests for normalize_identifier function."""
+
+    def test_at_username(self):
+        value, kind = normalize_identifier("@TestChannel")
+        assert value == "testchannel"
+        assert kind == "username"
+
+    def test_at_username_upper(self):
+        value, kind = normalize_identifier("@TESTCHANNEL")
+        assert value == "testchannel"
+        assert kind == "username"
+
+    def test_tme_link_https(self):
+        value, kind = normalize_identifier("https://t.me/channel1")
+        assert value == "channel1"
+        assert kind == "username"
+
+    def test_tme_link_bare(self):
+        value, kind = normalize_identifier("t.me/channel1")
+        assert value == "channel1"
+        assert kind == "username"
+
+    def test_tme_link_with_post(self):
+        value, kind = normalize_identifier("t.me/channel/123")
+        assert value == "channel"
+        assert kind == "username"
+
+    def test_tme_link_https_with_post(self):
+        value, kind = normalize_identifier("https://t.me/channel/456")
+        assert value == "channel"
+        assert kind == "username"
+
+    def test_numeric_id_negative(self):
+        value, kind = normalize_identifier("-1001234567890")
+        assert value == "-1001234567890"
+        assert kind == "numeric_id"
+
+    def test_numeric_id_positive(self):
+        value, kind = normalize_identifier("123456789")
+        assert value == "123456789"
+        assert kind == "numeric_id"
+
+    def test_bare_username(self):
+        value, kind = normalize_identifier("testchan")
+        assert value == "testchan"
+        assert kind == "username"
+
+    def test_bare_username_short(self):
+        # Too short (3 chars) doesn't match bare username pattern (needs 4+ chars)
+        value, kind = normalize_identifier("abc")
+        assert kind == "unknown"
+
+    def test_empty_string(self):
+        value, kind = normalize_identifier("")
+        assert value == ""
+        assert kind == "unknown"
+
+    def test_whitespace_only(self):
+        value, kind = normalize_identifier("   ")
+        assert value == ""
+        assert kind == "unknown"
+
+    def test_unknown_identifier(self):
+        value, kind = normalize_identifier("garbage!%^&*")
+        assert value == "garbage!%^&*"
+        assert kind == "unknown"
+
+    def test_strips_whitespace(self):
+        value, kind = normalize_identifier("  @TestChannel  ")
+        assert value == "testchannel"
+        assert kind == "username"
