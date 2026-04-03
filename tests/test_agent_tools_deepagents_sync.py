@@ -210,7 +210,7 @@ class TestDeepagentsSyncGetSchedulerStatus:
         mgr_mock.load_settings = AsyncMock(return_value=None)
         mgr_mock.is_running = True
         mgr_mock.interval_minutes = 15
-        with patch("src.scheduler.manager.SchedulerManager", return_value=mgr_mock):
+        with patch("src.scheduler.service.SchedulerManager", return_value=mgr_mock):
             tools = build_deepagents_tools(mock_db)
             tool_map = {t.__name__: t for t in tools}
             result = tool_map["get_scheduler_status"]()
@@ -219,7 +219,7 @@ class TestDeepagentsSyncGetSchedulerStatus:
     def test_error_returns_text(self, mock_db):
         from src.agent.tools.deepagents_sync import build_deepagents_tools
 
-        with patch("src.scheduler.manager.SchedulerManager", side_effect=Exception("no sched")):
+        with patch("src.scheduler.service.SchedulerManager", side_effect=Exception("no sched")):
             tools = build_deepagents_tools(mock_db)
             tool_map = {t.__name__: t for t in tools}
             result = tool_map["get_scheduler_status"]()

@@ -916,7 +916,7 @@ async def _base_app_b3(tmp_path):
     """Standalone base_app equivalent for batch3 tests."""
     from src.collection_queue import CollectionQueue
     from src.models import Account
-    from src.scheduler.manager import SchedulerManager
+    from src.scheduler.service import SchedulerManager
     from src.search.ai_search import AISearchEngine
     from src.search.engine import SearchEngine
     from src.telegram.auth import TelegramAuth

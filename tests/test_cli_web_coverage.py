@@ -24,7 +24,7 @@ from src.collection_queue import CollectionQueue
 from src.config import AppConfig
 from src.database import Database
 from src.models import Account, Channel
-from src.scheduler.manager import SchedulerManager
+from src.scheduler.service import SchedulerManager
 from src.search.ai_search import AISearchEngine
 from src.search.engine import SearchEngine
 from src.telegram.auth import TelegramAuth

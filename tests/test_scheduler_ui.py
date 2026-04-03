@@ -2,7 +2,7 @@ from datetime import datetime
 
 import pytest
 
-from src.scheduler.manager import SchedulerManager
+from src.scheduler.service import SchedulerManager
 
 
 class FakeJob:

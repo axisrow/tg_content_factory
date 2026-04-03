@@ -4,7 +4,7 @@ import pytest
 
 from src.config import SchedulerConfig
 from src.models import SearchQuery
-from src.scheduler.manager import SchedulerManager
+from src.scheduler.service import SchedulerManager
 
 
 @pytest.fixture
