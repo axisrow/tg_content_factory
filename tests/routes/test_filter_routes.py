@@ -31,6 +31,7 @@ async def test_filter_manage_renders_empty(client):
     assert resp.status_code == 200
     assert 'onclick="refreshFilters(this)"' in resp.text
     assert "async function refreshFilters(button)" in resp.text
+    assert "Сейчас запустится только сбор статистики." in resp.text
 
 
 @pytest.mark.asyncio

@@ -148,16 +148,21 @@ async function refreshFilters(button) {
 
         var data = await resp.json();
         var actionUrl = '/channels/filter/analyze';
+        var queueStatsOnly = false;
         if (!data.has_stats) {
-            if (!confirm('У некоторых каналов нет статистики. Сначала собрать статистику?')) {
+            if (!confirm('У некоторых каналов нет статистики. Сейчас запустится только сбор статистики. После завершения вернитесь и снова нажмите \"Обновить фильтры\". Продолжить?')) {
                 setAsyncButtonBusy(button, false);
                 return;
             }
             actionUrl = '/channels/stats/all';
+            queueStatsOnly = true;
         }
 
         var actionResp = await fetch(actionUrl, {method: 'POST'});
         if (!actionResp.ok) throw new Error('refresh action failed');
+        if (queueStatsOnly) {
+            alert('Сбор статистики запущен. После завершения вернитесь на эту страницу и снова обновите фильтры.');
+        }
         window.location = actionResp.url || window.location.href;
     } catch (e) {
         console.error('Failed to refresh filters:', e);
