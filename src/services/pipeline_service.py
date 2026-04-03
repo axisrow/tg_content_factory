@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import logging
 from dataclasses import dataclass
+from typing import Any
 
 from src.agent.prompt_template import PromptTemplateError, validate_prompt_template
 from src.database import Database
@@ -9,10 +12,14 @@ from src.database.bundles import PipelineBundle
 from src.models import (
     ContentPipeline,
     PipelineGenerationBackend,
+    PipelineGraph,
     PipelinePublishMode,
     PipelineSource,
     PipelineTarget,
+    PipelineTemplate,
 )
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -234,6 +241,193 @@ class PipelineService:
             missing_values = ", ".join(map(str, missing))
             raise PipelineValidationError(f"Неизвестные source channels: {missing_values}")
         return cleaned
+
+    # ------------------------------------------------------------------
+    # JSON import / export
+    # ------------------------------------------------------------------
+
+    async def export_json(self, pipeline_id: int) -> dict | None:
+        """Export a pipeline as a JSON-serialisable dict."""
+        detail = await self.get_detail(pipeline_id)
+        if detail is None:
+            return None
+        pipeline: ContentPipeline = detail["pipeline"]
+        data: dict[str, Any] = {
+            "name": pipeline.name,
+            "prompt_template": pipeline.prompt_template,
+            "llm_model": pipeline.llm_model,
+            "image_model": pipeline.image_model,
+            "publish_mode": pipeline.publish_mode.value,
+            "generation_backend": pipeline.generation_backend.value,
+            "generate_interval_minutes": pipeline.generate_interval_minutes,
+            "publish_times": pipeline.publish_times,
+            "refinement_steps": pipeline.refinement_steps,
+            "source_ids": detail["source_ids"],
+            "target_refs": detail["target_refs"],
+        }
+        if pipeline.pipeline_json:
+            data["pipeline_json"] = json.loads(pipeline.pipeline_json.to_json())
+        return data
+
+    async def import_json(
+        self,
+        data: dict | str,
+        *,
+        name_override: str | None = None,
+    ) -> int:
+        """Create a pipeline from a JSON export dict. Returns the new pipeline ID."""
+        if isinstance(data, str):
+            data = json.loads(data)
+        name = name_override or data.get("name", "Imported pipeline")
+        prompt_template = data.get("prompt_template", "")
+        source_ids = [int(x) for x in data.get("source_ids", [])]
+        target_refs_raw = data.get("target_refs", [])
+        target_refs = []
+        for ref in target_refs_raw:
+            if isinstance(ref, str) and "|" in ref:
+                phone, _, dialog_id = ref.partition("|")
+                target_refs.append(PipelineTargetRef(phone=phone, dialog_id=int(dialog_id)))
+
+        pipeline_json: PipelineGraph | None = None
+        if "pipeline_json" in data:
+            try:
+                pipeline_json = PipelineGraph.from_json(data["pipeline_json"])
+            except Exception:
+                logger.warning("import_json: failed to parse pipeline_json field, ignoring")
+
+        pipeline = await self._build_pipeline(
+            name=name,
+            prompt_template=prompt_template or ".",
+            llm_model=data.get("llm_model"),
+            image_model=data.get("image_model"),
+            publish_mode=data.get("publish_mode", PipelinePublishMode.MODERATED),
+            generation_backend=data.get("generation_backend", PipelineGenerationBackend.CHAIN),
+            generate_interval_minutes=int(data.get("generate_interval_minutes", 60)),
+            is_active=False,
+        )
+        pipeline = pipeline.model_copy(update={"pipeline_json": pipeline_json})
+
+        sources = await self._normalize_sources(source_ids) if source_ids else []
+        targets = await self._normalize_targets(target_refs) if target_refs else []
+
+        if not sources:
+            raise PipelineValidationError("Выберите хотя бы один источник.")
+        if not targets:
+            raise PipelineValidationError("Выберите хотя бы одну цель публикации.")
+
+        return await self._bundle.add(pipeline, sources, targets)
+
+    # ------------------------------------------------------------------
+    # Template operations
+    # ------------------------------------------------------------------
+
+    async def list_templates(self, category: str | None = None) -> list[PipelineTemplate]:
+        """List all available pipeline templates."""
+        if self._bundle.pipeline_templates is None:
+            return []
+        return await self._bundle.pipeline_templates.list_all(category)
+
+    async def create_from_template(
+        self,
+        template_id: int,
+        *,
+        name: str,
+        source_ids: list[int],
+        target_refs: list[PipelineTargetRef],
+        overrides: dict | None = None,
+    ) -> int:
+        """Create a new pipeline from a template. Returns pipeline ID."""
+        if self._bundle.pipeline_templates is None:
+            raise PipelineValidationError("Репозиторий шаблонов недоступен.")
+        tpl = await self._bundle.pipeline_templates.get_by_id(template_id)
+        if tpl is None:
+            raise PipelineValidationError(f"Шаблон id={template_id} не найден.")
+
+        graph = tpl.template_json
+        overrides = overrides or {}
+
+        # Extract legacy fields from the graph nodes for backward compat
+        prompt_template = overrides.get("prompt_template", "")
+        llm_model = overrides.get("llm_model")
+        image_model = overrides.get("image_model")
+        publish_mode = overrides.get("publish_mode", PipelinePublishMode.MODERATED)
+        generation_backend = overrides.get("generation_backend", PipelineGenerationBackend.CHAIN)
+        interval = int(overrides.get("generate_interval_minutes", 60))
+
+        # Try to extract prompt_template from llm_generate node if not provided
+        if not prompt_template:
+            for node in graph.nodes:
+                if node.type.value in ("llm_generate", "llm_refine"):
+                    prompt_template = node.config.get("prompt_template") or node.config.get("prompt", "")
+                    break
+        if not prompt_template:
+            prompt_template = name
+
+        pipeline = await self._build_pipeline(
+            name=name,
+            prompt_template=prompt_template,
+            llm_model=llm_model,
+            image_model=image_model,
+            publish_mode=publish_mode,
+            generation_backend=generation_backend,
+            generate_interval_minutes=interval,
+            is_active=False,
+        )
+        pipeline = pipeline.model_copy(update={"pipeline_json": graph})
+
+        sources = await self._normalize_sources(source_ids)
+        targets = await self._normalize_targets(target_refs)
+        return await self._bundle.add(pipeline, sources, targets)
+
+    async def edit_via_llm(self, pipeline_id: int, instruction: str, db: Database) -> dict:
+        """Edit a pipeline's JSON config via LLM instruction.
+
+        Returns {"ok": True, "pipeline_json": {...}} or {"ok": False, "error": "..."}.
+        """
+        pipeline = await self.get(pipeline_id)
+        if pipeline is None:
+            return {"ok": False, "error": f"Пайплайн id={pipeline_id} не найден."}
+
+        import json as _json
+
+        current_graph_json = (
+            pipeline.pipeline_json.to_json() if pipeline.pipeline_json
+            else _json.dumps({"nodes": [], "edges": []})
+        )
+
+        prompt = (
+            "You are a pipeline configuration assistant. "
+            "You receive the current pipeline JSON and a user instruction. "
+            "Return ONLY the updated pipeline JSON object (no explanations, no markdown fences). "
+            "Keep all existing nodes unless explicitly asked to remove them. "
+            "Valid node types: source, retrieve_context, llm_generate, llm_refine, "
+            "image_generate, publish, notify, filter, delay, react, forward, delete_message, "
+            "condition, search_query_trigger.\n\n"
+            f"Current pipeline JSON:\n{current_graph_json}\n\n"
+            f"Instruction: {instruction}\n\n"
+            "Return the updated JSON:"
+        )
+
+        try:
+            from src.services.provider_service import AgentProviderService
+            provider_service = AgentProviderService(db)
+            provider_callable = provider_service.get_provider_callable(pipeline.llm_model)
+            result = await provider_callable(prompt, model=pipeline.llm_model or "", max_tokens=4096, temperature=0.2)
+            raw = result.get("text") or result.get("generated_text") or ""
+            # Strip markdown fences if present
+            raw = raw.strip()
+            if raw.startswith("```"):
+                raw = raw.split("```", 2)[1]
+                if raw.startswith("json"):
+                    raw = raw[4:]
+                raw = raw.split("```")[0].strip()
+            new_graph = PipelineGraph.from_json(raw)
+            # Save the updated graph
+            await db.repos.content_pipelines.set_pipeline_json(pipeline_id, new_graph)
+            return {"ok": True, "pipeline_json": _json.loads(new_graph.to_json())}
+        except Exception as exc:
+            logger.warning("edit_via_llm failed for pipeline_id=%s: %s", pipeline_id, exc, exc_info=True)
+            return {"ok": False, "error": str(exc)}
 
     async def _normalize_targets(
         self,

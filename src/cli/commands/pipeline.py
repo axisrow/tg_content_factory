@@ -396,6 +396,77 @@ def run(args: argparse.Namespace) -> None:
                         import json
 
                         print(json.dumps(steps, ensure_ascii=False, indent=2))
+
+            elif args.pipeline_action == "export":
+                import json
+
+                data = await svc.export_json(args.id)
+                if data is None:
+                    print(f"Pipeline id={args.id} not found")
+                    return
+                output = json.dumps(data, ensure_ascii=False, indent=2)
+                if args.output:
+                    with open(args.output, "w", encoding="utf-8") as fh:
+                        fh.write(output)
+                    print(f"Exported pipeline id={args.id} to {args.output}")
+                else:
+                    print(output)
+
+            elif args.pipeline_action == "import":
+                import json
+
+                with open(args.file, encoding="utf-8") as fh:
+                    data = json.load(fh)
+                try:
+                    pipeline_id = await svc.import_json(data, name_override=getattr(args, "name", None))
+                    print(f"Imported pipeline (id={pipeline_id})")
+                except PipelineValidationError as exc:
+                    print(f"Validation error: {exc}")
+
+            elif args.pipeline_action == "templates":
+                import json
+
+                templates = await svc.list_templates(category=getattr(args, "category", None))
+                if not templates:
+                    print("No templates found.")
+                    return
+                print(f"{'ID':<5} {'Category':<14} {'Name':<32} Description")
+                print("-" * 80)
+                for tpl in templates:
+                    builtin = " [builtin]" if tpl.is_builtin else ""
+                    print(f"{tpl.id or '—':<5} {tpl.category:<14} {tpl.name:<32} {tpl.description[:40]}{builtin}")
+
+            elif args.pipeline_action == "from-template":
+                try:
+                    template_id = args.template_id
+                    name = args.name
+                    source_ids = (
+                        [int(x.strip()) for x in args.source_ids.split(",") if x.strip()]
+                        if args.source_ids else []
+                    )
+                    target_refs = _parse_target_refs(args.target_refs.split(",") if args.target_refs else [])
+                    pipeline_id = await svc.create_from_template(
+                        template_id,
+                        name=name,
+                        source_ids=source_ids,
+                        target_refs=target_refs,
+                    )
+                    print(f"Created pipeline from template (id={pipeline_id})")
+                except PipelineValidationError as exc:
+                    print(f"Validation error: {exc}")
+
+            elif args.pipeline_action == "ai-edit":
+                instruction = args.instruction
+                result = await svc.edit_via_llm(args.id, instruction, db)
+                import json
+
+                if result["ok"]:
+                    print("Pipeline JSON updated successfully.")
+                    if getattr(args, "show", False):
+                        print(json.dumps(result["pipeline_json"], ensure_ascii=False, indent=2))
+                else:
+                    print(f"Error: {result['error']}")
+
         finally:
             if pool is not None:
                 await pool.disconnect_all()

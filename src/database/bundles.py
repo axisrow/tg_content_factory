@@ -16,6 +16,7 @@ from src.database.repositories.generation_runs import GenerationRunsRepository
 from src.database.repositories.messages import MessagesRepository
 from src.database.repositories.notification_bots import NotificationBotsRepository
 from src.database.repositories.photo_loader import PhotoLoaderRepository
+from src.database.repositories.pipeline_templates import PipelineTemplatesRepository
 from src.database.repositories.search_log import SearchLogRepository
 from src.database.repositories.search_queries import SearchQueriesRepository
 from src.database.repositories.settings import SettingsRepository
@@ -61,6 +62,7 @@ class DatabaseRepositories:
     content_pipelines: ContentPipelinesRepository
     generation_runs: GenerationRunsRepository
     generated_images: GeneratedImagesRepository
+    pipeline_templates: PipelineTemplatesRepository
 
 
 @dataclass(frozen=True)
@@ -764,6 +766,7 @@ class PipelineBundle:
     channels: ChannelsRepository
     accounts: AccountsRepository
     dialog_cache: DialogCacheRepository
+    pipeline_templates: PipelineTemplatesRepository | None = None
 
     @classmethod
     def from_database(cls, db: "Database") -> "PipelineBundle":
@@ -773,6 +776,7 @@ class PipelineBundle:
             repos.channels,
             repos.accounts,
             repos.dialog_cache,
+            repos.pipeline_templates,
         )
 
     async def add(

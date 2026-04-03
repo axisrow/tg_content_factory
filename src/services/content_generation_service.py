@@ -80,22 +80,31 @@ class ContentGenerationService:
             generated_text = result.get("generated_text", "")
             metadata: dict[str, Any] = {"citations": result.get("citations", [])}
 
-            if pipeline.refinement_steps and generated_text:
+            if pipeline.refinement_steps and generated_text and pipeline.pipeline_json is None:
+                # Refinement steps are only applied for legacy pipelines (graph-based ones encode them as nodes)
                 generated_text = await self._apply_refinement_steps(
                     generated_text, pipeline, model, max_tokens, temperature
                 )
                 metadata["refinement_steps_applied"] = len(pipeline.refinement_steps)
 
-            image_model = pipeline.image_model
-            if not image_model:
-                image_model = await self._db.get_setting("default_image_model") or ""
-            if image_model:
-                image_url = await self._generate_image(pipeline, generated_text, model=image_model)
-                if image_url:
-                    await self._db.execute(
-                        "UPDATE generation_runs SET image_url = ? WHERE id = ?",
-                        (image_url, run_id),
-                    )
+            # Use image_url from graph executor if available, otherwise fall back to legacy image gen
+            image_url_from_graph = result.get("image_url")
+            if image_url_from_graph:
+                await self._db.execute(
+                    "UPDATE generation_runs SET image_url = ? WHERE id = ?",
+                    (image_url_from_graph, run_id),
+                )
+            else:
+                image_model = pipeline.image_model
+                if not image_model:
+                    image_model = await self._db.get_setting("default_image_model") or ""
+                if image_model and pipeline.pipeline_json is None:
+                    image_url = await self._generate_image(pipeline, generated_text, model=image_model)
+                    if image_url:
+                        await self._db.execute(
+                            "UPDATE generation_runs SET image_url = ? WHERE id = ?",
+                            (image_url, run_id),
+                        )
 
             await self._db.repos.generation_runs.save_result(run_id, generated_text, metadata)
             if self._quality_service and generated_text:
@@ -139,10 +148,48 @@ class ContentGenerationService:
         temperature: float,
     ) -> dict[str, Any]:
         """Execute the generation backend."""
+        if pipeline.pipeline_json is not None:
+            return await self._run_graph(pipeline, model, max_tokens, temperature)
+
         if pipeline.generation_backend == PipelineGenerationBackend.DEEP_AGENTS:
             return await self._run_deep_agents(pipeline, model, max_tokens, temperature)
 
         return await self._run_rag(pipeline, model, max_tokens, temperature)
+
+    async def _run_graph(
+        self,
+        pipeline: ContentPipeline,
+        model: str | None,
+        max_tokens: int,
+        temperature: float,
+    ) -> dict[str, Any]:
+        """Execute the pipeline using the node-based DAG executor."""
+        from src.services.pipeline_executor import PipelineExecutor
+        from src.services.provider_service import AgentProviderService
+
+        provider_service = AgentProviderService(self._db)
+        provider_callable = provider_service.get_provider_callable(pipeline.llm_model)
+
+        default_image_model = await self._db.get_setting("default_image_model") or ""
+
+        services = {
+            "search_engine": self._search,
+            "provider_callable": provider_callable,
+            "image_service": self._image_service,
+            "notification_service": self._notification_service,
+            "default_model": model or pipeline.llm_model or "",
+            "default_image_model": pipeline.image_model or default_image_model,
+            "db": self._db,
+        }
+
+        executor = PipelineExecutor()
+        result = await executor.execute(pipeline, pipeline.pipeline_json, services)
+
+        return {
+            "generated_text": result.get("generated_text", ""),
+            "image_url": result.get("image_url"),
+            "citations": result.get("citations", []),
+        }
 
     async def _run_rag(
         self,
