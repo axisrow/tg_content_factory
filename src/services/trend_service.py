@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import logging
+from collections import Counter
 from dataclasses import dataclass
 
 from sklearn.feature_extraction.text import TfidfVectorizer
@@ -46,25 +48,33 @@ class PeakHour:
 class TrendService:
     """Trend analysis over collected messages."""
 
+    _TOPIC_BATCH_SIZE = 5000
+    _MAX_TOPIC_DOCUMENTS = 10000
+
     def __init__(self, db: Database) -> None:
         self._db = db
 
     async def get_trending_topics(self, days: int = 7, limit: int = 20) -> list[TrendingTopic]:
-        """Return top keywords by TF-IDF score from messages in the last N days.
+        """Return top keywords ranked by TF-IDF from recent messages.
 
-        Uses TfidfVectorizer to automatically suppress ubiquitous low-signal words
-        (greetings, filler, stop-words) without a hardcoded list.
+        Uses a bounded corpus of recent messages to avoid unbounded memory usage
+        and keeps raw mention counts so downstream callers can continue to render
+        the results as "mentions".
         """
-        batch_size = 5000
+        if limit <= 0:
+            return []
+
         offset = 0
         texts: list[str] = []
 
-        while True:
+        while len(texts) < self._MAX_TOPIC_DOCUMENTS:
+            batch_size = min(self._TOPIC_BATCH_SIZE, self._MAX_TOPIC_DOCUMENTS - len(texts))
             rows = await self._db.execute_fetchall(
                 """
                 SELECT text FROM messages
                 WHERE date >= date('now', ?)
                   AND COALESCE(TRIM(text), '') <> ''
+                ORDER BY date DESC, id DESC
                 LIMIT ? OFFSET ?
                 """,
                 (f"-{days} days", batch_size, offset),
@@ -74,30 +84,46 @@ class TrendService:
             texts.extend(row["text"] or "" for row in rows)
             if len(rows) < batch_size:
                 break
-            offset += batch_size
+            offset += len(rows)
 
         if not texts:
             return []
 
+        if len(texts) == self._MAX_TOPIC_DOCUMENTS:
+            logger.info(
+                "Capped trending-topic corpus at %d most recent messages",
+                self._MAX_TOPIC_DOCUMENTS,
+            )
+
+        return await asyncio.to_thread(self._rank_trending_topics, texts, limit)
+
+    def _rank_trending_topics(self, texts: list[str], limit: int) -> list[TrendingTopic]:
         vectorizer = TfidfVectorizer(
-            token_pattern=r"(?u)\b[а-яёa-z]{4,}\b",  # 4+ символов, RU + EN
-            max_df=0.85,  # слова в >85% сообщений — шум, убираются автоматически
-            min_df=2,  # слова менее чем в 2 сообщениях — слишком редкие
+            token_pattern=r"(?u)\b[а-яёa-z]{4,}\b",
+            max_df=0.85,
+            min_df=2,
         )
         try:
             tfidf_matrix = vectorizer.fit_transform(texts)
         except ValueError:
-            # Нет слов после фильтрации (например, корпус слишком мал)
             return []
 
         feature_names = vectorizer.get_feature_names_out()
-        scores = tfidf_matrix.sum(axis=0).A1  # суммарный TF-IDF score по всем документам
+        scores = tfidf_matrix.sum(axis=0).A1
+        mention_counts: Counter[str] = Counter()
+        analyzer = vectorizer.build_analyzer()
 
-        top_indices = scores.argsort()[::-1][:limit]
-        return [
-            TrendingTopic(keyword=feature_names[i], count=int(tfidf_matrix.getcol(i).nnz))
-            for i in top_indices
-        ]
+        for text in texts:
+            mention_counts.update(analyzer(text))
+
+        top_indices = scores.argsort()[::-1]
+        topics: list[TrendingTopic] = []
+        for index in top_indices:
+            keyword = feature_names[index]
+            topics.append(TrendingTopic(keyword=keyword, count=mention_counts[keyword]))
+            if len(topics) >= limit:
+                break
+        return topics
 
     async def get_trending_channels(self, days: int = 7, limit: int = 10) -> list[TrendingChannel]:
         """Return channels with the highest average views in the last N days."""

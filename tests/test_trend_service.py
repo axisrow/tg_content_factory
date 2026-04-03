@@ -62,17 +62,28 @@ async def test_get_trending_topics_filters_high_frequency(service, mock_db):
 @pytest.mark.asyncio
 async def test_get_trending_topics_respects_limit(service, mock_db):
     """get_trending_topics respects the limit parameter."""
-    # Generate messages with unique words that appear in multiple docs
-    # Each word appears in 2 messages to pass min_df=2
+    keywords = [
+        "alpha",
+        "bravo",
+        "charlie",
+        "delta",
+        "echo",
+        "foxtrot",
+        "golf",
+        "hotel",
+        "india",
+        "juliet",
+    ]
     messages = []
-    for i in range(50):
-        messages.append({"text": f"unique{i:03d}word sharedword"})
-        messages.append({"text": f"unique{i:03d}word anotherword"})
+    for keyword in keywords:
+        messages.append({"text": f"{keyword} commonword"})
+        messages.append({"text": f"{keyword} commonword"})
     mock_db.execute_fetchall = AsyncMock(return_value=messages)
 
     result = await service.get_trending_topics(days=7, limit=5)
 
-    assert len(result) <= 5
+    assert len(result) == 5
+    assert {topic.keyword for topic in result}.issubset(set(keywords))
 
 
 @pytest.mark.asyncio
@@ -80,15 +91,17 @@ async def test_get_trending_topics_short_words_filtered(service, mock_db):
     """get_trending_topics filters words shorter than 4 characters."""
     mock_db.execute_fetchall = AsyncMock(
         return_value=[
-            {"text": "abc test important verify"},
+            {"text": "abc verify signal"},
+            {"text": "abc verify insight"},
+            {"text": "signal topic insight"},
         ]
     )
 
     result = await service.get_trending_topics(days=7, limit=20)
 
-    # "abc" is only 3 chars and should be filtered
     words = [t.keyword for t in result]
     assert "abc" not in words
+    assert "verify" in words
 
 
 @pytest.mark.asyncio
@@ -96,9 +109,9 @@ async def test_get_trending_topics_with_data(service, mock_db):
     """get_trending_topics processes and returns topics correctly."""
     mock_db.execute_fetchall = AsyncMock(
         return_value=[
-            {"text": "важная тема сегодня здесь"},
-            {"text": "другая важная тема здесь"},
-            {"text": "третье сообщение совсем другое"},  # без "важная"/"тема"
+            {"text": "важная важная тема здесь"},
+            {"text": "другая важная тема"},
+            {"text": "сегодня тема обзор"},
         ]
     )
 
@@ -106,11 +119,10 @@ async def test_get_trending_topics_with_data(service, mock_db):
 
     assert all(isinstance(t, TrendingTopic) for t in result)
     keywords = [t.keyword for t in result]
-    # "важная" в 2/3 документах (67% < max_df 85%) → должна быть в результатах
     assert "важная" in keywords
     important = next((t for t in result if t.keyword == "важная"), None)
     assert important is not None
-    assert important.count == 2  # document frequency
+    assert important.count == 3
 
 
 @pytest.mark.asyncio
@@ -118,19 +130,19 @@ async def test_get_trending_topics_non_alpha_only(service, mock_db):
     """get_trending_topics only includes alphabetic words (4+ chars, RU/EN)."""
     mock_db.execute_fetchall = AsyncMock(
         return_value=[
-            {"text": "validword другоеслово"},
-            {"text": "validword иноеслово"},  # повтор для min_df=2
-            {"text": "простоеслово ещеслово"},  # без validword, чтобы не попало под max_df
+            {"text": "keepword 123numeric"},
+            {"text": "keepword test123"},
+            {"text": "другоеслово 123numeric"},
+            {"text": "иноеслово test123"},
         ]
     )
 
     result = await service.get_trending_topics(days=7, limit=10)
 
     words = [t.keyword for t in result]
-    # Non-alpha words filtered by token_pattern
     assert "123numeric" not in words
     assert "test123" not in words
-    assert "validword" in words  # 2/3 = 67% < max_df 85%
+    assert "keepword" in words
 
 
 @pytest.mark.asyncio
