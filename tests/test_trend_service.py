@@ -44,38 +44,46 @@ async def test_get_trending_topics_empty_db(service, mock_db):
 
 
 @pytest.mark.asyncio
-async def test_get_trending_topics_filters_stop_words(service, mock_db):
-    """get_trending_topics filters out stop words."""
-    # Return messages with stop words and valid words
-    mock_db.execute_fetchall = AsyncMock(
-        return_value=[
-            {"text": "Это тест и проверка на стоп слова"},
-            {"text": "Важное сообщение для теста"},
-        ]
-    )
+async def test_get_trending_topics_filters_high_frequency(service, mock_db):
+    """get_trending_topics filters out words appearing in >85% of messages via max_df."""
+    # "hello" appears in all 10 messages → 100% > max_df 85% → filtered
+    # "topic" appears in 3/10 = 30% → kept
+    messages = [{"text": f"hello world testing {i} topic"} for i in range(7)]
+    messages.extend([{"text": f"hello world testing {i}"} for i in range(7, 10)])
+    mock_db.execute_fetchall = AsyncMock(return_value=messages)
 
     result = await service.get_trending_topics(days=7, limit=20)
+    keywords = [t.keyword for t in result]
 
-    # Stop words should be filtered out
-    words = [t.keyword for t in result]
-    assert "и" not in words
-    assert "на" not in words
-    assert "для" not in words
+    assert "hello" not in keywords  # 100% documents → filtered by max_df
+    assert "topic" in keywords  # 30% documents → kept
 
 
 @pytest.mark.asyncio
 async def test_get_trending_topics_respects_limit(service, mock_db):
     """get_trending_topics respects the limit parameter."""
-    # Create many messages with unique words
-    mock_db.execute_fetchall = AsyncMock(
-        return_value=[
-            {"text": f"word{i} test content"} for i in range(100)
-        ]
-    )
+    keywords = [
+        "alpha",
+        "bravo",
+        "charlie",
+        "delta",
+        "echo",
+        "foxtrot",
+        "golf",
+        "hotel",
+        "india",
+        "juliet",
+    ]
+    messages = []
+    for keyword in keywords:
+        messages.append({"text": f"{keyword} commonword"})
+        messages.append({"text": f"{keyword} commonword"})
+    mock_db.execute_fetchall = AsyncMock(return_value=messages)
 
-    result = await service.get_trending_topics(days=7, limit=10)
+    result = await service.get_trending_topics(days=7, limit=5)
 
-    assert len(result) <= 10
+    assert len(result) == 5
+    assert {topic.keyword for topic in result}.issubset(set(keywords))
 
 
 @pytest.mark.asyncio
@@ -83,15 +91,17 @@ async def test_get_trending_topics_short_words_filtered(service, mock_db):
     """get_trending_topics filters words shorter than 4 characters."""
     mock_db.execute_fetchall = AsyncMock(
         return_value=[
-            {"text": "abc test important verify"},
+            {"text": "abc verify signal"},
+            {"text": "abc verify insight"},
+            {"text": "signal topic insight"},
         ]
     )
 
     result = await service.get_trending_topics(days=7, limit=20)
 
-    # "abc" is only 3 chars and should be filtered
     words = [t.keyword for t in result]
     assert "abc" not in words
+    assert "verify" in words
 
 
 @pytest.mark.asyncio
@@ -99,37 +109,40 @@ async def test_get_trending_topics_with_data(service, mock_db):
     """get_trending_topics processes and returns topics correctly."""
     mock_db.execute_fetchall = AsyncMock(
         return_value=[
-            {"text": "Important topic here", "views": 100},
-            {"text": "Another important topic here", "views": 50},
+            {"text": "важная важная тема здесь"},
+            {"text": "другая важная тема"},
+            {"text": "сегодня тема обзор"},
         ]
     )
 
     result = await service.get_trending_topics(days=7, limit=10)
 
     assert all(isinstance(t, TrendingTopic) for t in result)
-    # Check that "important" appears with count=2 (in both messages)
-    important_topic = next((t for t in result if t.keyword == "important"), None)
-    assert important_topic is not None
-    assert important_topic.count == 2  # "important" appears twice
+    keywords = [t.keyword for t in result]
+    assert "важная" in keywords
+    important = next((t for t in result if t.keyword == "важная"), None)
+    assert important is not None
+    assert important.count == 3
 
 
 @pytest.mark.asyncio
 async def test_get_trending_topics_non_alpha_only(service, mock_db):
-    """get_trending_topics only includes alphabetic words."""
+    """get_trending_topics only includes alphabetic words (4+ chars, RU/EN)."""
     mock_db.execute_fetchall = AsyncMock(
         return_value=[
-            {"text": "validword 123numeric"},
-            {"text": "test123"},
+            {"text": "keepword 123numeric"},
+            {"text": "keepword test123"},
+            {"text": "другоеслово 123numeric"},
+            {"text": "иноеслово test123"},
         ]
     )
 
     result = await service.get_trending_topics(days=7, limit=10)
 
-    # Non-alpha words like "123numeric" should be filtered
     words = [t.keyword for t in result]
     assert "123numeric" not in words
     assert "test123" not in words
-    assert "validword" in words
+    assert "keepword" in words
 
 
 @pytest.mark.asyncio
@@ -365,3 +378,23 @@ def test_peak_hour_dataclass():
 
     assert peak.hour == 12
     assert peak.count == 5
+
+
+# === Regression tests ===
+
+
+@pytest.mark.asyncio
+async def test_get_trending_topics_tfidf_suppresses_noise(service, mock_db):
+    """Regression #329: words in every message should not appear in trends."""
+    # "hello" appears in all 10 messages → max_df filters it out
+    # "криптовалюта" appears in 2/10 → high IDF → should be in top
+    messages = [{"text": f"hello world testing {i}"} for i in range(10)]
+    messages[0]["text"] += " криптовалюта"
+    messages[1]["text"] += " криптовалюта"
+    mock_db.execute_fetchall = AsyncMock(return_value=messages)
+
+    result = await service.get_trending_topics(days=7, limit=20)
+    keywords = [t.keyword for t in result]
+
+    assert "криптовалюта" in keywords
+    assert "hello" not in keywords  # in 100% documents → filtered by max_df

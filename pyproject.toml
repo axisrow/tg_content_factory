@@ -41,6 +41,7 @@ dependencies = [
     "openpyxl==3.1.5",
     "aiohttp==3.13.3",
     "numpy==2.2.6",
+    "scikit-learn>=1.4",
     "langdetect==1.0.9",
     "textual[syntax]>=1.0.0",
     "claude-agent-sdk==0.1.52",
