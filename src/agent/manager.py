@@ -40,7 +40,7 @@ from src.agent.prompt_template import (
     build_prompt_template_context,
     render_prompt_template,
 )
-from src.agent.provider_registry import ProviderRuntimeConfig
+from src.agent.provider_registry import ZAI_DEFAULT_BASE_URL, ProviderRuntimeConfig
 from src.config import AppConfig
 from src.database import Database
 from src.services.agent_provider_service import (
@@ -1193,6 +1193,7 @@ class DeepagentsBackend:
                 "иначе deepagents переиспользует Claude SDK credentials."
             )
             raise RuntimeError(self._init_error)
+        model_provider = provider
         extra: dict[str, object] = {
             key: value for key, value in cfg.plain_fields.items() if value.strip()
         }
@@ -1207,6 +1208,12 @@ class DeepagentsBackend:
                 extra["client_kwargs"] = {"headers": {"Authorization": f"Bearer {api_key}"}}
         else:
             extra.update({key: value for key, value in cfg.secret_fields.items() if value.strip()})
+
+        if provider == "zai":
+            model_provider = "anthropic"
+            base_url = cfg.plain_fields.get("base_url", "").strip() or ZAI_DEFAULT_BASE_URL
+            extra.pop("base_url", None)
+            extra["anthropic_api_url"] = base_url
         self._init_attempted_model = cfg.model_name
 
         # ReAct fallback for Ollama models without native function calling
@@ -1239,10 +1246,16 @@ class DeepagentsBackend:
         try:
             from langchain.chat_models import init_chat_model
 
-            model = init_chat_model(model=resolved_model_name, model_provider=provider, **extra)
+            model = init_chat_model(
+                model=resolved_model_name,
+                model_provider=model_provider,
+                **extra,
+            )
         except ImportError as exc:
             package = (
-                f"langchain-{provider.replace('_', '-')}" if provider else "langchain provider"
+                f"langchain-{model_provider.replace('_', '-')}"
+                if model_provider
+                else "langchain provider"
             )
             self._init_error = (
                 f"Не установлена интеграция для provider '{provider}'. "

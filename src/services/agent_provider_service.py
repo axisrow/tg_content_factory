@@ -17,6 +17,7 @@ import aiohttp
 from src.agent.provider_registry import (
     PROVIDER_ORDER,
     PROVIDER_SPECS,
+    ZAI_DEFAULT_BASE_URL,
     ProviderRuntimeConfig,
     ProviderSpec,
     provider_spec,
@@ -662,6 +663,12 @@ class AgentProviderService:
             if api_key and base_url == "https://ollama.com":
                 return "ollama://cloud"
             return None
+        if provider == "zai":
+            base_url = cfg.plain_fields.get("base_url", "").strip()
+            normalized = self._normalize_urlish(base_url or ZAI_DEFAULT_BASE_URL)
+            if normalized == ZAI_DEFAULT_BASE_URL:
+                return normalized
+            return None
         if provider in _OPENAI_STYLE_DEFAULT_BASE_URLS:
             base_url = cfg.plain_fields.get("base_url", "").strip()
             default_base_url = _OPENAI_STYLE_DEFAULT_BASE_URLS[provider]
@@ -691,6 +698,12 @@ class AgentProviderService:
         cfg: ProviderRuntimeConfig | None,
     ) -> list[str]:
         provider = spec.name
+        if provider == "zai":
+            assert cfg is not None
+            return await self._fetch_zai_models(
+                cfg.plain_fields.get("base_url", ""),
+                cfg.secret_fields.get("api_key", ""),
+            )
         if provider in _OPENAI_STYLE_DEFAULT_BASE_URLS:
             assert cfg is not None
             base_url = (
@@ -786,6 +799,23 @@ class AgentProviderService:
         )
         return [str(item.get("id", "")).strip() for item in payload if item.get("id")]
 
+    async def _fetch_zai_models(
+        self, base_url: str, api_key: str
+    ) -> list[str]:
+        base_url = base_url.strip() or ZAI_DEFAULT_BASE_URL
+        headers = {
+            "x-api-key": api_key,
+            "anthropic-version": "2023-06-01",
+        }
+        payload = await self._fetch_json(
+            base_url.rstrip("/") + "/models", headers=headers
+        )
+        return [
+            str(item.get("id", "")).strip()
+            for item in payload.get("data", [])
+            if item.get("id")
+        ]
+
     def _build_model_option(
         self,
         model: str,
@@ -864,6 +894,9 @@ class AgentProviderService:
                     value,
                     secret_fields.get("api_key", ""),
                 )
+                continue
+            if key == "base_url" and provider_name == "zai":
+                normalized[key] = self._normalize_urlish(value or ZAI_DEFAULT_BASE_URL)
                 continue
             if key == "base_url" and provider_name in _OPENAI_STYLE_DEFAULT_BASE_URLS:
                 normalized[key] = self._normalize_urlish(

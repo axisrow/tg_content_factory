@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 from datetime import date, datetime
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -15,7 +16,7 @@ from src.agent.prompt_template import (
     PromptTemplateError,
     validate_prompt_template,
 )
-from src.agent.provider_registry import ProviderRuntimeConfig
+from src.agent.provider_registry import ZAI_DEFAULT_BASE_URL, ProviderRuntimeConfig
 from src.agent.tools import make_mcp_server
 from src.config import AppConfig
 from src.models import Message
@@ -1657,6 +1658,47 @@ def test_build_agent_langchain_import_error_blames_correct_provider(db, monkeypa
             mgr._deepagents_backend._build_agent(cfg, record_last_used=False)
 
     assert "ollama" in mgr._deepagents_backend._init_error
+
+
+def test_build_agent_zai_uses_anthropic_init_chat_model(db):
+    """Z.AI should reuse the Anthropic integration with a custom API URL."""
+    config = AppConfig()
+    config.agent.fallback_model = "openai:gpt-4.1-mini"
+    mgr = AgentManager(db, config)
+
+    cfg = ProviderRuntimeConfig(
+        provider="zai",
+        enabled=True,
+        priority=0,
+        selected_model="glm-5",
+        plain_fields={"base_url": ZAI_DEFAULT_BASE_URL},
+        secret_fields={"api_key": "zai-key"},
+    )
+
+    captured: dict[str, object] = {}
+    fake_model = SimpleNamespace(name="zai-model")
+
+    def fake_init_chat_model(*, model, model_provider, **kwargs):
+        captured["model"] = model
+        captured["provider"] = model_provider
+        captured["kwargs"] = kwargs
+        return fake_model
+
+    def fake_create_agent(model, tools, system_prompt):
+        assert model is fake_model
+        return MagicMock(run=MagicMock(return_value="ok-zai"))
+
+    with (
+        patch("langchain.chat_models.init_chat_model", side_effect=fake_init_chat_model),
+        patch("deepagents.create_deep_agent", side_effect=fake_create_agent),
+    ):
+        agent = mgr._deepagents_backend._build_agent(cfg, record_last_used=False)
+
+    assert agent is not None
+    assert captured["model"] == "glm-5"
+    assert captured["provider"] == "anthropic"
+    assert captured["kwargs"]["api_key"] == "zai-key"
+    assert captured["kwargs"]["anthropic_api_url"] == ZAI_DEFAULT_BASE_URL
 
 
 def test_build_agent_tools_import_error_shows_details(db, monkeypatch):
