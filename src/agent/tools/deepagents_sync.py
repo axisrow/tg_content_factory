@@ -676,7 +676,7 @@ def build_deepagents_tools(db, client_pool=None, config=None) -> list[Callable]:
     def get_scheduler_status() -> str:
         """Get scheduler status and job info."""
         try:
-            from src.scheduler.manager import SchedulerManager
+            from src.scheduler.service import SchedulerManager
 
             mgr = SchedulerManager(db)
             _run_sync("sched_load", mgr.load_settings)
@@ -690,7 +690,7 @@ def build_deepagents_tools(db, client_pool=None, config=None) -> list[Callable]:
     def toggle_scheduler_job(job_id: str) -> str:
         """Toggle a scheduler job on/off."""
         try:
-            from src.scheduler.manager import SchedulerManager
+            from src.scheduler.service import SchedulerManager
 
             mgr = SchedulerManager(db)
             _run_sync("sched_load2", mgr.load_settings)

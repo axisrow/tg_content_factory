@@ -19,7 +19,7 @@ from src.cli.runtime import init_pool
 from src.config import AppConfig, SchedulerConfig, load_config
 from src.database import Database
 from src.models import Channel, Message, SearchQuery
-from src.scheduler.manager import SchedulerManager
+from src.scheduler.service import SchedulerManager
 from src.search.engine import SearchEngine
 from src.telegram.client_pool import ClientPool
 from src.telegram.collector import Collector

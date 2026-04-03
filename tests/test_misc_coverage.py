@@ -11,7 +11,7 @@ import pytest
 
 from src.config import AppConfig, SchedulerConfig
 from src.models import SearchQuery
-from src.scheduler.manager import SchedulerManager
+from src.scheduler.service import SchedulerManager
 from tests.helpers import cli_ns as _ns
 
 # ---------------------------------------------------------------------------

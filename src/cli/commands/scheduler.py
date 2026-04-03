@@ -6,7 +6,7 @@ import logging
 
 from src.cli import runtime
 from src.database.bundles import ChannelBundle
-from src.scheduler.manager import SchedulerManager
+from src.scheduler.service import SchedulerManager
 from src.services.collection_service import CollectionService
 from src.services.task_enqueuer import TaskEnqueuer
 from src.telegram.collector import Collector

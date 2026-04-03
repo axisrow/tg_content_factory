@@ -22,7 +22,7 @@ from src.models import (
     PhotoBatchStatus,
     PhotoSendMode,
 )
-from src.scheduler.manager import SchedulerManager
+from src.scheduler.service import SchedulerManager
 from src.services.photo_auto_upload_service import PhotoAutoUploadService
 from src.services.photo_publish_service import PhotoPublishService
 from src.services.photo_task_service import PhotoTarget, PhotoTaskService

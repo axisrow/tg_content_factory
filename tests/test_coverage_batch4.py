@@ -1373,7 +1373,7 @@ def _make_task_enqueuer():
 @pytest.mark.asyncio
 async def test_scheduler_start_with_task_enqueuer():
     from src.config import SchedulerConfig
-    from src.scheduler.manager import SchedulerManager
+    from src.scheduler.service import SchedulerManager
 
     bundle = _make_mock_bundle()
     bundle.get_setting = AsyncMock(return_value=None)
@@ -1397,7 +1397,7 @@ async def test_scheduler_start_with_task_enqueuer():
 async def test_scheduler_stop_without_start():
     """Stop on non-running scheduler should not raise."""
     from src.config import SchedulerConfig
-    from src.scheduler.manager import SchedulerManager
+    from src.scheduler.service import SchedulerManager
 
     mgr = SchedulerManager(SchedulerConfig())
     await mgr.stop()  # Should be a no-op
@@ -1406,7 +1406,7 @@ async def test_scheduler_stop_without_start():
 @pytest.mark.asyncio
 async def test_scheduler_stop_cancels_bg_task():
     from src.config import SchedulerConfig
-    from src.scheduler.manager import SchedulerManager
+    from src.scheduler.service import SchedulerManager
 
     bundle = _make_mock_bundle()
     enqueuer = _make_task_enqueuer()
@@ -1423,7 +1423,7 @@ async def test_scheduler_trigger_background_idempotent():
     import asyncio
 
     from src.config import SchedulerConfig
-    from src.scheduler.manager import SchedulerManager
+    from src.scheduler.service import SchedulerManager
 
     bundle = _make_mock_bundle()
     enqueuer = _make_task_enqueuer()
@@ -1449,7 +1449,7 @@ async def test_scheduler_trigger_background_idempotent():
 @pytest.mark.asyncio
 async def test_scheduler_run_photo_due_no_enqueuer():
     from src.config import SchedulerConfig
-    from src.scheduler.manager import SchedulerManager
+    from src.scheduler.service import SchedulerManager
 
     mgr = SchedulerManager(SchedulerConfig())
     result = await mgr._run_photo_due()
@@ -1459,7 +1459,7 @@ async def test_scheduler_run_photo_due_no_enqueuer():
 @pytest.mark.asyncio
 async def test_scheduler_run_photo_auto_no_enqueuer():
     from src.config import SchedulerConfig
-    from src.scheduler.manager import SchedulerManager
+    from src.scheduler.service import SchedulerManager
 
     mgr = SchedulerManager(SchedulerConfig())
     result = await mgr._run_photo_auto()
@@ -1469,7 +1469,7 @@ async def test_scheduler_run_photo_auto_no_enqueuer():
 @pytest.mark.asyncio
 async def test_scheduler_run_photo_due_with_enqueuer():
     from src.config import SchedulerConfig
-    from src.scheduler.manager import SchedulerManager
+    from src.scheduler.service import SchedulerManager
 
     enqueuer = _make_task_enqueuer()
     mgr = SchedulerManager(SchedulerConfig(), task_enqueuer=enqueuer)
@@ -1481,7 +1481,7 @@ async def test_scheduler_run_photo_due_with_enqueuer():
 @pytest.mark.asyncio
 async def test_scheduler_run_photo_auto_with_enqueuer():
     from src.config import SchedulerConfig
-    from src.scheduler.manager import SchedulerManager
+    from src.scheduler.service import SchedulerManager
 
     enqueuer = _make_task_enqueuer()
     mgr = SchedulerManager(SchedulerConfig(), task_enqueuer=enqueuer)
@@ -1493,7 +1493,7 @@ async def test_scheduler_run_photo_auto_with_enqueuer():
 @pytest.mark.asyncio
 async def test_scheduler_run_photo_due_exception():
     from src.config import SchedulerConfig
-    from src.scheduler.manager import SchedulerManager
+    from src.scheduler.service import SchedulerManager
 
     enqueuer = _make_task_enqueuer()
     enqueuer.enqueue_photo_due = AsyncMock(side_effect=Exception("fail"))
@@ -1506,7 +1506,7 @@ async def test_scheduler_run_photo_due_exception():
 @pytest.mark.asyncio
 async def test_scheduler_run_pipeline_job():
     from src.config import SchedulerConfig
-    from src.scheduler.manager import SchedulerManager
+    from src.scheduler.service import SchedulerManager
 
     enqueuer = _make_task_enqueuer()
     mgr = SchedulerManager(SchedulerConfig(), task_enqueuer=enqueuer)
@@ -1517,7 +1517,7 @@ async def test_scheduler_run_pipeline_job():
 @pytest.mark.asyncio
 async def test_scheduler_run_content_generate_job():
     from src.config import SchedulerConfig
-    from src.scheduler.manager import SchedulerManager
+    from src.scheduler.service import SchedulerManager
 
     enqueuer = _make_task_enqueuer()
     mgr = SchedulerManager(SchedulerConfig(), task_enqueuer=enqueuer)
@@ -1528,7 +1528,7 @@ async def test_scheduler_run_content_generate_job():
 @pytest.mark.asyncio
 async def test_scheduler_run_search_query():
     from src.config import SchedulerConfig
-    from src.scheduler.manager import SchedulerManager
+    from src.scheduler.service import SchedulerManager
 
     enqueuer = _make_task_enqueuer()
     mgr = SchedulerManager(SchedulerConfig(), task_enqueuer=enqueuer)
@@ -1539,7 +1539,7 @@ async def test_scheduler_run_search_query():
 @pytest.mark.asyncio
 async def test_scheduler_get_job_next_run_no_scheduler():
     from src.config import SchedulerConfig
-    from src.scheduler.manager import SchedulerManager
+    from src.scheduler.service import SchedulerManager
 
     mgr = SchedulerManager(SchedulerConfig())
     result = mgr.get_job_next_run("collect_all")
@@ -1549,7 +1549,7 @@ async def test_scheduler_get_job_next_run_no_scheduler():
 @pytest.mark.asyncio
 async def test_scheduler_get_all_jobs_no_scheduler():
     from src.config import SchedulerConfig
-    from src.scheduler.manager import SchedulerManager
+    from src.scheduler.service import SchedulerManager
 
     mgr = SchedulerManager(SchedulerConfig())
     result = mgr.get_all_jobs_next_run()
@@ -1559,7 +1559,7 @@ async def test_scheduler_get_all_jobs_no_scheduler():
 @pytest.mark.asyncio
 async def test_scheduler_get_potential_jobs_no_bundles():
     from src.config import SchedulerConfig
-    from src.scheduler.manager import SchedulerManager
+    from src.scheduler.service import SchedulerManager
 
     mgr = SchedulerManager(SchedulerConfig())
     jobs = await mgr.get_potential_jobs()
@@ -1570,7 +1570,7 @@ async def test_scheduler_get_potential_jobs_no_bundles():
 async def test_scheduler_load_settings_no_bundle():
     """load_settings with no bundle should be a no-op."""
     from src.config import SchedulerConfig
-    from src.scheduler.manager import SchedulerManager
+    from src.scheduler.service import SchedulerManager
 
     mgr = SchedulerManager(SchedulerConfig(collect_interval_minutes=45))
     await mgr.load_settings()
@@ -1580,7 +1580,7 @@ async def test_scheduler_load_settings_no_bundle():
 @pytest.mark.asyncio
 async def test_scheduler_is_job_enabled_no_bundle():
     from src.config import SchedulerConfig
-    from src.scheduler.manager import SchedulerManager
+    from src.scheduler.service import SchedulerManager
 
     mgr = SchedulerManager(SchedulerConfig())
     assert await mgr.is_job_enabled("collect_all")
@@ -1590,7 +1590,7 @@ async def test_scheduler_is_job_enabled_no_bundle():
 async def test_scheduler_sync_job_state_not_running():
     """sync_job_state should be a no-op when scheduler is not running."""
     from src.config import SchedulerConfig
-    from src.scheduler.manager import SchedulerManager
+    from src.scheduler.service import SchedulerManager
 
     mgr = SchedulerManager(SchedulerConfig())
     await mgr.sync_job_state("collect_all", True)  # Should not raise
@@ -1600,7 +1600,7 @@ async def test_scheduler_sync_job_state_not_running():
 async def test_scheduler_update_interval_no_job():
     """update_interval when job is disabled should just store the value."""
     from src.config import SchedulerConfig
-    from src.scheduler.manager import SchedulerManager
+    from src.scheduler.service import SchedulerManager
 
     bundle = _make_mock_bundle()
     bundle.get_setting = AsyncMock(return_value="1")  # job disabled

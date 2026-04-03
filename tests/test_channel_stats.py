@@ -150,7 +150,7 @@ async def _wait_for_task_status(db, task_id: int, status: str, *, timeout: float
 
 async def _create_stats_web_test_context(tmp_path, collector):
     from src.database import Database
-    from src.scheduler.manager import SchedulerManager
+    from src.scheduler.service import SchedulerManager
     from src.search.ai_search import AISearchEngine
     from src.search.engine import SearchEngine
     from src.telegram.auth import TelegramAuth

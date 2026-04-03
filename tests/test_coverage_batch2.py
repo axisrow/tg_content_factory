@@ -743,7 +743,7 @@ class TestDeepagentsSyncToggleSchedulerJob:
         mgr_mock.load_settings = AsyncMock(return_value=None)
         mgr_mock.is_job_enabled = AsyncMock(return_value=True)
         mgr_mock.sync_job_state = AsyncMock(return_value=None)
-        with patch("src.scheduler.manager.SchedulerManager", return_value=mgr_mock):
+        with patch("src.scheduler.service.SchedulerManager", return_value=mgr_mock):
             tool_map = _build_sync_tools(mock_db)
             result = tool_map["toggle_scheduler_job"](job_id="collect_all")
         assert "collect_all" in result
@@ -754,13 +754,13 @@ class TestDeepagentsSyncToggleSchedulerJob:
         mgr_mock.load_settings = AsyncMock(return_value=None)
         mgr_mock.is_job_enabled = AsyncMock(return_value=False)
         mgr_mock.sync_job_state = AsyncMock(return_value=None)
-        with patch("src.scheduler.manager.SchedulerManager", return_value=mgr_mock):
+        with patch("src.scheduler.service.SchedulerManager", return_value=mgr_mock):
             tool_map = _build_sync_tools(mock_db)
             result = tool_map["toggle_scheduler_job"](job_id="collect_all")
         assert "включена" in result
 
     def test_error(self, mock_db):
-        with patch("src.scheduler.manager.SchedulerManager", side_effect=Exception("sched err")):
+        with patch("src.scheduler.service.SchedulerManager", side_effect=Exception("sched err")):
             tool_map = _build_sync_tools(mock_db)
             result = tool_map["toggle_scheduler_job"](job_id="x")
         assert "Ошибка" in result

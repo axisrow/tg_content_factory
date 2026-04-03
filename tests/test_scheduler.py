@@ -6,7 +6,7 @@ import pytest
 
 from src.config import SchedulerConfig
 from src.database.bundles import SchedulerBundle
-from src.scheduler.manager import SchedulerManager
+from src.scheduler.service import SchedulerManager
 
 
 @pytest.mark.asyncio

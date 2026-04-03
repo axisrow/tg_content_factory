@@ -6,7 +6,7 @@ from src.models import (
     CollectionTaskType,
     PipelineRunTaskPayload,
 )
-from src.scheduler.manager import SchedulerManager
+from src.scheduler.service import SchedulerManager
 from src.services.unified_dispatcher import UnifiedDispatcher
 
 

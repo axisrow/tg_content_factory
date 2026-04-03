@@ -18,7 +18,7 @@ from src.models import (
     PipelinePublishMode,
     PipelineTarget,
 )
-from src.scheduler.manager import SchedulerManager
+from src.scheduler.service import SchedulerManager
 from src.search.ai_search import AISearchEngine
 from src.search.engine import SearchEngine
 from src.services.publish_service import PublishResult
