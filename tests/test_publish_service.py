@@ -45,12 +45,14 @@ class FakeGenerationRunsRepo:
 class FakeClientPool:
     def __init__(self, should_succeed=True):
         self._should_succeed = should_succeed
+        self._clients = {}
         self.released = []
 
     async def get_client_by_phone(self, phone):
         if not self._should_succeed:
             return None
-        return (FakeClient(), phone)
+        client = self._clients.setdefault(phone, FakeClient())
+        return (client, phone)
 
     async def release_client(self, phone):
         self.released.append(phone)
@@ -60,6 +62,10 @@ class FakeClientPool:
 
 
 class FakeClient:
+    def __init__(self):
+        self.sent_files = []
+        self.sent_messages = []
+
     @property
     def raw_client(self):
         return FakeRawClient()
@@ -71,9 +77,24 @@ class FakeClient:
         return peer
 
     async def send_file(self, entity, files, caption=None, schedule=None):
+        self.sent_files.append(
+            {
+                "entity": entity,
+                "files": files,
+                "caption": caption,
+                "schedule": schedule,
+            }
+        )
         return FakeMessage()
 
     async def send_message(self, entity, text, **kwargs):
+        self.sent_messages.append(
+            {
+                "entity": entity,
+                "text": text,
+                "kwargs": kwargs,
+            }
+        )
         return FakeMessage()
 
 
@@ -210,3 +231,126 @@ async def test_publish_service_client_unavailable():
     assert results[0].success is False
     assert "No client" in results[0].error
     assert pool.released == []
+
+
+# === Additional tests for image, timeout, edge cases ===
+
+
+@pytest.mark.asyncio
+async def test_publish_service_with_image_url():
+    """Publishes via send_file when run has image_url."""
+    db = FakeDB()
+    db.repos.content_pipelines.set_targets(
+        [PipelineTarget(id=1, pipeline_id=1, phone="+1234567890", dialog_id=-1001234567890)]
+    )
+    pool = FakeClientPool(should_succeed=True)
+    service = PublishService(db, pool)
+
+    run = GenerationRun(
+        id=1,
+        pipeline_id=1,
+        generated_text="Content with image",
+        image_url="https://example.com/image.jpg",
+        moderation_status="approved",
+    )
+
+    results = await service.publish_run(run, make_pipeline())
+
+    assert len(results) == 1
+    assert results[0].success is True
+    client_result = await pool.get_client_by_phone("+1234567890")
+    assert client_result is not None
+    client, _phone = client_result
+    assert client.sent_files == [
+        {
+            "entity": {"phone": "+1234567890", "dialog_id": -1001234567890, "dialog_type": None},
+            "files": run.image_url,
+            "caption": run.generated_text,
+            "schedule": None,
+        }
+    ]
+    assert client.sent_messages == []
+
+
+@pytest.mark.asyncio
+async def test_publish_service_whitespace_text():
+    """Empty/whitespace generated_text is skipped."""
+    db = FakeDB()
+    db.repos.content_pipelines.set_targets(
+        [PipelineTarget(id=1, pipeline_id=1, phone="+1234567890", dialog_id=-1001234567890)]
+    )
+    pool = FakeClientPool(should_succeed=True)
+    service = PublishService(db, pool)
+
+    run = GenerationRun(
+        id=1,
+        pipeline_id=1,
+        generated_text="   \n\t  ",  # Whitespace only
+        moderation_status="approved",
+    )
+
+    results = await service.publish_run(run, make_pipeline())
+
+    assert len(results) == 1
+    assert results[0].success is False
+    assert "No generated text" in results[0].error
+
+
+@pytest.mark.asyncio
+async def test_publish_service_entity_resolution_fail():
+    """Entity resolution failure produces error result."""
+    db = FakeDB()
+    db.repos.content_pipelines.set_targets(
+        [PipelineTarget(id=1, pipeline_id=1, phone="+1234567890", dialog_id=-1001234567890)]
+    )
+
+    class FailingEntityPool(FakeClientPool):
+        async def resolve_dialog_entity(self, session, phone, dialog_id, dialog_type):
+            return None  # Entity resolution fails
+
+    pool = FailingEntityPool(should_succeed=True)
+    service = PublishService(db, pool)
+
+    run = GenerationRun(
+        id=1,
+        pipeline_id=1,
+        generated_text="Test content",
+        moderation_status="approved",
+    )
+
+    results = await service.publish_run(run, make_pipeline())
+
+    assert len(results) == 1
+    assert results[0].success is False
+    assert "Could not resolve" in results[0].error
+
+
+@pytest.mark.asyncio
+async def test_publish_service_timeout():
+    """asyncio.TimeoutError produces 'Timeout' error."""
+    db = FakeDB()
+    db.repos.content_pipelines.set_targets(
+        [PipelineTarget(id=1, pipeline_id=1, phone="+1234567890", dialog_id=-1001234567890)]
+    )
+
+    import asyncio
+
+    class TimeoutPool(FakeClientPool):
+        async def get_client_by_phone(self, phone):
+            raise asyncio.TimeoutError()
+
+    pool = TimeoutPool(should_succeed=True)
+    service = PublishService(db, pool)
+
+    run = GenerationRun(
+        id=1,
+        pipeline_id=1,
+        generated_text="Test content",
+        moderation_status="approved",
+    )
+
+    results = await service.publish_run(run, make_pipeline())
+
+    assert len(results) == 1
+    assert results[0].success is False
+    assert "Timeout" in results[0].error

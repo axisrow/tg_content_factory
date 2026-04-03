@@ -9,7 +9,7 @@ _TME_LINK_RE = re.compile(
     r"^(?:https?://)?t\.me/\+?([a-zA-Z][a-zA-Z0-9_]{3,31})(?:/\d+)?$"
 )
 
-# Bare username pattern (without @) — 5-32 chars, starts with letter.
+# Bare username pattern (without @) — 4-32 chars, starts with letter.
 _BARE_USERNAME_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9_]{3,31}$")
 
 
@@ -57,7 +57,7 @@ def normalize_identifier(raw: str) -> tuple[str, str]:
 _IDENTIFIER_RE = re.compile(
     r"https?://t\.me/[^\s\"'<>,;)]+"  # full t.me link
     r"|(?<![a-zA-Z0-9/])t\.me/[^\s\"'<>,;)]+"  # bare t.me/ (negative lookbehind)
-    r"|@[a-zA-Z][a-zA-Z0-9_]{3,31}"  # @username (5-32 chars total)
+    r"|@[a-zA-Z][a-zA-Z0-9_]{3,31}"  # @username (4-32 chars total)
     r"|-1\d{9,}",  # negative Telegram ID (-100...)
 )
 

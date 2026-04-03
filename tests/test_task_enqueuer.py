@@ -6,8 +6,88 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from src.models import CollectionTaskType, PipelineRunTaskPayload, SqStatsTaskPayload
+from src.models import (
+    CollectionTaskType,
+    ContentGenerateTaskPayload,
+    ContentPublishTaskPayload,
+    PipelineRunTaskPayload,
+    SqStatsTaskPayload,
+)
 from src.services.task_enqueuer import TaskEnqueuer
+
+# === enqueue_content_generate tests ===
+
+
+@pytest.mark.asyncio
+async def test_enqueue_content_generate_creates_task(task_enqueuer, mock_db):
+    """Creates CONTENT_GENERATE task when no active task exists."""
+    mock_db.repos.tasks.has_active_task = AsyncMock(return_value=False)
+    mock_db.repos.tasks.create_generic_task = AsyncMock(return_value=101)
+
+    result = await task_enqueuer.enqueue_content_generate(pipeline_id=5)
+
+    mock_db.repos.tasks.has_active_task.assert_called_once_with(
+        CollectionTaskType.CONTENT_GENERATE,
+        payload_filter_key="pipeline_id",
+        payload_filter_value=5,
+    )
+    mock_db.repos.tasks.create_generic_task.assert_called_once()
+    args, kwargs = mock_db.repos.tasks.create_generic_task.call_args
+    assert args[0] == CollectionTaskType.CONTENT_GENERATE
+    assert "Content generate #5" in kwargs.get("title", "")
+    payload = kwargs.get("payload")
+    assert isinstance(payload, ContentGenerateTaskPayload)
+    assert payload.pipeline_id == 5
+    assert result == 101
+
+
+@pytest.mark.asyncio
+async def test_enqueue_content_generate_skips_if_active(task_enqueuer, mock_db):
+    """Skips creation if active task for same pipeline exists."""
+    mock_db.repos.tasks.has_active_task = AsyncMock(return_value=True)
+
+    result = await task_enqueuer.enqueue_content_generate(pipeline_id=5)
+
+    mock_db.repos.tasks.create_generic_task.assert_not_called()
+    assert result is None
+
+
+# === enqueue_content_publish tests ===
+
+
+@pytest.mark.asyncio
+async def test_enqueue_content_publish_creates_task(task_enqueuer, mock_db):
+    """Creates CONTENT_PUBLISH task when no active task exists."""
+    mock_db.repos.tasks.has_active_task = AsyncMock(return_value=False)
+    mock_db.repos.tasks.create_generic_task = AsyncMock(return_value=202)
+
+    result = await task_enqueuer.enqueue_content_publish()
+
+    mock_db.repos.tasks.has_active_task.assert_called_once_with(
+        CollectionTaskType.CONTENT_PUBLISH
+    )
+    mock_db.repos.tasks.create_generic_task.assert_called_once()
+    args, kwargs = mock_db.repos.tasks.create_generic_task.call_args
+    assert args[0] == CollectionTaskType.CONTENT_PUBLISH
+    assert "Content publish" in kwargs.get("title", "")
+    payload = kwargs.get("payload")
+    assert isinstance(payload, ContentPublishTaskPayload)
+    assert result == 202
+
+
+@pytest.mark.asyncio
+async def test_enqueue_content_publish_with_pipeline_id(task_enqueuer, mock_db):
+    """Creates CONTENT_PUBLISH task with pipeline_id in payload."""
+    mock_db.repos.tasks.has_active_task = AsyncMock(return_value=False)
+    mock_db.repos.tasks.create_generic_task = AsyncMock(return_value=203)
+
+    result = await task_enqueuer.enqueue_content_publish(pipeline_id=7)
+
+    args, kwargs = mock_db.repos.tasks.create_generic_task.call_args
+    payload = kwargs.get("payload")
+    assert isinstance(payload, ContentPublishTaskPayload)
+    assert payload.pipeline_id == 7
+    assert result == 203
 
 
 @pytest.fixture

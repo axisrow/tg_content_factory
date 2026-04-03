@@ -221,3 +221,107 @@ async def test_retry_policy_with_jitter():
     # Test that delay calculation works
     delay = service._calculate_delay(0)
     assert delay >= 0  # With jitter, delay can vary
+
+
+# === New tests for improved coverage ===
+
+
+@pytest.mark.asyncio
+async def test_error_history_trims_at_max():
+    """Error history is trimmed to _max_history=100 entries."""
+    service = ErrorRecoveryService()
+
+    # Add 150 errors to exceed max
+    for i in range(150):
+        service._record_error(RuntimeError(f"error {i}"), ErrorCategory.TRANSIENT)
+
+    assert len(service._error_history) == 100
+
+
+@pytest.mark.asyncio
+async def test_execute_with_recovery_fatal_error_no_retries():
+    """Fatal errors raise immediately without retries."""
+    service = ErrorRecoveryService(
+        retry_policy=RetryPolicy(max_retries=3, jitter=False)
+    )
+
+    call_count = 0
+
+    async def fatal():
+        nonlocal call_count
+        call_count += 1
+        raise PermissionError("unauthorized access")  # "unauthorized" is in FATAL_ERRORS
+
+    with pytest.raises(PermissionError, match="unauthorized access"):
+        await service.execute_with_recovery(fatal)
+
+    assert call_count == 1  # No retries
+
+
+@pytest.mark.asyncio
+async def test_execute_with_recovery_fatal_error_with_fallback():
+    """Fatal error with fallback returns fallback value."""
+    service = ErrorRecoveryService(
+        retry_policy=RetryPolicy(max_retries=3, jitter=False)
+    )
+
+    async def fallback():
+        return "fallback-value"
+
+    async def fatal():
+        raise PermissionError("forbidden access")  # "forbidden" is in FATAL_ERRORS
+
+    result = await service.execute_with_recovery(fatal, fallback=fallback)
+
+    assert result == "fallback-value"
+
+
+@pytest.mark.asyncio
+async def test_circuit_breaker_recovery_timeout_transition(monkeypatch):
+    """Circuit breaker transitions from open to half_open after recovery timeout."""
+    current_time = {"value": 100.0}
+
+    monkeypatch.setattr(
+        "src.services.error_recovery_service.time.time",
+        lambda: current_time["value"],
+    )
+
+    breaker = CircuitBreaker(
+        CircuitBreakerConfig(failure_threshold=1, recovery_timeout=0.1, half_open_max_calls=1)
+    )
+
+    await breaker.record_failure()  # Opens circuit
+
+    current_time["value"] += 0.15
+
+    allowed, state = await breaker.can_execute()
+    assert allowed is True
+    assert state == "half_open"
+
+
+@pytest.mark.asyncio
+async def test_circuit_breaker_half_open_failure_reopens(monkeypatch):
+    """Failure in half_open state transitions back to open."""
+    current_time = {"value": 100.0}
+
+    monkeypatch.setattr(
+        "src.services.error_recovery_service.time.time",
+        lambda: current_time["value"],
+    )
+
+    breaker = CircuitBreaker(
+        CircuitBreakerConfig(failure_threshold=1, recovery_timeout=0.1, half_open_max_calls=1)
+    )
+
+    await breaker.record_failure()  # Opens circuit
+    current_time["value"] += 0.15
+    allowed, state = await breaker.can_execute()
+    assert allowed is True
+    assert state == "half_open"
+
+    # Failure in half_open should reopen
+    await breaker.record_failure()
+
+    allowed, state = await breaker.can_execute()
+    assert allowed is False
+    assert state == "open"
