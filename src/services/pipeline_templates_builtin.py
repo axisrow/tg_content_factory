@@ -264,7 +264,10 @@ def get_builtin_templates() -> list[PipelineTemplate]:
                     ),
                     _node(
                         "llm_1", PipelineNodeType.LLM_GENERATE, "Генерация ответа",
-                        {"prompt_template": "Напиши ответ на сообщение: {text}", "max_tokens": 500}, 440, 0,
+                        {
+                            "prompt_template": "Напиши ответ на сообщение:\n\n{source_messages}",
+                            "max_tokens": 500,
+                        }, 440, 0,
                     ),
                     _node(
                         "publish_1", PipelineNodeType.PUBLISH, "Публикация ответа",

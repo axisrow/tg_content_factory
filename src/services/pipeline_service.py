@@ -307,13 +307,10 @@ class PipelineService:
         )
         pipeline = pipeline.model_copy(update={"pipeline_json": pipeline_json})
 
+        # Imported pipelines may not include runtime data (source/target IDs valid in
+        # the target environment); allow empty and create as inactive for later config.
         sources = await self._normalize_sources(source_ids) if source_ids else []
         targets = await self._normalize_targets(target_refs) if target_refs else []
-
-        if not sources:
-            raise PipelineValidationError("Выберите хотя бы один источник.")
-        if not targets:
-            raise PipelineValidationError("Выберите хотя бы одну цель публикации.")
 
         return await self._bundle.add(pipeline, sources, targets)
 

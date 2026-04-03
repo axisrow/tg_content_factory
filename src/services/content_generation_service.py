@@ -282,7 +282,10 @@ class ContentGenerationService:
                     max_tokens=max_tokens,
                     temperature=temperature,
                 )
-                refined = result.get("text") or result.get("generated_text") or ""
+                refined = (
+                    result if isinstance(result, str)
+                    else (result.get("text") or result.get("generated_text") or "")
+                )
                 if refined:
                     text = refined
             except Exception:
