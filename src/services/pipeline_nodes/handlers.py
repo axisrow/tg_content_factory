@@ -274,14 +274,19 @@ class ReactHandler(BaseNodeHandler):
         random_emoji_list = node_config.get("random_emojis", [])
 
         for message in messages:
+            acquired_phone: str | None = None
             try:
-                client = await client_pool.get_available_client()
-                if client is None:
+                result = await client_pool.get_available_client()
+                if result is None:
                     break
+                session, acquired_phone = result
                 chosen_emoji = random.choice(random_emoji_list) if random_emoji_list else emoji
-                await client.send_reaction(message.channel_id, message.message_id, chosen_emoji)
+                await session.send_reaction(message.channel_id, message.message_id, chosen_emoji)
             except Exception:
                 logger.warning("ReactHandler: failed to react to message %s", message.message_id, exc_info=True)
+            finally:
+                if acquired_phone is not None:
+                    await client_pool.release_client(acquired_phone)
 
 
 class ForwardHandler(BaseNodeHandler):
@@ -301,14 +306,19 @@ class ForwardHandler(BaseNodeHandler):
             dialog_id = target.get("dialog_id")
             if not phone or not dialog_id:
                 continue
+            acquired_phone: str | None = None
             try:
-                client = await client_pool.get_client_by_phone(phone)
-                if client is None:
+                result = await client_pool.get_client_by_phone(phone)
+                if result is None:
                     continue
+                session, acquired_phone = result
                 for message in messages:
-                    await client.forward_messages(dialog_id, message.message_id, message.channel_id)
+                    await session.forward_messages(dialog_id, message.message_id, message.channel_id)
             except Exception:
                 logger.warning("ForwardHandler: failed to forward to %s", dialog_id, exc_info=True)
+            finally:
+                if acquired_phone is not None:
+                    await client_pool.release_client(acquired_phone)
 
 
 class DeleteMessageHandler(BaseNodeHandler):
@@ -323,15 +333,20 @@ class DeleteMessageHandler(BaseNodeHandler):
         messages = context.get_global("context_messages", [])
 
         for message in messages:
+            acquired_phone: str | None = None
             try:
-                client = await client_pool.get_available_client()
-                if client is None:
+                result = await client_pool.get_available_client()
+                if result is None:
                     break
-                await client.delete_messages(message.channel_id, [message.message_id])
+                session, acquired_phone = result
+                await session.delete_messages(message.channel_id, [message.message_id])
             except Exception:
                 logger.warning(
                     "DeleteMessageHandler: failed to delete message %s", message.message_id, exc_info=True
                 )
+            finally:
+                if acquired_phone is not None:
+                    await client_pool.release_client(acquired_phone)
 
 
 class ConditionHandler(BaseNodeHandler):
