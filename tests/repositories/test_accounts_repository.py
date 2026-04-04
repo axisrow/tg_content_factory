@@ -12,12 +12,6 @@ from src.security.session_cipher import SessionCipher
 
 
 @pytest.fixture
-async def repo(db):
-    """Create repository instance without cipher."""
-    return AccountsRepository(db.db)
-
-
-@pytest.fixture
 def cipher():
     """Create a SessionCipher for encryption tests."""
     return SessionCipher("test-secret-key-12345")

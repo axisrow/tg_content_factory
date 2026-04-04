@@ -2,16 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
-from src.database.repositories.settings import SettingsRepository
-
-
-@pytest.fixture
-async def repo(db):
-    """Create repository instance."""
-    return SettingsRepository(db.db)
-
 
 async def test_get_setting_not_found(repo):
     """Test getting non-existent setting returns None."""

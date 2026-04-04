@@ -5,9 +5,10 @@ import argparse
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from src.config import AppConfig
 from src.database import Database
 from src.models import Account
+
+_PHOTO_LOADER_INIT_DB_TARGET = "src.cli.commands.photo_loader.runtime.init_db"
 
 
 def _ns(**kwargs) -> argparse.Namespace:
@@ -77,7 +78,7 @@ def test_parse_schedule_at_without_tz():
     assert dt.tzinfo is not None
 
 
-def test_dialogs_action(tmp_path, capsys):
+def test_dialogs_action(tmp_path, cli_init_patch, capsys):
     """Test dialogs action prints dialog list."""
     db_path = str(tmp_path / "photo_dialogs.db")
     db = Database(db_path)
@@ -85,19 +86,13 @@ def test_dialogs_action(tmp_path, capsys):
     _setup_photo_db(db)
     asyncio.run(db.close())
 
-    async def fake_init_db(_config_path: str):
-        config = AppConfig()
-        database = Database(db_path)
-        await database.initialize()
-        return config, database
-
     async def fake_init_pool(_config, _db):
         pool = MagicMock()
         pool.disconnect_all = AsyncMock()
         return MagicMock(), pool
 
     with (
-        patch("src.cli.commands.photo_loader.runtime.init_db", side_effect=fake_init_db),
+        cli_init_patch(db, _PHOTO_LOADER_INIT_DB_TARGET),
         patch("src.cli.commands.photo_loader.runtime.init_pool", side_effect=fake_init_pool),
     ):
         from src.cli.commands.photo_loader import run
@@ -141,19 +136,13 @@ def _create_fake_services(task_methods=None, auto_methods=None):
     return FakePhotoTaskService, FakePhotoAutoUploadService
 
 
-def test_send_action(tmp_path, capsys):
+def test_send_action(tmp_path, cli_init_patch, capsys):
     """Test send action sends photo immediately."""
     db_path = str(tmp_path / "photo_send.db")
     db = Database(db_path)
     asyncio.run(db.initialize())
     _setup_photo_db(db)
     asyncio.run(db.close())
-
-    async def fake_init_db(_config_path: str):
-        config = AppConfig()
-        database = Database(db_path)
-        await database.initialize()
-        return config, database
 
     async def fake_init_pool(_config, _db):
         pool = MagicMock()
@@ -168,7 +157,7 @@ def test_send_action(tmp_path, capsys):
     )
 
     with (
-        patch("src.cli.commands.photo_loader.runtime.init_db", side_effect=fake_init_db),
+        cli_init_patch(db, _PHOTO_LOADER_INIT_DB_TARGET),
         patch("src.cli.commands.photo_loader.runtime.init_pool", side_effect=fake_init_pool),
         patch("src.cli.commands.photo_loader.PhotoTaskService", fake_task),
         patch("src.cli.commands.photo_loader.PhotoAutoUploadService", fake_auto),
@@ -190,19 +179,13 @@ def test_send_action(tmp_path, capsys):
     assert "Sent photo item #1" in out
 
 
-def test_schedule_send_action(tmp_path, capsys):
+def test_schedule_send_action(tmp_path, cli_init_patch, capsys):
     """Test schedule-send action schedules photo."""
     db_path = str(tmp_path / "photo_schedule.db")
     db = Database(db_path)
     asyncio.run(db.initialize())
     _setup_photo_db(db)
     asyncio.run(db.close())
-
-    async def fake_init_db(_config_path: str):
-        config = AppConfig()
-        database = Database(db_path)
-        await database.initialize()
-        return config, database
 
     async def fake_init_pool(_config, _db):
         pool = MagicMock()
@@ -217,7 +200,7 @@ def test_schedule_send_action(tmp_path, capsys):
     )
 
     with (
-        patch("src.cli.commands.photo_loader.runtime.init_db", side_effect=fake_init_db),
+        cli_init_patch(db, _PHOTO_LOADER_INIT_DB_TARGET),
         patch("src.cli.commands.photo_loader.runtime.init_pool", side_effect=fake_init_pool),
         patch("src.cli.commands.photo_loader.PhotoTaskService", fake_task),
         patch("src.cli.commands.photo_loader.PhotoAutoUploadService", fake_auto),
@@ -240,19 +223,13 @@ def test_schedule_send_action(tmp_path, capsys):
     assert "Scheduled photo item #2" in out
 
 
-def test_batch_create_action(tmp_path, capsys):
+def test_batch_create_action(tmp_path, cli_init_patch, capsys):
     """Test batch-create action creates photo batch."""
     db_path = str(tmp_path / "photo_batch_create.db")
     db = Database(db_path)
     asyncio.run(db.initialize())
     _setup_photo_db(db)
     asyncio.run(db.close())
-
-    async def fake_init_db(_config_path: str):
-        config = AppConfig()
-        database = Database(db_path)
-        await database.initialize()
-        return config, database
 
     async def fake_init_pool(_config, _db):
         pool = MagicMock()
@@ -270,7 +247,7 @@ def test_batch_create_action(tmp_path, capsys):
     )
 
     with (
-        patch("src.cli.commands.photo_loader.runtime.init_db", side_effect=fake_init_db),
+        cli_init_patch(db, _PHOTO_LOADER_INIT_DB_TARGET),
         patch("src.cli.commands.photo_loader.runtime.init_pool", side_effect=fake_init_pool),
         patch("src.cli.commands.photo_loader.PhotoTaskService", fake_task),
         patch("src.cli.commands.photo_loader.PhotoAutoUploadService", fake_auto),
@@ -291,19 +268,13 @@ def test_batch_create_action(tmp_path, capsys):
     assert "Created photo batch #3" in out
 
 
-def test_batch_list_action(tmp_path, capsys):
+def test_batch_list_action(tmp_path, cli_init_patch, capsys):
     """Test batch-list action lists batches."""
     db_path = str(tmp_path / "photo_batch_list.db")
     db = Database(db_path)
     asyncio.run(db.initialize())
     _setup_photo_db(db)
     asyncio.run(db.close())
-
-    async def fake_init_db(_config_path: str):
-        config = AppConfig()
-        database = Database(db_path)
-        await database.initialize()
-        return config, database
 
     async def fake_init_pool(_config, _db):
         pool = MagicMock()
@@ -322,7 +293,7 @@ def test_batch_list_action(tmp_path, capsys):
     )
 
     with (
-        patch("src.cli.commands.photo_loader.runtime.init_db", side_effect=fake_init_db),
+        cli_init_patch(db, _PHOTO_LOADER_INIT_DB_TARGET),
         patch("src.cli.commands.photo_loader.runtime.init_pool", side_effect=fake_init_pool),
         patch("src.cli.commands.photo_loader.PhotoTaskService", fake_task),
         patch("src.cli.commands.photo_loader.PhotoAutoUploadService", fake_auto),
@@ -336,19 +307,13 @@ def test_batch_list_action(tmp_path, capsys):
     assert "#2" in out
 
 
-def test_auto_create_action(tmp_path, capsys):
+def test_auto_create_action(tmp_path, cli_init_patch, capsys):
     """Test auto-create action creates auto upload job."""
     db_path = str(tmp_path / "photo_auto_create.db")
     db = Database(db_path)
     asyncio.run(db.initialize())
     _setup_photo_db(db)
     asyncio.run(db.close())
-
-    async def fake_init_db(_config_path: str):
-        config = AppConfig()
-        database = Database(db_path)
-        await database.initialize()
-        return config, database
 
     async def fake_init_pool(_config, _db):
         pool = MagicMock()
@@ -361,7 +326,7 @@ def test_auto_create_action(tmp_path, capsys):
     fake_task, fake_auto = _create_fake_services(auto_methods={"create_job": AsyncMock(return_value=4)})
 
     with (
-        patch("src.cli.commands.photo_loader.runtime.init_db", side_effect=fake_init_db),
+        cli_init_patch(db, _PHOTO_LOADER_INIT_DB_TARGET),
         patch("src.cli.commands.photo_loader.runtime.init_pool", side_effect=fake_init_pool),
         patch("src.cli.commands.photo_loader.PhotoTaskService", fake_task),
         patch("src.cli.commands.photo_loader.PhotoAutoUploadService", fake_auto),
@@ -384,19 +349,13 @@ def test_auto_create_action(tmp_path, capsys):
     assert "Created auto job #4" in out
 
 
-def test_auto_list_action(tmp_path, capsys):
+def test_auto_list_action(tmp_path, cli_init_patch, capsys):
     """Test auto-list action lists auto jobs."""
     db_path = str(tmp_path / "photo_auto_list.db")
     db = Database(db_path)
     asyncio.run(db.initialize())
     _setup_photo_db(db)
     asyncio.run(db.close())
-
-    async def fake_init_db(_config_path: str):
-        config = AppConfig()
-        database = Database(db_path)
-        await database.initialize()
-        return config, database
 
     async def fake_init_pool(_config, _db):
         pool = MagicMock()
@@ -420,7 +379,7 @@ def test_auto_list_action(tmp_path, capsys):
     )
 
     with (
-        patch("src.cli.commands.photo_loader.runtime.init_db", side_effect=fake_init_db),
+        cli_init_patch(db, _PHOTO_LOADER_INIT_DB_TARGET),
         patch("src.cli.commands.photo_loader.runtime.init_pool", side_effect=fake_init_pool),
         patch("src.cli.commands.photo_loader.PhotoTaskService", fake_task),
         patch("src.cli.commands.photo_loader.PhotoAutoUploadService", fake_auto),
@@ -434,19 +393,13 @@ def test_auto_list_action(tmp_path, capsys):
     assert "/tmp/photos" in out
 
 
-def test_auto_toggle_action(tmp_path, capsys):
+def test_auto_toggle_action(tmp_path, cli_init_patch, capsys):
     """Test auto-toggle action toggles job active state."""
     db_path = str(tmp_path / "photo_auto_toggle.db")
     db = Database(db_path)
     asyncio.run(db.initialize())
     _setup_photo_db(db)
     asyncio.run(db.close())
-
-    async def fake_init_db(_config_path: str):
-        config = AppConfig()
-        database = Database(db_path)
-        await database.initialize()
-        return config, database
 
     async def fake_init_pool(_config, _db):
         pool = MagicMock()
@@ -461,7 +414,7 @@ def test_auto_toggle_action(tmp_path, capsys):
     )
 
     with (
-        patch("src.cli.commands.photo_loader.runtime.init_db", side_effect=fake_init_db),
+        cli_init_patch(db, _PHOTO_LOADER_INIT_DB_TARGET),
         patch("src.cli.commands.photo_loader.runtime.init_pool", side_effect=fake_init_pool),
         patch("src.cli.commands.photo_loader.PhotoTaskService", fake_task),
         patch("src.cli.commands.photo_loader.PhotoAutoUploadService", fake_auto),
@@ -474,19 +427,13 @@ def test_auto_toggle_action(tmp_path, capsys):
     assert "Toggled auto job #1" in out
 
 
-def test_auto_toggle_not_found(tmp_path, capsys):
+def test_auto_toggle_not_found(tmp_path, cli_init_patch, capsys):
     """Test auto-toggle with non-existent job."""
     db_path = str(tmp_path / "photo_auto_toggle_nf.db")
     db = Database(db_path)
     asyncio.run(db.initialize())
     _setup_photo_db(db)
     asyncio.run(db.close())
-
-    async def fake_init_db(_config_path: str):
-        config = AppConfig()
-        database = Database(db_path)
-        await database.initialize()
-        return config, database
 
     async def fake_init_pool(_config, _db):
         pool = MagicMock()
@@ -496,7 +443,7 @@ def test_auto_toggle_not_found(tmp_path, capsys):
     fake_task, fake_auto = _create_fake_services(auto_methods={"get_job": AsyncMock(return_value=None)})
 
     with (
-        patch("src.cli.commands.photo_loader.runtime.init_db", side_effect=fake_init_db),
+        cli_init_patch(db, _PHOTO_LOADER_INIT_DB_TARGET),
         patch("src.cli.commands.photo_loader.runtime.init_pool", side_effect=fake_init_pool),
         patch("src.cli.commands.photo_loader.PhotoTaskService", fake_task),
         patch("src.cli.commands.photo_loader.PhotoAutoUploadService", fake_auto),
@@ -509,19 +456,13 @@ def test_auto_toggle_not_found(tmp_path, capsys):
     assert "not found" in out
 
 
-def test_run_due_action(tmp_path, capsys):
+def test_run_due_action(tmp_path, cli_init_patch, capsys):
     """Test run-due action processes due items and jobs."""
     db_path = str(tmp_path / "photo_run_due.db")
     db = Database(db_path)
     asyncio.run(db.initialize())
     _setup_photo_db(db)
     asyncio.run(db.close())
-
-    async def fake_init_db(_config_path: str):
-        config = AppConfig()
-        database = Database(db_path)
-        await database.initialize()
-        return config, database
 
     async def fake_init_pool(_config, _db):
         pool = MagicMock()
@@ -534,7 +475,7 @@ def test_run_due_action(tmp_path, capsys):
     )
 
     with (
-        patch("src.cli.commands.photo_loader.runtime.init_db", side_effect=fake_init_db),
+        cli_init_patch(db, _PHOTO_LOADER_INIT_DB_TARGET),
         patch("src.cli.commands.photo_loader.runtime.init_pool", side_effect=fake_init_pool),
         patch("src.cli.commands.photo_loader.PhotoTaskService", fake_task),
         patch("src.cli.commands.photo_loader.PhotoAutoUploadService", fake_auto),
@@ -548,19 +489,13 @@ def test_run_due_action(tmp_path, capsys):
     assert "auto_jobs=2" in out
 
 
-def test_auto_delete_action(tmp_path, capsys):
+def test_auto_delete_action(tmp_path, cli_init_patch, capsys):
     """Test auto-delete action deletes job."""
     db_path = str(tmp_path / "photo_auto_delete.db")
     db = Database(db_path)
     asyncio.run(db.initialize())
     _setup_photo_db(db)
     asyncio.run(db.close())
-
-    async def fake_init_db(_config_path: str):
-        config = AppConfig()
-        database = Database(db_path)
-        await database.initialize()
-        return config, database
 
     async def fake_init_pool(_config, _db):
         pool = MagicMock()
@@ -570,7 +505,7 @@ def test_auto_delete_action(tmp_path, capsys):
     fake_task, fake_auto = _create_fake_services(auto_methods={"delete_job": AsyncMock(return_value=None)})
 
     with (
-        patch("src.cli.commands.photo_loader.runtime.init_db", side_effect=fake_init_db),
+        cli_init_patch(db, _PHOTO_LOADER_INIT_DB_TARGET),
         patch("src.cli.commands.photo_loader.runtime.init_pool", side_effect=fake_init_pool),
         patch("src.cli.commands.photo_loader.PhotoTaskService", fake_task),
         patch("src.cli.commands.photo_loader.PhotoAutoUploadService", fake_auto),
@@ -583,19 +518,13 @@ def test_auto_delete_action(tmp_path, capsys):
     assert "Deleted auto job #1" in out
 
 
-def test_batch_cancel_action(tmp_path, capsys):
+def test_batch_cancel_action(tmp_path, cli_init_patch, capsys):
     """Test batch-cancel action cancels item."""
     db_path = str(tmp_path / "photo_batch_cancel.db")
     db = Database(db_path)
     asyncio.run(db.initialize())
     _setup_photo_db(db)
     asyncio.run(db.close())
-
-    async def fake_init_db(_config_path: str):
-        config = AppConfig()
-        database = Database(db_path)
-        await database.initialize()
-        return config, database
 
     async def fake_init_pool(_config, _db):
         pool = MagicMock()
@@ -605,7 +534,7 @@ def test_batch_cancel_action(tmp_path, capsys):
     fake_task, fake_auto = _create_fake_services(task_methods={"cancel_item": AsyncMock(return_value=True)})
 
     with (
-        patch("src.cli.commands.photo_loader.runtime.init_db", side_effect=fake_init_db),
+        cli_init_patch(db, _PHOTO_LOADER_INIT_DB_TARGET),
         patch("src.cli.commands.photo_loader.runtime.init_pool", side_effect=fake_init_pool),
         patch("src.cli.commands.photo_loader.PhotoTaskService", fake_task),
         patch("src.cli.commands.photo_loader.PhotoAutoUploadService", fake_auto),
@@ -618,19 +547,13 @@ def test_batch_cancel_action(tmp_path, capsys):
     assert "Cancelled" in out
 
 
-def test_auto_update_action(tmp_path, capsys):
+def test_auto_update_action(tmp_path, cli_init_patch, capsys):
     """Test auto-update action updates job."""
     db_path = str(tmp_path / "photo_auto_update.db")
     db = Database(db_path)
     asyncio.run(db.initialize())
     _setup_photo_db(db)
     asyncio.run(db.close())
-
-    async def fake_init_db(_config_path: str):
-        config = AppConfig()
-        database = Database(db_path)
-        await database.initialize()
-        return config, database
 
     async def fake_init_pool(_config, _db):
         pool = MagicMock()
@@ -640,7 +563,7 @@ def test_auto_update_action(tmp_path, capsys):
     fake_task, fake_auto = _create_fake_services(auto_methods={"update_job": AsyncMock(return_value=None)})
 
     with (
-        patch("src.cli.commands.photo_loader.runtime.init_db", side_effect=fake_init_db),
+        cli_init_patch(db, _PHOTO_LOADER_INIT_DB_TARGET),
         patch("src.cli.commands.photo_loader.runtime.init_pool", side_effect=fake_init_pool),
         patch("src.cli.commands.photo_loader.PhotoTaskService", fake_task),
         patch("src.cli.commands.photo_loader.PhotoAutoUploadService", fake_auto),

@@ -431,7 +431,7 @@ def test_clipboard_reads_from_native_tool(monkeypatch):
 class TestAgentChatOneShotMode:
     """Tests for `agent chat -p <message>` one-shot mode."""
 
-    def _run_chat(self, cli_env, prompt: str, thread_id=None, monkeypatch=None, capsys=None):
+    def _run_chat(self, cli_env, prompt: str, thread_id=None, cli_init_patch=None, monkeypatch=None, capsys=None):
         """Helper: run agent chat in one-shot mode with mocked AgentManager."""
         from unittest.mock import MagicMock
         from unittest.mock import patch as _patch
@@ -453,23 +453,20 @@ class TestAgentChatOneShotMode:
             yield assistant_msg
             yield result_msg
 
-        async def fake_init_db(_path):
-            return AppConfig(), cli_env
-
         with (
-            _patch("src.cli.runtime.init_db", side_effect=fake_init_db),
+            cli_init_patch(cli_env, "src.cli.runtime.init_db"),
             _patch("src.agent.manager.query", mock_query),
         ):
             run(_ns(agent_action="chat", prompt=prompt, thread_id=thread_id, model=None))
 
-    def test_one_shot_prints_response(self, cli_env, capsys, monkeypatch):
-        self._run_chat(cli_env, "hello", monkeypatch=monkeypatch)
+    def test_one_shot_prints_response(self, cli_env, cli_init_patch, capsys, monkeypatch):
+        self._run_chat(cli_env, "hello", cli_init_patch=cli_init_patch, monkeypatch=monkeypatch)
         assert "one-shot reply" in capsys.readouterr().out
 
-    def test_one_shot_creates_thread_if_none(self, cli_env, monkeypatch):
+    def test_one_shot_creates_thread_if_none(self, cli_env, cli_init_patch, monkeypatch):
         import sqlite3
 
-        self._run_chat(cli_env, "hi", monkeypatch=monkeypatch)
+        self._run_chat(cli_env, "hi", cli_init_patch=cli_init_patch, monkeypatch=monkeypatch)
         conn = sqlite3.connect(cli_env._db_path)
         try:
             count = conn.execute("SELECT COUNT(*) FROM agent_threads").fetchone()[0]
@@ -477,11 +474,11 @@ class TestAgentChatOneShotMode:
             conn.close()
         assert count >= 1
 
-    def test_one_shot_uses_existing_thread(self, cli_env, monkeypatch):
+    def test_one_shot_uses_existing_thread(self, cli_env, cli_init_patch, monkeypatch):
         import sqlite3
 
         tid = asyncio.run(cli_env.create_agent_thread("existing"))
-        self._run_chat(cli_env, "hi", thread_id=tid, monkeypatch=monkeypatch)
+        self._run_chat(cli_env, "hi", thread_id=tid, cli_init_patch=cli_init_patch, monkeypatch=monkeypatch)
         # CLI closes the aiosqlite connection, use raw sqlite3 to read state
         conn = sqlite3.connect(cli_env._db_path)
         conn.row_factory = sqlite3.Row
@@ -493,7 +490,7 @@ class TestAgentChatOneShotMode:
             conn.close()
         assert any(r["role"] == "user" and r["content"] == "hi" for r in rows)
 
-    def test_one_shot_prints_status_to_stderr(self, cli_env, capsys, monkeypatch):
+    def test_one_shot_prints_status_to_stderr(self, cli_env, cli_init_patch, capsys, monkeypatch):
         """Status events are printed to stderr, not stdout, in one-shot mode."""
         from unittest.mock import patch as _patch
 
@@ -502,9 +499,6 @@ class TestAgentChatOneShotMode:
 
         monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
 
-        async def fake_init_db(_path):
-            return AppConfig(), cli_env
-
         async def fake_chat_stream(*_a, **_kw):
             yield 'data: {"type": "status", "text": "Создание клиента"}\n\n'
             yield 'data: {"type": "status", "text": "Запрос к API"}\n\n'
@@ -512,7 +506,7 @@ class TestAgentChatOneShotMode:
             yield 'data: {"done": true, "full_text": "reply text"}\n\n'
 
         with (
-            _patch("src.cli.runtime.init_db", side_effect=fake_init_db),
+            cli_init_patch(cli_env, "src.cli.runtime.init_db"),
             _patch("src.agent.manager.AgentManager.chat_stream", fake_chat_stream),
         ):
             run(_ns(agent_action="chat", prompt="test", thread_id=None, model=None))
@@ -532,7 +526,7 @@ class TestAgentChatOneShotMode:
 class TestAgentChatInteractiveMode:
     """Tests that `agent chat` without --prompt launches TUI."""
 
-    def test_no_prompt_launches_tui(self, cli_env, monkeypatch):
+    def test_no_prompt_launches_tui(self, cli_env, cli_init_patch, monkeypatch):
         """When prompt is None, AgentTuiApp.run_async() is called."""
         from unittest.mock import AsyncMock
         from unittest.mock import patch as _patch
@@ -542,13 +536,10 @@ class TestAgentChatInteractiveMode:
 
         monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
 
-        async def fake_init_db(_path):
-            return AppConfig(), cli_env
-
         mock_run_async = AsyncMock()
 
         with (
-            _patch("src.cli.runtime.init_db", side_effect=fake_init_db),
+            cli_init_patch(cli_env, "src.cli.runtime.init_db"),
             _patch("src.cli.commands.agent_tui.AgentTuiApp.run_async", mock_run_async),
         ):
             run(_ns(agent_action="chat", prompt=None, thread_id=None, model=None))

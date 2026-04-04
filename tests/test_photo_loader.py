@@ -760,7 +760,7 @@ def test_photo_loader_cli_parser():
     assert args.mode == "album"
 
 
-def test_photo_loader_cli_send_command(tmp_path, capsys):
+def test_photo_loader_cli_send_command(tmp_path, cli_init_patch, capsys):
     image = tmp_path / "one.jpg"
     image.write_bytes(b"x")
     db = Database(str(tmp_path / "cli.db"))
@@ -777,11 +777,8 @@ def test_photo_loader_cli_send_command(tmp_path, capsys):
 
         return TelegramAuth(0, ""), fake_pool
 
-    async def fake_init_db(config_path):
-        return AppConfig(), db
-
     with (
-        patch("src.cli.runtime.init_db", side_effect=fake_init_db),
+        cli_init_patch(db, "src.cli.runtime.init_db"),
         patch("src.cli.runtime.init_pool", side_effect=fake_init_pool),
     ):
         from src.cli.commands.photo_loader import run

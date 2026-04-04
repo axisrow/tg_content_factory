@@ -6,7 +6,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.config import AppConfig
 from tests.helpers import cli_ns
 
 ISSUE_303_PARSE_CASES = {
@@ -92,13 +91,10 @@ def test_dialogs_help_still_uses_dialogs_usage(capsys):
     assert "mark-read" in out
 
 
-def test_dialogs_run_is_primary_entrypoint(cli_db, capsys):
+def test_dialogs_run_is_primary_entrypoint(cli_db, cli_init_patch, capsys):
     pool = MagicMock()
     pool.clients = {"+79001234567": AsyncMock()}
     pool.disconnect_all = AsyncMock()
-
-    async def fake_init_db(_config_path):
-        return AppConfig(), cli_db
 
     async def fake_init_pool(config, db):
         return MagicMock(), pool
@@ -114,7 +110,7 @@ def test_dialogs_run_is_primary_entrypoint(cli_db, capsys):
     ]
 
     with (
-        patch("src.cli.commands.dialogs.runtime.init_db", side_effect=fake_init_db),
+        cli_init_patch(cli_db, "src.cli.commands.dialogs.runtime.init_db"),
         patch("src.cli.commands.dialogs.runtime.init_pool", side_effect=fake_init_pool),
         patch(
             "src.cli.commands.dialogs.ChannelService.get_my_dialogs",
@@ -131,19 +127,16 @@ def test_dialogs_run_is_primary_entrypoint(cli_db, capsys):
     assert "@primary_dialogs" in out
 
 
-def test_dialogs_legacy_alias_remains_compatible(cli_db, capsys):
+def test_dialogs_legacy_alias_remains_compatible(cli_db, cli_init_patch, capsys):
     pool = MagicMock()
     pool.clients = {"+79001234567": AsyncMock()}
     pool.disconnect_all = AsyncMock()
-
-    async def fake_init_db(_config_path):
-        return AppConfig(), cli_db
 
     async def fake_init_pool(config, db):
         return MagicMock(), pool
 
     with (
-        patch("src.cli.commands.dialogs.runtime.init_db", side_effect=fake_init_db),
+        cli_init_patch(cli_db, "src.cli.commands.dialogs.runtime.init_db"),
         patch("src.cli.commands.dialogs.runtime.init_pool", side_effect=fake_init_pool),
         patch(
             "src.cli.commands.dialogs.ChannelService.get_my_dialogs",

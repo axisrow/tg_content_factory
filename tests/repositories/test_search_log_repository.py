@@ -2,16 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
-from src.database.repositories.search_log import SearchLogRepository
-
-
-@pytest.fixture
-async def repo(db):
-    """Create repository instance."""
-    return SearchLogRepository(db.db)
-
 
 async def test_log_search(repo):
     """Test logging a search."""

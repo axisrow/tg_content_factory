@@ -12,12 +12,6 @@ from src.models import Message, SearchQuery
 
 
 @pytest.fixture
-async def repo(db):
-    """Create repository instance."""
-    return MessagesRepository(db.db)
-
-
-@pytest.fixture
 async def channels_repo(db):
     """Create channels repository instance."""
     return ChannelsRepository(db.db)

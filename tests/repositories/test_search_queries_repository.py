@@ -4,16 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-import pytest
-
-from src.database.repositories.search_queries import SearchQueriesRepository
 from src.models import SearchQuery
-
-
-@pytest.fixture
-async def repo(db):
-    """Create repository instance."""
-    return SearchQueriesRepository(db.db)
 
 
 def make_query(query: str = "test query", **kwargs) -> SearchQuery:
