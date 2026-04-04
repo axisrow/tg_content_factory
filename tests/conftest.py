@@ -318,9 +318,12 @@ def pytest_runtest_setup(item):
         pytest.fail(message, pytrace=False)
 
 
-def pytest_collection_modifyitems(config, items):
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    if not config.pluginmanager.hasplugin("xdist"):
+        return
+
     for item in items:
-        if item.get_closest_marker("aiosqlite_serial") and not item.get_closest_marker("xdist_group"):
+        if item.get_closest_marker("aiosqlite_serial"):
             item.add_marker(pytest.mark.xdist_group("aiosqlite_serial"))
 
 

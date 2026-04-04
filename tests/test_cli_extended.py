@@ -13,6 +13,8 @@ from src.config import AppConfig
 from src.models import Channel, ChannelStats, CollectionTaskStatus
 from src.telegram.flood_wait import FloodWaitInfo
 
+pytestmark = pytest.mark.aiosqlite_serial
+
 
 def _ns(**kwargs) -> argparse.Namespace:
     defaults = {"config": "config.yaml"}
@@ -30,6 +32,12 @@ def _chan(channel_id, title, username="", ch_type="channel", deactivate=False):
     }
 
 
+def _ensure_db_open(db):
+    """Re-open cli_db if the CLI command closed its connection."""
+    if db._connection.db is None:
+        asyncio.run(db.initialize())
+
+
 @pytest.fixture
 def cli_env(cli_db, cli_init_patch):
     with cli_init_patch(
@@ -37,7 +45,6 @@ def cli_env(cli_db, cli_init_patch):
         "src.cli.commands.channel.runtime.init_db",
         "src.cli.commands.test.runtime.init_db",
         config=AppConfig(),
-        fresh_database=True,
     ):
         yield cli_db
 
@@ -83,6 +90,7 @@ class TestCLIChannelExtended:
         assert "Added channel: New Channel (12345)" in out
 
         # Verify it was added to DB
+        _ensure_db_open(db)
         ch = asyncio.run(db.get_channel_by_channel_id(12345))
         assert ch is not None
         assert ch.title == "New Channel"
@@ -102,6 +110,7 @@ class TestCLIChannelExtended:
         out = capsys.readouterr().out
         assert "WARN: deactivated, type=scam" in out
 
+        _ensure_db_open(db)
         ch = asyncio.run(db.get_channel_by_channel_id(67890))
         assert ch is not None
         assert ch.is_active is False
@@ -229,6 +238,7 @@ class TestCLIChannelExtended:
         assert "OK: T1 → supergroup" in out
         assert "DEACTIVATED (scam): T2" in out
 
+        _ensure_db_open(db)
         ch1 = asyncio.run(db.get_channel_by_channel_id(101))
         assert ch1.channel_type == "supergroup"
         ch2 = asyncio.run(db.get_channel_by_channel_id(102))
@@ -350,6 +360,7 @@ class TestCLIChannelExtended:
         assert "Collected 42 messages" in out
 
         # Verify task status
+        _ensure_db_open(db)
         tasks = asyncio.run(db.get_collection_tasks(limit=1))
         assert tasks[0].status == CollectionTaskStatus.COMPLETED
         assert tasks[0].messages_collected == 42
@@ -460,6 +471,7 @@ class TestCLIChannelExtended:
                         identifier=str(ch_id),
                     )
                 )
+        _ensure_db_open(db)
         tasks = asyncio.run(db.get_collection_tasks(limit=1))
         assert tasks[0].status == CollectionTaskStatus.FAILED
         assert "collect fail" in tasks[0].error

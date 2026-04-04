@@ -760,6 +760,7 @@ def test_photo_loader_cli_parser():
     assert args.mode == "album"
 
 
+@pytest.mark.aiosqlite_serial
 def test_photo_loader_cli_send_command(tmp_path, cli_init_patch, capsys):
     image = tmp_path / "one.jpg"
     image.write_bytes(b"x")
@@ -778,7 +779,7 @@ def test_photo_loader_cli_send_command(tmp_path, cli_init_patch, capsys):
         return TelegramAuth(0, ""), fake_pool
 
     with (
-        cli_init_patch(db, "src.cli.runtime.init_db"),
+        cli_init_patch(db, "src.cli.runtime.init_db", config=AppConfig()),
         patch("src.cli.runtime.init_pool", side_effect=fake_init_pool),
     ):
         from src.cli.commands.photo_loader import run

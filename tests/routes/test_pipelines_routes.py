@@ -23,6 +23,7 @@ _ADD_DATA = {
 @pytest.fixture
 async def client(base_app):
     app, db, pool_mock = base_app
+
     pool_mock.clients = {"+1234567890": MagicMock()}
     pool_mock.get_dialogs_for_phone = AsyncMock(return_value=[])
     await db.repos.dialog_cache.replace_dialogs(
@@ -39,6 +40,7 @@ async def client(base_app):
         headers={"Authorization": f"Basic {auth_header}", "Origin": "http://test"},
     ) as c:
         yield c
+
 
 
 @pytest.mark.asyncio

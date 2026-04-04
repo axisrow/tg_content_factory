@@ -37,7 +37,6 @@ async def client(base_app):
     ) as c:
         yield c
 
-
 @pytest.fixture
 async def client_no_buffer(base_app):
     """Create test client without log buffer."""
@@ -64,6 +63,7 @@ async def client_no_buffer(base_app):
         headers={"Authorization": f"Basic {auth_header}", "Origin": "http://test"},
     ) as c:
         yield c
+
 
 
 @pytest.mark.asyncio

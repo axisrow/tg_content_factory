@@ -24,18 +24,18 @@ def make_query(query: str = "test query", **kwargs) -> SearchQuery:
 # add tests
 
 
-async def test_add_basic(repo):
+async def test_add_basic(search_queries_repo):
     """Test adding a basic search query."""
     sq = make_query("hello world")
-    pk = await repo.add(sq)
+    pk = await search_queries_repo.add(sq)
     assert pk > 0
 
-    result = await repo.get_by_id(pk)
+    result = await search_queries_repo.get_by_id(pk)
     assert result is not None
     assert result.query == "hello world"
 
 
-async def test_add_with_all_fields(repo):
+async def test_add_with_all_fields(search_queries_repo):
     """Test adding query with all fields."""
     sq = SearchQuery(
         query="test",
@@ -48,9 +48,9 @@ async def test_add_with_all_fields(repo):
         exclude_patterns="spam\njunk",
         max_length=500,
     )
-    pk = await repo.add(sq)
+    pk = await search_queries_repo.add(sq)
 
-    result = await repo.get_by_id(pk)
+    result = await search_queries_repo.get_by_id(pk)
     assert result.is_regex is True
     assert result.is_active is False
     assert result.notify_on_collect is True
@@ -63,42 +63,42 @@ async def test_add_with_all_fields(repo):
 # get_all tests
 
 
-async def test_get_all_empty(repo):
+async def test_get_all_empty(search_queries_repo):
     """Test getting all queries when none exist."""
-    result = await repo.get_all()
+    result = await search_queries_repo.get_all()
     assert result == []
 
 
-async def test_get_all_multiple(repo):
+async def test_get_all_multiple(search_queries_repo):
     """Test getting all queries."""
-    await repo.add(make_query("query1"))
-    await repo.add(make_query("query2"))
-    await repo.add(make_query("query3"))
+    await search_queries_repo.add(make_query("query1"))
+    await search_queries_repo.add(make_query("query2"))
+    await search_queries_repo.add(make_query("query3"))
 
-    result = await repo.get_all()
+    result = await search_queries_repo.get_all()
     assert len(result) == 3
     queries = {q.query for q in result}
     assert queries == {"query1", "query2", "query3"}
 
 
-async def test_get_all_active_only(repo):
+async def test_get_all_active_only(search_queries_repo):
     """Test getting only active queries."""
-    await repo.add(make_query("active1", is_active=True))
-    await repo.add(make_query("inactive", is_active=False))
-    await repo.add(make_query("active2", is_active=True))
+    await search_queries_repo.add(make_query("active1", is_active=True))
+    await search_queries_repo.add(make_query("inactive", is_active=False))
+    await search_queries_repo.add(make_query("active2", is_active=True))
 
-    result = await repo.get_all(active_only=True)
+    result = await search_queries_repo.get_all(active_only=True)
     assert len(result) == 2
     assert all(q.is_active for q in result)
 
 
-async def test_get_all_ordered_by_id(repo):
+async def test_get_all_ordered_by_id(search_queries_repo):
     """Test that queries are ordered by id."""
-    id1 = await repo.add(make_query("first"))
-    id2 = await repo.add(make_query("second"))
-    id3 = await repo.add(make_query("third"))
+    id1 = await search_queries_repo.add(make_query("first"))
+    id2 = await search_queries_repo.add(make_query("second"))
+    id3 = await search_queries_repo.add(make_query("third"))
 
-    result = await repo.get_all()
+    result = await search_queries_repo.get_all()
     assert result[0].id == id1
     assert result[1].id == id2
     assert result[2].id == id3
@@ -107,112 +107,112 @@ async def test_get_all_ordered_by_id(repo):
 # get_by_id tests
 
 
-async def test_get_by_id_found(repo):
+async def test_get_by_id_found(search_queries_repo):
     """Test getting query by id."""
     sq = make_query("test query")
-    pk = await repo.add(sq)
+    pk = await search_queries_repo.add(sq)
 
-    result = await repo.get_by_id(pk)
+    result = await search_queries_repo.get_by_id(pk)
     assert result is not None
     assert result.query == "test query"
 
 
-async def test_get_by_id_not_found(repo):
+async def test_get_by_id_not_found(search_queries_repo):
     """Test getting non-existent query."""
-    result = await repo.get_by_id(999)
+    result = await search_queries_repo.get_by_id(999)
     assert result is None
 
 
 # set_active tests
 
 
-async def test_set_active_true(repo):
+async def test_set_active_true(search_queries_repo):
     """Test activating a query."""
-    pk = await repo.add(make_query("test", is_active=False))
-    await repo.set_active(pk, True)
+    pk = await search_queries_repo.add(make_query("test", is_active=False))
+    await search_queries_repo.set_active(pk, True)
 
-    result = await repo.get_by_id(pk)
+    result = await search_queries_repo.get_by_id(pk)
     assert result.is_active is True
 
 
-async def test_set_active_false(repo):
+async def test_set_active_false(search_queries_repo):
     """Test deactivating a query."""
-    pk = await repo.add(make_query("test", is_active=True))
-    await repo.set_active(pk, False)
+    pk = await search_queries_repo.add(make_query("test", is_active=True))
+    await search_queries_repo.set_active(pk, False)
 
-    result = await repo.get_by_id(pk)
+    result = await search_queries_repo.get_by_id(pk)
     assert result.is_active is False
 
 
 # update tests
 
 
-async def test_update_query(repo):
+async def test_update_query(search_queries_repo):
     """Test updating a query."""
-    pk = await repo.add(make_query("old query"))
+    pk = await search_queries_repo.add(make_query("old query"))
 
     updated = make_query("new query", is_regex=True, interval_minutes=120)
-    await repo.update(pk, updated)
+    await search_queries_repo.update(pk, updated)
 
-    result = await repo.get_by_id(pk)
+    result = await search_queries_repo.get_by_id(pk)
     assert result.query == "new query"
     assert result.is_regex is True
     assert result.interval_minutes == 120
 
 
-async def test_update_preserves_id(repo):
+async def test_update_preserves_id(search_queries_repo):
     """Test that update preserves the original id."""
-    pk = await repo.add(make_query("test"))
-    await repo.update(pk, make_query("updated"))
+    pk = await search_queries_repo.add(make_query("test"))
+    await search_queries_repo.update(pk, make_query("updated"))
 
-    result = await repo.get_by_id(pk)
+    result = await search_queries_repo.get_by_id(pk)
     assert result.id == pk
 
 
 # delete tests
 
 
-async def test_delete(repo):
+async def test_delete(search_queries_repo):
     """Test deleting a query."""
-    pk = await repo.add(make_query("test"))
-    await repo.delete(pk)
+    pk = await search_queries_repo.add(make_query("test"))
+    await search_queries_repo.delete(pk)
 
-    result = await repo.get_by_id(pk)
+    result = await search_queries_repo.get_by_id(pk)
     assert result is None
 
 
-async def test_delete_cascades_stats(repo):
+async def test_delete_cascades_stats(search_queries_repo):
     """Test that deleting a query also deletes its stats."""
-    pk = await repo.add(make_query("test"))
-    await repo.record_stat(pk, 10)
+    pk = await search_queries_repo.add(make_query("test"))
+    await search_queries_repo.record_stat(pk, 10)
 
-    await repo.delete(pk)
+    await search_queries_repo.delete(pk)
 
     # Verify stats are gone
-    stats = await repo.get_daily_stats(pk)
+    stats = await search_queries_repo.get_daily_stats(pk)
     assert stats == []
 
 
 # record_stat tests
 
 
-async def test_record_stat(repo):
+async def test_record_stat(search_queries_repo):
     """Test recording a stat."""
-    pk = await repo.add(make_query("test"))
-    await repo.record_stat(pk, 42)
+    pk = await search_queries_repo.add(make_query("test"))
+    await search_queries_repo.record_stat(pk, 42)
 
-    stats = await repo.get_daily_stats(pk, days=1)
+    stats = await search_queries_repo.get_daily_stats(pk, days=1)
     assert len(stats) == 1
     assert stats[0].count == 42
 
 
-async def test_record_stat_replaces_same_day(repo):
+async def test_record_stat_replaces_same_day(search_queries_repo):
     """Test that recording stat for same day replaces previous."""
-    pk = await repo.add(make_query("test"))
-    await repo.record_stat(pk, 10)
-    await repo.record_stat(pk, 20)  # Should replace
+    pk = await search_queries_repo.add(make_query("test"))
+    await search_queries_repo.record_stat(pk, 10)
+    await search_queries_repo.record_stat(pk, 20)  # Should replace
 
-    stats = await repo.get_daily_stats(pk, days=1)
+    stats = await search_queries_repo.get_daily_stats(pk, days=1)
     assert len(stats) == 1
     assert stats[0].count == 20
 
@@ -220,23 +220,23 @@ async def test_record_stat_replaces_same_day(repo):
 # get_daily_stats tests
 
 
-async def test_get_daily_stats_empty(repo):
+async def test_get_daily_stats_empty(search_queries_repo):
     """Test getting daily stats when none exist."""
-    pk = await repo.add(make_query("test"))
-    stats = await repo.get_daily_stats(pk)
+    pk = await search_queries_repo.add(make_query("test"))
+    stats = await search_queries_repo.get_daily_stats(pk)
     assert stats == []
 
 
-async def test_get_daily_stats_multiple_days(repo):
+async def test_get_daily_stats_multiple_days(search_queries_repo):
     """Test getting stats across multiple days."""
-    pk = await repo.add(make_query("test"))
+    pk = await search_queries_repo.add(make_query("test"))
 
     # Insert stats for different days using relative dates
     now = datetime.now(tz=timezone.utc)
     day0 = (now - timedelta(days=2)).strftime("%Y-%m-%d 12:00:00")
     day1 = (now - timedelta(days=1)).strftime("%Y-%m-%d 12:00:00")
     day2 = now.strftime("%Y-%m-%d 12:00:00")
-    await repo._db.executemany(
+    await search_queries_repo._db.executemany(
         "INSERT INTO search_query_stats (query_id, match_count, recorded_at) VALUES (?, ?, ?)",
         [
             (pk, 10, day0),
@@ -244,30 +244,30 @@ async def test_get_daily_stats_multiple_days(repo):
             (pk, 30, day2),
         ],
     )
-    await repo._db.commit()
+    await search_queries_repo._db.commit()
 
-    stats = await repo.get_daily_stats(pk, days=7)
+    stats = await search_queries_repo.get_daily_stats(pk, days=7)
     assert len(stats) == 3
     counts = {s.count for s in stats}
     assert counts == {10, 20, 30}
 
 
-async def test_get_daily_stats_aggregates_by_day(repo):
+async def test_get_daily_stats_aggregates_by_day(search_queries_repo):
     """Test that stats are aggregated by day."""
-    pk = await repo.add(make_query("test"))
+    pk = await search_queries_repo.add(make_query("test"))
 
     # Insert multiple stats for same day
     today = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d")
-    await repo._db.executemany(
+    await search_queries_repo._db.executemany(
         "INSERT INTO search_query_stats (query_id, match_count, recorded_at) VALUES (?, ?, ?)",
         [
             (pk, 10, f"{today} 10:00:00"),
             (pk, 20, f"{today} 15:00:00"),
         ],
     )
-    await repo._db.commit()
+    await search_queries_repo._db.commit()
 
-    stats = await repo.get_daily_stats(pk, days=7)
+    stats = await search_queries_repo.get_daily_stats(pk, days=7)
     assert len(stats) == 1
     assert stats[0].count == 30  # Sum of both
 
@@ -275,28 +275,28 @@ async def test_get_daily_stats_aggregates_by_day(repo):
 # get_stats_for_all tests
 
 
-async def test_get_stats_for_all_empty(repo):
+async def test_get_stats_for_all_empty(search_queries_repo):
     """Test getting all stats when none exist."""
-    stats = await repo.get_stats_for_all()
+    stats = await search_queries_repo.get_stats_for_all()
     assert stats == {}
 
 
-async def test_get_stats_for_all_multiple_queries(repo):
+async def test_get_stats_for_all_multiple_queries(search_queries_repo):
     """Test getting stats for multiple queries."""
-    pk1 = await repo.add(make_query("query1"))
-    pk2 = await repo.add(make_query("query2"))
+    pk1 = await search_queries_repo.add(make_query("query1"))
+    pk2 = await search_queries_repo.add(make_query("query2"))
 
     today = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d 12:00:00")
-    await repo._db.executemany(
+    await search_queries_repo._db.executemany(
         "INSERT INTO search_query_stats (query_id, match_count, recorded_at) VALUES (?, ?, ?)",
         [
             (pk1, 10, today),
             (pk2, 20, today),
         ],
     )
-    await repo._db.commit()
+    await search_queries_repo._db.commit()
 
-    stats = await repo.get_stats_for_all(days=7)
+    stats = await search_queries_repo.get_stats_for_all(days=7)
     assert pk1 in stats
     assert pk2 in stats
     assert stats[pk1][0].count == 10
@@ -306,22 +306,22 @@ async def test_get_stats_for_all_multiple_queries(repo):
 # get_last_recorded_at tests
 
 
-async def test_get_last_recorded_at_none(repo):
+async def test_get_last_recorded_at_none(search_queries_repo):
     """Test getting last recorded time when no stats exist."""
-    pk = await repo.add(make_query("test"))
-    result = await repo.get_last_recorded_at(pk)
+    pk = await search_queries_repo.add(make_query("test"))
+    result = await search_queries_repo.get_last_recorded_at(pk)
     assert result is None
 
 
-async def test_get_last_recorded_at(repo):
+async def test_get_last_recorded_at(search_queries_repo):
     """Test getting last recorded time."""
-    pk = await repo.add(make_query("test"))
+    pk = await search_queries_repo.add(make_query("test"))
 
     now = datetime.now(tz=timezone.utc)
     ts_old = (now - timedelta(days=2)).strftime("%Y-%m-%d 12:00:00")
     ts_latest = now.strftime("%Y-%m-%d 18:00:00")
     ts_mid = (now - timedelta(days=1)).strftime("%Y-%m-%d 10:00:00")
-    await repo._db.executemany(
+    await search_queries_repo._db.executemany(
         "INSERT INTO search_query_stats (query_id, match_count, recorded_at) VALUES (?, ?, ?)",
         [
             (pk, 10, ts_old),
@@ -329,39 +329,39 @@ async def test_get_last_recorded_at(repo):
             (pk, 30, ts_mid),
         ],
     )
-    await repo._db.commit()
+    await search_queries_repo._db.commit()
 
-    result = await repo.get_last_recorded_at(pk)
+    result = await search_queries_repo.get_last_recorded_at(pk)
     assert result == ts_latest
 
 
 # get_last_recorded_at_all tests
 
 
-async def test_get_last_recorded_at_all_empty(repo):
+async def test_get_last_recorded_at_all_empty(search_queries_repo):
     """Test getting all last recorded times when no stats exist."""
-    result = await repo.get_last_recorded_at_all()
+    result = await search_queries_repo.get_last_recorded_at_all()
     assert result == {}
 
 
-async def test_get_last_recorded_at_all(repo):
+async def test_get_last_recorded_at_all(search_queries_repo):
     """Test getting last recorded times for all queries."""
-    pk1 = await repo.add(make_query("query1"))
-    pk2 = await repo.add(make_query("query2"))
+    pk1 = await search_queries_repo.add(make_query("query1"))
+    pk2 = await search_queries_repo.add(make_query("query2"))
 
     now = datetime.now(tz=timezone.utc)
     ts1 = (now - timedelta(days=1)).strftime("%Y-%m-%d 12:00:00")
     ts2 = now.strftime("%Y-%m-%d 18:00:00")
-    await repo._db.executemany(
+    await search_queries_repo._db.executemany(
         "INSERT INTO search_query_stats (query_id, match_count, recorded_at) VALUES (?, ?, ?)",
         [
             (pk1, 10, ts1),
             (pk2, 20, ts2),
         ],
     )
-    await repo._db.commit()
+    await search_queries_repo._db.commit()
 
-    result = await repo.get_last_recorded_at_all()
+    result = await search_queries_repo.get_last_recorded_at_all()
     assert result[pk1] == ts1
     assert result[pk2] == ts2
 
@@ -369,66 +369,66 @@ async def test_get_last_recorded_at_all(repo):
 # get_notification_queries tests
 
 
-async def test_get_notification_queries_empty(repo):
+async def test_get_notification_queries_empty(search_queries_repo):
     """Test getting notification queries when none exist."""
-    result = await repo.get_notification_queries()
+    result = await search_queries_repo.get_notification_queries()
     assert result == []
 
 
-async def test_get_notification_queries(repo):
+async def test_get_notification_queries(search_queries_repo):
     """Test getting queries with notify_on_collect."""
-    await repo.add(make_query("notify1", notify_on_collect=True))
-    await repo.add(make_query("no_notify", notify_on_collect=False))
-    await repo.add(make_query("notify2", notify_on_collect=True))
+    await search_queries_repo.add(make_query("notify1", notify_on_collect=True))
+    await search_queries_repo.add(make_query("no_notify", notify_on_collect=False))
+    await search_queries_repo.add(make_query("notify2", notify_on_collect=True))
 
-    result = await repo.get_notification_queries()
+    result = await search_queries_repo.get_notification_queries()
     assert len(result) == 2
     queries = {q.query for q in result}
     assert queries == {"notify1", "notify2"}
 
 
-async def test_get_notification_queries_active_only(repo):
+async def test_get_notification_queries_active_only(search_queries_repo):
     """Test that notification queries can filter by active."""
-    await repo.add(make_query("active_notify", notify_on_collect=True, is_active=True))
-    await repo.add(make_query("inactive_notify", notify_on_collect=True, is_active=False))
+    await search_queries_repo.add(make_query("active_notify", notify_on_collect=True, is_active=True))
+    await search_queries_repo.add(make_query("inactive_notify", notify_on_collect=True, is_active=False))
 
-    result = await repo.get_notification_queries(active_only=True)
+    result = await search_queries_repo.get_notification_queries(active_only=True)
     assert len(result) == 1
     assert result[0].query == "active_notify"
 
 
-async def test_get_notification_queries_all(repo):
+async def test_get_notification_queries_all(search_queries_repo):
     """Test getting all notification queries including inactive."""
-    await repo.add(make_query("active_notify", notify_on_collect=True, is_active=True))
-    await repo.add(make_query("inactive_notify", notify_on_collect=True, is_active=False))
+    await search_queries_repo.add(make_query("active_notify", notify_on_collect=True, is_active=True))
+    await search_queries_repo.add(make_query("inactive_notify", notify_on_collect=True, is_active=False))
 
-    result = await repo.get_notification_queries(active_only=False)
+    result = await search_queries_repo.get_notification_queries(active_only=False)
     assert len(result) == 2
 
 
 # _row_to_model tests
 
 
-async def test_row_to_model_handles_null_is_fts(repo):
+async def test_row_to_model_handles_null_is_fts(search_queries_repo):
     """Test that null is_fts is handled correctly."""
     # Directly insert with null is_fts
-    await repo._db.execute(
+    await search_queries_repo._db.execute(
         "INSERT INTO search_queries"
         " (query, name, is_regex, is_fts, is_active,"
         " notify_on_collect, track_stats, interval_minutes)"
         " VALUES (?, ?, ?, NULL, ?, ?, ?, ?)",
         ("test", "test", 0, 1, 0, 1, 60),
     )
-    await repo._db.commit()
+    await search_queries_repo._db.commit()
 
-    result = await repo.get_all()
+    result = await search_queries_repo.get_all()
     assert len(result) == 1
     assert result[0].is_fts is False  # NULL -> False
 
 
-async def test_row_to_model_handles_null_exclude_patterns(repo):
+async def test_row_to_model_handles_null_exclude_patterns(search_queries_repo):
     """Test that null exclude_patterns is handled correctly."""
-    await repo._db.execute(
+    await search_queries_repo._db.execute(
         "INSERT INTO search_queries"
         " (query, name, is_regex, is_fts, is_active,"
         " notify_on_collect, track_stats, interval_minutes,"
@@ -436,16 +436,16 @@ async def test_row_to_model_handles_null_exclude_patterns(repo):
         " VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL)",
         ("test", "test", 0, 0, 1, 0, 1, 60),
     )
-    await repo._db.commit()
+    await search_queries_repo._db.commit()
 
-    result = await repo.get_all()
+    result = await search_queries_repo.get_all()
     assert len(result) == 1
     assert result[0].exclude_patterns == ""
 
 
-async def test_row_to_model_created_at(repo):
+async def test_row_to_model_created_at(search_queries_repo):
     """Test that created_at is properly parsed."""
-    pk = await repo.add(make_query("test"))
-    result = await repo.get_by_id(pk)
+    pk = await search_queries_repo.add(make_query("test"))
+    result = await search_queries_repo.get_by_id(pk)
     assert result.created_at is not None
     assert isinstance(result.created_at, datetime)
