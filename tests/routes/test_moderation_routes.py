@@ -10,8 +10,6 @@ from httpx import ASGITransport, AsyncClient
 
 from src.database import Database
 from src.models import (
-    Account,
-    Channel,
     ContentPipeline,
     PipelineGenerationBackend,
     PipelinePublishMode,

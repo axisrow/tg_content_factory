@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import base64
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
 from httpx import ASGITransport, AsyncClient

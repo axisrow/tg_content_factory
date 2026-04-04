@@ -4,12 +4,8 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-import pytest
-
 from src.database.repositories.collection_tasks import CollectionTasksRepository
 from src.models import CollectionTaskStatus, CollectionTaskType, StatsAllTaskPayload
-
-
 
 # _deserialize_payload tests
 

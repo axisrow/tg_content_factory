@@ -10,6 +10,7 @@ from httpx import ASGITransport, AsyncClient
 
 from src.models import Channel
 
+
 @pytest.fixture
 async def client(base_app):
     """Create test client with mocked pool."""

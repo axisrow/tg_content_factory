@@ -1,10 +1,6 @@
 from __future__ import annotations
 
-import pytest
-
-from src.database.repositories.content_pipelines import ContentPipelinesRepository
-from src.models import Channel, ContentPipeline, PipelineTarget
-
+from src.models import ContentPipeline, PipelineTarget
 
 
 def make_pipeline(**kwargs) -> ContentPipeline:

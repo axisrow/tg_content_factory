@@ -2,11 +2,7 @@
 
 from __future__ import annotations
 
-import pytest
-
-from src.database.repositories.channels import ChannelsRepository
 from src.models import Channel
-
 
 
 def make_channel(channel_id: int, title: str = "Test Channel", **kwargs) -> Channel:

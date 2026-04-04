@@ -6,6 +6,7 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
 from src.database import Database
 from src.models import Account, Channel
 

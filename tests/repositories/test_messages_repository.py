@@ -11,7 +11,6 @@ from src.database.repositories.messages import MessagesRepository, _normalize_da
 from src.models import Message, SearchQuery
 
 
-
 @pytest.fixture
 async def channels_repo(db):
     """Create channels repository instance."""

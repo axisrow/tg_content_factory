@@ -6,9 +6,7 @@ from datetime import datetime
 
 import pytest
 
-from src.database.repositories.notification_bots import NotificationBotsRepository
 from src.models import NotificationBot
-
 
 
 @pytest.fixture
