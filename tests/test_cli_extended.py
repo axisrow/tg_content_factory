@@ -10,7 +10,6 @@ import pydantic.root_model  # noqa: F401
 import pytest
 
 from src.config import AppConfig
-from src.database import Database
 from src.models import Channel, ChannelStats, CollectionTaskStatus
 from src.telegram.flood_wait import FloodWaitInfo
 
@@ -38,6 +37,7 @@ def cli_env(cli_db, cli_init_patch):
         "src.cli.commands.channel.runtime.init_db",
         "src.cli.commands.test.runtime.init_db",
         config=AppConfig(),
+        fresh_database=True,
     ):
         yield cli_db
 

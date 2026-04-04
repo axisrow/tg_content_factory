@@ -4,10 +4,9 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-import pytest
-
-from src.database.repositories.search_queries import SearchQueriesRepository
 from src.models import SearchQuery
+
+
 def make_query(query: str = "test query", **kwargs) -> SearchQuery:
     """Create a test SearchQuery."""
     defaults = {

@@ -4,10 +4,9 @@ from __future__ import annotations
 
 from datetime import datetime
 
-import pytest
-
-from src.database.repositories.channel_stats import ChannelStatsRepository
 from src.models import Channel, ChannelStats
+
+
 async def _create_channel(db, channel_id):
     """Helper to create a channel for FK constraint."""
     channel = Channel(

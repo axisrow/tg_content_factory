@@ -6,7 +6,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.config import AppConfig
 from tests.helpers import cli_ns
 
 ISSUE_303_PARSE_CASES = {

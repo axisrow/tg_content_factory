@@ -17,7 +17,6 @@ from src.database.repositories.search_queries import SearchQueriesRepository
 from src.database.repositories.settings import SettingsRepository
 from src.models import Channel
 
-
 _REPO_FACTORIES = {
     "test_accounts_repository.py": AccountsRepository,
     "test_channel_stats_repository.py": ChannelStatsRepository,

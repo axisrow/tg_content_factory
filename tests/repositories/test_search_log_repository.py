@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import pytest
 
-from src.database.repositories.search_log import SearchLogRepository
 async def test_log_search(repo):
     """Test logging a search."""
     await repo.log_search("+1234567890", "test query", 10)

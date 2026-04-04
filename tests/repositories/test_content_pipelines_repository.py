@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-import pytest
+from src.models import ContentPipeline, PipelineTarget
 
-from src.database.repositories.content_pipelines import ContentPipelinesRepository
-from src.models import Channel, ContentPipeline, PipelineTarget
+
 def make_pipeline(**kwargs) -> ContentPipeline:
     defaults = {
         "name": "Digest",

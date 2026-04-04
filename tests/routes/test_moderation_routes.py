@@ -8,23 +8,14 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from src.config import AppConfig
 from src.database import Database
 from src.models import (
-    Account,
-    Channel,
     ContentPipeline,
     PipelineGenerationBackend,
     PipelinePublishMode,
     PipelineTarget,
 )
-from src.scheduler.service import SchedulerManager
-from src.search.ai_search import AISearchEngine
-from src.search.engine import SearchEngine
 from src.services.publish_service import PublishResult
-from src.telegram.auth import TelegramAuth
-from src.telegram.collector import Collector
-from src.web.app import create_app
 
 
 @pytest.fixture

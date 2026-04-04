@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import pytest
 
-from src.database.repositories.settings import SettingsRepository
 async def test_get_setting_not_found(repo):
     """Test getting non-existent setting returns None."""
     result = await repo.get_setting("nonexistent_key")

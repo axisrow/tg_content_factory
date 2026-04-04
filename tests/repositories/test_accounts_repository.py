@@ -9,6 +9,8 @@ import pytest
 from src.database.repositories.accounts import AccountsRepository
 from src.models import Account
 from src.security.session_cipher import SessionCipher
+
+
 @pytest.fixture
 def cipher():
     """Create a SessionCipher for encryption tests."""

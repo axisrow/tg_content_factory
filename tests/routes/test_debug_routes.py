@@ -7,16 +7,6 @@ import base64
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from src.collection_queue import CollectionQueue
-from src.config import AppConfig
-from src.database import Database
-from src.models import Account
-from src.scheduler.service import SchedulerManager
-from src.search.ai_search import AISearchEngine
-from src.search.engine import SearchEngine
-from src.telegram.auth import TelegramAuth
-from src.telegram.collector import Collector
-from src.web.app import create_app
 from src.web.log_handler import LogBuffer
 
 
@@ -24,7 +14,8 @@ from src.web.log_handler import LogBuffer
 async def client(base_app):
     """Create test client with log buffer."""
     app, _, pool = base_app
-    async def _resolve_channel(self, identifier):
+
+    async def _resolve_channel(identifier):
         return {
             "channel_id": -1001234567890,
             "title": "Test Channel",
@@ -51,7 +42,8 @@ async def client(base_app):
 async def client_no_buffer(base_app):
     """Create test client without log buffer."""
     app, _, pool = base_app
-    async def _resolve_channel(self, identifier):
+
+    async def _resolve_channel(identifier):
         return {
             "channel_id": -1001234567890,
             "title": "Test Channel",

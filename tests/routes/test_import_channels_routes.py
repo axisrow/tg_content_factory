@@ -8,23 +8,15 @@ import io
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from src.collection_queue import CollectionQueue
-from src.config import AppConfig
-from src.database import Database
-from src.models import Account, Channel
-from src.scheduler.service import SchedulerManager
-from src.search.ai_search import AISearchEngine
-from src.search.engine import SearchEngine
-from src.telegram.auth import TelegramAuth
-from src.telegram.collector import Collector
-from src.web.app import create_app
+from src.models import Channel
 
 
 @pytest.fixture
 async def client(base_app):
     """Create test client with mocked pool."""
     app, _, pool = base_app
-    async def _resolve_channel(self, identifier):
+
+    async def _resolve_channel(identifier):
         # Mock resolve based on identifier
         if identifier.startswith("@"):
             return {
@@ -60,7 +52,7 @@ async def client(base_app):
 async def client_no_resolve(client):
     """Client with resolve that raises no_client error."""
 
-    async def _resolve_no_client(self, identifier):
+    async def _resolve_no_client(identifier):
         raise RuntimeError("no_client")
 
     client._transport.app.state.pool.resolve_channel = _resolve_no_client

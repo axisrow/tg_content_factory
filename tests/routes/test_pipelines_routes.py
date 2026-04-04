@@ -7,16 +7,6 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from src.config import AppConfig
-from src.database import Database
-from src.models import Account, Channel
-from src.scheduler.service import SchedulerManager
-from src.search.ai_search import AISearchEngine
-from src.search.engine import SearchEngine
-from src.telegram.auth import TelegramAuth
-from src.telegram.collector import Collector
-from src.web.app import create_app
-
 _ADD_DATA = {
     "name": "Test Pipeline",
     "prompt_template": "Write a summary",

@@ -4,7 +4,6 @@ import argparse
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from src.config import AppConfig
 from src.database import Database
 from src.models import (
     Account,

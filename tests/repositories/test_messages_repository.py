@@ -9,6 +9,8 @@ import pytest
 from src.database.repositories.channels import ChannelsRepository
 from src.database.repositories.messages import MessagesRepository, _normalize_date_to
 from src.models import Message, SearchQuery
+
+
 @pytest.fixture
 async def channels_repo(db):
     """Create channels repository instance."""

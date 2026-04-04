@@ -74,11 +74,20 @@ def cli_init_patch():
     """Patch one or more CLI init_db targets to return the provided database."""
 
     @contextmanager
-    def _patch(db, *targets: str, config: AppConfig | None = None):
+    def _patch(
+        db,
+        *targets: str,
+        config: AppConfig | None = None,
+        fresh_database: bool = False,
+    ):
         runtime_config = config or AppConfig()
 
         async def fake_init_db(_config_path: str):
-            if isinstance(db, Database):
+            if isinstance(db, Database) and fresh_database:
+                cmd_db = Database(db._db_path, session_encryption_secret=db._session_encryption_secret)
+                await cmd_db.initialize()
+                return runtime_config, cmd_db
+            if isinstance(db, Database) and db._connection.db is None:
                 await db.initialize()
             return runtime_config, db
 

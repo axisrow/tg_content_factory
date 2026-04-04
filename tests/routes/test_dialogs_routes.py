@@ -4,28 +4,20 @@ from __future__ import annotations
 
 import base64
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from src.collection_queue import CollectionQueue
-from src.config import AppConfig
-from src.database import Database
 from src.models import Account, Channel
-from src.scheduler.service import SchedulerManager
-from src.search.ai_search import AISearchEngine
-from src.search.engine import SearchEngine
-from src.telegram.auth import TelegramAuth
-from src.telegram.collector import Collector
-from src.web.app import create_app
 
 
 @pytest.fixture
 async def client(base_app):
     """Create test client with mocked pool."""
     app, db, pool_mock = base_app
-    async def _resolve_channel(self, identifier):
+
+    async def _resolve_channel(identifier):
         return {
             "channel_id": -1001234567890,
             "title": "Test Channel",
