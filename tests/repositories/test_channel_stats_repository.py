@@ -17,7 +17,7 @@ async def _create_channel(db, channel_id):
     await db.add_channel(channel)
 
 
-async def test_save_channel_stats(db, repo):
+async def test_save_channel_stats(db, channel_stats_repo):
     """Test saving channel stats."""
     await _create_channel(db, -1001234567890)
     stats = ChannelStats(
@@ -27,17 +27,17 @@ async def test_save_channel_stats(db, repo):
         avg_reactions=25.3,
         avg_forwards=10.1,
     )
-    result_id = await repo.save_channel_stats(stats)
+    result_id = await channel_stats_repo.save_channel_stats(stats)
     assert result_id > 0
 
 
-async def test_get_channel_stats_empty(repo):
+async def test_get_channel_stats_empty(channel_stats_repo):
     """Test getting stats for non-existent channel."""
-    result = await repo.get_channel_stats(-1009999999999)
+    result = await channel_stats_repo.get_channel_stats(-1009999999999)
     assert result == []
 
 
-async def test_get_channel_stats(db, repo):
+async def test_get_channel_stats(db, channel_stats_repo):
     """Test getting stats for a channel."""
     channel_id = -1001234567890
     await _create_channel(db, channel_id)
@@ -49,9 +49,9 @@ async def test_get_channel_stats(db, repo):
         avg_reactions=25.3,
         avg_forwards=10.1,
     )
-    await repo.save_channel_stats(stats)
+    await channel_stats_repo.save_channel_stats(stats)
 
-    result = await repo.get_channel_stats(channel_id)
+    result = await channel_stats_repo.get_channel_stats(channel_id)
     assert len(result) == 1
 
     retrieved = result[0]
@@ -63,7 +63,7 @@ async def test_get_channel_stats(db, repo):
     assert retrieved.collected_at is not None
 
 
-async def test_get_channel_stats_multiple(db, repo):
+async def test_get_channel_stats_multiple(db, channel_stats_repo):
     """Test getting multiple stats records for a channel."""
     channel_id = -1001234567890
     await _create_channel(db, channel_id)
@@ -77,9 +77,9 @@ async def test_get_channel_stats_multiple(db, repo):
             avg_reactions=25.0,
             avg_forwards=10.0,
         )
-        await repo.save_channel_stats(stats)
+        await channel_stats_repo.save_channel_stats(stats)
 
-    result = await repo.get_channel_stats(channel_id, limit=10)
+    result = await channel_stats_repo.get_channel_stats(channel_id, limit=10)
     assert len(result) == 3
 
     # Should be ordered by collected_at DESC
@@ -87,7 +87,7 @@ async def test_get_channel_stats_multiple(db, repo):
     assert result[2].subscriber_count == 10000
 
 
-async def test_get_channel_stats_limit(db, repo):
+async def test_get_channel_stats_limit(db, channel_stats_repo):
     """Test limit parameter in get_channel_stats."""
     channel_id = -1001234567890
     await _create_channel(db, channel_id)
@@ -100,19 +100,19 @@ async def test_get_channel_stats_limit(db, repo):
             avg_reactions=25.0,
             avg_forwards=10.0,
         )
-        await repo.save_channel_stats(stats)
+        await channel_stats_repo.save_channel_stats(stats)
 
-    result = await repo.get_channel_stats(channel_id, limit=2)
+    result = await channel_stats_repo.get_channel_stats(channel_id, limit=2)
     assert len(result) == 2
 
 
-async def test_get_latest_stats_for_all_empty(repo):
+async def test_get_latest_stats_for_all_empty(channel_stats_repo):
     """Test getting all latest stats when none exist."""
-    result = await repo.get_latest_stats_for_all()
+    result = await channel_stats_repo.get_latest_stats_for_all()
     assert result == {}
 
 
-async def test_get_latest_stats_for_all(db, repo):
+async def test_get_latest_stats_for_all(db, channel_stats_repo):
     """Test getting latest stats for all channels."""
     # Save stats for multiple channels
     channel_ids = [-1001111111111, -1002222222222, -1003333333333]
@@ -128,9 +128,9 @@ async def test_get_latest_stats_for_all(db, repo):
                 avg_reactions=25.0,
                 avg_forwards=10.0,
             )
-            await repo.save_channel_stats(stats)
+            await channel_stats_repo.save_channel_stats(stats)
 
-    result = await repo.get_latest_stats_for_all()
+    result = await channel_stats_repo.get_latest_stats_for_all()
 
     # Should return one entry per channel (the latest)
     assert len(result) == 3
@@ -140,7 +140,7 @@ async def test_get_latest_stats_for_all(db, repo):
         assert result[ch_id].subscriber_count == 10100
 
 
-async def test_save_stats_with_none_values(db, repo):
+async def test_save_stats_with_none_values(db, channel_stats_repo):
     """Test saving stats with None optional values."""
     channel_id = -1001234567890
     await _create_channel(db, channel_id)
@@ -153,17 +153,17 @@ async def test_save_stats_with_none_values(db, repo):
         avg_forwards=None,
     )
 
-    result_id = await repo.save_channel_stats(stats)
+    result_id = await channel_stats_repo.save_channel_stats(stats)
     assert result_id > 0
 
-    retrieved = await repo.get_channel_stats(channel_id)
+    retrieved = await channel_stats_repo.get_channel_stats(channel_id)
     assert len(retrieved) == 1
     assert retrieved[0].avg_views is None
     assert retrieved[0].avg_reactions is None
     assert retrieved[0].avg_forwards is None
 
 
-async def test_get_latest_stats_isolates_channels(db, repo):
+async def test_get_latest_stats_isolates_channels(db, channel_stats_repo):
     """Test that get_latest_stats_for_all correctly isolates per-channel max dates."""
     ch1 = -1001111111111
     ch2 = -1002222222222
@@ -179,7 +179,7 @@ async def test_get_latest_stats_isolates_channels(db, repo):
         avg_reactions=10.0,
         avg_forwards=1.0,
     )
-    await repo.save_channel_stats(stats1_old)
+    await channel_stats_repo.save_channel_stats(stats1_old)
 
     # Channel 2: save once
     stats2 = ChannelStats(
@@ -189,7 +189,7 @@ async def test_get_latest_stats_isolates_channels(db, repo):
         avg_reactions=20.0,
         avg_forwards=2.0,
     )
-    await repo.save_channel_stats(stats2)
+    await channel_stats_repo.save_channel_stats(stats2)
 
     # Channel 1: save newer
     stats1_new = ChannelStats(
@@ -199,16 +199,16 @@ async def test_get_latest_stats_isolates_channels(db, repo):
         avg_reactions=11.0,
         avg_forwards=1.1,
     )
-    await repo.save_channel_stats(stats1_new)
+    await channel_stats_repo.save_channel_stats(stats1_new)
 
-    result = await repo.get_latest_stats_for_all()
+    result = await channel_stats_repo.get_latest_stats_for_all()
     assert len(result) == 2
     # Channel 1 should have newer values
     assert result[ch1].subscriber_count == 1100
     assert result[ch2].subscriber_count == 2000
 
 
-async def test_stats_collected_at_is_datetime(db, repo):
+async def test_stats_collected_at_is_datetime(db, channel_stats_repo):
     """Test that collected_at is properly converted to datetime."""
     channel_id = -1001234567890
     await _create_channel(db, channel_id)
@@ -220,14 +220,14 @@ async def test_stats_collected_at_is_datetime(db, repo):
         avg_reactions=25.0,
         avg_forwards=10.0,
     )
-    await repo.save_channel_stats(stats)
+    await channel_stats_repo.save_channel_stats(stats)
 
-    result = await repo.get_channel_stats(channel_id)
+    result = await channel_stats_repo.get_channel_stats(channel_id)
     assert len(result) == 1
     assert isinstance(result[0].collected_at, datetime)
 
 
-async def test_save_stats_returns_id(db, repo):
+async def test_save_stats_returns_id(db, channel_stats_repo):
     """Test that save returns a valid row ID."""
     ch1 = -1001234567890
     ch2 = -1009999999999
@@ -241,7 +241,7 @@ async def test_save_stats_returns_id(db, repo):
         avg_reactions=25.0,
         avg_forwards=10.0,
     )
-    id1 = await repo.save_channel_stats(stats1)
+    id1 = await channel_stats_repo.save_channel_stats(stats1)
 
     stats2 = ChannelStats(
         channel_id=ch2,
@@ -250,14 +250,14 @@ async def test_save_stats_returns_id(db, repo):
         avg_reactions=12.0,
         avg_forwards=5.0,
     )
-    id2 = await repo.save_channel_stats(stats2)
+    id2 = await channel_stats_repo.save_channel_stats(stats2)
 
     assert id1 > 0
     assert id2 > 0
     assert id1 != id2
 
 
-async def test_negative_channel_id(db, repo):
+async def test_negative_channel_id(db, channel_stats_repo):
     """Test handling negative channel IDs (Telegram format)."""
     channel_id = -1001234567890123
     await _create_channel(db, channel_id)
@@ -269,8 +269,8 @@ async def test_negative_channel_id(db, repo):
         avg_reactions=12.5,
         avg_forwards=5.0,
     )
-    await repo.save_channel_stats(stats)
+    await channel_stats_repo.save_channel_stats(stats)
 
-    result = await repo.get_channel_stats(channel_id)
+    result = await channel_stats_repo.get_channel_stats(channel_id)
     assert len(result) == 1
     assert result[0].channel_id == channel_id

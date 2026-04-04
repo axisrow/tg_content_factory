@@ -38,6 +38,7 @@ async def client(base_app):
         yield c
 
 
+
 @pytest.mark.asyncio
 async def test_scheduler_page(client):
     """Test scheduler page renders."""

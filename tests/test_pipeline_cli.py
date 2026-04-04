@@ -4,6 +4,8 @@ import argparse
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
 from src.database import Database
 from src.models import (
     Account,
@@ -16,10 +18,9 @@ from src.models import (
 )
 from src.services.publish_service import PublishResult
 
-_PIPELINE_INIT_DB_TARGETS = (
-    "src.cli.runtime.init_db",
-    "src.cli.commands.pipeline.runtime.init_db",
-)
+pytestmark = pytest.mark.aiosqlite_serial
+
+_PIPELINE_INIT_DB_TARGETS = ("src.cli.runtime.init_db", "src.cli.commands.pipeline.runtime.init_db")
 
 
 def _ns(**kwargs) -> argparse.Namespace:
@@ -51,7 +52,6 @@ def test_pipeline_add_and_list(tmp_path, cli_init_patch, capsys):
     db = Database(db_path)
     asyncio.run(db.initialize())
     _add_pipeline_prereqs(db)
-    asyncio.run(db.close())
 
     with cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS):
         from src.cli.commands.pipeline import run
@@ -82,7 +82,6 @@ def test_pipeline_show_not_found(tmp_path, cli_init_patch, capsys):
     db_path = str(tmp_path / "cli_pipeline_not_found.db")
     db = Database(db_path)
     asyncio.run(db.initialize())
-    asyncio.run(db.close())
 
     with cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS):
         from src.cli.commands.pipeline import run
@@ -119,7 +118,6 @@ def test_pipeline_queue_approve_reject_and_publish(tmp_path, cli_init_patch, cap
     )
     run_id = asyncio.run(db.repos.generation_runs.create_run(pipeline_id, "prompt"))
     asyncio.run(db.repos.generation_runs.save_result(run_id, "Generated draft for CLI"))
-    asyncio.run(db.close())
 
     async def fake_init_pool(_config, _db):
         pool = MagicMock()
@@ -165,7 +163,6 @@ def test_pipeline_publish_not_found(tmp_path, cli_init_patch, capsys):
     db_path = str(tmp_path / "cli_pipeline_publish_not_found.db")
     db = Database(db_path)
     asyncio.run(db.initialize())
-    asyncio.run(db.close())
 
     with cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS):
         from src.cli.commands.pipeline import run
@@ -201,7 +198,6 @@ def test_pipeline_generate_prints_draft_preview(tmp_path, cli_init_patch, capsys
             ],
         )
     )
-    asyncio.run(db.close())
 
     class FakeContentGenerationService:
         def __init__(self, db, engine, agent_manager=None, **kwargs):
@@ -267,7 +263,6 @@ def test_pipeline_generate_wires_agent_manager_for_deep_agents(tmp_path, cli_ini
             ],
         )
     )
-    asyncio.run(db.close())
 
     captured = {}
 
@@ -340,7 +335,6 @@ def test_pipeline_runs_and_run_show(tmp_path, cli_init_patch, capsys):
     )
     run_id = asyncio.run(db.repos.generation_runs.create_run(pipeline_id, "prompt"))
     asyncio.run(db.repos.generation_runs.save_result(run_id, "Generated draft for CLI"))
-    asyncio.run(db.close())
 
     with cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS):
         from src.cli.commands.pipeline import run
@@ -384,7 +378,6 @@ def test_pipeline_show_found(tmp_path, cli_init_patch, capsys):
             ],
         )
     )
-    asyncio.run(db.close())
 
     with cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS):
         from src.cli.commands.pipeline import run
@@ -423,7 +416,6 @@ def test_pipeline_edit_found(tmp_path, cli_init_patch, capsys):
             ],
         )
     )
-    asyncio.run(db.close())
 
     with cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS):
         from src.cli.commands.pipeline import run
@@ -454,7 +446,6 @@ def test_pipeline_edit_not_found(tmp_path, cli_init_patch, capsys):
     db_path = str(tmp_path / "cli_pipeline_edit_nf.db")
     db = Database(db_path)
     asyncio.run(db.initialize())
-    asyncio.run(db.close())
 
     with cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS):
         from src.cli.commands.pipeline import run
@@ -506,7 +497,6 @@ def test_pipeline_toggle_found(tmp_path, cli_init_patch, capsys):
             ],
         )
     )
-    asyncio.run(db.close())
 
     with cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS):
         from src.cli.commands.pipeline import run
@@ -522,7 +512,6 @@ def test_pipeline_toggle_not_found(tmp_path, cli_init_patch, capsys):
     db_path = str(tmp_path / "cli_pipeline_toggle_nf.db")
     db = Database(db_path)
     asyncio.run(db.initialize())
-    asyncio.run(db.close())
 
     with cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS):
         from src.cli.commands.pipeline import run
@@ -558,7 +547,6 @@ def test_pipeline_delete(tmp_path, cli_init_patch, capsys):
             ],
         )
     )
-    asyncio.run(db.close())
 
     with cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS):
         from src.cli.commands.pipeline import run
@@ -595,7 +583,6 @@ def test_pipeline_run_with_preview(tmp_path, cli_init_patch, capsys):
             ],
         )
     )
-    asyncio.run(db.close())
 
     class FakeGenerationService:
         def __init__(self, engine, provider_callable=None):
@@ -633,7 +620,6 @@ def test_pipeline_run_not_found(tmp_path, cli_init_patch, capsys):
     db_path = str(tmp_path / "cli_pipeline_run_nf.db")
     db = Database(db_path)
     asyncio.run(db.initialize())
-    asyncio.run(db.close())
 
     with cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS):
         from src.cli.commands.pipeline import run
@@ -671,7 +657,6 @@ def test_pipeline_runs_with_status_filter(tmp_path, cli_init_patch, capsys):
     )
     run_id = asyncio.run(db.repos.generation_runs.create_run(pipeline_id, "prompt"))
     asyncio.run(db.repos.generation_runs.save_result(run_id, "Test output"))
-    asyncio.run(db.close())
 
     with cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS):
         from src.cli.commands.pipeline import run
@@ -688,7 +673,6 @@ def test_pipeline_runs_not_found(tmp_path, cli_init_patch, capsys):
     db_path = str(tmp_path / "cli_pipeline_runs_nf.db")
     db = Database(db_path)
     asyncio.run(db.initialize())
-    asyncio.run(db.close())
 
     with cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS):
         from src.cli.commands.pipeline import run
@@ -724,7 +708,6 @@ def test_pipeline_queue_empty(tmp_path, cli_init_patch, capsys):
             ],
         )
     )
-    asyncio.run(db.close())
 
     with cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS):
         from src.cli.commands.pipeline import run
@@ -740,7 +723,6 @@ def test_pipeline_queue_not_found(tmp_path, cli_init_patch, capsys):
     db_path = str(tmp_path / "cli_pipeline_queue_nf.db")
     db = Database(db_path)
     asyncio.run(db.initialize())
-    asyncio.run(db.close())
 
     with cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS):
         from src.cli.commands.pipeline import run
@@ -778,7 +760,6 @@ def test_pipeline_publish_no_clients(tmp_path, cli_init_patch, capsys):
     )
     run_id = asyncio.run(db.repos.generation_runs.create_run(pipeline_id, "prompt"))
     asyncio.run(db.repos.generation_runs.save_result(run_id, "Generated text"))
-    asyncio.run(db.close())
 
     async def fake_init_pool(_config, _db):
         pool = MagicMock()
@@ -803,7 +784,6 @@ def test_pipeline_run_show_not_found(tmp_path, cli_init_patch, capsys):
     db_path = str(tmp_path / "cli_pipeline_runshow_nf.db")
     db = Database(db_path)
     asyncio.run(db.initialize())
-    asyncio.run(db.close())
 
     with cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS):
         from src.cli.commands.pipeline import run
@@ -819,7 +799,6 @@ def test_pipeline_approve_not_found(tmp_path, cli_init_patch, capsys):
     db_path = str(tmp_path / "cli_pipeline_approve_nf.db")
     db = Database(db_path)
     asyncio.run(db.initialize())
-    asyncio.run(db.close())
 
     with cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS):
         from src.cli.commands.pipeline import run
@@ -835,7 +814,6 @@ def test_pipeline_reject_not_found(tmp_path, cli_init_patch, capsys):
     db_path = str(tmp_path / "cli_pipeline_reject_nf.db")
     db = Database(db_path)
     asyncio.run(db.initialize())
-    asyncio.run(db.close())
 
     with cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS):
         from src.cli.commands.pipeline import run
@@ -851,7 +829,6 @@ def test_pipeline_generate_not_found(tmp_path, cli_init_patch, capsys):
     db_path = str(tmp_path / "cli_pipeline_generate_nf.db")
     db = Database(db_path)
     asyncio.run(db.initialize())
-    asyncio.run(db.close())
 
     with cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS):
         from src.cli.commands.pipeline import run
@@ -887,7 +864,6 @@ def test_pipeline_generate_exception(tmp_path, cli_init_patch, capsys):
             ],
         )
     )
-    asyncio.run(db.close())
 
     class FakeContentGenerationService:
         def __init__(self, *args, **kwargs):
@@ -913,7 +889,6 @@ def test_pipeline_list_empty(tmp_path, cli_init_patch, capsys):
     db_path = str(tmp_path / "cli_pipeline_list_empty.db")
     db = Database(db_path)
     asyncio.run(db.initialize())
-    asyncio.run(db.close())
 
     with cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS):
         from src.cli.commands.pipeline import run

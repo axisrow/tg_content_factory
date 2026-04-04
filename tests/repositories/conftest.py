@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 
 from src.database.repositories.accounts import AccountsRepository
@@ -17,31 +15,59 @@ from src.database.repositories.search_queries import SearchQueriesRepository
 from src.database.repositories.settings import SettingsRepository
 from src.models import Channel
 
-_REPO_FACTORIES = {
-    "test_accounts_repository.py": AccountsRepository,
-    "test_channel_stats_repository.py": ChannelStatsRepository,
-    "test_channels_repository.py": ChannelsRepository,
-    "test_collection_tasks_repository.py": CollectionTasksRepository,
-    "test_filters_repository.py": FilterRepository,
-    "test_messages_repository.py": MessagesRepository,
-    "test_notification_bots_repository.py": NotificationBotsRepository,
-    "test_search_log_repository.py": SearchLogRepository,
-    "test_search_queries_repository.py": SearchQueriesRepository,
-    "test_settings_repository.py": SettingsRepository,
-}
+
+@pytest.fixture
+async def accounts_repo(db):
+    return AccountsRepository(db.db)
 
 
 @pytest.fixture
-async def repo(request, db):
-    """Provide the repository under test for repository modules."""
-    filename = Path(str(request.fspath)).name
+async def channel_stats_repo(db):
+    return ChannelStatsRepository(db.db)
 
-    if filename == "test_content_pipelines_repository.py":
-        await db.add_channel(Channel(channel_id=1001, title="Source A"))
-        await db.add_channel(Channel(channel_id=1002, title="Source B"))
-        return ContentPipelinesRepository(db.db)
 
-    factory = _REPO_FACTORIES.get(filename)
-    if factory is None:
-        raise LookupError(f"No shared repo fixture registered for {filename}")
-    return factory(db.db)
+@pytest.fixture
+async def channels_repo(db):
+    return ChannelsRepository(db.db)
+
+
+@pytest.fixture
+async def collection_tasks_repo(db):
+    return CollectionTasksRepository(db.db)
+
+
+@pytest.fixture
+async def content_pipelines_repo(db):
+    await db.add_channel(Channel(channel_id=1001, title="Source A"))
+    await db.add_channel(Channel(channel_id=1002, title="Source B"))
+    return ContentPipelinesRepository(db.db)
+
+
+@pytest.fixture
+async def filters_repo(db):
+    return FilterRepository(db.db)
+
+
+@pytest.fixture
+async def messages_repo(db):
+    return MessagesRepository(db.db)
+
+
+@pytest.fixture
+async def notification_bots_repo(db):
+    return NotificationBotsRepository(db.db)
+
+
+@pytest.fixture
+async def search_log_repo(db):
+    return SearchLogRepository(db.db)
+
+
+@pytest.fixture
+async def search_queries_repo(db):
+    return SearchQueriesRepository(db.db)
+
+
+@pytest.fixture
+async def settings_repo(db):
+    return SettingsRepository(db.db)

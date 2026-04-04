@@ -31,26 +31,26 @@ def make_account(phone: str, session: str = "session_string_123", **kwargs) -> A
 # add_account tests
 
 
-async def test_add_account_insert(repo):
+async def test_add_account_insert(accounts_repo):
     """Test inserting a new account."""
     account = make_account("+1234567890")
-    pk = await repo.add_account(account)
+    pk = await accounts_repo.add_account(account)
     assert pk > 0
 
-    accounts = await repo.get_accounts()
+    accounts = await accounts_repo.get_accounts()
     assert len(accounts) == 1
     assert accounts[0].phone == "+1234567890"
 
 
-async def test_add_account_upsert_on_conflict(repo):
+async def test_add_account_upsert_on_conflict(accounts_repo):
     """Test that add_account updates existing account on phone conflict."""
     account1 = make_account("+1234567890", is_active=True)
-    await repo.add_account(account1)
+    await accounts_repo.add_account(account1)
 
     account2 = make_account("+1234567890", is_active=False, is_premium=True)
-    await repo.add_account(account2)
+    await accounts_repo.add_account(account2)
 
-    accounts = await repo.get_accounts()
+    accounts = await accounts_repo.get_accounts()
     assert len(accounts) == 1
     assert accounts[0].is_active is False
     assert accounts[0].is_premium is True
@@ -73,34 +73,34 @@ async def test_add_account_with_cipher_encrypts_session(repo_with_cipher, cipher
 # get_accounts tests
 
 
-async def test_get_accounts_empty(repo):
+async def test_get_accounts_empty(accounts_repo):
     """Test getting accounts when none exist."""
-    accounts = await repo.get_accounts()
+    accounts = await accounts_repo.get_accounts()
     assert accounts == []
 
 
-async def test_get_accounts_active_only(repo):
+async def test_get_accounts_active_only(accounts_repo):
     """Test filtering by active_only."""
-    await repo.add_account(make_account("+1111111111", is_active=True))
-    await repo.add_account(make_account("+2222222222", is_active=False))
-    await repo.add_account(make_account("+3333333333", is_active=True))
+    await accounts_repo.add_account(make_account("+1111111111", is_active=True))
+    await accounts_repo.add_account(make_account("+2222222222", is_active=False))
+    await accounts_repo.add_account(make_account("+3333333333", is_active=True))
 
-    all_accounts = await repo.get_accounts()
+    all_accounts = await accounts_repo.get_accounts()
     assert len(all_accounts) == 3
 
-    active_accounts = await repo.get_accounts(active_only=True)
+    active_accounts = await accounts_repo.get_accounts(active_only=True)
     assert len(active_accounts) == 2
     phones = {a.phone for a in active_accounts}
     assert phones == {"+1111111111", "+3333333333"}
 
 
-async def test_get_accounts_ordering(repo):
+async def test_get_accounts_ordering(accounts_repo):
     """Test that accounts are ordered by is_primary DESC, id ASC."""
-    await repo.add_account(make_account("+1111111111", is_primary=False))
-    await repo.add_account(make_account("+2222222222", is_primary=True))
-    await repo.add_account(make_account("+3333333333", is_primary=False))
+    await accounts_repo.add_account(make_account("+1111111111", is_primary=False))
+    await accounts_repo.add_account(make_account("+2222222222", is_primary=True))
+    await accounts_repo.add_account(make_account("+3333333333", is_primary=False))
 
-    accounts = await repo.get_accounts()
+    accounts = await accounts_repo.get_accounts()
     assert accounts[0].phone == "+2222222222"  # primary first
     assert accounts[1].phone == "+1111111111"
     assert accounts[2].phone == "+3333333333"
@@ -132,104 +132,104 @@ async def test_get_accounts_handles_plaintext_when_cipher_set(repo_with_cipher):
 # update_account_flood tests
 
 
-async def test_update_account_flood_set(repo):
+async def test_update_account_flood_set(accounts_repo):
     """Test setting flood_wait_until."""
-    await repo.add_account(make_account("+1234567890"))
+    await accounts_repo.add_account(make_account("+1234567890"))
     until = datetime(2026, 3, 16, 12, 0, 0, tzinfo=timezone.utc)
-    await repo.update_account_flood("+1234567890", until)
+    await accounts_repo.update_account_flood("+1234567890", until)
 
-    accounts = await repo.get_accounts()
+    accounts = await accounts_repo.get_accounts()
     assert accounts[0].flood_wait_until == until
 
 
-async def test_update_account_flood_clear(repo):
+async def test_update_account_flood_clear(accounts_repo):
     """Test clearing flood_wait_until."""
-    await repo.add_account(make_account("+1234567890"))
+    await accounts_repo.add_account(make_account("+1234567890"))
     until = datetime(2026, 3, 16, 12, 0, 0, tzinfo=timezone.utc)
-    await repo.update_account_flood("+1234567890", until)
+    await accounts_repo.update_account_flood("+1234567890", until)
 
     # Clear it
-    await repo.update_account_flood("+1234567890", None)
+    await accounts_repo.update_account_flood("+1234567890", None)
 
-    accounts = await repo.get_accounts()
+    accounts = await accounts_repo.get_accounts()
     assert accounts[0].flood_wait_until is None
 
 
 # update_account_premium tests
 
 
-async def test_update_account_premium_set_true(repo):
+async def test_update_account_premium_set_true(accounts_repo):
     """Test setting is_premium to True."""
-    await repo.add_account(make_account("+1234567890", is_premium=False))
-    await repo.update_account_premium("+1234567890", True)
+    await accounts_repo.add_account(make_account("+1234567890", is_premium=False))
+    await accounts_repo.update_account_premium("+1234567890", True)
 
-    accounts = await repo.get_accounts()
+    accounts = await accounts_repo.get_accounts()
     assert accounts[0].is_premium is True
 
 
-async def test_update_account_premium_set_false(repo):
+async def test_update_account_premium_set_false(accounts_repo):
     """Test setting is_premium to False."""
-    await repo.add_account(make_account("+1234567890", is_premium=True))
-    await repo.update_account_premium("+1234567890", False)
+    await accounts_repo.add_account(make_account("+1234567890", is_premium=True))
+    await accounts_repo.update_account_premium("+1234567890", False)
 
-    accounts = await repo.get_accounts()
+    accounts = await accounts_repo.get_accounts()
     assert accounts[0].is_premium is False
 
 
 # set_account_active tests
 
 
-async def test_set_account_active_deactivate(repo):
+async def test_set_account_active_deactivate(accounts_repo):
     """Test deactivating an account."""
-    await repo.add_account(make_account("+1234567890", is_active=True))
-    accounts = await repo.get_accounts()
+    await accounts_repo.add_account(make_account("+1234567890", is_active=True))
+    accounts = await accounts_repo.get_accounts()
     pk = accounts[0].id
 
-    await repo.set_account_active(pk, False)
+    await accounts_repo.set_account_active(pk, False)
 
-    accounts = await repo.get_accounts()
+    accounts = await accounts_repo.get_accounts()
     assert accounts[0].is_active is False
 
 
-async def test_set_account_active_activate(repo):
+async def test_set_account_active_activate(accounts_repo):
     """Test activating an account."""
-    await repo.add_account(make_account("+1234567890", is_active=False))
-    accounts = await repo.get_accounts()
+    await accounts_repo.add_account(make_account("+1234567890", is_active=False))
+    accounts = await accounts_repo.get_accounts()
     pk = accounts[0].id
 
-    await repo.set_account_active(pk, True)
+    await accounts_repo.set_account_active(pk, True)
 
-    accounts = await repo.get_accounts()
+    accounts = await accounts_repo.get_accounts()
     assert accounts[0].is_active is True
 
 
 # delete_account tests
 
 
-async def test_delete_account(repo):
+async def test_delete_account(accounts_repo):
     """Test deleting an account."""
-    await repo.add_account(make_account("+1234567890"))
-    accounts = await repo.get_accounts()
+    await accounts_repo.add_account(make_account("+1234567890"))
+    accounts = await accounts_repo.get_accounts()
     pk = accounts[0].id
 
-    await repo.delete_account(pk)
+    await accounts_repo.delete_account(pk)
 
-    accounts = await repo.get_accounts()
+    accounts = await accounts_repo.get_accounts()
     assert len(accounts) == 0
 
 
-async def test_delete_account_nonexistent(repo):
+async def test_delete_account_nonexistent(accounts_repo):
     """Test deleting non-existent account does not raise."""
-    await repo.delete_account(999)  # Should not raise
+    await accounts_repo.delete_account(999)  # Should not raise
 
 
 # migrate_sessions tests
 
 
-async def test_migrate_sessions_no_cipher(repo):
+async def test_migrate_sessions_no_cipher(accounts_repo):
     """Test migrate_sessions returns 0 when no cipher is configured."""
-    await repo.add_account(make_account("+1234567890", session="plaintext"))
-    count = await repo.migrate_sessions()
+    await accounts_repo.add_account(make_account("+1234567890", session="plaintext"))
+    count = await accounts_repo.migrate_sessions()
     assert count == 0
 
 

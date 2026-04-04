@@ -400,7 +400,7 @@ async def test_collect_all_stats(db):
     assert result["errors"] == 0
 
 
-def test_cli_channel_stats_no_args(capsys):
+def test_cli_channel_stats_no_args(cli_init_patch, capsys):
     """Calling `channel stats` without identifier or --all should not crash."""
     import argparse
     from unittest.mock import AsyncMock, MagicMock, patch
@@ -421,16 +421,11 @@ def test_cli_channel_stats_no_args(capsys):
     mock_pool.clients = {"phone": True}
     mock_pool.disconnect_all = AsyncMock()
 
-    async def fake_init_db(config_path):
-        from src.config import AppConfig
-
-        return AppConfig(), mock_db
-
     async def fake_init_pool(config, db):
         return config, mock_pool
 
     with (
-        patch("src.main._init_db", fake_init_db),
+        cli_init_patch(mock_db, "src.main._init_db"),
         patch("src.main._init_pool", fake_init_pool),
     ):
         cmd_channel(args)

@@ -17,6 +17,7 @@ from tests.helpers import cli_add_channel as _add_channel
 from tests.helpers import cli_ns as _ns
 
 NOW = datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+pytestmark = pytest.mark.aiosqlite_serial
 
 
 @pytest.fixture
@@ -473,7 +474,12 @@ class TestCLISearch:
 
 
 class TestCLIAgentDbProviders:
-    def test_chat_refreshes_db_backed_provider_cache_before_initialize(self, cli_env, cli_init_patch, capsys):
+    def test_chat_refreshes_db_backed_provider_cache_before_initialize(
+        self,
+        cli_env,
+        cli_init_patch,
+        capsys,
+    ):
         from src.agent.provider_registry import ProviderRuntimeConfig
         from src.cli.commands.agent import run
         from src.services.agent_provider_service import AgentProviderService
@@ -1196,7 +1202,12 @@ class TestCLIAgent:
         assert "model reply" in out
         assert captured_opts.get("model") == "claude-haiku-4-5-20251001"
 
-    def test_test_escaping_uses_runtime_config_for_db_providers(self, cli_db, cli_init_patch, capsys):
+    def test_test_escaping_uses_runtime_config_for_db_providers(
+        self,
+        cli_db,
+        cli_init_patch,
+        capsys,
+    ):
         from src.agent.provider_registry import ProviderRuntimeConfig
         from src.cli.commands.agent import run
         from src.services.agent_provider_service import AgentProviderService

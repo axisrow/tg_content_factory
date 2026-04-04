@@ -47,7 +47,6 @@ async def client(base_app):
     ) as c:
         yield c
 
-
 @pytest.fixture
 async def client_no_resolve(client):
     """Client with resolve that raises no_client error."""
