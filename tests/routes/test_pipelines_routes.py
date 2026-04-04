@@ -106,7 +106,10 @@ async def test_edit_pipeline(client):
 @pytest.mark.asyncio
 async def test_run_pipeline_not_found(client):
     """Test run pipeline with invalid ID."""
-    resp = await client.post("/pipelines/999999/run", follow_redirects=False)
+    from unittest.mock import patch
+
+    with patch("src.services.provider_service.AgentProviderService.has_providers", return_value=True):
+        resp = await client.post("/pipelines/999999/run", follow_redirects=False)
     assert resp.status_code == 303
     assert "error=pipeline_invalid" in resp.headers["location"]
 
@@ -118,15 +121,16 @@ async def test_run_pipeline_enqueues(client):
 
     await client.post("/pipelines/add", data=_ADD_DATA)
 
-    with patch("src.web.routes.pipelines.deps.pipeline_service") as mock_svc:
-        mock_svc.return_value.get = AsyncMock(
-            return_value=MagicMock(id=1, is_active=True)
-        )
-        with patch("src.web.routes.pipelines.deps.get_task_enqueuer") as mock_enq:
-            mock_enq.return_value.enqueue_pipeline_run = AsyncMock()
-            resp = await client.post("/pipelines/1/run", follow_redirects=False)
-            assert resp.status_code == 303
-            assert "msg=pipeline_run_enqueued" in resp.headers["location"]
+    with patch("src.services.provider_service.AgentProviderService.has_providers", return_value=True):
+        with patch("src.web.routes.pipelines.deps.pipeline_service") as mock_svc:
+            mock_svc.return_value.get = AsyncMock(
+                return_value=MagicMock(id=1, is_active=True)
+            )
+            with patch("src.web.routes.pipelines.deps.get_task_enqueuer") as mock_enq:
+                mock_enq.return_value.enqueue_pipeline_run = AsyncMock()
+                resp = await client.post("/pipelines/1/run", follow_redirects=False)
+                assert resp.status_code == 303
+                assert "msg=pipeline_run_enqueued" in resp.headers["location"]
 
 
 @pytest.mark.asyncio
@@ -136,17 +140,18 @@ async def test_run_pipeline_failure(client):
 
     await client.post("/pipelines/add", data=_ADD_DATA)
 
-    with patch("src.web.routes.pipelines.deps.pipeline_service") as mock_svc:
-        mock_svc.return_value.get = AsyncMock(
-            return_value=MagicMock(id=1, is_active=True)
-        )
-        with patch("src.web.routes.pipelines.deps.get_task_enqueuer") as mock_enq:
-            mock_enq.return_value.enqueue_pipeline_run = AsyncMock(
-                side_effect=Exception("Queue error")
+    with patch("src.services.provider_service.AgentProviderService.has_providers", return_value=True):
+        with patch("src.web.routes.pipelines.deps.pipeline_service") as mock_svc:
+            mock_svc.return_value.get = AsyncMock(
+                return_value=MagicMock(id=1, is_active=True)
             )
-            resp = await client.post("/pipelines/1/run", follow_redirects=False)
-            assert resp.status_code == 303
-            assert "error=pipeline_run_failed" in resp.headers["location"]
+            with patch("src.web.routes.pipelines.deps.get_task_enqueuer") as mock_enq:
+                mock_enq.return_value.enqueue_pipeline_run = AsyncMock(
+                    side_effect=Exception("Queue error")
+                )
+                resp = await client.post("/pipelines/1/run", follow_redirects=False)
+                assert resp.status_code == 303
+                assert "error=pipeline_run_failed" in resp.headers["location"]
 
 
 @pytest.mark.asyncio
