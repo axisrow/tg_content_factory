@@ -209,6 +209,10 @@ async def delete_pipeline(request: Request, pipeline_id: int):
 
 @router.post("/{pipeline_id}/run")
 async def run_pipeline(request: Request, pipeline_id: int):
+    from src.services.provider_service import AgentProviderService
+
+    if not AgentProviderService(deps.get_db(request)).has_providers():
+        return _pipeline_redirect("llm_not_configured", error=True)
     svc = deps.pipeline_service(request)
     pipeline = await svc.get(pipeline_id)
     if pipeline is None:
@@ -255,6 +259,8 @@ async def generate_stream(
     from src.services.provider_service import AgentProviderService
 
     provider_service = AgentProviderService(db)
+    if not provider_service.has_providers():
+        return _pipeline_redirect("llm_not_configured", error=True)
     provider_callable = provider_service.get_provider_callable(pipeline.llm_model)
 
     from src.services.generation_service import GenerationService
@@ -323,6 +329,8 @@ async def generate_pipeline(
     from src.services.provider_service import AgentProviderService
 
     provider_service = AgentProviderService(db)
+    if not provider_service.has_providers():
+        return _pipeline_redirect("llm_not_configured", error=True)
     provider_callable = provider_service.get_provider_callable(pipeline.llm_model)
 
     from src.services.generation_service import GenerationService
