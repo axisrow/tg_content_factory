@@ -9,32 +9,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from src.collection_queue import CollectionQueue
-from src.config import AppConfig
-from src.database import Database
-from src.scheduler.service import SchedulerManager
-from src.search.ai_search import AISearchEngine
-from src.search.engine import SearchEngine
-from src.telegram.auth import TelegramAuth
-from src.telegram.collector import Collector
-from src.web.app import create_app
-
 
 @pytest.fixture
-async def client(tmp_path):
+async def client(base_app):
     """Create test client with mocked auth."""
-    config = AppConfig()
-    config.database.path = str(tmp_path / "test.db")
-    config.telegram.api_id = 12345
-    config.telegram.api_hash = "test_hash"
-    config.web.password = "testpass"
-    app = create_app(config)
+    app, _, pool = base_app
 
-    db = Database(config.database.path)
-    await db.initialize()
-    app.state.db = db
-
-    async def _resolve_channel(self, identifier):
+    async def _resolve_channel(identifier):
         return {
             "channel_id": -1001234567890,
             "title": "Test Channel",
@@ -42,30 +23,11 @@ async def client(tmp_path):
             "channel_type": "channel",
         }
 
-    # Create mock auth
-    auth = TelegramAuth(12345, "test_hash")
-    app.state.auth = auth
-
-    app.state.pool = type(
-        "Pool",
-        (),
-        {
-            "clients": {},
-            "resolve_channel": _resolve_channel,
-            "add_client": AsyncMock(),
-            "get_client_by_phone": AsyncMock(return_value=None),
-            "release_client": AsyncMock(),
-        },
-    )()
-
-    app.state.notifier = None
-    collector = Collector(app.state.pool, db, config.scheduler)
-    app.state.collector = collector
-    app.state.collection_queue = CollectionQueue(collector, db)
-    app.state.search_engine = SearchEngine(db)
-    app.state.ai_search = AISearchEngine(config.llm, db)
-    app.state.scheduler = SchedulerManager(config.scheduler)
-    app.state.session_secret = "test_secret_key"
+    pool.clients = {}
+    pool.resolve_channel = _resolve_channel
+    pool.add_client = AsyncMock()
+    pool.get_client_by_phone = AsyncMock(return_value=None)
+    pool.release_client = AsyncMock()
 
     transport = ASGITransport(app=app)
     auth_header = base64.b64encode(b":testpass").decode()
@@ -77,48 +39,19 @@ async def client(tmp_path):
     ) as c:
         yield c
 
-    await app.state.collection_queue.shutdown()
-    await db.close()
-
 
 @pytest.fixture
-async def client_unconfigured(tmp_path):
+async def client_unconfigured(base_app):
     """Create test client with unconfigured auth."""
-    config = AppConfig()
-    config.database.path = str(tmp_path / "test.db")
-    config.telegram.api_id = 0  # Unconfigured
-    config.telegram.api_hash = ""
-    config.web.password = "testpass"
-    app = create_app(config)
-
-    db = Database(config.database.path)
-    await db.initialize()
-    app.state.db = db
-
-    # Unconfigured auth
+    app, _, pool = base_app
     auth = MagicMock()
     auth.is_configured = False
     app.state.auth = auth
 
-    app.state.pool = type(
-        "Pool",
-        (),
-        {
-            "clients": {},
-            "add_client": AsyncMock(),
-            "get_client_by_phone": AsyncMock(return_value=None),
-            "release_client": AsyncMock(),
-        },
-    )()
-
-    app.state.notifier = None
-    collector = Collector(app.state.pool, db, config.scheduler)
-    app.state.collector = collector
-    app.state.collection_queue = CollectionQueue(collector, db)
-    app.state.search_engine = SearchEngine(db)
-    app.state.ai_search = AISearchEngine(config.llm, db)
-    app.state.scheduler = SchedulerManager(config.scheduler)
-    app.state.session_secret = "test_secret_key"
+    pool.clients = {}
+    pool.add_client = AsyncMock()
+    pool.get_client_by_phone = AsyncMock(return_value=None)
+    pool.release_client = AsyncMock()
 
     transport = ASGITransport(app=app)
     auth_header = base64.b64encode(b":testpass").decode()
@@ -129,9 +62,6 @@ async def client_unconfigured(tmp_path):
         headers={"Authorization": f"Basic {auth_header}", "Origin": "http://test"},
     ) as c:
         yield c
-
-    await app.state.collection_queue.shutdown()
-    await db.close()
 
 
 @pytest.mark.asyncio

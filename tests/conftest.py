@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Collection, Mapping
@@ -66,6 +67,36 @@ def cli_env(cli_db):
 
     with patch("src.cli.runtime.init_db", side_effect=fake_init_db):
         yield cli_db
+
+
+@pytest.fixture
+def cli_init_patch():
+    """Patch one or more CLI init_db targets to return the provided database."""
+
+    @contextmanager
+    def _patch(
+        db,
+        *targets: str,
+        config: AppConfig | None = None,
+        fresh_database: bool = False,
+    ):
+        runtime_config = config or AppConfig()
+
+        async def fake_init_db(_config_path: str):
+            if isinstance(db, Database) and fresh_database:
+                cmd_db = Database(db._db_path, session_encryption_secret=db._session_encryption_secret)
+                await cmd_db.initialize()
+                return runtime_config, cmd_db
+            if isinstance(db, Database) and db._connection.db is None:
+                await db.initialize()
+            return runtime_config, db
+
+        with ExitStack() as stack:
+            for target in targets:
+                stack.enter_context(patch(target, side_effect=fake_init_db))
+            yield runtime_config, db
+
+    return _patch
 
 
 @pytest.fixture
@@ -285,6 +316,12 @@ def pytest_runtest_setup(item):
         pytest.skip(message)
     if action == "fail":
         pytest.fail(message, pytrace=False)
+
+
+def pytest_collection_modifyitems(config, items):
+    for item in items:
+        if item.get_closest_marker("aiosqlite_serial") and not item.get_closest_marker("xdist_group"):
+            item.add_marker(pytest.mark.xdist_group("aiosqlite_serial"))
 
 
 @pytest.fixture(autouse=True)

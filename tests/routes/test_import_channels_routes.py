@@ -8,33 +8,15 @@ import io
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from src.collection_queue import CollectionQueue
-from src.config import AppConfig
-from src.database import Database
-from src.models import Account, Channel
-from src.scheduler.service import SchedulerManager
-from src.search.ai_search import AISearchEngine
-from src.search.engine import SearchEngine
-from src.telegram.auth import TelegramAuth
-from src.telegram.collector import Collector
-from src.web.app import create_app
+from src.models import Channel
 
 
 @pytest.fixture
-async def client(tmp_path):
+async def client(base_app):
     """Create test client with mocked pool."""
-    config = AppConfig()
-    config.database.path = str(tmp_path / "test.db")
-    config.telegram.api_id = 12345
-    config.telegram.api_hash = "test_hash"
-    config.web.password = "testpass"
-    app = create_app(config)
+    app, _, pool = base_app
 
-    db = Database(config.database.path)
-    await db.initialize()
-    app.state.db = db
-
-    async def _resolve_channel(self, identifier):
+    async def _resolve_channel(identifier):
         # Mock resolve based on identifier
         if identifier.startswith("@"):
             return {
@@ -52,26 +34,8 @@ async def client(tmp_path):
             }
         raise RuntimeError(f"Cannot resolve: {identifier}")
 
-    app.state.pool = type(
-        "Pool",
-        (),
-        {
-            "clients": {},
-            "resolve_channel": _resolve_channel,
-        },
-    )()
-
-    app.state.auth = TelegramAuth(12345, "test_hash")
-    app.state.notifier = None
-    collector = Collector(app.state.pool, db, config.scheduler)
-    app.state.collector = collector
-    app.state.collection_queue = CollectionQueue(collector, db)
-    app.state.search_engine = SearchEngine(db)
-    app.state.ai_search = AISearchEngine(config.llm, db)
-    app.state.scheduler = SchedulerManager(config.scheduler)
-    app.state.session_secret = "test_secret_key"
-
-    await db.add_account(Account(phone="+1234567890", session_string="test_session"))
+    pool.clients = {}
+    pool.resolve_channel = _resolve_channel
 
     transport = ASGITransport(app=app)
     auth_header = base64.b64encode(b":testpass").decode()
@@ -83,18 +47,16 @@ async def client(tmp_path):
     ) as c:
         yield c
 
-    await app.state.collection_queue.shutdown()
-    await db.close()
-
 
 @pytest.fixture
 async def client_no_resolve(client):
     """Client with resolve that raises no_client error."""
 
-    async def _resolve_no_client(self, identifier):
+    async def _resolve_no_client(identifier):
         raise RuntimeError("no_client")
 
     client._transport.app.state.pool.resolve_channel = _resolve_no_client
+    return client
 
 
 @pytest.mark.asyncio

@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from src.database.repositories.channels import ChannelsRepository
-from src.database.repositories.filters import FilterRepository, _has_cyrillic_udf
+from src.database.repositories.filters import _has_cyrillic_udf
 from src.models import Channel
 
 _INSERT_MSG = (
@@ -25,14 +25,6 @@ _INSERT_STATS_NULL = (
     "INSERT INTO channel_stats (channel_id, subscriber_count, collected_at)"
     " VALUES (?, NULL, datetime('now'))"
 )
-
-
-@pytest.fixture
-async def repo(db):
-    """Create repository instance."""
-    return FilterRepository(db.db)
-
-
 @pytest.fixture
 async def channels_repo(db):
     """Create channels repository instance."""
