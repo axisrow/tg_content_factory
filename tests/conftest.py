@@ -319,13 +319,12 @@ def pytest_runtest_setup(item):
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
-    xdist_group = getattr(pytest.mark, "xdist_group", None)
-    if xdist_group is None:
+    if not config.pluginmanager.hasplugin("xdist"):
         return
 
     for item in items:
         if item.get_closest_marker("aiosqlite_serial"):
-            item.add_marker(xdist_group("aiosqlite_serial"))
+            item.add_marker(pytest.mark.xdist_group("aiosqlite_serial"))
 
 
 @pytest.fixture(autouse=True)
