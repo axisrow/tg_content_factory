@@ -35,8 +35,6 @@ from tests.helpers import (
     make_test_config,
 )
 
-pytestmark = pytest.mark.aiosqlite_serial
-
 
 def _photo_dialog_from_spec(spec: dict) -> MagicMock:
     entity = SimpleNamespace(
@@ -762,6 +760,7 @@ def test_photo_loader_cli_parser():
     assert args.mode == "album"
 
 
+@pytest.mark.aiosqlite_serial
 def test_photo_loader_cli_send_command(tmp_path, cli_init_patch, capsys):
     image = tmp_path / "one.jpg"
     image.write_bytes(b"x")
