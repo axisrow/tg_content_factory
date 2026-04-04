@@ -508,6 +508,7 @@ class ClientPool:
         return set(self._premium_flood_wait_until)
 
     async def disconnect_all(self) -> None:
+        had_clients = bool(self.clients)
         for phone in list(self.clients):
             try:
                 await asyncio.wait_for(self.remove_client(phone), timeout=5.0)
@@ -520,7 +521,8 @@ class ClientPool:
             except Exception:
                 logger.debug("Error disconnecting %s", phone, exc_info=True)
         # Allow Telethon internal tasks (_send_loop, _recv_loop) to finish
-        await asyncio.sleep(0.25)
+        if had_clients:
+            await asyncio.sleep(0.25)
 
     @staticmethod
     def _normalize_runtime_config(
