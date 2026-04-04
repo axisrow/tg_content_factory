@@ -43,7 +43,7 @@
 
 {% if not llm_configured %}
 <div class="alert alert-warning" role="alert">
-    LLM-провайдер не настроен — генерация контента недоступна. Настройте провайдер в <a href="/settings" class="alert-link">Настройки → Провайдеры</a>.
+    LLM-провайдер не настроен — генерация контента недоступна. Установите переменную окружения с ключом API (например, <code>OPENAI_API_KEY</code>, <code>COHERE_API_KEY</code>) и перезапустите сервер.
 </div>
 {% endif %}
 

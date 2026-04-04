@@ -522,6 +522,10 @@ async def import_pipeline(
 @router.post("/{pipeline_id}/ai-edit")
 async def ai_edit_pipeline(request: Request, pipeline_id: int):
     """Accept JSON body: {"instruction": "..."}. Returns updated pipeline_json."""
+    from src.services.provider_service import AgentProviderService
+
+    if not AgentProviderService(deps.get_db(request)).has_providers():
+        return JSONResponse(content={"ok": False, "error": "LLM not configured"}, status_code=400)
     svc: PipelineService = deps.pipeline_service(request)
     db = deps.get_db(request)
     try:
