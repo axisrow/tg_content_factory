@@ -41,9 +41,16 @@
     </div>
 </div>
 
+{% if not llm_configured %}
+<div class="alert alert-warning" role="alert">
+    LLM-провайдер не настроен — генерация контента недоступна. Установите переменную окружения с ключом API (например, <code>OPENAI_API_KEY</code>, <code>COHERE_API_KEY</code>) и перезапустите сервер.
+</div>
+{% endif %}
+
 <div class="card mb-4">
     <div class="card-header fw-semibold">Новый pipeline</div>
     <div class="card-body">
+    {% if llm_configured %}
         <form method="post" action="/pipelines/add{% if selected_phone %}?phone={{ selected_phone|urlencode }}{% endif %}" data-busy>
             <div class="row g-3 mb-3">
                 <div class="col-12 col-lg-6">
@@ -136,6 +143,9 @@
             </div>
             <button type="submit" class="btn btn-primary">Создать pipeline</button>
         </form>
+    {% else %}
+        <p class="text-muted mb-0">Настройте LLM провайдер для создания пайплайнов.</p>
+    {% endif %}
     </div>
 </div>
 
@@ -188,16 +198,16 @@
                     {% if not pipeline.pipeline_json %}
                     <button type="button" class="btn btn-outline-secondary btn-sm" onclick="togglePipelineEdit({{ pipeline.id }})">Редактировать</button>
                     {% endif %}
-                    <a class="btn btn-outline-primary btn-sm" href="/pipelines/{{ pipeline.id }}/generate">Generate</a>
+                    <a class="btn btn-outline-primary btn-sm{% if not llm_configured %} disabled{% endif %}" href="/pipelines/{{ pipeline.id }}/generate" {% if not llm_configured %}aria-disabled="true" title="Настройте LLM провайдер"{% endif %}>Generate</a>
                     <form method="post" action="/pipelines/{{ pipeline.id }}/run" class="d-inline" data-busy>
-                        <button type="submit" class="btn btn-outline-success btn-sm">Run now</button>
+                        <button type="submit" class="btn btn-outline-success btn-sm" {% if not llm_configured %}disabled title="Настройте LLM провайдер"{% endif %}>Run now</button>
                     </form>
                     <form method="post" action="/pipelines/{{ pipeline.id }}/toggle" class="d-inline" data-busy>
                         <button type="submit" class="btn btn-outline-secondary btn-sm">{{ "Выключить" if pipeline.is_active else "Включить" }}</button>
                     </form>
                     <a class="btn btn-outline-dark btn-sm" href="/pipelines/{{ pipeline.id }}/export" title="Экспорт JSON">JSON</a>
                     {% if pipeline.pipeline_json %}
-                    <button type="button" class="btn btn-outline-info btn-sm" onclick="toggleAiEdit({{ pipeline.id }})" title="Редактировать через AI">AI</button>
+                    <button type="button" class="btn btn-outline-info btn-sm" {% if llm_configured %}onclick="toggleAiEdit({{ pipeline.id }})"{% else %}disabled{% endif %} title="{% if llm_configured %}Редактировать через AI{% else %}Настройте LLM провайдер{% endif %}">AI</button>
                     {% endif %}
                     <form method="post" action="/pipelines/{{ pipeline.id }}/delete{% if selected_phone %}?phone={{ selected_phone|urlencode }}{% endif %}" class="d-inline" data-busy onsubmit="return confirm('Удалить pipeline?')">
                         <button type="submit" class="btn btn-outline-danger btn-sm">Удалить</button>

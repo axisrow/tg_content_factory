@@ -87,6 +87,10 @@ async def test_pipeline_generate_and_publish(pipeline_client, monkeypatch):
         "src.services.generation_service.GenerationService.generate",
         fake_generate,
     )
+    monkeypatch.setattr(
+        "src.services.provider_service.AgentProviderService.has_providers",
+        lambda self: True,
+    )
 
     # Trigger generation (non-streaming path)
     gen_resp = await pipeline_client.post(

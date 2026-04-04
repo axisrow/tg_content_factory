@@ -116,6 +116,10 @@ class AgentProviderService:
                 logger.debug("Failed to register %s adapter", adapter_name, exc_info=True)
 
 
+    def has_providers(self) -> bool:
+        """Return True if any real (non-default) provider is registered."""
+        return any(name != "default" for name in self._registry)
+
     def register_provider(self, name: str, func: Callable[..., Awaitable[str]]) -> None:
         self._registry[name] = func
 
