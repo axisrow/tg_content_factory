@@ -1,0 +1,38 @@
+{
+  "tag": "v0.2.1",
+  "title": "Pipelines DAG, Z.AI Provider & Stability Fixes",
+  "highlights": [
+    {
+      "title": "Node-based DAG Pipelines",
+      "description": "Content pipelines redesigned as a node-based DAG, unlocking richer branching and reuse; includes a fix for semantic search fallback when no vector store is configured."
+    },
+    {
+      "title": "Z.AI Provider Support",
+      "description": "New Z.AI LLM provider with native API endpoint and Bearer auth, auto-registered from environment variables alongside the existing provider adapters."
+    },
+    {
+      "title": "Dynamic HuggingFace Image Models",
+      "description": "Image generation now discovers HuggingFace models dynamically via the huggingface_hub SDK and uses the new router.huggingface.co endpoint, replacing the deprecated api-inference host."
+    },
+    {
+      "title": "Pipeline & Filter UX Polishing",
+      "description": "LLM sections are disabled when no provider is configured, trending terms are filtered with TF-IDF to drop low-signal words, and channel filters now gate on stats to avoid dropping legitimate content."
+    },
+    {
+      "title": "Per-channel Post Browsing",
+      "description": "Channel list gains a quick button to browse all collected posts for a specific channel, making moderation and auditing faster."
+    },
+    {
+      "title": "Telegram Client Stability",
+      "description": "Grace period added to ClientPool.disconnect_all eliminates noisy 'Task was destroyed but it is pending' warnings during shutdown."
+    },
+    {
+      "title": "Scheduler Module Rename",
+      "description": "src/scheduler/manager.py renamed to service.py with a compatibility shim, aligning with the service-layer naming used elsewhere in the project."
+    },
+    {
+      "title": "Test Infrastructure Overhaul",
+      "description": "Deduplicated fixtures, centralized CLI DB patching, and expanded coverage across services, parsers, CLI, and web routes to close long-standing test-infra debt."
+    }
+  ]
+}
