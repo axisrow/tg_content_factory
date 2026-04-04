@@ -5,8 +5,11 @@ import argparse
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 from src.database import Database
 from src.models import Account
+
+pytestmark = pytest.mark.aiosqlite_serial
 
 _PHOTO_LOADER_INIT_DB_TARGET = "src.cli.commands.photo_loader.runtime.init_db"
 
@@ -84,7 +87,6 @@ def test_dialogs_action(tmp_path, cli_init_patch, capsys):
     db = Database(db_path)
     asyncio.run(db.initialize())
     _setup_photo_db(db)
-    asyncio.run(db.close())
 
     async def fake_init_pool(_config, _db):
         pool = MagicMock()
@@ -142,7 +144,6 @@ def test_send_action(tmp_path, cli_init_patch, capsys):
     db = Database(db_path)
     asyncio.run(db.initialize())
     _setup_photo_db(db)
-    asyncio.run(db.close())
 
     async def fake_init_pool(_config, _db):
         pool = MagicMock()
@@ -185,7 +186,6 @@ def test_schedule_send_action(tmp_path, cli_init_patch, capsys):
     db = Database(db_path)
     asyncio.run(db.initialize())
     _setup_photo_db(db)
-    asyncio.run(db.close())
 
     async def fake_init_pool(_config, _db):
         pool = MagicMock()
@@ -229,7 +229,6 @@ def test_batch_create_action(tmp_path, cli_init_patch, capsys):
     db = Database(db_path)
     asyncio.run(db.initialize())
     _setup_photo_db(db)
-    asyncio.run(db.close())
 
     async def fake_init_pool(_config, _db):
         pool = MagicMock()
@@ -274,7 +273,6 @@ def test_batch_list_action(tmp_path, cli_init_patch, capsys):
     db = Database(db_path)
     asyncio.run(db.initialize())
     _setup_photo_db(db)
-    asyncio.run(db.close())
 
     async def fake_init_pool(_config, _db):
         pool = MagicMock()
@@ -313,7 +311,6 @@ def test_auto_create_action(tmp_path, cli_init_patch, capsys):
     db = Database(db_path)
     asyncio.run(db.initialize())
     _setup_photo_db(db)
-    asyncio.run(db.close())
 
     async def fake_init_pool(_config, _db):
         pool = MagicMock()
@@ -355,7 +352,6 @@ def test_auto_list_action(tmp_path, cli_init_patch, capsys):
     db = Database(db_path)
     asyncio.run(db.initialize())
     _setup_photo_db(db)
-    asyncio.run(db.close())
 
     async def fake_init_pool(_config, _db):
         pool = MagicMock()
@@ -399,7 +395,6 @@ def test_auto_toggle_action(tmp_path, cli_init_patch, capsys):
     db = Database(db_path)
     asyncio.run(db.initialize())
     _setup_photo_db(db)
-    asyncio.run(db.close())
 
     async def fake_init_pool(_config, _db):
         pool = MagicMock()
@@ -433,7 +428,6 @@ def test_auto_toggle_not_found(tmp_path, cli_init_patch, capsys):
     db = Database(db_path)
     asyncio.run(db.initialize())
     _setup_photo_db(db)
-    asyncio.run(db.close())
 
     async def fake_init_pool(_config, _db):
         pool = MagicMock()
@@ -462,7 +456,6 @@ def test_run_due_action(tmp_path, cli_init_patch, capsys):
     db = Database(db_path)
     asyncio.run(db.initialize())
     _setup_photo_db(db)
-    asyncio.run(db.close())
 
     async def fake_init_pool(_config, _db):
         pool = MagicMock()
@@ -495,7 +488,6 @@ def test_auto_delete_action(tmp_path, cli_init_patch, capsys):
     db = Database(db_path)
     asyncio.run(db.initialize())
     _setup_photo_db(db)
-    asyncio.run(db.close())
 
     async def fake_init_pool(_config, _db):
         pool = MagicMock()
@@ -524,7 +516,6 @@ def test_batch_cancel_action(tmp_path, cli_init_patch, capsys):
     db = Database(db_path)
     asyncio.run(db.initialize())
     _setup_photo_db(db)
-    asyncio.run(db.close())
 
     async def fake_init_pool(_config, _db):
         pool = MagicMock()
@@ -553,7 +544,6 @@ def test_auto_update_action(tmp_path, cli_init_patch, capsys):
     db = Database(db_path)
     asyncio.run(db.initialize())
     _setup_photo_db(db)
-    asyncio.run(db.close())
 
     async def fake_init_pool(_config, _db):
         pool = MagicMock()

@@ -10,7 +10,6 @@ from httpx import ASGITransport, AsyncClient
 
 from src.models import Channel
 
-
 @pytest.fixture
 async def client(base_app):
     """Create test client with mocked pool."""
@@ -46,7 +45,6 @@ async def client(base_app):
         headers={"Authorization": f"Basic {auth_header}", "Origin": "http://test"},
     ) as c:
         yield c
-
 
 @pytest.fixture
 async def client_no_resolve(client):

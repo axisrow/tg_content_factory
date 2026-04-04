@@ -10,6 +10,8 @@ from httpx import ASGITransport, AsyncClient
 
 from src.database import Database
 from src.models import (
+    Account,
+    Channel,
     ContentPipeline,
     PipelineGenerationBackend,
     PipelinePublishMode,
@@ -20,7 +22,8 @@ from src.services.publish_service import PublishResult
 
 @pytest.fixture
 async def client(base_app):
-    app, _, pool_mock = base_app
+    app, db, pool_mock = base_app
+
     pool_mock.clients = {"+1234567890": MagicMock()}
     pool_mock.get_dialogs_for_phone = AsyncMock(return_value=[])
 
@@ -34,6 +37,7 @@ async def client(base_app):
     ) as c:
         c._transport_app = app
         yield c
+
 
 
 async def _create_pipeline(db: Database, *, publish_mode: PipelinePublishMode) -> int:

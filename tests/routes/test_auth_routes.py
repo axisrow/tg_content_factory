@@ -9,7 +9,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-
 @pytest.fixture
 async def client(base_app):
     """Create test client with mocked auth."""
@@ -39,7 +38,6 @@ async def client(base_app):
     ) as c:
         yield c
 
-
 @pytest.fixture
 async def client_unconfigured(base_app):
     """Create test client with unconfigured auth."""
@@ -62,6 +60,7 @@ async def client_unconfigured(base_app):
         headers={"Authorization": f"Basic {auth_header}", "Origin": "http://test"},
     ) as c:
         yield c
+
 
 
 @pytest.mark.asyncio

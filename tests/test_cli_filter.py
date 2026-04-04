@@ -5,8 +5,11 @@ import argparse
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 from src.database import Database
 from src.models import Account, Channel
+
+pytestmark = pytest.mark.aiosqlite_serial
 
 _FILTER_INIT_DB_TARGET = "src.cli.commands.filter.runtime.init_db"
 
@@ -73,8 +76,6 @@ def test_filter_analyze(tmp_path, cli_init_patch, capsys):
     asyncio.run(db.initialize())
     asyncio.run(db.add_account(Account(phone="+100", session_string="sess")))
     asyncio.run(db.add_channel(Channel(channel_id=1001, title="Test Channel")))
-    asyncio.run(db.close())
-
     with cli_init_patch(db, _FILTER_INIT_DB_TARGET):
         from src.cli.commands.filter import run
 
@@ -99,8 +100,6 @@ def test_filter_apply(tmp_path, cli_init_patch, capsys):
     db_path = str(tmp_path / "filter_apply.db")
     db = Database(db_path)
     asyncio.run(db.initialize())
-    asyncio.run(db.close())
-
     with cli_init_patch(db, _FILTER_INIT_DB_TARGET):
         from src.cli.commands.filter import run
 
@@ -122,8 +121,6 @@ def test_filter_precheck(tmp_path, cli_init_patch, capsys):
     db_path = str(tmp_path / "filter_precheck.db")
     db = Database(db_path)
     asyncio.run(db.initialize())
-    asyncio.run(db.close())
-
     with cli_init_patch(db, _FILTER_INIT_DB_TARGET):
         from src.cli.commands.filter import run
 
@@ -143,8 +140,6 @@ def test_filter_reset(tmp_path, cli_init_patch, capsys):
     db_path = str(tmp_path / "filter_reset.db")
     db = Database(db_path)
     asyncio.run(db.initialize())
-    asyncio.run(db.close())
-
     with cli_init_patch(db, _FILTER_INIT_DB_TARGET):
         from src.cli.commands.filter import run
 
@@ -164,8 +159,6 @@ def test_filter_purge_all(tmp_path, cli_init_patch, capsys):
     db_path = str(tmp_path / "filter_purge.db")
     db = Database(db_path)
     asyncio.run(db.initialize())
-    asyncio.run(db.close())
-
     with cli_init_patch(db, _FILTER_INIT_DB_TARGET):
         from src.cli.commands.filter import run
 
@@ -189,8 +182,6 @@ def test_filter_purge_by_pks(tmp_path, cli_init_patch, capsys):
     db_path = str(tmp_path / "filter_purge_pks.db")
     db = Database(db_path)
     asyncio.run(db.initialize())
-    asyncio.run(db.close())
-
     with cli_init_patch(db, _FILTER_INIT_DB_TARGET):
         from src.cli.commands.filter import run
 
@@ -214,8 +205,6 @@ def test_filter_purge_invalid_pks(tmp_path, cli_init_patch, capsys):
     db_path = str(tmp_path / "filter_purge_invalid.db")
     db = Database(db_path)
     asyncio.run(db.initialize())
-    asyncio.run(db.close())
-
     with cli_init_patch(db, _FILTER_INIT_DB_TARGET):
         from src.cli.commands.filter import run
 
@@ -230,8 +219,6 @@ def test_filter_hard_delete_requires_dev_mode(tmp_path, cli_init_patch, capsys):
     db_path = str(tmp_path / "filter_hard_delete_dev.db")
     db = Database(db_path)
     asyncio.run(db.initialize())
-    asyncio.run(db.close())
-
     with cli_init_patch(db, _FILTER_INIT_DB_TARGET):
         from src.cli.commands.filter import run
 
@@ -247,6 +234,7 @@ def test_filter_no_action(cli_init_patch, capsys):
 
     db = MagicMock()
     db.close = AsyncMock()
+
     with cli_init_patch(db, _FILTER_INIT_DB_TARGET):
         run(_ns(filter_action=None))
 

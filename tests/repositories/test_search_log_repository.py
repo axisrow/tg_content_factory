@@ -2,29 +2,34 @@
 
 from __future__ import annotations
 
+import pytest
 
-async def test_log_search(repo):
+from src.database.repositories.search_log import SearchLogRepository
+
+
+
+async def test_log_search(search_log_repo):
     """Test logging a search."""
-    await repo.log_search("+1234567890", "test query", 10)
+    await search_log_repo.log_search("+1234567890", "test query", 10)
 
-    result = await repo.get_recent_searches(limit=1)
+    result = await search_log_repo.get_recent_searches(limit=1)
     assert len(result) == 1
     assert result[0]["query"] == "test query"
     assert result[0]["results_count"] == 10
 
 
-async def test_get_recent_searches_empty(repo):
+async def test_get_recent_searches_empty(search_log_repo):
     """Test getting searches when none exist."""
-    result = await repo.get_recent_searches()
+    result = await search_log_repo.get_recent_searches()
     assert result == []
 
 
-async def test_get_recent_searches(repo):
+async def test_get_recent_searches(search_log_repo):
     """Test getting recent searches."""
-    await repo.log_search("+1111111111", "query1", 5)
-    await repo.log_search("+2222222222", "query2", 10)
+    await search_log_repo.log_search("+1111111111", "query1", 5)
+    await search_log_repo.log_search("+2222222222", "query2", 10)
 
-    result = await repo.get_recent_searches()
+    result = await search_log_repo.get_recent_searches()
     assert len(result) == 2
 
     # Should be ordered by id DESC
@@ -32,23 +37,23 @@ async def test_get_recent_searches(repo):
     assert result[1]["query"] == "query1"
 
 
-async def test_get_recent_searches_limit(repo):
+async def test_get_recent_searches_limit(search_log_repo):
     """Test limit parameter."""
     for i in range(30):
-        await repo.log_search("+1234567890", f"query{i}", i)
+        await search_log_repo.log_search("+1234567890", f"query{i}", i)
 
-    result = await repo.get_recent_searches(limit=10)
+    result = await search_log_repo.get_recent_searches(limit=10)
     assert len(result) == 10
 
     # Should get most recent
     assert result[0]["query"] == "query29"
 
 
-async def test_search_log_fields(repo):
+async def test_search_log_fields(search_log_repo):
     """Test that all fields are returned correctly."""
-    await repo.log_search("+1234567890", "test query", 42)
+    await search_log_repo.log_search("+1234567890", "test query", 42)
 
-    result = await repo.get_recent_searches(limit=1)
+    result = await search_log_repo.get_recent_searches(limit=1)
     assert len(result) == 1
 
     entry = result[0]
@@ -59,9 +64,9 @@ async def test_search_log_fields(repo):
     assert "created_at" in entry
 
 
-async def test_search_log_zero_results(repo):
+async def test_search_log_zero_results(search_log_repo):
     """Test logging search with zero results."""
-    await repo.log_search("+1234567890", "nonexistent", 0)
+    await search_log_repo.log_search("+1234567890", "nonexistent", 0)
 
-    result = await repo.get_recent_searches(limit=1)
+    result = await search_log_repo.get_recent_searches(limit=1)
     assert result[0]["results_count"] == 0

@@ -35,6 +35,8 @@ from tests.helpers import (
     make_test_config,
 )
 
+pytestmark = pytest.mark.aiosqlite_serial
+
 
 def _photo_dialog_from_spec(spec: dict) -> MagicMock:
     entity = SimpleNamespace(
@@ -778,7 +780,7 @@ def test_photo_loader_cli_send_command(tmp_path, cli_init_patch, capsys):
         return TelegramAuth(0, ""), fake_pool
 
     with (
-        cli_init_patch(db, "src.cli.runtime.init_db"),
+        cli_init_patch(db, "src.cli.runtime.init_db", config=AppConfig()),
         patch("src.cli.runtime.init_pool", side_effect=fake_init_pool),
     ):
         from src.cli.commands.photo_loader import run

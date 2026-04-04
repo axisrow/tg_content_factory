@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import base64
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -48,7 +48,6 @@ async def client(base_app):
         ]
     )
     pool_mock.leave_channels = AsyncMock(return_value={-100111: True, -100222: True})
-
     await db.add_account(Account(phone="+9876543210", session_string="test_session2"))
 
     transport = ASGITransport(app=app)
@@ -60,6 +59,7 @@ async def client(base_app):
         headers={"Authorization": f"Basic {auth_header}", "Origin": "http://test"},
     ) as c:
         yield c
+
 
 
 @pytest.mark.asyncio

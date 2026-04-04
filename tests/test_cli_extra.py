@@ -12,6 +12,8 @@ from src.config import AppConfig
 from src.database import Database
 from src.models import Channel, NotificationBot
 
+pytestmark = pytest.mark.aiosqlite_serial
+
 
 @pytest.fixture
 def cli_env_with_pool(cli_env):

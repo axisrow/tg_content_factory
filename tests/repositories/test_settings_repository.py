@@ -2,51 +2,56 @@
 
 from __future__ import annotations
 
+import pytest
 
-async def test_get_setting_not_found(repo):
+from src.database.repositories.settings import SettingsRepository
+
+
+
+async def test_get_setting_not_found(settings_repo):
     """Test getting non-existent setting returns None."""
-    result = await repo.get_setting("nonexistent_key")
+    result = await settings_repo.get_setting("nonexistent_key")
     assert result is None
 
 
-async def test_set_and_get_setting(repo):
+async def test_set_and_get_setting(settings_repo):
     """Test setting and getting a value."""
-    await repo.set_setting("test_key", "test_value")
-    result = await repo.get_setting("test_key")
+    await settings_repo.set_setting("test_key", "test_value")
+    result = await settings_repo.get_setting("test_key")
     assert result == "test_value"
 
 
-async def test_set_setting_upsert(repo):
+async def test_set_setting_upsert(settings_repo):
     """Test that set_setting updates existing value."""
-    await repo.set_setting("key1", "value1")
-    await repo.set_setting("key1", "value2")
-    result = await repo.get_setting("key1")
+    await settings_repo.set_setting("key1", "value1")
+    await settings_repo.set_setting("key1", "value2")
+    result = await settings_repo.get_setting("key1")
     assert result == "value2"
 
 
-async def test_set_setting_empty_string(repo):
+async def test_set_setting_empty_string(settings_repo):
     """Test setting empty string value."""
-    await repo.set_setting("empty_key", "")
-    result = await repo.get_setting("empty_key")
+    await settings_repo.set_setting("empty_key", "")
+    result = await settings_repo.get_setting("empty_key")
     assert result == ""
 
 
-async def test_set_setting_unicode(repo):
+async def test_set_setting_unicode(settings_repo):
     """Test setting unicode value."""
-    await repo.set_setting("unicode_key", "Значение на русском 🎉")
-    result = await repo.get_setting("unicode_key")
+    await settings_repo.set_setting("unicode_key", "Значение на русском 🎉")
+    result = await settings_repo.get_setting("unicode_key")
     assert result == "Значение на русском 🎉"
 
 
-async def test_set_setting_long_value(repo):
+async def test_set_setting_long_value(settings_repo):
     """Test setting long value."""
     long_value = "x" * 10000
-    await repo.set_setting("long_key", long_value)
-    result = await repo.get_setting("long_key")
+    await settings_repo.set_setting("long_key", long_value)
+    result = await settings_repo.get_setting("long_key")
     assert result == long_value
 
 
-async def test_roundtrip_multiple_settings(repo):
+async def test_roundtrip_multiple_settings(settings_repo):
     """Test multiple settings roundtrip."""
     settings = {
         "key1": "value1",
@@ -54,17 +59,17 @@ async def test_roundtrip_multiple_settings(repo):
         "key3": "value3",
     }
     for k, v in settings.items():
-        await repo.set_setting(k, v)
+        await settings_repo.set_setting(k, v)
 
     for k, v in settings.items():
-        result = await repo.get_setting(k)
+        result = await settings_repo.get_setting(k)
         assert result == v
 
 
-async def test_get_setting_case_sensitive(repo):
+async def test_get_setting_case_sensitive(settings_repo):
     """Test that keys are case-sensitive."""
-    await repo.set_setting("TestKey", "value1")
-    await repo.set_setting("testkey", "value2")
+    await settings_repo.set_setting("TestKey", "value1")
+    await settings_repo.set_setting("testkey", "value2")
 
-    assert await repo.get_setting("TestKey") == "value1"
-    assert await repo.get_setting("testkey") == "value2"
+    assert await settings_repo.get_setting("TestKey") == "value1"
+    assert await settings_repo.get_setting("testkey") == "value2"

@@ -13,6 +13,8 @@ from src.config import AppConfig
 from src.models import Channel, ChannelStats, CollectionTaskStatus
 from src.telegram.flood_wait import FloodWaitInfo
 
+pytestmark = pytest.mark.aiosqlite_serial
+
 
 def _ns(**kwargs) -> argparse.Namespace:
     defaults = {"config": "config.yaml"}
