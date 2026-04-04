@@ -57,7 +57,9 @@ async def test_pipelines_page_renders(pipeline_client):
     resp = await pipeline_client.get("/pipelines/")
     assert resp.status_code == 200
     assert "Пайплайны контента" in resp.text
-    assert "Source A" in resp.text
+    # When no LLM provider is configured, a warning banner is shown and the
+    # "New pipeline" form is hidden (so channel names like "Source A" are not in the DOM).
+    assert "LLM-провайдер не настроен" in resp.text
 
 
 @pytest.mark.asyncio

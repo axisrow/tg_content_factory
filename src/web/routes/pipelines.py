@@ -46,6 +46,8 @@ def _target_refs(values: list[str]) -> list[PipelineTargetRef]:
 
 
 async def _page_context(request: Request) -> dict:
+    from src.services.provider_service import AgentProviderService
+
     svc = deps.pipeline_service(request)
     channels = await deps.get_channel_bundle(request).list_channels(include_filtered=True)
     accounts = await deps.get_account_bundle(request).list_accounts()
@@ -82,6 +84,7 @@ async def _page_context(request: Request) -> dict:
         "publish_modes": list(PipelinePublishMode),
         "generation_backends": list(PipelineGenerationBackend),
         "next_runs": next_runs,
+        "llm_configured": AgentProviderService(deps.get_db(request)).has_providers(),
     }
 
 
