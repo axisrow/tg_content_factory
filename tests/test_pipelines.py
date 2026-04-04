@@ -52,8 +52,19 @@ async def pipeline_client(tmp_path, real_pool_harness_factory):
     await built_db.close()
 
 
+_LLM_ENV_VARS = [
+    "OPENAI_API_KEY", "COHERE_API_KEY", "CONTEXT7_API_KEY", "CTX7_API_KEY",
+    "OLLAMA_BASE", "OLLAMA_URL", "HUGGINGFACE_API_KEY", "HUGGINGFACE_TOKEN",
+    "FIREWORKS_BASE", "FIREWORKS_API_BASE", "FIREWORKS_API_KEY",
+    "DEEPSEEK_BASE", "DEEPSEEK_API_BASE", "DEEPSEEK_API_KEY",
+    "TOGETHER_BASE", "TOGETHER_API_BASE", "TOGETHER_API_KEY",
+]
+
+
 @pytest.mark.asyncio
-async def test_pipelines_page_renders(pipeline_client):
+async def test_pipelines_page_renders(pipeline_client, monkeypatch):
+    for var in _LLM_ENV_VARS:
+        monkeypatch.delenv(var, raising=False)
     resp = await pipeline_client.get("/pipelines/")
     assert resp.status_code == 200
     assert "Пайплайны контента" in resp.text
