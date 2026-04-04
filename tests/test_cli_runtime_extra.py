@@ -19,6 +19,7 @@ class TestSetupLogging:
         root = logging.getLogger()
         # Clear any existing handlers to ensure clean test
         original_handlers = root.handlers[:]
+        original_level = root.level
         root.handlers.clear()
 
         try:
@@ -27,6 +28,7 @@ class TestSetupLogging:
             assert len(root.handlers) >= 1
         finally:
             root.handlers = original_handlers
+            root.setLevel(original_level)
 
 
 class TestEnsureDataDirs:

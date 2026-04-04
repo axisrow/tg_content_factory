@@ -191,12 +191,10 @@ async def test_llm_refine_with_generated_text():
     ctx = NodeContext()
     ctx.set_global("generated_text", "original")
 
-    async def provider(prompt, model="", max_tokens=512, temperature=0.7):
-        return "refined"
-
+    provider = AsyncMock(return_value="refined")
     await LlmRefineHandler().execute({"prompt": "Rewrite: {text}"}, ctx, {"provider_callable": provider})
     assert ctx.get_global("generated_text") == "refined"
-    provider.assert_called if hasattr(provider, "assert_called") else None
+    provider.assert_awaited_once()
 
 
 @pytest.mark.asyncio

@@ -600,8 +600,12 @@ async def test_run_loop_marks_running_task_failed_on_exception():
     await d.stop()
 
     # Task should have been marked as failed in the exception recovery path
-    # The real_update would be called with FAILED status
     assert real_update.call_count >= 1
+    failed_calls = [
+        c for c in real_update.await_args_list
+        if len(c.args) >= 2 and c.args[1] == CollectionTaskStatus.FAILED
+    ]
+    assert len(failed_calls) >= 1, f"Expected FAILED status update, got: {real_update.await_args_list}"
 
 
 # ---------------------------------------------------------------------------
@@ -624,11 +628,8 @@ async def test_stats_all_stop_event_interrupts_batch():
 
     await d._handle_stats_all(_task(CollectionTaskType.STATS_ALL, payload=payload))
 
-    # Should NOT have called collect_channel_stats since stop_event was set
-    # Actually it checks is_running first, and collector.is_running is False,
-    # so it tries to collect. But the stop_event check is at the top of the while loop.
-    # The handler should break out of the loop early.
-    # This exercises line 232 in the source.
+    # stop_event was set before processing, so collect_channel_stats should not be called
+    d._collector.collect_channel_stats.assert_not_awaited()
 
 
 @pytest.mark.asyncio
