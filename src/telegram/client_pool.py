@@ -519,6 +519,8 @@ class ClientPool:
                 self._dialogs_fetched.discard(phone)
             except Exception:
                 logger.debug("Error disconnecting %s", phone, exc_info=True)
+        # Allow Telethon internal tasks (_send_loop, _recv_loop) to finish
+        await asyncio.sleep(0.25)
 
     @staticmethod
     def _normalize_runtime_config(
