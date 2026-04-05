@@ -142,15 +142,24 @@
         var form = document.getElementById(formId);
         if (!form) return;
         form.addEventListener('submit', async function(e) {
-            if (form._confirming) return;
+            if (form._confirming || form._confirmPending) return;
             e.preventDefault();
             var count = document.querySelectorAll('.ch-check:checked').length;
             if (count === 0) return;
-            var ok = await window.TGConfirm.show(messageFn(count));
-            if (ok) {
-                form._confirming = true;
-                if (typeof form.requestSubmit === 'function') form.requestSubmit();
-                else form.submit();
+            form._confirmPending = true;
+            try {
+                var ok = await window.TGConfirm.show(messageFn(count));
+                if (ok) {
+                    form._confirming = true;
+                    try {
+                        if (typeof form.requestSubmit === 'function') form.requestSubmit();
+                        else form.submit();
+                    } finally {
+                        delete form._confirming;
+                    }
+                }
+            } finally {
+                delete form._confirmPending;
             }
         }, true);
     }
