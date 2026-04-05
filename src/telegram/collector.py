@@ -166,15 +166,18 @@ class Collector:
             for f in (channel.filter_flags or "").split(",")
             if f.strip()
         }
-        await self._db.set_channels_filtered_bulk(
-            [(channel.channel_id, ",".join(sorted(existing_flags | set(meta_flags))))]
-        )
+        # Create rename event BEFORE marking filtered so a crash between
+        # the two operations cannot leave the channel filtered with no
+        # pending event in the UI.
         await self._db.create_rename_event(
             channel_id=channel.channel_id,
             old_title=channel.title,
             new_title=new_title,
             old_username=channel.username,
             new_username=new_username,
+        )
+        await self._db.set_channels_filtered_bulk(
+            [(channel.channel_id, ",".join(sorted(existing_flags | set(meta_flags))))]
         )
         return True
 
