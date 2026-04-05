@@ -125,7 +125,6 @@ async def test_toggle_deactivates():
     channels.get_by_pk = AsyncMock(return_value=ch)
     channels.set_active = AsyncMock()
     pool = MagicMock()
-    pool.remove_client = AsyncMock()
 
     svc = ChannelService(channels, pool, None)
     await svc.toggle(pk=1)
@@ -139,7 +138,6 @@ async def test_toggle_activates():
     channels.get_by_pk = AsyncMock(return_value=ch)
     channels.set_active = AsyncMock()
     pool = MagicMock()
-    pool.add_client = AsyncMock()
 
     svc = ChannelService(channels, pool, None)
     await svc.toggle(pk=1)
