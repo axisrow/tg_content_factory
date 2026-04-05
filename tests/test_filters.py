@@ -7,10 +7,11 @@ from src.filters.criteria import VALID_FLAGS, contains_cyrillic
 from src.filters.models import ChannelFilterResult, FilterReport
 
 
-async def _insert_channel(db, channel_id, title="Test", channel_type="channel"):
+async def _insert_channel(db, channel_id, title="Test", channel_type="channel", username=None):
     await db.execute(
-        "INSERT INTO channels (channel_id, title, channel_type, is_active) VALUES (?, ?, ?, 1)",
-        (channel_id, title, channel_type),
+        "INSERT INTO channels (channel_id, title, username, channel_type, is_active) "
+        "VALUES (?, ?, ?, ?, 1)",
+        (channel_id, title, username, channel_type),
     )
     await db.commit()
 
@@ -60,7 +61,9 @@ class TestValidFlags:
         assert "non_cyrillic" in VALID_FLAGS
         assert "chat_noise" in VALID_FLAGS
         assert "username_changed" in VALID_FLAGS
-        assert len(VALID_FLAGS) == 8
+        assert "title_changed" in VALID_FLAGS
+        assert "suspicious_username" in VALID_FLAGS
+        assert len(VALID_FLAGS) == 10
 
 
 class TestAnalyzerLowUniqueness:
@@ -229,6 +232,103 @@ class TestAnalyzerChatNoise:
         # 8 NULL + 2 long = 0 short out of 10 -> 0%
         assert result.short_msg_pct == 0.0
         assert "chat_noise" not in result.flags
+
+
+class TestAnalyzerSuspiciousUsername:
+    async def test_random_alnum_username_flagged(self, db, raw_db):
+        await _insert_channel(raw_db, 700, username="S0IMD1EDUAW")
+        await _insert_messages(raw_db, 700, ["any"])
+        analyzer = ChannelAnalyzer(db)
+        result = await analyzer.analyze_channel(700)
+        assert "suspicious_username" in result.flags
+
+    async def test_random_alnum_username_longer_flagged(self, db, raw_db):
+        await _insert_channel(raw_db, 701, username="EXF74CHE3RZ1")
+        await _insert_messages(raw_db, 701, ["any"])
+        analyzer = ChannelAnalyzer(db)
+        result = await analyzer.analyze_channel(701)
+        assert "suspicious_username" in result.flags
+
+    async def test_normal_lowercase_username_ok(self, db, raw_db):
+        await _insert_channel(raw_db, 702, username="durov")
+        await _insert_messages(raw_db, 702, ["any"])
+        analyzer = ChannelAnalyzer(db)
+        result = await analyzer.analyze_channel(702)
+        assert "suspicious_username" not in result.flags
+
+    async def test_mixed_case_username_ok(self, db, raw_db):
+        await _insert_channel(raw_db, 703, username="PublicChannel42")
+        await _insert_messages(raw_db, 703, ["any"])
+        analyzer = ChannelAnalyzer(db)
+        result = await analyzer.analyze_channel(703)
+        assert "suspicious_username" not in result.flags
+
+    async def test_all_caps_no_digits_ok(self, db, raw_db):
+        # "NASDAQNEWS" — all caps but no digits → not flagged.
+        await _insert_channel(raw_db, 704, username="NASDAQNEWS")
+        await _insert_messages(raw_db, 704, ["any"])
+        analyzer = ChannelAnalyzer(db)
+        result = await analyzer.analyze_channel(704)
+        assert "suspicious_username" not in result.flags
+
+    async def test_short_alnum_ok(self, db, raw_db):
+        # "BITCOIN24" — 9 chars, under length threshold of 10 → not flagged.
+        await _insert_channel(raw_db, 705, username="BITCOIN24")
+        await _insert_messages(raw_db, 705, ["any"])
+        analyzer = ChannelAnalyzer(db)
+        result = await analyzer.analyze_channel(705)
+        assert "suspicious_username" not in result.flags
+
+    async def test_null_username_ok(self, db, raw_db):
+        await _insert_channel(raw_db, 706, username=None)
+        await _insert_messages(raw_db, 706, ["any"])
+        analyzer = ChannelAnalyzer(db)
+        result = await analyzer.analyze_channel(706)
+        assert "suspicious_username" not in result.flags
+
+
+class TestAnalyzerStickyFlags:
+    async def test_username_changed_preserved_after_apply(self, db, raw_db):
+        await _insert_channel(raw_db, 710, username="durov")
+        await _insert_messages(raw_db, 710, ["unique a", "unique b", "unique c"])
+        # Simulate collector marking the channel with username_changed.
+        await raw_db.execute(
+            "UPDATE channels SET is_filtered = 1, filter_flags = 'username_changed' "
+            "WHERE channel_id = ?",
+            (710,),
+        )
+        await raw_db.commit()
+
+        analyzer = ChannelAnalyzer(db)
+        report = await analyzer.analyze_all()
+        await analyzer.apply_filters(report)
+
+        cur = await raw_db.execute(
+            "SELECT is_filtered, filter_flags FROM channels WHERE channel_id = ?", (710,)
+        )
+        row = await cur.fetchone()
+        assert row["is_filtered"] == 1
+        assert "username_changed" in row["filter_flags"]
+
+    async def test_title_changed_preserved_after_apply(self, db, raw_db):
+        await _insert_channel(raw_db, 711, username="durov")
+        await _insert_messages(raw_db, 711, ["unique a", "unique b", "unique c"])
+        await raw_db.execute(
+            "UPDATE channels SET is_filtered = 1, filter_flags = 'title_changed' "
+            "WHERE channel_id = ?",
+            (711,),
+        )
+        await raw_db.commit()
+
+        analyzer = ChannelAnalyzer(db)
+        report = await analyzer.analyze_all()
+        await analyzer.apply_filters(report)
+
+        cur = await raw_db.execute(
+            "SELECT filter_flags FROM channels WHERE channel_id = ?", (711,)
+        )
+        row = await cur.fetchone()
+        assert "title_changed" in row["filter_flags"]
 
 
 class TestChannelAnalyzer:
