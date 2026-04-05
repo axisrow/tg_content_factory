@@ -153,7 +153,6 @@ async def collect_all_stats(request: Request):
     ordered_channels = channels_without_stats + channels_with_stats
     payload = StatsAllTaskPayload(
         channel_ids=[ch.channel_id for ch in ordered_channels],
-        batch_size=20,
     )
     await db.create_stats_task(
         payload,

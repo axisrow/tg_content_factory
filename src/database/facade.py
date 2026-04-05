@@ -477,6 +477,16 @@ class Database:
         self._require()
         await self._tasks.update_collection_task_progress(task_id, messages_collected)
 
+    async def persist_stats_progress(
+        self,
+        task_id: int,
+        *,
+        payload: StatsAllTaskPayload,
+        messages_collected: int,
+    ) -> None:
+        self._require()
+        await self._tasks.persist_stats_progress(task_id, payload=payload, messages_collected=messages_collected)
+
     async def update_collection_task(
         self,
         task_id: int,
@@ -535,18 +545,20 @@ class Database:
             parent_task_id=parent_task_id,
         )
 
-    async def create_stats_continuation_task(
+    async def reschedule_stats_task(
         self,
+        task_id: int,
         *,
         payload: StatsAllTaskPayload,
-        run_after: datetime | None,
-        parent_task_id: int,
-    ) -> int:
+        run_after: datetime,
+        messages_collected: int,
+    ) -> None:
         self._require()
-        return await self._tasks.create_stats_continuation_task(
+        return await self._tasks.reschedule_stats_task(
+            task_id,
             payload=payload,
             run_after=run_after,
-            parent_task_id=parent_task_id,
+            messages_collected=messages_collected,
         )
 
     async def get_pending_channel_tasks(self) -> list[CollectionTask]:

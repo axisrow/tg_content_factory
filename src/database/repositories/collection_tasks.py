@@ -220,6 +220,20 @@ class CollectionTasksRepository:
         )
         await self._db.commit()
 
+    async def persist_stats_progress(
+        self,
+        task_id: int,
+        *,
+        payload: StatsAllTaskPayload,
+        messages_collected: int,
+    ) -> None:
+        """Persist current cursor/counters into the DB row for crash-safe resume."""
+        await self._db.execute(
+            "UPDATE collection_tasks SET messages_collected = ?, payload = ? WHERE id = ?",
+            (messages_collected, self._serialize_payload(payload), task_id),
+        )
+        await self._db.commit()
+
     async def update_collection_task(
         self,
         task_id: int,
@@ -362,18 +376,29 @@ class CollectionTasksRepository:
             return None
         return self._to_task(row)
 
-    async def create_stats_continuation_task(
+    async def reschedule_stats_task(
         self,
+        task_id: int,
         *,
         payload: StatsAllTaskPayload,
-        run_after: datetime | None,
-        parent_task_id: int,
-    ) -> int:
-        return await self.create_stats_task(
-            payload,
-            run_after=run_after,
-            parent_task_id=parent_task_id,
+        run_after: datetime,
+        messages_collected: int,
+    ) -> None:
+        """Return an in-progress stats task to PENDING with updated payload/run_after."""
+        await self._db.execute(
+            "UPDATE collection_tasks "
+            "SET status = ?, payload = ?, run_after = ?, messages_collected = ?, "
+            "    started_at = NULL, completed_at = NULL, error = NULL "
+            "WHERE id = ?",
+            (
+                CollectionTaskStatus.PENDING.value,
+                self._serialize_payload(payload),
+                run_after.astimezone(timezone.utc).isoformat(),
+                messages_collected,
+                task_id,
+            ),
         )
+        await self._db.commit()
 
     async def get_pending_channel_tasks(self) -> list[CollectionTask]:
         cur = await self._db.execute(

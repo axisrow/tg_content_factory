@@ -1517,7 +1517,6 @@ class TestUnifiedDispatcherDispatch:
         payload = StatsAllTaskPayload(
             channel_ids=[-100, -200],
             next_index=2,  # >= len(channel_ids), so done
-            batch_size=20,
         )
         task = CollectionTask(
             id=1,

@@ -54,7 +54,6 @@ class UnifiedDispatcher:
         sq_bundle: SearchQueryBundle | None = None,
         photo_task_service: PhotoTaskService | None = None,
         photo_auto_upload_service: PhotoAutoUploadService | None = None,
-        default_batch_size: int = 20,
         poll_interval_sec: float = 5.0,
         channel_timeout_sec: float = 120.0,
         search_engine: "SearchEngine" | None = None,
@@ -72,7 +71,6 @@ class UnifiedDispatcher:
         self._sq_bundle = sq_bundle
         self._photo_task_service = photo_task_service
         self._photo_auto_upload_service = photo_auto_upload_service
-        self._default_batch_size = default_batch_size
         self._poll_interval_sec = poll_interval_sec
         self._channel_timeout_sec = channel_timeout_sec
         self._search_engine = search_engine
@@ -205,15 +203,13 @@ class UnifiedDispatcher:
 
         channel_ids = payload.channel_ids
         next_index = payload.next_index
-        batch_size = max(1, payload.batch_size or self._default_batch_size)
-        channels_ok = payload.channels_ok or (task.messages_collected or 0)
-        channels_err = payload.channels_err
+        channels_ok = payload.channels_ok or 0
+        channels_err = payload.channels_err or 0
 
         logger.info(
-            "Running stats task #%s: next_index=%d batch_size=%d total=%d",
+            "Running stats task #%s: next_index=%d total=%d",
             task.id,
             next_index,
-            batch_size,
             len(channel_ids),
         )
 
@@ -221,17 +217,22 @@ class UnifiedDispatcher:
             await self._tasks.update_collection_task(
                 task.id,
                 CollectionTaskStatus.COMPLETED,
-                messages_collected=channels_ok,
+                messages_collected=len(channel_ids),
             )
             return
 
-        batch_end = min(next_index + batch_size, len(channel_ids))
         cursor = next_index
 
         collector_wait_sec = 0.0
-        while cursor < batch_end:
+        while cursor < len(channel_ids):
             if self._stop_event.is_set():
                 break
+
+            # Check if task was cancelled from UI
+            fresh = await self._tasks.get_collection_task(task.id)
+            if fresh and fresh.status == CollectionTaskStatus.CANCELLED:
+                return
+
             if self._collector.is_running:
                 await asyncio.sleep(self._poll_interval_sec)
                 collector_wait_sec += self._poll_interval_sec
@@ -239,7 +240,7 @@ class UnifiedDispatcher:
                     await self._tasks.update_collection_task(
                         task.id,
                         CollectionTaskStatus.FAILED,
-                        messages_collected=channels_ok,
+                        messages_collected=channels_ok + channels_err,
                         error="Timed out waiting for collector to finish",
                     )
                     return
@@ -251,6 +252,17 @@ class UnifiedDispatcher:
             if channel is None:
                 channels_err += 1
                 cursor += 1
+                progress_payload = StatsAllTaskPayload(
+                    channel_ids=channel_ids,
+                    next_index=cursor,
+                    channels_ok=channels_ok,
+                    channels_err=channels_err,
+                )
+                await self._tasks.persist_stats_progress(
+                    task.id,
+                    payload=progress_payload,
+                    messages_collected=channels_ok + channels_err,
+                )
                 continue
 
             try:
@@ -272,69 +284,67 @@ class UnifiedDispatcher:
                         availability.state == "all_flooded"
                         and availability.next_available_at_utc is not None
                     ):
-                        continuation_payload = StatsAllTaskPayload(
+                        reschedule_payload = StatsAllTaskPayload(
                             channel_ids=channel_ids,
                             next_index=cursor,
-                            batch_size=batch_size,
                             channels_ok=channels_ok,
                             channels_err=channels_err,
                         )
-                        continuation_id = await self._tasks.create_stats_continuation_task(
-                            payload=continuation_payload,
-                            run_after=availability.next_available_at_utc,
-                            parent_task_id=task.id,
-                        )
-                        await self._tasks.update_collection_task(
+                        await self._tasks.reschedule_stats_task(
                             task.id,
-                            CollectionTaskStatus.FAILED,
-                            messages_collected=channels_ok,
-                            error=(
-                                f"Deferred to task #{continuation_id} until "
-                                f"{availability.next_available_at_utc.isoformat()} "
-                                "(all clients flood-waited)"
-                            ),
+                            payload=reschedule_payload,
+                            run_after=availability.next_available_at_utc,
+                            messages_collected=channels_ok + channels_err,
                         )
                         return
 
                     await self._tasks.update_collection_task(
                         task.id,
                         CollectionTaskStatus.FAILED,
-                        messages_collected=channels_ok,
+                        messages_collected=channels_ok + channels_err,
                         error="No active connected Telegram accounts",
                     )
                     return
 
                 channels_ok += 1
                 cursor += 1
-                await self._tasks.update_collection_task_progress(task.id, channels_ok)
 
-            if cursor < batch_end:
-                await asyncio.sleep(self._collector.delay_between_channels_sec)
-
-        if cursor < len(channel_ids):
-            continuation_payload = StatsAllTaskPayload(
+            progress_payload = StatsAllTaskPayload(
                 channel_ids=channel_ids,
                 next_index=cursor,
-                batch_size=batch_size,
                 channels_ok=channels_ok,
                 channels_err=channels_err,
             )
-            await self._tasks.create_stats_continuation_task(
-                payload=continuation_payload,
-                run_after=datetime.now(timezone.utc),
-                parent_task_id=task.id,
-            )
-            await self._tasks.update_collection_task(
+            await self._tasks.persist_stats_progress(
                 task.id,
-                CollectionTaskStatus.COMPLETED,
-                messages_collected=channels_ok,
+                payload=progress_payload,
+                messages_collected=channels_ok + channels_err,
+            )
+
+            if cursor < len(channel_ids):
+                await asyncio.sleep(self._collector.delay_between_channels_sec)
+
+        # Final update — check if interrupted by stop event
+        if cursor < len(channel_ids):
+            # Graceful shutdown: reschedule so the remaining channels are processed on next run
+            reschedule_payload = StatsAllTaskPayload(
+                channel_ids=channel_ids,
+                next_index=cursor,
+                channels_ok=channels_ok,
+                channels_err=channels_err,
+            )
+            await self._tasks.reschedule_stats_task(
+                task.id,
+                payload=reschedule_payload,
+                run_after=datetime.now(timezone.utc),
+                messages_collected=channels_ok + channels_err,
             )
             return
 
         await self._tasks.update_collection_task(
             task.id,
             CollectionTaskStatus.COMPLETED,
-            messages_collected=channels_ok,
+            messages_collected=channels_ok + channels_err,
         )
 
     # ── SQ_STATS ──

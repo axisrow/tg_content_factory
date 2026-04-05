@@ -221,12 +221,16 @@ class TestChannelBundle:
         )
         assert claimed is not None and claimed.id == tid
 
-        cont_id = await b.create_stats_continuation_task(
-            payload=payload,
+        # Test reschedule_stats_task
+        await b.reschedule_stats_task(
+            tid,
+            payload=StatsAllTaskPayload(channel_ids=[-1001, -1002], next_index=1, channels_ok=1),
             run_after=NOW + timedelta(minutes=5),
-            parent_task_id=tid,
+            messages_collected=1,
         )
-        assert cont_id > tid
+        rescheduled = await b.tasks.get_collection_task(tid)
+        assert rescheduled is not None
+        assert rescheduled.status == CollectionTaskStatus.PENDING
 
         count = await b.tasks.requeue_running_generic_tasks_on_startup(
             NOW, [CollectionTaskType.STATS_ALL.value]

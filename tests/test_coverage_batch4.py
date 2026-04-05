@@ -2002,7 +2002,6 @@ async def test_dispatcher_handle_stats_all_empty_channels():
     payload = StatsAllTaskPayload(
         channel_ids=[],
         next_index=0,
-        batch_size=10,
         channels_ok=0,
         channels_err=0,
     )

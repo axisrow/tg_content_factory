@@ -1,6 +1,7 @@
 """Tests for uncovered UnifiedDispatcher handler paths."""
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -32,6 +33,7 @@ def _dispatcher(**kw):
         return_value=MagicMock(state="ok", next_available_at_utc=None)
     )
     channel_bundle = MagicMock()
+    channel_bundle.get_by_channel_id = AsyncMock(return_value=MagicMock(channel_id=42))
     tasks = AsyncMock()
     tasks.requeue_running_generic_tasks_on_startup = AsyncMock(return_value=0)
     tasks.claim_next_due_generic_task = AsyncMock(return_value=None)
@@ -100,15 +102,23 @@ async def test_stats_all_channel_not_found():
 
 
 @pytest.mark.asyncio
-async def test_stats_all_continuation_task():
+async def test_stats_all_reschedules_on_flood_wait():
+    """_handle_stats_all reschedules same task when all clients flooded."""
     d = _dispatcher()
     ch = MagicMock(channel_id=42)
     d._channel_bundle.get_by_channel_id = AsyncMock(return_value=ch)
-    d._tasks.create_stats_continuation_task = AsyncMock(return_value=99)
-    p = StatsAllTaskPayload(channel_ids=[42, 43], batch_size=1)
+    d._collector.collect_channel_stats = AsyncMock(return_value=None)
+    d._collector.get_stats_availability = AsyncMock(return_value=MagicMock(
+        state="all_flooded",
+        next_available_at_utc=datetime.now(timezone.utc),
+    ))
+    d._tasks.reschedule_stats_task = AsyncMock()
+    p = StatsAllTaskPayload(channel_ids=[42, 43])
     await d._handle_stats_all(_task(CollectionTaskType.STATS_ALL, payload=p))
-    assert d._tasks.update_collection_task.call_args[0][1] == CollectionTaskStatus.COMPLETED
-    d._tasks.create_stats_continuation_task.assert_called_once()
+    d._tasks.reschedule_stats_task.assert_called_once()
+    call_args = d._tasks.reschedule_stats_task.call_args
+    assert call_args[0][0] == 1  # task_id
+    assert call_args[1]["payload"].next_index == 0
 
 
 @pytest.mark.asyncio

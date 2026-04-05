@@ -1267,12 +1267,15 @@ class TestUnifiedDispatcherHandlers:
     async def test_start_recovers_tasks(self):
         from src.services.unified_dispatcher import UnifiedDispatcher
         db = _make_mock_db()
-        config = AppConfig()
         tasks_repo = AsyncMock()
         tasks_repo.requeue_running_generic_tasks_on_startup = AsyncMock(return_value=2)
         tasks_repo.claim_next_due_generic_task = AsyncMock(return_value=None)
         db.repos.collection_tasks = tasks_repo
-        dispatcher = UnifiedDispatcher(db, config, tasks_repo)
+        dispatcher = UnifiedDispatcher(
+            collector=MagicMock(),
+            channel_bundle=MagicMock(),
+            tasks_repo=tasks_repo,
+        )
         await dispatcher.start()
         await asyncio.sleep(0.1)
         await dispatcher.stop()
