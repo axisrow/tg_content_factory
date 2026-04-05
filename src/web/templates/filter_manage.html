@@ -35,14 +35,14 @@
     </thead>
     <tbody>
         {% set flag_emoji = {
-            "low_uniqueness": ("&#128424;&#65039;", "Низкая уникальность контента"),
-            "low_subscriber_ratio": ("&#128201;", "Мало подписчиков"),
-            "low_subscriber_manual": ("&#9995;", "Мало подписчиков (абс.)"),
-            "manual": ("&#128683;", "Ручная фильтрация"),
-            "cross_channel_spam": ("&#128226;", "Кросс-канальный спам"),
-            "non_cyrillic": ("&#127760;", "Не кириллический контент"),
-            "chat_noise": ("&#128172;", "Шум чата"),
-            "username_changed": ("&#128256;", "Сменил юзернейм")
+            "low_uniqueness": ("📴", "Низкая уникальность контента"),
+            "low_subscriber_ratio": ("📊", "Мало подписчиков"),
+            "low_subscriber_manual": ("✋", "Мало подписчиков (абс.)"),
+            "manual": ("🚫", "Ручная фильтрация"),
+            "cross_channel_spam": ("📢", "Кросс-канальный спам"),
+            "non_cyrillic": ("🌐", "Не кириллический контент"),
+            "chat_noise": ("💬", "Шум чата"),
+            "username_changed": ("💡", "Сменил юзернейм")
         } %}
         {% for ch in channels %}
         <tr class="table-danger">
@@ -61,11 +61,11 @@
                         {% if f in flag_emoji %}
                             <span title="{{ flag_emoji[f][1] }}" style="margin-right:0.25rem;cursor:default;font-size:1.1em">{{ flag_emoji[f][0] }}</span>
                         {% else %}
-                            <span title="{{ f }}" style="cursor:default">&#128683;</span>
+                            <span title="{{ f }}" style="cursor:default">🚫</span>
                         {% endif %}
                     {% endfor %}
                 {% else %}
-                    <span title="Отфильтрован" style="cursor:default">&#128683;</span>
+                    <span title="Отфильтрован" style="cursor:default">🚫</span>
                 {% endif %}
             </td>
         </tr>
