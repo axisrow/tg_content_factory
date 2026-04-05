@@ -37,13 +37,15 @@
         <td>
             <div class="d-flex gap-2">
                 <form method="post" action="/channels/renames/{{ ev.id }}/keep">
-                    <button type="submit" class="btn btn-sm btn-success" title="Разфильтровать канал и продолжить сбор">
-                        Оставить
+                    <button type="submit" class="btn btn-sm btn-success"
+                            title="Принять новое название/юзернейм и вернуть канал в сбор (если нет других причин фильтрации)">
+                        Принять переименование
                     </button>
                 </form>
                 <form method="post" action="/channels/renames/{{ ev.id }}/filter">
-                    <button type="submit" class="btn btn-sm btn-outline-danger" title="Оставить канал в фильтре, прекратить сбор">
-                        Фильтровать
+                    <button type="submit" class="btn btn-sm btn-outline-danger"
+                            title="Оставить канал в фильтре — прекратить сбор">
+                        Оставить в фильтре
                     </button>
                 </form>
             </div>

@@ -238,3 +238,60 @@ async def test_collect_channel_username_changed(collector, mock_pool, mock_db):
     mock_db.set_channels_filtered_bulk.assert_called_with(
         [(123, "title_changed,username_changed")]
     )
+
+
+# --- Tests for Collector._handle_meta_change_review (the unified helper) ---
+
+
+@pytest.mark.asyncio
+async def test_handle_meta_change_review_no_change(collector, mock_db):
+    channel = Channel(channel_id=777, username="same", title="Same", filter_flags="")
+    changed = await collector._handle_meta_change_review(
+        channel, "same", "Same", log_prefix="Channel"
+    )
+    assert changed is False
+    mock_db.update_channel_meta.assert_not_called()
+    mock_db.set_channels_filtered_bulk.assert_not_called()
+    mock_db.create_rename_event.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_handle_meta_change_review_username_only(collector, mock_db):
+    channel = Channel(channel_id=777, username="old", title="Same", filter_flags="")
+    changed = await collector._handle_meta_change_review(
+        channel, "new", "Same", log_prefix="Channel"
+    )
+    assert changed is True
+    mock_db.update_channel_meta.assert_called_once_with(777, username="new", title="Same")
+    mock_db.set_channels_filtered_bulk.assert_called_once_with([(777, "username_changed")])
+    mock_db.create_rename_event.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_handle_meta_change_review_title_only(collector, mock_db):
+    channel = Channel(channel_id=777, username="same", title="Old", filter_flags="")
+    changed = await collector._handle_meta_change_review(
+        channel, "same", "New", log_prefix="Stats"
+    )
+    assert changed is True
+    mock_db.set_channels_filtered_bulk.assert_called_once_with([(777, "title_changed")])
+    mock_db.create_rename_event.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_handle_meta_change_review_preserves_existing_flags(collector, mock_db):
+    # Channel already has an unrelated filter reason; the helper must preserve it.
+    channel = Channel(
+        channel_id=777,
+        username="old",
+        title="Old",
+        filter_flags="cross_channel_spam,suspicious_username",
+    )
+    changed = await collector._handle_meta_change_review(
+        channel, "new", "New", log_prefix="Channel"
+    )
+    assert changed is True
+    # Sorted merge of existing + meta flags.
+    mock_db.set_channels_filtered_bulk.assert_called_once_with(
+        [(777, "cross_channel_spam,suspicious_username,title_changed,username_changed")]
+    )

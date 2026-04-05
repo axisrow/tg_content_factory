@@ -4,6 +4,15 @@
 {% block content %}
 <h1>Очистка каналов</h1>
 
+{% if pending_rename_count %}
+<div class="alert alert-warning d-flex justify-content-between align-items-center mb-3">
+    <span>
+        <strong>{{ pending_rename_count }}</strong> канал(ов) переименовались и ждут вашего решения.
+    </span>
+    <a href="/channels/renames" class="btn btn-sm btn-warning">Разобрать</a>
+</div>
+{% endif %}
+
 <div class="d-flex gap-2 flex-wrap mb-3">
     <button type="button" class="btn btn-primary btn-sm" onclick="refreshFilters(this)">Обновить фильтры</button>
     <form method="post" action="/channels/filter/precheck" class="d-inline" data-busy>
