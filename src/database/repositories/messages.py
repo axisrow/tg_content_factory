@@ -108,8 +108,9 @@ class MessagesRepository:
                 """INSERT OR IGNORE INTO messages
                    (channel_id, message_id, sender_id, sender_name,
                     text, media_type, topic_id, reactions_json,
-                    views, forwards, reply_count, date, detected_lang)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    views, forwards, reply_count, date, detected_lang,
+                    forward_from_channel_id)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     msg.channel_id,
                     msg.message_id,
@@ -124,6 +125,7 @@ class MessagesRepository:
                     msg.reply_count,
                     msg.date.isoformat(),
                     msg.detected_lang,
+                    getattr(msg, "forward_from_channel_id", None),
                 ),
             )
             await self._db.commit()
@@ -179,6 +181,7 @@ class MessagesRepository:
                 m.reply_count,
                 m.date.isoformat(),
                 m.detected_lang,
+                getattr(m, "forward_from_channel_id", None),
             )
             for m in messages
         ]
@@ -187,8 +190,9 @@ class MessagesRepository:
                 """INSERT OR IGNORE INTO messages
                    (channel_id, message_id, sender_id, sender_name,
                     text, media_type, topic_id, reactions_json,
-                    views, forwards, reply_count, date, detected_lang)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    views, forwards, reply_count, date, detected_lang,
+                    forward_from_channel_id)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 data,
             )
             await self._db.commit()
@@ -699,6 +703,7 @@ class MessagesRepository:
                 detected_lang=r["detected_lang"] if "detected_lang" in r.keys() else None,
                 translation_en=r["translation_en"] if "translation_en" in r.keys() else None,
                 translation_custom=r["translation_custom"] if "translation_custom" in r.keys() else None,
+                forward_from_channel_id=r["forward_from_channel_id"] if "forward_from_channel_id" in r.keys() else None,
                 channel_title=r["channel_title"],
                 channel_username=r["channel_username"],
             )
@@ -1313,3 +1318,48 @@ class MessagesRepository:
         )
         row = await cur.fetchone()
         return dict(row) if row else {"total_forwards": 0, "post_count": 0, "avg_forwards": 0}
+
+    async def get_hour_weekday_heatmap(
+        self, channel_id: int, days: int = 30,
+    ) -> list[dict]:
+        """Return message counts grouped by hour (0-23) x weekday (0=Mon..6=Sun).
+
+        Each row has keys: ``hour``, ``weekday``, ``count``.
+        """
+        cur = await self._db.execute(
+            """SELECT CAST(strftime('%H', m.date) AS INTEGER) AS hour,
+                      CAST(strftime('%w', m.date) AS INTEGER) AS weekday,
+                      COUNT(*) AS count
+               FROM messages m
+               WHERE m.channel_id = ? AND m.date >= datetime('now', ?)
+               GROUP BY hour, weekday
+               ORDER BY weekday, hour""",
+            (channel_id, f"-{days} days"),
+        )
+        return [dict(r) for r in await cur.fetchall()]
+
+    async def get_cross_channel_citations(
+        self, channel_id: int, days: int = 30, limit: int = 20,
+    ) -> list[dict]:
+        """Return channels whose messages are forwarded into *channel_id*.
+
+        Each row: ``source_channel_id``, ``source_title``, ``source_username``,
+        ``citation_count``, ``latest_date``.
+        """
+        cur = await self._db.execute(
+            """SELECT m.forward_from_channel_id AS source_channel_id,
+                      c.title AS source_title,
+                      c.username AS source_username,
+                      COUNT(*) AS citation_count,
+                      MAX(m.date) AS latest_date
+               FROM messages m
+               LEFT JOIN channels c ON c.channel_id = m.forward_from_channel_id
+               WHERE m.channel_id = ?
+                 AND m.forward_from_channel_id IS NOT NULL
+                 AND m.date >= datetime('now', ?)
+               GROUP BY m.forward_from_channel_id
+               ORDER BY citation_count DESC
+               LIMIT ?""",
+            (channel_id, f"-{days} days", limit),
+        )
+        return [dict(r) for r in await cur.fetchall()]

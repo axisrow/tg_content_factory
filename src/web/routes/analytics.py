@@ -178,3 +178,17 @@ async def api_hourly_activity(request: Request, channel_id: int, days: int = 30)
 async def api_citation_stats(request: Request, channel_id: int):
     stats = await _svc(request).get_citation_stats(channel_id)
     return JSONResponse(dataclasses.asdict(stats))
+
+
+@router.get("/channels/api/heatmap")
+async def api_heatmap(request: Request, channel_id: int, days: int = 30):
+    data = await _svc(request).get_heatmap(channel_id, days)
+    return JSONResponse(data)
+
+
+@router.get("/channels/api/cross-citations")
+async def api_cross_citations(
+    request: Request, channel_id: int, days: int = 30, limit: int = 20,
+):
+    data = await _svc(request).get_cross_channel_citations(channel_id, days, limit)
+    return JSONResponse(data)

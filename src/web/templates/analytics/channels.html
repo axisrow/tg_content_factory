@@ -129,6 +129,27 @@
         </div>
       </div>
     </div>
+    <div class="col-12 col-md-6">
+      <div class="card">
+        <div class="card-header fw-semibold">Кросс-канальные цитирования</div>
+        <div class="card-body" style="max-height:260px;overflow-y:auto">
+          <table class="table table-sm table-hover mb-0" id="cross-cite-table">
+            <thead><tr><th>Источник</th><th>Цитат</th><th>Последняя</th></tr></thead>
+            <tbody></tbody>
+          </table>
+          <div id="cross-cite-empty" class="text-muted small text-center py-2">Нет данных</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="row g-4 mb-4">
+    <div class="col-12">
+      <div class="card">
+        <div class="card-header fw-semibold">Тепловая карта: час × день недели (UTC)</div>
+        <div class="card-body" style="overflow-x:auto"><canvas id="chart-heatmap" height="260"></canvas></div>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -250,6 +271,118 @@
     document.getElementById('cit-total').textContent = fmt(cit.total_forwards);
     document.getElementById('cit-posts').textContent = fmt(cit.post_count);
     document.getElementById('cit-avg').textContent = cit.avg_forwards.toFixed(1);
+
+    // Cross-channel citations
+    var crossCite = await fetch(baseUrl + '/cross-citations?channel_id=' + cid + '&days=' + days).then(function(r) { return r.json(); });
+    var tbody = document.querySelector('#cross-cite-table tbody');
+    var emptyEl = document.getElementById('cross-cite-empty');
+    tbody.innerHTML = '';
+    if (crossCite.length) {
+      emptyEl.style.display = 'none';
+      crossCite.forEach(function(row) {
+        var name = row.source_title || row.source_username || row.source_channel_id;
+        var tr = document.createElement('tr');
+        tr.innerHTML = '<td>' + name + '</td><td>' + row.citation_count + '</td><td>' + (row.latest_date || '').slice(0, 10) + '</td>';
+        tbody.appendChild(tr);
+      });
+    } else {
+      emptyEl.style.display = '';
+    }
+
+    // Heatmap (hour x weekday) -- matrix-style bubble chart
+    var heatmap = await fetch(baseUrl + '/heatmap?channel_id=' + cid + '&days=' + days).then(function(r) { return r.json(); });
+    var weekdays = ['Пн','Вт','Ср','Чт','Пт','Сб','Вс'];
+    // SQLite %w: 0=Sun; convert to Mon=0..Sun=6 for display
+    var wdOrder = [1,2,3,4,5,6,0]; // display index 0..6 -> actual %w values
+    var heatMap = {}; // key: "wd-hr" -> count
+    var maxCount = 1;
+    heatmap.forEach(function(r) {
+      heatMap[r.weekday + '-' + r.hour] = r.count;
+      if (r.count > maxCount) maxCount = r.count;
+    });
+    var heatCtx = document.getElementById('chart-heatmap');
+    if (heatCtx) {
+      // Build single dataset with one bubble per cell
+      var bubbleData = [];
+      for (var di = 0; di < 7; di++) {
+        for (var h = 0; h < 24; h++) {
+          var wd = wdOrder[di];
+          var cnt = heatMap[wd + '-' + h] || 0;
+          var pct = cnt / maxCount;
+          // Color gradient: light-blue (low) -> orange (mid) -> dark-red (high)
+          var cr, cg, cb;
+          if (pct < 0.5) {
+            cr = Math.round(200 + pct * 110);
+            cg = Math.round(220 - pct * 100);
+            cb = Math.round(240 - pct * 280);
+          } else {
+            cr = Math.round(255);
+            cg = Math.round(170 - (pct - 0.5) * 300);
+            cb = Math.round(100 - (pct - 0.5) * 200);
+          }
+          cr = Math.max(0, Math.min(255, cr));
+          cg = Math.max(0, Math.min(255, cg));
+          cb = Math.max(0, Math.min(255, cb));
+          bubbleData.push({
+            x: h,
+            y: 6 - di,  // Invert so Mon is at top
+            r: cnt > 0 ? Math.max(3, Math.round(Math.sqrt(cnt / maxCount) * 14)) : 2,
+            _count: cnt,
+            _weekday: weekdays[di],
+            _hour: String(h).padStart(2, '0') + ':00',
+            _color: 'rgba(' + cr + ',' + cg + ',' + cb + ',' + (cnt > 0 ? '0.9' : '0.2') + ')'
+          });
+        }
+      }
+      var heatChart = new Chart(heatCtx, {
+        type: 'bubble',
+        data: {
+          datasets: [{
+            data: bubbleData,
+            backgroundColor: bubbleData.map(function(d) { return d._color; }),
+            borderColor: 'rgba(0,0,0,0.15)',
+            borderWidth: 1
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              callbacks: {
+                label: function(ctx) {
+                  var d = ctx.raw;
+                  return d._weekday + ' ' + d._hour + ': ' + d._count + ' сообщ.';
+                }
+              }
+            }
+          },
+          scales: {
+            x: {
+              min: -0.5, max: 23.5,
+              ticks: {
+                callback: function(val) { return typeof val === 'number' && val >= 0 && val <= 23 ? String(val).padStart(2, '0') + ':00' : ''; },
+                stepSize: 1
+              },
+              grid: { display: false },
+              title: { display: true, text: 'Час (UTC)' }
+            },
+            y: {
+              min: -0.5, max: 6.5,
+              reverse: true,
+              ticks: {
+                callback: function(val) { return typeof val === 'number' && val >= 0 && val <= 6 ? weekdays[val] : ''; },
+                stepSize: 1
+              },
+              grid: { display: false },
+              title: { display: false }
+            }
+          }
+        }
+      });
+      charts['chart-heatmap'] = heatChart;
+    }
   }
 
   // Channel select

@@ -704,6 +704,20 @@ async def run_migrations(db: aiosqlite.Connection) -> bool:
     await _migrate_tool_permission_key(db, "list_dialogs", legacy_dialog_search_key)
     await _migrate_tool_permission_key(db, legacy_dialog_search_key, "search_dialogs")
 
+    # forward_from_channel_id on messages for cross-channel citation tracking (issue #330)
+    cur = await db.execute("PRAGMA table_info(messages)")
+    msg2_columns = {row["name"] for row in await cur.fetchall()}
+    if "forward_from_channel_id" not in msg2_columns:
+        await db.execute(
+            "ALTER TABLE messages ADD COLUMN forward_from_channel_id INTEGER"
+        )
+        await db.commit()
+    await db.execute("""
+        CREATE INDEX IF NOT EXISTS idx_messages_fwd_from_channel
+        ON messages(forward_from_channel_id) WHERE forward_from_channel_id IS NOT NULL
+    """)
+    await db.commit()
+
     # Reset agent prompt template to new default (AI Telegram client) — one-time migration
     cur = await db.execute("SELECT value FROM settings WHERE key = '_migration_reset_prompt_v2'")
     if not await cur.fetchone():

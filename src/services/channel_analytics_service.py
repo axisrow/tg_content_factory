@@ -198,6 +198,20 @@ class ChannelAnalyticsService:
             avg_forwards=round(float(raw.get("avg_forwards", 0)), 1),
         )
 
+    async def get_heatmap(
+        self, channel_id: int, days: int = 30,
+    ) -> list[dict]:
+        """Hour x weekday message-count heatmap data."""
+        return await self._db.repos.messages.get_hour_weekday_heatmap(channel_id, days)
+
+    async def get_cross_channel_citations(
+        self, channel_id: int, days: int = 30, limit: int = 20,
+    ) -> list[dict]:
+        """Cross-channel citation index via forward_from_channel_id."""
+        return await self._db.repos.messages.get_cross_channel_citations(
+            channel_id, days, limit,
+        )
+
     async def get_err(self, channel_id: int) -> float | None:
         """Engagement Rate per Reach for the last 20 posts."""
         return await self._calc_err(channel_id, last_n=20)
