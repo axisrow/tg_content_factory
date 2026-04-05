@@ -147,9 +147,6 @@ class Collector:
         if not meta_flags:
             return False
 
-        await self._db.update_channel_meta(
-            channel.channel_id, username=new_username, title=new_title
-        )
         logger.warning(
             "%s: channel %d meta changed (%s → %s / %s → %s), "
             "marking filtered %s — awaiting user decision",
@@ -166,9 +163,10 @@ class Collector:
             for f in (channel.filter_flags or "").split(",")
             if f.strip()
         }
-        # Create rename event BEFORE marking filtered so a crash between
-        # the two operations cannot leave the channel filtered with no
-        # pending event in the UI.
+        # Order: 1) create event (idempotent), 2) mark filtered,
+        # 3) update meta LAST.  A crash before step 3 means the next
+        # run re-detects the same diff — create_rename_event is
+        # idempotent so no duplicate is created.
         await self._db.create_rename_event(
             channel_id=channel.channel_id,
             old_title=channel.title,
@@ -178,6 +176,9 @@ class Collector:
         )
         await self._db.set_channels_filtered_bulk(
             [(channel.channel_id, ",".join(sorted(existing_flags | set(meta_flags))))]
+        )
+        await self._db.update_channel_meta(
+            channel.channel_id, username=new_username, title=new_title
         )
         return True
 
