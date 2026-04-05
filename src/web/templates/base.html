@@ -9,9 +9,7 @@
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" integrity="sha384-XGjxtQfXaH2tnPFa9x+ruJTuLE3Aa6LhHSWRr1XeTyhezb4abCG4ccI5AkVDxqC+" crossorigin="anonymous">
     <link rel="stylesheet" href="/static/style.css">
     <script src="https://unpkg.com/htmx.org@2.0.4" integrity="sha384-HGfztofotfshcF7+8n44JQL2oJmowVChPTg48S+jvZoztPfvwD79OC/LTtG6dMp+" crossorigin="anonymous"></script>
-    <script>
-    (function(){var t=localStorage.getItem('theme')||(matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light');document.documentElement.setAttribute('data-bs-theme',t)})();
-    </script>
+    <script src="/static/_theme_init.js"></script>
     {% block head_scripts %}{% endblock %}
 </head>
 <body class="d-flex flex-column min-vh-100">
@@ -69,6 +67,7 @@
         <small>TG Agent v{{ app_version }}</small>
     </footer>
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js" integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz" crossorigin="anonymous"></script>
+<script src="/static/_busy_button.js"></script>
 <script>
 (function() {
     var msgs = {
@@ -252,17 +251,6 @@
             a.classList.add("active");
         }
     });
-    // Unified busy-button handler: add data-busy to any <form> for auto spinner
-    document.addEventListener('submit', function(e) {
-        if (e.defaultPrevented) return;
-        var form = e.target;
-        if (!form.hasAttribute('data-busy')) return;
-        var btn = e.submitter || form.querySelector('button[type="submit"]');
-        if (!btn || btn.disabled) return;
-        btn.disabled = true;
-        var label = btn.getAttribute('data-busy-label') || btn.textContent.trim();
-        btn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> ' + label;
-    });
     // Local date conversion: replace .local-dt[data-utc] spans with browser-local time.
     // Initial textContent is a server-side UTC fallback; JS replaces it once the page loads.
     function convertLocalDates(root) {
@@ -281,22 +269,6 @@
     }
     document.addEventListener('DOMContentLoaded', function() { convertLocalDates(); });
     document.body.addEventListener('htmx:afterSwap', function(e) { convertLocalDates(e.detail.target); });
-    // Reusable spinner helper for fetch-based (non-form) buttons
-    window.setAsyncButtonBusy = function(button, busy, busyLabel) {
-        if (!button) return;
-        if (!button.dataset.defaultLabel) {
-            button.dataset.defaultLabel = button.innerHTML;
-        }
-        if (busy) {
-            button.disabled = true;
-            button.innerHTML =
-                '<span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>' +
-                (busyLabel || 'Выполняется...');
-            return;
-        }
-        button.disabled = false;
-        button.innerHTML = button.dataset.defaultLabel;
-    };
 })();
 </script>
 </body>

@@ -16,6 +16,19 @@ from src.web.paths import TEMPLATES_DIR
 
 logger = logging.getLogger(__name__)
 
+FILTER_FLAG_EMOJI = {
+    "low_uniqueness": ("📴", "Низкая уникальность контента"),
+    "low_subscriber_ratio": ("📊", "Мало подписчиков"),
+    "low_subscriber_manual": ("✋", "Мало подписчиков (абс.)"),
+    "manual": ("🚫", "Ручная фильтрация"),
+    "cross_channel_spam": ("📢", "Кросс-канальный спам"),
+    "non_cyrillic": ("🌐", "Не кириллический контент"),
+    "chat_noise": ("💬", "Шум чата"),
+    "username_changed": ("💡", "Сменил юзернейм"),
+    "title_changed": ("📝", "Смена названия"),
+    "suspicious_username": ("🎲", "Подозрительный юзернейм"),
+}
+
 PACKAGE_NAME = "tg-agent"
 PROJECT_ROOT = TEMPLATES_DIR.parent.parent.parent
 PYPROJECT_PATH = PROJECT_ROOT / "pyproject.toml"
@@ -114,5 +127,6 @@ def configure_template_globals(
 ) -> Jinja2Templates:
     templates.env.globals["agent_available"] = _agent_available_for_request
     templates.env.globals["app_version"] = get_app_version()
+    templates.env.globals["filter_flag_emoji"] = FILTER_FLAG_EMOJI
     templates.env.filters["local_dt"] = local_dt_filter
     return templates
