@@ -1003,6 +1003,11 @@ class AgentProviderService:
             if not raw:
                 continue
             if self._cipher is None:
+                if raw:
+                    raise ValueError(
+                        "SESSION_ENCRYPTION_KEY is not configured; "
+                        "cannot decrypt saved provider secrets."
+                    )
                 values[spec_field.name] = ""
                 continue
             values[spec_field.name] = self._cipher.decrypt(raw)

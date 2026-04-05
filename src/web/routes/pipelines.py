@@ -83,6 +83,7 @@ async def _page_context(request: Request) -> dict:
         "generation_backends": list(PipelineGenerationBackend),
         "next_runs": next_runs,
         "llm_configured": deps.get_llm_provider_service(request).has_providers(),
+        "llm_provider_statuses": await deps.get_llm_provider_service(request).get_provider_status_list(),
     }
 
 

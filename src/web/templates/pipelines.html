@@ -43,7 +43,14 @@
 
 {% if not llm_configured %}
 <div class="alert alert-warning" role="alert">
-    LLM-провайдер не настроен — генерация контента недоступна. Добавьте провайдера в <a href="/settings">Настройках</a> или задайте переменную окружения с ключом API (например, <code>OPENAI_API_KEY</code>, <code>COHERE_API_KEY</code>).
+    <strong>LLM-провайдер не настроен</strong> — генерация контента недоступна. Добавьте провайдера в <a href="/settings">Настройках</a> или задайте переменную окружения с ключом API (например, <code>OPENAI_API_KEY</code>, <code>COHERE_API_KEY</code>).
+    {% if llm_provider_statuses %}
+    <ul class="mb-0 mt-2">
+        {% for ps in llm_provider_statuses %}
+        <li><strong>{{ ps.provider }}</strong>: {{ ps.reason }}</li>
+        {% endfor %}
+    </ul>
+    {% endif %}
 </div>
 {% endif %}
 
