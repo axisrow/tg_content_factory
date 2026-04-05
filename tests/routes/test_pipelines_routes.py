@@ -185,19 +185,21 @@ async def test_generate_stream_success(client):
         yield {"delta": "Hello", "generated_text": None, "citations": []}
         yield {"delta": " world", "generated_text": "Hello world", "citations": []}
 
-    with patch("src.services.provider_service.AgentProviderService") as mock_provider_service:
-        mock_provider_instance = MagicMock()
-        mock_provider_instance.get_provider_callable = MagicMock(return_value=lambda: None)
-        mock_provider_service.return_value = mock_provider_instance
+    mock_provider_instance = MagicMock()
+    mock_provider_instance.has_providers = MagicMock(return_value=True)
+    mock_provider_instance.get_provider_callable = MagicMock(return_value=lambda: None)
 
-        with patch("src.services.generation_service.GenerationService") as mock_gen:
-            mock_instance = MagicMock()
-            mock_instance.generate_stream = fake_stream
-            mock_gen.return_value = mock_instance
+    app = client._transport.app  # type: ignore
+    app.state.llm_provider_service = mock_provider_instance
 
-            resp = await client.get("/pipelines/1/generate-stream")
-            assert resp.status_code == 200
-            assert "text/event-stream" in resp.headers["content-type"]
+    with patch("src.services.generation_service.GenerationService") as mock_gen:
+        mock_instance = MagicMock()
+        mock_instance.generate_stream = fake_stream
+        mock_gen.return_value = mock_instance
+
+        resp = await client.get("/pipelines/1/generate-stream")
+        assert resp.status_code == 200
+        assert "text/event-stream" in resp.headers["content-type"]
 
 
 @pytest.mark.asyncio
@@ -215,23 +217,25 @@ async def test_generate_pipeline_success(client):
 
     await client.post("/pipelines/add", data=_ADD_DATA)
 
-    with patch("src.services.provider_service.AgentProviderService") as mock_provider_service:
-        mock_provider_instance = MagicMock()
-        mock_provider_instance.get_provider_callable = MagicMock(return_value=lambda: None)
-        mock_provider_service.return_value = mock_provider_instance
+    mock_provider_instance = MagicMock()
+    mock_provider_instance.has_providers = MagicMock(return_value=True)
+    mock_provider_instance.get_provider_callable = MagicMock(return_value=lambda: None)
 
-        with patch("src.services.generation_service.GenerationService") as mock_gen:
-            mock_instance = MagicMock()
-            mock_instance.generate = AsyncMock(
-                return_value={"generated_text": "Test output", "citations": []}
-            )
-            mock_gen.return_value = mock_instance
+    app = client._transport.app  # type: ignore
+    app.state.llm_provider_service = mock_provider_instance
 
-            resp = await client.post(
-                "/pipelines/1/generate",
-                data={"model": "", "max_tokens": "256", "temperature": "0.0"},
-            )
-            assert resp.status_code == 200
+    with patch("src.services.generation_service.GenerationService") as mock_gen:
+        mock_instance = MagicMock()
+        mock_instance.generate = AsyncMock(
+            return_value={"generated_text": "Test output", "citations": []}
+        )
+        mock_gen.return_value = mock_instance
+
+        resp = await client.post(
+            "/pipelines/1/generate",
+            data={"model": "", "max_tokens": "256", "temperature": "0.0"},
+        )
+        assert resp.status_code == 200
 
 
 @pytest.mark.asyncio
@@ -241,22 +245,24 @@ async def test_generate_pipeline_failure(client):
 
     await client.post("/pipelines/add", data=_ADD_DATA)
 
-    with patch("src.services.provider_service.AgentProviderService") as mock_provider_service:
-        mock_provider_instance = MagicMock()
-        mock_provider_instance.get_provider_callable = MagicMock(return_value=lambda: None)
-        mock_provider_service.return_value = mock_provider_instance
+    mock_provider_instance = MagicMock()
+    mock_provider_instance.has_providers = MagicMock(return_value=True)
+    mock_provider_instance.get_provider_callable = MagicMock(return_value=lambda: None)
 
-        with patch("src.services.generation_service.GenerationService") as mock_gen:
-            mock_instance = MagicMock()
-            mock_instance.generate = AsyncMock(side_effect=Exception("Generation error"))
-            mock_gen.return_value = mock_instance
+    app = client._transport.app  # type: ignore
+    app.state.llm_provider_service = mock_provider_instance
 
-            resp = await client.post(
-                "/pipelines/1/generate",
-                data={"model": "", "max_tokens": "256", "temperature": "0.0"},
-            )
-            assert resp.status_code == 200
-            assert "Generation failed" in resp.text
+    with patch("src.services.generation_service.GenerationService") as mock_gen:
+        mock_instance = MagicMock()
+        mock_instance.generate = AsyncMock(side_effect=Exception("Generation error"))
+        mock_gen.return_value = mock_instance
+
+        resp = await client.post(
+            "/pipelines/1/generate",
+            data={"model": "", "max_tokens": "256", "temperature": "0.0"},
+        )
+        assert resp.status_code == 200
+        assert "Generation failed" in resp.text
 
 
 @pytest.mark.asyncio

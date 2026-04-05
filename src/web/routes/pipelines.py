@@ -46,8 +46,6 @@ def _target_refs(values: list[str]) -> list[PipelineTargetRef]:
 
 
 async def _page_context(request: Request) -> dict:
-    from src.services.provider_service import AgentProviderService
-
     svc = deps.pipeline_service(request)
     channels = await deps.get_channel_bundle(request).list_channels(include_filtered=True)
     accounts = await deps.get_account_bundle(request).list_accounts()
@@ -84,7 +82,7 @@ async def _page_context(request: Request) -> dict:
         "publish_modes": list(PipelinePublishMode),
         "generation_backends": list(PipelineGenerationBackend),
         "next_runs": next_runs,
-        "llm_configured": AgentProviderService(deps.get_db(request)).has_providers(),
+        "llm_configured": deps.get_llm_provider_service(request).has_providers(),
     }
 
 
@@ -209,9 +207,7 @@ async def delete_pipeline(request: Request, pipeline_id: int):
 
 @router.post("/{pipeline_id}/run")
 async def run_pipeline(request: Request, pipeline_id: int):
-    from src.services.provider_service import AgentProviderService
-
-    if not AgentProviderService(deps.get_db(request)).has_providers():
+    if not deps.get_llm_provider_service(request).has_providers():
         return _pipeline_redirect("llm_not_configured", error=True)
     svc = deps.pipeline_service(request)
     pipeline = await svc.get(pipeline_id)
@@ -256,9 +252,7 @@ async def generate_stream(
     db = deps.get_db(request)
     engine = deps.get_search_engine(request)
 
-    from src.services.provider_service import AgentProviderService
-
-    provider_service = AgentProviderService(db)
+    provider_service = deps.get_llm_provider_service(request)
     if not provider_service.has_providers():
         return _pipeline_redirect("llm_not_configured", error=True)
     provider_callable = provider_service.get_provider_callable(pipeline.llm_model)
@@ -326,9 +320,7 @@ async def generate_pipeline(
     db = deps.get_db(request)
     engine = deps.get_search_engine(request)
 
-    from src.services.provider_service import AgentProviderService
-
-    provider_service = AgentProviderService(db)
+    provider_service = deps.get_llm_provider_service(request)
     if not provider_service.has_providers():
         return _pipeline_redirect("llm_not_configured", error=True)
     provider_callable = provider_service.get_provider_callable(pipeline.llm_model)
@@ -522,9 +514,7 @@ async def import_pipeline(
 @router.post("/{pipeline_id}/ai-edit")
 async def ai_edit_pipeline(request: Request, pipeline_id: int):
     """Accept JSON body: {"instruction": "..."}. Returns updated pipeline_json."""
-    from src.services.provider_service import AgentProviderService
-
-    if not AgentProviderService(deps.get_db(request)).has_providers():
+    if not deps.get_llm_provider_service(request).has_providers():
         return JSONResponse(content={"ok": False, "error": "LLM not configured"}, status_code=400)
     svc: PipelineService = deps.pipeline_service(request)
     db = deps.get_db(request)
