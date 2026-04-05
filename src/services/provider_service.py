@@ -8,6 +8,18 @@ import aiohttp
 
 logger = logging.getLogger(__name__)
 
+# Base URLs for OpenAI-compatible providers (shared with agent_provider_service.py).
+_OPENAI_STYLE_BASE_URLS: Dict[str, str] = {
+    "openai": "https://api.openai.com/v1",
+    "groq": "https://api.groq.com/openai/v1",
+    "deepseek": "https://api.deepseek.com/v1",
+    "xai": "https://api.x.ai/v1",
+    "perplexity": "https://api.perplexity.ai",
+    "together": "https://api.together.xyz/v1",
+    "fireworks": "https://api.fireworks.ai/inference/v1",
+    "mistralai": "https://api.mistral.ai/v1",
+}
+
 
 class AgentProviderService:
     """Simple provider registry for generation providers.
@@ -25,14 +37,22 @@ class AgentProviderService:
     OPENAI_API_KEY is present in the environment, a basic OpenAI chat provider is
     registered under the name 'openai' and will be used when model names like
     'gpt-3.5-turbo' are passed.
+
+    DB-backed providers are loaded via ``load_db_providers()`` and complement
+    env-based ones.
     """
 
-    def __init__(self, db: Optional[object] = None) -> None:
+    def __init__(self, db: Optional[object] = None, config: Optional[object] = None) -> None:
         self.db = db
+        self._config = config
         self._registry: Dict[str, Callable[..., Awaitable[str]]] = {}
+        self._db_provider_names: set[str] = set()
         # register default provider
         self.register_provider("default", self._default_provider)
+        self._register_env_providers()
 
+    def _register_env_providers(self) -> None:
+        """Register providers from environment variables (original behaviour)."""
         # optional OpenAI provider (HTTP REST, minimal)
         openai_key = os.environ.get("OPENAI_API_KEY")
         if openai_key:
@@ -115,6 +135,141 @@ class AgentProviderService:
             except Exception:
                 logger.debug("Failed to register %s adapter", adapter_name, exc_info=True)
 
+    # ------------------------------------------------------------------
+    # DB-backed provider loading
+    # ------------------------------------------------------------------
+
+    async def load_db_providers(self) -> int:
+        """Load ProviderRuntimeConfig-s from DB and register them as adapters.
+
+        Returns the number of newly registered providers.
+        """
+        if self.db is None or self._config is None:
+            return 0
+        # Lazy import to avoid circular dependency
+        from src.services.agent_provider_service import AgentProviderService as DbProviderService
+
+        try:
+            db_svc = DbProviderService(self.db, self._config)
+            configs = await db_svc.load_provider_configs()
+        except Exception:
+            logger.debug("Failed to load db provider configs", exc_info=True)
+            return 0
+
+        added = 0
+        for cfg in configs:
+            if not cfg.enabled:
+                continue
+            if not self._has_valid_secrets(cfg):
+                logger.debug("Skipping db provider %s: empty secrets", cfg.provider)
+                continue
+            adapter = self._build_adapter_for_config(cfg)
+            if adapter is None:
+                logger.debug("Skipping db provider %s: no adapter mapping", cfg.provider)
+                continue
+            name = cfg.provider
+            if name not in self._registry:
+                self.register_provider(name, adapter)
+                self._db_provider_names.add(name)
+                added += 1
+        return added
+
+    async def reload_db_providers(self) -> int:
+        """Remove DB-sourced providers and reload from DB."""
+        for name in self._db_provider_names:
+            self._registry.pop(name, None)
+        self._db_provider_names.clear()
+        return await self.load_db_providers()
+
+    @staticmethod
+    def _has_valid_secrets(cfg: Any) -> bool:
+        secrets = getattr(cfg, "secret_fields", None) or {}
+        return any((v or "").strip() for v in secrets.values())
+
+    def _build_adapter_for_config(self, cfg: Any) -> Callable[..., Awaitable[str]] | None:
+        """Map a ProviderRuntimeConfig to a provider adapter callable."""
+        from src.services.provider_adapters import (
+            make_cohere_adapter,
+            make_generic_http_adapter,
+            make_huggingface_adapter,
+            make_ollama_adapter,
+        )
+
+        provider = cfg.provider
+        api_key = (cfg.secret_fields.get("api_key", "") or "").strip()
+
+        # OpenAI-compatible providers
+        if provider in _OPENAI_STYLE_BASE_URLS:
+            base_url = (cfg.plain_fields.get("base_url", "") or "").strip()
+            if not base_url:
+                base_url = _OPENAI_STYLE_BASE_URLS[provider]
+            return self._make_openai_compat_provider(base_url, api_key)
+
+        if provider == "cohere":
+            base_url = (cfg.plain_fields.get("base_url", "") or "").strip()
+            return make_cohere_adapter(api_key, base_url=base_url or None)
+
+        if provider == "ollama":
+            base_url = (cfg.plain_fields.get("base_url", "") or "").strip()
+            return make_ollama_adapter(base_url=base_url or None, api_key=api_key or None)
+
+        if provider == "huggingface":
+            base_url = (cfg.plain_fields.get("base_url", "") or "").strip()
+            return make_huggingface_adapter(api_key, base_url=base_url or None)
+
+        if provider == "anthropic":
+            base_url = (cfg.plain_fields.get("base_url", "") or "").strip()
+            endpoint = f"{base_url.rstrip('/')}/messages" if base_url else "https://api.anthropic.com/v1/messages"
+            return make_generic_http_adapter(endpoint, api_key, api_key_header="x-api-key")
+
+        if provider == "google_genai":
+            return make_generic_http_adapter(
+                "https://generativelanguage.googleapis.com/v1beta/models",
+                api_key,
+                api_key_header="x-goog-api-key",
+            )
+
+        return None
+
+    @staticmethod
+    def _make_openai_compat_provider(
+        base_url: str, api_key: str
+    ) -> Callable[..., Awaitable[str]]:
+        """Create an OpenAI-compatible chat completion provider."""
+        endpoint = f"{base_url.rstrip('/')}/chat/completions"
+
+        async def _provider(
+            prompt: str = "",
+            model: Optional[str] = None,
+            max_tokens: int = 256,
+            temperature: float = 0.0,
+            stream: bool = False,
+            **kwargs: Any,
+        ) -> str:
+            headers = {"Content-Type": "application/json"}
+            if api_key:
+                headers["Authorization"] = f"Bearer {api_key}"
+            payload = {
+                "model": model or "gpt-3.5-turbo",
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": int(max_tokens or 256),
+                "temperature": float(temperature or 0.0),
+            }
+            timeout = aiohttp.ClientTimeout(total=60)
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    endpoint, json=payload, headers=headers, timeout=timeout
+                ) as resp:
+                    text = await resp.text()
+                    if resp.status != 200:
+                        raise RuntimeError(f"Provider error {resp.status}: {text}")
+                    data = await resp.json()
+                    try:
+                        return data["choices"][0]["message"]["content"]
+                    except Exception:
+                        return str(data)
+
+        return _provider
 
     def has_providers(self) -> bool:
         """Return True if any real (non-default) provider is registered."""

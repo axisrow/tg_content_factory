@@ -177,7 +177,9 @@ async def build_container_with_templates(
     from src.services.provider_service import AgentProviderService
     from src.services.translation_service import TranslationService
 
-    translation_provider_service = AgentProviderService(db)
+    llm_provider_service = AgentProviderService(db, config)
+    await llm_provider_service.load_db_providers()
+    translation_provider_service = llm_provider_service
     translation_service = TranslationService(db, provider_service=translation_provider_service)
 
     _templates = configure_template_globals(
@@ -222,6 +224,7 @@ async def build_container_with_templates(
         bg_tasks=set(),
         agent_manager=agent_manager,
         translation_service=translation_service,
+        llm_provider_service=llm_provider_service,
         shutting_down=False,
     )
 

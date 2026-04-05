@@ -494,6 +494,10 @@ class UnifiedDispatcher:
             quality_service = QualityScoringService(db)
 
             image_service = await self._build_image_service()
+            from src.services.provider_service import AgentProviderService
+
+            provider_service = AgentProviderService(db, self._config)
+            await provider_service.load_db_providers()
             gen = ContentGenerationService(
                 db,
                 self._search_engine,
@@ -501,6 +505,7 @@ class UnifiedDispatcher:
                 notification_service=notification_service,
                 quality_service=quality_service,
                 client_pool=self._client_pool,
+                provider_service=provider_service,
             )
             try:
                 run = await gen.generate(
@@ -577,6 +582,10 @@ class UnifiedDispatcher:
             quality_service = QualityScoringService(db)
 
             image_service = await self._build_image_service()
+            from src.services.provider_service import AgentProviderService
+
+            provider_service = AgentProviderService(db, self._config)
+            await provider_service.load_db_providers()
             gen = ContentGenerationService(
                 db,
                 self._search_engine,
@@ -584,6 +593,7 @@ class UnifiedDispatcher:
                 notification_service=notification_service,
                 quality_service=quality_service,
                 client_pool=self._client_pool,
+                provider_service=provider_service,
             )
             run = await gen.generate(pipeline=pipeline, model=pipeline.llm_model)
 

@@ -217,13 +217,17 @@ def run(args: argparse.Namespace) -> None:
                     from src.agent.manager import AgentManager
 
                     agent_manager = AgentManager(db, config)
+                from src.services.provider_service import AgentProviderService
                 from src.services.quality_scoring_service import QualityScoringService
 
+                provider_svc = AgentProviderService(db, config)
+                await provider_svc.load_db_providers()
                 gen_svc = ContentGenerationService(
                     db,
                     engine,
                     agent_manager=agent_manager,
                     quality_service=QualityScoringService(db),
+                    provider_service=provider_svc,
                 )
                 try:
                     run = await gen_svc.generate(
