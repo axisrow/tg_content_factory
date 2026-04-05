@@ -151,6 +151,12 @@ async def build_container_with_templates(
 
     collection_service = CollectionService(channel_bundle, collector, collection_queue)
     task_enqueuer = TaskEnqueuer(db, collection_service)
+
+    from src.services.provider_service import AgentProviderService
+
+    llm_provider_service = AgentProviderService(db, config)
+    await llm_provider_service.load_db_providers()
+
     unified_dispatcher = UnifiedDispatcher(
         collector,
         channel_bundle,
@@ -164,6 +170,7 @@ async def build_container_with_templates(
         client_pool=pool,
         notifier=notifier,
         config=config,
+        llm_provider_service=llm_provider_service,
     )
     scheduler = SchedulerManager(
         config.scheduler,
@@ -174,10 +181,9 @@ async def build_container_with_templates(
     )
     agent_manager = AgentManager(db, config, client_pool=pool, scheduler_manager=scheduler)
 
-    from src.services.provider_service import AgentProviderService
     from src.services.translation_service import TranslationService
 
-    translation_provider_service = AgentProviderService(db)
+    translation_provider_service = llm_provider_service
     translation_service = TranslationService(db, provider_service=translation_provider_service)
 
     _templates = configure_template_globals(
@@ -222,6 +228,7 @@ async def build_container_with_templates(
         bg_tasks=set(),
         agent_manager=agent_manager,
         translation_service=translation_service,
+        llm_provider_service=llm_provider_service,
         shutting_down=False,
     )
 

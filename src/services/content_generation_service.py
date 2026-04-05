@@ -35,6 +35,7 @@ class ContentGenerationService:
         notification_service: "DraftNotificationService | None" = None,
         quality_service: "QualityScoringService | None" = None,
         client_pool: Any | None = None,
+        provider_service: Any | None = None,
     ) -> None:
         self._db = db
         self._search = search_engine
@@ -43,6 +44,7 @@ class ContentGenerationService:
         self._notification_service = notification_service
         self._quality_service = quality_service
         self._client_pool = client_pool
+        self._provider_service = provider_service
 
     async def generate(
         self,
@@ -175,10 +177,8 @@ class ContentGenerationService:
     ) -> dict[str, Any]:
         """Execute the pipeline using the node-based DAG executor."""
         from src.services.pipeline_executor import PipelineExecutor
-        from src.services.provider_service import AgentProviderService
 
-        provider_service = AgentProviderService(self._db)
-        provider_callable = provider_service.get_provider_callable(pipeline.llm_model)
+        provider_callable = self._get_provider_callable(pipeline.llm_model)
 
         default_image_model = await self._db.get_setting("default_image_model") or ""
 
@@ -213,10 +213,7 @@ class ContentGenerationService:
         temperature: float,
     ) -> dict[str, Any]:
         """Run RAG-based generation using GenerationService."""
-        from src.services.provider_service import AgentProviderService
-
-        provider_service = AgentProviderService(self._db)
-        provider_callable = provider_service.get_provider_callable(pipeline.llm_model)
+        provider_callable = self._get_provider_callable(pipeline.llm_model)
 
         gen = GenerationService(self._search, provider_callable=provider_callable)
 
@@ -279,10 +276,7 @@ class ContentGenerationService:
         temperature: float,
     ) -> str:
         """Apply each refinement step sequentially, replacing {text} with current output."""
-        from src.services.provider_service import AgentProviderService
-
-        provider_service = AgentProviderService(self._db)
-        provider_callable = provider_service.get_provider_callable(pipeline.llm_model)
+        provider_callable = self._get_provider_callable(pipeline.llm_model)
 
         for step in pipeline.refinement_steps:
             step_prompt = step.get("prompt", "")
@@ -326,3 +320,11 @@ class ContentGenerationService:
             )
             return None
         return await self._image_service.generate(model or pipeline.image_model, text)
+
+    def _get_provider_callable(self, model: str | None) -> Any:
+        """Resolve provider callable — prefer injected shared service, fall back to local."""
+        if self._provider_service is not None:
+            return self._provider_service.get_provider_callable(model)
+        from src.services.provider_service import AgentProviderService
+
+        return AgentProviderService(self._db).get_provider_callable(model)

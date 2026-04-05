@@ -73,6 +73,16 @@ def _agent_provider_service(request: Request) -> AgentProviderService:
     return AgentProviderService(deps.get_db(request), request.app.state.config)
 
 
+async def _reload_llm_providers(request: Request) -> None:
+    """Reload the shared LLM provider service from DB after settings change."""
+    svc = getattr(request.app.state, "llm_provider_service", None)
+    if svc is not None:
+        try:
+            await svc.reload_db_providers()
+        except Exception:
+            logger.warning("Failed to reload LLM providers from DB", exc_info=True)
+
+
 async def _semantic_settings_context(request: Request) -> dict[str, object]:
     db = deps.get_db(request)
     last_embedded_id = parse_int_setting(
@@ -710,6 +720,7 @@ async def add_agent_provider(request: Request):
     agent_manager = deps.get_agent_manager(request)
     if agent_manager is not None:
         await agent_manager.refresh_settings_cache(preflight=True)
+    await _reload_llm_providers(request)
     return RedirectResponse(url="/settings?msg=agent_saved", status_code=303)
 
 
@@ -753,6 +764,7 @@ async def save_agent_providers(request: Request):
     await service.save_provider_configs(validated)
     if is_persistent_manager:
         await manager.refresh_settings_cache(preflight=True)
+    await _reload_llm_providers(request)
     return RedirectResponse(url="/settings?msg=agent_saved", status_code=303)
 
 
@@ -774,6 +786,7 @@ async def delete_agent_provider(request: Request, provider_name: str):
     agent_manager = deps.get_agent_manager(request)
     if agent_manager is not None:
         await agent_manager.refresh_settings_cache(preflight=True)
+    await _reload_llm_providers(request)
     return RedirectResponse(url="/settings?msg=agent_saved", status_code=303)
 
 
