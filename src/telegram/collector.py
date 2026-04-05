@@ -121,6 +121,67 @@ class Collector:
         self._auto_delete_cached = result
         return result
 
+    async def _handle_meta_change_review(
+        self,
+        channel: Channel,
+        new_username: str | None,
+        new_title: str | None,
+        *,
+        log_prefix: str,
+    ) -> bool:
+        """Apply meta-change detection: update channel meta, merge filter
+        flags, create a pending rename event for user review.
+
+        Returns True if a meta change was detected (caller should stop
+        further processing for this channel in the collect path). Returns
+        False if nothing changed.
+
+        Does NOT call _maybe_auto_delete: messages are preserved until
+        the user explicitly resolves the rename event on /channels/renames.
+        """
+        meta_flags: list[str] = []
+        if new_username != channel.username:
+            meta_flags.append("username_changed")
+        if new_title != channel.title:
+            meta_flags.append("title_changed")
+        if not meta_flags:
+            return False
+
+        logger.warning(
+            "%s: channel %d meta changed (%s → %s / %s → %s), "
+            "marking filtered %s — awaiting user decision",
+            log_prefix,
+            channel.channel_id,
+            channel.username,
+            new_username,
+            channel.title,
+            new_title,
+            meta_flags,
+        )
+        existing_flags = {
+            f.strip()
+            for f in (channel.filter_flags or "").split(",")
+            if f.strip()
+        }
+        # Order: 1) create event (idempotent), 2) mark filtered,
+        # 3) update meta LAST.  A crash before step 3 means the next
+        # run re-detects the same diff — create_rename_event is
+        # idempotent so no duplicate is created.
+        await self._db.create_rename_event(
+            channel_id=channel.channel_id,
+            old_title=channel.title,
+            new_title=new_title,
+            old_username=channel.username,
+            new_username=new_username,
+        )
+        await self._db.set_channels_filtered_bulk(
+            [(channel.channel_id, ",".join(sorted(existing_flags | set(meta_flags))))]
+        )
+        await self._db.update_channel_meta(
+            channel.channel_id, username=new_username, title=new_title
+        )
+        return True
+
     async def _maybe_auto_delete(self, channel_id: int) -> bool:
         """Purge messages from filtered channel if auto_delete_on_collect is enabled."""
         if not await self._is_auto_delete_enabled():
@@ -403,44 +464,13 @@ class Collector:
                             or channel.username
                             or str(channel_id)
                         )
-                        meta_flags: list[str] = []
-                        if new_username != channel.username:
-                            meta_flags.append("username_changed")
-                        if new_title != channel.title:
-                            meta_flags.append("title_changed")
-                        if meta_flags:
-                            await self._db.update_channel_meta(
-                                channel_id, username=new_username, title=new_title
-                            )
-                            logger.warning(
-                                "Channel %d: meta changed (%s → %s / %s → %s), "
-                                "marking filtered %s — awaiting user decision",
-                                channel_id,
-                                channel.username,
-                                new_username,
-                                channel.title,
-                                new_title,
-                                meta_flags,
-                            )
-                            existing_flags = {
-                                f.strip()
-                                for f in (channel.filter_flags or "").split(",")
-                                if f.strip()
-                            }
-                            await self._db.set_channels_filtered_bulk(
-                                [(channel_id, ",".join(sorted(existing_flags | set(meta_flags))))]
-                            )
-                            await self._db.create_rename_event(
-                                channel_id=channel_id,
-                                old_title=channel.title,
-                                new_title=new_title,
-                                old_username=channel.username,
-                                new_username=new_username,
-                            )
-                            # Do NOT auto-delete here: the channel is pending user
-                            # decision on /channels/renames. Messages are preserved
-                            # until the user explicitly filters or keeps the channel.
-                            return total_collected
+                        await self._handle_meta_change_review(
+                            channel,
+                            new_username,
+                            new_title,
+                            log_prefix="Channel",
+                        )
+                        return total_collected
                 else:
                     try:
                         entity = await run_with_flood_wait(
@@ -909,42 +939,12 @@ class Collector:
                             or channel.username
                             or str(channel.channel_id)
                         )
-                        meta_flags: list[str] = []
-                        if new_username != channel.username:
-                            meta_flags.append("username_changed")
-                        if new_title != channel.title:
-                            meta_flags.append("title_changed")
-                        if meta_flags:
-                            await self._db.update_channel_meta(
-                                channel.channel_id,
-                                username=new_username,
-                                title=new_title,
-                            )
-                            logger.warning(
-                                "Stats: channel %d meta changed (%s → %s / %s → %s), "
-                                "marking filtered %s — awaiting user decision",
-                                channel.channel_id,
-                                channel.username,
-                                new_username,
-                                channel.title,
-                                new_title,
-                                meta_flags,
-                            )
-                            existing_flags = {
-                                f.strip()
-                                for f in (channel.filter_flags or "").split(",")
-                                if f.strip()
-                            }
-                            await self._db.set_channels_filtered_bulk(
-                                [(channel.channel_id, ",".join(sorted(existing_flags | set(meta_flags))))]
-                            )
-                            await self._db.create_rename_event(
-                                channel_id=channel.channel_id,
-                                old_title=channel.title,
-                                new_title=new_title,
-                                old_username=channel.username,
-                                new_username=new_username,
-                            )
+                        await self._handle_meta_change_review(
+                            channel,
+                            new_username,
+                            new_title,
+                            log_prefix="Stats",
+                        )
                 else:
                     entity = await run_with_flood_wait(
                         session.resolve_entity(PeerChannel(channel.channel_id)),
