@@ -88,7 +88,7 @@ def register(db, client_pool, embedding_service, **kwargs):
                 return _text_response(f"Канал pk={pk} не найден.")
             from src.models import StatsAllTaskPayload
 
-            payload = StatsAllTaskPayload(channel_ids=[ch.channel_id], batch_size=1)
+            payload = StatsAllTaskPayload(channel_ids=[ch.channel_id])
             await db.create_stats_task(payload)
             return _text_response(f"Сбор статистики для '{ch.title}' поставлен в очередь.")
         except Exception as e:
@@ -114,7 +114,6 @@ def register(db, client_pool, embedding_service, **kwargs):
 
             payload = StatsAllTaskPayload(
                 channel_ids=[ch.channel_id for ch in channels],
-                batch_size=20,
             )
             await db.create_stats_task(payload)
             return _text_response(f"Сбор статистики поставлен в очередь для {len(channels)} каналов.")

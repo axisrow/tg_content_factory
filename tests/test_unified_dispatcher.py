@@ -53,8 +53,10 @@ def mock_tasks_repo():
     repo.requeue_running_generic_tasks_on_startup = AsyncMock(return_value=0)
     repo.update_collection_task = AsyncMock()
     repo.update_collection_task_progress = AsyncMock()
+    repo.persist_stats_progress = AsyncMock()
     repo.get_collection_task = AsyncMock()
     repo.create_stats_continuation_task = AsyncMock(return_value=999)
+    repo.reschedule_stats_task = AsyncMock()
     return repo
 
 
@@ -214,7 +216,6 @@ async def test_handle_stats_all_empty_channels(dispatcher, mock_tasks_repo):
         payload=StatsAllTaskPayload(
             channel_ids=[123],
             next_index=1,  # Already past the end
-            batch_size=10,
         ),
     )
 
@@ -270,7 +271,6 @@ async def test_handle_stats_all_processes_batch(
         payload=StatsAllTaskPayload(
             channel_ids=[100, 101, 102],
             next_index=0,
-            batch_size=2,
         ),
     )
 
@@ -283,8 +283,8 @@ async def test_handle_stats_all_processes_batch(
 
     await dispatcher._handle_stats_all(task)
 
-    # Should process 2 channels (batch_size=2), then create continuation
-    mock_collector.collect_channel_stats.assert_called()
+    # Should process all 3 channels, no continuation
+    assert mock_collector.collect_channel_stats.call_count == 3
 
 
 @pytest.mark.asyncio
@@ -301,7 +301,6 @@ async def test_handle_stats_all_channel_not_found(
         payload=StatsAllTaskPayload(
             channel_ids=[999],
             next_index=0,
-            batch_size=10,
         ),
     )
 
@@ -332,7 +331,6 @@ async def test_handle_stats_all_timeout(
         payload=StatsAllTaskPayload(
             channel_ids=[100],
             next_index=0,
-            batch_size=10,
         ),
     )
 
@@ -345,8 +343,11 @@ async def test_handle_stats_all_timeout(
 
     await dispatcher._handle_stats_all(task)
 
-    # Should mark task completed despite error
+    # Should mark task completed with processed count
     mock_tasks_repo.update_collection_task.assert_called()
+    args, kwargs = mock_tasks_repo.update_collection_task.call_args
+    assert args[1] == CollectionTaskStatus.COMPLETED
+    assert kwargs.get("messages_collected") == 1  # channel processed despite error
 
 
 @pytest.mark.asyncio
@@ -367,7 +368,6 @@ async def test_handle_stats_all_stats_unavailable(
         payload=StatsAllTaskPayload(
             channel_ids=[100],
             next_index=0,
-            batch_size=10,
         ),
     )
 
@@ -386,14 +386,15 @@ async def test_handle_stats_all_stats_unavailable(
 
 
 @pytest.mark.asyncio
-async def test_handle_stats_all_flood_wait_creates_continuation(
+async def test_handle_stats_all_flood_wait_reschedules_same_task(
     mock_collector, mock_channel_bundle, mock_tasks_repo
 ):
-    """_handle_stats_all creates continuation task when all clients flooded."""
+    """_handle_stats_all reschedules same task when all clients flooded."""
     mock_collector.collect_channel_stats = AsyncMock(return_value=None)
+    flood_time = datetime.now(timezone.utc)
     mock_collector.get_stats_availability.return_value = MagicMock(
         state="all_flooded",
-        next_available_at_utc=datetime.now(timezone.utc),
+        next_available_at_utc=flood_time,
     )
 
     task = CollectionTask(
@@ -403,7 +404,6 @@ async def test_handle_stats_all_flood_wait_creates_continuation(
         payload=StatsAllTaskPayload(
             channel_ids=[100],
             next_index=0,
-            batch_size=10,
         ),
     )
 
@@ -416,8 +416,13 @@ async def test_handle_stats_all_flood_wait_creates_continuation(
 
     await dispatcher._handle_stats_all(task)
 
-    # Should create continuation task
-    mock_tasks_repo.create_stats_continuation_task.assert_called_once()
+    # Should reschedule same task (not create a new one)
+    mock_tasks_repo.reschedule_stats_task.assert_called_once()
+    call_kwargs = mock_tasks_repo.reschedule_stats_task.call_args
+    assert call_kwargs[0][0] == 1  # task_id
+    assert call_kwargs[1]["payload"].next_index == 0
+    assert call_kwargs[1]["run_after"] == flood_time
+    mock_tasks_repo.create_stats_continuation_task.assert_not_called()
 
 
 # === _handle_sq_stats tests ===
@@ -1137,7 +1142,6 @@ async def test_handle_stats_all_timeout_waiting_for_collector(
         payload=StatsAllTaskPayload(
             channel_ids=[100],
             next_index=0,
-            batch_size=10,
         ),
     )
 
@@ -1173,7 +1177,6 @@ async def test_handle_stats_all_exception_during_stats(
         payload=StatsAllTaskPayload(
             channel_ids=[100],
             next_index=0,
-            batch_size=10,
         ),
     )
 
@@ -1186,8 +1189,11 @@ async def test_handle_stats_all_exception_during_stats(
 
     await dispatcher._handle_stats_all(task)
 
-    # Should increment errors and continue
+    # Should mark completed with processed count despite error
     mock_tasks_repo.update_collection_task.assert_called()
+    args, kwargs = mock_tasks_repo.update_collection_task.call_args
+    assert args[1] == CollectionTaskStatus.COMPLETED
+    assert kwargs.get("messages_collected") == 1  # channel processed despite error
 
 
 # === _run_loop extended exception recovery tests ===
