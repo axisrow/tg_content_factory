@@ -181,7 +181,6 @@ async def build_container_with_templates(
     )
     agent_manager = AgentManager(db, config, client_pool=pool, scheduler_manager=scheduler)
 
-    from src.services.provider_service import AgentProviderService
     from src.services.translation_service import TranslationService
 
     translation_provider_service = llm_provider_service

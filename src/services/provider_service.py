@@ -139,7 +139,7 @@ class AgentProviderService:
     # DB-backed provider loading
     # ------------------------------------------------------------------
 
-    async def load_db_providers(self) -> int:
+    async def load_db_providers(self, _reloading_names: set[str] | None = None) -> int:
         """Load ProviderRuntimeConfig-s from DB and register them as adapters.
 
         Returns the number of newly registered providers.
@@ -157,6 +157,7 @@ class AgentProviderService:
             return 0
 
         added = 0
+        reloading_names = _reloading_names or set()
         for cfg in configs:
             if not cfg.enabled:
                 continue
@@ -169,7 +170,9 @@ class AgentProviderService:
                     logger.debug("Skipping db provider %s: no adapter mapping", cfg.provider)
                     continue
                 name = cfg.provider
-                if name not in self._registry:
+                # Register if new; overwrite if previously DB-sourced
+                # (env-registered providers are never overwritten by DB loads).
+                if name not in self._registry or name in reloading_names:
                     self.register_provider(name, adapter)
                     self._db_provider_names.add(name)
                     added += 1
@@ -180,18 +183,16 @@ class AgentProviderService:
     async def reload_db_providers(self) -> int:
         """Remove DB-sourced providers and reload from DB.
 
-        Loads new providers first, then removes only the old names that
-        were not re-registered — avoiding a brief empty-registry window.
+        Keeps existing providers live during the DB round-trip so
+        has_providers() never returns False during a reload.
         """
         old_names = set(self._db_provider_names)
         self._db_provider_names.clear()
-        # Allow load_db_providers to re-register names (they won't be
-        # skipped since we cleared _db_provider_names, but the registry
-        # entries from the previous load must be removed first so the
-        # `if name not in self._registry` check lets them through).
-        for name in old_names:
+        added = await self.load_db_providers(_reloading_names=old_names)
+        # Remove only names that were NOT re-registered
+        for name in old_names - self._db_provider_names:
             self._registry.pop(name, None)
-        return await self.load_db_providers()
+        return added
 
     @staticmethod
     def _has_valid_secrets(cfg: Any) -> bool:
