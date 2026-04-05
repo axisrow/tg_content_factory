@@ -288,6 +288,7 @@
             modal.className = 'tgdlg-overlay';
             var box = document.createElement('div');
             box.className = 'tgdlg-box';
+            box.tabIndex = -1;
             var msgEl = document.createElement('div');
             msgEl.className = 'tgdlg-message';
             msgEl.textContent = message;
@@ -368,19 +369,28 @@
     // e.defaultPrevented and skips until we re-submit with form._confirming=true.
     document.addEventListener('submit', async function(e) {
         var form = e.target;
-        if (form._confirming) return;
+        if (form._confirming || form._confirmPending) return;
         var msg = form.dataset && form.dataset.confirm;
         if (!msg) return;
         e.preventDefault();
         var submitter = e.submitter;
-        var ok = await window.TGConfirm.show(msg);
-        if (ok) {
-            form._confirming = true;
-            if (typeof form.requestSubmit === 'function') {
-                form.requestSubmit(submitter || undefined);
-            } else {
-                form.submit();
+        form._confirmPending = true;
+        try {
+            var ok = await window.TGConfirm.show(msg);
+            if (ok) {
+                form._confirming = true;
+                try {
+                    if (typeof form.requestSubmit === 'function') {
+                        form.requestSubmit(submitter || undefined);
+                    } else {
+                        form.submit();
+                    }
+                } finally {
+                    delete form._confirming;
+                }
             }
+        } finally {
+            delete form._confirmPending;
         }
     }, true);
     // Declarative data-confirm-check on <input type="checkbox"> —
