@@ -28,7 +28,8 @@ def pipeline_needs_llm(pipeline: ContentPipeline) -> bool:
       ``LLM_REFINE`` node.
     * Legacy chain mode (``pipeline_json is None``) — the ContentGenerationService
       always calls ``generate_with_provider`` on this path, so it needs an LLM.
-    * ``refinement_steps`` is non-empty — refinement chain uses the LLM.
+    * Legacy chain mode (``pipeline_json is None``) — the ContentGenerationService
+      always calls ``generate_with_provider`` on this path, so it needs an LLM.
     """
     if pipeline.generation_backend != PipelineGenerationBackend.CHAIN:
         return True
@@ -44,6 +45,4 @@ def pipeline_needs_llm(pipeline: ContentPipeline) -> bool:
         return False
 
     # Legacy chain path always calls the provider.
-    if pipeline.refinement_steps:
-        return True
     return True

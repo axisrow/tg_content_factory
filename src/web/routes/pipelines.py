@@ -284,6 +284,8 @@ async def generate_stream(
     provider_service = deps.get_llm_provider_service(request)
     if pipeline_needs_llm(pipeline) and not provider_service.has_providers():
         return _pipeline_redirect("llm_not_configured", error=True)
+    if not pipeline_needs_llm(pipeline):
+        return _pipeline_redirect("pipeline_no_llm_nodes", error=True)
     provider_callable = provider_service.get_provider_callable(pipeline.llm_model)
 
     from src.services.generation_service import GenerationService
@@ -352,6 +354,8 @@ async def generate_pipeline(
     provider_service = deps.get_llm_provider_service(request)
     if pipeline_needs_llm(pipeline) and not provider_service.has_providers():
         return _pipeline_redirect("llm_not_configured", error=True)
+    if not pipeline_needs_llm(pipeline):
+        return _pipeline_redirect("pipeline_no_llm_nodes", error=True)
     provider_callable = provider_service.get_provider_callable(pipeline.llm_model)
 
     from src.services.generation_service import GenerationService

@@ -203,7 +203,13 @@
                     {% endif %}
                     {% set pipeline_needs_llm = needs_llm_map.get(pipeline.id, true) %}
                     {% set llm_blocked = pipeline_needs_llm and not llm_configured %}
-                    <a class="btn btn-outline-primary btn-sm{% if llm_blocked %} disabled{% endif %}" href="/pipelines/{{ pipeline.id }}/generate" {% if llm_blocked %}aria-disabled="true" title="Настройте LLM провайдер"{% endif %}>Generate</a>
+                    {% if not pipeline_needs_llm %}
+                    {# Non-LLM pipelines don't use Generate endpoint #}
+                    {% elif llm_blocked %}
+                    <span class="btn btn-outline-primary btn-sm disabled" aria-disabled="true" title="Настройте LLM провайдер">Generate</span>
+                    {% else %}
+                    <a class="btn btn-outline-primary btn-sm" href="/pipelines/{{ pipeline.id }}/generate">Generate</a>
+                    {% endif %}
                     <form method="post" action="/pipelines/{{ pipeline.id }}/run" class="d-inline" data-busy>
                         <button type="submit" class="btn btn-outline-success btn-sm" {% if llm_blocked %}disabled title="Настройте LLM провайдер"{% endif %}>Run now</button>
                     </form>
