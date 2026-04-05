@@ -53,10 +53,16 @@ async def filter_manage(request: Request):
     channels = await db.get_channels_with_counts(active_only=False, include_filtered=True)
     filtered = [ch for ch in channels if ch.is_filtered]
     dev_mode = await _dev_mode_enabled(request)
+    pending_rename_count = await db.count_pending_rename_events()
     return deps.get_templates(request).TemplateResponse(
         request,
         "filter_manage.html",
-        {"channels": filtered, "total": len(filtered), "dev_mode": dev_mode},
+        {
+            "channels": filtered,
+            "total": len(filtered),
+            "dev_mode": dev_mode,
+            "pending_rename_count": pending_rename_count,
+        },
     )
 
 

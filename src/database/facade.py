@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+from collections.abc import Iterable
 from datetime import datetime
 from typing import Any
 
@@ -369,6 +370,46 @@ class Database:
             (decision, event_id),
         )
         await self._db.commit()
+
+    async def get_rename_event(self, event_id: int) -> dict | None:
+        """Return a single rename event by id (including its decision), or None."""
+        self._require()
+        assert self._db is not None
+        cur = await self._db.execute(
+            """
+            SELECT id, channel_id, old_title, new_title,
+                   old_username, new_username, created_at,
+                   decided_at, decision
+            FROM channel_rename_events
+            WHERE id = ?
+            """,
+            (event_id,),
+        )
+        row = await cur.fetchone()
+        return dict(row) if row else None
+
+    async def ensure_channel_filtered(
+        self, channel_id: int, required_flags: Iterable[str]
+    ) -> None:
+        """Idempotently mark a channel as filtered and ensure required_flags
+        are present in its filter_flags (merged with existing flags).
+
+        Used by rename-review handlers to guarantee the final filtered state
+        regardless of prior manual changes to the channel.
+        """
+        self._require()
+        channel = await self._channels.get_channel_by_channel_id(channel_id)
+        if channel is None:
+            return
+        existing = {
+            f.strip()
+            for f in (channel.filter_flags or "").split(",")
+            if f.strip()
+        }
+        merged = existing | set(required_flags)
+        await self._channels.set_filtered_bulk(
+            [(channel_id, ",".join(sorted(merged)))]
+        )
 
     async def get_forum_topics(self, channel_id: int) -> list[dict]:
         self._require()
