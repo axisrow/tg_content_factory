@@ -97,7 +97,7 @@
                         {{ "⏏️" if sq.is_active else "🔄" }}
                     </button>
                 </form>
-                <form method="post" action="/search-queries/{{ sq.id }}/delete" class="d-inline" onsubmit="return confirm('Удалить этот запрос и всю его статистику?')" data-busy>
+                <form method="post" action="/search-queries/{{ sq.id }}/delete" class="d-inline" data-confirm="Удалить этот запрос и всю его статистику?" data-busy>
                     <button type="submit" class="btn btn-outline-danger btn-sm emoji-btn" title="Удалить">&#128465;&#65039;</button>
                 </form>
             </td>
@@ -219,7 +219,7 @@
                         {{ "⏏️" if sq.is_active else "🔄" }}
                     </button>
                 </form>
-                <form method="post" action="/search-queries/{{ sq.id }}/delete" class="d-inline" onsubmit="return confirm('Удалить этот запрос и всю его статистику?')" data-busy>
+                <form method="post" action="/search-queries/{{ sq.id }}/delete" class="d-inline" data-confirm="Удалить этот запрос и всю его статистику?" data-busy>
                     <button type="submit" class="btn btn-outline-danger btn-sm emoji-btn" title="Удалить">&#128465;&#65039;</button>
                 </form>
             </div>
