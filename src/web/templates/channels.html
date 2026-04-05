@@ -130,7 +130,7 @@
                     <button type="submit" class="btn btn-outline-secondary btn-sm emoji-btn" title="Вернуть">&#128257;</button>
                 </form>
                 {% if ch.message_count > 0 %}
-                <form method="post" action="/channels/{{ ch.channel_id }}/purge-messages" class="d-inline" data-busy onsubmit="return confirm('Удалить {{ ch.message_count }} сообщений из этого канала?')">
+                <form method="post" action="/channels/{{ ch.channel_id }}/purge-messages" class="d-inline" data-busy data-confirm="Удалить {{ ch.message_count }} сообщений из этого канала?">
                     <button type="submit" class="btn btn-outline-danger btn-sm emoji-btn" title="Очистить сообщения">&#129529;</button>
                 </form>
                 {% endif %}
@@ -153,7 +153,7 @@
                         {{ "⏏️" if ch.is_active else "▶️" }}
                     </button>
                 </form>
-                <form method="post" action="/channels/{{ ch.id }}/delete" class="d-inline" data-busy onsubmit="return confirm('Вы уверены, что хотите удалить этот канал?')">
+                <form method="post" action="/channels/{{ ch.id }}/delete" class="d-inline" data-busy data-confirm="Вы уверены, что хотите удалить этот канал?">
                     <button type="submit" class="btn btn-outline-danger btn-sm emoji-btn" title="Удалить">&#128465;&#65039;</button>
                 </form>
             </td>
@@ -209,7 +209,7 @@
                     <button type="submit" class="btn btn-outline-secondary btn-sm emoji-btn" title="Вернуть">&#128257;</button>
                 </form>
                 {% if ch.message_count > 0 %}
-                <form method="post" action="/channels/{{ ch.channel_id }}/purge-messages" class="d-inline" data-busy onsubmit="return confirm('Удалить {{ ch.message_count }} сообщений из этого канала?')">
+                <form method="post" action="/channels/{{ ch.channel_id }}/purge-messages" class="d-inline" data-busy data-confirm="Удалить {{ ch.message_count }} сообщений из этого канала?">
                     <button type="submit" class="btn btn-outline-danger btn-sm emoji-btn" title="Очистить сообщения">&#129529;</button>
                 </form>
                 {% endif %}
@@ -232,7 +232,7 @@
                         {{ "⏏️" if ch.is_active else "▶️" }}
                     </button>
                 </form>
-                <form method="post" action="/channels/{{ ch.id }}/delete" class="d-inline" data-busy onsubmit="return confirm('Вы уверены, что хотите удалить этот канал?')">
+                <form method="post" action="/channels/{{ ch.id }}/delete" class="d-inline" data-busy data-confirm="Вы уверены, что хотите удалить этот канал?">
                     <button type="submit" class="btn btn-outline-danger btn-sm emoji-btn" title="Удалить">&#128465;&#65039;</button>
                 </form>
             </div>

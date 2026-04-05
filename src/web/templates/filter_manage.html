@@ -13,7 +13,7 @@
     </form>
     {% if channels %}
     <form method="post" action="/channels/filter/purge-all" class="d-inline" data-busy
-          onsubmit="return confirm('Очистить сообщения у ВСЕХ {{ total }} отфильтрованных каналов?')">
+          data-confirm="Очистить сообщения у ВСЕХ {{ total }} отфильтрованных каналов?">
         <button type="submit" class="btn btn-warning btn-sm">Очистить все сообщения</button>
     </form>
     {% endif %}
@@ -76,15 +76,13 @@
 
 <div class="d-flex gap-2 flex-wrap">
     <form method="post" action="/channels/filter/purge-selected" id="purge-form" class="d-inline" data-busy>
-        <button type="submit" class="btn btn-warning action-btn" disabled
-                onclick="return confirmPurge()">
+        <button type="submit" class="btn btn-warning action-btn" disabled>
             Очистить сообщения (<span class="selected-count">0</span>)
         </button>
     </form>
     {% if dev_mode %}
     <form method="post" action="/channels/filter/hard-delete-selected" id="hard-delete-form" class="d-inline" data-busy>
-        <button type="submit" class="btn btn-danger action-btn" disabled
-                onclick="return confirmHardDelete()">
+        <button type="submit" class="btn btn-danger action-btn" disabled>
             Удалить из БД (<span class="selected-count">0</span>)
         </button>
     </form>
@@ -138,6 +136,30 @@
     checkboxes.forEach(function(cb) {
         cb.addEventListener('change', updateCount);
     });
+
+    // Dynamic confirm for purge / hard-delete (count computed at submit time).
+    function attachDynamicConfirm(formId, messageFn) {
+        var form = document.getElementById(formId);
+        if (!form) return;
+        form.addEventListener('submit', async function(e) {
+            if (form._confirming) return;
+            e.preventDefault();
+            var count = document.querySelectorAll('.ch-check:checked').length;
+            if (count === 0) return;
+            var ok = await window.TGConfirm.show(messageFn(count));
+            if (ok) {
+                form._confirming = true;
+                if (typeof form.requestSubmit === 'function') form.requestSubmit();
+                else form.submit();
+            }
+        }, true);
+    }
+    attachDynamicConfirm('purge-form', function(n) {
+        return 'Очистить сообщения у ' + n + ' канал(ов)? Каналы останутся в базе.';
+    });
+    attachDynamicConfirm('hard-delete-form', function(n) {
+        return 'ПОЛНОСТЬЮ удалить ' + n + ' канал(ов) из базы данных? Это действие необратимо.';
+    });
 })();
 
 async function refreshFilters(button) {
@@ -150,7 +172,8 @@ async function refreshFilters(button) {
         var actionUrl = '/channels/filter/analyze';
         var queueStatsOnly = false;
         if (!data.has_stats) {
-            if (!confirm('У некоторых каналов нет статистики. Сейчас запустится только сбор статистики. После завершения вернитесь и снова нажмите \"Обновить фильтры\". Продолжить?')) {
+            var ok = await window.TGConfirm.show('У некоторых каналов нет статистики. Сейчас запустится только сбор статистики. После завершения вернитесь и снова нажмите "Обновить фильтры". Продолжить?');
+            if (!ok) {
                 setAsyncButtonBusy(button, false);
                 return;
             }
@@ -161,24 +184,14 @@ async function refreshFilters(button) {
         var actionResp = await fetch(actionUrl, {method: 'POST'});
         if (!actionResp.ok) throw new Error('refresh action failed');
         if (queueStatsOnly) {
-            alert('Сбор статистики запущен. После завершения вернитесь на эту страницу и снова обновите фильтры.');
+            await window.TGConfirm.alert('Сбор статистики запущен. После завершения вернитесь на эту страницу и снова обновите фильтры.');
         }
         window.location = actionResp.url || window.location.href;
     } catch (e) {
         console.error('Failed to refresh filters:', e);
         setAsyncButtonBusy(button, false);
-        alert('Не удалось обновить фильтры. Попробуйте еще раз.');
+        await window.TGConfirm.alert('Не удалось обновить фильтры. Попробуйте еще раз.');
     }
-}
-
-function confirmPurge() {
-    var count = document.querySelectorAll('.ch-check:checked').length;
-    return confirm('Очистить сообщения у ' + count + ' канал(ов)? Каналы останутся в базе.');
-}
-
-function confirmHardDelete() {
-    var count = document.querySelectorAll('.ch-check:checked').length;
-    return confirm('ПОЛНОСТЬЮ удалить ' + count + ' канал(ов) из базы данных? Это действие необратимо.');
 }
 </script>
 {% endblock %}
