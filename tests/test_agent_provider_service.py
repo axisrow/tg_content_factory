@@ -1187,3 +1187,81 @@ def test_canonical_endpoint_fingerprint_for_ollama_cloud(db):
     fingerprint = service.canonical_endpoint_fingerprint(cfg)
 
     assert fingerprint == "ollama://cloud"
+
+
+# === Z.AI edge case tests ===
+
+
+@pytest.mark.asyncio
+async def test_zai_fetch_models_http_error_propagates(db, monkeypatch):
+    """Z.AI model fetch propagates HTTP errors (caller handles fallback)."""
+    config = AppConfig()
+    config.security.session_encryption_key = "provider-secret"
+    service = AgentProviderService(db, config)
+
+    cfg = ProviderRuntimeConfig(
+        provider="zai",
+        enabled=True,
+        priority=0,
+        selected_model="glm-5",
+        secret_fields={"api_key": "zai-key"},
+    )
+
+    async def _failing_fetch(url, headers=None):
+        raise ConnectionError("API unreachable")
+
+    monkeypatch.setattr(service, "_fetch_json", _failing_fetch)
+
+    spec = provider_spec("zai")
+    with pytest.raises(ConnectionError, match="API unreachable"):
+        await service._fetch_live_models(spec, cfg)
+
+
+@pytest.mark.asyncio
+async def test_zai_fetch_models_empty_response(db, monkeypatch):
+    """Z.AI model fetch handles empty response gracefully."""
+    config = AppConfig()
+    config.security.session_encryption_key = "provider-secret"
+    service = AgentProviderService(db, config)
+
+    cfg = ProviderRuntimeConfig(
+        provider="zai",
+        enabled=True,
+        priority=0,
+        selected_model="",
+        secret_fields={"api_key": "zai-key"},
+    )
+
+    async def _empty_fetch(url, headers=None):
+        return {}
+
+    monkeypatch.setattr(service, "_fetch_json", _empty_fetch)
+
+    spec = provider_spec("zai")
+    models = await service._fetch_live_models(spec, cfg)
+    assert models == []
+
+
+@pytest.mark.asyncio
+async def test_zai_fetch_models_missing_api_key(db, monkeypatch):
+    """Z.AI model fetch handles missing api_key gracefully."""
+    config = AppConfig()
+    config.security.session_encryption_key = "provider-secret"
+    service = AgentProviderService(db, config)
+
+    cfg = ProviderRuntimeConfig(
+        provider="zai",
+        enabled=True,
+        priority=0,
+        selected_model="",
+        # No api_key in secret_fields
+    )
+
+    async def _fake_empty_fetch(url, headers=None):
+        return {"data": []}
+
+    monkeypatch.setattr(service, "_fetch_json", _fake_empty_fetch)
+
+    spec = provider_spec("zai")
+    models = await service._fetch_live_models(spec, cfg)
+    assert models == []

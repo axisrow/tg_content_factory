@@ -48,6 +48,9 @@ async def base_app(tmp_path):
         }
     )
     pool_mock.get_forum_topics = AsyncMock(return_value=[])
+    pool_mock.remove_client = AsyncMock()
+    pool_mock.connect_client = AsyncMock()
+    pool_mock.disconnect_client = AsyncMock()
     app.state.pool = pool_mock
 
     app.state.auth = TelegramAuth(12345, "test_hash")
