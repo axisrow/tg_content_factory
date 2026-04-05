@@ -104,7 +104,6 @@ class StatsAllTaskPayload(BaseModel):
     task_kind: str = CollectionTaskType.STATS_ALL.value
     channel_ids: list[int]
     next_index: int = 0
-    batch_size: int = 20
     channels_ok: int = 0
     channels_err: int = 0
 

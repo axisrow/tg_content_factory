@@ -47,6 +47,7 @@ def _make_dispatcher(**kw):
     tasks.update_collection_task_progress = AsyncMock()
     tasks.get_collection_task = AsyncMock(return_value=None)
     tasks.create_stats_continuation_task = AsyncMock(return_value=999)
+    tasks.reschedule_stats_task = AsyncMock()
     tasks.create_generic_task = AsyncMock(return_value=100)
     defaults = dict(
         collector=collector,
@@ -624,7 +625,7 @@ async def test_stats_all_stop_event_interrupts_batch():
     # Set stop_event before processing starts
     d._stop_event.set()
 
-    payload = StatsAllTaskPayload(channel_ids=[42, 43], batch_size=10)
+    payload = StatsAllTaskPayload(channel_ids=[42, 43])
 
     await d._handle_stats_all(_task(CollectionTaskType.STATS_ALL, payload=payload))
 
@@ -641,7 +642,7 @@ async def test_stats_all_successful_completion():
     ch2 = MagicMock(channel_id=101)
     d._channel_bundle.get_by_channel_id = AsyncMock(side_effect=[ch1, ch2])
 
-    payload = StatsAllTaskPayload(channel_ids=[100, 101], batch_size=10)
+    payload = StatsAllTaskPayload(channel_ids=[100, 101])
 
     await d._handle_stats_all(_task(CollectionTaskType.STATS_ALL, payload=payload))
 

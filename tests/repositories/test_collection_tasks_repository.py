@@ -407,24 +407,28 @@ async def test_claim_next_due_stats_task_skips_running(collection_tasks_repo):
     assert claimed is None
 
 
-# create_stats_continuation_task tests
+# reschedule_stats_task tests
 
 
-async def test_create_stats_continuation_task(collection_tasks_repo):
-    """Test creating a continuation task."""
-    parent_id = await collection_tasks_repo.create_stats_task(StatsAllTaskPayload(channel_ids=[1, 2]))
+async def test_reschedule_stats_task(collection_tasks_repo):
+    """Test rescheduling a stats task back to pending."""
+    task_id = await collection_tasks_repo.create_stats_task(StatsAllTaskPayload(channel_ids=[1, 2, 3]))
+    await collection_tasks_repo.update_collection_task(task_id, CollectionTaskStatus.RUNNING)
+
     run_after = datetime.now(tz=timezone.utc) + timedelta(minutes=5)
-
-    payload = StatsAllTaskPayload(channel_ids=[1, 2, 3], next_index=10)
-    child_id = await collection_tasks_repo.create_stats_continuation_task(
+    payload = StatsAllTaskPayload(channel_ids=[1, 2, 3], next_index=1, channels_ok=1)
+    await collection_tasks_repo.reschedule_stats_task(
+        task_id,
         payload=payload,
         run_after=run_after,
-        parent_task_id=parent_id,
+        messages_collected=1,
     )
 
-    task = await collection_tasks_repo.get_collection_task(child_id)
-    assert task.parent_task_id == parent_id
-    assert task.payload.next_index == 10
+    task = await collection_tasks_repo.get_collection_task(task_id)
+    assert task.status == CollectionTaskStatus.PENDING
+    assert task.payload.next_index == 1
+    assert task.payload.channels_ok == 1
+    assert task.messages_collected == 1
 
 
 # get_pending_channel_tasks tests

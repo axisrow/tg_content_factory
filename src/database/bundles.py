@@ -283,17 +283,19 @@ class ChannelBundle:
             parent_task_id=parent_task_id,
         )
 
-    async def create_stats_continuation_task(
+    async def reschedule_stats_task(
         self,
+        task_id: int,
         *,
         payload: StatsAllTaskPayload,
-        run_after: datetime | None,
-        parent_task_id: int,
-    ) -> int:
-        return await self.tasks.create_stats_continuation_task(
+        run_after: datetime,
+        messages_collected: int,
+    ) -> None:
+        return await self.tasks.reschedule_stats_task(
+            task_id,
             payload=payload,
             run_after=run_after,
-            parent_task_id=parent_task_id,
+            messages_collected=messages_collected,
         )
 
     async def get_pending_channel_tasks(self) -> list[CollectionTask]:

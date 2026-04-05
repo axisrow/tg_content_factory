@@ -885,17 +885,20 @@ async def test_stats_task_claim_and_continuation(db):
     assert isinstance(claimed.payload, StatsAllTaskPayload)
     assert claimed.payload.task_kind == CollectionTaskType.STATS_ALL.value
 
-    continuation_id = await db.create_stats_continuation_task(
-        payload=StatsAllTaskPayload(channel_ids=[-1001, -1002], next_index=1),
-        run_after=now,
-        parent_task_id=tid,
+    # Test reschedule_stats_task: reschedule same task back to pending
+    from datetime import timedelta
+
+    await db.reschedule_stats_task(
+        tid,
+        payload=StatsAllTaskPayload(channel_ids=[-1001, -1002], next_index=1, channels_ok=1),
+        run_after=now + timedelta(minutes=5),
+        messages_collected=1,
     )
-    continuation = await db.get_collection_task(continuation_id)
-    assert continuation is not None
-    assert continuation.parent_task_id == tid
-    assert continuation.status == CollectionTaskStatus.PENDING
-    assert isinstance(continuation.payload, StatsAllTaskPayload)
-    assert continuation.payload.next_index == 1
+    rescheduled = await db.get_collection_task(tid)
+    assert rescheduled is not None
+    assert rescheduled.status == CollectionTaskStatus.PENDING
+    assert isinstance(rescheduled.payload, StatsAllTaskPayload)
+    assert rescheduled.payload.next_index == 1
 
 
 @pytest.mark.asyncio
