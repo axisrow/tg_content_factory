@@ -39,6 +39,10 @@ async def rename_events_count(request: Request):
 async def rename_event_filter(request: Request, event_id: int):
     """Keep the channel filtered (default after rename — just mark decision)."""
     db = deps.get_db(request)
+    events = await db.list_pending_rename_events()
+    event = next((e for e in events if e["id"] == event_id), None)
+    if not event:
+        return RedirectResponse(url="/channels/renames?msg=rename_already_decided", status_code=303)
     await db.decide_rename_event(event_id, "filter")
     return RedirectResponse(url="/channels/renames?msg=rename_filtered", status_code=303)
 
@@ -49,18 +53,19 @@ async def rename_event_keep(request: Request, event_id: int):
     db = deps.get_db(request)
     events = await db.list_pending_rename_events()
     event = next((e for e in events if e["id"] == event_id), None)
-    if event:
-        channel_id = event["channel_id"]
-        channels = await db.get_channels(active_only=False, include_filtered=True)
-        ch = next((c for c in channels if c.channel_id == channel_id), None)
-        if ch and ch.id:
-            current_flags = {f.strip() for f in (ch.filter_flags or "").split(",") if f.strip()}
-            current_flags -= {"username_changed", "title_changed"}
-            if current_flags:
-                await db.set_channels_filtered_bulk(
-                    [(channel_id, ",".join(sorted(current_flags)))]
-                )
-            else:
-                await db.set_channel_filtered(ch.id, False)
+    if not event:
+        return RedirectResponse(url="/channels/renames?msg=rename_already_decided", status_code=303)
+    channel_id = event["channel_id"]
+    channels = await db.get_channels(active_only=False, include_filtered=True)
+    ch = next((c for c in channels if c.channel_id == channel_id), None)
+    if ch and ch.id:
+        current_flags = {f.strip() for f in (ch.filter_flags or "").split(",") if f.strip()}
+        current_flags -= {"username_changed", "title_changed"}
+        if current_flags:
+            await db.set_channels_filtered_bulk(
+                [(channel_id, ",".join(sorted(current_flags)))]
+            )
+        else:
+            await db.set_channel_filtered(ch.id, False)
     await db.decide_rename_event(event_id, "keep")
     return RedirectResponse(url="/channels/renames?msg=rename_kept", status_code=303)

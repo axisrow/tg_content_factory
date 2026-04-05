@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import sqlite3
 from datetime import datetime
 from typing import Any
 
@@ -303,16 +304,25 @@ class Database:
         existing = await cur.fetchone()
         if existing:
             return existing["id"]
-        cur = await self._db.execute(
-            """
-            INSERT INTO channel_rename_events
-                (channel_id, old_title, new_title, old_username, new_username)
-            VALUES (?, ?, ?, ?, ?)
-            """,
-            (channel_id, old_title, new_title, old_username, new_username),
-        )
-        await self._db.commit()
-        return cur.lastrowid or 0
+        try:
+            cur = await self._db.execute(
+                """
+                INSERT INTO channel_rename_events
+                    (channel_id, old_title, new_title, old_username, new_username)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (channel_id, old_title, new_title, old_username, new_username),
+            )
+            await self._db.commit()
+            return cur.lastrowid or 0
+        except sqlite3.IntegrityError:
+            # Concurrent INSERT won the race; re-select the existing row
+            cur = await self._db.execute(
+                "SELECT id FROM channel_rename_events WHERE channel_id = ? AND decision IS NULL LIMIT 1",
+                (channel_id,),
+            )
+            row = await cur.fetchone()
+            return row["id"] if row else 0
 
     async def list_pending_rename_events(self) -> list[dict]:
         """Return all undecided rename events, newest first."""
@@ -343,14 +353,18 @@ class Database:
         return row[0] if row else 0
 
     async def decide_rename_event(self, event_id: int, decision: str) -> None:
-        """Mark a rename event as decided (decision: 'filter' or 'keep')."""
+        """Mark a rename event as decided (decision: 'filter' or 'keep').
+
+        Only updates if the event has not already been decided, preventing
+        overwrite of a previous decision in race conditions.
+        """
         self._require()
         assert self._db is not None
         await self._db.execute(
             """
             UPDATE channel_rename_events
             SET decision = ?, decided_at = datetime('now')
-            WHERE id = ?
+            WHERE id = ? AND decision IS NULL
             """,
             (decision, event_id),
         )
