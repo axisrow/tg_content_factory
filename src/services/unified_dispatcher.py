@@ -63,6 +63,7 @@ class UnifiedDispatcher:
         client_pool: object | None = None,
         notifier: "Notifier | None" = None,
         config: object | None = None,
+        llm_provider_service: object | None = None,
     ):
 
         self._collector = collector
@@ -80,6 +81,7 @@ class UnifiedDispatcher:
         self._client_pool = client_pool
         self._notifier = notifier
         self._config = config
+        self._llm_provider_service = llm_provider_service
         self._task: asyncio.Task | None = None
         self._stop_event = asyncio.Event()
 
@@ -494,10 +496,12 @@ class UnifiedDispatcher:
             quality_service = QualityScoringService(db)
 
             image_service = await self._build_image_service()
-            from src.services.provider_service import AgentProviderService
+            provider_service = self._llm_provider_service
+            if provider_service is None:
+                from src.services.provider_service import AgentProviderService
 
-            provider_service = AgentProviderService(db, self._config)
-            await provider_service.load_db_providers()
+                provider_service = AgentProviderService(db, self._config)
+                await provider_service.load_db_providers()
             gen = ContentGenerationService(
                 db,
                 self._search_engine,
@@ -582,10 +586,12 @@ class UnifiedDispatcher:
             quality_service = QualityScoringService(db)
 
             image_service = await self._build_image_service()
-            from src.services.provider_service import AgentProviderService
+            provider_service = self._llm_provider_service
+            if provider_service is None:
+                from src.services.provider_service import AgentProviderService
 
-            provider_service = AgentProviderService(db, self._config)
-            await provider_service.load_db_providers()
+                provider_service = AgentProviderService(db, self._config)
+                await provider_service.load_db_providers()
             gen = ContentGenerationService(
                 db,
                 self._search_engine,

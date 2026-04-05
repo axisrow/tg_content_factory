@@ -163,15 +163,18 @@ class AgentProviderService:
             if not self._has_valid_secrets(cfg):
                 logger.debug("Skipping db provider %s: empty secrets", cfg.provider)
                 continue
-            adapter = self._build_adapter_for_config(cfg)
-            if adapter is None:
-                logger.debug("Skipping db provider %s: no adapter mapping", cfg.provider)
-                continue
-            name = cfg.provider
-            if name not in self._registry:
-                self.register_provider(name, adapter)
-                self._db_provider_names.add(name)
-                added += 1
+            try:
+                adapter = self._build_adapter_for_config(cfg)
+                if adapter is None:
+                    logger.debug("Skipping db provider %s: no adapter mapping", cfg.provider)
+                    continue
+                name = cfg.provider
+                if name not in self._registry:
+                    self.register_provider(name, adapter)
+                    self._db_provider_names.add(name)
+                    added += 1
+            except Exception:
+                logger.warning("Failed to register db provider %s", cfg.provider, exc_info=True)
         return added
 
     async def reload_db_providers(self) -> int:
@@ -190,7 +193,6 @@ class AgentProviderService:
         """Map a ProviderRuntimeConfig to a provider adapter callable."""
         from src.services.provider_adapters import (
             make_cohere_adapter,
-            make_generic_http_adapter,
             make_huggingface_adapter,
             make_ollama_adapter,
         )
@@ -218,16 +220,15 @@ class AgentProviderService:
             return make_huggingface_adapter(api_key, base_url=base_url or None)
 
         if provider == "anthropic":
-            base_url = (cfg.plain_fields.get("base_url", "") or "").strip()
-            endpoint = f"{base_url.rstrip('/')}/messages" if base_url else "https://api.anthropic.com/v1/messages"
-            return make_generic_http_adapter(endpoint, api_key, api_key_header="x-api-key")
+            # Anthropic requires a different request schema (messages API)
+            # than what make_generic_http_adapter provides (prompt-based).
+            logger.debug("Skipping db provider %s: incompatible request schema", provider)
+            return None
 
         if provider == "google_genai":
-            return make_generic_http_adapter(
-                "https://generativelanguage.googleapis.com/v1beta/models",
-                api_key,
-                api_key_header="x-goog-api-key",
-            )
+            # Google GenAI also needs a different request schema.
+            logger.debug("Skipping db provider %s: incompatible request schema", provider)
+            return None
 
         return None
 
