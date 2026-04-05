@@ -178,10 +178,19 @@ class AgentProviderService:
         return added
 
     async def reload_db_providers(self) -> int:
-        """Remove DB-sourced providers and reload from DB."""
-        for name in self._db_provider_names:
-            self._registry.pop(name, None)
+        """Remove DB-sourced providers and reload from DB.
+
+        Loads new providers first, then removes only the old names that
+        were not re-registered — avoiding a brief empty-registry window.
+        """
+        old_names = set(self._db_provider_names)
         self._db_provider_names.clear()
+        # Allow load_db_providers to re-register names (they won't be
+        # skipped since we cleared _db_provider_names, but the registry
+        # entries from the previous load must be removed first so the
+        # `if name not in self._registry` check lets them through).
+        for name in old_names:
+            self._registry.pop(name, None)
         return await self.load_db_providers()
 
     @staticmethod
