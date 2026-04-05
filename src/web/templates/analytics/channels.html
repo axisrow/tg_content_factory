@@ -197,8 +197,7 @@
 
   function fmtDelta(d) {
     if (d == null) return '';
-    var s = Number(d).toLocaleString('ru-RU', {signDisplay: 'exceptZero'});
-    return d > 0 ? '+' + s : s;
+    return Number(d).toLocaleString('ru-RU', {signDisplay: 'exceptZero'});
   }
 
   async function loadChannel(cid) {
@@ -389,6 +388,7 @@
   document.getElementById('channel-select').addEventListener('change', function() {
     var val = parseInt(this.value);
     if (val) {
+      channelId = val;
       var url = new URL(window.location);
       url.searchParams.set('channel_id', val);
       url.searchParams.set('days', days);

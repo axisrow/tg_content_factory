@@ -1311,7 +1311,7 @@ class MessagesRepository:
         cur = await self._db.execute(
             """SELECT COALESCE(SUM(m.forwards), 0) AS total_forwards,
                       COUNT(*) AS post_count,
-                      COALESCE(AVG(m.forwards), 0) AS avg_forwards
+                      COALESCE(AVG(COALESCE(m.forwards, 0)), 0) AS avg_forwards
                FROM messages m
                WHERE m.channel_id = ?""",
             (channel_id,),
