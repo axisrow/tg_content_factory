@@ -9,6 +9,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Resp
 
 from src.agent.prompt_template import ALLOWED_TEMPLATE_VARIABLES
 from src.models import PipelineGenerationBackend, PipelinePublishMode
+from src.services.pipeline_llm_requirements import pipeline_needs_llm
 from src.services.pipeline_service import (
     PipelineService,
     PipelineTargetRef,
@@ -58,14 +59,28 @@ async def _page_context(request: Request) -> dict:
             logger.warning("Failed to refresh dialog cache for %s", selected_phone, exc_info=True)
     cached_dialogs = await svc.list_cached_dialogs_by_phone()
     items = await svc.get_with_relations()
+    # Annotate each item with whether the pipeline actually needs an LLM provider.
+    # Used by the template to disable Generate/Run buttons per-pipeline instead of
+    # globally — non-LLM pipelines (SOURCE→PUBLISH DAGs) remain runnable.
+    needs_llm_map: dict[int, bool] = {}
+    for item in items:
+        pipeline = item.get("pipeline") if isinstance(item, dict) else None
+        if pipeline is None or pipeline.id is None:
+            continue
+        try:
+            needs_llm_map[pipeline.id] = pipeline_needs_llm(pipeline)
+        except Exception:
+            # Fail safe: assume LLM is needed on unexpected shapes.
+            logger.warning("pipeline_needs_llm failed for pipeline_id=%s", pipeline.id, exc_info=True)
+            needs_llm_map[pipeline.id] = True
     # gather next_run times for pipelines (batch query)
     next_runs = {}
     try:
         scheduler = deps.get_scheduler(request)
         all_jobs = scheduler.get_all_jobs_next_run()
         for item in items:
-            pipeline = item.pipeline
-            if pipeline.id is None:
+            pipeline = item.get("pipeline") if isinstance(item, dict) else None
+            if pipeline is None or pipeline.id is None:
                 continue
             job_id = f"pipeline_run_{pipeline.id}"
             nr = all_jobs.get(job_id)
@@ -83,6 +98,7 @@ async def _page_context(request: Request) -> dict:
         "generation_backends": list(PipelineGenerationBackend),
         "next_runs": next_runs,
         "llm_configured": deps.get_llm_provider_service(request).has_providers(),
+        "needs_llm_map": needs_llm_map,
     }
     # Only query DB for provider statuses when the banner is visible
     if not ctx["llm_configured"]:
@@ -115,7 +131,7 @@ async def add_pipeline(
 ):
     svc: PipelineService = deps.pipeline_service(request)
     try:
-        await svc.add(
+        new_pipeline_id = await svc.add(
             name=name,
             prompt_template=prompt_template,
             source_channel_ids=source_channel_ids,
@@ -135,6 +151,14 @@ async def add_pipeline(
         await scheduler.sync_pipeline_jobs()
     except Exception:
         logger.warning("Scheduler sync failed", exc_info=True)
+    # Warn if pipeline needs LLM but no provider is configured — still create it.
+    try:
+        created = await svc.get(new_pipeline_id)
+        if created is not None and pipeline_needs_llm(created):
+            if not deps.get_llm_provider_service(request).has_providers():
+                return _pipeline_redirect("pipeline_added_no_llm")
+    except Exception:
+        logger.debug("pipeline_needs_llm check failed after add", exc_info=True)
     return _pipeline_redirect("pipeline_added")
 
 
@@ -211,12 +235,13 @@ async def delete_pipeline(request: Request, pipeline_id: int):
 
 @router.post("/{pipeline_id}/run")
 async def run_pipeline(request: Request, pipeline_id: int):
-    if not deps.get_llm_provider_service(request).has_providers():
-        return _pipeline_redirect("llm_not_configured", error=True)
     svc = deps.pipeline_service(request)
     pipeline = await svc.get(pipeline_id)
     if pipeline is None:
         return _pipeline_redirect("pipeline_invalid", error=True)
+    # Per-pipeline LLM requirement: pure forward/publish DAGs run fine without a provider.
+    if pipeline_needs_llm(pipeline) and not deps.get_llm_provider_service(request).has_providers():
+        return _pipeline_redirect("llm_not_configured", error=True)
     try:
         enqueuer = deps.get_task_enqueuer(request)
         await enqueuer.enqueue_pipeline_run(pipeline_id)
@@ -257,7 +282,7 @@ async def generate_stream(
     engine = deps.get_search_engine(request)
 
     provider_service = deps.get_llm_provider_service(request)
-    if not provider_service.has_providers():
+    if pipeline_needs_llm(pipeline) and not provider_service.has_providers():
         return _pipeline_redirect("llm_not_configured", error=True)
     provider_callable = provider_service.get_provider_callable(pipeline.llm_model)
 
@@ -325,7 +350,7 @@ async def generate_pipeline(
     engine = deps.get_search_engine(request)
 
     provider_service = deps.get_llm_provider_service(request)
-    if not provider_service.has_providers():
+    if pipeline_needs_llm(pipeline) and not provider_service.has_providers():
         return _pipeline_redirect("llm_not_configured", error=True)
     provider_callable = provider_service.get_provider_callable(pipeline.llm_model)
 
