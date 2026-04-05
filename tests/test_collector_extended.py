@@ -40,6 +40,7 @@ def mock_db():
     db.upsert_forum_topics = AsyncMock()
     db.save_channel_stats = AsyncMock()
     db.set_channel_type = AsyncMock()
+    db.create_rename_event = AsyncMock()
     return db
 
 
@@ -233,4 +234,7 @@ async def test_collect_channel_username_changed(collector, mock_pool, mock_db):
     res = await collector._collect_channel(channel)
     assert res == 0
     mock_db.update_channel_meta.assert_called_once()
-    mock_db.set_channels_filtered_bulk.assert_called_with([(123, "username_changed")])
+    # Both username and title differ from DB → both sticky flags set (sorted alphabetically).
+    mock_db.set_channels_filtered_bulk.assert_called_with(
+        [(123, "title_changed,username_changed")]
+    )

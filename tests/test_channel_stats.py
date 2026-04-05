@@ -276,15 +276,61 @@ async def test_collect_channel_stats_releases_client(db):
     await db.add_channel(ch)
 
     mock_client = AsyncMock()
-    mock_client.get_entity = AsyncMock(side_effect=ValueError("fail"))
+    # Use RuntimeError — an error class that is NOT in the fallback exception
+    # tuple (ValueError / UsernameNotOccupiedError / UsernameInvalidError), so it
+    # bubbles straight up and we can assert release_client still runs in finally.
+    mock_client.get_entity = AsyncMock(side_effect=RuntimeError("fail"))
 
     pool = make_mock_pool(get_available_client=AsyncMock(return_value=(mock_client, "+7000")))
 
     collector = Collector(pool, db, SchedulerConfig())
-    with pytest.raises(ValueError):
+    with pytest.raises(RuntimeError):
         await collector.collect_channel_stats(ch)
 
     pool.release_client.assert_awaited_once_with("+7000")
+
+
+@pytest.mark.asyncio
+async def test_collect_channel_stats_fallback_on_stale_username(db):
+    """Stale username in DB → resolve via numeric ID and mark channel filtered."""
+    from telethon.errors import UsernameNotOccupiedError
+
+    ch = Channel(channel_id=-100555, title="Old Title", username="S0IMD1EDUAW")
+    await db.add_channel(ch)
+
+    fallback_entity = SimpleNamespace(username="new_handle", title="New Title")
+    mock_full_chat = SimpleNamespace(participants_count=42)
+    mock_full = SimpleNamespace(full_chat=mock_full_chat)
+
+    mock_client = AsyncMock()
+    # First call (by username) raises the stale-username error; second call
+    # (by PeerChannel) resolves to the fresh entity.
+    mock_client.get_entity = AsyncMock(
+        side_effect=[
+            UsernameNotOccupiedError(request=None),
+            fallback_entity,
+        ]
+    )
+    mock_client.return_value = mock_full
+    mock_client.iter_messages = MagicMock(return_value=_AsyncIterMessages([]))
+
+    pool = make_mock_pool(get_available_client=AsyncMock(return_value=(mock_client, "+7000")))
+
+    collector = Collector(pool, db, SchedulerConfig())
+    stats = await collector.collect_channel_stats(ch)
+
+    assert stats is not None
+    assert stats.subscriber_count == 42
+    assert mock_client.get_entity.await_count == 2
+
+    # DB should have updated meta + sticky filter flags.
+    channels = await db.get_channels()
+    updated = next(c for c in channels if c.channel_id == -100555)
+    assert updated.username == "new_handle"
+    assert updated.title == "New Title"
+    assert updated.is_filtered is True
+    assert "username_changed" in updated.filter_flags
+    assert "title_changed" in updated.filter_flags
 
 
 @pytest.mark.asyncio

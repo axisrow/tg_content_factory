@@ -678,6 +678,26 @@ async def run_migrations(db: aiosqlite.Connection) -> bool:
         """)
     await db.commit()
 
+    # Channel rename events (pending user decisions)
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS channel_rename_events (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            channel_id  INTEGER NOT NULL,
+            old_title   TEXT,
+            new_title   TEXT,
+            old_username TEXT,
+            new_username TEXT,
+            created_at  TEXT DEFAULT (datetime('now')),
+            decided_at  TEXT,
+            decision    TEXT
+        )
+        """)
+    await db.execute("""
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_channel_rename_events_pending
+        ON channel_rename_events(channel_id) WHERE decision IS NULL
+        """)
+    await db.commit()
+
     legacy_dialog_search_key = "_".join(("search", "my", "telegram"))
 
     # Preserve historical rename path for older DBs, then migrate to the canonical tool id.

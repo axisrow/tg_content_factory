@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block title %}Переименования каналов — TG Agent{% endblock %}
+{% block content %}
+<h1>Переименования каналов</h1>
+<p class="text-muted">Telegram-каналы ниже изменили название или юзернейм с момента последней проверки. Решите, что с ними делать.</p>
+
+{% if events %}
+<p>Ожидают решения: <strong>{{ total }}</strong></p>
+<div class="table-responsive">
+<table class="table table-bordered table-sm align-middle">
+    <thead class="table-light">
+        <tr>
+            <th>Было</th>
+            <th></th>
+            <th>Стало</th>
+            <th>Обнаружено</th>
+            <th>Действие</th>
+        </tr>
+    </thead>
+    <tbody>
+    {% for ev in events %}
+    <tr>
+        <td>
+            {% if ev.old_title %}<div class="fw-semibold">{{ ev.old_title }}</div>{% endif %}
+            {% if ev.old_username %}<small class="text-muted">@{{ ev.old_username }}</small>{% endif %}
+            {% if not ev.old_title and not ev.old_username %}<span class="text-muted">—</span>{% endif %}
+        </td>
+        <td class="text-center text-secondary">→</td>
+        <td>
+            {% if ev.new_title %}<div class="fw-semibold">{{ ev.new_title }}</div>{% endif %}
+            {% if ev.new_username %}<small class="text-muted">@{{ ev.new_username }}</small>{% endif %}
+            {% if not ev.new_title and not ev.new_username %}<span class="text-muted">—</span>{% endif %}
+        </td>
+        <td>
+            <small class="text-muted">{{ ev.created_at | local_dt }}</small>
+        </td>
+        <td>
+            <div class="d-flex gap-2">
+                <form method="post" action="/channels/renames/{{ ev.id }}/keep">
+                    <button type="submit" class="btn btn-sm btn-success" title="Разфильтровать канал и продолжить сбор">
+                        Оставить
+                    </button>
+                </form>
+                <form method="post" action="/channels/renames/{{ ev.id }}/filter">
+                    <button type="submit" class="btn btn-sm btn-outline-danger" title="Оставить канал в фильтре, прекратить сбор">
+                        Фильтровать
+                    </button>
+                </form>
+            </div>
+        </td>
+    </tr>
+    {% endfor %}
+    </tbody>
+</table>
+</div>
+{% else %}
+<div class="alert alert-success">Нет каналов, ожидающих решения.</div>
+{% endif %}
+{% endblock %}

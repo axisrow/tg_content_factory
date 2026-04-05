@@ -4,6 +4,11 @@ import re
 
 CYRILLIC_RE = re.compile(r"[а-яА-ЯёЁ]")
 
+# Случайно сгенерированные username: только заглавные латинские + цифры,
+# длина ≥ 10 и обязательно хотя бы одна цифра. Ловит шаблоны вроде
+# "S0IMD1EDUAW", "EXF74CHE3RZ1"; безопасно пропускает "BITCOIN24", "NASDAQNEWS".
+SUSPICIOUS_USERNAME_RE = re.compile(r"^(?=.*\d)[A-Z0-9]{10,}$")
+
 LOW_UNIQUENESS_THRESHOLD = 30.0
 LOW_SUBSCRIBER_RATIO_THRESHOLD = 1.0  # broadcast-каналы
 LOW_SUBSCRIBER_RATIO_CHAT_THRESHOLD = 0.02  # supergroup / group / gigagroup
@@ -25,6 +30,8 @@ VALID_FLAGS = frozenset(
         "non_cyrillic",
         "chat_noise",
         "username_changed",
+        "title_changed",
+        "suspicious_username",
     }
 )
 

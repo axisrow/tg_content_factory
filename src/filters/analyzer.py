@@ -11,6 +11,7 @@ from src.filters.criteria import (
     LOW_SUBSCRIBER_RATIO_THRESHOLD,
     LOW_UNIQUENESS_THRESHOLD,
     NON_CYRILLIC_THRESHOLD,
+    SUSPICIOUS_USERNAME_RE,
 )
 from src.filters.models import ChannelFilterResult, FilterReport
 from src.settings_utils import parse_int_setting
@@ -118,6 +119,10 @@ class ChannelAnalyzer:
             if noisy_chat:
                 flags.append("chat_noise")
 
+            raw_username = channel["username"]
+            if raw_username and SUSPICIOUS_USERNAME_RE.match(raw_username):
+                flags.append("suspicious_username")
+
             results.append(
                 ChannelFilterResult(
                     channel_id=channel_id_value,
@@ -158,9 +163,29 @@ class ChannelAnalyzer:
                 existing = deduped.get(result.channel_id, set())
                 existing.update(result.flags)
                 deduped[result.channel_id] = existing
-        updates = [(cid, ",".join(sorted(flags))) for cid, flags in deduped.items()]
+
         conn = self._database.db
         assert conn is not None
+
+        # Preserve "sticky" flags that are set outside of analyzer — e.g. collector
+        # marks channels with `username_changed` when Telegram reports the saved
+        # username no longer matches the channel, and operators set `manual` via UI.
+        # These must survive reset_all_channel_filters → apply new report cycle.
+        sticky_flag_names = ("username_changed", "title_changed", "manual")
+        cur = await conn.execute(
+            "SELECT channel_id, filter_flags FROM channels "
+            "WHERE is_filtered = 1 AND filter_flags IS NOT NULL AND filter_flags != ''"
+        )
+        sticky_rows = await cur.fetchall()
+        for row in sticky_rows:
+            existing_flags = {f.strip() for f in (row["filter_flags"] or "").split(",") if f.strip()}
+            preserved = existing_flags & set(sticky_flag_names)
+            if preserved:
+                bucket = deduped.setdefault(row["channel_id"], set())
+                bucket.update(preserved)
+
+        updates = [(cid, ",".join(sorted(flags))) for cid, flags in deduped.items()]
+
         # Rollback any stale transaction left by a prior interrupted operation
         # (isolation_level=None means autocommit, so rollback is a no-op when clean).
         try:

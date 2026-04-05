@@ -33,6 +33,15 @@
                     <li class="nav-item"><a class="nav-link" href="/dashboard">Панель</a></li>
                     <li class="nav-item"><a class="nav-link" href="/channels">Каналы</a></li>
                     <li class="nav-item"><a class="nav-link" href="/channels/filter/manage">Очистка</a></li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="/channels/renames">
+                            Переименования<span
+                                id="rename-badge"
+                                hx-get="/channels/renames/count"
+                                hx-trigger="load, every 60s"
+                                hx-swap="innerHTML"></span>
+                        </a>
+                    </li>
                     <li class="nav-item"><a class="nav-link" href="/search-queries">Запросы</a></li>
                     <li class="nav-item"><a class="nav-link" href="/pipelines">Пайплайны</a></li>
                     <li class="nav-item"><a class="nav-link" href="/images">Картинки</a></li>
@@ -130,7 +139,9 @@
         semantic_indexed: "Индексация semantic search завершена.",
         translation_saved: "Настройки перевода сохранены.",
         translation_backfill_done: "Определение языков завершено.",
-        translation_run_started: "Фоновый перевод запущен."
+        translation_run_started: "Фоновый перевод запущен.",
+        rename_filtered: "Канал оставлен в фильтре.",
+        rename_kept: "Канал разфильтрован и оставлен активным."
     };
     var errors = {
         resolve: "Не удалось найти канал. Проверьте username или ссылку.",
