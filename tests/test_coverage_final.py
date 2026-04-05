@@ -1180,14 +1180,16 @@ class TestAgentProviderServiceExtended:
         assert result["model"] == "test"
 
     async def test_decrypt_no_cipher(self, db):
+        import pytest
+
         from src.services.agent_provider_service import AgentProviderService, provider_spec
         config = AppConfig()
         svc = AgentProviderService(db, config)
         svc._cipher = None
         spec = provider_spec("openai")
         if spec and spec.secret_fields:
-            result = svc._decrypt_secret_fields({"api_key": "secret"}, spec)
-            assert result.get("api_key") == ""
+            with pytest.raises(ValueError, match="SESSION_ENCRYPTION_KEY"):
+                svc._decrypt_secret_fields({"api_key": "secret"}, spec)
 
     async def test_app_version(self, db):
         from src.services.agent_provider_service import AgentProviderService

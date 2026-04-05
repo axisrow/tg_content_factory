@@ -160,14 +160,15 @@ class AgentProviderService:
         reloading_names = _reloading_names or set()
         for cfg in configs:
             if not cfg.enabled:
+                logger.debug("Skipping db provider %s: disabled", cfg.provider)
                 continue
             if not self._has_valid_secrets(cfg):
-                logger.debug("Skipping db provider %s: empty secrets", cfg.provider)
+                logger.warning("Skipping db provider %s: empty/invalid secrets", cfg.provider)
                 continue
             try:
                 adapter = self._build_adapter_for_config(cfg)
                 if adapter is None:
-                    logger.debug("Skipping db provider %s: no adapter mapping", cfg.provider)
+                    logger.warning("Skipping db provider %s: no adapter mapping", cfg.provider)
                     continue
                 name = cfg.provider
                 # Register if new; overwrite if previously DB-sourced
@@ -194,10 +195,18 @@ class AgentProviderService:
             self._registry.pop(name, None)
         return added
 
-    @staticmethod
-    def _has_valid_secrets(cfg: Any) -> bool:
+    def _has_valid_secrets(self, cfg: Any) -> bool:
         secrets = getattr(cfg, "secret_fields", None) or {}
-        return any((v or "").strip() for v in secrets.values())
+        if any((v or "").strip() for v in secrets.values()):
+            return True
+        # Providers where ALL secret fields are optional (e.g. Ollama)
+        # are valid even without secrets.
+        from src.agent.provider_registry import provider_spec
+
+        spec = provider_spec(getattr(cfg, "provider", ""))
+        if spec is not None and spec.secret_fields and all(not f.required for f in spec.secret_fields):
+            return True
+        return False
 
     def _build_adapter_for_config(self, cfg: Any) -> Callable[..., Awaitable[str]] | None:
         """Map a ProviderRuntimeConfig to a provider adapter callable."""
@@ -285,6 +294,45 @@ class AgentProviderService:
     def has_providers(self) -> bool:
         """Return True if any real (non-default) provider is registered."""
         return any(name != "default" for name in self._registry)
+
+    async def get_provider_status_list(self) -> list[dict[str, str]]:
+        """Return per-provider diagnostic status for UI display.
+
+        Each entry: {"provider": str, "status": str, "reason": str}.
+        Statuses: active, disabled, invalid_secrets, no_adapter.
+        """
+        if self.db is None or self._config is None:
+            return []
+        from src.services.agent_provider_service import AgentProviderService as DbProviderService
+
+        try:
+            db_svc = DbProviderService(self.db, self._config)
+            configs = await db_svc.load_provider_configs()
+        except Exception:
+            logger.warning("Failed to load provider statuses from DB", exc_info=True)
+            return []
+
+        statuses: list[dict[str, str]] = []
+        for cfg in configs:
+            if cfg.provider in self._registry and cfg.provider != "default":
+                statuses.append({"provider": cfg.provider, "status": "active", "reason": ""})
+            elif not cfg.enabled:
+                statuses.append({"provider": cfg.provider, "status": "disabled", "reason": "Провайдер отключён."})
+            elif not self._has_valid_secrets(cfg):
+                reason = cfg.last_validation_error or "API-ключ или секрет пуст."
+                statuses.append({"provider": cfg.provider, "status": "invalid_secrets", "reason": reason})
+            else:
+                adapter = self._build_adapter_for_config(cfg)
+                if adapter is None:
+                    reason = f"Адаптер для {cfg.provider} ещё не реализован."
+                    statuses.append({"provider": cfg.provider, "status": "no_adapter", "reason": reason})
+                else:
+                    statuses.append({
+                        "provider": cfg.provider,
+                        "status": "unknown_skip",
+                        "reason": "Провайдер пропущен по неизвестной причине.",
+                    })
+        return statuses
 
     def register_provider(self, name: str, func: Callable[..., Awaitable[str]]) -> None:
         self._registry[name] = func
