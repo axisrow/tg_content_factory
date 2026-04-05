@@ -244,6 +244,15 @@ class ChannelBundle:
     async def update_collection_task_progress(self, task_id: int, messages_collected: int) -> None:
         await self.tasks.update_collection_task_progress(task_id, messages_collected)
 
+    async def persist_stats_progress(
+        self,
+        task_id: int,
+        *,
+        payload: StatsAllTaskPayload,
+        messages_collected: int,
+    ) -> None:
+        await self.tasks.persist_stats_progress(task_id, payload=payload, messages_collected=messages_collected)
+
     async def get_collection_task(self, task_id: int) -> CollectionTask | None:
         return await self.tasks.get_collection_task(task_id)
 

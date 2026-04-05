@@ -477,6 +477,16 @@ class Database:
         self._require()
         await self._tasks.update_collection_task_progress(task_id, messages_collected)
 
+    async def persist_stats_progress(
+        self,
+        task_id: int,
+        *,
+        payload: StatsAllTaskPayload,
+        messages_collected: int,
+    ) -> None:
+        self._require()
+        await self._tasks.persist_stats_progress(task_id, payload=payload, messages_collected=messages_collected)
+
     async def update_collection_task(
         self,
         task_id: int,

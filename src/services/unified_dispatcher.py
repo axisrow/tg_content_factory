@@ -250,8 +250,16 @@ class UnifiedDispatcher:
             if channel is None:
                 channels_err += 1
                 cursor += 1
-                await self._tasks.update_collection_task_progress(
-                    task.id, channels_ok + channels_err
+                progress_payload = StatsAllTaskPayload(
+                    channel_ids=channel_ids,
+                    next_index=cursor,
+                    channels_ok=channels_ok,
+                    channels_err=channels_err,
+                )
+                await self._tasks.persist_stats_progress(
+                    task.id,
+                    payload=progress_payload,
+                    messages_collected=channels_ok + channels_err,
                 )
                 continue
 
@@ -299,18 +307,42 @@ class UnifiedDispatcher:
                 channels_ok += 1
                 cursor += 1
 
-            await self._tasks.update_collection_task_progress(
-                task.id, channels_ok + channels_err
+            progress_payload = StatsAllTaskPayload(
+                channel_ids=channel_ids,
+                next_index=cursor,
+                channels_ok=channels_ok,
+                channels_err=channels_err,
+            )
+            await self._tasks.persist_stats_progress(
+                task.id,
+                payload=progress_payload,
+                messages_collected=channels_ok + channels_err,
             )
 
             if cursor < len(channel_ids):
                 await asyncio.sleep(self._collector.delay_between_channels_sec)
 
-        # Final update
+        # Final update — check if interrupted by stop event
+        if cursor < len(channel_ids):
+            # Graceful shutdown: reschedule so the remaining channels are processed on next run
+            reschedule_payload = StatsAllTaskPayload(
+                channel_ids=channel_ids,
+                next_index=cursor,
+                channels_ok=channels_ok,
+                channels_err=channels_err,
+            )
+            await self._tasks.reschedule_stats_task(
+                task.id,
+                payload=reschedule_payload,
+                run_after=datetime.now(timezone.utc),
+                messages_collected=channels_ok + channels_err,
+            )
+            return
+
         await self._tasks.update_collection_task(
             task.id,
             CollectionTaskStatus.COMPLETED,
-            messages_collected=len(channel_ids),
+            messages_collected=channels_ok + channels_err,
         )
 
     # ── SQ_STATS ──

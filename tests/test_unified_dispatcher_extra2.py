@@ -45,6 +45,7 @@ def _make_dispatcher(**kw):
     tasks.claim_next_due_generic_task = AsyncMock(return_value=None)
     tasks.update_collection_task = AsyncMock()
     tasks.update_collection_task_progress = AsyncMock()
+    tasks.persist_stats_progress = AsyncMock()
     tasks.get_collection_task = AsyncMock(return_value=None)
     tasks.create_stats_continuation_task = AsyncMock(return_value=999)
     tasks.reschedule_stats_task = AsyncMock()

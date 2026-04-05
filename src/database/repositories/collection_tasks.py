@@ -220,6 +220,20 @@ class CollectionTasksRepository:
         )
         await self._db.commit()
 
+    async def persist_stats_progress(
+        self,
+        task_id: int,
+        *,
+        payload: StatsAllTaskPayload,
+        messages_collected: int,
+    ) -> None:
+        """Persist current cursor/counters into the DB row for crash-safe resume."""
+        await self._db.execute(
+            "UPDATE collection_tasks SET messages_collected = ?, payload = ? WHERE id = ?",
+            (messages_collected, self._serialize_payload(payload), task_id),
+        )
+        await self._db.commit()
+
     async def update_collection_task(
         self,
         task_id: int,
@@ -374,7 +388,7 @@ class CollectionTasksRepository:
         await self._db.execute(
             "UPDATE collection_tasks "
             "SET status = ?, payload = ?, run_after = ?, messages_collected = ?, "
-            "    started_at = NULL, error = NULL "
+            "    started_at = NULL, completed_at = NULL, error = NULL "
             "WHERE id = ?",
             (
                 CollectionTaskStatus.PENDING.value,

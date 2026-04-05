@@ -53,6 +53,7 @@ def mock_tasks_repo():
     repo.requeue_running_generic_tasks_on_startup = AsyncMock(return_value=0)
     repo.update_collection_task = AsyncMock()
     repo.update_collection_task_progress = AsyncMock()
+    repo.persist_stats_progress = AsyncMock()
     repo.get_collection_task = AsyncMock()
     repo.create_stats_continuation_task = AsyncMock(return_value=999)
     repo.reschedule_stats_task = AsyncMock()
