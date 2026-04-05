@@ -41,11 +41,16 @@ async def test_collect_all_channels_empty(client, base_app):
     """POST collect-all with no active channels returns empty message."""
     app, db, pool = base_app
 
+    channel = await db.get_channel_by_channel_id(100)
+    if channel and channel.id is not None:
+        await db.set_channel_active(channel.id, False)
+
     resp = await client.post(
         "/channels/collect-all",
         headers={"HX-Request": "true"},
     )
     assert resp.status_code == 200
+    assert "Нет активных каналов" in resp.text
 
 
 @pytest.mark.asyncio
