@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import dataclasses
+
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
+from src.services.channel_analytics_service import ChannelAnalyticsService
 from src.services.content_analytics_service import ContentAnalyticsService
 from src.services.trend_service import TrendService
 from src.web import deps
@@ -106,3 +109,72 @@ async def trends_page(request: Request, days: int = 7):
             "days": days,
         },
     )
+
+
+# ── Channel analytics ────────────────────────────────────────────
+
+
+@router.get("/channels", response_class=HTMLResponse)
+async def channel_analytics_page(request: Request, channel_id: int = 0, days: int = 30):
+    """Render per-channel analytics dashboard."""
+    days = days if days in (7, 14, 30, 90) else 30
+    db = deps.get_db(request)
+    svc = ChannelAnalyticsService(db)
+    channels = await svc.get_active_channels()
+    return deps.get_templates(request).TemplateResponse(
+        request,
+        "analytics/channels.html",
+        {
+            "channels": [dataclasses.asdict(c) for c in channels],
+            "selected_channel_id": channel_id,
+            "days": days,
+        },
+    )
+
+
+def _svc(request: Request) -> ChannelAnalyticsService:
+    return ChannelAnalyticsService(deps.get_db(request))
+
+
+@router.get("/channels/api/overview")
+async def api_channel_overview(request: Request, channel_id: int):
+    overview = await _svc(request).get_channel_overview(channel_id)
+    return JSONResponse(dataclasses.asdict(overview))
+
+
+@router.get("/channels/api/subscribers")
+async def api_subscriber_history(request: Request, channel_id: int, days: int = 30):
+    data = await _svc(request).get_subscriber_history(channel_id, days)
+    return JSONResponse(data)
+
+
+@router.get("/channels/api/views")
+async def api_views_timeseries(request: Request, channel_id: int, days: int = 30):
+    data = await _svc(request).get_views_timeseries(channel_id, days)
+    return JSONResponse(data)
+
+
+@router.get("/channels/api/frequency")
+async def api_post_frequency(request: Request, channel_id: int, days: int = 30):
+    data = await _svc(request).get_post_frequency(channel_id, days)
+    return JSONResponse(data)
+
+
+@router.get("/channels/api/err")
+async def api_err(request: Request, channel_id: int):
+    svc = _svc(request)
+    err = await svc.get_err(channel_id)
+    err24 = await svc.get_err24(channel_id)
+    return JSONResponse({"err": err, "err24": err24})
+
+
+@router.get("/channels/api/hourly")
+async def api_hourly_activity(request: Request, channel_id: int, days: int = 30):
+    data = await _svc(request).get_hourly_activity(channel_id, days)
+    return JSONResponse(data)
+
+
+@router.get("/channels/api/citation")
+async def api_citation_stats(request: Request, channel_id: int):
+    stats = await _svc(request).get_citation_stats(channel_id)
+    return JSONResponse(dataclasses.asdict(stats))

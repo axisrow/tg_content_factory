@@ -123,3 +123,27 @@ class ChannelStatsRepository:
             elif rn == 2:
                 previous[r["channel_id"]] = r["subscriber_count"]
         return latest, previous
+
+    async def get_subscriber_history(
+        self, channel_id: int, days: int = 30
+    ) -> list[dict]:
+        """Return subscriber_count time series for a channel over the last N days."""
+        cur = await self._db.execute(
+            "SELECT collected_at, subscriber_count "
+            "FROM channel_stats "
+            "WHERE channel_id = ? AND collected_at >= datetime('now', ?) "
+            "ORDER BY collected_at ASC",
+            (channel_id, f"-{days} days"),
+        )
+        return [dict(r) for r in await cur.fetchall()]
+
+    async def get_subscriber_count_at(self, channel_id: int, days_ago: int) -> int | None:
+        """Get the subscriber count closest to N days ago for a channel."""
+        cur = await self._db.execute(
+            "SELECT subscriber_count FROM channel_stats "
+            "WHERE channel_id = ? AND collected_at <= datetime('now', ?) "
+            "ORDER BY collected_at DESC LIMIT 1",
+            (channel_id, f"-{days_ago} days"),
+        )
+        row = await cur.fetchone()
+        return row["subscriber_count"] if row else None

@@ -1,0 +1,281 @@
+{% extends "base.html" %}
+{% block title %}Статистика каналов — TG Agent{% endblock %}
+{% block head_scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+{% endblock %}
+{% block content %}
+<h1 class="h3 mb-3">Статистика каналов</h1>
+
+{% macro analytics_tabs(active) %}
+<div class="btn-group btn-group-sm mb-3" role="group">
+  <a href="/analytics" class="btn btn-outline-secondary{% if active == 'messages' %} active{% endif %}">Сообщения</a>
+  <a href="/analytics/channels" class="btn btn-outline-secondary{% if active == 'channels' %} active{% endif %}">Каналы</a>
+  <a href="/analytics/trends" class="btn btn-outline-secondary{% if active == 'trends' %} active{% endif %}">Тренды</a>
+  <a href="/analytics/content" class="btn btn-outline-secondary{% if active == 'content' %} active{% endif %}">Контент</a>
+</div>
+{% endmacro %}
+{{ analytics_tabs('channels') }}
+
+<div class="row g-3 mb-3">
+  <div class="col-md-5">
+    <select id="channel-select" class="form-select">
+      <option value="">— выберите канал —</option>
+      {% for ch in channels %}
+      <option value="{{ ch.channel_id }}" {% if ch.channel_id == selected_channel_id %}selected{% endif %}>
+        {{ ch.title or ch.username or ch.channel_id }}
+      </option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="col-md-3">
+    <div class="btn-group btn-group-sm" role="group" id="period-btns">
+      <button class="btn btn-outline-secondary{% if days == 7 %} active{% endif %}" data-days="7">7д</button>
+      <button class="btn btn-outline-secondary{% if days == 14 %} active{% endif %}" data-days="14">14д</button>
+      <button class="btn btn-outline-secondary{% if days == 30 %} active{% endif %}" data-days="30">30д</button>
+      <button class="btn btn-outline-secondary{% if days == 90 %} active{% endif %}" data-days="90">90д</button>
+    </div>
+  </div>
+</div>
+
+<div id="channel-data" style="display:none">
+  <div class="row g-3 mb-4">
+    <div class="col-6 col-md-3">
+      <div class="card text-center h-100">
+        <div class="card-body">
+          <div class="text-muted small">Подписчики</div>
+          <h4 id="ov-subs">—</h4>
+          <small id="ov-subs-delta" class="text-muted"></small>
+        </div>
+      </div>
+    </div>
+    <div class="col-6 col-md-3">
+      <div class="card text-center h-100">
+        <div class="card-body">
+          <div class="text-muted small">ERR / ERR24</div>
+          <h4 id="ov-err">—</h4>
+          <small class="text-muted">Engagement Rate</small>
+        </div>
+      </div>
+    </div>
+    <div class="col-6 col-md-3">
+      <div class="card text-center h-100">
+        <div class="card-body">
+          <div class="text-muted small">Посты</div>
+          <h4 id="ov-posts">—</h4>
+          <small id="ov-posts-detail" class="text-muted"></small>
+        </div>
+      </div>
+    </div>
+    <div class="col-6 col-md-3">
+      <div class="card text-center h-100">
+        <div class="card-body">
+          <div class="text-muted small">Ср. просмотры</div>
+          <h4 id="ov-views">—</h4>
+          <small id="ov-views-detail" class="text-muted"></small>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="row g-4 mb-4">
+    <div class="col-12 col-lg-6">
+      <div class="card">
+        <div class="card-header fw-semibold">Подписчики</div>
+        <div class="card-body"><canvas id="chart-subs"></canvas></div>
+      </div>
+    </div>
+    <div class="col-12 col-lg-6">
+      <div class="card">
+        <div class="card-header fw-semibold">Просмотры (средние)</div>
+        <div class="card-body"><canvas id="chart-views"></canvas></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="row g-4 mb-4">
+    <div class="col-12 col-lg-6">
+      <div class="card">
+        <div class="card-header fw-semibold">Частота постов</div>
+        <div class="card-body"><canvas id="chart-freq"></canvas></div>
+      </div>
+    </div>
+    <div class="col-12 col-lg-6">
+      <div class="card">
+        <div class="card-header fw-semibold">Активность по часам (UTC)</div>
+        <div class="card-body"><canvas id="chart-hourly"></canvas></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="row g-4 mb-4">
+    <div class="col-12 col-md-6">
+      <div class="card">
+        <div class="card-header fw-semibold">Цитируемость (форварды)</div>
+        <div class="card-body">
+          <div class="row text-center">
+            <div class="col-4">
+              <div class="text-muted small">Всего</div>
+              <h5 id="cit-total">—</h5>
+            </div>
+            <div class="col-4">
+              <div class="text-muted small">Постов</div>
+              <h5 id="cit-posts">—</h5>
+            </div>
+            <div class="col-4">
+              <div class="text-muted small">Ср. / пост</div>
+              <h5 id="cit-avg">—</h5>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="no-channel" class="text-muted py-5 text-center">
+  Выберите канал для отображения статистики.
+</div>
+
+<script>
+(function() {
+  var channelId = {{ selected_channel_id | default(0) }};
+  var days = {{ days | default(30) }};
+  var baseUrl = '/analytics/channels/api';
+
+  var charts = {};
+  var defaultOptions = {
+    responsive: true,
+    maintainAspectRatio: true,
+    plugins: { legend: { display: false } },
+    scales: { x: { grid: { display: false } }, y: { beginAtZero: true } }
+  };
+
+  function destroyCharts() {
+    Object.keys(charts).forEach(function(k) {
+      if (charts[k]) charts[k].destroy();
+      delete charts[k];
+    });
+  }
+
+  function makeChart(id, type, labels, datasets, opts) {
+    var ctx = document.getElementById(id);
+    if (!ctx) return null;
+    var c = new Chart(ctx, {
+      type: type,
+      data: { labels: labels, datasets: datasets },
+      options: Object.assign({}, defaultOptions, opts || {})
+    });
+    charts[id] = c;
+    return c;
+  }
+
+  function fmt(n) {
+    if (n == null) return '—';
+    return Number(n).toLocaleString('ru-RU');
+  }
+
+  function fmtDelta(d) {
+    if (d == null) return '';
+    var s = Number(d).toLocaleString('ru-RU', {signDisplay: 'exceptZero'});
+    return d > 0 ? '+' + s : s;
+  }
+
+  async function loadChannel(cid) {
+    destroyCharts();
+    if (!cid) {
+      document.getElementById('channel-data').style.display = 'none';
+      document.getElementById('no-channel').style.display = '';
+      return;
+    }
+    document.getElementById('channel-data').style.display = '';
+    document.getElementById('no-channel').style.display = 'none';
+
+    // Overview
+    var ov = await fetch(baseUrl + '/overview?channel_id=' + cid).then(function(r) { return r.json(); });
+    document.getElementById('ov-subs').textContent = fmt(ov.subscriber_count);
+    var deltaEl = document.getElementById('ov-subs-delta');
+    if (ov.subscriber_delta_week != null) {
+      deltaEl.textContent = 'нед: ' + fmtDelta(ov.subscriber_delta_week) + ' / мес: ' + fmtDelta(ov.subscriber_delta_month);
+      deltaEl.className = 'text-muted';
+    } else if (ov.subscriber_delta != null) {
+      deltaEl.textContent = fmtDelta(ov.subscriber_delta);
+      deltaEl.className = ov.subscriber_delta >= 0 ? 'text-success' : 'text-danger';
+    } else {
+      deltaEl.textContent = '';
+    }
+    document.getElementById('ov-err').textContent =
+      (ov.err != null ? ov.err.toFixed(2) + '%' : '—') + ' / ' +
+      (ov.err24 != null ? ov.err24.toFixed(2) + '%' : '—');
+    document.getElementById('ov-posts').textContent = fmt(ov.total_posts);
+    document.getElementById('ov-posts-detail').textContent =
+      'сег: ' + (ov.posts_today || 0) + ' / нед: ' + (ov.posts_week || 0) + ' / пер: ' + (ov.posts_month || 0);
+    document.getElementById('ov-views').textContent = ov.avg_views != null ? fmt(Math.round(ov.avg_views)) : '—';
+    document.getElementById('ov-views-detail').textContent =
+      'фор: ' + (ov.avg_forwards != null ? ov.avg_forwards.toFixed(1) : '—') +
+      ' / реакт: ' + (ov.avg_reactions != null ? ov.avg_reactions.toFixed(1) : '—');
+
+    // Charts
+    var subs = await fetch(baseUrl + '/subscribers?channel_id=' + cid + '&days=' + days).then(function(r) { return r.json(); });
+    makeChart('chart-subs', 'line',
+      subs.map(function(r) { return r.collected_at ? r.collected_at.slice(0, 10) : ''; }),
+      [{ data: subs.map(function(r) { return r.subscriber_count; }), borderColor: '#0d6efd', tension: 0.3, fill: false }]
+    );
+
+    var views = await fetch(baseUrl + '/views?channel_id=' + cid + '&days=' + days).then(function(r) { return r.json(); });
+    makeChart('chart-views', 'line',
+      views.map(function(r) { return r.day; }),
+      [{ label: 'Ср. просмотры', data: views.map(function(r) { return Math.round(r.avg_views); }), borderColor: '#198754', tension: 0.3, fill: false }]
+    );
+
+    var freq = await fetch(baseUrl + '/frequency?channel_id=' + cid + '&days=' + days).then(function(r) { return r.json(); });
+    makeChart('chart-freq', 'bar',
+      freq.map(function(r) { return r.day; }),
+      [{ label: 'Постов', data: freq.map(function(r) { return r.count; }), backgroundColor: '#6f42c1' }]
+    );
+
+    var hourly = await fetch(baseUrl + '/hourly?channel_id=' + cid + '&days=' + days).then(function(r) { return r.json(); });
+    var allHours = [];
+    for (var h = 0; h < 24; h++) allHours.push(h);
+    var hourData = allHours.map(function(h) {
+      var found = hourly.find(function(r) { return r.hour === h; });
+      return found ? found.count : 0;
+    });
+    makeChart('chart-hourly', 'bar',
+      allHours.map(function(h) { return String(h).padStart(2, '0') + ':00'; }),
+      [{ label: 'Сообщений', data: hourData, backgroundColor: '#fd7e14' }]
+    );
+
+    // Citation
+    var cit = await fetch(baseUrl + '/citation?channel_id=' + cid).then(function(r) { return r.json(); });
+    document.getElementById('cit-total').textContent = fmt(cit.total_forwards);
+    document.getElementById('cit-posts').textContent = fmt(cit.post_count);
+    document.getElementById('cit-avg').textContent = cit.avg_forwards.toFixed(1);
+  }
+
+  // Channel select
+  document.getElementById('channel-select').addEventListener('change', function() {
+    var val = parseInt(this.value);
+    if (val) {
+      var url = new URL(window.location);
+      url.searchParams.set('channel_id', val);
+      url.searchParams.set('days', days);
+      window.history.replaceState(null, '', url);
+    }
+    loadChannel(val);
+  });
+
+  // Period buttons
+  document.querySelectorAll('#period-btns button').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      document.querySelectorAll('#period-btns button').forEach(function(b) { b.classList.remove('active'); });
+      btn.classList.add('active');
+      days = parseInt(btn.dataset.days);
+      if (channelId) loadChannel(channelId);
+    });
+  });
+
+  // Auto-load if channel_id is set
+  if (channelId) loadChannel(channelId);
+})();
+</script>
+{% endblock %}

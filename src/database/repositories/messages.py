@@ -1221,3 +1221,95 @@ class MessagesRepository:
         if updated:
             await self._db.commit()
         return updated
+
+    async def get_views_timeseries(
+        self, channel_id: int, days: int = 30
+    ) -> list[dict]:
+        """Daily average views and message count for a channel."""
+        cur = await self._db.execute(
+            """SELECT date(m.date) AS day,
+                      COUNT(*) AS message_count,
+                      COALESCE(AVG(m.views), 0) AS avg_views
+               FROM messages m
+               WHERE m.channel_id = ? AND m.date >= datetime('now', ?)
+               GROUP BY day
+               ORDER BY day ASC""",
+            (channel_id, f"-{days} days"),
+        )
+        return [dict(r) for r in await cur.fetchall()]
+
+    async def get_post_frequency(
+        self, channel_id: int, days: int = 30
+    ) -> list[dict]:
+        """Daily post count for a channel."""
+        cur = await self._db.execute(
+            """SELECT date(m.date) AS day, COUNT(*) AS count
+               FROM messages m
+               WHERE m.channel_id = ? AND m.date >= datetime('now', ?)
+               GROUP BY day
+               ORDER BY day ASC""",
+            (channel_id, f"-{days} days"),
+        )
+        return [dict(r) for r in await cur.fetchall()]
+
+    async def get_channel_message_count(
+        self, channel_id: int, days: int | None = None
+    ) -> int:
+        """Count messages for a channel, optionally within last N days."""
+        if days is not None:
+            cur = await self._db.execute(
+                "SELECT COUNT(*) AS cnt FROM messages "
+                "WHERE channel_id = ? AND date >= datetime('now', ?)",
+                (channel_id, f"-{days} days"),
+            )
+        else:
+            cur = await self._db.execute(
+                "SELECT COUNT(*) AS cnt FROM messages WHERE channel_id = ?",
+                (channel_id,),
+            )
+        row = await cur.fetchone()
+        return row["cnt"] if row else 0
+
+    async def get_err_data(
+        self, channel_id: int, last_n: int = 20
+    ) -> list[dict]:
+        """Get engagement data for ERR calculation (last N posts)."""
+        cur = await self._db.execute(
+            """SELECT m.views, m.forwards, m.reply_count,
+                      COALESCE((SELECT SUM(mr.count) FROM message_reactions mr
+                                WHERE mr.channel_id = m.channel_id
+                                AND mr.message_id = m.message_id), 0) AS total_reactions
+               FROM messages m
+               WHERE m.channel_id = ?
+               ORDER BY m.date DESC
+               LIMIT ?""",
+            (channel_id, last_n),
+        )
+        return [dict(r) for r in await cur.fetchall()]
+
+    async def get_err24_data(self, channel_id: int) -> list[dict]:
+        """Get engagement data for ERR24 (posts from last 24h)."""
+        cur = await self._db.execute(
+            """SELECT m.views, m.forwards, m.reply_count,
+                      COALESCE((SELECT SUM(mr.count) FROM message_reactions mr
+                                WHERE mr.channel_id = m.channel_id
+                                AND mr.message_id = m.message_id), 0) AS total_reactions
+               FROM messages m
+               WHERE m.channel_id = ? AND m.date >= datetime('now', '-1 day')
+               ORDER BY m.date DESC""",
+            (channel_id,),
+        )
+        return [dict(r) for r in await cur.fetchall()]
+
+    async def get_citation_stats(self, channel_id: int) -> dict:
+        """Get forward-based citation stats for a channel."""
+        cur = await self._db.execute(
+            """SELECT COALESCE(SUM(m.forwards), 0) AS total_forwards,
+                      COUNT(*) AS post_count,
+                      COALESCE(AVG(m.forwards), 0) AS avg_forwards
+               FROM messages m
+               WHERE m.channel_id = ?""",
+            (channel_id,),
+        )
+        row = await cur.fetchone()
+        return dict(row) if row else {"total_forwards": 0, "post_count": 0, "avg_forwards": 0}
