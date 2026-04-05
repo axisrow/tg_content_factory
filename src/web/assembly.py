@@ -141,6 +141,7 @@ def register_routes(app: FastAPI) -> None:
     from src.web.routes.auth import router as auth_router
     from src.web.routes.calendar import router as calendar_router
     from src.web.routes.channel_collection import router as channel_collection_router
+    from src.web.routes.channel_renames import router as channel_renames_router
     from src.web.routes.channels import router as channels_router
     from src.web.routes.dashboard import router as dashboard_router
     from src.web.routes.debug import router as debug_router
@@ -166,6 +167,7 @@ def register_routes(app: FastAPI) -> None:
     app.include_router(auth_router, prefix="/auth")
     app.include_router(channels_router, prefix="/channels")
     app.include_router(filter_router, prefix="/channels")
+    app.include_router(channel_renames_router, prefix="/channels")
     app.include_router(search_queries_router, prefix="/search-queries")
     app.include_router(pipelines_router, prefix="/pipelines")
     app.include_router(channel_collection_router, prefix="/channels")

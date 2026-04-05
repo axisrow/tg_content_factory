@@ -25,6 +25,8 @@ FILTER_FLAG_EMOJI = {
     "non_cyrillic": ("🌐", "Не кириллический контент"),
     "chat_noise": ("💬", "Шум чата"),
     "username_changed": ("💡", "Сменил юзернейм"),
+    "title_changed": ("📝", "Смена названия"),
+    "suspicious_username": ("🎲", "Подозрительный юзернейм"),
 }
 
 PACKAGE_NAME = "tg-agent"

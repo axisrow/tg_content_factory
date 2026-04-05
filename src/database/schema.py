@@ -317,4 +317,19 @@ CREATE TABLE IF NOT EXISTS channel_tags (
     tag_id     INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
     PRIMARY KEY (channel_pk, tag_id)
 );
+
+CREATE TABLE IF NOT EXISTS channel_rename_events (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    channel_id  INTEGER NOT NULL,
+    old_title   TEXT,
+    new_title   TEXT,
+    old_username TEXT,
+    new_username TEXT,
+    created_at  TEXT DEFAULT (datetime('now')),
+    decided_at  TEXT,
+    decision    TEXT
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_channel_rename_events_pending
+    ON channel_rename_events(channel_id) WHERE decision IS NULL;
 """

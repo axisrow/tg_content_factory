@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import sqlite3
 from datetime import datetime
 from typing import Any
 
@@ -280,6 +281,94 @@ class Database:
     ) -> None:
         self._require()
         await self._channels.update_channel_meta(channel_id, username=username, title=title)
+
+    async def create_rename_event(
+        self,
+        channel_id: int,
+        old_title: str | None,
+        new_title: str | None,
+        old_username: str | None,
+        new_username: str | None,
+    ) -> int:
+        """Record a channel rename event awaiting user decision.
+
+        Idempotent: if a pending (undecided) event already exists for
+        this channel, returns its id without creating a duplicate.
+        """
+        self._require()
+        assert self._db is not None
+        cur = await self._db.execute(
+            "SELECT id FROM channel_rename_events WHERE channel_id = ? AND decision IS NULL LIMIT 1",
+            (channel_id,),
+        )
+        existing = await cur.fetchone()
+        if existing:
+            return existing["id"]
+        try:
+            cur = await self._db.execute(
+                """
+                INSERT INTO channel_rename_events
+                    (channel_id, old_title, new_title, old_username, new_username)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (channel_id, old_title, new_title, old_username, new_username),
+            )
+            await self._db.commit()
+            return cur.lastrowid or 0
+        except sqlite3.IntegrityError:
+            # Concurrent INSERT won the race; re-select the existing row
+            cur = await self._db.execute(
+                "SELECT id FROM channel_rename_events WHERE channel_id = ? AND decision IS NULL LIMIT 1",
+                (channel_id,),
+            )
+            row = await cur.fetchone()
+            return row["id"] if row else 0
+
+    async def list_pending_rename_events(self) -> list[dict]:
+        """Return all undecided rename events, newest first."""
+        self._require()
+        assert self._db is not None
+        cur = await self._db.execute(
+            """
+            SELECT e.id, e.channel_id, e.old_title, e.new_title,
+                   e.old_username, e.new_username, e.created_at,
+                   c.title AS current_title, c.username AS current_username
+            FROM channel_rename_events e
+            LEFT JOIN channels c ON c.channel_id = e.channel_id
+            WHERE e.decision IS NULL
+            ORDER BY e.created_at DESC
+            """
+        )
+        rows = await cur.fetchall()
+        return [dict(r) for r in rows]
+
+    async def count_pending_rename_events(self) -> int:
+        """Return the number of pending (undecided) rename events."""
+        self._require()
+        assert self._db is not None
+        cur = await self._db.execute(
+            "SELECT COUNT(*) FROM channel_rename_events WHERE decision IS NULL"
+        )
+        row = await cur.fetchone()
+        return row[0] if row else 0
+
+    async def decide_rename_event(self, event_id: int, decision: str) -> None:
+        """Mark a rename event as decided (decision: 'filter' or 'keep').
+
+        Only updates if the event has not already been decided, preventing
+        overwrite of a previous decision in race conditions.
+        """
+        self._require()
+        assert self._db is not None
+        await self._db.execute(
+            """
+            UPDATE channel_rename_events
+            SET decision = ?, decided_at = datetime('now')
+            WHERE id = ? AND decision IS NULL
+            """,
+            (decision, event_id),
+        )
+        await self._db.commit()
 
     async def get_forum_topics(self, channel_id: int) -> list[dict]:
         self._require()
