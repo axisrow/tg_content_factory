@@ -1,0 +1,54 @@
+{# Reusable Jinja macros for TG Agent templates. #}
+
+{% macro filter_flags(flags_str, margin='') %}
+{% if flags_str %}
+    {% for flag in flags_str.split(',') %}
+        {% set f = flag.strip() %}
+        {% if f in filter_flag_emoji %}
+            <span title="{{ filter_flag_emoji[f][1] }}" style="cursor:default;font-size:1.1em;{{ margin }}">{{ filter_flag_emoji[f][0] }}</span>
+        {% else %}
+            <span title="{{ f }}" style="cursor:default;{{ margin }}">🚫</span>
+        {% endif %}
+    {% endfor %}
+{% else %}
+    <span title="Отфильтрован" style="cursor:default">🚫</span>
+{% endif %}
+{% endmacro %}
+
+
+{% macro channel_actions(ch, prefix='') %}
+{% if ch.message_count > 0 %}
+<a href="/search?channel_id={{ ch.channel_id }}&mode=local" class="btn btn-outline-secondary btn-sm emoji-btn" title="Смотреть сообщения">&#128196;</a>
+{% endif %}
+{% if ch.is_filtered %}
+<form method="post" action="/channels/{{ ch.id }}/filter-toggle" class="d-inline" data-busy>
+    <button type="submit" class="btn btn-outline-secondary btn-sm emoji-btn" title="Вернуть">&#128257;</button>
+</form>
+{% if ch.message_count > 0 %}
+<form method="post" action="/channels/{{ ch.channel_id }}/purge-messages" class="d-inline" data-busy onsubmit="return confirm('Удалить {{ ch.message_count }} сообщений из этого канала?')">
+    <button type="submit" class="btn btn-outline-danger btn-sm emoji-btn" title="Очистить сообщения">&#129529;</button>
+</form>
+{% endif %}
+{% endif %}
+<span id="collect-btn-{{ prefix }}{{ ch.id }}">
+    <form action="/channels/{{ ch.id }}/collect" method="post"
+          hx-post="/channels/{{ ch.id }}/collect"
+          hx-target="#collect-btn-{{ prefix }}{{ ch.id }}"
+          hx-swap="outerHTML"
+          hx-disabled-elt="find button"
+          class="d-inline">
+        <button type="submit" class="btn btn-outline-primary btn-sm emoji-btn" title="Загрузить">&#11015;&#65039;</button>
+    </form>
+</span>
+<form method="post" action="/channels/{{ ch.id }}/stats" class="d-inline" data-busy>
+    <button type="submit" class="btn btn-outline-primary btn-sm emoji-btn" title="Обновить статистику">&#128202;</button>
+</form>
+<form method="post" action="/channels/{{ ch.id }}/toggle" class="d-inline" data-busy>
+    <button type="submit" class="btn btn-outline-secondary btn-sm emoji-btn" title="{{ 'Отключить' if ch.is_active else 'Включить' }}">
+        {{ "⏏️" if ch.is_active else "▶️" }}
+    </button>
+</form>
+<form method="post" action="/channels/{{ ch.id }}/delete" class="d-inline" data-busy onsubmit="return confirm('Вы уверены, что хотите удалить этот канал?')">
+    <button type="submit" class="btn btn-outline-danger btn-sm emoji-btn" title="Удалить">&#128465;&#65039;</button>
+</form>
+{% endmacro %}
