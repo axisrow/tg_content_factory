@@ -72,7 +72,7 @@ async def _page_context(request: Request) -> dict:
             next_runs[pipeline.id] = nr.isoformat() if nr else None
     except Exception:
         next_runs = {}
-    return {
+    ctx = {
         "items": items,
         "channels": channels,
         "accounts": accounts,
@@ -83,8 +83,11 @@ async def _page_context(request: Request) -> dict:
         "generation_backends": list(PipelineGenerationBackend),
         "next_runs": next_runs,
         "llm_configured": deps.get_llm_provider_service(request).has_providers(),
-        "llm_provider_statuses": await deps.get_llm_provider_service(request).get_provider_status_list(),
     }
+    # Only query DB for provider statuses when the banner is visible
+    if not ctx["llm_configured"]:
+        ctx["llm_provider_statuses"] = await deps.get_llm_provider_service(request).get_provider_status_list()
+    return ctx
 
 
 @router.get("/", response_class=HTMLResponse)
