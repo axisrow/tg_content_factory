@@ -160,7 +160,7 @@ class AgentProviderService:
         reloading_names = _reloading_names or set()
         for cfg in configs:
             if not cfg.enabled:
-                logger.warning("Skipping db provider %s: disabled", cfg.provider)
+                logger.debug("Skipping db provider %s: disabled", cfg.provider)
                 continue
             if not self._has_valid_secrets(cfg):
                 logger.warning("Skipping db provider %s: empty/invalid secrets", cfg.provider)
@@ -309,6 +309,7 @@ class AgentProviderService:
             db_svc = DbProviderService(self.db, self._config)
             configs = await db_svc.load_provider_configs()
         except Exception:
+            logger.warning("Failed to load provider statuses from DB", exc_info=True)
             return []
 
         statuses: list[dict[str, str]] = []
