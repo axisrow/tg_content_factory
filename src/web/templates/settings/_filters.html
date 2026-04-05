@@ -12,7 +12,7 @@
     <div class="form-check form-switch mb-2">
         <input class="form-check-input" type="checkbox" id="auto_delete_filtered" name="auto_delete_filtered" value="1"
                {{ 'checked' if auto_delete_filtered else '' }}
-               onchange="if(this.checked && !confirm('При включении сообщения отфильтрованных каналов будут автоматически очищаться при обновлении фильтров. Продолжить?')) this.checked=false;">
+               data-confirm-check="При включении сообщения отфильтрованных каналов будут автоматически очищаться при обновлении фильтров. Продолжить?">
         <label class="form-check-label" for="auto_delete_filtered">
             Очищать сообщения после анализа фильтров
             {% if auto_delete_filtered %}<span class="badge bg-warning text-dark ms-1">Активно</span>{% endif %}
@@ -22,7 +22,7 @@
     <div class="form-check form-switch mb-3">
         <input class="form-check-input" type="checkbox" id="auto_delete_on_collect" name="auto_delete_on_collect" value="1"
                {{ 'checked' if auto_delete_on_collect else '' }}
-               onchange="if(this.checked && !confirm('При включении сообщения каналов, подпавших под фильтр во время сбора, будут автоматически очищены. Продолжить?')) this.checked=false;">
+               data-confirm-check="При включении сообщения каналов, подпавших под фильтр во время сбора, будут автоматически очищены. Продолжить?">
         <label class="form-check-label" for="auto_delete_on_collect">
             Очищать сообщения при сборе
             {% if auto_delete_on_collect %}<span class="badge bg-warning text-dark ms-1">Активно</span>{% endif %}

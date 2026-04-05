@@ -1164,7 +1164,7 @@
     window.deleteThread = async function(e, tid) {
         e.preventDefault();
         e.stopPropagation();
-        if (!confirm('Удалить тред?')) return;
+        if (!(await window.TGConfirm.show('Удалить тред?'))) return;
         var btn = e.target.closest('button') || e.target;
         setAsyncButtonBusy(btn, true, '');
         try {
@@ -1172,7 +1172,7 @@
             window.location.href = '/agent';
         } catch(err) {
             setAsyncButtonBusy(btn, false);
-            alert('Ошибка удаления: ' + err.message);
+            await window.TGConfirm.alert('Ошибка удаления: ' + err.message);
         }
     };
 

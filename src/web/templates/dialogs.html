@@ -67,13 +67,13 @@
 
 <p class="text-muted">Всего диалогов: <strong>{{ dialogs|length }}</strong></p>
 
-<form method="post" action="/dialogs/leave" id="leave-form" data-busy>
+<form method="post" action="/dialogs/leave" id="leave-form" data-busy
+      data-confirm="Отписаться от выбранных диалогов?">
 <input type="hidden" name="phone" value="{{ selected_phone }}">
 
 <div id="leave-bar" class="d-none gap-3 align-items-center mb-3">
     <span id="leave-count">0 выбрано</span>
-    <button type="submit" class="btn btn-danger btn-sm"
-            onclick="return confirm('Отписаться от выбранных диалогов?')">
+    <button type="submit" class="btn btn-danger btn-sm">
         Отписаться
     </button>
     <button type="button" class="btn btn-secondary btn-sm" onclick="clearSelection()">Сбросить</button>

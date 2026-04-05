@@ -209,7 +209,7 @@
                     {% if pipeline.pipeline_json %}
                     <button type="button" class="btn btn-outline-info btn-sm" {% if llm_configured %}onclick="toggleAiEdit({{ pipeline.id }})"{% else %}disabled{% endif %} title="{% if llm_configured %}Редактировать через AI{% else %}Настройте LLM провайдер{% endif %}">AI</button>
                     {% endif %}
-                    <form method="post" action="/pipelines/{{ pipeline.id }}/delete{% if selected_phone %}?phone={{ selected_phone|urlencode }}{% endif %}" class="d-inline" data-busy onsubmit="return confirm('Удалить pipeline?')">
+                    <form method="post" action="/pipelines/{{ pipeline.id }}/delete{% if selected_phone %}?phone={{ selected_phone|urlencode }}{% endif %}" class="d-inline" data-busy data-confirm="Удалить pipeline?">
                         <button type="submit" class="btn btn-outline-danger btn-sm">Удалить</button>
                     </form>
                 </td>
