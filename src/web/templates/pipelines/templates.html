@@ -20,6 +20,16 @@
 <div class="row g-3">
     {% for tpl in templates %}
     {% if tpl.category == category %}
+    {# Compute needs_llm / needs_target from node types #}
+    {% set ns = namespace(has_llm=false, has_target=false) %}
+    {% for node in tpl.template_json.nodes %}
+        {% if node.type.value in ("llm_generate", "llm_refine") %}
+            {% set ns.has_llm = true %}
+        {% endif %}
+        {% if node.type.value in ("forward", "publish") %}
+            {% set ns.has_target = true %}
+        {% endif %}
+    {% endfor %}
     <div class="col-12 col-md-6 col-xl-4">
         <div class="card h-100">
             <div class="card-header d-flex justify-content-between align-items-center">
@@ -33,43 +43,16 @@
                     <span class="badge bg-light text-dark border me-1">{{ node.type.value }}</span>
                     {% endfor %}
                 </div>
-                <button type="button" class="btn btn-outline-primary btn-sm" data-bs-toggle="modal" data-bs-target="#tplModal{{ tpl.id }}">Использовать</button>
+                <button type="button" class="btn btn-outline-primary btn-sm"
+                        data-bs-toggle="modal" data-bs-target="#tplModal"
+                        data-tpl-id="{{ tpl.id }}"
+                        data-tpl-name="{{ tpl.name }}"
+                        data-tpl-needs-llm="{{ ns.has_llm | lower }}"
+                        data-tpl-needs-target="{{ ns.has_target | lower }}">
+                    Использовать
+                </button>
                 <button type="button" class="btn btn-outline-secondary btn-sm" onclick="toggleJsonView('tpl-json-{{ tpl.id }}')">JSON</button>
                 <pre class="d-none small mt-2 p-2 border rounded bg-light" id="tpl-json-{{ tpl.id }}" style="max-height:200px;overflow:auto">{{ tpl.template_json.to_json() }}</pre>
-            </div>
-        </div>
-    </div>
-
-    <!-- Create from template modal -->
-    <div class="modal fade" id="tplModal{{ tpl.id }}" tabindex="-1">
-        <div class="modal-dialog">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h5 class="modal-title">Создать из шаблона: {{ tpl.name }}</h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-                </div>
-                <form method="post" action="/pipelines/from-template">
-                    <input type="hidden" name="template_id" value="{{ tpl.id }}">
-                    <div class="modal-body">
-                        <div class="mb-3">
-                            <label class="form-label">Название</label>
-                            <input class="form-control" type="text" name="name" value="{{ tpl.name }}" required>
-                        </div>
-                        <div class="mb-3">
-                            <label class="form-label">LLM модель (опционально)</label>
-                            <input class="form-control" type="text" name="llm_model" placeholder="claude-sonnet-4.5">
-                        </div>
-                        <div class="mb-3">
-                            <label class="form-label">Интервал (мин)</label>
-                            <input class="form-control" type="number" name="generate_interval_minutes" min="1" value="60">
-                        </div>
-                        <p class="text-muted small">После создания добавьте источники и цели публикации в разделе редактирования.</p>
-                    </div>
-                    <div class="modal-footer">
-                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
-                        <button type="submit" class="btn btn-primary">Создать</button>
-                    </div>
-                </form>
             </div>
         </div>
     </div>
@@ -82,9 +65,181 @@
 <p>Шаблонов пока нет.</p>
 {% endif %}
 
+<!-- Shared Create from template modal -->
+<div class="modal fade" id="tplModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="tplModalTitle">Создать из шаблона</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <form method="post" action="/pipelines/from-template">
+                <input type="hidden" name="template_id" id="tplModalTemplateId" value="">
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label">Название</label>
+                        <input class="form-control" type="text" name="name" id="tplModalName" value="" required>
+                    </div>
+
+                    <div class="mb-3" id="tplModalLLMSection">
+                        <label class="form-label">LLM модель</label>
+                        <input class="form-control" type="text" name="llm_model" placeholder="claude-sonnet-4.5">
+                        {% if not llm_configured %}
+                        <div class="form-text text-warning">LLM-провайдер не настроен. <a href="/settings">Настройки</a></div>
+                        {% endif %}
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label">Интервал (мин)</label>
+                        <input class="form-control" type="number" name="generate_interval_minutes" min="1" value="60">
+                    </div>
+
+                    {# Source channels #}
+                    <div class="mb-3">
+                        <label class="form-label">Каналы-источники</label>
+                        <div class="searchable-picker" data-picker-name="source_channel_ids" data-picker-multi="true">
+                            <div class="picker-selected"></div>
+                            <input type="search" class="form-control form-control-sm mb-1" placeholder="Поиск канала..." data-picker-search>
+                            <div class="list-group picker-list">
+                                {% for channel in channels %}
+                                <label class="list-group-item list-group-item-action d-flex align-items-center gap-2"
+                                       data-picker-option
+                                       data-value="{{ channel.channel_id }}"
+                                       data-group="channel"
+                                       data-search-text="{{ ((channel.title or '') ~ ' ' ~ (channel.username or '') ~ ' ' ~ channel.channel_id)|lower }}">
+                                    <input type="checkbox" class="form-check-input mt-0">
+                                    <span>{{ channel.title or channel.channel_id }}{% if channel.username %} <small class="text-muted">@{{ channel.username }}</small>{% endif %}</span>
+                                </label>
+                                {% endfor %}
+                            </div>
+                            <small class="text-muted d-none" data-picker-empty>Ничего не найдено</small>
+                        </div>
+                    </div>
+
+                    <div id="tplModalTargetSection">
+                    {# Target dialogs #}
+                    <div class="mb-3">
+                        <label class="form-label">Целевые диалоги</label>
+                        <div class="searchable-picker" data-picker-name="target_refs" data-picker-multi="true">
+                            <div class="picker-selected"></div>
+                            <input type="search" class="form-control form-control-sm mb-1" placeholder="Поиск диалога..." data-picker-search>
+                            <div class="btn-group btn-group-sm mb-1" data-picker-filters>
+                                <button type="button" class="btn btn-outline-secondary active" data-filter="all">Все</button>
+                                <button type="button" class="btn btn-outline-secondary" data-filter="channel">Каналы</button>
+                                <button type="button" class="btn btn-outline-secondary" data-filter="group">Группы</button>
+                                <button type="button" class="btn btn-outline-secondary" data-filter="dm">Личные</button>
+                            </div>
+                            <div class="list-group picker-list">
+                                {% for account in accounts %}
+                                {% set dialogs = cached_dialogs.get(account.phone, []) %}
+                                {% for dialog in dialogs %}
+                                {% set ref = account.phone ~ "|" ~ dialog.channel_id %}
+                                {% set dtype = dialog.channel_type %}
+                                {% set dgroup = "dm" if dtype == "dm" else ("channel" if dtype in ("channel", "monoforum") else "group") %}
+                                <label class="list-group-item list-group-item-action d-flex align-items-center gap-2"
+                                       data-picker-option
+                                       data-value="{{ ref }}"
+                                       data-group="{{ dgroup }}"
+                                       data-search-text="{{ ((dialog.title or '') ~ ' ' ~ dtype ~ ' ' ~ account.phone)|lower }}">
+                                    <input type="checkbox" class="form-check-input mt-0">
+                                    <span>{{ dialog.title or dialog.channel_id }}</span>
+                                    <small class="text-muted ms-auto">{{ dtype }}</small>
+                                </label>
+                                {% endfor %}
+                                {% endfor %}
+                            </div>
+                            <small class="text-muted d-none" data-picker-empty>Ничего не найдено</small>
+                        </div>
+                    </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+                    <button type="submit" class="btn btn-primary">Создать</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
 <script>
 function toggleJsonView(id) {
     document.getElementById(id).classList.toggle("d-none");
 }
+
+/* Shared modal: populate from card button data attributes */
+const tplModal = document.getElementById('tplModal');
+if (tplModal) {
+    tplModal.addEventListener('show.bs.modal', function (event) {
+        const button = event.relatedTarget;
+        if (!button) return;
+
+        const tplId = button.getAttribute('data-tpl-id');
+        const tplName = button.getAttribute('data-tpl-name');
+        const needsLlm = button.getAttribute('data-tpl-needs-llm') === 'true';
+        const needsTarget = button.getAttribute('data-tpl-needs-target') === 'true';
+
+        document.getElementById('tplModalTemplateId').value = tplId;
+        document.getElementById('tplModalTitle').textContent = 'Создать из шаблона: ' + tplName;
+        document.getElementById('tplModalName').value = tplName;
+
+        /* Show/hide LLM section */
+        const llmSection = document.getElementById('tplModalLLMSection');
+        if (llmSection) {
+            llmSection.style.display = needsLlm ? '' : 'none';
+            if (!needsLlm) {
+                const llmInput = llmSection.querySelector('input[name="llm_model"]');
+                if (llmInput) llmInput.value = '';
+            }
+        }
+
+        /* Show/hide target section */
+        const targetSection = document.getElementById('tplModalTargetSection');
+        if (targetSection) {
+            targetSection.style.display = needsTarget ? '' : 'none';
+        }
+    });
+}
+
+/* Searchable picker: filter options by search text */
+document.querySelectorAll('.searchable-picker').forEach(function(picker) {
+    const searchInput = picker.querySelector('[data-picker-search]');
+    const options = picker.querySelectorAll('[data-picker-option]');
+    const emptyMsg = picker.querySelector('[data-picker-empty]');
+
+    /* Filter buttons */
+    const filterBtns = picker.querySelectorAll('[data-picker-filters] [data-filter]');
+    let activeFilter = 'all';
+
+    function applyFilters() {
+        const query = (searchInput ? searchInput.value : '').toLowerCase();
+        let visible = 0;
+        options.forEach(function(opt) {
+            const text = opt.getAttribute('data-search-text') || '';
+            const group = opt.getAttribute('data-group') || '';
+            const matchesSearch = !query || text.indexOf(query) !== -1;
+            const matchesGroup = activeFilter === 'all' || group === activeFilter;
+            const show = matchesSearch && matchesGroup;
+            opt.style.display = show ? '' : 'none';
+            if (show) visible++;
+        });
+        if (emptyMsg) {
+            emptyMsg.classList.toggle('d-none', visible > 0);
+        }
+    }
+
+    if (searchInput) {
+        searchInput.addEventListener('input', applyFilters);
+    }
+
+    filterBtns.forEach(function(btn) {
+        btn.addEventListener('click', function() {
+            filterBtns.forEach(function(b) { b.classList.remove('active'); });
+            btn.classList.add('active');
+            activeFilter = btn.getAttribute('data-filter');
+            applyFilters();
+        });
+    });
+});
 </script>
 {% endblock %}
