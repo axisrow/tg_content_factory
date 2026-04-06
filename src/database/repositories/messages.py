@@ -1322,9 +1322,14 @@ class MessagesRepository:
     async def get_hour_weekday_heatmap(
         self, channel_id: int, days: int = 30,
     ) -> list[dict]:
-        """Return message counts grouped by hour (0-23) x weekday (0=Mon..6=Sun).
+        """Return message counts grouped by hour (0-23) x weekday (0=Sun..6=Sat).
 
-        Each row has keys: ``hour``, ``weekday``, ``count``.
+        Each row has keys: ``hour`` (0-23), ``weekday`` (0=Sunday per SQLite ``%w``),
+        ``count`` (messages in that slot).
+
+        Uses ``strftime('%H', date)`` for hour and ``strftime('%w', date)`` for weekday.
+        Only includes (hour, weekday) slots with at least one message; absent cells
+        should be treated as 0 when rendering the heatmap grid.
         """
         cur = await self._db.execute(
             """SELECT CAST(strftime('%H', m.date) AS INTEGER) AS hour,

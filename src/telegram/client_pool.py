@@ -774,6 +774,7 @@ class ClientPool:
                     "username": getattr(entity, "username", None),
                     "channel_type": channel_type,
                     "deactivate": deactivate,
+                    "created_at": getattr(entity, "date", None),
                 }
             except asyncio.TimeoutError:
                 logger.warning("resolve_channel: get_entity timed out for '%s'", identifier)
@@ -1068,6 +1069,7 @@ class ClientPool:
                                 "channel_type": channel_type,
                                 "deactivate": deactivate,
                                 "is_own": getattr(entity, "creator", False),
+                                "created_at": getattr(entity, "date", None),
                             }
                         )
                     elif include_dm or mode == "full":
@@ -1085,6 +1087,7 @@ class ClientPool:
                                 "channel_type": "saved" if is_saved else ("bot" if is_bot else "dm"),
                                 "deactivate": False,
                                 "is_own": False,
+                                "created_at": getattr(entity, "date", None),
                             }
                         )
 
