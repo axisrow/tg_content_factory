@@ -229,6 +229,28 @@ class ContentPipelinesRepository:
         )
         return [self._to_target(row) for row in await cur.fetchall()]
 
+    async def batch_sources(self, pipeline_ids: list[int]) -> list[PipelineSource]:
+        """Load sources for multiple pipelines in one query."""
+        if not pipeline_ids:
+            return []
+        placeholders = ",".join("?" * len(pipeline_ids))
+        cur = await self._db.execute(
+            f"SELECT * FROM pipeline_sources WHERE pipeline_id IN ({placeholders}) ORDER BY id",
+            pipeline_ids,
+        )
+        return [self._to_source(row) for row in await cur.fetchall()]
+
+    async def batch_targets(self, pipeline_ids: list[int]) -> list[PipelineTarget]:
+        """Load targets for multiple pipelines in one query."""
+        if not pipeline_ids:
+            return []
+        placeholders = ",".join("?" * len(pipeline_ids))
+        cur = await self._db.execute(
+            f"SELECT * FROM pipeline_targets WHERE pipeline_id IN ({placeholders}) ORDER BY id",
+            pipeline_ids,
+        )
+        return [self._to_target(row) for row in await cur.fetchall()]
+
     async def _replace_sources_no_commit(
         self,
         pipeline_id: int,
