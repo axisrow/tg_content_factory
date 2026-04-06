@@ -422,6 +422,7 @@ async def test_delete_message_invalid_ids(client):
         follow_redirects=False,
     )
     assert resp.status_code == 303
+    assert "error=invalid_ids" in resp.headers["location"]
 
 
 @pytest.mark.asyncio
