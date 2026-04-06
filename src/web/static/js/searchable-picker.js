@@ -139,10 +139,9 @@
         // ---- AJAX mode ----
         function fetchAjaxResults(query) {
             if (!ajaxUrl || !listEl) return;
+            // Short queries → fetch default batch (top 50) instead of clearing
             if (query.length < 2) {
-                listEl.innerHTML = "";
-                if (emptyEl) emptyEl.classList.add("d-none");
-                return;
+                query = "";
             }
 
             // Check sessionStorage cache
@@ -237,7 +236,12 @@
         });
 
         syncHiddenInputs();
-        if (!ajaxUrl) applyFilters();
+        if (ajaxUrl) {
+            // AJAX mode: load initial batch immediately
+            fetchAjaxResults("");
+        } else {
+            applyFilters();
+        }
     }
 
     document.addEventListener("DOMContentLoaded", function () {
