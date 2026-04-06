@@ -308,17 +308,21 @@
 
     window.toggleFilterSubpanel = function() {
         var ft = document.querySelector('[name="filter_type"]').value;
+        var panelMap = { service_message: "service", anonymous_sender: "anonymous" };
+        var panelKey = panelMap[ft] || ft;
         ["keywords", "regex", "service", "anonymous"].forEach(function(t) {
             var el = document.getElementById("filter-" + t);
-            if (el) el.classList.toggle("d-none", t !== ft);
+            if (el) el.classList.toggle("d-none", t !== panelKey);
         });
     };
 
     window.toggleActionSubpanel = function() {
         var at = document.querySelector('[name="action_type"]').value;
+        var panelMap = { delete_message: "delete" };
+        var panelKey = panelMap[at] || at;
         ["forward", "react", "delete"].forEach(function(t) {
             var el = document.getElementById("action-" + t);
-            if (el) el.classList.toggle("d-none", t !== at);
+            if (el) el.classList.toggle("d-none", t !== panelKey);
         });
     };
 
@@ -487,14 +491,27 @@
         var flow = graph.nodes.map(function(n) { return n.name; }).join(" → ");
 
         var typeLabels = { forward: "Пересылка", react: "Авто-реакции", filter_action: "Фильтр + действие", cleanup: "Очистка чата" };
-        var html = '<dl class="row mb-0">';
-        html += '<dt class="col-sm-4">Название</dt><dd class="col-sm-8">' + name + '</dd>';
-        html += '<dt class="col-sm-4">Тип</dt><dd class="col-sm-8">' + (typeLabels[pipelineType] || pipelineType) + '</dd>';
-        html += '<dt class="col-sm-4">Источники</dt><dd class="col-sm-8">' + sources.length + ' каналов</dd>';
-        html += '<dt class="col-sm-4">Цепочка</dt><dd class="col-sm-8"><code>' + flow + '</code></dd>';
-        html += '<dt class="col-sm-4">Интервал</dt><dd class="col-sm-8">' + interval + ' мин</dd>';
-        html += '</dl>';
-        document.getElementById("review-content").innerHTML = html;
+        var dl = document.createElement("dl");
+        dl.className = "row mb-0";
+        function addRow(dt, ddContent, isCode) {
+            var dtEl = document.createElement("dt");
+            dtEl.className = "col-sm-4";
+            dtEl.textContent = dt;
+            var ddEl = document.createElement("dd");
+            ddEl.className = "col-sm-8";
+            if (isCode) { var c = document.createElement("code"); c.textContent = ddContent; ddEl.appendChild(c); }
+            else { ddEl.textContent = ddContent; }
+            dl.appendChild(dtEl);
+            dl.appendChild(ddEl);
+        }
+        addRow("Название", name);
+        addRow("Тип", typeLabels[pipelineType] || pipelineType);
+        addRow("Источники", sources.length + " каналов");
+        addRow("Цепочка", flow, true);
+        addRow("Интервал", interval + " мин");
+        var reviewEl = document.getElementById("review-content");
+        reviewEl.innerHTML = "";
+        reviewEl.appendChild(dl);
     }
 
     // Form submit: copy target_refs for filter_action forward into main target_refs

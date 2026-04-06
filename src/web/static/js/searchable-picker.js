@@ -49,10 +49,10 @@
             });
             // Also include pre-selected that don't have a visible option yet
             preselectedEls.forEach(function (el) {
-                var already = options.some(function (opt) {
-                    return opt.dataset.value === el.value && getCheckbox(opt).checked;
+                var hasVisible = options.some(function (opt) {
+                    return opt.dataset.value === el.value;
                 });
-                if (!already) {
+                if (!hasVisible) {
                     addHiddenInput(el.value);
                 }
             });
