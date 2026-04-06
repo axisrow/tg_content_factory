@@ -110,6 +110,16 @@ async def scheduler_page(
     status: str = Query("all"),
     limit: int = Query(50),
 ):
+    try:
+        return await _scheduler_page_inner(request, page, status, limit)
+    except Exception:
+        logger.exception("scheduler_page failed")
+        raise
+
+
+async def _scheduler_page_inner(
+    request: Request, page: int, status: str, limit: int
+) -> HTMLResponse:
     sched = deps.get_scheduler(request)
     db = deps.get_db(request)
     msg = request.query_params.get("msg")
@@ -154,28 +164,29 @@ async def scheduler_page(
 
     scheduler_jobs = await _build_jobs_context(sched, db)
 
-    return deps.get_templates(request).TemplateResponse(
-        request,
-        "scheduler.html",
-        {
-            "is_running": sched.is_running,
-            "interval_minutes": sched.interval_minutes,
-            "msg": msg,
-            "tasks": tasks,
-            "has_active_tasks": has_active_tasks,
-            "page": page,
-            "total_pages": total_pages,
-            "all_count": all_count,
-            "active_count": active_count,
-            "completed_count": completed_count,
-            "status_filter": status_filter,
-            "limit": limit,
-            "search_log": search_log,
-            "bot_configured": bot_configured,
-            "pending_collect_count": pending_collect_count,
-            "scheduler_jobs": scheduler_jobs,
-        },
-    )
+    context = {
+        "is_running": sched.is_running,
+        "interval_minutes": sched.interval_minutes,
+        "msg": msg,
+        "tasks": tasks,
+        "has_active_tasks": has_active_tasks,
+        "page": page,
+        "total_pages": total_pages,
+        "all_count": all_count,
+        "active_count": active_count,
+        "completed_count": completed_count,
+        "status_filter": status_filter,
+        "limit": limit,
+        "search_log": search_log,
+        "bot_configured": bot_configured,
+        "pending_collect_count": pending_collect_count,
+        "scheduler_jobs": scheduler_jobs,
+    }
+
+    templates = deps.get_templates(request)
+    tpl = templates.env.get_template("scheduler.html")
+    body = tpl.render({**context, "request": request})
+    return HTMLResponse(body)
 
 
 @router.post("/jobs/{job_id}/toggle")
