@@ -218,6 +218,7 @@ def test_pipeline_generate_prints_draft_preview(tmp_path, cli_init_patch, capsys
     with (
         cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS),
         patch("src.cli.commands.pipeline.ContentGenerationService", FakeContentGenerationService),
+        patch("src.services.provider_service.AgentProviderService.has_providers", return_value=True),
     ):
         from src.cli.commands.pipeline import run
 
@@ -289,6 +290,7 @@ def test_pipeline_generate_wires_agent_manager_for_deep_agents(tmp_path, cli_ini
         cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS),
         patch("src.agent.manager.AgentManager", FakeAgentManager),
         patch("src.cli.commands.pipeline.ContentGenerationService", FakeContentGenerationService),
+        patch("src.services.provider_service.AgentProviderService.has_providers", return_value=True),
     ):
         from src.cli.commands.pipeline import run
 
@@ -594,6 +596,7 @@ def test_pipeline_run_with_preview(tmp_path, cli_init_patch, capsys):
     with (
         cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS),
         patch("src.cli.commands.pipeline.GenerationService", FakeGenerationService),
+        patch("src.services.provider_service.AgentProviderService.has_providers", return_value=True),
     ):
         from src.cli.commands.pipeline import run
 
@@ -875,6 +878,7 @@ def test_pipeline_generate_exception(tmp_path, cli_init_patch, capsys):
     with (
         cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS),
         patch("src.cli.commands.pipeline.ContentGenerationService", FakeContentGenerationService),
+        patch("src.services.provider_service.AgentProviderService.has_providers", return_value=True),
     ):
         from src.cli.commands.pipeline import run
 

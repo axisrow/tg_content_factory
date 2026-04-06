@@ -43,7 +43,7 @@
 
 {% if not llm_configured %}
 <div class="alert alert-warning" role="alert">
-    <strong>LLM-провайдер не настроен</strong> — генерация контента недоступна. Добавьте провайдера в <a href="/settings">Настройках</a> или задайте переменную окружения с ключом API (например, <code>OPENAI_API_KEY</code>, <code>COHERE_API_KEY</code>).
+    <strong>LLM-провайдер не настроен</strong> — пайплайны с LLM-шагами работать не будут. Пайплайны без LLM (forward/publish) доступны. Добавьте провайдера в <a href="/settings">Настройках</a> или задайте переменную окружения с ключом API (например, <code>OPENAI_API_KEY</code>, <code>COHERE_API_KEY</code>).
     {% if llm_provider_statuses %}
     <ul class="mb-0 mt-2">
         {% for ps in llm_provider_statuses %}
@@ -57,7 +57,6 @@
 <div class="card mb-4">
     <div class="card-header fw-semibold">Новый pipeline</div>
     <div class="card-body">
-    {% if llm_configured %}
         <form method="post" action="/pipelines/add{% if selected_phone %}?phone={{ selected_phone|urlencode }}{% endif %}" data-busy>
             <div class="row g-3 mb-3">
                 <div class="col-12 col-lg-6">
@@ -150,9 +149,6 @@
             </div>
             <button type="submit" class="btn btn-primary">Создать pipeline</button>
         </form>
-    {% else %}
-        <p class="text-muted mb-0">Настройте LLM провайдер для создания пайплайнов.</p>
-    {% endif %}
     </div>
 </div>
 
@@ -205,9 +201,17 @@
                     {% if not pipeline.pipeline_json %}
                     <button type="button" class="btn btn-outline-secondary btn-sm" onclick="togglePipelineEdit({{ pipeline.id }})">Редактировать</button>
                     {% endif %}
-                    <a class="btn btn-outline-primary btn-sm{% if not llm_configured %} disabled{% endif %}" href="/pipelines/{{ pipeline.id }}/generate" {% if not llm_configured %}aria-disabled="true" title="Настройте LLM провайдер"{% endif %}>Generate</a>
+                    {% set pipeline_needs_llm = needs_llm_map.get(pipeline.id, true) %}
+                    {% set llm_blocked = pipeline_needs_llm and not llm_configured %}
+                    {% if not pipeline_needs_llm %}
+                    {# Non-LLM pipelines don't use Generate endpoint #}
+                    {% elif llm_blocked %}
+                    <span class="btn btn-outline-primary btn-sm disabled" aria-disabled="true" title="Настройте LLM провайдер">Generate</span>
+                    {% else %}
+                    <a class="btn btn-outline-primary btn-sm" href="/pipelines/{{ pipeline.id }}/generate">Generate</a>
+                    {% endif %}
                     <form method="post" action="/pipelines/{{ pipeline.id }}/run" class="d-inline" data-busy>
-                        <button type="submit" class="btn btn-outline-success btn-sm" {% if not llm_configured %}disabled title="Настройте LLM провайдер"{% endif %}>Run now</button>
+                        <button type="submit" class="btn btn-outline-success btn-sm" {% if llm_blocked %}disabled title="Настройте LLM провайдер"{% endif %}>Run now</button>
                     </form>
                     <form method="post" action="/pipelines/{{ pipeline.id }}/toggle" class="d-inline" data-busy>
                         <button type="submit" class="btn btn-outline-secondary btn-sm">{{ "Выключить" if pipeline.is_active else "Включить" }}</button>

@@ -51,7 +51,25 @@ async def test_pipelines_page_renders(client):
 
 
 @pytest.mark.asyncio
-async def test_add_pipeline(client):
+async def test_add_pipeline_warns_when_no_llm_provider(client):
+    """LLM-requiring pipeline + no provider ⇒ pipeline_added_no_llm warning."""
+    resp = await client.post(
+        "/pipelines/add",
+        data=_ADD_DATA,
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    assert "msg=pipeline_added_no_llm" in resp.headers["location"]
+
+
+@pytest.mark.asyncio
+async def test_add_pipeline_with_provider(client):
+    """With provider registered, redirect shows plain pipeline_added."""
+    mock_provider_instance = MagicMock()
+    mock_provider_instance.has_providers = MagicMock(return_value=True)
+    app = client._transport.app  # type: ignore
+    app.state.llm_provider_service = mock_provider_instance
+
     resp = await client.post(
         "/pipelines/add",
         data=_ADD_DATA,
@@ -59,6 +77,7 @@ async def test_add_pipeline(client):
     )
     assert resp.status_code == 303
     assert "msg=pipeline_added" in resp.headers["location"]
+    assert "pipeline_added_no_llm" not in resp.headers["location"]
 
 
 @pytest.mark.asyncio
@@ -131,6 +150,57 @@ async def test_run_pipeline_enqueues(client):
                 resp = await client.post("/pipelines/1/run", follow_redirects=False)
                 assert resp.status_code == 303
                 assert "msg=pipeline_run_enqueued" in resp.headers["location"]
+
+
+@pytest.mark.asyncio
+async def test_run_pipeline_blocked_when_needs_llm_and_no_provider(client):
+    """Default chain pipeline needs LLM: without provider, run is blocked."""
+    await client.post("/pipelines/add", data=_ADD_DATA)
+    # base_app fixture sets up AgentProviderService() with no providers.
+    resp = await client.post("/pipelines/1/run", follow_redirects=False)
+    assert resp.status_code == 303
+    assert "error=llm_not_configured" in resp.headers["location"]
+
+
+@pytest.mark.asyncio
+async def test_run_pipeline_allowed_for_non_llm_dag_without_provider(client):
+    """A DAG with only SOURCE→PUBLISH nodes runs without an LLM provider."""
+    from unittest.mock import patch
+
+    from src.models import (
+        PipelineEdge,
+        PipelineGraph,
+        PipelineNode,
+        PipelineNodeType,
+    )
+
+    await client.post("/pipelines/add", data=_ADD_DATA)
+
+    non_llm_pipeline = MagicMock(
+        id=1,
+        is_active=True,
+        pipeline_json=PipelineGraph(
+            nodes=[
+                PipelineNode(id="src", type=PipelineNodeType.SOURCE, name="src"),
+                PipelineNode(id="pub", type=PipelineNodeType.PUBLISH, name="pub"),
+            ],
+            edges=[PipelineEdge(from_node="src", to_node="pub")],
+        ),
+    )
+    # MagicMock's default mocks generation_backend; force it to the real CHAIN value
+    # so pipeline_needs_llm short-circuits on pipeline_json inspection instead.
+    from src.models import PipelineGenerationBackend
+
+    non_llm_pipeline.generation_backend = PipelineGenerationBackend.CHAIN
+
+    with patch("src.web.routes.pipelines.deps.pipeline_service") as mock_svc:
+        mock_svc.return_value.get = AsyncMock(return_value=non_llm_pipeline)
+        with patch("src.web.routes.pipelines.deps.get_task_enqueuer") as mock_enq:
+            mock_enq.return_value.enqueue_pipeline_run = AsyncMock()
+            resp = await client.post("/pipelines/1/run", follow_redirects=False)
+            assert resp.status_code == 303
+            # Not blocked despite no provider registered in base_app.
+            assert "msg=pipeline_run_enqueued" in resp.headers["location"]
 
 
 @pytest.mark.asyncio
