@@ -1,0 +1,140 @@
+{% extends "base.html" %}
+{% block title %}Редактировать — {{ pipeline.name }}{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h1 class="mb-0">Редактировать: {{ pipeline.name }}</h1>
+    <a class="btn btn-secondary btn-sm" href="/pipelines">&#8592; Назад</a>
+</div>
+
+<form method="post" action="/pipelines/{{ pipeline.id }}/edit" data-busy>
+    <div class="row g-3 mb-3">
+        <div class="col-12 col-lg-6">
+            <label class="form-label">Название</label>
+            <input class="form-control" type="text" name="name" value="{{ pipeline.name }}" required>
+        </div>
+        <div class="col-6 col-md-3 col-lg-2">
+            <label class="form-label">Бэкенд</label>
+            <select class="form-select" name="generation_backend">
+                {% for backend in generation_backends %}
+                <option value="{{ backend.value }}" {{ "selected" if backend.value == pipeline.generation_backend.value }}>{{ backend.value }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="col-6 col-md-3 col-lg-2">
+            <label class="form-label">Режим публикации</label>
+            <select class="form-select" name="publish_mode">
+                {% for mode in publish_modes %}
+                <option value="{{ mode.value }}" {{ "selected" if mode.value == pipeline.publish_mode.value }}>{{ mode.value }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="col-6 col-md-3 col-lg-2">
+            <label class="form-label">Интервал (мин)</label>
+            <input class="form-control" type="number" name="generate_interval_minutes" min="1" value="{{ pipeline.generate_interval_minutes }}">
+        </div>
+    </div>
+
+    <div class="row g-3 mb-3">
+        <div class="col-12 col-md-6">
+            <label class="form-label">LLM модель</label>
+            <input class="form-control" type="text" name="llm_model" value="{{ pipeline.llm_model or '' }}">
+        </div>
+        <div class="col-12 col-md-6">
+            <label class="form-label">Image model</label>
+            <input class="form-control" type="text" name="image_model" value="{{ pipeline.image_model or '' }}" list="image-model-list">
+            <datalist id="image-model-list">
+                <option value="together:black-forest-labs/FLUX.1-schnell">
+                <option value="together:black-forest-labs/FLUX.1-dev">
+                <option value="openai:dall-e-3">
+                <option value="huggingface:stabilityai/stable-diffusion-xl-base-1.0">
+                <option value="replicate:black-forest-labs/flux-schnell">
+            </datalist>
+        </div>
+    </div>
+
+    <div class="mb-3">
+        <label class="form-label">Шаблон промпта</label>
+        <textarea class="form-control" name="prompt_template" rows="5" required>{{ pipeline.prompt_template }}</textarea>
+        <div class="form-text">
+            Доступные переменные:
+            {% for variable in prompt_variables %}
+            <code>{{ "{" }}{{ variable }}{{ "}" }}</code>{% if not loop.last %}, {% endif %}
+            {% endfor %}
+        </div>
+    </div>
+
+    {# Source channels — searchable picker #}
+    <div class="row g-3 mb-3">
+        <div class="col-12 col-lg-6">
+            <label class="form-label">Каналы-источники</label>
+            <div class="searchable-picker" data-picker-name="source_channel_ids" data-picker-multi="true">
+                <div class="picker-selected"></div>
+                <input type="search" class="form-control form-control-sm mb-1" placeholder="Поиск канала..." data-picker-search>
+                <div class="list-group picker-list">
+                    {% for channel in channels %}
+                    <label class="list-group-item list-group-item-action d-flex align-items-center gap-2"
+                           data-picker-option
+                           data-value="{{ channel.channel_id }}"
+                           data-group="channel"
+                           data-search-text="{{ ((channel.title or '') ~ ' ' ~ (channel.username or '') ~ ' ' ~ channel.channel_id)|lower }}">
+                        <input type="checkbox" class="form-check-input mt-0"
+                               {{ "checked" if channel.channel_id in source_ids }}>
+                        <span>{{ channel.title or channel.channel_id }}{% if channel.username %} <small class="text-muted">@{{ channel.username }}</small>{% endif %}</span>
+                    </label>
+                    {% endfor %}
+                </div>
+                <small class="text-muted d-none" data-picker-empty>Ничего не найдено</small>
+            </div>
+        </div>
+
+        {# Target dialogs — searchable picker #}
+        <div class="col-12 col-lg-6">
+            <div class="d-flex justify-content-between align-items-center">
+                <label class="form-label mb-0">Целевые диалоги</label>
+                {% if accounts %}
+                <a class="small" href="/pipelines/{{ pipeline.id }}/edit?refresh=1">Обновить кэш</a>
+                {% endif %}
+            </div>
+            <div class="searchable-picker mt-1" data-picker-name="target_refs" data-picker-multi="true">
+                <div class="picker-selected"></div>
+                <input type="search" class="form-control form-control-sm mb-1" placeholder="Поиск диалога..." data-picker-search>
+                <div class="btn-group btn-group-sm mb-1" data-picker-filters>
+                    <button type="button" class="btn btn-outline-secondary active" data-filter="all">Все</button>
+                    <button type="button" class="btn btn-outline-secondary" data-filter="channel">Каналы</button>
+                    <button type="button" class="btn btn-outline-secondary" data-filter="group">Группы</button>
+                    <button type="button" class="btn btn-outline-secondary" data-filter="dm">Личные</button>
+                </div>
+                <div class="list-group picker-list">
+                    {% for account in accounts %}
+                    {% set dialogs = cached_dialogs.get(account.phone, []) %}
+                    {% for dialog in dialogs %}
+                    {% set ref = account.phone ~ "|" ~ dialog.channel_id %}
+                    {% set dtype = dialog.channel_type %}
+                    {% set dgroup = "dm" if dtype == "dm" else ("channel" if dtype in ("channel", "monoforum") else "group") %}
+                    <label class="list-group-item list-group-item-action d-flex align-items-center gap-2"
+                           data-picker-option
+                           data-value="{{ ref }}"
+                           data-group="{{ dgroup }}"
+                           data-search-text="{{ ((dialog.title or '') ~ ' ' ~ dtype ~ ' ' ~ account.phone)|lower }}">
+                        <input type="checkbox" class="form-check-input mt-0"
+                               {{ "checked" if ref in target_refs }}>
+                        <span>{{ dialog.title or dialog.channel_id }}</span>
+                        <small class="text-muted ms-auto">{{ dtype }}</small>
+                    </label>
+                    {% endfor %}
+                    {% endfor %}
+                </div>
+                <small class="text-muted d-none" data-picker-empty>Ничего не найдено</small>
+            </div>
+        </div>
+    </div>
+
+    <div class="form-check mb-3">
+        <input class="form-check-input" type="checkbox" name="is_active" value="true" id="edit-active" {{ "checked" if pipeline.is_active }}>
+        <label class="form-check-label" for="edit-active">Pipeline активен</label>
+    </div>
+
+    <button type="submit" class="btn btn-primary me-2">Сохранить</button>
+    <a href="/pipelines" class="btn btn-secondary">Отмена</a>
+</form>
+{% endblock %}

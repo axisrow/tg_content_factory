@@ -55,6 +55,24 @@ html { font-size: 14px; }
     align-items: center;
 }
 
+/* Searchable multi-select picker */
+.searchable-picker .picker-list {
+    max-height: 15rem;
+    overflow-y: auto;
+}
+.searchable-picker .picker-selected {
+    min-height: 1.5rem;
+    margin-bottom: 0.25rem;
+}
+.searchable-picker .picker-selected .badge {
+    font-weight: 500;
+    font-size: 0.8rem;
+}
+.searchable-picker .list-group-item {
+    padding: 0.35rem 0.5rem;
+    font-size: 0.875rem;
+}
+
 /* Settings tabs */
 #settings-tabs {
     gap: 0.25rem;

@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_macros.html" import pipeline_actions %}
 {% block title %}Пайплайны — TG Agent{% endblock %}
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-3">
@@ -54,115 +55,155 @@
 </div>
 {% endif %}
 
+{# === Collapsible Add Form === #}
 <div class="card mb-4">
-    <div class="card-header fw-semibold">Новый pipeline</div>
-    <div class="card-body">
-        <form method="post" action="/pipelines/add{% if selected_phone %}?phone={{ selected_phone|urlencode }}{% endif %}" data-busy>
-            <div class="row g-3 mb-3">
-                <div class="col-12 col-lg-6">
-                    <label class="form-label">Название</label>
-                    <input class="form-control" type="text" name="name" required placeholder="Daily digest">
-                </div>
-                <div class="col-12 col-md-4 col-lg-3">
-                    <label class="form-label">Backend</label>
-                    <select class="form-select" name="generation_backend">
-                        {% for backend in generation_backends %}
-                        <option value="{{ backend.value }}">{{ backend.value }}</option>
-                        {% endfor %}
-                    </select>
-                </div>
-                <div class="col-12 col-md-4 col-lg-3">
-                    <label class="form-label">Publish mode</label>
-                    <select class="form-select" name="publish_mode">
-                        {% for mode in publish_modes %}
-                        <option value="{{ mode.value }}">{{ mode.value }}</option>
-                        {% endfor %}
-                    </select>
-                </div>
-                <div class="col-12 col-md-4 col-lg-3">
-                    <label class="form-label">Интервал (мин)</label>
-                    <input class="form-control" type="number" name="generate_interval_minutes" min="1" value="60">
-                </div>
-                <div class="col-12 col-md-6 col-lg-3">
-                    <label class="form-label">LLM model</label>
-                    <input class="form-control" type="text" name="llm_model" placeholder="claude-sonnet-4.5">
-                </div>
-                <div class="col-12 col-md-6 col-lg-3">
-                    <label class="form-label">Image model</label>
-                    <input class="form-control" type="text" name="image_model" placeholder="optional" list="image-model-list">
-                    <datalist id="image-model-list">
-                        <option value="together:black-forest-labs/FLUX.1-schnell">
-                        <option value="together:black-forest-labs/FLUX.1-dev">
-                        <option value="openai:dall-e-3">
-                        <option value="huggingface:stabilityai/stable-diffusion-xl-base-1.0">
-                        <option value="replicate:black-forest-labs/flux-schnell">
-                    </datalist>
-                </div>
-            </div>
-            <div class="mb-3">
-                <label class="form-label">Prompt template</label>
-                <textarea class="form-control" name="prompt_template" rows="5" required placeholder="Собери пост на основе {source_messages}"></textarea>
-                <div class="form-text">
-                    Доступные переменные:
-                    {% for variable in prompt_variables %}
-                    <code>{{ "{" }}{{ variable }}{{ "}" }}</code>{% if not loop.last %}, {% endif %}
-                    {% endfor %}
-                </div>
-            </div>
-            <div class="row g-3 mb-3">
-                <div class="col-12 col-lg-6">
-                    <label class="form-label">Source channels</label>
-                    <select class="form-select" name="source_channel_ids" multiple size="8" required>
-                        {% for channel in channels %}
-                        <option value="{{ channel.channel_id }}">
-                            {{ channel.title or channel.channel_id }}
-                            {% if channel.username %}(@{{ channel.username }}){% endif %}
-                        </option>
-                        {% endfor %}
-                    </select>
-                </div>
-                <div class="col-12 col-lg-6">
-                    <div class="d-flex justify-content-between align-items-center">
-                        <label class="form-label mb-0">Target dialogs</label>
-                        {% if selected_phone %}
-                        <a class="small" href="/pipelines?phone={{ selected_phone|urlencode }}&refresh=1">Обновить кэш {{ selected_phone }}</a>
-                        {% endif %}
+    <div class="card-header fw-semibold d-flex justify-content-between align-items-center"
+         data-bs-toggle="collapse" data-bs-target="#add-pipeline-form" style="cursor:pointer">
+        Новый пайплайн
+        <span class="bi-chevron-down"></span>
+    </div>
+    <div class="collapse" id="add-pipeline-form">
+        <div class="card-body">
+            <form method="post" action="/pipelines/add{% if selected_phone %}?phone={{ selected_phone|urlencode }}{% endif %}" data-busy>
+                <div class="row g-3 mb-3">
+                    <div class="col-12 col-lg-6">
+                        <label class="form-label">Название</label>
+                        <input class="form-control" type="text" name="name" required placeholder="Daily digest">
                     </div>
-                    <select class="form-select" name="target_refs" multiple size="8" required>
-                        {% for account in accounts %}
-                        {% set dialogs = cached_dialogs.get(account.phone, []) %}
-                        <optgroup label="{{ account.phone }}">
-                            {% for dialog in dialogs %}
-                            <option value="{{ account.phone }}|{{ dialog.channel_id }}">
-                                {{ dialog.title or dialog.channel_id }} [{{ dialog.channel_type }}]
-                            </option>
+                    <div class="col-6 col-md-4 col-lg-3">
+                        <label class="form-label">Бэкенд</label>
+                        <select class="form-select" name="generation_backend">
+                            {% for backend in generation_backends %}
+                            <option value="{{ backend.value }}">{{ backend.value }}</option>
                             {% endfor %}
-                        </optgroup>
-                        {% endfor %}
-                    </select>
-                    <div class="form-text">Список targets берётся из dialog cache аккаунтов.</div>
+                        </select>
+                    </div>
+                    <div class="col-6 col-md-4 col-lg-3">
+                        <label class="form-label">Режим публикации</label>
+                        <select class="form-select" name="publish_mode">
+                            {% for mode in publish_modes %}
+                            <option value="{{ mode.value }}">{{ mode.value }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
                 </div>
-            </div>
-            <div class="form-check mb-3">
-                <input class="form-check-input" type="checkbox" name="is_active" value="true" id="pipeline-active" checked>
-                <label class="form-check-label" for="pipeline-active">Pipeline активен</label>
-            </div>
-            <button type="submit" class="btn btn-primary">Создать pipeline</button>
-        </form>
+                <div class="row g-3 mb-3">
+                    <div class="col-6 col-md-3">
+                        <label class="form-label">Интервал (мин)</label>
+                        <input class="form-control" type="number" name="generate_interval_minutes" min="1" value="60">
+                    </div>
+                    <div class="col-6 col-md-4">
+                        <label class="form-label">LLM модель</label>
+                        <input class="form-control" type="text" name="llm_model" placeholder="claude-sonnet-4.5">
+                    </div>
+                    <div class="col-12 col-md-5">
+                        <label class="form-label">Image model</label>
+                        <input class="form-control" type="text" name="image_model" placeholder="optional" list="image-model-list">
+                        <datalist id="image-model-list">
+                            <option value="together:black-forest-labs/FLUX.1-schnell">
+                            <option value="together:black-forest-labs/FLUX.1-dev">
+                            <option value="openai:dall-e-3">
+                            <option value="huggingface:stabilityai/stable-diffusion-xl-base-1.0">
+                            <option value="replicate:black-forest-labs/flux-schnell">
+                        </datalist>
+                    </div>
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label">Шаблон промпта</label>
+                    <textarea class="form-control" name="prompt_template" rows="5" required placeholder="Собери пост на основе {source_messages}"></textarea>
+                    <div class="form-text">
+                        Доступные переменные:
+                        {% for variable in prompt_variables %}
+                        <code>{{ "{" }}{{ variable }}{{ "}" }}</code>{% if not loop.last %}, {% endif %}
+                        {% endfor %}
+                    </div>
+                </div>
+
+                {# Source channels — searchable picker #}
+                <div class="row g-3 mb-3">
+                    <div class="col-12 col-lg-6">
+                        <label class="form-label">Каналы-источники</label>
+                        <div class="searchable-picker" data-picker-name="source_channel_ids" data-picker-multi="true">
+                            <div class="picker-selected"></div>
+                            <input type="search" class="form-control form-control-sm mb-1" placeholder="Поиск канала..." data-picker-search>
+                            <div class="list-group picker-list">
+                                {% for channel in channels %}
+                                <label class="list-group-item list-group-item-action d-flex align-items-center gap-2"
+                                       data-picker-option
+                                       data-value="{{ channel.channel_id }}"
+                                       data-group="channel"
+                                       data-search-text="{{ ((channel.title or '') ~ ' ' ~ (channel.username or '') ~ ' ' ~ channel.channel_id)|lower }}">
+                                    <input type="checkbox" class="form-check-input mt-0">
+                                    <span>{{ channel.title or channel.channel_id }}{% if channel.username %} <small class="text-muted">@{{ channel.username }}</small>{% endif %}</span>
+                                </label>
+                                {% endfor %}
+                            </div>
+                            <small class="text-muted d-none" data-picker-empty>Ничего не найдено</small>
+                        </div>
+                    </div>
+
+                    {# Target dialogs — searchable picker #}
+                    <div class="col-12 col-lg-6">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <label class="form-label mb-0">Целевые диалоги</label>
+                            {% if selected_phone %}
+                            <a class="small" href="/pipelines?phone={{ selected_phone|urlencode }}&refresh=1">Обновить кэш</a>
+                            {% endif %}
+                        </div>
+                        <div class="searchable-picker mt-1" data-picker-name="target_refs" data-picker-multi="true">
+                            <div class="picker-selected"></div>
+                            <input type="search" class="form-control form-control-sm mb-1" placeholder="Поиск диалога..." data-picker-search>
+                            <div class="btn-group btn-group-sm mb-1" data-picker-filters>
+                                <button type="button" class="btn btn-outline-secondary active" data-filter="all">Все</button>
+                                <button type="button" class="btn btn-outline-secondary" data-filter="channel">Каналы</button>
+                                <button type="button" class="btn btn-outline-secondary" data-filter="group">Группы</button>
+                                <button type="button" class="btn btn-outline-secondary" data-filter="dm">Личные</button>
+                            </div>
+                            <div class="list-group picker-list">
+                                {% for account in accounts %}
+                                {% set dialogs = cached_dialogs.get(account.phone, []) %}
+                                {% for dialog in dialogs %}
+                                {% set ref = account.phone ~ "|" ~ dialog.channel_id %}
+                                {% set dtype = dialog.channel_type %}
+                                {% set dgroup = "dm" if dtype == "dm" else ("channel" if dtype in ("channel", "monoforum") else "group") %}
+                                <label class="list-group-item list-group-item-action d-flex align-items-center gap-2"
+                                       data-picker-option
+                                       data-value="{{ ref }}"
+                                       data-group="{{ dgroup }}"
+                                       data-search-text="{{ ((dialog.title or '') ~ ' ' ~ dtype ~ ' ' ~ account.phone)|lower }}">
+                                    <input type="checkbox" class="form-check-input mt-0">
+                                    <span>{{ dialog.title or dialog.channel_id }}</span>
+                                    <small class="text-muted ms-auto">{{ dtype }}</small>
+                                </label>
+                                {% endfor %}
+                                {% endfor %}
+                            </div>
+                            <small class="text-muted d-none" data-picker-empty>Ничего не найдено</small>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="form-check mb-3">
+                    <input class="form-check-input" type="checkbox" name="is_active" value="true" id="pipeline-active" checked>
+                    <label class="form-check-label" for="pipeline-active">Pipeline активен</label>
+                </div>
+                <button type="submit" class="btn btn-primary">Создать пайплайн</button>
+            </form>
+        </div>
     </div>
 </div>
 
+{# === Pipeline List === #}
 {% if items %}
-<div class="table-responsive">
+{# Desktop table #}
+<div class="table-responsive d-none d-md-block">
     <table class="table table-striped align-middle">
         <thead>
             <tr>
-                <th>ID</th>
                 <th>Название</th>
-                <th>Sources</th>
-                <th>Targets</th>
-                <th>Backend</th>
-                <th>Mode</th>
+                <th>Источники</th>
+                <th>Цели</th>
                 <th>Интервал</th>
                 <th></th>
             </tr>
@@ -170,169 +211,105 @@
         <tbody>
             {% for item in items %}
             {% set pipeline = item.pipeline %}
+            {% set pipeline_needs_llm_val = needs_llm_map.get(pipeline.id, true) %}
             <tr id="pipeline-row-{{ pipeline.id }}">
-                <td>{{ pipeline.id }}</td>
                 <td>
                     <div class="fw-semibold">{{ pipeline.name }}</div>
-                    <small class="text-muted">{{ "active" if pipeline.is_active else "inactive" }}</small>
+                    <small class="text-muted">
+                        {{ pipeline.generation_backend.value }} / {{ pipeline.publish_mode.value }}
+                        {% if not pipeline.is_active %} &middot; <span class="text-warning">inactive</span>{% endif %}
+                    </small>
                 </td>
                 <td>
-                    {% for source_title in item.source_titles %}
-                    <div>{{ source_title }}</div>
+                    {% for source_title in item.source_titles[:3] %}
+                    <div class="small">{{ source_title }}</div>
                     {% endfor %}
+                    {% if item.source_titles|length > 3 %}
+                    <div class="small text-muted">+{{ item.source_titles|length - 3 }}</div>
+                    {% endif %}
                 </td>
                 <td>
-                    {% for target in item.targets %}
-                    <div>{{ target.phone }} → {{ target.title or target.dialog_id }}</div>
+                    {% for target in item.targets[:3] %}
+                    <div class="small">{{ target.title or target.dialog_id }}</div>
                     {% endfor %}
+                    {% if item.targets|length > 3 %}
+                    <div class="small text-muted">+{{ item.targets|length - 3 }}</div>
+                    {% endif %}
                 </td>
-                <td>{{ pipeline.generation_backend.value }}</td>
-                <td>{{ pipeline.publish_mode.value }}</td>
                 <td>
                     {{ pipeline.generate_interval_minutes }} мин
                     {% set nr = next_runs.get(pipeline.id) %}
                     {% if nr %}
-                    <div class="small text-muted">Next: {{ nr|local_dt }}</div>
-                    {% else %}
-                    <div class="small text-muted">Не запланировано</div>
+                    <div class="small text-muted">{{ nr|local_dt }}</div>
                     {% endif %}
                 </td>
                 <td class="text-nowrap">
-                    {% if not pipeline.pipeline_json %}
-                    <button type="button" class="btn btn-outline-secondary btn-sm" onclick="togglePipelineEdit({{ pipeline.id }})">Редактировать</button>
-                    {% endif %}
-                    {% set pipeline_needs_llm = needs_llm_map.get(pipeline.id, true) %}
-                    {% set llm_blocked = pipeline_needs_llm and not llm_configured %}
-                    {% if not pipeline_needs_llm %}
-                    {# Non-LLM pipelines don't use Generate endpoint #}
-                    {% elif llm_blocked %}
-                    <span class="btn btn-outline-primary btn-sm disabled" aria-disabled="true" title="Настройте LLM провайдер">Generate</span>
-                    {% else %}
-                    <a class="btn btn-outline-primary btn-sm" href="/pipelines/{{ pipeline.id }}/generate">Generate</a>
-                    {% endif %}
-                    <form method="post" action="/pipelines/{{ pipeline.id }}/run" class="d-inline" data-busy>
-                        <button type="submit" class="btn btn-outline-success btn-sm" {% if llm_blocked %}disabled title="Настройте LLM провайдер"{% endif %}>Run now</button>
-                    </form>
-                    <form method="post" action="/pipelines/{{ pipeline.id }}/toggle" class="d-inline" data-busy>
-                        <button type="submit" class="btn btn-outline-secondary btn-sm">{{ "Выключить" if pipeline.is_active else "Включить" }}</button>
-                    </form>
-                    <a class="btn btn-outline-dark btn-sm" href="/pipelines/{{ pipeline.id }}/export" title="Экспорт JSON">JSON</a>
-                    {% if pipeline.pipeline_json %}
-                    <button type="button" class="btn btn-outline-info btn-sm" {% if llm_configured %}onclick="toggleAiEdit({{ pipeline.id }})"{% else %}disabled{% endif %} title="{% if llm_configured %}Редактировать через AI{% else %}Настройте LLM провайдер{% endif %}">AI</button>
-                    {% endif %}
-                    <form method="post" action="/pipelines/{{ pipeline.id }}/delete{% if selected_phone %}?phone={{ selected_phone|urlencode }}{% endif %}" class="d-inline" data-busy data-confirm="Удалить pipeline?">
-                        <button type="submit" class="btn btn-outline-danger btn-sm">Удалить</button>
-                    </form>
+                    {{ pipeline_actions(pipeline, needs_llm=pipeline_needs_llm_val, llm_configured=llm_configured) }}
                 </td>
             </tr>
+            {# AI edit row (DAG pipelines) #}
+            {% if pipeline.pipeline_json %}
             <tr id="pipeline-ai-edit-{{ pipeline.id }}" class="d-none">
-                <td colspan="8">
+                <td colspan="5">
                     <div class="p-3 border rounded bg-light">
-                        <label class="form-label fw-semibold">Редактировать pipeline через AI</label>
-                        <div class="mb-2">
-                            <pre class="border rounded p-2 bg-white small" style="max-height:300px;overflow:auto" id="pipeline-json-preview-{{ pipeline.id }}">Загрузка...</pre>
-                        </div>
+                        <label class="form-label fw-semibold">AI-редактирование pipeline</label>
+                        <pre class="border rounded p-2 bg-white small" style="max-height:300px;overflow:auto" id="pipeline-json-preview-{{ pipeline.id }}">Загрузка...</pre>
                         <div class="input-group mb-2">
-                            <input class="form-control" type="text" id="ai-instruction-{{ pipeline.id }}" placeholder="Инструкция для AI (например: добавь шаг рефайна, смени модель на gpt-4o, добавь генерацию картинки)">
+                            <input class="form-control" type="text" id="ai-instruction-{{ pipeline.id }}" placeholder="Инструкция для AI">
                             <button class="btn btn-primary" type="button" onclick="sendAiEdit({{ pipeline.id }})">Применить</button>
                         </div>
                         <div id="ai-edit-result-{{ pipeline.id }}" class="text-muted small"></div>
                     </div>
                 </td>
             </tr>
-            <tr id="pipeline-edit-{{ pipeline.id }}" class="d-none">
-                <td colspan="8">
-                    <form method="post" action="/pipelines/{{ pipeline.id }}/edit{% if selected_phone %}?phone={{ selected_phone|urlencode }}{% endif %}" data-busy>
-                        <div class="row g-3 mb-3">
-                            <div class="col-12 col-lg-6">
-                                <label class="form-label">Название</label>
-                                <input class="form-control" type="text" name="name" value="{{ pipeline.name }}" required>
-                            </div>
-                            <div class="col-12 col-md-4 col-lg-2">
-                                <label class="form-label">Backend</label>
-                                <select class="form-select" name="generation_backend">
-                                    {% for backend in generation_backends %}
-                                    <option value="{{ backend.value }}" {{ "selected" if backend == pipeline.generation_backend else "" }}>{{ backend.value }}</option>
-                                    {% endfor %}
-                                </select>
-                            </div>
-                            <div class="col-12 col-md-4 col-lg-2">
-                                <label class="form-label">Mode</label>
-                                <select class="form-select" name="publish_mode">
-                                    {% for mode in publish_modes %}
-                                    <option value="{{ mode.value }}" {{ "selected" if mode == pipeline.publish_mode else "" }}>{{ mode.value }}</option>
-                                    {% endfor %}
-                                </select>
-                            </div>
-                            <div class="col-12 col-md-4 col-lg-2">
-                                <label class="form-label">Интервал</label>
-                                <input class="form-control" type="number" name="generate_interval_minutes" min="1" value="{{ pipeline.generate_interval_minutes }}">
-                            </div>
-                            <div class="col-12 col-md-6">
-                                <label class="form-label">LLM model</label>
-                                <input class="form-control" type="text" name="llm_model" value="{{ pipeline.llm_model or '' }}">
-                            </div>
-                            <div class="col-12 col-md-6">
-                                <label class="form-label">Image model</label>
-                                <input class="form-control" type="text" name="image_model" value="{{ pipeline.image_model or '' }}" list="image-model-list">
-                            </div>
-                        </div>
-                        <div class="mb-3">
-                            <label class="form-label">Prompt template</label>
-                            <textarea class="form-control" name="prompt_template" rows="5" required>{{ pipeline.prompt_template }}</textarea>
-                        </div>
-                        <div class="row g-3 mb-3">
-                            <div class="col-12 col-lg-6">
-                                <label class="form-label">Source channels</label>
-                                <select class="form-select" name="source_channel_ids" multiple size="8" required>
-                                    {% for channel in channels %}
-                                    <option value="{{ channel.channel_id }}" {{ "selected" if channel.channel_id in item.source_ids else "" }}>
-                                        {{ channel.title or channel.channel_id }}
-                                        {% if channel.username %}(@{{ channel.username }}){% endif %}
-                                    </option>
-                                    {% endfor %}
-                                </select>
-                            </div>
-                            <div class="col-12 col-lg-6">
-                                <label class="form-label">Target dialogs</label>
-                                <select class="form-select" name="target_refs" multiple size="8" required>
-                                    {% for account in accounts %}
-                                    {% set dialogs = cached_dialogs.get(account.phone, []) %}
-                                    <optgroup label="{{ account.phone }}">
-                                        {% for dialog in dialogs %}
-                                        {% set ref = account.phone ~ "|" ~ dialog.channel_id %}
-                                        <option value="{{ ref }}" {{ "selected" if ref in item.target_refs else "" }}>
-                                            {{ dialog.title or dialog.channel_id }} [{{ dialog.channel_type }}]
-                                        </option>
-                                        {% endfor %}
-                                    </optgroup>
-                                    {% endfor %}
-                                </select>
-                            </div>
-                        </div>
-                        <div class="form-check mb-3">
-                            <input class="form-check-input" type="checkbox" name="is_active" value="true" id="pipeline-edit-active-{{ pipeline.id }}" {{ "checked" if pipeline.is_active else "" }}>
-                            <label class="form-check-label" for="pipeline-edit-active-{{ pipeline.id }}">Pipeline активен</label>
-                        </div>
-                        <button type="submit" class="btn btn-primary me-2">Сохранить</button>
-                        <button type="button" class="btn btn-secondary" onclick="togglePipelineEdit({{ pipeline.id }})">Отмена</button>
-                    </form>
-                </td>
-            </tr>
+            {% endif %}
             {% endfor %}
         </tbody>
     </table>
 </div>
+
+{# Mobile cards #}
+<div class="d-md-none">
+    {% for item in items %}
+    {% set pipeline = item.pipeline %}
+    {% set pipeline_needs_llm_val = needs_llm_map.get(pipeline.id, true) %}
+    <div class="card mb-2">
+        <div class="card-body">
+            <div class="d-flex justify-content-between align-items-start">
+                <div class="min-w-0 flex-fill">
+                    <div class="d-flex align-items-center gap-1 mb-1">
+                        {% if pipeline.is_active %}<span class="badge-active">&#9679;</span>
+                        {% else %}<span class="badge-inactive">&#9679;</span>{% endif %}
+                        <strong class="text-truncate">{{ pipeline.name }}</strong>
+                    </div>
+                    <small class="text-muted">
+                        {{ pipeline.generation_backend.value }} / {{ pipeline.publish_mode.value }}
+                        &middot; {{ pipeline.generate_interval_minutes }} мин
+                    </small>
+                    {% if item.source_titles %}
+                    <div class="small mt-1">
+                        Источники: {{ item.source_titles[:2]|join(", ") }}{% if item.source_titles|length > 2 %} +{{ item.source_titles|length - 2 }}{% endif %}
+                    </div>
+                    {% endif %}
+                    {% if item.targets %}
+                    <div class="small">
+                        Цели: {{ item.targets[:2]|map(attribute="title")|join(", ") }}{% if item.targets|length > 2 %} +{{ item.targets|length - 2 }}{% endif %}
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+            <div class="card-actions mt-2">
+                {{ pipeline_actions(pipeline, needs_llm=pipeline_needs_llm_val, llm_configured=llm_configured) }}
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+</div>
 {% else %}
-<p>Пайплайнов пока нет.</p>
+<p>Нет созданных пайплайнов. <a href="/pipelines/templates">Создайте из шаблона</a> или заполните форму выше.</p>
 {% endif %}
 
 <script>
-function togglePipelineEdit(id) {
-    document.getElementById("pipeline-row-" + id).classList.toggle("d-none");
-    document.getElementById("pipeline-edit-" + id).classList.toggle("d-none");
-}
-
 function toggleAiEdit(id) {
     const row = document.getElementById("pipeline-ai-edit-" + id);
     row.classList.toggle("d-none");
