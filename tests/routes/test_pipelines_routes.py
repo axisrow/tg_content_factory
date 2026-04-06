@@ -119,6 +119,23 @@ async def test_edit_pipeline(client):
     assert "msg=pipeline_edited" in resp.headers["location"]
 
 
+@pytest.mark.asyncio
+async def test_pipeline_edit_page_loads(client):
+    """GET /pipelines/<id>/edit returns 200 with edit form."""
+    await client.post("/pipelines/add", data=_ADD_DATA)
+    resp = await client.get("/pipelines/1/edit")
+    assert resp.status_code == 200
+    assert "Редактировать" in resp.text
+
+
+@pytest.mark.asyncio
+async def test_pipeline_edit_page_not_found(client):
+    """GET /pipelines/<id>/edit redirects for invalid ID."""
+    resp = await client.get("/pipelines/999999/edit", follow_redirects=False)
+    assert resp.status_code == 303
+    assert "error=pipeline_invalid" in resp.headers["location"]
+
+
 # === New tests ===
 
 
