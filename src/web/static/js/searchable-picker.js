@@ -173,6 +173,7 @@
         function renderAjaxResults(items) {
             if (!listEl) return;
             listEl.innerHTML = "";
+            options = options.filter(function (o) { return o.isConnected; });
             var count = 0;
             (items || []).forEach(function (item) {
                 var label = document.createElement("label");
