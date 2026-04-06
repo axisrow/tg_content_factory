@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_macros.html" import icon %}
 {% block title %}Диалоги — TG Agent{% endblock %}
 {% block content %}
 <div class="d-flex align-items-center gap-3 mb-1">
@@ -34,7 +35,7 @@
             <option value="{{ acc }}" {% if acc == selected_phone %}selected{% endif %}>{{ acc }}</option>
             {% endfor %}
         </select>
-        <span id="dialogs-loading" class="htmx-indicator d-inline-block mt-2">&#9203; Загрузка диалогов…</span>
+        <span id="dialogs-loading" class="htmx-indicator d-inline-block mt-2">{{ icon("loading") }} Загрузка диалогов…</span>
         <form method="post" action="/dialogs/refresh" class="mt-2" data-busy>
             <input type="hidden" name="phone" value="{{ selected_phone or '' }}">
             <button class="btn btn-outline-secondary btn-sm" type="submit" {% if not selected_phone %}disabled{% endif %}>Обновить диалоги</button>
@@ -116,7 +117,7 @@
             <td><span class="badge-active">{{ d.channel_type }}</span></td>
             <td>{{ d.title }}</td>
             <td>{% if d.username %}<a href="https://t.me/{{ d.username }}" target="_blank" rel="noopener">@{{ d.username }}</a>{% else %}<span class="text-muted">—</span>{% endif %}</td>
-            <td>{% if d.already_added %}<span class="badge-active">&#10003;</span>{% else %}<span class="text-muted">—</span>{% endif %}</td>
+            <td>{% if d.already_added %}<span class="badge-active">{{ icon("success") }}</span>{% else %}<span class="text-muted">—</span>{% endif %}</td>
         </tr>
         {% endfor %}
         </tbody>
@@ -130,7 +131,7 @@
                 <input type="checkbox" class="form-check-input cb-own" name="channel_ids" value="{{ d.channel_id }}:{{ d.channel_type }}" onchange="updateLeaveBar()">
                 <div class="flex-fill min-w-0">
                     <div class="text-truncate"><strong>{{ d.title }}</strong></div>
-                    <small class="text-muted">{{ d.channel_type }}{% if d.username %} &middot; @{{ d.username }}{% endif %}{% if d.already_added %} &middot; &#10003;{% endif %}</small>
+                    <small class="text-muted">{{ d.channel_type }}{% if d.username %} &middot; @{{ d.username }}{% endif %}{% if d.already_added %} &middot; {{ icon("success") }}{% endif %}</small>
                 </div>
             </div>
         </div>
@@ -157,7 +158,7 @@
             <td><span class="badge-active">{{ d.channel_type }}</span></td>
             <td>{{ d.title }}</td>
             <td>{% if d.username %}<a href="https://t.me/{{ d.username }}" target="_blank" rel="noopener">@{{ d.username }}</a>{% else %}<span class="text-muted">—</span>{% endif %}</td>
-            <td>{% if d.already_added %}<span class="badge-active">&#10003;</span>{% else %}<span class="text-muted">—</span>{% endif %}</td>
+            <td>{% if d.already_added %}<span class="badge-active">{{ icon("success") }}</span>{% else %}<span class="text-muted">—</span>{% endif %}</td>
         </tr>
         {% endfor %}
         </tbody>
@@ -171,7 +172,7 @@
                 <input type="checkbox" class="form-check-input cb-channels" name="channel_ids" value="{{ d.channel_id }}:{{ d.channel_type }}" onchange="updateLeaveBar()">
                 <div class="flex-fill min-w-0">
                     <div class="text-truncate"><strong>{{ d.title }}</strong></div>
-                    <small class="text-muted">{{ d.channel_type }}{% if d.username %} &middot; @{{ d.username }}{% endif %}{% if d.already_added %} &middot; &#10003;{% endif %}</small>
+                    <small class="text-muted">{{ d.channel_type }}{% if d.username %} &middot; @{{ d.username }}{% endif %}{% if d.already_added %} &middot; {{ icon("success") }}{% endif %}</small>
                 </div>
             </div>
         </div>
@@ -198,7 +199,7 @@
             <td><span class="badge-active">{{ d.channel_type }}</span></td>
             <td>{{ d.title }}</td>
             <td>{% if d.username %}<a href="https://t.me/{{ d.username }}" target="_blank" rel="noopener">@{{ d.username }}</a>{% else %}<span class="text-muted">—</span>{% endif %}</td>
-            <td>{% if d.already_added %}<span class="badge-active">&#10003;</span>{% else %}<span class="text-muted">—</span>{% endif %}</td>
+            <td>{% if d.already_added %}<span class="badge-active">{{ icon("success") }}</span>{% else %}<span class="text-muted">—</span>{% endif %}</td>
         </tr>
         {% endfor %}
         </tbody>
@@ -212,7 +213,7 @@
                 <input type="checkbox" class="form-check-input cb-groups" name="channel_ids" value="{{ d.channel_id }}:{{ d.channel_type }}" onchange="updateLeaveBar()">
                 <div class="flex-fill min-w-0">
                     <div class="text-truncate"><strong>{{ d.title }}</strong></div>
-                    <small class="text-muted">{{ d.channel_type }}{% if d.username %} &middot; @{{ d.username }}{% endif %}{% if d.already_added %} &middot; &#10003;{% endif %}</small>
+                    <small class="text-muted">{{ d.channel_type }}{% if d.username %} &middot; @{{ d.username }}{% endif %}{% if d.already_added %} &middot; {{ icon("success") }}{% endif %}</small>
                 </div>
             </div>
         </div>

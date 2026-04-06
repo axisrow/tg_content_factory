@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_macros.html" import icon %}
 {% block title %}Агент — TG Agent{% endblock %}
 
 {% block head_scripts %}
@@ -533,7 +534,7 @@
             <span class="thread-title" title="{{ thread.title }}">{{ thread.title }}</span>
             <button class="thread-delete-btn"
                     onclick="deleteThread(event, {{ thread.id }})"
-                    title="Удалить тред">&#10005;</button>
+                    title="Удалить тред">{{ icon("close") }}</button>
         </a>
         {% else %}
         <p class="small text-muted">Тредов пока нет</p>
@@ -576,7 +577,7 @@
             <span class="thread-title" title="{{ thread.title }}">{{ thread.title }}</span>
             <button class="thread-delete-btn"
                     onclick="deleteThread(event, {{ thread.id }})"
-                    title="Удалить тред">&#10005;</button>
+                    title="Удалить тред">{{ icon("close") }}</button>
         </a>
         {% else %}
         <p class="small text-muted">Тредов пока нет</p>
@@ -640,7 +641,7 @@
                 {% endif %}
                 {% else %}
                 <div class="empty-state">
-                    <span style="font-size:2rem">&#129302;</span>
+                    <span style="font-size:2rem">{{ icon("ai") }}</span>
                     <p>Напишите первое сообщение</p>
                 </div>
                 {% endfor %}
@@ -852,7 +853,7 @@
         if (!container.querySelector('.message-bubble') && !container.querySelector('.message-context')) {
             var empty = document.createElement('div');
             empty.className = 'empty-state';
-            empty.innerHTML = '<span style="font-size:2rem">&#129302;</span><p>Напишите первое сообщение</p>';
+            empty.innerHTML = '<span style="font-size:2rem">{{ icon("ai") }}</span><p>Напишите первое сообщение</p>';
             container.appendChild(empty);
         }
 
@@ -864,7 +865,7 @@
     function addRegenerateButton(bubble, text, removeUserBubble) {
         var btn = document.createElement('button');
         btn.className = 'retry-btn';
-        btn.innerHTML = '&#128260;'; // 🔄
+        btn.innerHTML = '{{ icon("refresh") }}';
         btn.title = 'Повторить';
         btn.onclick = function() {
             if (removeUserBubble) {
@@ -1272,7 +1273,7 @@
                     msgContainer.appendChild(bubble);
                     msgContainer.scrollTop = msgContainer.scrollHeight;
                 }
-                status.textContent = 'Загружено ✓';
+                status.textContent = 'Загружено {{ icon("success") }}';
             } catch(e) {
                 status.textContent = 'Ошибка: ' + e.message;
             } finally {
