@@ -22,6 +22,14 @@ from src.models import (
 logger = logging.getLogger(__name__)
 
 
+def _group_by_pipeline(items: list) -> dict[int, list]:
+    """Group a list of source/target objects by their pipeline_id."""
+    result: dict[int, list] = {}
+    for item in items:
+        result.setdefault(item.pipeline_id, []).append(item)
+    return result
+
+
 @dataclass(frozen=True)
 class PipelineTargetRef:
     phone: str
@@ -145,12 +153,37 @@ class PipelineService:
 
     async def get_with_relations(self, active_only: bool = False) -> list[dict]:
         pipelines = await self._bundle.get_all(active_only)
-        channels = await self._bundle.list_channels(include_filtered=True)
-        channels_by_id = {channel.channel_id: channel for channel in channels}
-        relation_rows = await asyncio.gather(
-            *[self._get_relation_row(pipeline, channels_by_id) for pipeline in pipelines]
+        if not pipelines:
+            return []
+        pipeline_ids = [p.id for p in pipelines if p.id is not None]
+        channels, all_sources, all_targets = await asyncio.gather(
+            self._bundle.list_channels(include_filtered=True),
+            self._batch_sources(pipeline_ids),
+            self._batch_targets(pipeline_ids),
         )
-        return relation_rows
+        channels_by_id = {channel.channel_id: channel for channel in channels}
+        sources_by_pid = _group_by_pipeline(all_sources)
+        targets_by_pid = _group_by_pipeline(all_targets)
+        return [
+            {
+                "pipeline": p,
+                "sources": sources_by_pid.get(p.id, []),
+                "targets": targets_by_pid.get(p.id, []),
+                "source_ids": [s.channel_id for s in sources_by_pid.get(p.id, [])],
+                "target_refs": [
+                    f"{t.phone}|{t.dialog_id}" for t in targets_by_pid.get(p.id, [])
+                ],
+                "source_titles": [
+                    (
+                        channels_by_id.get(s.channel_id).title or str(s.channel_id)
+                        if channels_by_id.get(s.channel_id)
+                        else str(s.channel_id)
+                    )
+                    for s in sources_by_pid.get(p.id, [])
+                ],
+            }
+            for p in pipelines
+        ]
 
     async def list_cached_dialogs_by_phone(
         self,
@@ -162,31 +195,13 @@ class PipelineService:
         )
         return {account.phone: rows for account, rows in zip(accounts, dialogs, strict=False)}
 
-    async def _get_relation_row(
-        self,
-        pipeline: ContentPipeline,
-        channels_by_id: dict[int, object],
-    ) -> dict:
-        assert pipeline.id is not None
-        sources, targets = await asyncio.gather(
-            self._bundle.list_sources(pipeline.id),
-            self._bundle.list_targets(pipeline.id),
-        )
-        return {
-            "pipeline": pipeline,
-            "sources": sources,
-            "targets": targets,
-            "source_ids": [source.channel_id for source in sources],
-            "target_refs": [f"{target.phone}|{target.dialog_id}" for target in targets],
-            "source_titles": [
-                (
-                    channels_by_id.get(source.channel_id).title or str(source.channel_id)
-                    if channels_by_id.get(source.channel_id)
-                    else str(source.channel_id)
-                )
-                for source in sources
-            ],
-        }
+    async def _batch_sources(self, pipeline_ids: list[int]) -> list[PipelineSource]:
+        """Load sources for all given pipeline IDs in a single query."""
+        return await self._bundle.content_pipelines.batch_sources(pipeline_ids)
+
+    async def _batch_targets(self, pipeline_ids: list[int]) -> list[PipelineTarget]:
+        """Load targets for all given pipeline IDs in a single query."""
+        return await self._bundle.content_pipelines.batch_targets(pipeline_ids)
 
     async def _build_pipeline(
         self,

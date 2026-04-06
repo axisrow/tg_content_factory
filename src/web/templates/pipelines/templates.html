@@ -80,24 +80,13 @@
                             <input class="form-control" type="number" name="generate_interval_minutes" min="1" value="60">
                         </div>
 
-                        {# Source channels #}
+                        {# Source channels — AJAX searchable picker #}
                         <div class="mb-3">
                             <label class="form-label">Каналы-источники</label>
-                            <div class="searchable-picker" data-picker-name="source_channel_ids" data-picker-multi="true">
+                            <div class="searchable-picker" data-picker-name="source_channel_ids" data-picker-multi="true" data-picker-url="/pipelines/api/channels/search?q=">
                                 <div class="picker-selected"></div>
-                                <input type="search" class="form-control form-control-sm mb-1" placeholder="Поиск канала..." data-picker-search>
-                                <div class="list-group picker-list">
-                                    {% for channel in channels %}
-                                    <label class="list-group-item list-group-item-action d-flex align-items-center gap-2"
-                                           data-picker-option
-                                           data-value="{{ channel.channel_id }}"
-                                           data-group="channel"
-                                           data-search-text="{{ ((channel.title or '') ~ ' ' ~ (channel.username or '') ~ ' ' ~ channel.channel_id)|lower }}">
-                                        <input type="checkbox" class="form-check-input mt-0">
-                                        <span>{{ channel.title or channel.channel_id }}{% if channel.username %} <small class="text-muted">@{{ channel.username }}</small>{% endif %}</span>
-                                    </label>
-                                    {% endfor %}
-                                </div>
+                                <input type="search" class="form-control form-control-sm mb-1" placeholder="Введите название или ID канала (мин. 2 символа)..." data-picker-search>
+                                <div class="list-group picker-list"></div>
                                 <small class="text-muted d-none" data-picker-empty>Ничего не найдено</small>
                             </div>
                         </div>
