@@ -152,6 +152,60 @@ async def pipelines_page(request: Request):
     )
 
 
+@router.get("/create", response_class=HTMLResponse)
+async def create_wizard_page(request: Request):
+    svc = deps.pipeline_service(request)
+    accounts = await deps.get_account_bundle(request).list_accounts()
+    cached_dialogs = await svc.list_cached_dialogs_by_phone()
+    return deps.get_templates(request).TemplateResponse(
+        request,
+        "pipelines/create.html",
+        {
+            "accounts": accounts,
+            "cached_dialogs": cached_dialogs,
+        },
+    )
+
+
+@router.post("/create-wizard")
+async def create_wizard_submit(
+    request: Request,
+    name: str = Form(...),
+    pipeline_json: str = Form(...),
+    source_channel_ids: list[int] = Form(default=[]),
+    target_refs: list[str] = Form(default=[]),
+    generate_interval_minutes: int = Form(60),
+    is_active: str = Form(""),
+):
+    import json as _json
+
+    svc = deps.pipeline_service(request)
+    try:
+        graph_data = _json.loads(pipeline_json)
+        data = {
+            "name": name,
+            "prompt_template": ".",
+            "source_ids": source_channel_ids,
+            "target_refs": target_refs,
+            "generate_interval_minutes": generate_interval_minutes,
+            "pipeline_json": graph_data,
+        }
+        pipeline_id = await svc.import_json(data)
+    except PipelineValidationError as exc:
+        return _pipeline_redirect(str(exc), error=True)
+    except Exception as exc:
+        logger.warning("create-wizard failed: %s", exc, exc_info=True)
+        return _pipeline_redirect(f"Ошибка: {exc}", error=True)
+    if is_active:
+        await svc.toggle(pipeline_id)
+    try:
+        scheduler = deps.get_scheduler(request)
+        await scheduler.sync_pipeline_jobs()
+    except Exception:
+        logger.warning("Scheduler sync failed", exc_info=True)
+    return _pipeline_redirect("pipeline_added")
+
+
 @router.post("/add")
 async def add_pipeline(
     request: Request,

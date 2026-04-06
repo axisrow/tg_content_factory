@@ -262,3 +262,50 @@ label:first-child .hint::before { left: 0.5em; transform: none; }
 
     .card-body { padding: 0.75rem; }
 }
+
+/* Pipeline creation wizard */
+.wizard-stepper .nav-pills .nav-link {
+    border-radius: 0;
+    font-size: 0.85rem;
+    padding: 0.5rem 0.75rem;
+    border: 1px solid var(--bs-border-color);
+    color: var(--bs-secondary-color);
+}
+.wizard-stepper .nav-pills .nav-link.active {
+    background-color: var(--bs-primary);
+    color: #fff;
+}
+.wizard-stepper .nav-pills .nav-link.completed {
+    background-color: var(--bs-success-bg-subtle);
+    color: var(--bs-success);
+    border-color: var(--bs-success);
+}
+.wizard-stepper .nav-pills .nav-link.disabled {
+    opacity: 0.5;
+    pointer-events: none;
+}
+.wizard-step { display: none; }
+.wizard-step.active { display: block; }
+
+/* Wizard type cards */
+.wizard-type-card {
+    cursor: pointer;
+    transition: border-color 0.15s, box-shadow 0.15s;
+}
+.wizard-type-card:hover {
+    border-color: var(--bs-primary);
+}
+.wizard-type-card.selected {
+    border-color: var(--bs-primary);
+    box-shadow: 0 0 0 2px rgba(13, 110, 253, 0.25);
+}
+.wizard-type-card input[type="radio"] {
+    display: none;
+}
+
+@media (max-width: 575.98px) {
+    .wizard-stepper .nav-pills .nav-link {
+        font-size: 0.7rem;
+        padding: 0.35rem 0.4rem;
+    }
+}

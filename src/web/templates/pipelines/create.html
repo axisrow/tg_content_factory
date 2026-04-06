@@ -1,0 +1,516 @@
+{% extends "base.html" %}
+{% block title %}Создать пайплайн — TG Agent{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h1 class="mb-0">Создать пайплайн</h1>
+    <a class="btn btn-secondary btn-sm" href="/pipelines">&larr; Назад</a>
+</div>
+
+{# Stepper nav #}
+<nav class="wizard-stepper mb-4">
+    <div class="nav nav-pills nav-justified">
+        <a class="nav-link active" data-step="1">1. Тип</a>
+        <a class="nav-link disabled" data-step="2">2. Источники</a>
+        <a class="nav-link disabled" data-step="3">3. Действие</a>
+        <a class="nav-link disabled" data-step="4">4. Расписание</a>
+        <a class="nav-link disabled" data-step="5">5. Проверка</a>
+    </div>
+</nav>
+
+<form id="wizard-form" method="post" action="/pipelines/create-wizard" data-busy>
+
+{# === Step 1: Pipeline Type === #}
+<div class="wizard-step active" id="step-1">
+    <h5 class="mb-3">Выберите тип пайплайна</h5>
+    <div class="row g-3">
+        <div class="col-12 col-md-6">
+            <label class="card wizard-type-card h-100 p-3" onclick="selectType(this, 'forward')">
+                <input type="radio" name="pipeline_type" value="forward">
+                <div class="card-body text-center">
+                    <div class="fs-2 mb-2">&#x1F517;</div>
+                    <h6 class="card-title">Пересылка сообщений</h6>
+                    <p class="card-text small text-muted">Пересылает сообщения из источников в целевые каналы/чаты</p>
+                    <code class="small">ИСТОЧНИК → ПЕРЕСЫЛКА</code>
+                </div>
+            </label>
+        </div>
+        <div class="col-12 col-md-6">
+            <label class="card wizard-type-card h-100 p-3" onclick="selectType(this, 'react')">
+                <input type="radio" name="pipeline_type" value="react">
+                <div class="card-body text-center">
+                    <div class="fs-2 mb-2">👍</div>
+                    <h6 class="card-title">Авто-реакции</h6>
+                    <p class="card-text small text-muted">Ставит emoji-реакции на сообщения с случайной задержкой</p>
+                    <code class="small">ИСТОЧНИК → ЗАДЕРЖКА → РЕАКЦИЯ</code>
+                </div>
+            </label>
+        </div>
+        <div class="col-12 col-md-6">
+            <label class="card wizard-type-card h-100 p-3" onclick="selectType(this, 'filter_action')">
+                <input type="radio" name="pipeline_type" value="filter_action">
+                <div class="card-body text-center">
+                    <div class="fs-2 mb-2">&#x1F3AF;</div>
+                    <h6 class="card-title">Фильтр + действие</h6>
+                    <p class="card-text small text-muted">Фильтрует по ключевым словам или regex, затем пересылает/реагирует/удаляет</p>
+                    <code class="small">ИСТОЧНИК → ФИЛЬТР → ДЕЙСТВИЕ</code>
+                </div>
+            </label>
+        </div>
+        <div class="col-12 col-md-6">
+            <label class="card wizard-type-card h-100 p-3" onclick="selectType(this, 'cleanup')">
+                <input type="radio" name="pipeline_type" value="cleanup">
+                <div class="card-body text-center">
+                    <div class="fs-2 mb-2">&#x1F5D1;</div>
+                    <h6 class="card-title">Очистка чата</h6>
+                    <p class="card-text small text-muted">Удаляет служебные сообщения (присоединение/выход из чата)</p>
+                    <code class="small">ИСТОЧНИК → ФИЛЬТР → УДАЛЕНИЕ</code>
+                </div>
+            </label>
+        </div>
+    </div>
+</div>
+
+{# === Step 2: Sources === #}
+<div class="wizard-step" id="step-2">
+    <h5 class="mb-3">Каналы-источники</h5>
+    <p class="text-muted">Выберите каналы, из которых будут поступать сообщения.</p>
+    <div class="searchable-picker" data-picker-name="source_channel_ids" data-picker-multi="true" data-picker-url="/pipelines/api/channels/search?q=">
+        <div class="picker-selected"></div>
+        <input type="search" class="form-control form-control-sm mb-1" placeholder="Поиск каналов..." data-picker-search>
+        <div class="list-group picker-list"></div>
+        <small class="text-muted d-none" data-picker-empty>Ничего не найдено</small>
+    </div>
+</div>
+
+{# === Step 3: Action Config === #}
+<div class="wizard-step" id="step-3">
+
+    {# -- Forward panel -- #}
+    <div class="action-panel d-none" id="panel-forward">
+        <h5 class="mb-3">Целевые диалоги</h5>
+        <p class="text-muted">Выберите каналы/чаты, куда будут пересылаться сообщения.</p>
+        <div class="searchable-picker" data-picker-name="target_refs" data-picker-multi="true">
+            <div class="picker-selected"></div>
+            <input type="search" class="form-control form-control-sm mb-1" placeholder="Поиск диалога..." data-picker-search>
+            <div class="btn-group btn-group-sm mb-1" data-picker-filters>
+                <button type="button" class="btn btn-outline-secondary active" data-filter="all">Все</button>
+                <button type="button" class="btn btn-outline-secondary" data-filter="channel">Каналы</button>
+                <button type="button" class="btn btn-outline-secondary" data-filter="group">Группы</button>
+                <button type="button" class="btn btn-outline-secondary" data-filter="dm">Личные</button>
+            </div>
+            <div class="list-group picker-list">
+                {% for account in accounts %}
+                {% set dialogs = cached_dialogs.get(account.phone, []) %}
+                {% for dialog in dialogs %}
+                {% set ref = account.phone ~ "|" ~ dialog.channel_id %}
+                {% set dtype = dialog.channel_type %}
+                {% set dgroup = "dm" if dtype == "dm" else ("channel" if dtype in ("channel", "monoforum") else "group") %}
+                <label class="list-group-item list-group-item-action d-flex align-items-center gap-2"
+                       data-picker-option
+                       data-value="{{ ref }}"
+                       data-group="{{ dgroup }}"
+                       data-search-text="{{ ((dialog.title or '') ~ ' ' ~ dtype ~ ' ' ~ account.phone)|lower }}">
+                    <input type="checkbox" class="form-check-input mt-0">
+                    <span>{{ dialog.title or dialog.channel_id }}</span>
+                    <small class="text-muted ms-auto">{{ dtype }}</small>
+                </label>
+                {% endfor %}
+                {% endfor %}
+            </div>
+            <small class="text-muted d-none" data-picker-empty>Ничего не найдено</small>
+        </div>
+    </div>
+
+    {# -- React panel -- #}
+    <div class="action-panel d-none" id="panel-react">
+        <h5 class="mb-3">Реакции</h5>
+        <div class="row g-3">
+            <div class="col-12 col-md-6">
+                <label class="form-label">Emoji реакция</label>
+                <input class="form-control" type="text" name="react_emoji" maxlength="10" placeholder="👍" value="👍">
+                <div class="form-text">Одиночный emoji или список через запятую для случайного выбора</div>
+            </div>
+        </div>
+        <h6 class="mt-4 mb-2">Задержка (опционально)</h6>
+        <div class="row g-3">
+            <div class="col-6 col-md-3">
+                <label class="form-label">Мин (сек)</label>
+                <input class="form-control" type="number" name="delay_min" min="0" value="5">
+            </div>
+            <div class="col-6 col-md-3">
+                <label class="form-label">Макс (сек)</label>
+                <input class="form-control" type="number" name="delay_max" min="0" value="60">
+            </div>
+        </div>
+    </div>
+
+    {# -- Filter+Action panel -- #}
+    <div class="action-panel d-none" id="panel-filter_action">
+        <h5 class="mb-3">Фильтрация</h5>
+        <div class="row g-3 mb-3">
+            <div class="col-12 col-md-6">
+                <label class="form-label">Тип фильтра</label>
+                <select class="form-select" name="filter_type" onchange="toggleFilterSubpanel()">
+                    <option value="keywords">По ключевым словам</option>
+                    <option value="regex">По регулярному выражению</option>
+                    <option value="service_message">Служебные сообщения</option>
+                    <option value="anonymous_sender">Анонимные сообщения</option>
+                </select>
+            </div>
+        </div>
+
+        <div id="filter-keywords" class="mb-3">
+            <label class="form-label">Ключевые слова (по одному на строку)</label>
+            <textarea class="form-control" name="filter_keywords" rows="3" placeholder="crypto&#10;buy now&#10;free money"></textarea>
+        </div>
+        <div id="filter-regex" class="mb-3 d-none">
+            <label class="form-label">Регулярное выражение</label>
+            <input class="form-control" type="text" name="filter_pattern" placeholder="https?://\S+">
+        </div>
+        <div id="filter-service" class="mb-3 d-none">
+            <div class="form-check">
+                <input class="form-check-input" type="checkbox" name="filter_joined" value="1" checked>
+                <label class="form-check-label">user_joined</label>
+            </div>
+            <div class="form-check">
+                <input class="form-check-input" type="checkbox" name="filter_left" value="1" checked>
+                <label class="form-check-label">user_left</label>
+            </div>
+        </div>
+        <div id="filter-anonymous" class="mb-3 d-none">
+            <p class="text-muted">Будут отфильтрованы все сообщения от анонимных отправителей.</p>
+        </div>
+
+        <h5 class="mt-4 mb-3">Действие с отфильтрованными</h5>
+        <div class="row g-3 mb-3">
+            <div class="col-12 col-md-6">
+                <label class="form-label">Тип действия</label>
+                <select class="form-select" name="action_type" onchange="toggleActionSubpanel()">
+                    <option value="forward">Переслать</option>
+                    <option value="react">Поставить реакцию</option>
+                    <option value="delete_message">Удалить</option>
+                </select>
+            </div>
+        </div>
+
+        <div id="action-forward" class="mb-3">
+            <label class="form-label">Целевые диалоги</label>
+            <div class="searchable-picker" data-picker-name="filter_target_refs" data-picker-multi="true">
+                <div class="picker-selected"></div>
+                <input type="search" class="form-control form-control-sm mb-1" placeholder="Поиск диалога..." data-picker-search>
+                <div class="btn-group btn-group-sm mb-1" data-picker-filters>
+                    <button type="button" class="btn btn-outline-secondary active" data-filter="all">Все</button>
+                    <button type="button" class="btn btn-outline-secondary" data-filter="channel">Каналы</button>
+                    <button type="button" class="btn btn-outline-secondary" data-filter="group">Группы</button>
+                </div>
+                <div class="list-group picker-list">
+                    {% for account in accounts %}
+                    {% set dialogs = cached_dialogs.get(account.phone, []) %}
+                    {% for dialog in dialogs %}
+                    {% set ref = account.phone ~ "|" ~ dialog.channel_id %}
+                    {% set dtype = dialog.channel_type %}
+                    {% set dgroup = "dm" if dtype == "dm" else ("channel" if dtype in ("channel", "monoforum") else "group") %}
+                    <label class="list-group-item list-group-item-action d-flex align-items-center gap-2"
+                           data-picker-option
+                           data-value="{{ ref }}"
+                           data-group="{{ dgroup }}"
+                           data-search-text="{{ ((dialog.title or '') ~ ' ' ~ dtype ~ ' ' ~ account.phone)|lower }}">
+                        <input type="checkbox" class="form-check-input mt-0">
+                        <span>{{ dialog.title or dialog.channel_id }}</span>
+                        <small class="text-muted ms-auto">{{ dtype }}</small>
+                    </label>
+                    {% endfor %}
+                    {% endfor %}
+                </div>
+                <small class="text-muted d-none" data-picker-empty>Ничего не найдено</small>
+            </div>
+        </div>
+        <div id="action-react" class="mb-3 d-none">
+            <label class="form-label">Emoji</label>
+            <input class="form-control" type="text" name="action_react_emoji" maxlength="10" value="👍">
+        </div>
+        <div id="action-delete" class="mb-3 d-none">
+            <p class="text-muted">Отфильтрованные сообщения будут удалены.</p>
+        </div>
+    </div>
+
+    {# -- Cleanup panel -- #}
+    <div class="action-panel d-none" id="panel-cleanup">
+        <div class="alert alert-info">
+            Преднастроенный пайплайн: автоматически удаляет сообщения о присоединении/выходе пользователей из чата.
+            Никаких дополнительных настроек не требуется.
+        </div>
+    </div>
+</div>
+
+{# === Step 4: Schedule === #}
+<div class="wizard-step" id="step-4">
+    <h5 class="mb-3">Расписание</h5>
+    <div class="row g-3">
+        <div class="col-12 col-md-6">
+            <label class="form-label">Название пайплайна</label>
+            <input class="form-control" type="text" name="name" required placeholder="Мой пайплайн">
+        </div>
+        <div class="col-6 col-md-3">
+            <label class="form-label">Интервал (мин)</label>
+            <input class="form-control" type="number" name="generate_interval_minutes" min="1" value="60">
+        </div>
+    </div>
+    <div class="form-check mt-3">
+        <input class="form-check-input" type="checkbox" name="is_active" value="true" id="wizard-active" checked>
+        <label class="form-check-label" for="wizard-active">Активен сразу после создания</label>
+    </div>
+</div>
+
+{# === Step 5: Review === #}
+<div class="wizard-step" id="step-5">
+    <h5 class="mb-3">Проверка</h5>
+    <div id="wizard-review" class="card">
+        <div class="card-body">
+            <div id="review-content"></div>
+        </div>
+    </div>
+</div>
+
+{# Navigation buttons #}
+<div class="d-flex justify-content-between mt-4">
+    <button type="button" class="btn btn-secondary" id="btn-back" onclick="goBack()" style="display:none">
+        &larr; Назад
+    </button>
+    <div class="ms-auto">
+        <button type="button" class="btn btn-primary" id="btn-next" onclick="goNext()">
+            Далее &rarr;
+        </button>
+        <button type="submit" class="btn btn-success d-none" id="btn-submit">
+            &#x2714; Создать
+        </button>
+    </div>
+</div>
+
+<input type="hidden" name="pipeline_json" id="pipeline_json_input">
+</form>
+
+<script>
+(function() {
+    "use strict";
+    var currentStep = 1;
+    var pipelineType = null;
+    var totalSteps = 5;
+
+    window.selectType = function(card, type) {
+        document.querySelectorAll(".wizard-type-card").forEach(function(c) {
+            c.classList.remove("selected");
+        });
+        card.classList.add("selected");
+        card.querySelector('input[type="radio"]').checked = true;
+        pipelineType = type;
+    };
+
+    window.toggleFilterSubpanel = function() {
+        var ft = document.querySelector('[name="filter_type"]').value;
+        ["keywords", "regex", "service", "anonymous"].forEach(function(t) {
+            var el = document.getElementById("filter-" + t);
+            if (el) el.classList.toggle("d-none", t !== ft);
+        });
+    };
+
+    window.toggleActionSubpanel = function() {
+        var at = document.querySelector('[name="action_type"]').value;
+        ["forward", "react", "delete"].forEach(function(t) {
+            var el = document.getElementById("action-" + t);
+            if (el) el.classList.toggle("d-none", t !== at);
+        });
+    };
+
+    function validateStep(step) {
+        if (step === 1) {
+            if (!pipelineType) { alert("Выберите тип пайплайна"); return false; }
+        } else if (step === 2) {
+            var src = document.querySelectorAll('[name="source_channel_ids"]');
+            if (src.length === 0) { alert("Выберите хотя бы один канал-источник"); return false; }
+        } else if (step === 3) {
+            if (pipelineType === 'forward') {
+                var tgts = document.querySelectorAll('[name="target_refs"]');
+                if (tgts.length === 0) { alert("Выберите хотя бы один целевой диалог"); return false; }
+            } else if (pipelineType === 'filter_action') {
+                var at = document.querySelector('[name="action_type"]').value;
+                if (at === 'forward') {
+                    var ft = document.querySelectorAll('[name="filter_target_refs"]');
+                    if (ft.length === 0) { alert("Выберите целевые диалоги для пересылки"); return false; }
+                }
+            }
+        } else if (step === 4) {
+            var n = document.querySelector('[name="name"]').value.trim();
+            if (!n) { alert("Введите название пайплайна"); return false; }
+        }
+        return true;
+    }
+
+    window.goNext = function() {
+        if (!validateStep(currentStep)) return;
+        if (currentStep === 1) {
+            configureActionPanel();
+        }
+        if (currentStep === 4) {
+            renderReview();
+        }
+        showStep(currentStep + 1);
+    };
+
+    window.goBack = function() {
+        showStep(currentStep - 1);
+    };
+
+    function showStep(n) {
+        if (n < 1 || n > totalSteps) return;
+        document.querySelectorAll(".wizard-step").forEach(function(s) { s.classList.remove("active"); });
+        document.getElementById("step-" + n).classList.add("active");
+        // Update stepper nav
+        document.querySelectorAll(".wizard-stepper .nav-link").forEach(function(link) {
+            var s = parseInt(link.dataset.step);
+            link.classList.remove("active", "completed", "disabled");
+            if (s === n) link.classList.add("active");
+            else if (s < n) link.classList.add("completed");
+            else link.classList.add("disabled");
+        });
+        // Toggle buttons
+        document.getElementById("btn-back").style.display = n > 1 ? "" : "none";
+        if (n === totalSteps) {
+            document.getElementById("btn-next").classList.add("d-none");
+            document.getElementById("btn-submit").classList.remove("d-none");
+        } else {
+            document.getElementById("btn-next").classList.remove("d-none");
+            document.getElementById("btn-submit").classList.add("d-none");
+        }
+        currentStep = n;
+    }
+
+    function configureActionPanel() {
+        document.querySelectorAll(".action-panel").forEach(function(p) { p.classList.add("d-none"); });
+        var panel = document.getElementById("panel-" + pipelineType);
+        if (panel) panel.classList.remove("d-none");
+    }
+
+    function getFormValues(name) {
+        return Array.from(document.querySelectorAll('[name="' + name + '"]')).map(function(el) { return el.value; });
+    }
+
+    function parseTargetRefs(name) {
+        name = name || "target_refs";
+        return getFormValues(name).map(function(ref) {
+            var parts = ref.split("|");
+            return { phone: parts[0], dialog_id: parseInt(parts[1]) };
+        });
+    }
+
+    function buildPipelineGraph() {
+        var sourceIds = getFormValues("source_channel_ids").map(Number);
+        var nodes = [];
+        var edges = [];
+
+        nodes.push({ id: "source_1", type: "source", name: "Источники", config: { channel_ids: sourceIds }, position: { x: 0, y: 0 } });
+
+        if (pipelineType === "forward") {
+            var targets = parseTargetRefs();
+            nodes.push({ id: "forward_1", type: "forward", name: "Пересылка", config: { targets: targets }, position: { x: 220, y: 0 } });
+            edges.push({ from: "source_1", to: "forward_1" });
+
+        } else if (pipelineType === "react") {
+            var emojiRaw = document.querySelector('[name="react_emoji"]').value.trim();
+            var reactConfig;
+            if (emojiRaw.indexOf(",") !== -1) {
+                reactConfig = { random_emojis: emojiRaw.split(",").map(function(e) { return e.trim(); }).filter(Boolean) };
+            } else {
+                reactConfig = { emoji: emojiRaw || "👍" };
+            }
+            var delayMin = parseFloat(document.querySelector('[name="delay_min"]').value) || 0;
+            var delayMax = parseFloat(document.querySelector('[name="delay_max"]').value) || 0;
+            var lastId = "source_1";
+            if (delayMin > 0 || delayMax > 0) {
+                nodes.push({ id: "delay_1", type: "delay", name: "Задержка", config: { min_seconds: delayMin, max_seconds: delayMax }, position: { x: 220, y: 0 } });
+                edges.push({ from: "source_1", to: "delay_1" });
+                lastId = "delay_1";
+            }
+            nodes.push({ id: "react_1", type: "react", name: "Реакция", config: reactConfig, position: { x: lastId === "delay_1" ? 440 : 220, y: 0 } });
+            edges.push({ from: lastId, to: "react_1" });
+
+        } else if (pipelineType === "filter_action") {
+            var ft = document.querySelector('[name="filter_type"]').value;
+            var filterConfig;
+            if (ft === "keywords") {
+                filterConfig = { type: "keywords", keywords: document.querySelector('[name="filter_keywords"]').value.split("\n").map(function(k) { return k.trim(); }).filter(Boolean) };
+            } else if (ft === "regex") {
+                filterConfig = { type: "regex", pattern: document.querySelector('[name="filter_pattern"]').value };
+            } else if (ft === "service_message") {
+                var stypes = [];
+                if (document.querySelector('[name="filter_joined"]').checked) stypes.push("user_joined");
+                if (document.querySelector('[name="filter_left"]').checked) stypes.push("user_left");
+                filterConfig = { type: "service_message", service_types: stypes };
+            } else {
+                filterConfig = { type: "anonymous_sender" };
+            }
+            nodes.push({ id: "filter_1", type: "filter", name: "Фильтр", config: filterConfig, position: { x: 220, y: 0 } });
+            edges.push({ from: "source_1", to: "filter_1" });
+
+            var at = document.querySelector('[name="action_type"]').value;
+            var actionConfig = {};
+            var actionType = at;
+            var actionName = "";
+            if (at === "forward") {
+                actionConfig = { targets: parseTargetRefs("filter_target_refs") };
+                actionName = "Пересылка";
+            } else if (at === "react") {
+                actionConfig = { emoji: document.querySelector('[name="action_react_emoji"]').value || "👍" };
+                actionName = "Реакция";
+            } else {
+                actionName = "Удаление";
+            }
+            nodes.push({ id: "action_1", type: actionType, name: actionName, config: actionConfig, position: { x: 440, y: 0 } });
+            edges.push({ from: "filter_1", to: "action_1" });
+
+        } else if (pipelineType === "cleanup") {
+            nodes.push({ id: "filter_1", type: "filter", name: "Фильтр join/leave", config: { type: "service_message", service_types: ["user_joined", "user_left"] }, position: { x: 220, y: 0 } });
+            edges.push({ from: "source_1", to: "filter_1" });
+            nodes.push({ id: "delete_1", type: "delete_message", name: "Удаление", config: {}, position: { x: 440, y: 0 } });
+            edges.push({ from: "filter_1", to: "delete_1" });
+        }
+
+        return { nodes: nodes, edges: edges };
+    }
+
+    function renderReview() {
+        var graph = buildPipelineGraph();
+        document.getElementById("pipeline_json_input").value = JSON.stringify(graph);
+        var name = document.querySelector('[name="name"]').value || "Без названия";
+        var interval = document.querySelector('[name="generate_interval_minutes"]').value;
+        var sources = getFormValues("source_channel_ids");
+        var flow = graph.nodes.map(function(n) { return n.name; }).join(" → ");
+
+        var typeLabels = { forward: "Пересылка", react: "Авто-реакции", filter_action: "Фильтр + действие", cleanup: "Очистка чата" };
+        var html = '<dl class="row mb-0">';
+        html += '<dt class="col-sm-4">Название</dt><dd class="col-sm-8">' + name + '</dd>';
+        html += '<dt class="col-sm-4">Тип</dt><dd class="col-sm-8">' + (typeLabels[pipelineType] || pipelineType) + '</dd>';
+        html += '<dt class="col-sm-4">Источники</dt><dd class="col-sm-8">' + sources.length + ' каналов</dd>';
+        html += '<dt class="col-sm-4">Цепочка</dt><dd class="col-sm-8"><code>' + flow + '</code></dd>';
+        html += '<dt class="col-sm-4">Интервал</dt><dd class="col-sm-8">' + interval + ' мин</dd>';
+        html += '</dl>';
+        document.getElementById("review-content").innerHTML = html;
+    }
+
+    // Form submit: copy target_refs for filter_action forward into main target_refs
+    var form = document.getElementById("wizard-form");
+    form.addEventListener("submit", function(e) {
+        // For filter_action with forward: copy filter_target_refs as target_refs
+        if (pipelineType === "filter_action" && document.querySelector('[name="action_type"]').value === "forward") {
+            getFormValues("filter_target_refs").forEach(function(val) {
+                var inp = document.createElement("input");
+                inp.type = "hidden";
+                inp.name = "target_refs";
+                inp.value = val;
+                form.appendChild(inp);
+            });
+        }
+    });
+})();
+</script>
+{% endblock %}

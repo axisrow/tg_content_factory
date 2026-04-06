@@ -5,6 +5,7 @@
 <div class="d-flex justify-content-between align-items-center mb-3">
     <h1 class="mb-0">Пайплайны контента</h1>
     <div class="d-flex gap-2">
+        <a class="btn btn-success btn-sm" href="/pipelines/create">+ Мастер</a>
         <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-toggle="modal" data-bs-target="#importModal">Импорт JSON</button>
         <a class="btn btn-outline-primary btn-sm" href="/pipelines/templates">Шаблоны</a>
     </div>
@@ -126,7 +127,7 @@
                         <label class="form-label">Каналы-источники</label>
                         <div class="searchable-picker" data-picker-name="source_channel_ids" data-picker-multi="true" data-picker-url="/pipelines/api/channels/search?q=">
                             <div class="picker-selected"></div>
-                            <input type="search" class="form-control form-control-sm mb-1" placeholder="Введите название или ID канала (мин. 2 символа)..." data-picker-search>
+                            <input type="search" class="form-control form-control-sm mb-1" placeholder="Поиск каналов..." data-picker-search>
                             <div class="list-group picker-list"></div>
                             <small class="text-muted d-none" data-picker-empty>Ничего не найдено</small>
                         </div>
