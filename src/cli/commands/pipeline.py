@@ -7,6 +7,7 @@ from src.cli import runtime
 from src.search.engine import SearchEngine
 from src.services.content_generation_service import ContentGenerationService
 from src.services.generation_service import GenerationService
+from src.services.pipeline_llm_requirements import pipeline_needs_llm
 from src.services.pipeline_service import (
     PipelineService,
     PipelineTargetRef,
@@ -169,7 +170,14 @@ def run(args: argparse.Namespace) -> None:
 
                 from src.services.provider_service import AgentProviderService
 
-                provider_service = AgentProviderService(db)
+                provider_service = AgentProviderService(db, config)
+                await provider_service.load_db_providers()
+                if pipeline_needs_llm(pipeline) and not provider_service.has_providers():
+                    print(
+                        "LLM provider is not configured. Add one in /settings or set an API key "
+                        "env var (e.g. OPENAI_API_KEY). Non-LLM pipelines run without a provider."
+                    )
+                    return
                 provider_callable = provider_service.get_provider_callable(pipeline.llm_model)
 
                 gen_svc = GenerationService(engine, provider_callable=provider_callable)
@@ -222,6 +230,12 @@ def run(args: argparse.Namespace) -> None:
 
                 provider_svc = AgentProviderService(db, config)
                 await provider_svc.load_db_providers()
+                if pipeline_needs_llm(pipeline) and not provider_svc.has_providers():
+                    print(
+                        "LLM provider is not configured. Add one in /settings or set an API key "
+                        "env var (e.g. OPENAI_API_KEY). Non-LLM pipelines run without a provider."
+                    )
+                    return
                 gen_svc = ContentGenerationService(
                     db,
                     engine,

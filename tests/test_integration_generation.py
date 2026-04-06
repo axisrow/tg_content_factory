@@ -55,6 +55,15 @@ async def pipeline_client(tmp_path, real_pool_harness_factory):
 
 @pytest.mark.asyncio
 async def test_pipeline_generate_and_publish(pipeline_client, monkeypatch):
+    # Mock LLM provider service so the Generate button is shown in the template
+    from unittest.mock import MagicMock
+
+    mock_llm_service = MagicMock()
+    mock_llm_service.has_providers = MagicMock(return_value=True)
+    mock_llm_service.get_provider_callable = MagicMock(return_value=None)
+    app = pipeline_client._transport.app  # type: ignore
+    app.state.llm_provider_service = mock_llm_service
+
     # Create a simple pipeline (reuse existing channels/accounts from fixture)
     resp = await pipeline_client.post(
         "/pipelines/add",
