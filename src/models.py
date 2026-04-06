@@ -44,6 +44,7 @@ class Channel(BaseModel):
     has_comments: bool = False
     last_collected_id: int = 0
     added_at: datetime | None = None
+    created_at: datetime | None = None
     message_count: int = 0
     tags: list[str] = []
 

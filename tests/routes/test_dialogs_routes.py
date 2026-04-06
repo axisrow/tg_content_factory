@@ -303,3 +303,189 @@ async def test_leave_dialogs_multiple(client):
         follow_redirects=False,
     )
     assert resp.status_code == 303
+
+
+# ─── refresh & cache ────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_refresh_dialogs_redirects(client):
+    """Test refresh dialogs redirects back."""
+    resp = await client.post(
+        "/dialogs/refresh",
+        data={"phone": "+1234567890"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    assert "phone=" in resp.headers.get("location", "")
+
+
+@pytest.mark.asyncio
+async def test_refresh_dialogs_missing_phone(client):
+    """Test refresh without phone returns validation error."""
+    resp = await client.post("/dialogs/refresh", follow_redirects=False)
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_cache_status_returns_json(client):
+    """Test cache-status endpoint returns JSON list."""
+    db = client._transport.app.state.db
+    await db.repos.dialog_cache.replace_dialogs("+1234567890", [
+        {"channel_id": 100111, "title": "Cached", "username": "cached",
+         "channel_type": "channel", "deactivate": 0, "is_own": 0},
+    ])
+    resp = await client.get("/dialogs/cache-status")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert isinstance(data, list)
+
+
+@pytest.mark.asyncio
+async def test_cache_clear_with_phone(client):
+    """Test cache-clear with phone param."""
+    resp = await client.post(
+        "/dialogs/cache-clear",
+        data={"phone": "+1234567890"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+
+
+@pytest.mark.asyncio
+async def test_cache_clear_without_phone(client):
+    """Test cache-clear without phone clears all."""
+    resp = await client.post("/dialogs/cache-clear", follow_redirects=False)
+    assert resp.status_code == 303
+
+
+# ─── send / edit / delete messages ──────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_send_message_missing_fields(client):
+    """Test send with missing required fields redirects."""
+    resp = await client.post("/dialogs/send", follow_redirects=False)
+    assert resp.status_code == 303
+
+
+@pytest.mark.asyncio
+async def test_send_message_no_client(client):
+    """Test send when native client is unavailable."""
+    pool = client._transport.app.state.pool
+    pool.get_native_client_by_phone = AsyncMock(return_value=None)
+
+    resp = await client.post(
+        "/dialogs/send",
+        data={"phone": "+1234567890", "recipient": "-100111", "text": "hi"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+
+
+@pytest.mark.asyncio
+async def test_send_message_success(client):
+    """Test successful send message."""
+    native_mock = AsyncMock()
+    native_mock.send_message = AsyncMock(return_value=SimpleNamespace(id=42))
+    pool = client._transport.app.state.pool
+    pool.get_native_client_by_phone = AsyncMock(return_value=(native_mock, "+1234567890"))
+
+    resp = await client.post(
+        "/dialogs/send",
+        data={"phone": "+1234567890", "recipient": "-100111", "text": "hello"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+
+
+@pytest.mark.asyncio
+async def test_edit_message_missing_fields(client):
+    """Test edit-message with missing fields redirects."""
+    resp = await client.post("/dialogs/edit-message", follow_redirects=False)
+    assert resp.status_code == 303
+
+
+@pytest.mark.asyncio
+async def test_delete_message_missing_fields(client):
+    """Test delete-message with missing fields redirects."""
+    resp = await client.post("/dialogs/delete-message", follow_redirects=False)
+    assert resp.status_code == 303
+
+
+@pytest.mark.asyncio
+async def test_delete_message_invalid_ids(client):
+    """Test delete-message with non-numeric message_ids."""
+    resp = await client.post(
+        "/dialogs/delete-message",
+        data={"phone": "+1234567890", "chat_id": "-100111", "message_ids": "abc"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    assert "error=invalid_ids" in resp.headers["location"]
+
+
+@pytest.mark.asyncio
+async def test_forward_messages_missing_fields(client):
+    """Test forward-messages with missing fields redirects."""
+    resp = await client.post("/dialogs/forward-messages", follow_redirects=False)
+    assert resp.status_code == 303
+
+
+# ─── pin / unpin ────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_pin_message_missing_fields(client):
+    """Test pin-message with missing fields redirects."""
+    resp = await client.post("/dialogs/pin-message", follow_redirects=False)
+    assert resp.status_code == 303
+
+
+@pytest.mark.asyncio
+async def test_unpin_message_missing_fields(client):
+    """Test unpin-message with missing fields redirects."""
+    resp = await client.post("/dialogs/unpin-message", follow_redirects=False)
+    assert resp.status_code == 303
+
+
+# ─── participants / archive / unarchive / mark-read ─────────────────
+
+
+@pytest.mark.asyncio
+async def test_participants_missing_params(client):
+    """Test participants with missing params returns error or empty."""
+    resp = await client.get("/dialogs/participants")
+    # May return 400 or redirect
+    assert resp.status_code in (200, 303, 400, 422)
+
+
+@pytest.mark.asyncio
+async def test_archive_dialog_missing_fields(client):
+    """Test archive with missing fields redirects."""
+    resp = await client.post("/dialogs/archive", follow_redirects=False)
+    assert resp.status_code == 303
+
+
+@pytest.mark.asyncio
+async def test_unarchive_dialog_missing_fields(client):
+    """Test unarchive with missing fields redirects."""
+    resp = await client.post("/dialogs/unarchive", follow_redirects=False)
+    assert resp.status_code == 303
+
+
+@pytest.mark.asyncio
+async def test_mark_read_missing_fields(client):
+    """Test mark-read with missing fields redirects."""
+    resp = await client.post("/dialogs/mark-read", follow_redirects=False)
+    assert resp.status_code == 303
+
+
+# ─── create-channel page ────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_create_channel_page_renders(client):
+    """Test create-channel page renders."""
+    resp = await client.get("/dialogs/create-channel")
+    assert resp.status_code == 200

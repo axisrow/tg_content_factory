@@ -51,6 +51,7 @@ class ChannelService:
             about=meta.get("about") if meta else None,
             linked_chat_id=meta.get("linked_chat_id") if meta else None,
             has_comments=meta.get("has_comments", False) if meta else False,
+            created_at=info.get("created_at"),
         )
         await self._channels.add_channel(channel)
         return True
@@ -77,6 +78,7 @@ class ChannelService:
                     username=dialog["username"],
                     channel_type=dialog.get("channel_type"),
                     is_active=not dialog.get("deactivate", False),
+                    created_at=dialog.get("created_at"),
                 )
             )
 

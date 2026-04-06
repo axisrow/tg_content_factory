@@ -106,6 +106,7 @@ async def import_channels(
             username=info["username"],
             channel_type=info.get("channel_type"),
             is_active=not deactivate,
+            created_at=info.get("created_at"),
         )
         await db.add_channel(channel)
         existing_ids.add(info["channel_id"])

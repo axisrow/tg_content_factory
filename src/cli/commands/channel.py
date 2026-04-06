@@ -141,6 +141,7 @@ def run(args: argparse.Namespace) -> None:
                         about=meta.get("about") if meta else None,
                         linked_chat_id=meta.get("linked_chat_id") if meta else None,
                         has_comments=meta.get("has_comments", False) if meta else False,
+                        created_at=info.get("created_at"),
                     )
                 )
                 msg = f"Added channel: {info['title']} ({info['channel_id']})"
@@ -219,6 +220,7 @@ def run(args: argparse.Namespace) -> None:
                             username=info["username"],
                             channel_type=info.get("channel_type"),
                             is_active=not deactivate,
+                            created_at=info.get("created_at"),
                         )
                     )
                     existing_ids.add(info["channel_id"])
@@ -407,6 +409,7 @@ def run(args: argparse.Namespace) -> None:
                             username=info.get("username"),
                             channel_type=info.get("channel_type"),
                             is_active=True,
+                            created_at=info.get("created_at"),
                         )
                     )
                     existing_ids.add(info["channel_id"])

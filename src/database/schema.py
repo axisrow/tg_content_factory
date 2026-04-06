@@ -22,7 +22,8 @@ CREATE TABLE IF NOT EXISTS channels (
     filter_flags TEXT DEFAULT '',
     about TEXT,
     linked_chat_id INTEGER,
-    has_comments INTEGER DEFAULT 0
+    has_comments INTEGER DEFAULT 0,
+    created_at TEXT
 );
 
 CREATE TABLE IF NOT EXISTS messages (
