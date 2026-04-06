@@ -201,7 +201,12 @@ class ChannelAnalyticsService:
     async def get_heatmap(
         self, channel_id: int, days: int = 30,
     ) -> list[dict]:
-        """Hour x weekday message-count heatmap data."""
+        """Hour x weekday message-count heatmap data.
+
+        Returns ``[{hour, weekday, count}]`` dicts for a 7x24 grid
+        (weekdays on Y, hours on X).  Absent cells = 0.
+        Delegates to :meth:`MessagesRepository.get_hour_weekday_heatmap`.
+        """
         return await self._db.repos.messages.get_hour_weekday_heatmap(channel_id, days)
 
     async def get_cross_channel_citations(

@@ -117,6 +117,9 @@ async def run_migrations(db: aiosqlite.Connection) -> bool:
     if "has_comments" not in ch_columns:
         await db.execute("ALTER TABLE channels ADD COLUMN has_comments INTEGER DEFAULT 0")
         await db.commit()
+    if "created_at" not in ch_columns:
+        await db.execute("ALTER TABLE channels ADD COLUMN created_at TEXT")
+        await db.commit()
 
     cur = await db.execute("PRAGMA table_info(collection_tasks)")
     task_rows = await cur.fetchall()
@@ -737,6 +740,14 @@ async def run_migrations(db: aiosqlite.Connection) -> bool:
             "INSERT OR IGNORE INTO settings (key, value) VALUES ('_migration_reset_prompt_v2', '1')"
         )
         await db.commit()
+
+    # Fix forward_from_channel_id normalization (issue #381)
+    # Old code stored -PeerChannel.channel_id; correct value is positive channel_id.
+    await db.execute(
+        "UPDATE messages SET forward_from_channel_id = ABS(forward_from_channel_id) "
+        "WHERE forward_from_channel_id < 0"
+    )
+    await db.commit()
 
     return fts_available
 

@@ -211,3 +211,57 @@ async def test_debug_page_empty_buffer(client):
 
     resp = await client.get("/debug/")
     assert resp.status_code == 200
+
+
+# ─── timing endpoint tests ──────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_debug_timing_page(client):
+    """Test timing page renders."""
+    resp = await client.get("/debug/timing")
+    assert resp.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_debug_timing_page_without_buffer(client_no_buffer):
+    """Test timing page when no timing buffer configured."""
+    resp = await client_no_buffer.get("/debug/timing")
+    assert resp.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_debug_timing_rows(client):
+    """Test timing rows partial."""
+    resp = await client.get("/debug/timing/rows")
+    assert resp.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_debug_timing_rows_without_buffer(client_no_buffer):
+    """Test timing rows without buffer."""
+    resp = await client_no_buffer.get("/debug/timing/rows")
+    assert resp.status_code == 200
+
+
+# ─── memory endpoint tests ──────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_debug_memory_returns_json(client):
+    """Test memory endpoint returns JSON with expected keys."""
+    resp = await client.get("/debug/memory")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "rss_mb" in data
+    assert "gc_counts" in data
+    assert "pool" in data
+
+
+@pytest.mark.asyncio
+async def test_debug_memory_pool_info(client):
+    """Test memory endpoint includes pool info."""
+    resp = await client.get("/debug/memory")
+    data = resp.json()
+    assert "connected_clients" in data["pool"]
+    assert "dialogs_cache_entries" in data["pool"]

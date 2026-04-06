@@ -605,7 +605,7 @@ class Collector:
                         if fwd_from and getattr(fwd_from, "from_id", None):
                             from_id = fwd_from.from_id
                             if hasattr(from_id, "channel_id"):
-                                fwd_from_channel_id = -from_id.channel_id
+                                fwd_from_channel_id = from_id.channel_id
 
                         message = Message(
                             channel_id=channel_id,

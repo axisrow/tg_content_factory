@@ -14,8 +14,8 @@ class ChannelsRepository:
     async def add_channel(self, channel: Channel) -> int:
         cur = await self._db.execute(
             """INSERT INTO channels (channel_id, title, username, channel_type, is_active,
-                                     about, linked_chat_id, has_comments)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                                     about, linked_chat_id, has_comments, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(channel_id) DO UPDATE
                SET title=excluded.title, username=excluded.username,
                    channel_type=excluded.channel_type,
@@ -23,7 +23,8 @@ class ChannelsRepository:
                    about=COALESCE(excluded.about, channels.about),
                    linked_chat_id=COALESCE(excluded.linked_chat_id, channels.linked_chat_id),
                    has_comments=CASE WHEN COALESCE(excluded.linked_chat_id, channels.linked_chat_id)
-                                          IS NOT NULL THEN 1 ELSE 0 END""",
+                                          IS NOT NULL THEN 1 ELSE 0 END,
+                   created_at=COALESCE(excluded.created_at, channels.created_at)""",
             (
                 channel.channel_id,
                 channel.title,
@@ -33,6 +34,7 @@ class ChannelsRepository:
                 channel.about,
                 channel.linked_chat_id,
                 int(channel.has_comments),
+                channel.created_at.isoformat() if channel.created_at else None,
             ),
         )
         await self._db.commit()
@@ -57,6 +59,11 @@ class ChannelsRepository:
             has_comments=bool(row["has_comments"]) if "has_comments" in keys and row["has_comments"] else False,
             last_collected_id=row["last_collected_id"],
             added_at=datetime.fromisoformat(row["added_at"]) if row["added_at"] else None,
+            created_at=(
+                datetime.fromisoformat(row["created_at"])
+                if "created_at" in keys and row["created_at"]
+                else None
+            ),
             message_count=(
                 row["message_count"]
                 if "message_count" in keys and row["message_count"] is not None
