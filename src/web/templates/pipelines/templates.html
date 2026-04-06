@@ -3,7 +3,7 @@
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-3">
     <h1 class="mb-0">Шаблоны пайплайнов</h1>
-    <a class="btn btn-secondary btn-sm" href="/pipelines">← Назад к пайплайнам</a>
+    <a class="btn btn-secondary btn-sm" href="/pipelines">&#8592; Назад к пайплайнам</a>
 </div>
 
 <p class="text-muted">Выберите шаблон для создания нового пайплайна. Шаблоны содержат готовые наборы нод — вы можете настроить их после создания с помощью AI-редактора.</p>
@@ -20,6 +20,14 @@
 <div class="row g-3">
     {% for tpl in templates %}
     {% if tpl.category == category %}
+    {# Determine template capabilities #}
+    {% set node_types = [] %}
+    {% for node in tpl.template_json.nodes %}
+        {% set _ = node_types.append(node.type.value) %}
+    {% endfor %}
+    {% set uses_llm = "llm_generate" in node_types or "llm_refine" in node_types %}
+    {% set needs_target = "forward" in node_types or "publish" in node_types %}
+
     <div class="col-12 col-md-6 col-xl-4">
         <div class="card h-100">
             <div class="card-header d-flex justify-content-between align-items-center">
@@ -42,7 +50,7 @@
 
     <!-- Create from template modal -->
     <div class="modal fade" id="tplModal{{ tpl.id }}" tabindex="-1">
-        <div class="modal-dialog">
+        <div class="modal-dialog modal-lg">
             <div class="modal-content">
                 <div class="modal-header">
                     <h5 class="modal-title">Создать из шаблона: {{ tpl.name }}</h5>
@@ -55,15 +63,80 @@
                             <label class="form-label">Название</label>
                             <input class="form-control" type="text" name="name" value="{{ tpl.name }}" required>
                         </div>
+
+                        {% if uses_llm %}
                         <div class="mb-3">
-                            <label class="form-label">LLM модель (опционально)</label>
+                            <label class="form-label">LLM модель</label>
                             <input class="form-control" type="text" name="llm_model" placeholder="claude-sonnet-4.5">
+                            {% if not llm_configured %}
+                            <div class="form-text text-warning">LLM-провайдер не настроен. <a href="/settings">Настройки</a></div>
+                            {% endif %}
                         </div>
+                        {% endif %}
+
                         <div class="mb-3">
                             <label class="form-label">Интервал (мин)</label>
                             <input class="form-control" type="number" name="generate_interval_minutes" min="1" value="60">
                         </div>
-                        <p class="text-muted small">После создания добавьте источники и цели публикации в разделе редактирования.</p>
+
+                        {# Source channels #}
+                        <div class="mb-3">
+                            <label class="form-label">Каналы-источники</label>
+                            <div class="searchable-picker" data-picker-name="source_channel_ids" data-picker-multi="true">
+                                <div class="picker-selected"></div>
+                                <input type="search" class="form-control form-control-sm mb-1" placeholder="Поиск канала..." data-picker-search>
+                                <div class="list-group picker-list">
+                                    {% for channel in channels %}
+                                    <label class="list-group-item list-group-item-action d-flex align-items-center gap-2"
+                                           data-picker-option
+                                           data-value="{{ channel.channel_id }}"
+                                           data-group="channel"
+                                           data-search-text="{{ ((channel.title or '') ~ ' ' ~ (channel.username or '') ~ ' ' ~ channel.channel_id)|lower }}">
+                                        <input type="checkbox" class="form-check-input mt-0">
+                                        <span>{{ channel.title or channel.channel_id }}{% if channel.username %} <small class="text-muted">@{{ channel.username }}</small>{% endif %}</span>
+                                    </label>
+                                    {% endfor %}
+                                </div>
+                                <small class="text-muted d-none" data-picker-empty>Ничего не найдено</small>
+                            </div>
+                        </div>
+
+                        {% if needs_target %}
+                        {# Target dialogs #}
+                        <div class="mb-3">
+                            <label class="form-label">Целевые диалоги</label>
+                            <div class="searchable-picker" data-picker-name="target_refs" data-picker-multi="true">
+                                <div class="picker-selected"></div>
+                                <input type="search" class="form-control form-control-sm mb-1" placeholder="Поиск диалога..." data-picker-search>
+                                <div class="btn-group btn-group-sm mb-1" data-picker-filters>
+                                    <button type="button" class="btn btn-outline-secondary active" data-filter="all">Все</button>
+                                    <button type="button" class="btn btn-outline-secondary" data-filter="channel">Каналы</button>
+                                    <button type="button" class="btn btn-outline-secondary" data-filter="group">Группы</button>
+                                    <button type="button" class="btn btn-outline-secondary" data-filter="dm">Личные</button>
+                                </div>
+                                <div class="list-group picker-list">
+                                    {% for account in accounts %}
+                                    {% set dialogs = cached_dialogs.get(account.phone, []) %}
+                                    {% for dialog in dialogs %}
+                                    {% set ref = account.phone ~ "|" ~ dialog.channel_id %}
+                                    {% set dtype = dialog.channel_type %}
+                                    {% set dgroup = "dm" if dtype == "dm" else ("channel" if dtype in ("channel", "monoforum") else "group") %}
+                                    <label class="list-group-item list-group-item-action d-flex align-items-center gap-2"
+                                           data-picker-option
+                                           data-value="{{ ref }}"
+                                           data-group="{{ dgroup }}"
+                                           data-search-text="{{ ((dialog.title or '') ~ ' ' ~ dtype ~ ' ' ~ account.phone)|lower }}">
+                                        <input type="checkbox" class="form-check-input mt-0">
+                                        <span>{{ dialog.title or dialog.channel_id }}</span>
+                                        <small class="text-muted ms-auto">{{ dtype }}</small>
+                                    </label>
+                                    {% endfor %}
+                                    {% endfor %}
+                                </div>
+                                <small class="text-muted d-none" data-picker-empty>Ничего не найдено</small>
+                            </div>
+                        </div>
+                        {% endif %}
                     </div>
                     <div class="modal-footer">
                         <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
