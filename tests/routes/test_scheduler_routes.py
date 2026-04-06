@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from src.models import CollectionTaskStatus, SearchQuery, StatsAllTaskPayload
+from src.models import Channel, CollectionTaskStatus, SearchQuery, StatsAllTaskPayload
 
 
 @pytest.fixture
@@ -455,6 +455,47 @@ async def test_scheduler_page_with_cancelled_task(client):
 
     resp = await client.get("/scheduler/")
     assert resp.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_trigger_then_get_scheduler_with_pending_tasks(client):
+    """Trigger collect-all then follow redirect to scheduler page with pending tasks.
+
+    Reproduces the 500 'No response returned' scenario where the scheduler
+    page fails to render when pending tasks exist after triggering collection.
+    """
+    db = client._transport.app.state.db
+
+    # Seed several channels so enqueue_all_channels creates tasks
+    for i in range(3):
+        await db.add_channel(Channel(
+            channel_id=-(1001000000 + i),
+            title=f"Channel {i}",
+            username=f"ch{i}",
+            channel_type="channel",
+        ))
+
+    # Trigger collection (follow redirect to GET /scheduler/?msg=...)
+    resp = await client.post("/scheduler/trigger")
+    assert resp.status_code == 200
+    assert "Планировщик" in resp.text
+
+
+@pytest.mark.asyncio
+async def test_scheduler_page_with_many_pending_tasks(client):
+    """Scheduler page renders correctly with many pending tasks."""
+    db = client._transport.app.state.db
+
+    for i in range(10):
+        await db.create_collection_task(
+            channel_id=-(1001000000 + i),
+            channel_title=f"Channel {i}",
+            channel_username=f"ch{i}",
+        )
+
+    resp = await client.get("/scheduler/")
+    assert resp.status_code == 200
+    assert "Channel 0" in resp.text
 
 
 # ── Dry-run notification tests ──────────────────────────────────────

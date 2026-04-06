@@ -290,15 +290,13 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
             )
 
         try:
-            return app.state.templates.TemplateResponse(
-                request,
-                "error.html",
-                {
-                    "status_code": 500,
-                    "detail": "An unexpected error occurred. See /debug/ for details.",
-                },
-                status_code=500,
-            )
+            tpl = app.state.templates.env.get_template("error.html")
+            body = tpl.render({
+                "request": request,
+                "status_code": 500,
+                "detail": "An unexpected error occurred. See /debug/ for details.",
+            })
+            return HTMLResponse(body, status_code=500)
         except Exception:
             return HTMLResponse("Internal Server Error", status_code=500)
 
