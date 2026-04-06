@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_macros.html" import icon %}
 {% block title %}Поиск — TG Agent{% endblock %}
 {% block content %}
 <h1>Поиск по постам</h1>
@@ -134,10 +135,10 @@
             <td class="text-nowrap text-muted" style="font-size:0.8rem">
                 {%- if msg.views is not none %}👁 {{ msg.views }}{% endif %}
                 {%- if msg.forwards is not none %} ↗ {{ msg.forwards }}{% endif %}
-                {%- if msg.reply_count is not none %} 💬 {{ msg.reply_count }}{% endif %}
+                {%- if msg.reply_count is not none %} {{ icon("comments") }} {{ msg.reply_count }}{% endif %}
                 {%- if msg.views is none and msg.forwards is none and msg.reply_count is none %}—{% endif %}
             </td>
-            <td>{% if msg.channel_username %}<a href="https://t.me/{{ msg.channel_username }}/{{ msg.message_id }}" target="_blank" rel="noopener" title="Открыть в Telegram">&#8599;</a>{% else %}<a href="https://t.me/c/{{ msg.channel_id }}/{{ msg.message_id }}" target="_blank" rel="noopener" title="Открыть в Telegram">&#8599;</a>{% endif %}</td>
+            <td>{% if msg.channel_username %}<a href="https://t.me/{{ msg.channel_username }}/{{ msg.message_id }}" target="_blank" rel="noopener" title="Открыть в Telegram">{{ icon("link") }}</a>{% else %}<a href="https://t.me/c/{{ msg.channel_id }}/{{ msg.message_id }}" target="_blank" rel="noopener" title="Открыть в Telegram">{{ icon("link") }}</a>{% endif %}</td>
         </tr>
         {% endfor %}
     </tbody>
@@ -151,7 +152,7 @@
         <div class="card-body">
             <div class="d-flex justify-content-between align-items-center mb-1">
                 <strong class="text-truncate">{{ msg.channel_title or msg.channel_username or msg.channel_id }}</strong>
-                {% if msg.channel_username %}<a href="https://t.me/{{ msg.channel_username }}/{{ msg.message_id }}" target="_blank" rel="noopener">&#8599;</a>{% else %}<a href="https://t.me/c/{{ msg.channel_id }}/{{ msg.message_id }}" target="_blank" rel="noopener">&#8599;</a>{% endif %}
+                {% if msg.channel_username %}<a href="https://t.me/{{ msg.channel_username }}/{{ msg.message_id }}" target="_blank" rel="noopener">{{ icon("link") }}</a>{% else %}<a href="https://t.me/c/{{ msg.channel_id }}/{{ msg.message_id }}" target="_blank" rel="noopener">{{ icon("link") }}</a>{% endif %}
             </div>
             <small class="text-muted">{{ msg.date|local_dt }}{% if msg.sender_name %} &middot; {{ msg.sender_name }}{% endif %}{% if msg.media_type %} &middot; {{ msg.media_type }}{% endif %}</small>
             <p class="mb-0 mt-1" style="font-size:0.85rem">
@@ -168,7 +169,7 @@
             <small class="text-muted">
                 {%- if msg.views is not none %}👁 {{ msg.views }}{% endif %}
                 {%- if msg.forwards is not none %} ↗ {{ msg.forwards }}{% endif %}
-                {%- if msg.reply_count is not none %} 💬 {{ msg.reply_count }}{% endif %}
+                {%- if msg.reply_count is not none %} {{ icon("comments") }} {{ msg.reply_count }}{% endif %}
             </small>
             {%- endif %}
         </div>

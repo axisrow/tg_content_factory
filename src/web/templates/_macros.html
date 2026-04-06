@@ -1,5 +1,7 @@
 {# Reusable Jinja macros for TG Agent templates. #}
 
+{% macro icon(name) %}{% if name == "edit" %}✏️{% elif name == "delete" %}🗑️{% elif name == "toggle_on" %}⏸️{% elif name == "toggle_off" %}▶️{% elif name == "run" %}▶️{% elif name == "generate" %}✨{% elif name == "ai" %}🤖{% elif name == "export" %}⬇️{% elif name == "view" %}👁️{% elif name == "collect" %}⬇️{% elif name == "stats" %}📊{% elif name == "restore" %}↩️{% elif name == "purge" %}🧹{% elif name == "search" %}🔍{% elif name == "notification" %}🔔{% elif name == "link" %}🔗{% elif name == "back" %}←{% elif name == "loading" %}⏳{% elif name == "success" %}✓{% elif name == "close" %}✕{% elif name == "refresh" %}🔄{% elif name == "private" %}🔒{% elif name == "warning" %}⚠️{% elif name == "filter" %}🚫{% elif name == "comments" %}💬{% elif name == "trend_up" %}⬆️{% elif name == "trend_down" %}⬇️{% elif name == "trend_flat" %}➖{% elif name == "active" %}🟢{% elif name == "save" %}💾{% elif name == "add" %}➕{% endif %}{% endmacro %}
+
 {% macro filter_flags(flags_str, margin='') %}
 {% if flags_str %}
     {% for flag in flags_str.split(',') %}
@@ -18,15 +20,15 @@
 
 {% macro channel_actions(ch, prefix='') %}
 {% if ch.message_count > 0 %}
-<a href="/search?channel_id={{ ch.channel_id }}&mode=local" class="btn btn-outline-secondary btn-sm emoji-btn" title="Смотреть сообщения">&#128196;</a>
+<a href="/search?channel_id={{ ch.channel_id }}&mode=local" class="btn btn-outline-secondary btn-sm emoji-btn" title="Смотреть сообщения">{{ icon("view") }}</a>
 {% endif %}
 {% if ch.is_filtered %}
 <form method="post" action="/channels/{{ ch.id }}/filter-toggle" class="d-inline" data-busy>
-    <button type="submit" class="btn btn-outline-secondary btn-sm emoji-btn" title="Вернуть">&#128257;</button>
+    <button type="submit" class="btn btn-outline-secondary btn-sm emoji-btn" title="Вернуть">{{ icon("restore") }}</button>
 </form>
 {% if ch.message_count > 0 %}
 <form method="post" action="/channels/{{ ch.channel_id }}/purge-messages" class="d-inline" data-busy data-confirm="Удалить {{ ch.message_count }} сообщений из этого канала?">
-    <button type="submit" class="btn btn-outline-danger btn-sm emoji-btn" title="Очистить сообщения">&#129529;</button>
+    <button type="submit" class="btn btn-outline-danger btn-sm emoji-btn" title="Очистить сообщения">{{ icon("purge") }}</button>
 </form>
 {% endif %}
 {% endif %}
@@ -37,19 +39,19 @@
           hx-swap="outerHTML"
           hx-disabled-elt="find button"
           class="d-inline">
-        <button type="submit" class="btn btn-outline-primary btn-sm emoji-btn" title="Загрузить">&#11015;&#65039;</button>
+        <button type="submit" class="btn btn-outline-primary btn-sm emoji-btn" title="Загрузить">{{ icon("collect") }}</button>
     </form>
 </span>
 <form method="post" action="/channels/{{ ch.id }}/stats" class="d-inline" data-busy>
-    <button type="submit" class="btn btn-outline-primary btn-sm emoji-btn" title="Обновить статистику">&#128202;</button>
+    <button type="submit" class="btn btn-outline-primary btn-sm emoji-btn" title="Обновить статистику">{{ icon("stats") }}</button>
 </form>
 <form method="post" action="/channels/{{ ch.id }}/toggle" class="d-inline" data-busy>
     <button type="submit" class="btn btn-outline-secondary btn-sm emoji-btn" title="{{ 'Отключить' if ch.is_active else 'Включить' }}">
-        {{ "⏏️" if ch.is_active else "▶️" }}
+        {{ icon("toggle_on") if ch.is_active else icon("toggle_off") }}
     </button>
 </form>
 <form method="post" action="/channels/{{ ch.id }}/delete" class="d-inline" data-busy data-confirm="Вы уверены, что хотите удалить этот канал?">
-    <button type="submit" class="btn btn-outline-danger btn-sm emoji-btn" title="Удалить">&#128465;&#65039;</button>
+    <button type="submit" class="btn btn-outline-danger btn-sm emoji-btn" title="Удалить">{{ icon("delete") }}</button>
 </form>
 {% endmacro %}
 
@@ -57,31 +59,31 @@
 {% macro pipeline_actions(pipeline, needs_llm=true, llm_configured=true) %}
 {% set llm_blocked = needs_llm and not llm_configured %}
 {# Edit #}
-<a href="/pipelines/{{ pipeline.id }}/edit" class="btn btn-outline-secondary btn-sm emoji-btn" title="Редактировать">&#9998;&#65039;</a>
+<a href="/pipelines/{{ pipeline.id }}/edit" class="btn btn-outline-secondary btn-sm emoji-btn" title="Редактировать">{{ icon("edit") }}</a>
 {# Generate #}
 {% if needs_llm and not llm_blocked %}
-<a href="/pipelines/{{ pipeline.id }}/generate" class="btn btn-outline-primary btn-sm emoji-btn" title="Генерация">&#9889;</a>
+<a href="/pipelines/{{ pipeline.id }}/generate" class="btn btn-outline-primary btn-sm emoji-btn" title="Генерация">{{ icon("generate") }}</a>
 {% elif needs_llm and llm_blocked %}
-<span class="btn btn-outline-primary btn-sm emoji-btn disabled" aria-disabled="true" title="Настройте LLM провайдер">&#9889;</span>
+<span class="btn btn-outline-primary btn-sm emoji-btn disabled" aria-disabled="true" title="Настройте LLM провайдер">{{ icon("generate") }}</span>
 {% endif %}
 {# Run now #}
 <form method="post" action="/pipelines/{{ pipeline.id }}/run" class="d-inline" data-busy>
-    <button type="submit" class="btn btn-outline-success btn-sm emoji-btn" title="Запустить" {% if llm_blocked %}disabled{% endif %}>&#9654;&#65039;</button>
+    <button type="submit" class="btn btn-outline-success btn-sm emoji-btn" title="Запустить" {% if llm_blocked %}disabled{% endif %}>{{ icon("run") }}</button>
 </form>
 {# Toggle active #}
 <form method="post" action="/pipelines/{{ pipeline.id }}/toggle" class="d-inline" data-busy>
     <button type="submit" class="btn btn-outline-secondary btn-sm emoji-btn" title="{{ 'Отключить' if pipeline.is_active else 'Включить' }}">
-        {{ "\u23cf\ufe0f" if pipeline.is_active else "\u25b6\ufe0f" }}
+        {{ icon("toggle_on") if pipeline.is_active else icon("toggle_off") }}
     </button>
 </form>
 {# Export JSON #}
-<a href="/pipelines/{{ pipeline.id }}/export" class="btn btn-outline-dark btn-sm emoji-btn" title="Экспорт JSON">&#128196;</a>
+<a href="/pipelines/{{ pipeline.id }}/export" class="btn btn-outline-dark btn-sm emoji-btn" title="Экспорт JSON">{{ icon("export") }}</a>
 {# AI edit (DAG pipelines with LLM) #}
 {% if pipeline.pipeline_json and llm_configured %}
-<button type="button" class="btn btn-outline-info btn-sm emoji-btn" onclick="toggleAiEdit({{ pipeline.id }})" title="AI редактирование">&#129302;</button>
+<button type="button" class="btn btn-outline-info btn-sm emoji-btn" onclick="toggleAiEdit({{ pipeline.id }})" title="AI редактирование">{{ icon("ai") }}</button>
 {% endif %}
 {# Delete #}
 <form method="post" action="/pipelines/{{ pipeline.id }}/delete" class="d-inline" data-busy data-confirm="Удалить pipeline «{{ pipeline.name }}»?">
-    <button type="submit" class="btn btn-outline-danger btn-sm emoji-btn" title="Удалить">&#128465;&#65039;</button>
+    <button type="submit" class="btn btn-outline-danger btn-sm emoji-btn" title="Удалить">{{ icon("delete") }}</button>
 </form>
 {% endmacro %}

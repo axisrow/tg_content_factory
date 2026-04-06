@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_macros.html" import icon %}
 {% block title %}Планировщик — TG Agent{% endblock %}
 {% block content %}
 <h1>Планировщик</h1>
@@ -25,7 +26,7 @@
         <div class="d-flex flex-wrap gap-2">
             {% if not is_running %}
             <form method="post" action="/scheduler/start" data-busy>
-                <button type="submit" class="btn btn-primary">&#9654; Запустить</button>
+                <button type="submit" class="btn btn-primary">{{ icon("run") }} Запустить</button>
             </form>
             {% else %}
             <form method="post" action="/scheduler/stop" data-busy>
@@ -33,7 +34,7 @@
             </form>
             {% endif %}
             <form method="post" action="/scheduler/trigger" data-busy>
-                <button type="submit" class="btn btn-outline-primary">&#9654; Собрать все каналы</button>
+                <button type="submit" class="btn btn-outline-primary">{{ icon("run") }} Собрать все каналы</button>
             </form>
             {% if pending_collect_count > 0 %}
             <form method="post" action="/scheduler/tasks/clear-pending-collect" data-busy>
@@ -95,7 +96,7 @@
                                   class="d-flex gap-1 mb-0">
                                 <input type="number" name="interval_minutes" value="{{ j.interval_minutes }}"
                                        min="1" max="1440" class="form-control form-control-sm" style="width:75px">
-                                <button type="submit" class="btn btn-sm btn-outline-secondary">✓</button>
+                                <button type="submit" class="btn btn-sm btn-outline-secondary">{{ icon("save") }}</button>
                             </form>
                         {% elif j.interval_minutes %}
                             {{ j.interval_minutes }} мин.

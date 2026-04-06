@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import filter_flags, channel_actions %}
+{% from "_macros.html" import icon, filter_flags, channel_actions %}
 {% block title %}Каналы — TG Agent{% endblock %}
 {% block content %}
 <h1>Каналы</h1>
@@ -68,10 +68,10 @@
             <td>{{ ch.title or "—" }}</td>
             <td>{% if ch.username %}<a href="https://t.me/{{ ch.username }}" target="_blank" rel="noopener">@{{ ch.username }}</a>{% else %}—{% endif %}</td>
             <td><small>{% if ch.about %}{{ ch.about[:60] }}{% if ch.about|length > 60 %}…{% endif %}{% else %}—{% endif %}</small></td>
-            <td>{% if ch.channel_type == "channel" %}{% if not ch.username %}Канал <span title="Приватный">&#128274;</span>{% else %}Канал{% endif %}{% elif ch.channel_type == "supergroup" %}{% if not ch.username %}Супергруппа <span title="Приватная">&#128274;</span>{% else %}Супергруппа{% endif %}{% elif ch.channel_type == "gigagroup" %}{% if not ch.username %}Гигагруппа <span title="Приватная">&#128274;</span>{% else %}Гигагруппа{% endif %}{% elif ch.channel_type == "group" %}{% if not ch.username %}Группа <span title="Приватная">&#128274;</span>{% else %}Группа{% endif %}{% elif ch.channel_type == "forum" %}{% if not ch.username %}Форум <span title="Приватный">&#128274;</span>{% else %}Форум{% endif %}{% elif ch.channel_type == "monoforum" %}Монофорум{% elif ch.channel_type == "restricted" %}<span class="text-danger">Ограничен</span>{% elif ch.channel_type == "scam" %}<span class="text-danger">Скам &#9888;&#65039;</span>{% elif ch.channel_type == "fake" %}<span class="text-danger">Фейк &#9888;&#65039;</span>{% elif ch.channel_type == "unavailable" %}<span class="text-muted">Недоступен</span>{% else %}<span class="text-muted">Непроверен</span>{% endif %}{% if ch.has_comments %} <span title="Есть комментарии">💬</span>{% endif %}</td>
+            <td>{% if ch.channel_type == "channel" %}{% if not ch.username %}Канал <span title="Приватный">{{ icon("private") }}</span>{% else %}Канал{% endif %}{% elif ch.channel_type == "supergroup" %}{% if not ch.username %}Супергруппа <span title="Приватная">{{ icon("private") }}</span>{% else %}Супергруппа{% endif %}{% elif ch.channel_type == "gigagroup" %}{% if not ch.username %}Гигагруппа <span title="Приватная">{{ icon("private") }}</span>{% else %}Гигагруппа{% endif %}{% elif ch.channel_type == "group" %}{% if not ch.username %}Группа <span title="Приватная">{{ icon("private") }}</span>{% else %}Группа{% endif %}{% elif ch.channel_type == "forum" %}{% if not ch.username %}Форум <span title="Приватный">{{ icon("private") }}</span>{% else %}Форум{% endif %}{% elif ch.channel_type == "monoforum" %}Монофорум{% elif ch.channel_type == "restricted" %}<span class="text-danger">Ограничен</span>{% elif ch.channel_type == "scam" %}<span class="text-danger">Скам {{ icon("warning") }}</span>{% elif ch.channel_type == "fake" %}<span class="text-danger">Фейк {{ icon("warning") }}</span>{% elif ch.channel_type == "unavailable" %}<span class="text-muted">Недоступен</span>{% else %}<span class="text-muted">Непроверен</span>{% endif %}{% if ch.has_comments %} <span title="Есть комментарии">{{ icon("comments") }}</span>{% endif %}</td>
             <td>
               {% if ch.is_filtered %}<span class="badge-filtered" title="Отфильтрован">&#9679;</span>
-              {% elif ch.is_active %}<span class="badge-active">&#9679;</span>
+              {% elif ch.is_active %}<span class="badge-active">{{ icon("active") }}</span>
               {% else %}<span class="badge-inactive">&#9679;</span>{% endif %}
             </td>
             <td>{{ ch.message_count }}</td>
@@ -82,11 +82,11 @@
                     {{ sub }}
                     {%- if prev_sub is not none -%}
                         {%- if sub > prev_sub -%}
-                            <span class="text-success ms-1" title="Рост: +{{ sub - prev_sub }}">&#9650;</span>
+                            <span class="text-success ms-1" title="Рост: +{{ sub - prev_sub }}">{{ icon("trend_up") }}</span>
                         {%- elif sub < prev_sub -%}
-                            <span class="text-danger ms-1" title="Падение: {{ sub - prev_sub }}">&#9660;</span>
+                            <span class="text-danger ms-1" title="Падение: {{ sub - prev_sub }}">{{ icon("trend_down") }}</span>
                         {%- else -%}
-                            <span class="text-muted ms-1" title="Без изменений">&#9644;</span>
+                            <span class="text-muted ms-1" title="Без изменений">{{ icon("trend_flat") }}</span>
                         {%- endif -%}
                     {%- endif -%}
                 {%- else -%}—{%- endif -%}
@@ -120,10 +120,10 @@
                 <div class="min-w-0 flex-fill">
                     <div class="d-flex align-items-center gap-1 mb-1">
                         {% if ch.is_filtered %}<span class="badge-filtered">&#9679;</span>
-                        {% elif ch.is_active %}<span class="badge-active">&#9679;</span>
+                        {% elif ch.is_active %}<span class="badge-active">{{ icon("active") }}</span>
                         {% else %}<span class="badge-inactive">&#9679;</span>{% endif %}
                         <strong class="text-truncate">{{ ch.title or "—" }}</strong>
-                        {% if ch.has_comments %}<span title="Есть комментарии">💬</span>{% endif %}
+                        {% if ch.has_comments %}<span title="Есть комментарии">{{ icon("comments") }}</span>{% endif %}
                     </div>
                     {% if ch.about %}<small class="d-block text-muted mb-1" title="{{ ch.about }}">{{ ch.about[:60] }}{% if ch.about|length > 60 %}…{% endif %}</small>{% endif %}
                     <small class="text-muted">
@@ -134,13 +134,13 @@
                                 &middot; {{ st.subscriber_count }}
                                 {%- set prev_sub = prev_subscriber_counts.get(ch.channel_id) if prev_subscriber_counts else none -%}
                                 {%- if prev_sub is not none -%}
-                                    {%- if st.subscriber_count > prev_sub %}<span class="text-success" title="Рост">&#9650;</span>
-                                    {%- elif st.subscriber_count < prev_sub %}<span class="text-danger" title="Падение">&#9660;</span>
-                                    {%- else %}<span class="text-muted">&#9644;</span>
+                                    {%- if st.subscriber_count > prev_sub %}<span class="text-success" title="Рост">{{ icon("trend_up") }}</span>
+                                    {%- elif st.subscriber_count < prev_sub %}<span class="text-danger" title="Падение">{{ icon("trend_down") }}</span>
+                                    {%- else %}<span class="text-muted">{{ icon("trend_flat") }}</span>
                                     {%- endif -%}
                                 {%- endif %} подп.
                             {%- endif -%}
-                            {%- if st.avg_views is not none %} &middot; 👁 {{ "%.0f"|format(st.avg_views) }}{%- endif -%}
+                            {%- if st.avg_views is not none %} &middot; {{ icon("view") }} {{ "%.0f"|format(st.avg_views) }}{%- endif -%}
                             {%- if st.avg_reactions is not none %} &middot; ❤️ {{ "%.0f"|format(st.avg_reactions) }}{%- endif -%}
                             {%- if st.avg_forwards is not none %} &middot; ↪ {{ "%.0f"|format(st.avg_forwards) }}{%- endif -%}
                         {%- endif -%}
