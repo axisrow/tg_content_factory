@@ -454,10 +454,9 @@ async def test_unpin_message_missing_fields(client):
 
 @pytest.mark.asyncio
 async def test_participants_missing_params(client):
-    """Test participants with missing params returns error or empty."""
+    """Test participants with missing params returns 400."""
     resp = await client.get("/dialogs/participants")
-    # May return 400 or redirect
-    assert resp.status_code in (200, 303, 400, 422)
+    assert resp.status_code == 400
 
 
 @pytest.mark.asyncio

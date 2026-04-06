@@ -1022,6 +1022,13 @@ class Collector:
                 )
                 await self._db.save_channel_stats(stats)
 
+                # Backfill channel creation date from entity if missing
+                entity_created = getattr(entity, "date", None)
+                if entity_created is not None:
+                    await self._db.repos.channels.update_channel_created_at(
+                        channel.channel_id, entity_created
+                    )
+
                 # Update channel_type if missing
                 if channel.channel_type is None:
                     channel_type, _deactivate = self._pool._classify_entity(entity)
