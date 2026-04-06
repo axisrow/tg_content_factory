@@ -599,6 +599,14 @@ class Collector:
                             )
                         elif reply_to:
                             pass
+                        # Extract forward source channel for cross-channel citation tracking
+                        fwd_from_channel_id = None
+                        fwd_from = getattr(msg, "fwd_from", None)
+                        if fwd_from and getattr(fwd_from, "from_id", None):
+                            from_id = fwd_from.from_id
+                            if hasattr(from_id, "channel_id"):
+                                fwd_from_channel_id = -from_id.channel_id
+
                         message = Message(
                             channel_id=channel_id,
                             message_id=msg.id,
@@ -617,6 +625,7 @@ class Collector:
                                 if msg.date and msg.date.tzinfo is None
                                 else msg.date
                             ),
+                            forward_from_channel_id=fwd_from_channel_id,
                         )
                         messages_batch.append(message)
 

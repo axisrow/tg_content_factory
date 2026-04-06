@@ -1,9 +1,13 @@
 {% extends "base.html" %}
 {% block title %}Тренды — TG Agent{% endblock %}
 {% block content %}
-<div class="d-flex align-items-center gap-3 mb-3">
-    <h1 class="mb-0">Тренды</h1>
-    <a href="/analytics" class="btn btn-outline-secondary btn-sm">← Аналитика</a>
+<h1 class="h3 mb-3">Тренды</h1>
+
+<div class="btn-group btn-group-sm mb-3" role="group">
+  <a href="/analytics" class="btn btn-outline-secondary">Сообщения</a>
+  <a href="/analytics/channels" class="btn btn-outline-secondary">Каналы</a>
+  <a href="/analytics/trends" class="btn btn-outline-secondary active">Тренды</a>
+  <a href="/analytics/content" class="btn btn-outline-secondary">Контент</a>
 </div>
 
 <div class="mb-3">

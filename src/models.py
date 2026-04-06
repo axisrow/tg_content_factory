@@ -66,6 +66,7 @@ class Message(BaseModel):
     detected_lang: str | None = None
     translation_en: str | None = None
     translation_custom: str | None = None
+    forward_from_channel_id: int | None = None
     channel_title: str | None = None
     channel_username: str | None = None
 
