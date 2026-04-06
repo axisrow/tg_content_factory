@@ -343,9 +343,9 @@ async def test_get_provider_status_list_invalid_secrets(mock_db, mock_config):
 async def test_get_provider_status_list_no_adapter(mock_db, mock_config):
     """get_provider_status_list returns no_adapter for unsupported providers."""
     mock_cfg = MagicMock()
-    mock_cfg.provider = "anthropic"
+    mock_cfg.provider = "google_genai"
     mock_cfg.enabled = True
-    mock_cfg.secret_fields = {"api_key": "sk-ant-test"}
+    mock_cfg.secret_fields = {"api_key": "test-key"}
     mock_cfg.plain_fields = {}
     mock_cfg.last_validation_error = ""
 
@@ -361,7 +361,7 @@ async def test_get_provider_status_list_no_adapter(mock_db, mock_config):
 
     assert len(statuses) == 1
     assert statuses[0]["status"] == "no_adapter"
-    assert "anthropic" in statuses[0]["reason"]
+    assert "google_genai" in statuses[0]["reason"]
 
 
 @pytest.mark.asyncio

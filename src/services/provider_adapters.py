@@ -188,6 +188,48 @@ def make_huggingface_adapter(
     return provider
 
 
+def make_anthropic_adapter(
+    api_key: str, base_url: Optional[str] = None
+) -> Callable[..., Awaitable[str]]:
+    """Anthropic Messages API adapter (works with Z.AI and other compatible endpoints)."""
+    base = (base_url or "https://api.anthropic.com/v1").rstrip("/")
+    endpoint = f"{base}/messages"
+
+    async def provider(
+        prompt: str = "",
+        model: Optional[str] = None,
+        max_tokens: int = 256,
+        temperature: float = 0.0,
+        stream: bool = False,
+        **kwargs: Any,
+    ) -> str:
+        headers = {
+            "Content-Type": "application/json",
+            "x-api-key": api_key,
+            "anthropic-version": "2023-06-01",
+        }
+        payload = {
+            "model": model or "claude-sonnet-4-6",
+            "max_tokens": int(max_tokens or 256),
+            "messages": [{"role": "user", "content": prompt}],
+        }
+        if temperature is not None:
+            payload["temperature"] = float(temperature)
+        timeout = aiohttp.ClientTimeout(total=60)
+        async with aiohttp.ClientSession() as session:
+            async with session.post(endpoint, json=payload, headers=headers, timeout=timeout) as resp:
+                text = await resp.text()
+                if resp.status != 200:
+                    raise RuntimeError(f"Anthropic error {resp.status}: {text}")
+                data = await resp.json()
+                try:
+                    return data["content"][0]["text"]
+                except Exception:
+                    return str(data)
+
+    return provider
+
+
 def make_generic_http_adapter(
     base_url: str, api_key: Optional[str] = None, api_key_header: str = "Authorization"
 ) -> Callable[..., Awaitable[str]]:

@@ -211,6 +211,7 @@ class AgentProviderService:
     def _build_adapter_for_config(self, cfg: Any) -> Callable[..., Awaitable[str]] | None:
         """Map a ProviderRuntimeConfig to a provider adapter callable."""
         from src.services.provider_adapters import (
+            make_anthropic_adapter,
             make_cohere_adapter,
             make_huggingface_adapter,
             make_ollama_adapter,
@@ -239,10 +240,14 @@ class AgentProviderService:
             return make_huggingface_adapter(api_key, base_url=base_url or None)
 
         if provider == "anthropic":
-            # Anthropic requires a different request schema (messages API)
-            # than what make_generic_http_adapter provides (prompt-based).
-            logger.debug("Skipping db provider %s: incompatible request schema", provider)
-            return None
+            base_url = (cfg.plain_fields.get("base_url", "") or "").strip()
+            return make_anthropic_adapter(api_key, base_url=base_url or None)
+
+        if provider == "zai":
+            from src.agent.provider_registry import ZAI_DEFAULT_BASE_URL
+
+            base_url = (cfg.plain_fields.get("base_url", "") or "").strip()
+            return make_anthropic_adapter(api_key, base_url=base_url or ZAI_DEFAULT_BASE_URL)
 
         if provider == "google_genai":
             # Google GenAI also needs a different request schema.
