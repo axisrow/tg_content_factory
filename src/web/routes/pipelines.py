@@ -251,6 +251,43 @@ async def run_pipeline(request: Request, pipeline_id: int):
     return _pipeline_redirect("pipeline_run_enqueued")
 
 
+@router.get("/{pipeline_id}/edit", response_class=HTMLResponse)
+async def edit_page(request: Request, pipeline_id: int):
+    svc = deps.pipeline_service(request)
+    pipeline = await svc.get(pipeline_id)
+    if pipeline is None:
+        return _pipeline_redirect("pipeline_invalid", error=True)
+    db = deps.get_db(request)
+    channels = await deps.get_channel_bundle(request).list_channels(include_filtered=True)
+    accounts = await deps.get_account_bundle(request).list_accounts()
+    selected_phone = request.query_params.get("phone") or (accounts[0].phone if accounts else "")
+    if selected_phone and request.query_params.get("refresh") == "1":
+        try:
+            await deps.channel_service(request).get_my_dialogs(selected_phone, refresh=True)
+        except Exception:
+            logger.warning("Failed to refresh dialog cache for %s", selected_phone, exc_info=True)
+    cached_dialogs = await svc.list_cached_dialogs_by_phone()
+    sources = await db.repos.content_pipelines.list_sources(pipeline_id)
+    targets = await db.repos.content_pipelines.list_targets(pipeline_id)
+    source_ids = [s.channel_id for s in sources]
+    target_refs = [f"{t.phone}|{t.dialog_id}" for t in targets]
+    return deps.get_templates(request).TemplateResponse(
+        request,
+        "pipelines/edit.html",
+        {
+            "pipeline": pipeline,
+            "channels": channels,
+            "accounts": accounts,
+            "cached_dialogs": cached_dialogs,
+            "source_ids": source_ids,
+            "target_refs": target_refs,
+            "prompt_variables": sorted(ALLOWED_TEMPLATE_VARIABLES),
+            "generation_backends": list(PipelineGenerationBackend),
+            "publish_modes": list(PipelinePublishMode),
+        },
+    )
+
+
 @router.get("/{pipeline_id}/generate", response_class=HTMLResponse)
 async def generate_page(request: Request, pipeline_id: int):
     svc = deps.pipeline_service(request)
@@ -432,10 +469,20 @@ async def get_refinement_steps(request: Request, pipeline_id: int):
 async def templates_page(request: Request):
     svc: PipelineService = deps.pipeline_service(request)
     templates = await svc.list_templates()
+    channels = await deps.get_channel_bundle(request).list_channels(include_filtered=True)
+    accounts = await deps.get_account_bundle(request).list_accounts()
+    cached_dialogs = await svc.list_cached_dialogs_by_phone()
+    llm_configured = deps.get_llm_provider_service(request).has_providers()
     return deps.get_templates(request).TemplateResponse(
         request,
         "pipelines/templates.html",
-        {"templates": templates},
+        {
+            "templates": templates,
+            "channels": channels,
+            "accounts": accounts,
+            "cached_dialogs": cached_dialogs,
+            "llm_configured": llm_configured,
+        },
     )
 
 
@@ -487,7 +534,7 @@ async def create_from_template(
         await scheduler.sync_pipeline_jobs()
     except Exception:
         logger.warning("Scheduler sync failed", exc_info=True)
-    return RedirectResponse(url=f"/pipelines/{pipeline_id}/generate", status_code=303)
+    return RedirectResponse(url=f"/pipelines/{pipeline_id}/edit", status_code=303)
 
 
 # ------------------------------------------------------------------

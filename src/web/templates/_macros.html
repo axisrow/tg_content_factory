@@ -52,3 +52,36 @@
     <button type="submit" class="btn btn-outline-danger btn-sm emoji-btn" title="Удалить">&#128465;&#65039;</button>
 </form>
 {% endmacro %}
+
+
+{% macro pipeline_actions(pipeline, needs_llm=true, llm_configured=true) %}
+{% set llm_blocked = needs_llm and not llm_configured %}
+{# Edit #}
+<a href="/pipelines/{{ pipeline.id }}/edit" class="btn btn-outline-secondary btn-sm emoji-btn" title="Редактировать">&#9998;&#65039;</a>
+{# Generate #}
+{% if needs_llm and not llm_blocked %}
+<a href="/pipelines/{{ pipeline.id }}/generate" class="btn btn-outline-primary btn-sm emoji-btn" title="Генерация">&#9889;</a>
+{% elif needs_llm and llm_blocked %}
+<span class="btn btn-outline-primary btn-sm emoji-btn disabled" aria-disabled="true" title="Настройте LLM провайдер">&#9889;</span>
+{% endif %}
+{# Run now #}
+<form method="post" action="/pipelines/{{ pipeline.id }}/run" class="d-inline" data-busy>
+    <button type="submit" class="btn btn-outline-success btn-sm emoji-btn" title="Запустить" {% if llm_blocked %}disabled{% endif %}>&#9654;&#65039;</button>
+</form>
+{# Toggle active #}
+<form method="post" action="/pipelines/{{ pipeline.id }}/toggle" class="d-inline" data-busy>
+    <button type="submit" class="btn btn-outline-secondary btn-sm emoji-btn" title="{{ 'Отключить' if pipeline.is_active else 'Включить' }}">
+        {{ "\u23cf\ufe0f" if pipeline.is_active else "\u25b6\ufe0f" }}
+    </button>
+</form>
+{# Export JSON #}
+<a href="/pipelines/{{ pipeline.id }}/export" class="btn btn-outline-dark btn-sm emoji-btn" title="Экспорт JSON">&#128196;</a>
+{# AI edit (DAG pipelines with LLM) #}
+{% if pipeline.pipeline_json and llm_configured %}
+<button type="button" class="btn btn-outline-info btn-sm emoji-btn" onclick="toggleAiEdit({{ pipeline.id }})" title="AI редактирование">&#129302;</button>
+{% endif %}
+{# Delete #}
+<form method="post" action="/pipelines/{{ pipeline.id }}/delete" class="d-inline" data-busy data-confirm="Удалить pipeline «{{ pipeline.name }}»?">
+    <button type="submit" class="btn btn-outline-danger btn-sm emoji-btn" title="Удалить">&#128465;&#65039;</button>
+</form>
+{% endmacro %}
