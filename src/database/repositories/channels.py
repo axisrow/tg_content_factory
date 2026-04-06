@@ -200,6 +200,15 @@ class ChannelsRepository:
         )
         await self._db.commit()
 
+    async def update_channel_created_at(self, channel_id: int, created_at) -> None:
+        """Set created_at only if currently NULL (backfill from entity.date)."""
+        iso = created_at.isoformat() if hasattr(created_at, "isoformat") else created_at
+        await self._db.execute(
+            "UPDATE channels SET created_at = ? WHERE channel_id = ? AND created_at IS NULL",
+            (iso, channel_id),
+        )
+        await self._db.commit()
+
     async def get_forum_topics(self, channel_id: int) -> list[dict]:
         cur = await self._db.execute(
             "SELECT topic_id, title FROM forum_topics WHERE channel_id = ? ORDER BY topic_id",

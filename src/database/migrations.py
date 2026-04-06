@@ -743,11 +743,16 @@ async def run_migrations(db: aiosqlite.Connection) -> bool:
 
     # Fix forward_from_channel_id normalization (issue #381)
     # Old code stored -PeerChannel.channel_id; correct value is positive channel_id.
-    await db.execute(
-        "UPDATE messages SET forward_from_channel_id = ABS(forward_from_channel_id) "
-        "WHERE forward_from_channel_id < 0"
-    )
-    await db.commit()
+    cur = await db.execute("SELECT value FROM settings WHERE key = '_migration_fwd_abs_v1' LIMIT 1")
+    if not await cur.fetchone():
+        await db.execute(
+            "UPDATE messages SET forward_from_channel_id = ABS(forward_from_channel_id) "
+            "WHERE forward_from_channel_id < 0"
+        )
+        await db.execute(
+            "INSERT OR IGNORE INTO settings (key, value) VALUES ('_migration_fwd_abs_v1', '1')"
+        )
+        await db.commit()
 
     return fts_available
 
