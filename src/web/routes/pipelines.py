@@ -46,6 +46,31 @@ def _target_refs(values: list[str]) -> list[PipelineTargetRef]:
     return refs
 
 
+@router.get("/api/channels/search", response_class=JSONResponse)
+async def api_channels_search(request: Request, q: str = ""):
+    """AJAX endpoint for searchable picker — returns up to 50 channels matching *q*."""
+    query = q.strip()
+    if len(query) < 2:
+        return []
+    db = deps.get_db(request)
+    cur = await db.execute(
+        """SELECT channel_id, title, username FROM channels
+           WHERE (LOWER(title) LIKE ? OR LOWER(username) LIKE ? OR CAST(channel_id AS TEXT) LIKE ?)
+           ORDER BY channel_id LIMIT 50""",
+        (f"%{query.lower()}%", f"%{query.lower()}%", f"%{query}%"),
+    )
+    rows = await cur.fetchall()
+    return [
+        {
+            "value": row["channel_id"],
+            "title": row["title"] or str(row["channel_id"]),
+            "username": row["username"] or "",
+            "group": "channel",
+        }
+        for row in rows
+    ]
+
+
 async def _page_context(request: Request) -> dict:
     svc = deps.pipeline_service(request)
     channels = await deps.get_channel_bundle(request).list_channels(include_filtered=True)
