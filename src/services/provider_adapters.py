@@ -209,11 +209,11 @@ def make_anthropic_adapter(
             "anthropic-version": "2023-06-01",
         }
         payload = {
-            "model": model or "claude-sonnet-4-20250514",
+            "model": model or "claude-sonnet-4-6",
             "max_tokens": int(max_tokens or 256),
             "messages": [{"role": "user", "content": prompt}],
         }
-        if temperature:
+        if temperature is not None:
             payload["temperature"] = float(temperature)
         timeout = aiohttp.ClientTimeout(total=60)
         async with aiohttp.ClientSession() as session:
