@@ -377,7 +377,7 @@ async def test_send_message_no_client(client):
 
     resp = await client.post(
         "/dialogs/send",
-        data={"phone": "+1234567890", "dialog_id": "-100111", "message": "hi"},
+        data={"phone": "+1234567890", "recipient": "-100111", "text": "hi"},
         follow_redirects=False,
     )
     assert resp.status_code == 303
@@ -389,11 +389,11 @@ async def test_send_message_success(client):
     native_mock = AsyncMock()
     native_mock.send_message = AsyncMock(return_value=SimpleNamespace(id=42))
     pool = client._transport.app.state.pool
-    pool.get_native_client_by_phone = AsyncMock(return_value=native_mock)
+    pool.get_native_client_by_phone = AsyncMock(return_value=(native_mock, "+1234567890"))
 
     resp = await client.post(
         "/dialogs/send",
-        data={"phone": "+1234567890", "dialog_id": "-100111", "message": "hello"},
+        data={"phone": "+1234567890", "recipient": "-100111", "text": "hello"},
         follow_redirects=False,
     )
     assert resp.status_code == 303
@@ -418,7 +418,7 @@ async def test_delete_message_invalid_ids(client):
     """Test delete-message with non-numeric message_ids."""
     resp = await client.post(
         "/dialogs/delete-message",
-        data={"phone": "+1234567890", "dialog_id": "-100111", "message_ids": "abc"},
+        data={"phone": "+1234567890", "chat_id": "-100111", "message_ids": "abc"},
         follow_redirects=False,
     )
     assert resp.status_code == 303
