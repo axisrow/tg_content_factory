@@ -1,9 +1,10 @@
 {% extends "base.html" %}
+{% from "_macros.html" import icon %}
 {% block title %}Редактировать — {{ pipeline.name }}{% endblock %}
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-3">
     <h1 class="mb-0">Редактировать: {{ pipeline.name }}</h1>
-    <a class="btn btn-secondary btn-sm" href="/pipelines">&#8592; Назад</a>
+    <a class="btn btn-secondary btn-sm" href="/pipelines">{{ icon("back") }} Назад</a>
 </div>
 
 <form method="post" action="/pipelines/{{ pipeline.id }}/edit" data-busy>

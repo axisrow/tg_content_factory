@@ -1,9 +1,10 @@
 {% extends "base.html" %}
+{% from "_macros.html" import icon %}
 {% block title %}Шаблоны пайплайнов — TG Agent{% endblock %}
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-3">
     <h1 class="mb-0">Шаблоны пайплайнов</h1>
-    <a class="btn btn-secondary btn-sm" href="/pipelines">&#8592; Назад к пайплайнам</a>
+    <a class="btn btn-secondary btn-sm" href="/pipelines">{{ icon("back") }} Назад к пайплайнам</a>
 </div>
 
 <p class="text-muted">Выберите шаблон для создания нового пайплайна. Шаблоны содержат готовые наборы нод — вы можете настроить их после создания с помощью AI-редактора.</p>

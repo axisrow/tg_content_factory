@@ -2489,7 +2489,7 @@ async def test_search_results_have_tg_links(client):
     resp = await client.get("/search?q=Hello&mode=local")
     assert resp.status_code == 200
     assert "t.me/testchan/42" in resp.text
-    assert "&#8599;" in resp.text
+    assert "🔗" in resp.text
 
 
 @pytest.mark.asyncio

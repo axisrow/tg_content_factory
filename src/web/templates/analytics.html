@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_macros.html" import icon %}
 {% block title %}Аналитика — TG Agent{% endblock %}
 {% block content %}
 {% macro msg_text(text, max_len=100) %}{{ (text or '')[:max_len] }}{{ '…' if text and text|length > max_len else '' }}{% endmacro %}
@@ -62,9 +63,9 @@
                 <td><strong>{{ msg.total_reactions }}</strong></td>
                 <td>
                     {% if msg.channel_username %}
-                    <a href="https://t.me/{{ msg.channel_username }}/{{ msg.message_id }}" target="_blank" rel="noopener">&#8599;</a>
+                    <a href="https://t.me/{{ msg.channel_username }}/{{ msg.message_id }}" target="_blank" rel="noopener">{{ icon("link") }}</a>
                     {% else %}
-                    <a href="https://t.me/c/{{ (msg.channel_id | abs) - 1000000000000 }}/{{ msg.message_id }}" target="_blank" rel="noopener">&#8599;</a>
+                    <a href="https://t.me/c/{{ (msg.channel_id | abs) - 1000000000000 }}/{{ msg.message_id }}" target="_blank" rel="noopener">{{ icon("link") }}</a>
                     {% endif %}
                 </td>
             </tr>
@@ -84,9 +85,9 @@
                 <small class="text-muted">{{ msg.date|local_dt }} &middot; {{ msg.media_type or 'text' }}</small>
                 <p class="mb-1 mt-1" style="font-size:0.85rem">{{ msg_text(msg.text) }}</p>
                 {% if msg.channel_username %}
-                <a href="https://t.me/{{ msg.channel_username }}/{{ msg.message_id }}" target="_blank" rel="noopener" class="btn btn-sm btn-outline-secondary">Открыть &#8599;</a>
+                <a href="https://t.me/{{ msg.channel_username }}/{{ msg.message_id }}" target="_blank" rel="noopener" class="btn btn-sm btn-outline-secondary">Открыть {{ icon("link") }}</a>
                 {% else %}
-                <a href="https://t.me/c/{{ (msg.channel_id | abs) - 1000000000000 }}/{{ msg.message_id }}" target="_blank" rel="noopener" class="btn btn-sm btn-outline-secondary">Открыть &#8599;</a>
+                <a href="https://t.me/c/{{ (msg.channel_id | abs) - 1000000000000 }}/{{ msg.message_id }}" target="_blank" rel="noopener" class="btn btn-sm btn-outline-secondary">Открыть {{ icon("link") }}</a>
                 {% endif %}
             </div>
         </div>

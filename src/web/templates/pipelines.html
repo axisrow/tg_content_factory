@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import pipeline_actions %}
+{% from "_macros.html" import icon, pipeline_actions %}
 {% block title %}Пайплайны — TG Agent{% endblock %}
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-3">
@@ -278,7 +278,7 @@
             <div class="d-flex justify-content-between align-items-start">
                 <div class="min-w-0 flex-fill">
                     <div class="d-flex align-items-center gap-1 mb-1">
-                        {% if pipeline.is_active %}<span class="badge-active">&#9679;</span>
+                        {% if pipeline.is_active %}<span class="badge-active">{{ icon("active") }}</span>
                         {% else %}<span class="badge-inactive">&#9679;</span>{% endif %}
                         <strong class="text-truncate">{{ pipeline.name }}</strong>
                     </div>
