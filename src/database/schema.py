@@ -40,6 +40,7 @@ CREATE TABLE IF NOT EXISTS messages (
     reply_count INTEGER,
     date TEXT NOT NULL,
     collected_at TEXT DEFAULT (datetime('now')),
+    forward_from_channel_id INTEGER,
     UNIQUE(channel_id, message_id)
 );
 

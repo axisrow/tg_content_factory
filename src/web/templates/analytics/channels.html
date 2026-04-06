@@ -1,0 +1,414 @@
+{% extends "base.html" %}
+{% block title %}Статистика каналов — TG Agent{% endblock %}
+{% block head_scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+{% endblock %}
+{% block content %}
+<h1 class="h3 mb-3">Статистика каналов</h1>
+
+{% macro analytics_tabs(active) %}
+<div class="btn-group btn-group-sm mb-3" role="group">
+  <a href="/analytics" class="btn btn-outline-secondary{% if active == 'messages' %} active{% endif %}">Сообщения</a>
+  <a href="/analytics/channels" class="btn btn-outline-secondary{% if active == 'channels' %} active{% endif %}">Каналы</a>
+  <a href="/analytics/trends" class="btn btn-outline-secondary{% if active == 'trends' %} active{% endif %}">Тренды</a>
+  <a href="/analytics/content" class="btn btn-outline-secondary{% if active == 'content' %} active{% endif %}">Контент</a>
+</div>
+{% endmacro %}
+{{ analytics_tabs('channels') }}
+
+<div class="row g-3 mb-3">
+  <div class="col-md-5">
+    <select id="channel-select" class="form-select">
+      <option value="">— выберите канал —</option>
+      {% for ch in channels %}
+      <option value="{{ ch.channel_id }}" {% if ch.channel_id == selected_channel_id %}selected{% endif %}>
+        {{ ch.title or ch.username or ch.channel_id }}
+      </option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="col-md-3">
+    <div class="btn-group btn-group-sm" role="group" id="period-btns">
+      <button class="btn btn-outline-secondary{% if days == 7 %} active{% endif %}" data-days="7">7д</button>
+      <button class="btn btn-outline-secondary{% if days == 14 %} active{% endif %}" data-days="14">14д</button>
+      <button class="btn btn-outline-secondary{% if days == 30 %} active{% endif %}" data-days="30">30д</button>
+      <button class="btn btn-outline-secondary{% if days == 90 %} active{% endif %}" data-days="90">90д</button>
+    </div>
+  </div>
+</div>
+
+<div id="channel-data" style="display:none">
+  <div class="row g-3 mb-4">
+    <div class="col-6 col-md-3">
+      <div class="card text-center h-100">
+        <div class="card-body">
+          <div class="text-muted small">Подписчики</div>
+          <h4 id="ov-subs">—</h4>
+          <small id="ov-subs-delta" class="text-muted"></small>
+        </div>
+      </div>
+    </div>
+    <div class="col-6 col-md-3">
+      <div class="card text-center h-100">
+        <div class="card-body">
+          <div class="text-muted small">ERR / ERR24</div>
+          <h4 id="ov-err">—</h4>
+          <small class="text-muted">Engagement Rate</small>
+        </div>
+      </div>
+    </div>
+    <div class="col-6 col-md-3">
+      <div class="card text-center h-100">
+        <div class="card-body">
+          <div class="text-muted small">Посты</div>
+          <h4 id="ov-posts">—</h4>
+          <small id="ov-posts-detail" class="text-muted"></small>
+        </div>
+      </div>
+    </div>
+    <div class="col-6 col-md-3">
+      <div class="card text-center h-100">
+        <div class="card-body">
+          <div class="text-muted small">Ср. просмотры</div>
+          <h4 id="ov-views">—</h4>
+          <small id="ov-views-detail" class="text-muted"></small>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="row g-4 mb-4">
+    <div class="col-12 col-lg-6">
+      <div class="card">
+        <div class="card-header fw-semibold">Подписчики</div>
+        <div class="card-body"><canvas id="chart-subs"></canvas></div>
+      </div>
+    </div>
+    <div class="col-12 col-lg-6">
+      <div class="card">
+        <div class="card-header fw-semibold">Просмотры (средние)</div>
+        <div class="card-body"><canvas id="chart-views"></canvas></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="row g-4 mb-4">
+    <div class="col-12 col-lg-6">
+      <div class="card">
+        <div class="card-header fw-semibold">Частота постов</div>
+        <div class="card-body"><canvas id="chart-freq"></canvas></div>
+      </div>
+    </div>
+    <div class="col-12 col-lg-6">
+      <div class="card">
+        <div class="card-header fw-semibold">Активность по часам (UTC)</div>
+        <div class="card-body"><canvas id="chart-hourly"></canvas></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="row g-4 mb-4">
+    <div class="col-12 col-md-6">
+      <div class="card">
+        <div class="card-header fw-semibold">Цитируемость (форварды)</div>
+        <div class="card-body">
+          <div class="row text-center">
+            <div class="col-4">
+              <div class="text-muted small">Всего</div>
+              <h5 id="cit-total">—</h5>
+            </div>
+            <div class="col-4">
+              <div class="text-muted small">Постов</div>
+              <h5 id="cit-posts">—</h5>
+            </div>
+            <div class="col-4">
+              <div class="text-muted small">Ср. / пост</div>
+              <h5 id="cit-avg">—</h5>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="col-12 col-md-6">
+      <div class="card">
+        <div class="card-header fw-semibold">Кросс-канальные цитирования</div>
+        <div class="card-body" style="max-height:260px;overflow-y:auto">
+          <table class="table table-sm table-hover mb-0" id="cross-cite-table">
+            <thead><tr><th>Источник</th><th>Цитат</th><th>Последняя</th></tr></thead>
+            <tbody></tbody>
+          </table>
+          <div id="cross-cite-empty" class="text-muted small text-center py-2">Нет данных</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="row g-4 mb-4">
+    <div class="col-12">
+      <div class="card">
+        <div class="card-header fw-semibold">Тепловая карта: час × день недели (UTC)</div>
+        <div class="card-body" style="overflow-x:auto"><canvas id="chart-heatmap" height="260"></canvas></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="no-channel" class="text-muted py-5 text-center">
+  Выберите канал для отображения статистики.
+</div>
+
+<script>
+(function() {
+  var channelId = {{ selected_channel_id | default(0) }};
+  var days = {{ days | default(30) }};
+  var baseUrl = '/analytics/channels/api';
+
+  var charts = {};
+  var defaultOptions = {
+    responsive: true,
+    maintainAspectRatio: true,
+    plugins: { legend: { display: false } },
+    scales: { x: { grid: { display: false } }, y: { beginAtZero: true } }
+  };
+
+  function destroyCharts() {
+    Object.keys(charts).forEach(function(k) {
+      if (charts[k]) charts[k].destroy();
+      delete charts[k];
+    });
+  }
+
+  function makeChart(id, type, labels, datasets, opts) {
+    var ctx = document.getElementById(id);
+    if (!ctx) return null;
+    var c = new Chart(ctx, {
+      type: type,
+      data: { labels: labels, datasets: datasets },
+      options: Object.assign({}, defaultOptions, opts || {})
+    });
+    charts[id] = c;
+    return c;
+  }
+
+  function fmt(n) {
+    if (n == null) return '—';
+    return Number(n).toLocaleString('ru-RU');
+  }
+
+  function fmtDelta(d) {
+    if (d == null) return '';
+    return Number(d).toLocaleString('ru-RU', {signDisplay: 'exceptZero'});
+  }
+
+  async function loadChannel(cid) {
+    destroyCharts();
+    if (!cid) {
+      document.getElementById('channel-data').style.display = 'none';
+      document.getElementById('no-channel').style.display = '';
+      return;
+    }
+    document.getElementById('channel-data').style.display = '';
+    document.getElementById('no-channel').style.display = 'none';
+
+    // Overview
+    var ov = await fetch(baseUrl + '/overview?channel_id=' + cid).then(function(r) { return r.json(); });
+    document.getElementById('ov-subs').textContent = fmt(ov.subscriber_count);
+    var deltaEl = document.getElementById('ov-subs-delta');
+    if (ov.subscriber_delta_week != null) {
+      deltaEl.textContent = 'нед: ' + fmtDelta(ov.subscriber_delta_week) + ' / мес: ' + fmtDelta(ov.subscriber_delta_month);
+      deltaEl.className = 'text-muted';
+    } else if (ov.subscriber_delta != null) {
+      deltaEl.textContent = fmtDelta(ov.subscriber_delta);
+      deltaEl.className = ov.subscriber_delta >= 0 ? 'text-success' : 'text-danger';
+    } else {
+      deltaEl.textContent = '';
+    }
+    document.getElementById('ov-err').textContent =
+      (ov.err != null ? ov.err.toFixed(2) + '%' : '—') + ' / ' +
+      (ov.err24 != null ? ov.err24.toFixed(2) + '%' : '—');
+    document.getElementById('ov-posts').textContent = fmt(ov.total_posts);
+    document.getElementById('ov-posts-detail').textContent =
+      'сег: ' + (ov.posts_today || 0) + ' / нед: ' + (ov.posts_week || 0) + ' / пер: ' + (ov.posts_month || 0);
+    document.getElementById('ov-views').textContent = ov.avg_views != null ? fmt(Math.round(ov.avg_views)) : '—';
+    document.getElementById('ov-views-detail').textContent =
+      'фор: ' + (ov.avg_forwards != null ? ov.avg_forwards.toFixed(1) : '—') +
+      ' / реакт: ' + (ov.avg_reactions != null ? ov.avg_reactions.toFixed(1) : '—');
+
+    // Charts
+    var subs = await fetch(baseUrl + '/subscribers?channel_id=' + cid + '&days=' + days).then(function(r) { return r.json(); });
+    makeChart('chart-subs', 'line',
+      subs.map(function(r) { return r.collected_at ? r.collected_at.slice(0, 10) : ''; }),
+      [{ data: subs.map(function(r) { return r.subscriber_count; }), borderColor: '#0d6efd', tension: 0.3, fill: false }]
+    );
+
+    var views = await fetch(baseUrl + '/views?channel_id=' + cid + '&days=' + days).then(function(r) { return r.json(); });
+    makeChart('chart-views', 'line',
+      views.map(function(r) { return r.day; }),
+      [{ label: 'Ср. просмотры', data: views.map(function(r) { return Math.round(r.avg_views); }), borderColor: '#198754', tension: 0.3, fill: false }]
+    );
+
+    var freq = await fetch(baseUrl + '/frequency?channel_id=' + cid + '&days=' + days).then(function(r) { return r.json(); });
+    makeChart('chart-freq', 'bar',
+      freq.map(function(r) { return r.day; }),
+      [{ label: 'Постов', data: freq.map(function(r) { return r.count; }), backgroundColor: '#6f42c1' }]
+    );
+
+    var hourly = await fetch(baseUrl + '/hourly?channel_id=' + cid + '&days=' + days).then(function(r) { return r.json(); });
+    var allHours = [];
+    for (var h = 0; h < 24; h++) allHours.push(h);
+    var hourData = allHours.map(function(h) {
+      var found = hourly.find(function(r) { return r.hour === h; });
+      return found ? found.count : 0;
+    });
+    makeChart('chart-hourly', 'bar',
+      allHours.map(function(h) { return String(h).padStart(2, '0') + ':00'; }),
+      [{ label: 'Сообщений', data: hourData, backgroundColor: '#fd7e14' }]
+    );
+
+    // Citation
+    var cit = await fetch(baseUrl + '/citation?channel_id=' + cid).then(function(r) { return r.json(); });
+    document.getElementById('cit-total').textContent = fmt(cit.total_forwards);
+    document.getElementById('cit-posts').textContent = fmt(cit.post_count);
+    document.getElementById('cit-avg').textContent = cit.avg_forwards.toFixed(1);
+
+    // Cross-channel citations
+    var crossCite = await fetch(baseUrl + '/cross-citations?channel_id=' + cid + '&days=' + days).then(function(r) { return r.json(); });
+    var tbody = document.querySelector('#cross-cite-table tbody');
+    var emptyEl = document.getElementById('cross-cite-empty');
+    tbody.innerHTML = '';
+    if (crossCite.length) {
+      emptyEl.style.display = 'none';
+      crossCite.forEach(function(row) {
+        var name = row.source_title || row.source_username || row.source_channel_id;
+        var tr = document.createElement('tr');
+        tr.innerHTML = '<td>' + name + '</td><td>' + row.citation_count + '</td><td>' + (row.latest_date || '').slice(0, 10) + '</td>';
+        tbody.appendChild(tr);
+      });
+    } else {
+      emptyEl.style.display = '';
+    }
+
+    // Heatmap (hour x weekday) -- matrix-style bubble chart
+    var heatmap = await fetch(baseUrl + '/heatmap?channel_id=' + cid + '&days=' + days).then(function(r) { return r.json(); });
+    var weekdays = ['Пн','Вт','Ср','Чт','Пт','Сб','Вс'];
+    // SQLite %w: 0=Sun; convert to Mon=0..Sun=6 for display
+    var wdOrder = [1,2,3,4,5,6,0]; // display index 0..6 -> actual %w values
+    var heatMap = {}; // key: "wd-hr" -> count
+    var maxCount = 1;
+    heatmap.forEach(function(r) {
+      heatMap[r.weekday + '-' + r.hour] = r.count;
+      if (r.count > maxCount) maxCount = r.count;
+    });
+    var heatCtx = document.getElementById('chart-heatmap');
+    if (heatCtx) {
+      // Build single dataset with one bubble per cell
+      var bubbleData = [];
+      for (var di = 0; di < 7; di++) {
+        for (var h = 0; h < 24; h++) {
+          var wd = wdOrder[di];
+          var cnt = heatMap[wd + '-' + h] || 0;
+          var pct = cnt / maxCount;
+          // Color gradient: light-blue (low) -> orange (mid) -> dark-red (high)
+          var cr, cg, cb;
+          if (pct < 0.5) {
+            cr = Math.round(200 + pct * 110);
+            cg = Math.round(220 - pct * 100);
+            cb = Math.round(240 - pct * 280);
+          } else {
+            cr = Math.round(255);
+            cg = Math.round(170 - (pct - 0.5) * 300);
+            cb = Math.round(100 - (pct - 0.5) * 200);
+          }
+          cr = Math.max(0, Math.min(255, cr));
+          cg = Math.max(0, Math.min(255, cg));
+          cb = Math.max(0, Math.min(255, cb));
+          bubbleData.push({
+            x: h,
+            y: 6 - di,  // Invert so Mon is at top
+            r: cnt > 0 ? Math.max(3, Math.round(Math.sqrt(cnt / maxCount) * 14)) : 2,
+            _count: cnt,
+            _weekday: weekdays[di],
+            _hour: String(h).padStart(2, '0') + ':00',
+            _color: 'rgba(' + cr + ',' + cg + ',' + cb + ',' + (cnt > 0 ? '0.9' : '0.2') + ')'
+          });
+        }
+      }
+      var heatChart = new Chart(heatCtx, {
+        type: 'bubble',
+        data: {
+          datasets: [{
+            data: bubbleData,
+            backgroundColor: bubbleData.map(function(d) { return d._color; }),
+            borderColor: 'rgba(0,0,0,0.15)',
+            borderWidth: 1
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              callbacks: {
+                label: function(ctx) {
+                  var d = ctx.raw;
+                  return d._weekday + ' ' + d._hour + ': ' + d._count + ' сообщ.';
+                }
+              }
+            }
+          },
+          scales: {
+            x: {
+              min: -0.5, max: 23.5,
+              ticks: {
+                callback: function(val) { return typeof val === 'number' && val >= 0 && val <= 23 ? String(val).padStart(2, '0') + ':00' : ''; },
+                stepSize: 1
+              },
+              grid: { display: false },
+              title: { display: true, text: 'Час (UTC)' }
+            },
+            y: {
+              min: -0.5, max: 6.5,
+              reverse: true,
+              ticks: {
+                callback: function(val) { return typeof val === 'number' && val >= 0 && val <= 6 ? weekdays[val] : ''; },
+                stepSize: 1
+              },
+              grid: { display: false },
+              title: { display: false }
+            }
+          }
+        }
+      });
+      charts['chart-heatmap'] = heatChart;
+    }
+  }
+
+  // Channel select
+  document.getElementById('channel-select').addEventListener('change', function() {
+    var val = parseInt(this.value);
+    if (val) {
+      channelId = val;
+      var url = new URL(window.location);
+      url.searchParams.set('channel_id', val);
+      url.searchParams.set('days', days);
+      window.history.replaceState(null, '', url);
+    }
+    loadChannel(val);
+  });
+
+  // Period buttons
+  document.querySelectorAll('#period-btns button').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      document.querySelectorAll('#period-btns button').forEach(function(b) { b.classList.remove('active'); });
+      btn.classList.add('active');
+      days = parseInt(btn.dataset.days);
+      if (channelId) loadChannel(channelId);
+    });
+  });
+
+  // Auto-load if channel_id is set
+  if (channelId) loadChannel(channelId);
+})();
+</script>
+{% endblock %}

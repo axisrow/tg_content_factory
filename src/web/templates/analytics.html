@@ -2,7 +2,13 @@
 {% block title %}Аналитика — TG Agent{% endblock %}
 {% block content %}
 {% macro msg_text(text, max_len=100) %}{{ (text or '')[:max_len] }}{{ '…' if text and text|length > max_len else '' }}{% endmacro %}
-<h1>Аналитика сообщений</h1>
+<h1 class="h3">Аналитика сообщений</h1>
+<div class="btn-group btn-group-sm mb-3" role="group">
+  <a href="/analytics" class="btn btn-outline-secondary active">Сообщения</a>
+  <a href="/analytics/channels" class="btn btn-outline-secondary">Каналы</a>
+  <a href="/analytics/trends" class="btn btn-outline-secondary">Тренды</a>
+  <a href="/analytics/content" class="btn btn-outline-secondary">Контент</a>
+</div>
 
 <form method="get" action="/analytics" class="mb-4" data-busy>
     <div class="row g-3 align-items-end">

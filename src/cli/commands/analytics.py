@@ -220,6 +220,80 @@ def run(args: argparse.Namespace) -> None:
                     print(f"Top {limit} emojis (last {days} days):\n")
                     for emoji, count in counter.most_common(limit):
                         print(f"  {emoji}  {count}")
+
+            elif action == "channel":
+                from src.services.channel_analytics_service import ChannelAnalyticsService
+
+                channel_id = args.channel_id
+                days = getattr(args, "days", 30)
+                svc = ChannelAnalyticsService(db)
+                ov = await svc.get_channel_overview(channel_id, days=days)
+                if ov.title is None:
+                    print(f"Channel {channel_id} not found.")
+                    return
+                print(f"Channel: {ov.title or ov.username or channel_id}")
+                print(f"Username: {ov.username or '-'}")
+                print(f"Subscribers: {ov.subscriber_count if ov.subscriber_count is not None else '-'}")
+                if ov.subscriber_delta_week is not None:
+                    print(f"  Delta week: {'+' if ov.subscriber_delta_week >= 0 else ''}{ov.subscriber_delta_week}")
+                if ov.subscriber_delta_month is not None:
+                    print(f"  Delta month: {'+' if ov.subscriber_delta_month >= 0 else ''}{ov.subscriber_delta_month}")
+                print(f"ERR: {ov.err:.2f}%" if ov.err is not None else "ERR: -")
+                print(f"ERR24: {ov.err24:.2f}%" if ov.err24 is not None else "ERR24: -")
+                print(f"Posts total: {ov.total_posts}")
+                print(f"  today / week / period({days}d): {ov.posts_today} / {ov.posts_week} / {ov.posts_month}")
+                print(f"Avg views: {ov.avg_views if ov.avg_views is not None else '-'}")
+                print(f"Avg forwards: {ov.avg_forwards if ov.avg_forwards is not None else '-'}")
+                print(f"Avg reactions: {ov.avg_reactions if ov.avg_reactions is not None else '-'}")
+
+                # Citation stats
+                cit = await svc.get_citation_stats(channel_id)
+                print("\nCitations (forwards):")
+                print(f"  Total: {cit.total_forwards}  Posts: {cit.post_count}  Avg/post: {cit.avg_forwards}")
+
+                # Cross-channel citations
+                cross = await svc.get_cross_channel_citations(channel_id, days=days, limit=10)
+                if cross:
+                    print(f"\nCross-channel citations (last {days}d):")
+                    fmt = "  {:<30} {:<10} {}"
+                    print(fmt.format("Source", "Citations", "Last date"))
+                    for row in cross:
+                        name = row["source_title"] or row["source_username"] or str(row["source_channel_id"])
+                        print(fmt.format(name[:30], str(row["citation_count"]), (row["latest_date"] or "")[:10]))
+                else:
+                    print(f"\nNo cross-channel citations in last {days}d.")
+
+                # Heatmap (compact text representation)
+                heatmap = await svc.get_heatmap(channel_id, days=days)
+                if heatmap:
+                    print(f"\nHeatmap (hour x weekday, last {days}d):")
+                    # SQLite %w: 0=Sun; reorder to Mon-first
+                    wd_order = [1, 2, 3, 4, 5, 6, 0]
+                    wd_labels = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+                    heat_map = {}
+                    max_cnt = 1
+                    for r in heatmap:
+                        heat_map[(r["weekday"], r["hour"])] = r["count"]
+                        if r["count"] > max_cnt:
+                            max_cnt = r["count"]
+                    header = "       " + " ".join(f"{h:02d}" for h in range(24))
+                    print(header)
+                    for idx, wd in enumerate(wd_order):
+                        cells = []
+                        for h in range(24):
+                            cnt = heat_map.get((wd, h), 0)
+                            pct = cnt / max_cnt if max_cnt else 0
+                            if cnt == 0:
+                                cells.append("  .")
+                            elif pct < 0.33:
+                                cells.append("  -")
+                            elif pct < 0.66:
+                                cells.append("  +")
+                            else:
+                                cells.append("  *")
+                        print(f"  {wd_labels[idx]:>3}  " + " ".join(cells))
+                else:
+                    print(f"\nNo heatmap data for last {days}d.")
         finally:
             await db.close()
 

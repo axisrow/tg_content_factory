@@ -803,6 +803,10 @@ def build_parser() -> argparse.ArgumentParser:
     analytics_emojis.add_argument("--days", type=int, default=7, help="Number of days (default: 7)")
     analytics_emojis.add_argument("--limit", type=int, default=20)
 
+    analytics_channel = analytics_sub.add_parser("channel", help="Per-channel statistics overview")
+    analytics_channel.add_argument("channel_id", type=int, help="Telegram channel_id (negative int)")
+    analytics_channel.add_argument("--days", type=int, default=30, help="Time window in days (default: 30)")
+
     # ── provider ──
     provider_parser = sub.add_parser("provider", help="LLM provider management")
     provider_sub = provider_parser.add_subparsers(dest="provider_action")
