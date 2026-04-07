@@ -245,7 +245,7 @@ class PipelineTemplate(BaseModel):
 class ContentPipeline(BaseModel):
     id: int | None = None
     name: str
-    prompt_template: str
+    prompt_template: str = ""
     llm_model: str | None = None
     image_model: str | None = None
     publish_mode: PipelinePublishMode = PipelinePublishMode.MODERATED

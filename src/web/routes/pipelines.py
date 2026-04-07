@@ -9,7 +9,13 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Resp
 
 from src.agent.prompt_template import ALLOWED_TEMPLATE_VARIABLES
 from src.models import PipelineGenerationBackend, PipelinePublishMode
-from src.services.pipeline_llm_requirements import pipeline_needs_llm
+from src.services.pipeline_llm_requirements import (
+    get_dag_source_channel_ids,
+    get_react_emoji_config,
+    pipeline_is_dag,
+    pipeline_needs_llm,
+    pipeline_needs_publish_mode,
+)
 from src.services.pipeline_service import (
     PipelineService,
     PipelineTargetRef,
@@ -274,7 +280,7 @@ async def edit_pipeline(
     request: Request,
     pipeline_id: int,
     name: str = Form(...),
-    prompt_template: str = Form(...),
+    prompt_template: str = Form(""),
     source_channel_ids: list[int] = Form(default=[]),
     target_refs: list[str] = Form(default=[]),
     llm_model: str = Form(""),
@@ -283,6 +289,8 @@ async def edit_pipeline(
     generation_backend: str = Form(PipelineGenerationBackend.CHAIN.value),
     generate_interval_minutes: int = Form(60),
     is_active: bool = Form(False),
+    react_emoji: str = Form(""),
+    dag_source_channel_ids: list[int] = Form(default=[]),
 ):
     svc: PipelineService = deps.pipeline_service(request)
     phone = request.query_params.get("phone")
@@ -302,6 +310,8 @@ async def edit_pipeline(
             generation_backend=generation_backend,
             generate_interval_minutes=generate_interval_minutes,
             is_active=is_active,
+            react_emoji=react_emoji or None,
+            dag_source_channel_ids=dag_source_channel_ids if dag_source_channel_ids else None,
         )
     except PipelineValidationError as exc:
         return _pipeline_redirect(str(exc), error=True, phone=phone)
@@ -410,6 +420,11 @@ async def edit_page(request: Request, pipeline_id: int):
             "prompt_variables": sorted(ALLOWED_TEMPLATE_VARIABLES),
             "generation_backends": list(PipelineGenerationBackend),
             "publish_modes": list(PipelinePublishMode),
+            "needs_llm": pipeline_needs_llm(pipeline),
+            "needs_publish_mode": pipeline_needs_publish_mode(pipeline),
+            "is_dag": pipeline_is_dag(pipeline),
+            "react_emoji": get_react_emoji_config(pipeline),
+            "dag_source_channel_ids": get_dag_source_channel_ids(pipeline),
         },
     )
 
