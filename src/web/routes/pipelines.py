@@ -21,6 +21,14 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+def _to_since_hours(value: int, unit: str) -> float:
+    if unit == "m":
+        return value / 60.0
+    if unit == "d":
+        return value * 24.0
+    return float(value)  # "h"
+
+
 def _pipeline_redirect(
     code: str,
     *,
@@ -176,6 +184,9 @@ async def create_wizard_submit(
     target_refs: list[str] = Form(default=[]),
     generate_interval_minutes: int = Form(60),
     is_active: str = Form(""),
+    run_after: str = Form(""),
+    since_value: int = Form(24),
+    since_unit: str = Form("h"),
 ):
     import json as _json
 
@@ -203,6 +214,11 @@ async def create_wizard_submit(
         await scheduler.sync_pipeline_jobs()
     except Exception:
         logger.warning("Scheduler sync failed", exc_info=True)
+    if run_after:
+        _since = _to_since_hours(since_value, since_unit)
+        enqueuer = deps.get_task_enqueuer(request)
+        await enqueuer.enqueue_pipeline_run(pipeline_id, since_hours=_since)
+        return _pipeline_redirect("pipeline_run_with_since")
     return _pipeline_redirect("pipeline_added")
 
 
@@ -325,7 +341,8 @@ async def delete_pipeline(request: Request, pipeline_id: int):
 
 
 @router.post("/{pipeline_id}/run")
-async def run_pipeline(request: Request, pipeline_id: int):
+async def run_pipeline(request: Request, pipeline_id: int,
+                       since_value: int = Form(24), since_unit: str = Form("h")):
     svc = deps.pipeline_service(request)
     pipeline = await svc.get(pipeline_id)
     if pipeline is None:
@@ -334,12 +351,30 @@ async def run_pipeline(request: Request, pipeline_id: int):
     if pipeline_needs_llm(pipeline) and not deps.get_llm_provider_service(request).has_providers():
         return _pipeline_redirect("llm_not_configured", error=True)
     try:
+        since_hours = _to_since_hours(since_value, since_unit)
         enqueuer = deps.get_task_enqueuer(request)
-        await enqueuer.enqueue_pipeline_run(pipeline_id)
+        await enqueuer.enqueue_pipeline_run(pipeline_id, since_hours=since_hours)
     except Exception:
         logger.warning("Failed to enqueue pipeline run for pipeline_id=%d", pipeline_id, exc_info=True)
         return _pipeline_redirect("pipeline_run_failed", error=True)
     return _pipeline_redirect("pipeline_run_enqueued")
+
+
+@router.post("/{pipeline_id}/dry-run")
+async def dry_run_pipeline(request: Request, pipeline_id: int):
+    svc = deps.pipeline_service(request)
+    pipeline = await svc.get(pipeline_id)
+    if pipeline is None:
+        return _pipeline_redirect("pipeline_invalid", error=True)
+    if pipeline_needs_llm(pipeline) and not deps.get_llm_provider_service(request).has_providers():
+        return _pipeline_redirect("llm_not_configured", error=True)
+    try:
+        enqueuer = deps.get_task_enqueuer(request)
+        await enqueuer.enqueue_pipeline_run(pipeline_id, dry_run=True)
+    except Exception:
+        logger.warning("Failed to enqueue dry-run for pipeline_id=%d", pipeline_id, exc_info=True)
+        return _pipeline_redirect("pipeline_run_failed", error=True)
+    return _pipeline_redirect("pipeline_dry_run_enqueued")
 
 
 @router.get("/{pipeline_id}/edit", response_class=HTMLResponse)
@@ -549,6 +584,75 @@ async def get_refinement_steps(request: Request, pipeline_id: int):
     if pipeline is None:
         return _pipeline_redirect("pipeline_not_found", error=True)
     return JSONResponse(content={"steps": pipeline.refinement_steps})
+
+
+# ------------------------------------------------------------------
+# Dry-run count endpoints
+# ------------------------------------------------------------------
+
+
+def _apply_pipeline_filter(pipeline, messages: list) -> int:
+    """Count messages that would pass the filter node, if any."""
+    import re as _re
+
+    if pipeline.pipeline_json is None:
+        return len(messages)
+    graph = pipeline.pipeline_json
+    filter_node = next(
+        (n for n in graph.nodes if n.type.value == "filter"),
+        None,
+    )
+    if filter_node is None:
+        return len(messages)
+    cfg = filter_node.config
+    ft = cfg.get("type", "keywords")
+    count = 0
+    for m in messages:
+        text = (m.text or "").lower() if hasattr(m, "text") else ""
+        if ft == "keywords":
+            kws = [k.lower() for k in cfg.get("keywords", [])]
+            if any(k in text for k in kws):
+                count += 1
+        elif ft == "regex":
+            pat = cfg.get("pattern", "")
+            if pat and _re.search(pat, text, _re.IGNORECASE):
+                count += 1
+        elif ft == "service_message":
+            stypes = cfg.get("service_types", [])
+            if any(s in text for s in stypes):
+                count += 1
+        elif ft == "anonymous_sender":
+            if not getattr(m, "sender_id", None):
+                count += 1
+        else:
+            count += 1
+    return count
+
+
+@router.get("/dry-run-count", response_class=JSONResponse)
+async def dry_run_count_new(request: Request, source_ids: str = "",
+                             since_value: int = 6, since_unit: str = "h"):
+    since_hours = _to_since_hours(since_value, since_unit)
+    ids = [int(x) for x in source_ids.split(",") if x.strip().isdigit()]
+    db = deps.get_db(request)
+    messages = await db.repos.messages.get_recent_for_channels(ids, since_hours)
+    return {"total": len(messages), "after_filter": len(messages)}
+
+
+@router.get("/{pipeline_id}/dry-run-count", response_class=JSONResponse)
+async def dry_run_count(request: Request, pipeline_id: int,
+                        since_value: int = 6, since_unit: str = "h"):
+    since_hours = _to_since_hours(since_value, since_unit)
+    svc = deps.pipeline_service(request)
+    pipeline = await svc.get(pipeline_id)
+    if pipeline is None:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    db = deps.get_db(request)
+    sources = await db.repos.content_pipelines.list_sources(pipeline_id)
+    ids = [s.channel_id for s in sources]
+    messages = await db.repos.messages.get_recent_for_channels(ids, since_hours)
+    after_filter = _apply_pipeline_filter(pipeline, messages)
+    return {"total": len(messages), "after_filter": after_filter}
 
 
 # ------------------------------------------------------------------

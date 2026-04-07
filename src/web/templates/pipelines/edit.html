@@ -129,5 +129,41 @@
 
     <button type="submit" class="btn btn-primary me-2">Сохранить</button>
     <a href="/pipelines" class="btn btn-secondary">Отмена</a>
+
+    <span class="ms-3 d-inline-flex align-items-center gap-2">
+        <input type="number" id="edit-since-value" value="24" min="1"
+               class="form-control form-control-sm" style="width:64px">
+        <select id="edit-since-unit" class="form-select form-select-sm" style="width:72px">
+            <option value="m">мин</option>
+            <option value="h" selected>ч</option>
+            <option value="d">д</option>
+        </select>
+    </span>
+    <form method="post" action="/pipelines/{{ pipeline.id }}/run" class="d-inline" id="edit-run-form">
+        <input type="hidden" name="since_value" id="edit-run-since-value">
+        <input type="hidden" name="since_unit" id="edit-run-since-unit">
+        <button type="submit" class="btn btn-outline-primary btn-sm"
+                onclick="syncEditRunParams()">&#x25BA; Запустить</button>
+    </form>
+    <button type="button" class="btn btn-outline-warning btn-sm"
+            onclick="editDryRunCount({{ pipeline.id }})">&#x1F9EA; Тест</button>
+
+    <script>
+    function syncEditRunParams() {
+        document.getElementById("edit-run-since-value").value =
+            document.getElementById("edit-since-value").value;
+        document.getElementById("edit-run-since-unit").value =
+            document.getElementById("edit-since-unit").value;
+    }
+    function editDryRunCount(id) {
+        var sv = document.getElementById("edit-since-value").value;
+        var su = document.getElementById("edit-since-unit").value;
+        fetch("/pipelines/" + id + "/dry-run-count?since_value=" + sv + "&since_unit=" + su)
+            .then(function(r) { return r.json(); })
+            .then(function(d) {
+                showToast("Тест: " + d.total + " сообщений, " + d.after_filter + " пройдут обработку");
+            }).catch(function() { showToast("Ошибка при подсчёте"); });
+    }
+    </script>
 </form>
 {% endblock %}

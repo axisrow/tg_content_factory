@@ -525,6 +525,8 @@ class UnifiedDispatcher:
                 run = await gen.generate(
                     pipeline=pipeline,
                     model=pipeline.llm_model,
+                    dry_run=payload.dry_run,
+                    since_hours=payload.since_hours,
                 )
                 run_id = run.id
                 await self._tasks.update_collection_task(

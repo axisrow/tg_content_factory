@@ -73,6 +73,11 @@
     <main class="container py-3 flex-grow-1">
         {% block content %}{% endblock %}
     </main>
+    <div class="toast-container position-fixed bottom-0 end-0 p-3" style="z-index:1090">
+        <div id="live-toast" class="toast" role="status" aria-live="polite">
+            <div class="toast-body"></div>
+        </div>
+    </div>
     <footer class="text-center text-muted py-3 mt-auto">
         <small>TG Agent v{{ app_version }}</small>
     </footer>
@@ -129,6 +134,8 @@
          pipeline_toggled: "Статус pipeline изменён.",
          pipeline_edited: "Pipeline обновлён.",
          pipeline_run_enqueued: "Запуск pipeline поставлен в очередь.",
+         pipeline_run_with_since: "Запуск поставлен в очередь.",
+         pipeline_dry_run_enqueued: "Тест pipeline поставлен в очередь.",
          pipeline_published: "Pipeline опубликован.",
          notification_test_sent: "Тестовое уведомление отправлено.",
         photo_sent: "Фото отправлены.",
@@ -413,6 +420,15 @@
             delete el._confirming;
         }
     }, true);
+    // showToast — reusable Bootstrap toast
+    window.showToast = function(text) {
+        var el = document.getElementById("live-toast");
+        if (!el) return;
+        var body = el.querySelector(".toast-body");
+        if (body) body.textContent = text;
+        var t = bootstrap.Toast.getOrCreateInstance(el);
+        t.show();
+    };
 })();
 </script>
 </body>

@@ -184,6 +184,7 @@ class PipelineNodeType(StrEnum):
     REACT = "react"
     FORWARD = "forward"
     DELETE_MESSAGE = "delete_message"
+    FETCH_MESSAGES = "fetch_messages"
     CONDITION = "condition"
     SEARCH_QUERY_TRIGGER = "search_query_trigger"
 
@@ -278,6 +279,8 @@ class PipelineTarget(BaseModel):
 class PipelineRunTaskPayload(BaseModel):
     task_kind: str = CollectionTaskType.PIPELINE_RUN.value
     pipeline_id: int
+    dry_run: bool = False
+    since_hours: float = 24.0
 
 
 class NotificationBot(BaseModel):

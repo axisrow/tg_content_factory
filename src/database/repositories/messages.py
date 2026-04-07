@@ -1368,3 +1368,21 @@ class MessagesRepository:
             (channel_id, f"-{days} days", limit),
         )
         return [dict(r) for r in await cur.fetchall()]
+
+    async def get_recent_for_channels(
+        self, channel_ids: list[int], since_hours: float
+    ) -> list[Message]:
+        """Return messages from the given channels newer than *since_hours* ago."""
+        if not channel_ids:
+            return []
+        from datetime import datetime, timedelta, timezone
+
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=since_hours)).replace(tzinfo=None)
+        placeholders = ",".join("?" * len(channel_ids))
+        cur = await self._db.execute(
+            f"SELECT * FROM messages WHERE channel_id IN ({placeholders})"
+            f" AND date >= ? ORDER BY date DESC",
+            (*channel_ids, cutoff),
+        )
+        rows = await cur.fetchall()
+        return self._rows_to_messages(rows)
