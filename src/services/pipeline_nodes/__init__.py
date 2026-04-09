@@ -7,6 +7,7 @@ from src.services.pipeline_nodes.handlers import (
     ConditionHandler,
     DelayHandler,
     DeleteMessageHandler,
+    FetchMessagesHandler,
     FilterHandler,
     ForwardHandler,
     ImageGenerateHandler,
@@ -33,6 +34,7 @@ HANDLER_REGISTRY: dict[PipelineNodeType, type[BaseNodeHandler]] = {
     PipelineNodeType.REACT: ReactHandler,
     PipelineNodeType.FORWARD: ForwardHandler,
     PipelineNodeType.DELETE_MESSAGE: DeleteMessageHandler,
+    PipelineNodeType.FETCH_MESSAGES: FetchMessagesHandler,
     PipelineNodeType.CONDITION: ConditionHandler,
     PipelineNodeType.SEARCH_QUERY_TRIGGER: SearchQueryTriggerHandler,
 }

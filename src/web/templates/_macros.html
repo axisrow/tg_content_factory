@@ -1,6 +1,6 @@
 {# Reusable Jinja macros for TG Agent templates. #}
 
-{% macro icon(name) %}{% if name == "edit" %}✏️{% elif name == "delete" %}🗑️{% elif name == "toggle_on" %}⏸️{% elif name == "toggle_off" %}▶️{% elif name == "run" %}▶️{% elif name == "generate" %}✨{% elif name == "ai" %}🤖{% elif name == "export" %}⬇️{% elif name == "view" %}👁️{% elif name == "collect" %}⬇️{% elif name == "stats" %}📊{% elif name == "restore" %}↩️{% elif name == "purge" %}🧹{% elif name == "search" %}🔍{% elif name == "notification" %}🔔{% elif name == "link" %}🔗{% elif name == "back" %}←{% elif name == "loading" %}⏳{% elif name == "success" %}✓{% elif name == "close" %}✕{% elif name == "refresh" %}🔄{% elif name == "private" %}🔒{% elif name == "warning" %}⚠️{% elif name == "filter" %}🚫{% elif name == "comments" %}💬{% elif name == "trend_up" %}⬆️{% elif name == "trend_down" %}⬇️{% elif name == "trend_flat" %}➖{% elif name == "active" %}🟢{% elif name == "save" %}💾{% elif name == "add" %}➕{% endif %}{% endmacro %}
+{% macro icon(name) %}{% if name == "edit" %}✏️{% elif name == "delete" %}🗑️{% elif name == "toggle_on" %}⏸️{% elif name == "toggle_off" %}▶️{% elif name == "run" %}▶️{% elif name == "dry_run" %}🧪{% elif name == "generate" %}✨{% elif name == "ai" %}🤖{% elif name == "export" %}⬇️{% elif name == "view" %}👁️{% elif name == "collect" %}⬇️{% elif name == "stats" %}📊{% elif name == "restore" %}↩️{% elif name == "purge" %}🧹{% elif name == "search" %}🔍{% elif name == "notification" %}🔔{% elif name == "link" %}🔗{% elif name == "back" %}←{% elif name == "loading" %}⏳{% elif name == "success" %}✓{% elif name == "close" %}✕{% elif name == "refresh" %}🔄{% elif name == "private" %}🔒{% elif name == "warning" %}⚠️{% elif name == "filter" %}🚫{% elif name == "comments" %}💬{% elif name == "trend_up" %}⬆️{% elif name == "trend_down" %}⬇️{% elif name == "trend_flat" %}➖{% elif name == "active" %}🟢{% elif name == "save" %}💾{% elif name == "add" %}➕{% endif %}{% endmacro %}
 
 {% macro filter_flags(flags_str, margin='') %}
 {% if flags_str %}
@@ -66,9 +66,9 @@
 {% elif needs_llm and llm_blocked %}
 <span class="btn btn-outline-primary btn-sm emoji-btn disabled" aria-disabled="true" title="Настройте LLM провайдер">{{ icon("generate") }}</span>
 {% endif %}
-{# Run now #}
-<form method="post" action="/pipelines/{{ pipeline.id }}/run" class="d-inline" data-busy>
-    <button type="submit" class="btn btn-outline-success btn-sm emoji-btn" title="Запустить" {% if llm_blocked %}disabled{% endif %}>{{ icon("run") }}</button>
+{# Dry run (тест без публикации) #}
+<form method="post" action="/pipelines/{{ pipeline.id }}/dry-run" class="d-inline" data-busy>
+    <button type="submit" class="btn btn-outline-warning btn-sm emoji-btn" title="Тест (без публикации)" {% if llm_blocked %}disabled{% endif %}>{{ icon("dry_run") }}</button>
 </form>
 {# Toggle active #}
 <form method="post" action="/pipelines/{{ pipeline.id }}/toggle" class="d-inline" data-busy>

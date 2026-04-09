@@ -9,7 +9,8 @@
             <div class="card-body">
                 <h6 class="card-subtitle mb-2 text-muted">Аккаунты</h6>
                 <p class="mb-1"><strong>{{ stats.get('accounts', 0) }}</strong> в базе</p>
-                <p class="mb-0"><strong>{{ accounts_connected }}</strong> подключено</p>
+                <p class="mb-1"><strong>{{ accounts_connected }}</strong> подключено</p>
+                {% if accounts_flood_wait %}<p class="mb-0 text-warning"><strong>{{ accounts_flood_wait }}</strong> в flood-wait</p>{% endif %}
             </div>
             <div class="card-footer"><a href="/settings">Управление</a></div>
         </div>
@@ -18,7 +19,9 @@
         <div class="card h-100">
             <div class="card-body">
                 <h6 class="card-subtitle mb-2 text-muted">Каналы</h6>
-                <p class="mb-0"><strong>{{ stats.get('channels', 0) }}</strong> отслеживается</p>
+                <p class="mb-0">В базе: <strong>{{ stats.get('channels', 0) }}</strong></p>
+                <p class="mb-0">Отфильтровано: <strong>{{ stats.get('channels_filtered', 0) }}</strong></p>
+                <p class="mb-0">Отслеживается: <strong>{{ stats.get('channels_tracked', 0) }}</strong></p>
             </div>
             <div class="card-footer"><a href="/channels">Управление</a></div>
         </div>
@@ -27,7 +30,10 @@
         <div class="card h-100">
             <div class="card-body">
                 <h6 class="card-subtitle mb-2 text-muted">Сообщения</h6>
-                <p class="mb-0"><strong>{{ stats.get('messages', 0) }}</strong> собрано</p>
+                <p class="mb-1"><strong>{{ stats.get('messages', 0) }}</strong> всего</p>
+                {% if stats.get('messages_today', 0) %}<p class="mb-1">+<strong>{{ stats.get('messages_today', 0) }}</strong> за 24ч</p>{% endif %}
+                {% if last_collect_ago %}<p class="mb-1 text-muted small">последний сбор: {{ last_collect_ago }}</p>{% endif %}
+                {% if active_tasks %}<p class="mb-0"><strong>{{ active_tasks }}</strong> задач в очереди</p>{% endif %}
             </div>
             <div class="card-footer"><a href="/search">Поиск</a></div>
         </div>
@@ -35,19 +41,37 @@
     <div class="col-6 col-md-3">
         <div class="card h-100">
             <div class="card-body">
-                <h6 class="card-subtitle mb-2 text-muted">Поисковые запросы</h6>
-                <p class="mb-0"><strong>{{ stats.get('search_queries', 0) }}</strong> активных</p>
+                <h6 class="card-subtitle mb-2 text-muted">Поиск + Планировщик</h6>
+                <p class="mb-1"><strong>{{ stats.get('search_queries', 0) }}</strong> запросов</p>
+                <p class="mb-1">Интервал: <strong>{{ scheduler_interval }} мин</strong></p>
+                <p class="mb-0">Статус: <strong>{{ "Запущен" if scheduler_running else "Остановлен" }}</strong></p>
             </div>
-            <div class="card-footer"><a href="/search-queries">Настроить</a></div>
+            <div class="card-footer"><a href="/search-queries">Поиск</a> · <a href="/scheduler">Планировщик</a></div>
         </div>
     </div>
 </div>
 
-<div class="card">
-    <div class="card-header fw-semibold">Планировщик</div>
+{% if pipelines_total or content_published %}
+<div class="card mb-4">
+    <div class="card-header fw-semibold">Контент</div>
     <div class="card-body">
-        <p>Статус: <strong>{{ "Запущен" if scheduler_running else "Остановлен" }}</strong></p>
+        <div class="row g-3">
+            <div class="col-6 col-md-3">
+                <p class="text-muted mb-1 small">Пайплайны</p>
+                <p class="mb-0"><strong>{{ pipelines_active }}</strong> / {{ pipelines_total }} активных</p>
+            </div>
+            <div class="col-6 col-md-3">
+                <p class="text-muted mb-1 small">На модерации</p>
+                <p class="mb-0"><strong>{{ content_pending + content_approved }}</strong></p>
+            </div>
+            <div class="col-6 col-md-3">
+                <p class="text-muted mb-1 small">Опубликовано</p>
+                <p class="mb-0"><strong>{{ content_published }}</strong></p>
+            </div>
+        </div>
     </div>
-    <div class="card-footer"><a href="/scheduler">Управление</a></div>
+    <div class="card-footer"><a href="/pipelines">Управление</a> · <a href="/calendar">Календарь</a></div>
 </div>
+{% endif %}
+
 {% endblock %}

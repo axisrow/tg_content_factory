@@ -52,6 +52,8 @@ class ContentGenerationService:
         model: str | None = None,
         max_tokens: int = 512,
         temperature: float = 0.7,
+        dry_run: bool = False,
+        since_hours: float = 24.0,
     ) -> GenerationRun:
         """Generate content for a pipeline and return the generation run.
 
@@ -60,9 +62,12 @@ class ContentGenerationService:
         2. Retrieve context messages from pipeline sources
         3. Render prompt template with source messages
         4. Call backend (GenerationService RAG or AgentManager)
-        5. Handle image generation if image_model is set (stub: NotImplementedError)
+        5. Handle image generation if image_model is set (skipped for dry_run)
         6. Save result with moderation_status='pending'
         7. Return the GenerationRun
+
+        If dry_run=True: skips image generation and draft notifications; marks
+        metadata with dry_run=True so callers can distinguish test runs.
         """
         run_id = await self._db.repos.generation_runs.create_run(
             pipeline_id=pipeline.id,
@@ -80,6 +85,7 @@ class ContentGenerationService:
                 model=model,
                 max_tokens=max_tokens,
                 temperature=temperature,
+                since_hours=since_hours,
             )
             generated_text = result.get("generated_text", "")
             effective_publish_mode = result.get("publish_mode") or pipeline.publish_mode.value
@@ -87,6 +93,8 @@ class ContentGenerationService:
                 "citations": result.get("citations", []),
                 "effective_publish_mode": effective_publish_mode,
             }
+            if dry_run:
+                metadata["dry_run"] = True
             if result.get("publish_reply"):
                 metadata["publish_reply"] = True
             if result.get("reply_to_message_id") is not None:
@@ -100,23 +108,25 @@ class ContentGenerationService:
                 metadata["refinement_steps_applied"] = len(pipeline.refinement_steps)
 
             # Use image_url from graph executor if available, otherwise fall back to legacy image gen
-            image_url_from_graph = result.get("image_url")
-            if image_url_from_graph:
-                await self._db.execute(
-                    "UPDATE generation_runs SET image_url = ? WHERE id = ?",
-                    (image_url_from_graph, run_id),
-                )
-            else:
-                image_model = pipeline.image_model
-                if not image_model:
-                    image_model = await self._db.get_setting("default_image_model") or ""
-                if image_model and pipeline.pipeline_json is None:
-                    image_url = await self._generate_image(pipeline, generated_text, model=image_model)
-                    if image_url:
-                        await self._db.execute(
-                            "UPDATE generation_runs SET image_url = ? WHERE id = ?",
-                            (image_url, run_id),
-                        )
+            # Image generation is skipped for dry runs to save time and cost
+            if not dry_run:
+                image_url_from_graph = result.get("image_url")
+                if image_url_from_graph:
+                    await self._db.execute(
+                        "UPDATE generation_runs SET image_url = ? WHERE id = ?",
+                        (image_url_from_graph, run_id),
+                    )
+                else:
+                    image_model = pipeline.image_model
+                    if not image_model:
+                        image_model = await self._db.get_setting("default_image_model") or ""
+                    if image_model and pipeline.pipeline_json is None:
+                        image_url = await self._generate_image(pipeline, generated_text, model=image_model)
+                        if image_url:
+                            await self._db.execute(
+                                "UPDATE generation_runs SET image_url = ? WHERE id = ?",
+                                (image_url, run_id),
+                            )
 
             await self._db.repos.generation_runs.save_result(run_id, generated_text, metadata)
             if self._quality_service and generated_text:
@@ -134,7 +144,8 @@ class ContentGenerationService:
                 raise RuntimeError(f"Generation run {run_id} not found after save")
 
             if (
-                self._notification_service
+                not dry_run
+                and self._notification_service
                 and run.moderation_status == "pending"
                 and effective_publish_mode == PipelinePublishMode.MODERATED.value
             ):
@@ -158,10 +169,11 @@ class ContentGenerationService:
         model: str | None,
         max_tokens: int,
         temperature: float,
+        since_hours: float = 24.0,
     ) -> dict[str, Any]:
         """Execute the generation backend."""
         if pipeline.pipeline_json is not None:
-            return await self._run_graph(pipeline, model, max_tokens, temperature)
+            return await self._run_graph(pipeline, model, max_tokens, temperature, since_hours)
 
         if pipeline.generation_backend == PipelineGenerationBackend.DEEP_AGENTS:
             return await self._run_deep_agents(pipeline, model, max_tokens, temperature)
@@ -174,6 +186,7 @@ class ContentGenerationService:
         model: str | None,
         max_tokens: int,
         temperature: float,
+        since_hours: float = 24.0,
     ) -> dict[str, Any]:
         """Execute the pipeline using the node-based DAG executor."""
         from src.services.pipeline_executor import PipelineExecutor
@@ -191,6 +204,7 @@ class ContentGenerationService:
             "default_model": model or pipeline.llm_model or "",
             "default_image_model": pipeline.image_model or default_image_model,
             "db": self._db,
+            "since_hours": since_hours,
         }
 
         executor = PipelineExecutor()

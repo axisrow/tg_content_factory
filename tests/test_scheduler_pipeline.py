@@ -145,7 +145,7 @@ async def test_pipeline_run_handler_uses_content_generation_service(monkeypatch)
             captured["notification_service"] = notification_service
             captured["quality_service"] = quality_service
 
-        async def generate(self, pipeline, model=None):
+        async def generate(self, pipeline, model=None, **kwargs):
             from src.models import GenerationRun
 
             return GenerationRun(id=77, pipeline_id=pipeline.id, status="completed")

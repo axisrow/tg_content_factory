@@ -13,11 +13,13 @@ from src.models import (
     ContentPipeline,
     PipelineGenerationBackend,
     PipelineGraph,
+    PipelineNodeType,
     PipelinePublishMode,
     PipelineSource,
     PipelineTarget,
     PipelineTemplate,
 )
+from src.services.pipeline_llm_requirements import pipeline_needs_llm
 
 logger = logging.getLogger(__name__)
 
@@ -88,7 +90,20 @@ class PipelineService:
         generation_backend: PipelineGenerationBackend | str = PipelineGenerationBackend.CHAIN,
         generate_interval_minutes: int = 60,
         is_active: bool = True,
+        react_emoji: str | None = None,
+        dag_source_channel_ids: list[int] | None = None,
     ) -> bool:
+        existing = await self.get(pipeline_id)
+        existing_pipeline_json = existing.pipeline_json if existing else None
+        is_dag = existing_pipeline_json is not None
+
+        # Determine if the updated pipeline will need LLM based on new backend + existing pipeline_json
+        probe = ContentPipeline(
+            name="x",
+            generation_backend=generation_backend,
+            pipeline_json=existing_pipeline_json,
+        )
+        skip_llm_validation = not pipeline_needs_llm(probe)
         pipeline = await self._build_pipeline(
             name=name,
             prompt_template=prompt_template,
@@ -98,9 +113,35 @@ class PipelineService:
             generation_backend=generation_backend,
             generate_interval_minutes=generate_interval_minutes,
             is_active=is_active,
+            skip_llm_validation=skip_llm_validation,
         )
-        sources = await self._normalize_sources(source_channel_ids)
-        targets = await self._normalize_targets(target_refs)
+
+        # Preserve existing pipeline_json and apply node-level config updates
+        updated_graph = existing_pipeline_json
+        if updated_graph is not None:
+            if dag_source_channel_ids is not None:
+                for node in updated_graph.nodes:
+                    if node.type == PipelineNodeType.SOURCE:
+                        node.config["channel_ids"] = dag_source_channel_ids
+            if react_emoji is not None:
+                emojis = [e.strip() for e in react_emoji.split(",") if e.strip()]
+                for node in updated_graph.nodes:
+                    if node.type == PipelineNodeType.REACT:
+                        if len(emojis) > 1:
+                            node.config["emoji"] = emojis[0]
+                            node.config["random_emojis"] = emojis
+                        else:
+                            node.config["emoji"] = emojis[0] if emojis else "👍"
+                            node.config["random_emojis"] = []
+        pipeline = pipeline.model_copy(update={"pipeline_json": updated_graph})
+
+        # For DAG pipelines, source/target are managed via pipeline_json nodes, not DB tables
+        if is_dag:
+            sources: list[int] = []
+            targets: list[PipelineTarget] = []
+        else:
+            sources = await self._normalize_sources(source_channel_ids)
+            targets = await self._normalize_targets(target_refs)
         return await self._bundle.update(pipeline_id, pipeline, sources, targets)
 
     async def list(self, active_only: bool = False) -> list[ContentPipeline]:
@@ -215,17 +256,19 @@ class PipelineService:
         generate_interval_minutes: int,
         is_active: bool,
         last_generated_id: int = 0,
+        skip_llm_validation: bool = False,
     ) -> ContentPipeline:
         cleaned_name = name.strip()
         if not cleaned_name:
             raise PipelineValidationError("Название pipeline не может быть пустым.")
         cleaned_template = prompt_template.strip()
-        if not cleaned_template:
-            raise PipelineValidationError("Шаблон промпта не может быть пустым.")
-        try:
-            validate_prompt_template(cleaned_template)
-        except PromptTemplateError as exc:
-            raise PipelineValidationError(str(exc)) from exc
+        if not skip_llm_validation:
+            if not cleaned_template:
+                raise PipelineValidationError("Шаблон промпта не может быть пустым.")
+            try:
+                validate_prompt_template(cleaned_template)
+            except PromptTemplateError as exc:
+                raise PipelineValidationError(str(exc)) from exc
         try:
             publish_mode_enum = PipelinePublishMode(publish_mode)
             backend_enum = PipelineGenerationBackend(generation_backend)

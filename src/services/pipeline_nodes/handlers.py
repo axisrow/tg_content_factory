@@ -19,6 +19,20 @@ class SourceHandler(BaseNodeHandler):
         context.set_global("source_channel_ids", channel_ids)
 
 
+class FetchMessagesHandler(BaseNodeHandler):
+    """Fetch recent messages from source channels into context."""
+
+    async def execute(self, node_config: dict, context: NodeContext, services: dict) -> None:
+        db = services.get("db")
+        if db is None:
+            context.set_global("context_messages", [])
+            return
+        channel_ids = context.get_global("source_channel_ids", [])
+        since_hours = float(services.get("since_hours", context.get_global("since_hours", 24.0)))
+        messages = await db.repos.messages.get_recent_for_channels(channel_ids, since_hours)
+        context.set_global("context_messages", messages)
+
+
 class RetrieveContextHandler(BaseNodeHandler):
     """Retrieve context from search engine."""
 
