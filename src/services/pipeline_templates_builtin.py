@@ -281,4 +281,128 @@ def get_builtin_templates() -> list[PipelineTemplate]:
                 ],
             ),
         ),
+        # 12. Summarization
+        PipelineTemplate(
+            name="Суммаризация постов",
+            description="Собирает сообщения из источников и создаёт краткую саммари с помощью LLM",
+            category="content",
+            is_builtin=True,
+            template_json=PipelineGraph(
+                nodes=[
+                    _node("source_1", PipelineNodeType.SOURCE, "Источники", {"channel_ids": []}, 0, 0),
+                    _node(
+                        "retrieve_1", PipelineNodeType.RETRIEVE_CONTEXT,
+                        "Поиск контекста", {"limit": 12, "method": "hybrid"}, 220, 0,
+                    ),
+                    _node(
+                        "llm_1", PipelineNodeType.LLM_GENERATE, "Суммаризация",
+                        {"prompt_template": (
+                             "Сделай краткую выжимку из следующих сообщений,"
+                             " выдели основные темы и факты:\n\n{source_messages}"
+                         ),
+                         "max_tokens": 1000, "temperature": 0.3}, 440, 0,
+                    ),
+                    _node("publish_1", PipelineNodeType.PUBLISH, "Публикация",
+                          {"targets": [], "mode": "moderated"}, 660, 0),
+                ],
+                edges=[
+                    _edge("source_1", "retrieve_1"),
+                    _edge("retrieve_1", "llm_1"),
+                    _edge("llm_1", "publish_1"),
+                ],
+            ),
+        ),
+        # 13. Translation
+        PipelineTemplate(
+            name="Перевод постов",
+            description="Переводит сообщения из источников на русский язык и публикует в целевой канал",
+            category="content",
+            is_builtin=True,
+            template_json=PipelineGraph(
+                nodes=[
+                    _node("source_1", PipelineNodeType.SOURCE, "Источники", {"channel_ids": []}, 0, 0),
+                    _node(
+                        "llm_1", PipelineNodeType.LLM_GENERATE, "Перевод",
+                        {"prompt_template": (
+                             "Переведи следующий текст на русский язык,"
+                             " сохранив стиль и форматирование:\n\n{source_messages}"
+                         ),
+                         "max_tokens": 2000, "temperature": 0.3}, 220, 0,
+                    ),
+                    _node("publish_1", PipelineNodeType.PUBLISH, "Публикация",
+                          {"targets": [], "mode": "moderated"}, 440, 0),
+                ],
+                edges=[
+                    _edge("source_1", "llm_1"),
+                    _edge("llm_1", "publish_1"),
+                ],
+            ),
+        ),
+        # 14. Smart assistant (agent loop)
+        PipelineTemplate(
+            name="Умный ассистент",
+            description="Агентный пайплайн: анализирует сообщения с помощью LLM-ассистента и публикует результат",
+            category="automation",
+            is_builtin=True,
+            template_json=PipelineGraph(
+                nodes=[
+                    _node("source_1", PipelineNodeType.SOURCE, "Источники", {"channel_ids": []}, 0, 0),
+                    _node(
+                        "fetch_1", PipelineNodeType.FETCH_MESSAGES,
+                        "Загрузка сообщений", {}, 220, 0,
+                    ),
+                    _node(
+                        "agent_1", PipelineNodeType.AGENT_LOOP, "Агент",
+                        {"system_prompt": (
+                             "Ты контент-ассистент. Проанализируй сообщения"
+                             " и создай интересный пост на их основе."
+                         ),
+                         "max_tokens": 2000, "temperature": 0.7}, 440, 0,
+                    ),
+                    _node("publish_1", PipelineNodeType.PUBLISH, "Публикация",
+                          {"targets": [], "mode": "moderated"}, 660, 0),
+                ],
+                edges=[
+                    _edge("source_1", "fetch_1"),
+                    _edge("fetch_1", "agent_1"),
+                    _edge("agent_1", "publish_1"),
+                ],
+            ),
+        ),
+        # 15. Agent moderation
+        PipelineTemplate(
+            name="Агент-модерация",
+            description=(
+                "Агентный пайплайн для модерации: агент анализирует сообщения,"
+                " затем условие проверяет решение об удалении"
+            ),
+            category="moderation",
+            is_builtin=True,
+            template_json=PipelineGraph(
+                nodes=[
+                    _node("source_1", PipelineNodeType.SOURCE, "Источник", {"channel_ids": []}, 0, 0),
+                    _node(
+                        "fetch_1", PipelineNodeType.FETCH_MESSAGES,
+                        "Загрузка сообщений", {"limit": 1}, 220, 0,
+                    ),
+                    _node(
+                        "agent_1", PipelineNodeType.AGENT_LOOP, "Модератор",
+                        {"system_prompt": "Ты модератор чата. Проанализируй сообщение и реши, нарушает ли оно правила. "
+                         "Ответь DELETE если нужно удалить, или OK если сообщение допустимое.",
+                         "max_tokens": 50, "temperature": 0.1}, 440, 0,
+                    ),
+                    _node(
+                        "condition_1", PipelineNodeType.CONDITION, "Проверка решения",
+                        {"field": "generated_text", "operator": "contains", "value": "DELETE"}, 660, 0,
+                    ),
+                    _node("delete_1", PipelineNodeType.DELETE_MESSAGE, "Удаление", {}, 880, 0),
+                ],
+                edges=[
+                    _edge("source_1", "fetch_1"),
+                    _edge("fetch_1", "agent_1"),
+                    _edge("agent_1", "condition_1"),
+                    _edge("condition_1", "delete_1"),
+                ],
+            ),
+        ),
     ]

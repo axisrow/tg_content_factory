@@ -3,16 +3,16 @@
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-3">
     <h1 class="mb-0">Создать пайплайн</h1>
-    <a class="btn btn-secondary btn-sm" href="/pipelines">&larr; Назад</a>
+    <a class="btn btn-secondary btn-sm" href="/pipelines"><i class="bi bi-arrow-left"></i> Назад</a>
 </div>
 
 {# Stepper nav #}
 <nav class="wizard-stepper mb-4">
-    <div class="wizard-step-card active" data-step="1"><span class="step-emoji">&#x1F3AF;</span>Тип</div>
-    <div class="wizard-step-card" data-step="2"><span class="step-emoji">&#x1F4E1;</span>Источники</div>
-    <div class="wizard-step-card" data-step="3"><span class="step-emoji">&#x2699;&#xFE0F;</span>Действие</div>
-    <div class="wizard-step-card" data-step="4"><span class="step-emoji">&#x1F550;</span>Расписание</div>
-    <div class="wizard-step-card" data-step="5"><span class="step-emoji">&#x2714;&#xFE0F;</span>Проверка</div>
+    <div class="wizard-step-card active" data-step="1"><i class="bi bi-bullseye step-icon"></i>Тип</div>
+    <div class="wizard-step-card" data-step="2"><i class="bi bi-box-arrow-in-right step-icon"></i>Источники</div>
+    <div class="wizard-step-card" data-step="3"><i class="bi bi-gear step-icon"></i>Действие</div>
+    <div class="wizard-step-card" data-step="4"><i class="bi bi-clock step-icon"></i>Расписание</div>
+    <div class="wizard-step-card" data-step="5"><i class="bi bi-check-circle step-icon"></i>Проверка</div>
 </nav>
 
 <form id="wizard-form" method="post" action="/pipelines/create-wizard" data-busy>
@@ -25,7 +25,7 @@
             <label class="card wizard-type-card h-100 p-3" onclick="selectType(this, 'forward')">
                 <input type="radio" name="pipeline_type" value="forward">
                 <div class="card-body text-center">
-                    <div class="fs-2 mb-2">&#x1F517;</div>
+                    <i class="bi bi-reply-all fs-2 mb-2"></i>
                     <h6 class="card-title">Пересылка сообщений</h6>
                     <p class="card-text small text-muted">Пересылает сообщения из источников в целевые каналы/чаты</p>
                     <code class="small">ИСТОЧНИК → ПЕРЕСЫЛКА</code>
@@ -36,7 +36,7 @@
             <label class="card wizard-type-card h-100 p-3" onclick="selectType(this, 'react')">
                 <input type="radio" name="pipeline_type" value="react">
                 <div class="card-body text-center">
-                    <div class="fs-2 mb-2">👍</div>
+                    <i class="bi bi-emoji-smile fs-2 mb-2"></i>
                     <h6 class="card-title">Авто-реакции</h6>
                     <p class="card-text small text-muted">Ставит emoji-реакции на сообщения с случайной задержкой</p>
                     <code class="small">ИСТОЧНИК → ЗАДЕРЖКА → РЕАКЦИЯ</code>
@@ -47,7 +47,7 @@
             <label class="card wizard-type-card h-100 p-3" onclick="selectType(this, 'filter_action')">
                 <input type="radio" name="pipeline_type" value="filter_action">
                 <div class="card-body text-center">
-                    <div class="fs-2 mb-2">&#x1F3AF;</div>
+                    <i class="bi bi-funnel fs-2 mb-2"></i>
                     <h6 class="card-title">Фильтр + действие</h6>
                     <p class="card-text small text-muted">Фильтрует по ключевым словам или regex, затем пересылает/реагирует/удаляет</p>
                     <code class="small">ИСТОЧНИК → ФИЛЬТР → ДЕЙСТВИЕ</code>
@@ -58,7 +58,7 @@
             <label class="card wizard-type-card h-100 p-3" onclick="selectType(this, 'cleanup')">
                 <input type="radio" name="pipeline_type" value="cleanup">
                 <div class="card-body text-center">
-                    <div class="fs-2 mb-2">&#x1F5D1;</div>
+                    <i class="bi bi-trash3 fs-2 mb-2"></i>
                     <h6 class="card-title">Очистка чата</h6>
                     <p class="card-text small text-muted">Удаляет служебные сообщения (присоединение/выход из чата)</p>
                     <code class="small">ИСТОЧНИК → ФИЛЬТР → УДАЛЕНИЕ</code>
@@ -235,7 +235,7 @@
     {# -- Cleanup panel -- #}
     <div class="action-panel d-none" id="panel-cleanup">
         <div class="alert alert-info">
-            Преднастроенный пайплайн: автоматически удаляет сообщения о присоединении/выходе пользователей из чата.
+            <i class="bi bi-info-circle"></i> Преднастроенный пайплайн: автоматически удаляет сообщения о присоединении/выходе пользователей из чата.
             Никаких дополнительных настроек не требуется.
         </div>
     </div>
@@ -273,14 +273,14 @@
 {# Navigation buttons #}
 <div class="d-flex justify-content-between mt-4">
     <button type="button" class="btn btn-secondary" id="btn-back" onclick="goBack()" style="display:none">
-        &larr; Назад
+        <i class="bi bi-arrow-left"></i> Назад
     </button>
     <div class="ms-auto d-flex align-items-center gap-2">
         <button type="button" class="btn btn-primary" id="btn-next" onclick="goNext()">
-            Далее &rarr;
+            Далее <i class="bi bi-arrow-right"></i>
         </button>
         <button type="submit" name="run_after" value="" class="btn btn-success d-none" id="btn-submit">
-            &#x2714; Создать
+            <i class="bi bi-check-lg"></i> Создать
         </button>
         <div class="d-none align-items-center gap-2" id="run-controls">
             <input type="number" name="since_value" id="since_value" value="24" min="1"
@@ -291,10 +291,10 @@
                 <option value="d">д</option>
             </select>
             <button type="submit" name="run_after" value="1" class="btn btn-outline-primary btn-sm">
-                &#x25BA; Запустить
+                <i class="bi bi-play-fill"></i> Запустить
             </button>
             <button type="button" class="btn btn-outline-warning btn-sm" onclick="runDryRunCount()">
-                &#x1F9EA; Тест
+                <i class="bi bi-lightning"></i> Тест
             </button>
         </div>
     </div>

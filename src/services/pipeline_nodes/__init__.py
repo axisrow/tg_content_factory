@@ -4,6 +4,7 @@ from __future__ import annotations
 from src.models import PipelineNodeType
 from src.services.pipeline_nodes.base import BaseNodeHandler, NodeContext
 from src.services.pipeline_nodes.handlers import (
+    AgentLoopHandler,
     ConditionHandler,
     DelayHandler,
     DeleteMessageHandler,
@@ -37,6 +38,7 @@ HANDLER_REGISTRY: dict[PipelineNodeType, type[BaseNodeHandler]] = {
     PipelineNodeType.FETCH_MESSAGES: FetchMessagesHandler,
     PipelineNodeType.CONDITION: ConditionHandler,
     PipelineNodeType.SEARCH_QUERY_TRIGGER: SearchQueryTriggerHandler,
+    PipelineNodeType.AGENT_LOOP: AgentLoopHandler,
 }
 
 

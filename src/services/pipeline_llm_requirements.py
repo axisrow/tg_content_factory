@@ -13,7 +13,7 @@ from __future__ import annotations
 from src.models import ContentPipeline, PipelineGenerationBackend, PipelineNodeType
 
 _LLM_NODE_TYPES: frozenset[PipelineNodeType] = frozenset(
-    {PipelineNodeType.LLM_GENERATE, PipelineNodeType.LLM_REFINE}
+    {PipelineNodeType.LLM_GENERATE, PipelineNodeType.LLM_REFINE, PipelineNodeType.AGENT_LOOP}
 )
 
 _PUBLISH_NODE_TYPES: frozenset[PipelineNodeType] = frozenset(
