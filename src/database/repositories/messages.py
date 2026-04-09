@@ -926,7 +926,10 @@ class MessagesRepository:
         )
         row = await cur.fetchone()
         if not row:
-            return {"accounts": 0, "channels": 0, "channels_filtered": 0, "channels_tracked": 0, "messages": 0, "messages_today": 0, "search_queries": 0}
+            return {
+                "accounts": 0, "channels": 0, "channels_filtered": 0,
+                "channels_tracked": 0, "messages": 0, "messages_today": 0, "search_queries": 0,
+            }
         return {
             "accounts": row["accounts"],
             "channels": row["channels"],

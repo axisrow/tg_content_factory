@@ -8,7 +8,6 @@ from typing import Any
 
 from src.agent.prompt_template import PromptTemplateError, validate_prompt_template
 from src.database import Database
-from src.services.pipeline_llm_requirements import pipeline_needs_llm
 from src.database.bundles import PipelineBundle
 from src.models import (
     ContentPipeline,
@@ -20,6 +19,7 @@ from src.models import (
     PipelineTarget,
     PipelineTemplate,
 )
+from src.services.pipeline_llm_requirements import pipeline_needs_llm
 
 logger = logging.getLogger(__name__)
 
