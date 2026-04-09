@@ -13,6 +13,7 @@
             <label class="form-label">Название</label>
             <input class="form-control" type="text" name="name" value="{{ pipeline.name }}" required>
         </div>
+        {% if not is_dag %}
         <div class="col-6 col-md-3 col-lg-2">
             <label class="form-label">Бэкенд</label>
             <select class="form-select" name="generation_backend">
@@ -21,6 +22,8 @@
                 {% endfor %}
             </select>
         </div>
+        {% endif %}
+        {% if needs_publish_mode %}
         <div class="col-6 col-md-3 col-lg-2">
             <label class="form-label">Режим публикации</label>
             <select class="form-select" name="publish_mode">
@@ -29,12 +32,14 @@
                 {% endfor %}
             </select>
         </div>
+        {% endif %}
         <div class="col-6 col-md-3 col-lg-2">
             <label class="form-label">Интервал (мин)</label>
             <input class="form-control" type="number" name="generate_interval_minutes" min="1" value="{{ pipeline.generate_interval_minutes }}">
         </div>
     </div>
 
+    {% if needs_llm %}
     <div class="row g-3 mb-3">
         <div class="col-12 col-md-6">
             <label class="form-label">LLM модель</label>
@@ -55,7 +60,7 @@
 
     <div class="mb-3">
         <label class="form-label">Шаблон промпта</label>
-        <textarea class="form-control" name="prompt_template" rows="5" required>{{ pipeline.prompt_template }}</textarea>
+        <textarea class="form-control" name="prompt_template" rows="5">{{ pipeline.prompt_template }}</textarea>
         <div class="form-text">
             Доступные переменные:
             {% for variable in prompt_variables %}
@@ -63,8 +68,36 @@
             {% endfor %}
         </div>
     </div>
+    {% endif %}
 
-    {# Source channels — AJAX searchable picker #}
+    {# DAG: канал для реакций / источник (из pipeline_json source ноды) #}
+    {% if dag_source_channel_ids is not none %}
+    <div class="mb-3">
+        <label class="form-label">Канал-источник</label>
+        <div class="searchable-picker" data-picker-name="dag_source_channel_ids" data-picker-multi="true" data-picker-url="/pipelines/api/channels/search?q=">
+            <div class="picker-selected"></div>
+            <input type="search" class="form-control form-control-sm mb-1" placeholder="Введите название или ID канала (мин. 2 символа)..." data-picker-search>
+            <div class="list-group picker-list"></div>
+            <small class="text-muted d-none" data-picker-empty>Ничего не найдено</small>
+            {% for cid in dag_source_channel_ids %}
+            {% set ch = channels | selectattr("channel_id", "equalto", cid) | first | default(none) %}
+            <input type="hidden" data-picker-preselected value="{{ cid }}" data-title="{{ ch.title if ch else 'Канал ' ~ cid }}">
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
+    {# DAG: конфигурация реакции (emoji) #}
+    {% if react_emoji is not none %}
+    <div class="mb-3">
+        <label class="form-label">Реакция</label>
+        <input class="form-control" type="text" name="react_emoji" value="{{ react_emoji }}" placeholder="👍">
+        <div class="form-text">Один эмодзи: <code>👍</code>. Несколько через запятую: <code>👍,❤️,🔥</code> — случайный выбор при каждом запуске.</div>
+    </div>
+    {% endif %}
+
+    {# Legacy: source / target pickers (только для не-DAG пайплайнов) #}
+    {% if not is_dag %}
     <div class="row g-3 mb-3">
         <div class="col-12 col-lg-6">
             <label class="form-label">Каналы-источники</label>
@@ -73,14 +106,12 @@
                 <input type="search" class="form-control form-control-sm mb-1" placeholder="Введите название или ID канала (мин. 2 символа)..." data-picker-search>
                 <div class="list-group picker-list"></div>
                 <small class="text-muted d-none" data-picker-empty>Ничего не найдено</small>
-                {# Pre-selected sources — rendered as hidden inputs + badges #}
                 {% for sid in source_ids %}
                 <input type="hidden" data-picker-preselected value="{{ sid }}" data-title="Канал {{ sid }}">
                 {% endfor %}
             </div>
         </div>
 
-        {# Target dialogs — searchable picker #}
         <div class="col-12 col-lg-6">
             <div class="d-flex justify-content-between align-items-center">
                 <label class="form-label mb-0">Целевые диалоги</label>
@@ -121,6 +152,7 @@
             </div>
         </div>
     </div>
+    {% endif %}
 
     <div class="form-check mb-3">
         <input class="form-check-input" type="checkbox" name="is_active" value="true" id="edit-active" {{ "checked" if pipeline.is_active }}>
@@ -130,4 +162,50 @@
     <button type="submit" class="btn btn-primary me-2">Сохранить</button>
     <a href="/pipelines" class="btn btn-secondary">Отмена</a>
 </form>
+
+{% if is_dag %}
+{# DAG pipeline: simple run button without since parameters #}
+<form method="post" action="/pipelines/{{ pipeline.id }}/run" class="d-inline ms-3">
+    <input type="hidden" name="since_value" value="24">
+    <input type="hidden" name="since_unit" value="h">
+    <button type="submit" class="btn btn-outline-primary btn-sm">&#x25BA; Запустить</button>
+</form>
+{% else %}
+{# Legacy pipeline: run with since parameters #}
+<span class="ms-3 d-inline-flex align-items-center gap-2">
+    <input type="number" id="edit-since-value" value="24" min="1"
+           class="form-control form-control-sm" style="width:64px">
+    <select id="edit-since-unit" class="form-select form-select-sm" style="width:72px">
+        <option value="m">мин</option>
+        <option value="h" selected>ч</option>
+        <option value="d">д</option>
+    </select>
+</span>
+<form method="post" action="/pipelines/{{ pipeline.id }}/run" class="d-inline" id="edit-run-form">
+    <input type="hidden" name="since_value" id="edit-run-since-value">
+    <input type="hidden" name="since_unit" id="edit-run-since-unit">
+    <button type="submit" class="btn btn-outline-primary btn-sm"
+            onclick="syncEditRunParams()">&#x25BA; Запустить</button>
+</form>
+<script>
+function syncEditRunParams() {
+    document.getElementById("edit-run-since-value").value =
+        document.getElementById("edit-since-value").value;
+    document.getElementById("edit-run-since-unit").value =
+        document.getElementById("edit-since-unit").value;
+}
+</script>
+{% endif %}
+<button type="button" class="btn btn-outline-warning btn-sm"
+        onclick="editDryRunCount({{ pipeline.id }})">&#x1F9EA; Тест</button>
+
+<script>
+function editDryRunCount(id) {
+    fetch("/pipelines/" + id + "/dry-run-count?since_value=24&since_unit=h")
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+            showToast("Тест: " + d.total + " сообщений, " + d.after_filter + " пройдут обработку");
+        }).catch(function() { showToast("Ошибка при подсчёте"); });
+}
+</script>
 {% endblock %}

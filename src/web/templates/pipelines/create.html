@@ -8,13 +8,11 @@
 
 {# Stepper nav #}
 <nav class="wizard-stepper mb-4">
-    <div class="nav nav-pills nav-justified">
-        <a class="nav-link active" data-step="1">1. Тип</a>
-        <a class="nav-link disabled" data-step="2">2. Источники</a>
-        <a class="nav-link disabled" data-step="3">3. Действие</a>
-        <a class="nav-link disabled" data-step="4">4. Расписание</a>
-        <a class="nav-link disabled" data-step="5">5. Проверка</a>
-    </div>
+    <div class="wizard-step-card active" data-step="1"><span class="step-emoji">&#x1F3AF;</span>Тип</div>
+    <div class="wizard-step-card" data-step="2"><span class="step-emoji">&#x1F4E1;</span>Источники</div>
+    <div class="wizard-step-card" data-step="3"><span class="step-emoji">&#x2699;&#xFE0F;</span>Действие</div>
+    <div class="wizard-step-card" data-step="4"><span class="step-emoji">&#x1F550;</span>Расписание</div>
+    <div class="wizard-step-card" data-step="5"><span class="step-emoji">&#x2714;&#xFE0F;</span>Проверка</div>
 </nav>
 
 <form id="wizard-form" method="post" action="/pipelines/create-wizard" data-busy>
@@ -277,13 +275,28 @@
     <button type="button" class="btn btn-secondary" id="btn-back" onclick="goBack()" style="display:none">
         &larr; Назад
     </button>
-    <div class="ms-auto">
+    <div class="ms-auto d-flex align-items-center gap-2">
         <button type="button" class="btn btn-primary" id="btn-next" onclick="goNext()">
             Далее &rarr;
         </button>
-        <button type="submit" class="btn btn-success d-none" id="btn-submit">
+        <button type="submit" name="run_after" value="" class="btn btn-success d-none" id="btn-submit">
             &#x2714; Создать
         </button>
+        <div class="d-none align-items-center gap-2" id="run-controls">
+            <input type="number" name="since_value" id="since_value" value="24" min="1"
+                   class="form-control form-control-sm" style="width:64px">
+            <select name="since_unit" id="since_unit" class="form-select form-select-sm" style="width:72px">
+                <option value="m">мин</option>
+                <option value="h" selected>ч</option>
+                <option value="d">д</option>
+            </select>
+            <button type="submit" name="run_after" value="1" class="btn btn-outline-primary btn-sm">
+                &#x25BA; Запустить
+            </button>
+            <button type="button" class="btn btn-outline-warning btn-sm" onclick="runDryRunCount()">
+                &#x1F9EA; Тест
+            </button>
+        </div>
     </div>
 </div>
 
@@ -370,21 +383,24 @@
         document.querySelectorAll(".wizard-step").forEach(function(s) { s.classList.remove("active"); });
         document.getElementById("step-" + n).classList.add("active");
         // Update stepper nav
-        document.querySelectorAll(".wizard-stepper .nav-link").forEach(function(link) {
-            var s = parseInt(link.dataset.step);
-            link.classList.remove("active", "completed", "disabled");
-            if (s === n) link.classList.add("active");
-            else if (s < n) link.classList.add("completed");
-            else link.classList.add("disabled");
+        document.querySelectorAll(".wizard-step-card").forEach(function(card) {
+            var s = parseInt(card.dataset.step);
+            card.classList.remove("active", "completed");
+            if (s === n) card.classList.add("active");
+            else if (s < n) card.classList.add("completed");
         });
         // Toggle buttons
         document.getElementById("btn-back").style.display = n > 1 ? "" : "none";
         if (n === totalSteps) {
             document.getElementById("btn-next").classList.add("d-none");
             document.getElementById("btn-submit").classList.remove("d-none");
+            document.getElementById("run-controls").classList.remove("d-none");
+            document.getElementById("run-controls").classList.add("d-flex");
         } else {
             document.getElementById("btn-next").classList.remove("d-none");
             document.getElementById("btn-submit").classList.add("d-none");
+            document.getElementById("run-controls").classList.add("d-none");
+            document.getElementById("run-controls").classList.remove("d-flex");
         }
         currentStep = n;
     }
@@ -413,11 +429,14 @@
         var edges = [];
 
         nodes.push({ id: "source_1", type: "source", name: "Источники", config: { channel_ids: sourceIds }, position: { x: 0, y: 0 } });
+        nodes.push({ id: "fetch_1", type: "fetch_messages", name: "Загрузка сообщений", config: {}, position: { x: 110, y: 0 } });
+        edges.push({ from: "source_1", to: "fetch_1" });
+        var lastSourceId = "fetch_1";
 
         if (pipelineType === "forward") {
             var targets = parseTargetRefs();
             nodes.push({ id: "forward_1", type: "forward", name: "Пересылка", config: { targets: targets }, position: { x: 220, y: 0 } });
-            edges.push({ from: "source_1", to: "forward_1" });
+            edges.push({ from: lastSourceId, to: "forward_1" });
 
         } else if (pipelineType === "react") {
             var emojiRaw = document.querySelector('[name="react_emoji"]').value.trim();
@@ -429,10 +448,10 @@
             }
             var delayMin = parseFloat(document.querySelector('[name="delay_min"]').value) || 0;
             var delayMax = parseFloat(document.querySelector('[name="delay_max"]').value) || 0;
-            var lastId = "source_1";
+            var lastId = lastSourceId;
             if (delayMin > 0 || delayMax > 0) {
                 nodes.push({ id: "delay_1", type: "delay", name: "Задержка", config: { min_seconds: delayMin, max_seconds: delayMax }, position: { x: 220, y: 0 } });
-                edges.push({ from: "source_1", to: "delay_1" });
+                edges.push({ from: lastSourceId, to: "delay_1" });
                 lastId = "delay_1";
             }
             nodes.push({ id: "react_1", type: "react", name: "Реакция", config: reactConfig, position: { x: lastId === "delay_1" ? 440 : 220, y: 0 } });
@@ -454,7 +473,7 @@
                 filterConfig = { type: "anonymous_sender" };
             }
             nodes.push({ id: "filter_1", type: "filter", name: "Фильтр", config: filterConfig, position: { x: 220, y: 0 } });
-            edges.push({ from: "source_1", to: "filter_1" });
+            edges.push({ from: lastSourceId, to: "filter_1" });
 
             var at = document.querySelector('[name="action_type"]').value;
             var actionConfig = {};
@@ -474,7 +493,7 @@
 
         } else if (pipelineType === "cleanup") {
             nodes.push({ id: "filter_1", type: "filter", name: "Фильтр join/leave", config: { type: "service_message", service_types: ["user_joined", "user_left"] }, position: { x: 220, y: 0 } });
-            edges.push({ from: "source_1", to: "filter_1" });
+            edges.push({ from: lastSourceId, to: "filter_1" });
             nodes.push({ id: "delete_1", type: "delete_message", name: "Удаление", config: {}, position: { x: 440, y: 0 } });
             edges.push({ from: "filter_1", to: "delete_1" });
         }
@@ -529,5 +548,16 @@
         }
     });
 })();
+
+window.runDryRunCount = function() {
+    var sourceIds = Array.from(document.querySelectorAll('[name="source_channel_ids"]')).map(function(el) { return el.value; });
+    var sv = document.getElementById("since_value").value;
+    var su = document.getElementById("since_unit").value;
+    var url = "/pipelines/dry-run-count?since_value=" + sv + "&since_unit=" + su
+              + "&source_ids=" + sourceIds.join(",");
+    fetch(url).then(function(r) { return r.json(); }).then(function(d) {
+        showToast("Тест: " + d.total + " сообщений найдено, " + d.after_filter + " пройдут обработку");
+    }).catch(function() { showToast("Ошибка при подсчёте"); });
+};
 </script>
 {% endblock %}

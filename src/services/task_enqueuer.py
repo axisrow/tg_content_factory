@@ -73,7 +73,9 @@ class TaskEnqueuer:
         )
         return task_id
 
-    async def enqueue_pipeline_run(self, pipeline_id: int) -> int | None:
+    async def enqueue_pipeline_run(
+        self, pipeline_id: int, dry_run: bool = False, since_hours: float = 24.0,
+    ) -> int | None:
         """Create a PIPELINE_RUN task for a specific pipeline with deduplication."""
         has = await self._db.repos.tasks.has_active_task(
             CollectionTaskType.PIPELINE_RUN,
@@ -86,7 +88,7 @@ class TaskEnqueuer:
         task_id = await self._db.repos.tasks.create_generic_task(
             CollectionTaskType.PIPELINE_RUN,
             title=f"Pipeline run #{pipeline_id}",
-            payload=PipelineRunTaskPayload(pipeline_id=pipeline_id),
+            payload=PipelineRunTaskPayload(pipeline_id=pipeline_id, dry_run=dry_run, since_hours=since_hours),
         )
         logger.info("Enqueued PIPELINE_RUN task #%d for pipeline_id=%d", task_id, pipeline_id)
         return task_id

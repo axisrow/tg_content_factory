@@ -918,16 +918,25 @@ class MessagesRepository:
             "SELECT"
             " (SELECT COUNT(*) FROM accounts) AS accounts,"
             " (SELECT COUNT(*) FROM channels) AS channels,"
+            " (SELECT COUNT(*) FROM channels WHERE is_filtered = 1) AS channels_filtered,"
+            " (SELECT COUNT(*) FROM channels WHERE is_filtered = 0 AND is_active = 1) AS channels_tracked,"
             " (SELECT COUNT(*) FROM messages) AS messages,"
+            " (SELECT COUNT(*) FROM messages WHERE collected_at >= datetime('now', '-24 hours')) AS messages_today,"
             " (SELECT COUNT(*) FROM search_queries) AS search_queries"
         )
         row = await cur.fetchone()
         if not row:
-            return {"accounts": 0, "channels": 0, "messages": 0, "search_queries": 0}
+            return {
+                "accounts": 0, "channels": 0, "channels_filtered": 0,
+                "channels_tracked": 0, "messages": 0, "messages_today": 0, "search_queries": 0,
+            }
         return {
             "accounts": row["accounts"],
             "channels": row["channels"],
+            "channels_filtered": row["channels_filtered"],
+            "channels_tracked": row["channels_tracked"],
             "messages": row["messages"],
+            "messages_today": row["messages_today"],
             "search_queries": row["search_queries"],
         }
 
@@ -1368,3 +1377,22 @@ class MessagesRepository:
             (channel_id, f"-{days} days", limit),
         )
         return [dict(r) for r in await cur.fetchall()]
+
+    async def get_recent_for_channels(
+        self, channel_ids: list[int], since_hours: float
+    ) -> list[Message]:
+        """Return messages from the given channels newer than *since_hours* ago."""
+        if not channel_ids:
+            return []
+        from datetime import datetime, timedelta, timezone
+
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=since_hours)).replace(tzinfo=None)
+        cutoff_str = cutoff.isoformat()
+        placeholders = ",".join("?" * len(channel_ids))
+        cur = await self._db.execute(
+            f"SELECT * FROM messages WHERE channel_id IN ({placeholders})"
+            f" AND date >= ? ORDER BY date DESC",
+            (*channel_ids, cutoff_str),
+        )
+        rows = await cur.fetchall()
+        return self._rows_to_messages(rows)
