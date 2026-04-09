@@ -315,7 +315,7 @@ def get_builtin_templates() -> list[PipelineTemplate]:
         # 13. Translation
         PipelineTemplate(
             name="Перевод постов",
-            description="Переводит сообщения из источников на заданный язык и публикует в целевой канал",
+            description="Переводит сообщения из источников на русский язык и публикует в целевой канал",
             category="content",
             is_builtin=True,
             template_json=PipelineGraph(
@@ -373,8 +373,8 @@ def get_builtin_templates() -> list[PipelineTemplate]:
         PipelineTemplate(
             name="Агент-модерация",
             description=(
-                "Агентный пайплайн для модерации: фильтрует сообщения,"
-                " затем агент принимает решение об удалении"
+                "Агентный пайплайн для модерации: агент анализирует сообщения,"
+                " затем условие проверяет решение об удалении"
             ),
             category="moderation",
             is_builtin=True,

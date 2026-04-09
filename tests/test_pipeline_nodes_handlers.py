@@ -8,6 +8,7 @@ import pytest
 
 from src.services.pipeline_nodes import NodeContext
 from src.services.pipeline_nodes.handlers import (
+    AgentLoopHandler,
     ConditionHandler,
     DelayHandler,
     DeleteMessageHandler,
@@ -676,3 +677,47 @@ async def test_search_trigger_exception():
     engine.search_local = AsyncMock(side_effect=RuntimeError("db down"))
     await SearchQueryTriggerHandler().execute({"query": "test"}, ctx, {"search_engine": engine})
     assert ctx.get_global("trigger_matched") is False
+
+
+# --- AgentLoopHandler ---
+
+
+@pytest.mark.asyncio
+async def test_agent_loop_generates_text():
+    ctx = NodeContext()
+    ctx.set_global("context_messages", [
+        _msg(text="Hello world", channel_title="Chan1", message_id=1),
+        _msg(text="Second post", channel_title="Chan2", message_id=2),
+    ])
+    provider = AsyncMock(return_value="Analyzed: 2 messages")
+    services = {"provider_callable": provider, "default_model": "test-model"}
+
+    await AgentLoopHandler().execute(
+        {"system_prompt": "Analyze", "max_tokens": 500, "temperature": 0.5},
+        ctx, services,
+    )
+
+    assert ctx.get_global("generated_text") == "Analyzed: 2 messages"
+    provider.assert_called_once()
+    call_kwargs = provider.call_args
+    assert "Analyze" in call_kwargs.kwargs["prompt"]
+    assert call_kwargs.kwargs["max_tokens"] == 500
+
+
+@pytest.mark.asyncio
+async def test_agent_loop_no_provider_raises():
+    ctx = NodeContext()
+    with pytest.raises(RuntimeError, match="no provider_callable"):
+        await AgentLoopHandler().execute({}, ctx, {})
+
+
+@pytest.mark.asyncio
+async def test_agent_loop_empty_messages():
+    ctx = NodeContext()
+    ctx.set_global("context_messages", [])
+    provider = AsyncMock(return_value="Nothing to analyze")
+    services = {"provider_callable": provider}
+
+    await AgentLoopHandler().execute({"system_prompt": "Summarize"}, ctx, services)
+
+    assert ctx.get_global("generated_text") == "Nothing to analyze"

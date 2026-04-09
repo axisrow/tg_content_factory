@@ -464,8 +464,5 @@ class AgentLoopHandler(BaseNodeHandler):
             temperature=temperature,
         )
 
-        node_id = node_config.get("_node_id", "agent_loop")
-        context.set(node_id, "result", result)
-        context.set(node_id, "source_count", len(source_parts))
         context.set_global("generated_text", result)
         logger.info("AgentLoop: completed, %d chars generated", len(result or ""))
