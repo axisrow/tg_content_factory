@@ -316,8 +316,8 @@ async def edit_pipeline(
             generation_backend=generation_backend,
             generate_interval_minutes=generate_interval_minutes,
             is_active=is_active,
-            react_emoji=react_emoji or None,
-            dag_source_channel_ids=dag_source_channel_ids if dag_source_channel_ids else None,
+            react_emoji=react_emoji,
+            dag_source_channel_ids=dag_source_channel_ids,
         )
     except PipelineValidationError as exc:
         return _pipeline_redirect(str(exc), error=True, phone=phone)
