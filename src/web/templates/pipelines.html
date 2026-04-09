@@ -3,11 +3,11 @@
 {% block title %}Пайплайны — TG Agent{% endblock %}
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-3">
-    <h1 class="mb-0">Пайплайны контента</h1>
+    <h1 class="mb-0"><i class="bi bi-diagram-3"></i> Пайплайны контента</h1>
     <div class="d-flex gap-2">
-        <a class="btn btn-success btn-sm" href="/pipelines/create">+ Мастер</a>
-        <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-toggle="modal" data-bs-target="#importModal">Импорт JSON</button>
-        <a class="btn btn-outline-primary btn-sm" href="/pipelines/templates">Шаблоны</a>
+        <a class="btn btn-success btn-sm" href="/pipelines/create"><i class="bi bi-plus-lg"></i> Мастер</a>
+        <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-toggle="modal" data-bs-target="#importModal"><i class="bi bi-upload"></i> Импорт</button>
+        <a class="btn btn-outline-primary btn-sm" href="/pipelines/templates"><i class="bi bi-collection"></i> Шаблоны</a>
     </div>
 </div>
 
@@ -36,7 +36,7 @@
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
-                    <button type="submit" class="btn btn-primary">Импортировать</button>
+                    <button type="submit" class="btn btn-primary"><i class="bi bi-upload"></i> Импортировать</button>
                 </div>
             </form>
         </div>
@@ -44,15 +44,18 @@
 </div>
 
 {% if not llm_configured %}
-<div class="alert alert-warning" role="alert">
-    <strong>LLM-провайдер не настроен</strong> — пайплайны с LLM-шагами работать не будут. Пайплайны без LLM (forward/publish) доступны. Добавьте провайдера в <a href="/settings">Настройках</a> или задайте переменную окружения с ключом API (например, <code>OPENAI_API_KEY</code>, <code>COHERE_API_KEY</code>).
-    {% if llm_provider_statuses %}
-    <ul class="mb-0 mt-2">
-        {% for ps in llm_provider_statuses %}
-        <li><strong>{{ ps.provider }}</strong>: {{ ps.reason }}</li>
-        {% endfor %}
-    </ul>
-    {% endif %}
+<div class="alert alert-warning d-flex align-items-start gap-2" role="alert">
+    <i class="bi bi-exclamation-triangle-fill fs-5"></i>
+    <div>
+        <strong>LLM-провайдер не настроен</strong> — пайплайны с LLM-шагами работать не будут. Пайплайны без LLM (forward/publish) доступны. Добавьте провайдера в <a href="/settings">Настройках</a> или задайте переменную окружения с ключом API (например, <code>OPENAI_API_KEY</code>, <code>COHERE_API_KEY</code>).
+        {% if llm_provider_statuses %}
+        <ul class="mb-0 mt-2">
+            {% for ps in llm_provider_statuses %}
+            <li><strong>{{ ps.provider }}</strong>: {{ ps.reason }}</li>
+            {% endfor %}
+        </ul>
+        {% endif %}
+    </div>
 </div>
 {% endif %}
 
@@ -60,8 +63,8 @@
 <div class="card mb-4">
     <div class="card-header fw-semibold d-flex justify-content-between align-items-center"
          data-bs-toggle="collapse" data-bs-target="#add-pipeline-form" style="cursor:pointer">
-        Новый пайплайн
-        <span class="bi-chevron-down"></span>
+        <span><i class="bi bi-plus-circle"></i> Новый пайплайн</span>
+        <i class="bi bi-chevron-down"></i>
     </div>
     <div class="collapse" id="add-pipeline-form">
         <div class="card-body">
@@ -178,132 +181,97 @@
                     <input class="form-check-input" type="checkbox" name="is_active" value="true" id="pipeline-active" checked>
                     <label class="form-check-label" for="pipeline-active">Pipeline активен</label>
                 </div>
-                <button type="submit" class="btn btn-primary">Создать пайплайн</button>
+                <button type="submit" class="btn btn-primary"><i class="bi bi-check-lg"></i> Создать пайплайн</button>
             </form>
         </div>
     </div>
 </div>
 
-{# === Pipeline List === #}
+{# === Pipeline Card Grid (unified desktop + mobile) === #}
 {% if items %}
-{# Desktop table #}
-<div class="table-responsive d-none d-md-block">
-    <table class="table table-striped align-middle">
-        <thead>
-            <tr>
-                <th>Название</th>
-                <th>Источники</th>
-                <th>Цели</th>
-                <th>Интервал</th>
-                <th></th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for item in items %}
-            {% set pipeline = item.pipeline %}
-            {% set pipeline_needs_llm_val = needs_llm_map.get(pipeline.id, true) %}
-            <tr id="pipeline-row-{{ pipeline.id }}">
-                <td>
-                    <div class="fw-semibold">{{ pipeline.name }}</div>
-                    <small class="text-muted">
-                        {{ pipeline.generation_backend.value }} / {{ pipeline.publish_mode.value }}
-                        {% if not pipeline.is_active %} &middot; <span class="text-warning">inactive</span>{% endif %}
-                    </small>
-                </td>
-                <td>
-                    {% for source_title in item.source_titles[:3] %}
-                    <div class="small">{{ source_title }}</div>
-                    {% endfor %}
-                    {% if item.source_titles|length > 3 %}
-                    <div class="small text-muted">+{{ item.source_titles|length - 3 }}</div>
-                    {% endif %}
-                </td>
-                <td>
-                    {% for target in item.targets[:3] %}
-                    <div class="small">{{ target.title or target.dialog_id }}</div>
-                    {% endfor %}
-                    {% if item.targets|length > 3 %}
-                    <div class="small text-muted">+{{ item.targets|length - 3 }}</div>
-                    {% endif %}
-                </td>
-                <td>
-                    {{ pipeline.generate_interval_minutes }} мин
-                    {% set nr = next_runs.get(pipeline.id) %}
-                    {% if nr %}
-                    <div class="small text-muted">{{ nr|local_dt }}</div>
-                    {% endif %}
-                </td>
-                <td class="text-nowrap">
-                    {{ pipeline_actions(pipeline, needs_llm=pipeline_needs_llm_val, llm_configured=llm_configured) }}
-                </td>
-            </tr>
-            {# AI edit row (DAG pipelines) #}
-            {% if pipeline.pipeline_json %}
-            <tr id="pipeline-ai-edit-{{ pipeline.id }}" class="d-none">
-                <td colspan="5">
-                    <div class="p-3 border rounded bg-light">
-                        <label class="form-label fw-semibold">AI-редактирование pipeline</label>
-                        <pre class="border rounded p-2 bg-white small" style="max-height:300px;overflow:auto" id="pipeline-json-preview-{{ pipeline.id }}">Загрузка...</pre>
-                        <div class="input-group mb-2">
-                            <input class="form-control" type="text" id="ai-instruction-{{ pipeline.id }}" placeholder="Инструкция для AI">
-                            <button class="btn btn-primary" type="button" onclick="sendAiEdit({{ pipeline.id }})">Применить</button>
-                        </div>
-                        <div id="ai-edit-result-{{ pipeline.id }}" class="text-muted small"></div>
-                    </div>
-                </td>
-            </tr>
-            {% endif %}
-            {% endfor %}
-        </tbody>
-    </table>
-</div>
-
-{# Mobile cards #}
-<div class="d-md-none">
+<div class="row g-3">
     {% for item in items %}
     {% set pipeline = item.pipeline %}
     {% set pipeline_needs_llm_val = needs_llm_map.get(pipeline.id, true) %}
-    <div class="card mb-2">
-        <div class="card-body">
-            <div class="d-flex justify-content-between align-items-start">
-                <div class="min-w-0 flex-fill">
-                    <div class="d-flex align-items-center gap-1 mb-1">
-                        {% if pipeline.is_active %}<span class="badge-active">{{ icon("active") }}</span>
-                        {% else %}<span class="badge-inactive">&#9679;</span>{% endif %}
-                        <strong class="text-truncate">{{ pipeline.name }}</strong>
+    <div class="col-12" id="pipeline-card-{{ pipeline.id }}">
+        <div class="card{% if not pipeline.is_active %} opacity-50{% endif %}">
+            <div class="card-body">
+                <div class="d-flex justify-content-between align-items-start gap-2">
+                    <div class="min-w-0 flex-fill">
+                        <div class="d-flex align-items-center gap-2 mb-1">
+                            {# Type badge: DAG vs Legacy #}
+                            {% if pipeline.pipeline_json %}
+                            <span class="badge bg-info text-dark"><i class="bi bi-diagram-3"></i> DAG</span>
+                            {% else %}
+                            <span class="badge bg-secondary"><i class="bi bi-list-task"></i> Legacy</span>
+                            {% endif %}
+                            {# Status indicator #}
+                            {% if pipeline.is_active %}
+                            <i class="bi bi-circle-fill text-success" title="Активен"></i>
+                            {% else %}
+                            <i class="bi bi-circle text-secondary" title="Неактивен"></i>
+                            {% endif %}
+                            <strong class="text-truncate">{{ pipeline.name }}</strong>
+                        </div>
+                        <div class="small text-muted">
+                            {{ pipeline.generation_backend.value }} / {{ pipeline.publish_mode.value }}
+                            &middot; {{ pipeline.generate_interval_minutes }} мин
+                            {% set nr = next_runs.get(pipeline.id) %}
+                            {% if nr %}
+                            &middot; следующий: {{ nr|local_dt }}
+                            {% endif %}
+                        </div>
+                        {# Sources & Targets #}
+                        <div class="row g-2 mt-1">
+                            {% if item.source_titles %}
+                            <div class="col-auto">
+                                <span class="badge bg-light text-dark border"><i class="bi bi-box-arrow-in-right"></i> {{ item.source_titles[:3]|join(", ") }}{% if item.source_titles|length > 3 %} +{{ item.source_titles|length - 3 }}{% endif %}</span>
+                            </div>
+                            {% endif %}
+                            {% if item.targets %}
+                            <div class="col-auto">
+                                <span class="badge bg-light text-dark border"><i class="bi bi-box-arrow-right"></i> {{ item.targets[:3]|map(attribute="title")|join(", ") }}{% if item.targets|length > 3 %} +{{ item.targets|length - 3 }}{% endif %}</span>
+                            </div>
+                            {% endif %}
+                        </div>
                     </div>
-                    <small class="text-muted">
-                        {{ pipeline.generation_backend.value }} / {{ pipeline.publish_mode.value }}
-                        &middot; {{ pipeline.generate_interval_minutes }} мин
-                    </small>
-                    {% if item.source_titles %}
-                    <div class="small mt-1">
-                        Источники: {{ item.source_titles[:2]|join(", ") }}{% if item.source_titles|length > 2 %} +{{ item.source_titles|length - 2 }}{% endif %}
+                    <div class="text-nowrap">
+                        {{ pipeline_actions(pipeline, needs_llm=pipeline_needs_llm_val, llm_configured=llm_configured) }}
                     </div>
-                    {% endif %}
-                    {% if item.targets %}
-                    <div class="small">
-                        Цели: {{ item.targets[:2]|map(attribute="title")|join(", ") }}{% if item.targets|length > 2 %} +{{ item.targets|length - 2 }}{% endif %}
-                    </div>
-                    {% endif %}
                 </div>
-            </div>
-            <div class="card-actions mt-2">
-                {{ pipeline_actions(pipeline, needs_llm=pipeline_needs_llm_val, llm_configured=llm_configured) }}
+                {# AI edit row (DAG pipelines) #}
+                {% if pipeline.pipeline_json %}
+                <div id="pipeline-ai-edit-{{ pipeline.id }}" class="d-none mt-3">
+                    <div class="p-3 border rounded bg-light">
+                        <label class="form-label fw-semibold"><i class="bi bi-robot"></i> AI-редактирование pipeline</label>
+                        <pre class="border rounded p-2 bg-white small" style="max-height:300px;overflow:auto" id="pipeline-json-preview-{{ pipeline.id }}">Загрузка...</pre>
+                        <div class="input-group mb-2">
+                            <input class="form-control" type="text" id="ai-instruction-{{ pipeline.id }}" placeholder="Инструкция для AI">
+                            <button class="btn btn-primary" type="button" onclick="sendAiEdit({{ pipeline.id }})"><i class="bi bi-send"></i> Применить</button>
+                        </div>
+                        <div id="ai-edit-result-{{ pipeline.id }}" class="text-muted small"></div>
+                    </div>
+                </div>
+                {% endif %}
             </div>
         </div>
     </div>
     {% endfor %}
 </div>
 {% else %}
-<p>Нет созданных пайплайнов. <a href="/pipelines/templates">Создайте из шаблона</a> или заполните форму выше.</p>
+<div class="text-center py-5">
+    <i class="bi bi-diagram-3 fs-1 text-muted"></i>
+    <p class="mt-2 mb-1">Нет созданных пайплайнов.</p>
+    <a href="/pipelines/templates" class="btn btn-primary btn-sm"><i class="bi bi-collection"></i> Создайте из шаблона</a>
+    или заполните форму выше.
+</div>
 {% endif %}
 
 <script>
 function toggleAiEdit(id) {
-    const row = document.getElementById("pipeline-ai-edit-" + id);
-    row.classList.toggle("d-none");
-    if (!row.classList.contains("d-none")) {
+    const el = document.getElementById("pipeline-ai-edit-" + id);
+    el.classList.toggle("d-none");
+    if (!el.classList.contains("d-none")) {
         loadPipelineJson(id);
     }
 }
