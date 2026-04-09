@@ -23,6 +23,7 @@
     {% block head_scripts %}{% endblock %}
 </head>
 <body class="d-flex flex-column min-vh-100">
+    {% block nav %}
     <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
         <div class="container">
             <a class="navbar-brand fw-bold" href="/">TG Agent</a>
@@ -69,6 +70,7 @@
             </div>
         </div>
     </nav>
+    {% endblock %}
     <div id="flash-container" class="container mt-3"></div>
     <main class="container py-3 flex-grow-1">
         {% block content %}{% endblock %}
@@ -78,10 +80,12 @@
             <div class="toast-body"></div>
         </div>
     </div>
+    {% block footer %}
     <footer class="text-center text-muted py-3 mt-auto">
         <small>TG Agent v{{ app_version }}</small>
     </footer>
-<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js" integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz" crossorigin="anonymous"></script>
+    {% endblock %}
+<script src="https://cdn.jsdelivr.net/npm/bootstrap/5.3.3/dist/js/bootstrap.bundle.min.js" integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz" crossorigin="anonymous"></script>
 <script src="/static/_busy_button.js"></script>
 <script src="/static/js/searchable-picker.js"></script>
 <script>
