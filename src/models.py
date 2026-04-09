@@ -187,6 +187,7 @@ class PipelineNodeType(StrEnum):
     FETCH_MESSAGES = "fetch_messages"
     CONDITION = "condition"
     SEARCH_QUERY_TRIGGER = "search_query_trigger"
+    AGENT_LOOP = "agent_loop"
 
 
 class PipelineNode(BaseModel):

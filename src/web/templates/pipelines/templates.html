@@ -3,11 +3,37 @@
 {% block title %}Шаблоны пайплайнов — TG Agent{% endblock %}
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-3">
-    <h1 class="mb-0">Шаблоны пайплайнов</h1>
+    <h1 class="mb-0"><i class="bi bi-collection"></i> Шаблоны пайплайнов</h1>
     <a class="btn btn-secondary btn-sm" href="/pipelines">{{ icon("back") }} Назад к пайплайнам</a>
 </div>
 
 <p class="text-muted">Выберите шаблон для создания нового пайплайна. Шаблоны содержат готовые наборы нод — вы можете настроить их после создания с помощью AI-редактора.</p>
+
+{% set category_icons = {
+    "content": "bi-pencil-square",
+    "automation": "bi-gear",
+    "moderation": "bi-shield-check",
+    "monitoring": "bi-eye",
+} %}
+
+{% set node_icons = {
+    "source": "bi-box-arrow-in-right",
+    "retrieve_context": "bi-search",
+    "llm_generate": "bi-stars",
+    "llm_refine": "bi-pencil",
+    "image_generate": "bi-image",
+    "publish": "bi-send",
+    "notify": "bi-bell",
+    "filter": "bi-funnel",
+    "delay": "bi-clock",
+    "react": "bi-emoji-smile",
+    "forward": "bi-reply-all",
+    "delete_message": "bi-trash",
+    "fetch_messages": "bi-cloud-download",
+    "condition": "bi-signpost-split",
+    "search_query_trigger": "bi-search",
+    "agent_loop": "bi-robot",
+} %}
 
 {% set categories = [] %}
 {% for tpl in templates %}
@@ -17,7 +43,7 @@
 {% endfor %}
 
 {% for category in categories %}
-<h3 class="mt-4">{{ category|capitalize }}</h3>
+<h3 class="mt-4"><i class="bi {{ category_icons.get(category, 'bi-diagram-3') }}"></i> {{ category|capitalize }}</h3>
 <div class="row g-3">
     {% for tpl in templates %}
     {% if tpl.category == category %}
@@ -39,11 +65,16 @@
                 <p class="card-text text-muted small">{{ tpl.description }}</p>
                 <div class="mb-2">
                     {% for node in tpl.template_json.nodes %}
-                    <span class="badge bg-light text-dark border me-1">{{ node.type.value }}</span>
+                    <span class="badge bg-light text-dark border me-1"><i class="bi {{ node_icons.get(node.type.value, 'bi-circle') }}"></i> {{ node.name }}</span>
                     {% endfor %}
                 </div>
-                <button type="button" class="btn btn-outline-primary btn-sm" data-bs-toggle="modal" data-bs-target="#tplModal{{ tpl.id }}">Использовать</button>
-                <button type="button" class="btn btn-outline-secondary btn-sm" onclick="toggleJsonView('tpl-json-{{ tpl.id }}')">JSON</button>
+                {% if uses_llm %}
+                <span class="badge bg-info text-dark mb-2"><i class="bi bi-stars"></i> Требует LLM</span>
+                {% endif %}
+                <div class="mt-2">
+                    <button type="button" class="btn btn-outline-primary btn-sm" data-bs-toggle="modal" data-bs-target="#tplModal{{ tpl.id }}"><i class="bi bi-plus-lg"></i> Использовать</button>
+                    <button type="button" class="btn btn-outline-secondary btn-sm" onclick="toggleJsonView('tpl-json-{{ tpl.id }}')"><i class="bi bi-code-slash"></i> JSON</button>
+                </div>
                 <pre class="d-none small mt-2 p-2 border rounded bg-light" id="tpl-json-{{ tpl.id }}" style="max-height:200px;overflow:auto">{{ tpl.template_json.to_json() }}</pre>
             </div>
         </div>
@@ -70,7 +101,7 @@
                             <label class="form-label">LLM модель</label>
                             <input class="form-control" type="text" name="llm_model" placeholder="claude-sonnet-4.5">
                             {% if not llm_configured %}
-                            <div class="form-text text-warning">LLM-провайдер не настроен. <a href="/settings">Настройки</a></div>
+                            <div class="form-text text-warning"><i class="bi bi-exclamation-triangle"></i> LLM-провайдер не настроен. <a href="/settings">Настройки</a></div>
                             {% endif %}
                         </div>
                         {% endif %}
@@ -82,7 +113,7 @@
 
                         {# Source channels — AJAX searchable picker #}
                         <div class="mb-3">
-                            <label class="form-label">Каналы-источники</label>
+                            <label class="form-label"><i class="bi bi-box-arrow-in-right"></i> Каналы-источники</label>
                             <div class="searchable-picker" data-picker-name="source_channel_ids" data-picker-multi="true" data-picker-url="/pipelines/api/channels/search?q=">
                                 <div class="picker-selected"></div>
                                 <input type="search" class="form-control form-control-sm mb-1" placeholder="Введите название или ID канала (мин. 2 символа)..." data-picker-search>
@@ -94,7 +125,7 @@
                         {% if needs_target %}
                         {# Target dialogs #}
                         <div class="mb-3">
-                            <label class="form-label">Целевые диалоги</label>
+                            <label class="form-label"><i class="bi bi-box-arrow-right"></i> Целевые диалоги</label>
                             <div class="searchable-picker" data-picker-name="target_refs" data-picker-multi="true">
                                 <div class="picker-selected"></div>
                                 <input type="search" class="form-control form-control-sm mb-1" placeholder="Поиск диалога..." data-picker-search>
@@ -130,7 +161,7 @@
                     </div>
                     <div class="modal-footer">
                         <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
-                        <button type="submit" class="btn btn-primary">Создать</button>
+                        <button type="submit" class="btn btn-primary"><i class="bi bi-check-lg"></i> Создать</button>
                     </div>
                 </form>
             </div>
@@ -142,7 +173,10 @@
 {% endfor %}
 
 {% if not templates %}
-<p>Шаблонов пока нет.</p>
+<div class="text-center py-5">
+    <i class="bi bi-collection fs-1 text-muted"></i>
+    <p class="mt-2">Шаблонов пока нет.</p>
+</div>
 {% endif %}
 
 <script>

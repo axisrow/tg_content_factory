@@ -1,19 +1,19 @@
 {# Reusable Jinja macros for TG Agent templates. #}
 
-{% macro icon(name) %}{% if name == "edit" %}✏️{% elif name == "delete" %}🗑️{% elif name == "toggle_on" %}⏸️{% elif name == "toggle_off" %}▶️{% elif name == "run" %}▶️{% elif name == "dry_run" %}🧪{% elif name == "generate" %}✨{% elif name == "ai" %}🤖{% elif name == "export" %}⬇️{% elif name == "view" %}👁️{% elif name == "collect" %}⬇️{% elif name == "stats" %}📊{% elif name == "restore" %}↩️{% elif name == "purge" %}🧹{% elif name == "search" %}🔍{% elif name == "notification" %}🔔{% elif name == "link" %}🔗{% elif name == "back" %}←{% elif name == "loading" %}⏳{% elif name == "success" %}✓{% elif name == "close" %}✕{% elif name == "refresh" %}🔄{% elif name == "private" %}🔒{% elif name == "warning" %}⚠️{% elif name == "filter" %}🚫{% elif name == "comments" %}💬{% elif name == "trend_up" %}⬆️{% elif name == "trend_down" %}⬇️{% elif name == "trend_flat" %}➖{% elif name == "active" %}🟢{% elif name == "save" %}💾{% elif name == "add" %}➕{% endif %}{% endmacro %}
+{% macro icon(name) %}<i class="bi bi-{% if name == "edit" %}pencil{% elif name == "delete" %}trash{% elif name == "toggle_on" %}pause-circle{% elif name == "toggle_off" %}play-circle{% elif name == "run" %}play-fill{% elif name == "dry_run" %}lightning{% elif name == "generate" %}stars{% elif name == "ai" %}robot{% elif name == "export" %}download{% elif name == "view" %}eye{% elif name == "collect" %}cloud-download{% elif name == "stats" %}bar-chart{% elif name == "restore" %}arrow-counterclockwise{% elif name == "purge" %}trash2{% elif name == "search" %}search{% elif name == "notification" %}bell{% elif name == "link" %}link-45deg{% elif name == "back" %}arrow-left{% elif name == "loading" %}hourglass-split{% elif name == "success" %}check-lg{% elif name == "close" %}x-lg{% elif name == "refresh" %}arrow-clockwise{% elif name == "private" %}lock{% elif name == "warning" %}exclamation-triangle{% elif name == "filter" %}filter-circle{% elif name == "comments" %}chat{% elif name == "trend_up" %}arrow-up{% elif name == "trend_down" %}arrow-down{% elif name == "trend_flat" %}dash{% elif name == "active" %}circle-fill{% elif name == "save" %}save{% elif name == "add" %}plus-lg{% endif %}"></i>{% endmacro %}
 
 {% macro filter_flags(flags_str, margin='') %}
 {% if flags_str %}
     {% for flag in flags_str.split(',') %}
         {% set f = flag.strip() %}
         {% if f in filter_flag_emoji %}
-            <span title="{{ filter_flag_emoji[f][1] }}" style="cursor:default;font-size:1.1em;{{ margin }}">{{ filter_flag_emoji[f][0] }}</span>
+            <span title="{{ filter_flag_emoji[f][1] }}" style="cursor:default;{{ margin }}">{{ filter_flag_emoji[f][0] }}</span>
         {% else %}
-            <span title="{{ f }}" style="cursor:default;{{ margin }}">🚫</span>
+            <span title="{{ f }}" style="cursor:default;{{ margin }}"><i class="bi bi-slash-circle"></i></span>
         {% endif %}
     {% endfor %}
 {% else %}
-    <span title="Отфильтрован" style="cursor:default">🚫</span>
+    <span title="Отфильтрован" style="cursor:default"><i class="bi bi-slash-circle"></i></span>
 {% endif %}
 {% endmacro %}
 
