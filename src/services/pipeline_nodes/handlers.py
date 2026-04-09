@@ -28,7 +28,7 @@ class FetchMessagesHandler(BaseNodeHandler):
             context.set_global("context_messages", [])
             return
         channel_ids = context.get_global("source_channel_ids", [])
-        since_hours = float(context.get_global("since_hours", 24.0))
+        since_hours = float(services.get("since_hours", context.get_global("since_hours", 24.0)))
         messages = await db.repos.messages.get_recent_for_channels(channel_ids, since_hours)
         context.set_global("context_messages", messages)
 

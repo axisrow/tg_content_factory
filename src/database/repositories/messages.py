@@ -1384,11 +1384,12 @@ class MessagesRepository:
         from datetime import datetime, timedelta, timezone
 
         cutoff = (datetime.now(timezone.utc) - timedelta(hours=since_hours)).replace(tzinfo=None)
+        cutoff_str = cutoff.isoformat()
         placeholders = ",".join("?" * len(channel_ids))
         cur = await self._db.execute(
             f"SELECT * FROM messages WHERE channel_id IN ({placeholders})"
             f" AND date >= ? ORDER BY date DESC",
-            (*channel_ids, cutoff),
+            (*channel_ids, cutoff_str),
         )
         rows = await cur.fetchall()
         return self._rows_to_messages(rows)

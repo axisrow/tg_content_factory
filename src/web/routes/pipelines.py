@@ -297,6 +297,12 @@ async def edit_pipeline(
     existing = await svc.get(pipeline_id)
     if existing is None:
         return _pipeline_redirect("pipeline_invalid", error=True, phone=phone)
+    # For DAG pipelines, hidden form fields send defaults — preserve existing values
+    if pipeline_is_dag(existing):
+        if not prompt_template:
+            prompt_template = existing.prompt_template or ""
+        if generation_backend == PipelineGenerationBackend.CHAIN.value and existing.generation_backend:
+            generation_backend = existing.generation_backend.value
     try:
         ok = await svc.update(
             pipeline_id,
@@ -630,8 +636,11 @@ def _apply_pipeline_filter(pipeline, messages: list) -> int:
                 count += 1
         elif ft == "regex":
             pat = cfg.get("pattern", "")
-            if pat and _re.search(pat, text, _re.IGNORECASE):
-                count += 1
+            try:
+                if pat and _re.search(pat, text, _re.IGNORECASE):
+                    count += 1
+            except _re.error:
+                pass  # treat malformed pattern as non-matching
         elif ft == "service_message":
             stypes = cfg.get("service_types", [])
             if any(s in text for s in stypes):
@@ -663,8 +672,11 @@ async def dry_run_count(request: Request, pipeline_id: int,
     if pipeline is None:
         return JSONResponse({"error": "not found"}, status_code=404)
     db = deps.get_db(request)
-    sources = await db.repos.content_pipelines.list_sources(pipeline_id)
-    ids = [s.channel_id for s in sources]
+    if pipeline.pipeline_json:
+        ids = get_dag_source_channel_ids(pipeline) or []
+    else:
+        sources = await db.repos.content_pipelines.list_sources(pipeline_id)
+        ids = [s.channel_id for s in sources]
     messages = await db.repos.messages.get_recent_for_channels(ids, since_hours)
     after_filter = _apply_pipeline_filter(pipeline, messages)
     return {"total": len(messages), "after_filter": after_filter}
