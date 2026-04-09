@@ -383,7 +383,7 @@ def get_builtin_templates() -> list[PipelineTemplate]:
                     _node("source_1", PipelineNodeType.SOURCE, "Источник", {"channel_ids": []}, 0, 0),
                     _node(
                         "fetch_1", PipelineNodeType.FETCH_MESSAGES,
-                        "Загрузка сообщений", {}, 220, 0,
+                        "Загрузка сообщений", {"limit": 1}, 220, 0,
                     ),
                     _node(
                         "agent_1", PipelineNodeType.AGENT_LOOP, "Модератор",
