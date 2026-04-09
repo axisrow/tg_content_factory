@@ -52,7 +52,7 @@
     {% for node in tpl.template_json.nodes %}
         {% set _ = node_types.append(node.type.value) %}
     {% endfor %}
-    {% set uses_llm = "llm_generate" in node_types or "llm_refine" in node_types %}
+    {% set uses_llm = "llm_generate" in node_types or "llm_refine" in node_types or "agent_loop" in node_types %}
     {% set needs_target = "forward" in node_types or "publish" in node_types %}
 
     <div class="col-12 col-md-6 col-xl-4">
