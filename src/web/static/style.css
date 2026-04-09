@@ -272,7 +272,7 @@ label:first-child .hint::before { left: 0.5em; transform: none; }
     transition: border-color 0.15s, box-shadow 0.15s, opacity 0.15s;
     font-size: 11px; text-align: center;
 }
-.wizard-step-card .step-emoji { font-size: 20px; }
+.wizard-step-card .step-icon { font-size: 20px; }
 .wizard-step-card.active {
     border-color: var(--bs-primary); opacity: 1;
     box-shadow: 0 0 0 3px rgba(13,110,253,0.2);

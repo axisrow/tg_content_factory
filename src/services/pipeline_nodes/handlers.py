@@ -418,3 +418,51 @@ class SearchQueryTriggerHandler(BaseNodeHandler):
         except Exception:
             logger.warning("SearchQueryTriggerHandler: search failed", exc_info=True)
             context.set_global("trigger_matched", False)
+
+
+class AgentLoopHandler(BaseNodeHandler):
+    """Agent loop node: sends messages to an LLM with a system prompt and writes the result to context.
+
+    Config keys:
+        system_prompt (str): System prompt for the agent.
+        model (str): LLM model override.
+        max_tokens (int): Max response tokens.
+        temperature (float): Response temperature.
+    """
+
+    async def execute(self, node_config: dict, context: NodeContext, services: dict) -> None:
+        provider_callable = services.get("provider_callable")
+        if provider_callable is None:
+            raise RuntimeError("AgentLoopHandler: no provider_callable in services")
+
+        from datetime import datetime
+
+        system_prompt = node_config.get("system_prompt", "Ты полезный ассистент.")
+        model = node_config.get("model") or services.get("default_model") or ""
+        max_tokens = int(node_config.get("max_tokens", 2000))
+        temperature = float(node_config.get("temperature", 0.7))
+
+        # Build source messages string from context
+        messages = context.get_global("context_messages", [])
+        source_parts = []
+        for m in messages:
+            text = (m.text or "").strip()
+            if not text:
+                continue
+            header = m.channel_title or m.channel_username or ""
+            when = m.date.isoformat() if isinstance(m.date, datetime) else str(m.date)
+            source_parts.append(f"[{header}] {text} (id:{m.message_id} date:{when})")
+        source_messages = "\n\n".join(source_parts)
+
+        full_prompt = f"{system_prompt}\n\n---\nСообщения для анализа:\n\n{source_messages}"
+
+        logger.info("AgentLoop: calling provider with %d source messages", len(source_parts))
+        result = await provider_callable(
+            prompt=full_prompt,
+            model=model,
+            max_tokens=max_tokens,
+            temperature=temperature,
+        )
+
+        context.set_global("generated_text", result)
+        logger.info("AgentLoop: completed, %d chars generated", len(result or ""))
