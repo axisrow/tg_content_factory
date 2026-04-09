@@ -230,7 +230,7 @@
                             {% endif %}
                             {% if item.targets %}
                             <div class="col-auto">
-                                <span class="badge bg-light text-dark border"><i class="bi bi-box-arrow-right"></i> {{ item.targets[:3]|map(attribute="title")|join(", ") }}{% if item.targets|length > 3 %} +{{ item.targets|length - 3 }}{% endif %}</span>
+                                <span class="badge bg-light text-dark border"><i class="bi bi-box-arrow-right"></i> {% for target in item.targets[:3] %}{{ target.title or target.dialog_id }}{% if not loop.last %}, {% endif %}{% endfor %}{% if item.targets|length > 3 %} +{{ item.targets|length - 3 }}{% endif %}</span>
                             </div>
                             {% endif %}
                         </div>

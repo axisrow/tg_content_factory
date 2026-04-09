@@ -1273,7 +1273,7 @@
                     msgContainer.appendChild(bubble);
                     msgContainer.scrollTop = msgContainer.scrollHeight;
                 }
-                status.textContent = 'Загружено {{ icon("success") }}';
+                status.innerHTML = 'Загружено {{ icon("success") }}';
             } catch(e) {
                 status.textContent = 'Ошибка: ' + e.message;
             } finally {
