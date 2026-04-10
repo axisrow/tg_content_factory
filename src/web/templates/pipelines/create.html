@@ -623,7 +623,7 @@
             var llmModelS = (document.querySelector('[name="llm_model_sum"]') || {}).value || "";
             nodes.push({ id: "context_1", type: "retrieve_context", name: "Контекст", config: {}, position: { x: 220, y: 0 } });
             edges.push({ from: lastSourceId, to: "context_1" });
-            nodes.push({ id: "llm_1", type: "llm_generate", name: "Суммаризация", config: { prompt_template: "Сделай краткое содержание следующих сообщений:\n\n{context}", model: llmModelS }, position: { x: 330, y: 0 } });
+            nodes.push({ id: "llm_1", type: "llm_generate", name: "Суммаризация", config: { prompt_template: "Сделай краткое содержание следующих сообщений:\n\n{source_messages}", model: llmModelS }, position: { x: 330, y: 0 } });
             edges.push({ from: "context_1", to: "llm_1" });
             nodes.push({ id: "publish_1", type: "publish", name: "Публикация", config: { targets: [], mode: "moderated" }, position: { x: 440, y: 0 } });
             edges.push({ from: "llm_1", to: "publish_1" });
@@ -631,7 +631,7 @@
         } else if (pipelineType === "translate") {
             var llmModelT = (document.querySelector('[name="llm_model_tr"]') || {}).value || "";
             var targetLang = (document.querySelector('[name="target_language"]') || {}).value || "русский";
-            nodes.push({ id: "llm_1", type: "llm_generate", name: "Перевод", config: { prompt_template: "Переведи следующий текст на " + targetLang + ":\n\n{text}", model: llmModelT }, position: { x: 220, y: 0 } });
+            nodes.push({ id: "llm_1", type: "llm_generate", name: "Перевод", config: { prompt_template: "Переведи следующий текст на " + targetLang + ":\n\n{source_messages}", model: llmModelT }, position: { x: 220, y: 0 } });
             edges.push({ from: lastSourceId, to: "llm_1" });
             nodes.push({ id: "publish_1", type: "publish", name: "Публикация", config: { targets: [], mode: "moderated" }, position: { x: 440, y: 0 } });
             edges.push({ from: "llm_1", to: "publish_1" });
@@ -639,9 +639,10 @@
         } else if (pipelineType === "content_gen") {
             var llmModelG = (document.querySelector('[name="llm_model_gen"]') || {}).value || "";
             var genPrompt = (document.querySelector('[name="gen_prompt"]') || {}).value || "Напиши пост на основе контекста";
+            var safePrompt = genPrompt.replace(/\{/g, "{{").replace(/\}/g, "}}");
             nodes.push({ id: "context_1", type: "retrieve_context", name: "Контекст", config: {}, position: { x: 220, y: 0 } });
             edges.push({ from: lastSourceId, to: "context_1" });
-            nodes.push({ id: "llm_1", type: "llm_generate", name: "Генерация", config: { prompt_template: genPrompt + "\n\n{context}", model: llmModelG }, position: { x: 330, y: 0 } });
+            nodes.push({ id: "llm_1", type: "llm_generate", name: "Генерация", config: { prompt_template: safePrompt + "\n\n{source_messages}", model: llmModelG }, position: { x: 330, y: 0 } });
             edges.push({ from: "context_1", to: "llm_1" });
             nodes.push({ id: "publish_1", type: "publish", name: "Публикация", config: { targets: [], mode: "moderated" }, position: { x: 440, y: 0 } });
             edges.push({ from: "llm_1", to: "publish_1" });
