@@ -60,15 +60,17 @@ def test_module_groups_cover_all_tools():
 
 
 def test_pipeline_safe_tools_are_read_only():
-    """All tools in _PIPELINE_SAFE_TOOLS that exist in TOOL_CATEGORIES should be READ category."""
+    """All tools in _PIPELINE_SAFE_TOOLS must exist in TOOL_CATEGORIES and be READ-only."""
     from src.agent.tools import _PIPELINE_SAFE_TOOLS
 
     for tool_name in _PIPELINE_SAFE_TOOLS:
-        cat = TOOL_CATEGORIES.get(tool_name)
-        if cat is not None:
-            assert cat == ToolCategory.READ, (
-                f"_PIPELINE_SAFE_TOOLS contains {tool_name!r} with category {cat}, expected READ"
-            )
+        assert tool_name in TOOL_CATEGORIES, (
+            f"_PIPELINE_SAFE_TOOLS entry {tool_name!r} not found in TOOL_CATEGORIES"
+        )
+        assert TOOL_CATEGORIES[tool_name] == ToolCategory.READ, (
+            f"_PIPELINE_SAFE_TOOLS contains {tool_name!r} with category "
+            f"{TOOL_CATEGORIES[tool_name]}, expected READ"
+        )
 
 
 # ── _default_permissions ─────────────────────────────────────────────────────
