@@ -700,7 +700,6 @@ async def test_agent_loop_generates_text():
     assert ctx.get_global("generated_text") == "Analyzed: 2 messages"
     provider.assert_called_once()
     call_kwargs = provider.call_args
-    assert "Analyze" in call_kwargs.kwargs["prompt"]
     assert call_kwargs.kwargs["max_tokens"] == 500
 
 
@@ -721,3 +720,111 @@ async def test_agent_loop_empty_messages():
     await AgentLoopHandler().execute({"system_prompt": "Summarize"}, ctx, services)
 
     assert ctx.get_global("generated_text") == "Nothing to analyze"
+
+
+@pytest.mark.asyncio
+async def test_agent_loop_multi_step_with_tools():
+    """Agent calls a tool, gets result, then gives final answer."""
+    ctx = NodeContext()
+    ctx.set_global("context_messages", [_msg(text="test msg")])
+
+    call_count = 0
+
+    async def provider(prompt, model="", max_tokens=512, temperature=0.7):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return '```json\n{"tool": "search_messages", "args": {"query": "test"}}\n```'
+        return "Final analysis: found relevant content"
+
+    search_tool = AsyncMock(return_value="3 messages found")
+    services = {
+        "provider_callable": provider,
+        "agent_tools": {"search_messages": search_tool},
+    }
+
+    await AgentLoopHandler().execute(
+        {"system_prompt": "You are an analyst", "max_steps": 5},
+        ctx, services,
+    )
+
+    assert call_count == 2
+    assert ctx.get_global("generated_text") == "Final analysis: found relevant content"
+    search_tool.assert_called_once_with(query="test")
+
+
+@pytest.mark.asyncio
+async def test_agent_loop_max_steps_exhaustion():
+    """Agent keeps calling tools until max_steps is reached."""
+    ctx = NodeContext()
+    ctx.set_global("context_messages", [_msg(text="test")])
+
+    async def provider(prompt, model="", max_tokens=512, temperature=0.7):
+        return '```json\n{"tool": "search_messages", "args": {"query": "more"}}\n```'
+
+    search_tool = AsyncMock(return_value="results")
+    services = {
+        "provider_callable": provider,
+        "agent_tools": {"search_messages": search_tool},
+    }
+
+    await AgentLoopHandler().execute(
+        {"system_prompt": "Analyst", "max_steps": 3},
+        ctx, services,
+    )
+
+    # max_steps=3 means 3 LLM calls
+    assert search_tool.call_count == 3
+
+
+@pytest.mark.asyncio
+async def test_agent_loop_tool_error():
+    """Tool raises an exception — agent receives error message and continues."""
+    ctx = NodeContext()
+    ctx.set_global("context_messages", [_msg(text="test")])
+
+    call_count = 0
+
+    async def provider(prompt, model="", max_tokens=512, temperature=0.7):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return '```json\n{"tool": "broken_tool", "args": {}}\n```'
+        return "Final answer despite tool error"
+
+    broken_tool = AsyncMock(side_effect=ValueError("tool crashed"))
+    services = {
+        "provider_callable": provider,
+        "agent_tools": {"broken_tool": broken_tool},
+    }
+
+    await AgentLoopHandler().execute({"max_steps": 3}, ctx, services)
+
+    assert call_count == 2
+    assert ctx.get_global("generated_text") == "Final answer despite tool error"
+
+
+@pytest.mark.asyncio
+async def test_agent_loop_unknown_tool():
+    """Agent references a tool name not in agent_tools."""
+    ctx = NodeContext()
+    ctx.set_global("context_messages", [_msg(text="test")])
+
+    call_count = 0
+
+    async def provider(prompt, model="", max_tokens=512, temperature=0.7):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return '```json\n{"tool": "nonexistent", "args": {}}\n```'
+        return "Final answer after unknown tool"
+
+    services = {
+        "provider_callable": provider,
+        "agent_tools": {},
+    }
+
+    await AgentLoopHandler().execute({"max_steps": 3}, ctx, services)
+
+    assert call_count == 2
+    assert ctx.get_global("generated_text") == "Final answer after unknown tool"

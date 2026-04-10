@@ -421,14 +421,36 @@ class SearchQueryTriggerHandler(BaseNodeHandler):
 
 
 class AgentLoopHandler(BaseNodeHandler):
-    """Agent loop node: sends messages to an LLM with a system prompt and writes the result to context.
+    """Agent loop node: multi-step agent with tool access (ReAct pattern).
+
+    Unlike a single-shot LLM call, this handler:
+    1. Sends system prompt + messages to LLM
+    2. Parses tool call requests from the response
+    3. Executes approved tools from services["agent_tools"]
+    4. Feeds results back to LLM
+    5. Repeats until final answer or max_steps reached
 
     Config keys:
         system_prompt (str): System prompt for the agent.
         model (str): LLM model override.
-        max_tokens (int): Max response tokens.
+        max_tokens (int): Max response tokens per step.
         temperature (float): Response temperature.
+        max_steps (int): Maximum agent loop iterations (default 5).
     """
+
+    _TOOL_CALL_RE = re.compile(
+        r"```json\s*(\{[^`]+\})\s*```|orElse\s*(\{.*?\})\s*fin",
+        re.DOTALL,
+    )
+
+    _REACT_SUFFIX = """
+
+Если тебе нужно вызвать инструмент (tool), используй следующий формат:
+```json
+{"tool": "<tool_name>", "args": {<arguments>}}
+```
+Система выполнит инструмент и вернёт результат. Ты можешь вызывать инструменты несколько раз.
+Когда ты получил все необходимые данные, дай финальный ответ без JSON-блока."""
 
     async def execute(self, node_config: dict, context: NodeContext, services: dict) -> None:
         provider_callable = services.get("provider_callable")
@@ -441,6 +463,20 @@ class AgentLoopHandler(BaseNodeHandler):
         model = node_config.get("model") or services.get("default_model") or ""
         max_tokens = int(node_config.get("max_tokens", 2000))
         temperature = float(node_config.get("temperature", 0.7))
+        max_steps = int(node_config.get("max_steps", 5))
+        agent_tools = services.get("agent_tools", {})
+
+        # Build tool descriptions for system prompt
+        tool_desc = ""
+        if agent_tools:
+            import inspect
+            parts = []
+            for name, fn in agent_tools.items():
+                doc = inspect.getdoc(fn) or ""
+                parts.append(f"- {name}: {doc}")
+            tool_desc = "\n\nДоступные инструменты:\n" + "\n".join(parts)
+
+        full_system = system_prompt + tool_desc + self._REACT_SUFFIX
 
         # Build source messages string from context
         messages = context.get_global("context_messages", [])
@@ -454,15 +490,62 @@ class AgentLoopHandler(BaseNodeHandler):
             source_parts.append(f"[{header}] {text} (id:{m.message_id} date:{when})")
         source_messages = "\n\n".join(source_parts)
 
-        full_prompt = f"{system_prompt}\n\n---\nСообщения для анализа:\n\n{source_messages}"
+        user_message = f"Сообщения для анализа:\n\n{source_messages}" if source_parts else "Нет сообщений для анализа."
 
-        logger.info("AgentLoop: calling provider with %d source messages", len(source_parts))
-        result = await provider_callable(
-            prompt=full_prompt,
-            model=model,
-            max_tokens=max_tokens,
-            temperature=temperature,
+        conversation = [
+            {"role": "system", "content": full_system},
+            {"role": "user", "content": user_message},
+        ]
+
+        import json as _json
+
+        response_text = ""
+        for step in range(max_steps):
+            logger.info("AgentLoop step %d/%d", step + 1, max_steps)
+            result = await provider_callable(
+                prompt=conversation[-1]["content"],
+                model=model,
+                max_tokens=max_tokens,
+                temperature=temperature,
+            )
+            response_text = result if isinstance(result, str) else str(result)
+
+            # Check for tool calls
+            match = self._TOOL_CALL_RE.search(response_text)
+            if not match:
+                # Final answer — no tool call pattern found
+                break
+
+            json_str = match.group(1) or match.group(2)
+            try:
+                call = _json.loads(json_str)
+                tool_name = call.get("tool", "")
+                tool_args = call.get("args") or {}
+            except (_json.JSONDecodeError, AttributeError):
+                break
+
+            # Execute tool
+            fn = agent_tools.get(tool_name)
+            if fn is None:
+                tool_result = f"[Unknown tool: {tool_name}]"
+            else:
+                try:
+                    tool_result = await fn(**tool_args) if asyncio.iscoroutinefunction(fn) else fn(**tool_args)
+                    tool_result = str(tool_result)
+                except Exception as exc:
+                    tool_result = f"[Tool error: {exc}]"
+
+            logger.info("AgentLoop tool %r → %s", tool_name, tool_result[:100])
+
+            conversation.append({"role": "assistant", "content": response_text})
+            conversation.append({
+                "role": "user",
+                "content": f"Результат инструмента `{tool_name}`:\n{tool_result}",
+            })
+
+        context.set_global("generated_text", response_text)
+        logger.info(
+            "AgentLoop: completed in %d steps, %d chars generated",
+            min(step + 1, max_steps),
+            len(response_text or ""),
         )
-
-        context.set_global("generated_text", result)
-        logger.info("AgentLoop: completed, %d chars generated", len(result or ""))

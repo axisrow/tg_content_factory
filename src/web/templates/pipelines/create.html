@@ -66,6 +66,31 @@
             </label>
         </div>
     </div>
+    <h5 class="mb-3 mt-4"><i class="bi bi-robot"></i> Агентная автоматизация</h5>
+    <div class="row g-3">
+        <div class="col-12 col-md-6">
+            <label class="card wizard-type-card h-100 p-3" onclick="selectType(this, 'smart_assistant')">
+                <input type="radio" name="pipeline_type" value="smart_assistant">
+                <div class="card-body text-center">
+                    <i class="bi bi-robot fs-2 mb-2"></i>
+                    <h6 class="card-title">Умный ассистент</h6>
+                    <p class="card-text small text-muted">Агент анализирует сообщения с помощью LLM и инструментов</p>
+                    <span class="badge bg-warning text-dark"><i class="bi bi-robot"></i> Agent</span>
+                </div>
+            </label>
+        </div>
+        <div class="col-12 col-md-6">
+            <label class="card wizard-type-card h-100 p-3" onclick="selectType(this, 'agent_moderation')">
+                <input type="radio" name="pipeline_type" value="agent_moderation">
+                <div class="card-body text-center">
+                    <i class="bi bi-shield-check fs-2 mb-2"></i>
+                    <h6 class="card-title">Агент-модерация</h6>
+                    <p class="card-text small text-muted">Агент модерации с доступом к инструментам поиска и удаления</p>
+                    <span class="badge bg-warning text-dark"><i class="bi bi-robot"></i> Agent</span>
+                </div>
+            </label>
+        </div>
+    </div>
 </div>
 
 {# === Step 2: Sources === #}
@@ -237,6 +262,47 @@
         <div class="alert alert-info">
             <i class="bi bi-info-circle"></i> Преднастроенный пайплайн: автоматически удаляет сообщения о присоединении/выходе пользователей из чата.
             Никаких дополнительных настроек не требуется.
+        </div>
+    </div>
+
+    {# -- Agent panels -- #}
+    <div class="action-panel d-none" id="panel-smart_assistant">
+        {% if not llm_configured %}
+        <div class="alert alert-warning"><i class="bi bi-exclamation-triangle"></i> Ни один LLM-провайдер не настроен. Агент не сможет работать без LLM.</div>
+        {% endif %}
+        <div class="row g-3">
+            <div class="col-12 col-md-6">
+                <label class="form-label">LLM модель</label>
+                <input class="form-control" type="text" name="agent_model" placeholder="Например: openai:gpt-4o-mini">
+            </div>
+            <div class="col-6 col-md-3">
+                <label class="form-label">Макс. шагов</label>
+                <input class="form-control" type="number" name="agent_max_steps" min="1" max="20" value="5">
+            </div>
+        </div>
+        <div class="mb-3 mt-3">
+            <label class="form-label">Системный промпт</label>
+            <textarea class="form-control" name="agent_system_prompt" rows="3" placeholder="Ты контент-ассистент. Анализируй сообщения и создавай полезный контент."></textarea>
+        </div>
+    </div>
+
+    <div class="action-panel d-none" id="panel-agent_moderation">
+        {% if not llm_configured %}
+        <div class="alert alert-warning"><i class="bi bi-exclamation-triangle"></i> Ни один LLM-провайдер не настроен. Агент не сможет работать без LLM.</div>
+        {% endif %}
+        <div class="row g-3">
+            <div class="col-12 col-md-6">
+                <label class="form-label">LLM модель</label>
+                <input class="form-control" type="text" name="agent_model_mod" placeholder="Например: openai:gpt-4o-mini">
+            </div>
+            <div class="col-6 col-md-3">
+                <label class="form-label">Макс. шагов</label>
+                <input class="form-control" type="number" name="agent_max_steps_mod" min="1" max="20" value="5">
+            </div>
+        </div>
+        <div class="mb-3 mt-3">
+            <label class="form-label">Системный промпт</label>
+            <textarea class="form-control" name="agent_system_prompt_mod" rows="3" placeholder="Ты модератор чата. Проверяй сообщения на спам и нарушающие правила."></textarea>
         </div>
     </div>
 </div>
@@ -496,6 +562,26 @@
             edges.push({ from: lastSourceId, to: "filter_1" });
             nodes.push({ id: "delete_1", type: "delete_message", name: "Удаление", config: {}, position: { x: 440, y: 0 } });
             edges.push({ from: "filter_1", to: "delete_1" });
+
+        } else if (pipelineType === "smart_assistant") {
+            var agentModel = (document.querySelector('[name="agent_model"]') || {}).value || "";
+            var agentMaxSteps = parseInt((document.querySelector('[name="agent_max_steps"]') || {}).value) || 5;
+            var agentPrompt = (document.querySelector('[name="agent_system_prompt"]') || {}).value || "Ты контент-ассистент. Анализируй сообщения и создавай полезный контент.";
+            nodes.push({ id: "agent_1", type: "agent_loop", name: "Агент", config: { system_prompt: agentPrompt, max_steps: agentMaxSteps, model: agentModel }, position: { x: 220, y: 0 } });
+            edges.push({ from: lastSourceId, to: "agent_1" });
+            nodes.push({ id: "publish_1", type: "publish", name: "Публикация", config: { targets: [], mode: "moderated" }, position: { x: 440, y: 0 } });
+            edges.push({ from: "agent_1", to: "publish_1" });
+
+        } else if (pipelineType === "agent_moderation") {
+            var agentModelM = (document.querySelector('[name="agent_model_mod"]') || {}).value || "";
+            var agentMaxStepsM = parseInt((document.querySelector('[name="agent_max_steps_mod"]') || {}).value) || 5;
+            var agentPromptM = (document.querySelector('[name="agent_system_prompt_mod"]') || {}).value || "Ты модератор чата. Проверяй сообщения на спам и нарушающие правила.";
+            nodes.push({ id: "agent_1", type: "agent_loop", name: "Агент-модерация", config: { system_prompt: agentPromptM, max_steps: agentMaxStepsM, model: agentModelM }, position: { x: 220, y: 0 } });
+            edges.push({ from: lastSourceId, to: "agent_1" });
+            nodes.push({ id: "condition_1", type: "condition", name: "Условие", config: { check: "not_empty", value_key: "generated_text" }, position: { x: 330, y: 0 } });
+            edges.push({ from: "agent_1", to: "condition_1" });
+            nodes.push({ id: "publish_1", type: "publish", name: "Публикация", config: { targets: [], mode: "moderated" }, position: { x: 440, y: 0 } });
+            edges.push({ from: "condition_1", to: "publish_1" });
         }
 
         return { nodes: nodes, edges: edges };
@@ -509,7 +595,7 @@
         var sources = getFormValues("source_channel_ids");
         var flow = graph.nodes.map(function(n) { return n.name; }).join(" → ");
 
-        var typeLabels = { forward: "Пересылка", react: "Авто-реакции", filter_action: "Фильтр + действие", cleanup: "Очистка чата" };
+        var typeLabels = { forward: "Пересылка", react: "Авто-реакции", filter_action: "Фильтр + действие", cleanup: "Очистка чата", smart_assistant: "Умный ассистент", agent_moderation: "Агент-модерация" };
         var dl = document.createElement("dl");
         dl.className = "row mb-0";
         function addRow(dt, ddContent, isCode) {

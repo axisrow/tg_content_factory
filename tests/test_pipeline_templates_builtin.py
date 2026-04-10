@@ -64,3 +64,32 @@ def test_content_generation_template_exists():
     templates = get_builtin_templates()
     content_templates = [t for t in templates if t.category == "content"]
     assert len(content_templates) >= 2  # text-only and text+image
+
+
+# ------------------------------------------------------------------
+# Agent template structure tests
+# ------------------------------------------------------------------
+
+
+def _find_template(name: str):
+    return next((t for t in get_builtin_templates() if t.name == name), None)
+
+
+def test_smart_assistant_template_has_agent_loop():
+    tpl = _find_template("Умный ассистент")
+    assert tpl is not None
+    node_types = {n.type for n in tpl.template_json.nodes}
+    assert PipelineNodeType.AGENT_LOOP in node_types
+    assert PipelineNodeType.PUBLISH in node_types
+    agent_node = next(n for n in tpl.template_json.nodes if n.type == PipelineNodeType.AGENT_LOOP)
+    assert agent_node.config.get("system_prompt")
+
+
+def test_agent_moderation_template_has_agent_loop():
+    tpl = _find_template("Агент-модерация")
+    assert tpl is not None
+    node_types = {n.type for n in tpl.template_json.nodes}
+    assert PipelineNodeType.AGENT_LOOP in node_types
+    assert PipelineNodeType.CONDITION in node_types
+    agent_node = next(n for n in tpl.template_json.nodes if n.type == PipelineNodeType.AGENT_LOOP)
+    assert agent_node.config.get("system_prompt")
