@@ -1,7 +1,11 @@
 """Tests for built-in pipeline templates."""
 from __future__ import annotations
 
-from src.models import PipelineNodeType
+import pytest
+
+from src.database.bundles import PipelineBundle
+from src.models import Account, Channel, PipelineNodeType
+from src.services.pipeline_service import PipelineService, PipelineTargetRef
 from src.services.pipeline_templates_builtin import get_builtin_templates
 
 
@@ -67,12 +71,58 @@ def test_content_generation_template_exists():
 
 
 # ------------------------------------------------------------------
-# Agent template structure tests
+# LLM template structure tests
 # ------------------------------------------------------------------
 
 
 def _find_template(name: str):
     return next((t for t in get_builtin_templates() if t.name == name), None)
+
+
+def test_rewrite_template_has_llm_refine():
+    tpl = _find_template("Рерайт через LLM")
+    assert tpl is not None
+    node_types = {n.type for n in tpl.template_json.nodes}
+    assert PipelineNodeType.LLM_REFINE in node_types
+    assert PipelineNodeType.PUBLISH in node_types
+    refine_node = next(n for n in tpl.template_json.nodes if n.type == PipelineNodeType.LLM_REFINE)
+    assert refine_node.config.get("prompt")
+
+
+def test_summarize_template_has_retrieve_and_llm():
+    tpl = _find_template("Суммаризация постов")
+    assert tpl is not None
+    node_types = {n.type for n in tpl.template_json.nodes}
+    assert PipelineNodeType.RETRIEVE_CONTEXT in node_types
+    assert PipelineNodeType.LLM_GENERATE in node_types
+    assert PipelineNodeType.PUBLISH in node_types
+    llm_node = next(n for n in tpl.template_json.nodes if n.type == PipelineNodeType.LLM_GENERATE)
+    assert llm_node.config.get("prompt_template")
+
+
+def test_translate_template_has_llm():
+    tpl = _find_template("Перевод постов")
+    assert tpl is not None
+    node_types = {n.type for n in tpl.template_json.nodes}
+    assert PipelineNodeType.LLM_GENERATE in node_types
+    assert PipelineNodeType.PUBLISH in node_types
+    llm_node = next(n for n in tpl.template_json.nodes if n.type == PipelineNodeType.LLM_GENERATE)
+    prompt_text = llm_node.config.get("prompt_template", "").lower()
+    assert "перевод" in prompt_text or "переведи" in prompt_text
+
+
+def test_content_gen_template_has_retrieve_and_llm():
+    tpl = _find_template("Контент-генерация")
+    assert tpl is not None
+    node_types = {n.type for n in tpl.template_json.nodes}
+    assert PipelineNodeType.RETRIEVE_CONTEXT in node_types
+    assert PipelineNodeType.LLM_GENERATE in node_types
+    assert PipelineNodeType.PUBLISH in node_types
+
+
+# ------------------------------------------------------------------
+# Agent template structure tests
+# ------------------------------------------------------------------
 
 
 def test_smart_assistant_template_has_agent_loop():
@@ -93,3 +143,106 @@ def test_agent_moderation_template_has_agent_loop():
     assert PipelineNodeType.CONDITION in node_types
     agent_node = next(n for n in tpl.template_json.nodes if n.type == PipelineNodeType.AGENT_LOOP)
     assert agent_node.config.get("system_prompt")
+
+
+# ------------------------------------------------------------------
+# Template wiring tests (source/target injection)
+# ------------------------------------------------------------------
+
+
+@pytest.fixture
+async def _seeded_db(db):
+    """DB with accounts, channels, and builtin templates seeded."""
+    await db.add_account(Account(phone="+100", session_string="sess"))
+    await db.add_channel(Channel(channel_id=1001, title="Source A"))
+    await db.add_channel(Channel(channel_id=1002, title="Source B"))
+    await db.repos.dialog_cache.replace_dialogs(
+        "+100",
+        [{"channel_id": 77, "title": "Target A", "username": "targeta", "channel_type": "channel"}],
+    )
+    # Seed builtin templates
+    templates = get_builtin_templates()
+    await db.repos.pipeline_templates.ensure_builtins(templates)
+    return db
+
+
+async def _create_from_template(db, template_name, source_ids, target_refs=None):
+    """Helper: create a pipeline from a builtin template by name."""
+    svc = PipelineService(PipelineBundle.from_database(db))
+    tpl = await db.repos.pipeline_templates.get_by_name(template_name)
+    assert tpl is not None, f"Template '{template_name}' not found"
+    return await svc.create_from_template(
+        tpl.id,
+        name=f"Test {template_name}",
+        source_ids=source_ids,
+        target_refs=target_refs or [],
+    )
+
+
+@pytest.mark.asyncio
+async def test_forward_template_source_wiring(_seeded_db):
+    db = _seeded_db
+    pipeline_id = await _create_from_template(
+        db, "Пересылка сообщений", [1001, 1002], [PipelineTargetRef(phone="+100", dialog_id=77)]
+    )
+    svc = PipelineService(PipelineBundle.from_database(db))
+    pipeline = await svc.get(pipeline_id)
+    graph = pipeline.pipeline_json
+
+    source_node = next(n for n in graph.nodes if n.type == PipelineNodeType.SOURCE)
+    assert source_node.config["channel_ids"] == [1001, 1002]
+
+    forward_node = next(n for n in graph.nodes if n.type == PipelineNodeType.FORWARD)
+    assert len(forward_node.config.get("targets", [])) == 1
+    assert forward_node.config["targets"][0]["phone"] == "+100"
+    assert forward_node.config["targets"][0]["dialog_id"] == 77
+
+
+@pytest.mark.asyncio
+async def test_react_template_source_wiring(_seeded_db):
+    db = _seeded_db
+    pipeline_id = await _create_from_template(db, "Реакции на сообщения", [1001])
+    svc = PipelineService(PipelineBundle.from_database(db))
+    pipeline = await svc.get(pipeline_id)
+
+    source_node = next(n for n in pipeline.pipeline_json.nodes if n.type == PipelineNodeType.SOURCE)
+    assert source_node.config["channel_ids"] == [1001]
+
+    react_node = next(n for n in pipeline.pipeline_json.nodes if n.type == PipelineNodeType.REACT)
+    assert react_node is not None
+
+
+@pytest.mark.asyncio
+async def test_cleanup_template_source_wiring(_seeded_db):
+    db = _seeded_db
+    pipeline_id = await _create_from_template(db, "Удаление join/leave сообщений", [1001])
+    svc = PipelineService(PipelineBundle.from_database(db))
+    pipeline = await svc.get(pipeline_id)
+    graph = pipeline.pipeline_json
+
+    source_node = next(n for n in graph.nodes if n.type == PipelineNodeType.SOURCE)
+    assert source_node.config["channel_ids"] == [1001]
+
+    filter_node = next(n for n in graph.nodes if n.type == PipelineNodeType.FILTER)
+    assert "service_types" in filter_node.config
+
+    delete_node = next(n for n in graph.nodes if n.type == PipelineNodeType.DELETE_MESSAGE)
+    assert delete_node is not None
+
+
+@pytest.mark.asyncio
+async def test_template_without_targets_no_injection(_seeded_db):
+    """Templates without source_ids should leave source node config empty."""
+    db = _seeded_db
+    svc = PipelineService(PipelineBundle.from_database(db))
+    templates = get_builtin_templates()
+    await db.repos.pipeline_templates.ensure_builtins(templates)
+    tpl = await db.repos.pipeline_templates.get_by_name("Удаление join/leave сообщений")
+    assert tpl is not None
+
+    pipeline_id = await svc.create_from_template(
+        tpl.id, name="No sources", source_ids=[], target_refs=[]
+    )
+    pipeline = await svc.get(pipeline_id)
+    source_node = next(n for n in pipeline.pipeline_json.nodes if n.type == PipelineNodeType.SOURCE)
+    assert source_node.config.get("channel_ids") == []
