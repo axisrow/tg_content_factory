@@ -40,7 +40,7 @@
     {% if top_messages %}
     <!-- Desktop -->
     <div class="table-responsive d-none d-md-block">
-    <table class="table table-striped table-hover table-sm mb-0">
+    <table class="tga-table-striped-hover mb-0">
         <thead>
             <tr>
                 <th>#</th>
@@ -104,7 +104,7 @@
             <div class="card-header fw-semibold">Вовлечённость по типу контента</div>
             {% if by_media_type %}
             <div class="table-responsive">
-            <table class="table table-sm mb-0">
+            <table class="tga-table mb-0">
                 <thead><tr><th>Тип</th><th>Сообщений</th><th>Ср. реакций</th></tr></thead>
                 <tbody>
                     {% for row in by_media_type %}
@@ -127,7 +127,7 @@
             <div class="card-header fw-semibold">Активность по часам (UTC)</div>
             {% if hourly %}
             <div class="table-responsive">
-            <table class="table table-sm mb-0">
+            <table class="tga-table mb-0">
                 <thead><tr><th>Час</th><th>Сообщений</th><th>Ср. реакций</th></tr></thead>
                 <tbody>
                     {% for row in hourly %}

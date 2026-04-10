@@ -12,6 +12,16 @@ html { font-size: 14px; }
 [data-bs-theme="dark"] .badge-active { color: #4ade80; }
 [data-bs-theme="dark"] .badge-filtered { color: #f87171; }
 
+/* Table utility classes (normalize Bootstrap table variants) */
+.tga-table { width: 100%; margin-bottom: 1rem; font-size: 0.875rem; color: var(--bs-table-color, var(--bs-body-color)); vertical-align: top; border-collapse: collapse; }
+.tga-table > :not(caption) > * > * { padding: 0.25rem 0.25rem; background-color: transparent; border-bottom-width: var(--bs-border-width); box-shadow: inset 0 0 0 0 rgba(0,0,0,0); }
+.tga-table > tbody { vertical-align: inherit; }
+.tga-table > thead { vertical-align: bottom; }
+.tga-table-striped > tbody > tr:nth-of-type(odd) > * { --bs-table-accent-bg: var(--bs-table-striped-bg, rgba(0,0,0,0.05)); color: var(--bs-table-striped-color, var(--bs-table-color)); }
+.tga-table-hover > tbody > tr:hover > * { --bs-table-accent-bg: var(--bs-table-hover-bg, rgba(0,0,0,0.075)); color: var(--bs-table-hover-color, var(--bs-table-color)); }
+.tga-table-striped-hover > tbody > tr:nth-of-type(odd) > * { --bs-table-accent-bg: var(--bs-table-striped-bg, rgba(0,0,0,0.05)); color: var(--bs-table-striped-color, var(--bs-table-color)); }
+.tga-table-striped-hover > tbody > tr:hover > * { --bs-table-accent-bg: var(--bs-table-hover-bg, rgba(0,0,0,0.075)); color: var(--bs-table-hover-color, var(--bs-table-color)); }
+
 /* Debug log coloring */
 .log-error td { color: var(--bs-danger); }
 .log-warning td { color: var(--bs-warning); }
