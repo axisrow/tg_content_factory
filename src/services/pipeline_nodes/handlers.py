@@ -534,7 +534,7 @@ class AgentLoopHandler(BaseNodeHandler):
                 # Final answer — no tool call pattern found
                 break
 
-            json_str = match.group(1) or match.group(2)
+            json_str = match.group(1)
             try:
                 call = _json.loads(json_str)
                 tool_name = call.get("tool", "")
