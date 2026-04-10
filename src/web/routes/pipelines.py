@@ -202,9 +202,16 @@ async def create_wizard_submit(
     svc = deps.pipeline_service(request)
     try:
         graph_data = _json.loads(pipeline_json)
+        # Extract llm_model from first LLM node config for pipeline-level setting
+        llm_model = ""
+        for node in graph_data.get("nodes", []):
+            if node.get("type") in ("llm_generate", "llm_refine", "agent_loop"):
+                llm_model = node.get("config", {}).get("model", "") or ""
+                break
         data = {
             "name": name,
             "prompt_template": ".",
+            "llm_model": llm_model or None,
             "source_ids": source_channel_ids,
             "target_refs": target_refs,
             "generate_interval_minutes": generate_interval_minutes,
