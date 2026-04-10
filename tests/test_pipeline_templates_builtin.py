@@ -145,6 +145,26 @@ def test_agent_moderation_template_has_agent_loop():
     assert agent_node.config.get("system_prompt")
 
 
+def test_agent_moderation_safety_contract():
+    """Verify agent_moderation template limits fetch to 1 message and has delete path."""
+    tpl = _find_template("Агент-модерация")
+    assert tpl is not None
+
+    # FETCH_MESSAGES node must have limit=1 for safety
+    fetch_node = next(
+        (n for n in tpl.template_json.nodes if n.type == PipelineNodeType.FETCH_MESSAGES), None
+    )
+    assert fetch_node is not None, "Агент-модерация template missing FETCH_MESSAGES node"
+    assert fetch_node.config.get("limit") == 1, (
+        f"Safety contract: fetch limit must be 1, got {fetch_node.config.get('limit')}"
+    )
+
+    # Must have AGENT_LOOP + DELETE_MESSAGE for destructive path
+    node_types = {n.type for n in tpl.template_json.nodes}
+    assert PipelineNodeType.AGENT_LOOP in node_types
+    assert PipelineNodeType.DELETE_MESSAGE in node_types
+
+
 # ------------------------------------------------------------------
 # Template wiring tests (source/target injection)
 # ------------------------------------------------------------------
