@@ -30,6 +30,9 @@ class FetchMessagesHandler(BaseNodeHandler):
         channel_ids = context.get_global("source_channel_ids", [])
         since_hours = float(services.get("since_hours", context.get_global("since_hours", 24.0)))
         messages = await db.repos.messages.get_recent_for_channels(channel_ids, since_hours)
+        limit = int(node_config["limit"]) if "limit" in node_config else None
+        if limit is not None and len(messages) > limit:
+            messages = messages[:limit]
         context.set_global("context_messages", messages)
 
 

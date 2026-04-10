@@ -207,6 +207,18 @@ class ContentGenerationService:
             "since_hours": since_hours,
         }
 
+        # Inject read-only agent tools for AgentLoopHandler
+        try:
+            from src.agent.tools import build_agent_tools_dict
+
+            services["agent_tools"] = build_agent_tools_dict(
+                db=self._db,
+                client_pool=self._client_pool,
+                search_engine=self._search,
+            )
+        except Exception:
+            logger.debug("agent_tools unavailable for pipeline execution", exc_info=True)
+
         executor = PipelineExecutor()
         result = await executor.execute(pipeline, pipeline.pipeline_json, services)
 
