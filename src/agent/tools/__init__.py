@@ -112,3 +112,117 @@ def make_mcp_server(db, client_pool=None, scheduler_manager=None, config=None):
         name="telegram_db",
         tools=all_tools,
     )
+
+
+# Tool names safe for unattended pipeline execution (read-only subset).
+_PIPELINE_SAFE_TOOLS: frozenset[str] = frozenset({
+    "search_messages",
+    "semantic_search",
+    "search_telegram",
+    "search_my_chats",
+    "search_in_channel",
+    "search_hybrid",
+    "list_channels",
+    "get_channel_stats",
+    "collect_channel_stats",
+    "collect_all_stats",
+    "list_pipelines",
+    "get_pipeline_detail",
+    "list_pipeline_runs",
+    "get_pipeline_run",
+    "get_pipeline_queue",
+    "get_refinement_steps",
+    "export_pipeline_json",
+    "list_pipeline_templates",
+    "list_pending_moderation",
+    "view_moderation_run",
+    "top_content",
+    "content_types",
+    "hourly_stats",
+    "analytics_summary",
+    "daily_stats",
+    "pipeline_analytics",
+    "trending_topics",
+    "trending_channels",
+    "velocity",
+    "peak_hours",
+    "calendar",
+    "trending_emojis",
+    "list_tags",
+    "search_query_list",
+    "search_query_stats",
+})
+
+
+def _adapt_sdk_tool(sdk_tool: SdkMcpTool):
+    """Adapt an SdkMcpTool for direct pipeline invocation.
+
+    SdkMcpTool.handler(args: dict) → dict (MCP response format).
+    AgentLoopHandler calls fn(**kwargs) → str.
+
+    This wrapper translates between the two calling conventions.
+    """
+
+    async def wrapper(**kwargs):
+        result = await sdk_tool.handler(kwargs)
+        if isinstance(result, dict) and "content" in result:
+            parts = []
+            for item in result["content"]:
+                if isinstance(item, dict) and item.get("type") == "text":
+                    parts.append(item.get("text", ""))
+            return "\n".join(parts) if parts else str(result)
+        return str(result)
+
+    wrapper.__doc__ = sdk_tool.description
+    return wrapper
+
+
+def build_agent_tools_dict(db, client_pool=None, search_engine=None, config=None):
+    """Build a dict {tool_name: async_callable} for AgentLoopHandler in pipeline context.
+
+    Only read-only tools are included — destructive operations require interactive
+    confirmation which is unavailable in automated pipeline execution.
+
+    Args:
+        db: Database instance.
+        client_pool: Optional ClientPool for Telegram operations.
+        search_engine: Optional SearchEngine for search tools.
+        config: Optional config dict.
+    """
+    from src.services.embedding_service import EmbeddingService
+
+    embedding_service = EmbeddingService(db, config=config)
+
+    from src.agent.tools import (
+        accounts,
+        agent_threads,
+        analytics,
+        channels,
+        collection,
+        dialogs,
+        filters,
+        images,
+        messaging,
+        moderation,
+        notifications,
+        photo_loader,
+        pipelines,
+        scheduler,
+        search,
+        search_queries,
+        settings,
+    )
+
+    extras: dict = {"scheduler_manager": None, "config": config}
+    tools_dict: dict[str, object] = {}
+
+    for module in [
+        search, channels, collection, pipelines, moderation, search_queries,
+        accounts, filters, analytics, scheduler, notifications, photo_loader,
+        dialogs, messaging, images, settings, agent_threads,
+    ]:
+        for tool_obj in module.register(db, client_pool, embedding_service, **extras):
+            if tool_obj.name in _PIPELINE_SAFE_TOOLS:
+                tools_dict[tool_obj.name] = _adapt_sdk_tool(tool_obj)
+
+    return tools_dict

@@ -833,3 +833,82 @@ async def test_agent_loop_unknown_tool():
 
     assert call_count == 2
     assert ctx.get_global("generated_text") == "Final answer after unknown tool"
+
+
+@pytest.mark.asyncio
+async def test_fetch_messages_respects_limit():
+    """FetchMessagesHandler slices context_messages to node_config['limit']."""
+    from src.services.pipeline_nodes.handlers import FetchMessagesHandler
+
+    ctx = NodeContext()
+    ctx.set_global("source_channel_ids", [1, 2])
+
+    mock_db = MagicMock()
+    mock_messages = [MagicMock(text=f"msg{i}") for i in range(10)]
+    mock_db.repos.messages.get_recent_for_channels = AsyncMock(return_value=mock_messages)
+
+    services = {"db": mock_db, "since_hours": 24.0}
+
+    # With limit=1
+    await FetchMessagesHandler().execute({"limit": 1}, ctx, services)
+    assert len(ctx.get_global("context_messages")) == 1
+
+    # Without limit — all messages
+    await FetchMessagesHandler().execute({}, ctx, services)
+    assert len(ctx.get_global("context_messages")) == 10
+
+
+@pytest.mark.asyncio
+async def test_agent_loop_with_tools_in_graph_execution():
+    """Integration: AgentLoopHandler receives agent_tools through PipelineExecutor."""
+    from src.models import ContentPipeline, PipelineEdge, PipelineGraph, PipelineNode
+    from src.services.pipeline_executor import PipelineExecutor
+    from src.services.pipeline_nodes import PipelineNodeType
+
+    graph = PipelineGraph(
+        nodes=[
+            PipelineNode(
+                id="src", type=PipelineNodeType.SOURCE, name="Source",
+                config={"channel_ids": [1]}, position={"x": 0, "y": 0},
+            ),
+            PipelineNode(
+                id="fetch", type=PipelineNodeType.FETCH_MESSAGES, name="Fetch",
+                config={}, position={"x": 100, "y": 0},
+            ),
+            PipelineNode(
+                id="agent", type=PipelineNodeType.AGENT_LOOP, name="Agent",
+                config={"system_prompt": "Test agent", "max_steps": 2},
+                config_mut={"system_prompt": True, "max_steps": True},
+                position={"x": 200, "y": 0},
+            ),
+        ],
+        edges=[
+            PipelineEdge(from_node="src", to_node="fetch"),
+            PipelineEdge(from_node="fetch", to_node="agent"),
+        ],
+    )
+
+    pipeline = ContentPipeline(
+        id=1, name="test", prompt_template=".", pipeline_json=graph,
+    )
+
+    search_tool = AsyncMock(return_value="3 results found")
+
+    async def provider(prompt, model="", max_tokens=512, temperature=0.7):
+        return "Final answer from agent"
+
+    mock_db = MagicMock()
+    mock_db.repos.messages.get_recent_for_channels = AsyncMock(return_value=[])
+
+    services = {
+        "provider_callable": provider,
+        "agent_tools": {"search_messages": search_tool},
+        "db": mock_db,
+        "since_hours": 24.0,
+        "default_model": "",
+    }
+
+    executor = PipelineExecutor()
+    result = await executor.execute(pipeline, graph, services)
+
+    assert result.get("generated_text") == "Final answer from agent"
