@@ -71,6 +71,56 @@ def test_content_generation_template_exists():
 
 
 # ------------------------------------------------------------------
+# LLM template structure tests
+# ------------------------------------------------------------------
+
+
+def _find_template(name: str):
+    return next((t for t in get_builtin_templates() if t.name == name), None)
+
+
+def test_rewrite_template_has_llm_refine():
+    tpl = _find_template("Рерайт через LLM")
+    assert tpl is not None
+    node_types = {n.type for n in tpl.template_json.nodes}
+    assert PipelineNodeType.LLM_REFINE in node_types
+    assert PipelineNodeType.PUBLISH in node_types
+    refine_node = next(n for n in tpl.template_json.nodes if n.type == PipelineNodeType.LLM_REFINE)
+    assert refine_node.config.get("prompt")
+
+
+def test_summarize_template_has_retrieve_and_llm():
+    tpl = _find_template("Суммаризация постов")
+    assert tpl is not None
+    node_types = {n.type for n in tpl.template_json.nodes}
+    assert PipelineNodeType.RETRIEVE_CONTEXT in node_types
+    assert PipelineNodeType.LLM_GENERATE in node_types
+    assert PipelineNodeType.PUBLISH in node_types
+    llm_node = next(n for n in tpl.template_json.nodes if n.type == PipelineNodeType.LLM_GENERATE)
+    assert llm_node.config.get("prompt_template")
+
+
+def test_translate_template_has_llm():
+    tpl = _find_template("Перевод постов")
+    assert tpl is not None
+    node_types = {n.type for n in tpl.template_json.nodes}
+    assert PipelineNodeType.LLM_GENERATE in node_types
+    assert PipelineNodeType.PUBLISH in node_types
+    llm_node = next(n for n in tpl.template_json.nodes if n.type == PipelineNodeType.LLM_GENERATE)
+    prompt_text = llm_node.config.get("prompt_template", "").lower()
+    assert "перевод" in prompt_text or "переведи" in prompt_text
+
+
+def test_content_gen_template_has_retrieve_and_llm():
+    tpl = _find_template("Контент-генерация")
+    assert tpl is not None
+    node_types = {n.type for n in tpl.template_json.nodes}
+    assert PipelineNodeType.RETRIEVE_CONTEXT in node_types
+    assert PipelineNodeType.LLM_GENERATE in node_types
+    assert PipelineNodeType.PUBLISH in node_types
+
+
+# ------------------------------------------------------------------
 # Template wiring tests (source/target injection)
 # ------------------------------------------------------------------
 
