@@ -463,7 +463,7 @@ class AgentLoopHandler(BaseNodeHandler):
         model = node_config.get("model") or services.get("default_model") or ""
         max_tokens = int(node_config.get("max_tokens", 2000))
         temperature = float(node_config.get("temperature", 0.7))
-        max_steps = int(node_config.get("max_steps", 5))
+        max_steps = max(1, int(node_config.get("max_steps", 5)))
         agent_tools = services.get("agent_tools", {})
 
         # Build tool descriptions for system prompt
@@ -499,16 +499,32 @@ class AgentLoopHandler(BaseNodeHandler):
 
         import json as _json
 
+        def _serialize_conversation(conv: list[dict]) -> str:
+            """Flatten multi-turn conversation into a single prompt string."""
+            parts = []
+            for msg in conv:
+                role = msg.get("role", "")
+                content = msg.get("content", "")
+                if role == "system":
+                    parts.append(content)
+                else:
+                    parts.append(content)
+            return "\n\n".join(parts)
+
         response_text = ""
         for step in range(max_steps):
             logger.info("AgentLoop step %d/%d", step + 1, max_steps)
+            prompt_text = _serialize_conversation(conversation)
             result = await provider_callable(
-                prompt=conversation[-1]["content"],
+                prompt=prompt_text,
                 model=model,
                 max_tokens=max_tokens,
                 temperature=temperature,
             )
-            response_text = result if isinstance(result, str) else str(result)
+            if isinstance(result, str):
+                response_text = result
+            else:
+                response_text = result.get("text") or result.get("generated_text") or str(result)
 
             # Check for tool calls
             match = self._TOOL_CALL_RE.search(response_text)
@@ -530,8 +546,11 @@ class AgentLoopHandler(BaseNodeHandler):
                 tool_result = f"[Unknown tool: {tool_name}]"
             else:
                 try:
-                    tool_result = await fn(**tool_args) if asyncio.iscoroutinefunction(fn) else fn(**tool_args)
-                    tool_result = str(tool_result)
+                    import inspect as _inspect
+                    retval = fn(**tool_args)
+                    if _inspect.isawaitable(retval):
+                        retval = await retval
+                    tool_result = str(retval)
                 except Exception as exc:
                     tool_result = f"[Tool error: {exc}]"
 

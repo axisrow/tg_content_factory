@@ -728,7 +728,7 @@
             var agentPromptM = (document.querySelector('[name="agent_system_prompt_mod"]') || {}).value || "Ты модератор чата. Проверяй сообщения на спам и нарушающие правила.";
             nodes.push({ id: "agent_1", type: "agent_loop", name: "Агент-модерация", config: { system_prompt: agentPromptM, max_steps: agentMaxStepsM, model: agentModelM }, position: { x: 220, y: 0 } });
             edges.push({ from: lastSourceId, to: "agent_1" });
-            nodes.push({ id: "condition_1", type: "condition", name: "Условие", config: { check: "not_empty", value_key: "generated_text" }, position: { x: 330, y: 0 } });
+            nodes.push({ id: "condition_1", type: "condition", name: "Условие", config: { field: "generated_text", operator: "not_empty" }, position: { x: 330, y: 0 } });
             edges.push({ from: "agent_1", to: "condition_1" });
             nodes.push({ id: "publish_1", type: "publish", name: "Публикация", config: { targets: [], mode: "moderated" }, position: { x: 440, y: 0 } });
             edges.push({ from: "condition_1", to: "publish_1" });
