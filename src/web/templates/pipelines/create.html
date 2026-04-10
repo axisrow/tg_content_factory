@@ -172,7 +172,7 @@
         <div class="row g-3">
             <div class="col-12 col-md-6">
                 <label class="form-label">Emoji реакция</label>
-                <input class="form-control" type="text" name="react_emoji" maxlength="10" placeholder="👍" value="👍">
+                <input class="form-control" type="text" name="react_emoji" maxlength="10" placeholder="emoji, например: 👍" value="">
                 <div class="form-text">Одиночный emoji или список через запятую для случайного выбора</div>
             </div>
         </div>
@@ -272,7 +272,7 @@
         </div>
         <div id="action-react" class="mb-3 d-none">
             <label class="form-label">Emoji</label>
-            <input class="form-control" type="text" name="action_react_emoji" maxlength="10" value="👍">
+            <input class="form-control" type="text" name="action_react_emoji" maxlength="10" value="">
         </div>
         <div id="action-delete" class="mb-3 d-none">
             <p class="text-muted">Отфильтрованные сообщения будут удалены.</p>
@@ -559,7 +559,7 @@
             if (emojiRaw.indexOf(",") !== -1) {
                 reactConfig = { random_emojis: emojiRaw.split(",").map(function(e) { return e.trim(); }).filter(Boolean) };
             } else {
-                reactConfig = { emoji: emojiRaw || "👍" };
+                reactConfig = { emoji: emojiRaw || "" };
             }
             var delayMin = parseFloat(document.querySelector('[name="delay_min"]').value) || 0;
             var delayMax = parseFloat(document.querySelector('[name="delay_max"]').value) || 0;
@@ -598,7 +598,7 @@
                 actionConfig = { targets: parseTargetRefs("filter_target_refs") };
                 actionName = "Пересылка";
             } else if (at === "react") {
-                actionConfig = { emoji: document.querySelector('[name="action_react_emoji"]').value || "👍" };
+                actionConfig = { emoji: document.querySelector('[name="action_react_emoji"]').value || "" };
                 actionName = "Реакция";
             } else {
                 actionName = "Удаление";
