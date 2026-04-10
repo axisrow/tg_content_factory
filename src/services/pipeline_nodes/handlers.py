@@ -501,14 +501,13 @@ class AgentLoopHandler(BaseNodeHandler):
 
         def _serialize_conversation(conv: list[dict]) -> str:
             """Flatten multi-turn conversation into a single prompt string."""
+            role_labels = {"system": "SYSTEM", "user": "USER", "assistant": "ASSISTANT"}
             parts = []
             for msg in conv:
                 role = msg.get("role", "")
                 content = msg.get("content", "")
-                if role == "system":
-                    parts.append(content)
-                else:
-                    parts.append(content)
+                label = role_labels.get(role, role.upper())
+                parts.append(f"{label}:\n{content}")
             return "\n\n".join(parts)
 
         response_text = ""
@@ -561,6 +560,13 @@ class AgentLoopHandler(BaseNodeHandler):
                 "role": "user",
                 "content": f"Результат инструмента `{tool_name}`:\n{tool_result}",
             })
+
+        # If max_steps exhausted and last response is still a tool call, discard it
+        if self._TOOL_CALL_RE.search(response_text):
+            logger.warning(
+                "AgentLoop: max_steps exhausted without final answer, discarding tool-call output"
+            )
+            response_text = ""
 
         context.set_global("generated_text", response_text)
         logger.info(

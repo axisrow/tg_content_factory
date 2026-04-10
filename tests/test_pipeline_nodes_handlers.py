@@ -775,6 +775,8 @@ async def test_agent_loop_max_steps_exhaustion():
 
     # max_steps=3 means 3 LLM calls
     assert search_tool.call_count == 3
+    # When max_steps exhausted with pending tool call, generated_text is empty
+    assert ctx.get_global("generated_text") == ""
 
 
 @pytest.mark.asyncio
