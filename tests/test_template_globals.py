@@ -1,6 +1,8 @@
 from datetime import datetime, timezone
 
-from src.web.template_globals import local_dt_filter
+from markupsafe import Markup
+
+from src.web.template_globals import FILTER_FLAG_EMOJI, local_dt_filter
 
 
 def test_none_returns_dash():
@@ -98,3 +100,14 @@ def test_fallback_text_present_for_string():
     result = str(local_dt_filter("2024-03-15T10:30:00"))
     # fallback is str(value)[:16] of original string
     assert "2024-03-15T10:30" in result
+
+
+def test_filter_flag_emoji_uses_bootstrap_icons():
+    """Every FILTER_FLAG_EMOJI entry must use a Bootstrap Icon (Markup with bi bi- class)."""
+    assert len(FILTER_FLAG_EMOJI) > 0, "FILTER_FLAG_EMOJI should not be empty"
+    for flag_key, (icon_value, label) in FILTER_FLAG_EMOJI.items():
+        assert isinstance(icon_value, Markup), f"{flag_key}: icon must be a Markup instance"
+        icon_str = str(icon_value)
+        assert "bi bi-" in icon_str, f"{flag_key}: icon must contain 'bi bi-' class, got: {icon_str}"
+        assert "<i " in icon_str, f"{flag_key}: icon must be an <i> element"
+        assert isinstance(label, str) and len(label) > 0, f"{flag_key}: label must be a non-empty string"

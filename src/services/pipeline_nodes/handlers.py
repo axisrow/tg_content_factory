@@ -284,7 +284,7 @@ class ReactHandler(BaseNodeHandler):
             return
 
         messages = context.get_global("context_messages", [])
-        emoji = node_config.get("emoji", "👍")
+        emoji = node_config.get("emoji") or "👍"
         random_emoji_list = node_config.get("random_emojis", [])
 
         for message in messages:
