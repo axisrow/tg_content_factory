@@ -430,6 +430,24 @@ class PipelineService:
         )
         pipeline = pipeline.model_copy(update={"pipeline_json": graph})
 
+        # Inject source channel IDs into source nodes and target refs into publish/forward nodes
+        if source_ids:
+            clean_ids = sorted(set(source_ids))
+            for node in graph.nodes:
+                if node.type == PipelineNodeType.SOURCE and not node.config.get("channel_ids"):
+                    node.config["channel_ids"] = clean_ids
+        if target_refs:
+            seen: set[tuple[str, int]] = set()
+            target_dicts = []
+            for t in target_refs:
+                key = (t.phone, t.dialog_id)
+                if key not in seen:
+                    seen.add(key)
+                    target_dicts.append({"phone": t.phone, "dialog_id": t.dialog_id})
+            for node in graph.nodes:
+                if node.type in (PipelineNodeType.PUBLISH, PipelineNodeType.FORWARD) and not node.config.get("targets"):
+                    node.config["targets"] = target_dicts
+
         # Templates are created inactive; sources/targets are optional at creation time
         sources = await self._normalize_sources(source_ids) if source_ids else []
         targets = await self._normalize_targets(target_refs) if target_refs else []
