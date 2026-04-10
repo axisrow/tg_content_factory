@@ -121,6 +121,31 @@ def test_content_gen_template_has_retrieve_and_llm():
 
 
 # ------------------------------------------------------------------
+# Agent template structure tests
+# ------------------------------------------------------------------
+
+
+def test_smart_assistant_template_has_agent_loop():
+    tpl = _find_template("Умный ассистент")
+    assert tpl is not None
+    node_types = {n.type for n in tpl.template_json.nodes}
+    assert PipelineNodeType.AGENT_LOOP in node_types
+    assert PipelineNodeType.PUBLISH in node_types
+    agent_node = next(n for n in tpl.template_json.nodes if n.type == PipelineNodeType.AGENT_LOOP)
+    assert agent_node.config.get("system_prompt")
+
+
+def test_agent_moderation_template_has_agent_loop():
+    tpl = _find_template("Агент-модерация")
+    assert tpl is not None
+    node_types = {n.type for n in tpl.template_json.nodes}
+    assert PipelineNodeType.AGENT_LOOP in node_types
+    assert PipelineNodeType.CONDITION in node_types
+    agent_node = next(n for n in tpl.template_json.nodes if n.type == PipelineNodeType.AGENT_LOOP)
+    assert agent_node.config.get("system_prompt")
+
+
+# ------------------------------------------------------------------
 # Template wiring tests (source/target injection)
 # ------------------------------------------------------------------
 
