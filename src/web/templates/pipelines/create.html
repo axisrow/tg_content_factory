@@ -66,6 +66,53 @@
             </label>
         </div>
     </div>
+    <h5 class="mb-3 mt-4"><i class="bi bi-stars"></i> LLM-действия</h5>
+    <div class="row g-3">
+        <div class="col-12 col-md-6">
+            <label class="card wizard-type-card h-100 p-3" onclick="selectType(this, 'rewrite')">
+                <input type="radio" name="pipeline_type" value="rewrite">
+                <div class="card-body text-center">
+                    <i class="bi bi-pencil fs-2 mb-2"></i>
+                    <h6 class="card-title">Рерайт через LLM</h6>
+                    <p class="card-text small text-muted">Переписывает сообщения своими словами через LLM</p>
+                    <span class="badge bg-info text-dark"><i class="bi bi-stars"></i> Требует LLM</span>
+                </div>
+            </label>
+        </div>
+        <div class="col-12 col-md-6">
+            <label class="card wizard-type-card h-100 p-3" onclick="selectType(this, 'summarize')">
+                <input type="radio" name="pipeline_type" value="summarize">
+                <div class="card-body text-center">
+                    <i class="bi bi-file-text fs-2 mb-2"></i>
+                    <h6 class="card-title">Суммаризация</h6>
+                    <p class="card-text small text-muted">Создаёт краткое содержание постов через LLM</p>
+                    <span class="badge bg-info text-dark"><i class="bi bi-stars"></i> Требует LLM</span>
+                </div>
+            </label>
+        </div>
+        <div class="col-12 col-md-6">
+            <label class="card wizard-type-card h-100 p-3" onclick="selectType(this, 'translate')">
+                <input type="radio" name="pipeline_type" value="translate">
+                <div class="card-body text-center">
+                    <i class="bi bi-translate fs-2 mb-2"></i>
+                    <h6 class="card-title">Перевод</h6>
+                    <p class="card-text small text-muted">Переводит посты на другой язык через LLM</p>
+                    <span class="badge bg-info text-dark"><i class="bi bi-stars"></i> Требует LLM</span>
+                </div>
+            </label>
+        </div>
+        <div class="col-12 col-md-6">
+            <label class="card wizard-type-card h-100 p-3" onclick="selectType(this, 'content_gen')">
+                <input type="radio" name="pipeline_type" value="content_gen">
+                <div class="card-body text-center">
+                    <i class="bi bi-magic fs-2 mb-2"></i>
+                    <h6 class="card-title">Генерация контента</h6>
+                    <p class="card-text small text-muted">Создаёт новый контент на основе контекста из источников</p>
+                    <span class="badge bg-info text-dark"><i class="bi bi-stars"></i> Требует LLM</span>
+                </div>
+            </label>
+        </div>
+    </div>
 </div>
 
 {# === Step 2: Sources === #}
@@ -237,6 +284,74 @@
         <div class="alert alert-info">
             <i class="bi bi-info-circle"></i> Преднастроенный пайплайн: автоматически удаляет сообщения о присоединении/выходе пользователей из чата.
             Никаких дополнительных настроек не требуется.
+        </div>
+    </div>
+
+    {# -- LLM panels (shared for rewrite/summarize/translate/content_gen) -- #}
+    <div class="action-panel d-none" id="panel-rewrite">
+        {% if not llm_configured %}
+        <div class="alert alert-warning"><i class="bi bi-exclamation-triangle"></i> Ни один LLM-провайдер не настроен. Пайплайн не сможет работать без LLM.</div>
+        {% endif %}
+        <div class="row g-3">
+            <div class="col-12 col-md-6">
+                <label class="form-label">LLM модель</label>
+                <input class="form-control" type="text" name="llm_model" placeholder="Например: openai:gpt-4o-mini">
+                <div class="form-text">Формат: provider:model_id. Оставьте пустым для модели по умолчанию.</div>
+            </div>
+        </div>
+        <div class="alert alert-info mt-3">
+            <i class="bi bi-info-circle"></i> Рерайт: переписывает текст сообщения своими словами, сохраняя смысл.
+        </div>
+    </div>
+
+    <div class="action-panel d-none" id="panel-summarize">
+        {% if not llm_configured %}
+        <div class="alert alert-warning"><i class="bi bi-exclamation-triangle"></i> Ни один LLM-провайдер не настроен. Пайплайн не сможет работать без LLM.</div>
+        {% endif %}
+        <div class="row g-3">
+            <div class="col-12 col-md-6">
+                <label class="form-label">LLM модель</label>
+                <input class="form-control" type="text" name="llm_model_sum" placeholder="Например: openai:gpt-4o-mini">
+                <div class="form-text">Формат: provider:model_id. Оставьте пустым для модели по умолчанию.</div>
+            </div>
+        </div>
+        <div class="alert alert-info mt-3">
+            <i class="bi bi-info-circle"></i> Суммаризация: создаёт краткое содержание постов из каналов-источников.
+        </div>
+    </div>
+
+    <div class="action-panel d-none" id="panel-translate">
+        {% if not llm_configured %}
+        <div class="alert alert-warning"><i class="bi bi-exclamation-triangle"></i> Ни один LLM-провайдер не настроен. Пайплайн не сможет работать без LLM.</div>
+        {% endif %}
+        <div class="row g-3">
+            <div class="col-12 col-md-6">
+                <label class="form-label">LLM модель</label>
+                <input class="form-control" type="text" name="llm_model_tr" placeholder="Например: openai:gpt-4o-mini">
+                <div class="form-text">Формат: provider:model_id. Оставьте пустым для модели по умолчанию.</div>
+            </div>
+            <div class="col-12 col-md-6">
+                <label class="form-label">Целевой язык</label>
+                <input class="form-control" type="text" name="target_language" value="русский">
+            </div>
+        </div>
+    </div>
+
+    <div class="action-panel d-none" id="panel-content_gen">
+        {% if not llm_configured %}
+        <div class="alert alert-warning"><i class="bi bi-exclamation-triangle"></i> Ни один LLM-провайдер не настроен. Пайплайн не сможет работать без LLM.</div>
+        {% endif %}
+        <div class="row g-3">
+            <div class="col-12 col-md-6">
+                <label class="form-label">LLM модель</label>
+                <input class="form-control" type="text" name="llm_model_gen" placeholder="Например: openai:gpt-4o-mini">
+                <div class="form-text">Формат: provider:model_id. Оставьте пустым для модели по умолчанию.</div>
+            </div>
+        </div>
+        <div class="mb-3">
+            <label class="form-label">Промпт для генерации</label>
+            <textarea class="form-control" name="gen_prompt" rows="3" placeholder="Напиши пост на основе контекста"></textarea>
+            <div class="form-text">Опишите что должен сгенерировать LLM на основе контекста из источников.</div>
         </div>
     </div>
 </div>
@@ -496,6 +611,40 @@
             edges.push({ from: lastSourceId, to: "filter_1" });
             nodes.push({ id: "delete_1", type: "delete_message", name: "Удаление", config: {}, position: { x: 440, y: 0 } });
             edges.push({ from: "filter_1", to: "delete_1" });
+
+        } else if (pipelineType === "rewrite") {
+            var llmModel = (document.querySelector('[name="llm_model"]') || {}).value || "";
+            nodes.push({ id: "refine_1", type: "llm_refine", name: "Рерайт", config: { prompt: "Перепиши следующий текст своими словами, сохранив смысл:\n\n{text}", model: llmModel }, position: { x: 220, y: 0 } });
+            edges.push({ from: lastSourceId, to: "refine_1" });
+            nodes.push({ id: "publish_1", type: "publish", name: "Публикация", config: { targets: [], mode: "moderated" }, position: { x: 440, y: 0 } });
+            edges.push({ from: "refine_1", to: "publish_1" });
+
+        } else if (pipelineType === "summarize") {
+            var llmModelS = (document.querySelector('[name="llm_model_sum"]') || {}).value || "";
+            nodes.push({ id: "context_1", type: "retrieve_context", name: "Контекст", config: {}, position: { x: 220, y: 0 } });
+            edges.push({ from: lastSourceId, to: "context_1" });
+            nodes.push({ id: "llm_1", type: "llm_generate", name: "Суммаризация", config: { prompt_template: "Сделай краткое содержание следующих сообщений:\n\n{context}", model: llmModelS }, position: { x: 330, y: 0 } });
+            edges.push({ from: "context_1", to: "llm_1" });
+            nodes.push({ id: "publish_1", type: "publish", name: "Публикация", config: { targets: [], mode: "moderated" }, position: { x: 440, y: 0 } });
+            edges.push({ from: "llm_1", to: "publish_1" });
+
+        } else if (pipelineType === "translate") {
+            var llmModelT = (document.querySelector('[name="llm_model_tr"]') || {}).value || "";
+            var targetLang = (document.querySelector('[name="target_language"]') || {}).value || "русский";
+            nodes.push({ id: "llm_1", type: "llm_generate", name: "Перевод", config: { prompt_template: "Переведи следующий текст на " + targetLang + ":\n\n{text}", model: llmModelT }, position: { x: 220, y: 0 } });
+            edges.push({ from: lastSourceId, to: "llm_1" });
+            nodes.push({ id: "publish_1", type: "publish", name: "Публикация", config: { targets: [], mode: "moderated" }, position: { x: 440, y: 0 } });
+            edges.push({ from: "llm_1", to: "publish_1" });
+
+        } else if (pipelineType === "content_gen") {
+            var llmModelG = (document.querySelector('[name="llm_model_gen"]') || {}).value || "";
+            var genPrompt = (document.querySelector('[name="gen_prompt"]') || {}).value || "Напиши пост на основе контекста";
+            nodes.push({ id: "context_1", type: "retrieve_context", name: "Контекст", config: {}, position: { x: 220, y: 0 } });
+            edges.push({ from: lastSourceId, to: "context_1" });
+            nodes.push({ id: "llm_1", type: "llm_generate", name: "Генерация", config: { prompt_template: genPrompt + "\n\n{context}", model: llmModelG }, position: { x: 330, y: 0 } });
+            edges.push({ from: "context_1", to: "llm_1" });
+            nodes.push({ id: "publish_1", type: "publish", name: "Публикация", config: { targets: [], mode: "moderated" }, position: { x: 440, y: 0 } });
+            edges.push({ from: "llm_1", to: "publish_1" });
         }
 
         return { nodes: nodes, edges: edges };
@@ -509,7 +658,7 @@
         var sources = getFormValues("source_channel_ids");
         var flow = graph.nodes.map(function(n) { return n.name; }).join(" → ");
 
-        var typeLabels = { forward: "Пересылка", react: "Авто-реакции", filter_action: "Фильтр + действие", cleanup: "Очистка чата" };
+        var typeLabels = { forward: "Пересылка", react: "Авто-реакции", filter_action: "Фильтр + действие", cleanup: "Очистка чата", rewrite: "Рерайт через LLM", summarize: "Суммаризация", translate: "Перевод", content_gen: "Генерация контента" };
         var dl = document.createElement("dl");
         dl.className = "row mb-0";
         function addRow(dt, ddContent, isCode) {

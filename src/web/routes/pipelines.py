@@ -171,12 +171,15 @@ async def create_wizard_page(request: Request):
     svc = deps.pipeline_service(request)
     accounts = await deps.get_account_bundle(request).list_accounts()
     cached_dialogs = await svc.list_cached_dialogs_by_phone()
+    llm_provider_svc = deps.get_llm_provider_service(request)
+    llm_configured = llm_provider_svc.has_providers()
     return deps.get_templates(request).TemplateResponse(
         request,
         "pipelines/create.html",
         {
             "accounts": accounts,
             "cached_dialogs": cached_dialogs,
+            "llm_configured": llm_configured,
         },
     )
 
