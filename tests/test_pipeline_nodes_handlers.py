@@ -728,12 +728,11 @@ async def test_agent_loop_multi_step_with_tools():
     ctx = NodeContext()
     ctx.set_global("context_messages", [_msg(text="test msg")])
 
-    call_count = 0
+    provider_calls = []
 
     async def provider(prompt, model="", max_tokens=512, temperature=0.7):
-        nonlocal call_count
-        call_count += 1
-        if call_count == 1:
+        provider_calls.append({"prompt": prompt})
+        if len(provider_calls) == 1:
             return '```json\n{"tool": "search_messages", "args": {"query": "test"}}\n```'
         return "Final analysis: found relevant content"
 
@@ -748,9 +747,13 @@ async def test_agent_loop_multi_step_with_tools():
         ctx, services,
     )
 
-    assert call_count == 2
+    assert len(provider_calls) == 2
     assert ctx.get_global("generated_text") == "Final analysis: found relevant content"
     search_tool.assert_called_once_with(query="test")
+    # Verify tool result reaches the second LLM call
+    second_prompt = provider_calls[1]["prompt"]
+    assert "3 messages found" in second_prompt
+    assert "search_messages" in second_prompt
 
 
 @pytest.mark.asyncio

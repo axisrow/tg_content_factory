@@ -439,7 +439,7 @@ class AgentLoopHandler(BaseNodeHandler):
     """
 
     _TOOL_CALL_RE = re.compile(
-        r"```json\s*(\{[^`]+\})\s*```|orElse\s*(\{.*?\})\s*fin",
+        r"```json\s*(\{[^`]+\})\s*```",
         re.DOTALL,
     )
 
