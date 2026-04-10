@@ -17,16 +17,16 @@ from src.web.paths import TEMPLATES_DIR
 logger = logging.getLogger(__name__)
 
 FILTER_FLAG_EMOJI = {
-    "low_uniqueness": ("📴", "Низкая уникальность контента"),
-    "low_subscriber_ratio": ("📊", "Мало подписчиков"),
-    "low_subscriber_manual": ("✋", "Мало подписчиков (абс.)"),
-    "manual": ("🚫", "Ручная фильтрация"),
-    "cross_channel_spam": ("📢", "Кросс-канальный спам"),
-    "non_cyrillic": ("🌐", "Не кириллический контент"),
-    "chat_noise": ("💬", "Шум чата"),
-    "username_changed": ("💡", "Сменил юзернейм"),
-    "title_changed": ("📝", "Смена названия"),
-    "suspicious_username": ("🎲", "Подозрительный юзернейм"),
+    "low_uniqueness": (Markup('<i class="bi bi-phone-slash"></i>'), "Низкая уникальность контента"),
+    "low_subscriber_ratio": (Markup('<i class="bi bi-bar-chart"></i>'), "Мало подписчиков"),
+    "low_subscriber_manual": (Markup('<i class="bi bi-hand-index"></i>'), "Мало подписчиков (абс.)"),
+    "manual": (Markup('<i class="bi bi-slash-circle"></i>'), "Ручная фильтрация"),
+    "cross_channel_spam": (Markup('<i class="bi bi-megaphone"></i>'), "Кросс-канальный спам"),
+    "non_cyrillic": (Markup('<i class="bi bi-globe"></i>'), "Не кириллический контент"),
+    "chat_noise": (Markup('<i class="bi bi-chat-dots"></i>'), "Шум чата"),
+    "username_changed": (Markup('<i class="bi bi-lightbulb"></i>'), "Сменил юзернейм"),
+    "title_changed": (Markup('<i class="bi bi-pencil-square"></i>'), "Смена названия"),
+    "suspicious_username": (Markup('<i class="bi bi-dice-5"></i>'), "Подозрительный юзернейм"),
 }
 
 PACKAGE_NAME = "tg-agent"
