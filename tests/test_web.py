@@ -1990,9 +1990,9 @@ async def test_resolve_channel_fail(tmp_path):
         follow_redirects=True,
         headers={"Authorization": f"Basic {auth_header}", "Origin": "http://test"},
     ) as c:
-        resp = await c.post("/channels/add", data={"identifier": "@nonexistent"})
-        assert resp.status_code == 200
-        assert "Не удалось найти канал" in resp.text
+        resp = await c.post("/channels/add", data={"identifier": "@nonexistent"}, follow_redirects=False)
+        assert resp.status_code == 303
+        assert "error=resolve" in resp.headers.get("location", "")
 
     await db.close()
 
@@ -3153,9 +3153,9 @@ async def test_test_notification_no_bot(client):
     app = client._transport.app
     app.state.notifier = None
 
-    resp = await client.post("/scheduler/test-notification")
-    assert resp.status_code == 200
-    assert "Бот не подключён" in resp.text
+    resp = await client.post("/scheduler/test-notification", follow_redirects=False)
+    assert resp.status_code == 303
+    assert "error=bot_not_configured" in resp.headers.get("location", "")
 
 
 @pytest.mark.asyncio
@@ -3172,10 +3172,10 @@ async def test_test_notification_no_queries(client, monkeypatch):
 
     monkeypatch.setattr("src.telegram.notifier.Notifier.notify", fake_notify)
 
-    resp = await client.post("/scheduler/test-notification")
-    assert resp.status_code == 200
+    resp = await client.post("/scheduler/test-notification", follow_redirects=False)
+    assert resp.status_code == 303
     assert "нет поисковых запросов" in captured["text"]
-    assert "Тестовое уведомление отправлено" in resp.text
+    assert "msg=test_notification_sent" in resp.headers.get("location", "")
 
 
 @pytest.mark.asyncio
@@ -3291,9 +3291,9 @@ async def test_test_notification_notify_fails(client, monkeypatch):
 
     monkeypatch.setattr("src.telegram.notifier.Notifier.notify", fake_notify)
 
-    resp = await client.post("/scheduler/test-notification")
-    assert resp.status_code == 200
-    assert "Не удалось отправить уведомление" in resp.text
+    resp = await client.post("/scheduler/test-notification", follow_redirects=False)
+    assert resp.status_code == 303
+    assert "msg=test_notification_failed" in resp.headers.get("location", "")
 
 
 # --- Global error handler ---
