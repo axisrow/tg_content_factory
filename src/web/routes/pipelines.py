@@ -171,12 +171,15 @@ async def create_wizard_page(request: Request):
     svc = deps.pipeline_service(request)
     accounts = await deps.get_account_bundle(request).list_accounts()
     cached_dialogs = await svc.list_cached_dialogs_by_phone()
+    llm_provider_svc = deps.get_llm_provider_service(request)
+    llm_configured = llm_provider_svc.has_providers()
     return deps.get_templates(request).TemplateResponse(
         request,
         "pipelines/create.html",
         {
             "accounts": accounts,
             "cached_dialogs": cached_dialogs,
+            "llm_configured": llm_configured,
         },
     )
 
@@ -199,9 +202,16 @@ async def create_wizard_submit(
     svc = deps.pipeline_service(request)
     try:
         graph_data = _json.loads(pipeline_json)
+        # Extract llm_model from first LLM node config for pipeline-level setting
+        llm_model = ""
+        for node in graph_data.get("nodes", []):
+            if node.get("type") in ("llm_generate", "llm_refine", "agent_loop"):
+                llm_model = node.get("config", {}).get("model", "") or ""
+                break
         data = {
             "name": name,
             "prompt_template": ".",
+            "llm_model": llm_model or None,
             "source_ids": source_channel_ids,
             "target_refs": target_refs,
             "generate_interval_minutes": generate_interval_minutes,
