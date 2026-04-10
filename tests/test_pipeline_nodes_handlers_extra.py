@@ -443,11 +443,15 @@ async def test_react_exception_continues():
 async def test_forward_empty_messages():
     ctx = NodeContext()
     ctx.set_global("context_messages", [])
+    session = AsyncMock()
     pool = AsyncMock()
+    pool.get_client_by_phone = AsyncMock(return_value=(session, "+123"))
+    pool.release_client = AsyncMock()
     targets = [{"phone": "+123", "dialog_id": -1}]
     await ForwardHandler().execute({"targets": targets}, ctx, {"client_pool": pool})
-    # Gets client but never calls forward_messages (no messages to forward)
     pool.get_client_by_phone.assert_awaited_once_with("+123")
+    session.forward_messages.assert_not_awaited()
+    pool.release_client.assert_awaited_once_with("+123")
 
 
 @pytest.mark.asyncio
