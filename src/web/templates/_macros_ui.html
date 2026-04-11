@@ -1,16 +1,16 @@
 {# UI utility macros: empty_state, card, status_dot, task_status_badge, task_status_text. #}
 {% from "_macros.html" import icon %}
 
-{% macro empty_state(text, icon_name=None, class='') %}
+{% macro empty_state(text, icon=None, class='') %}
 <p class="text-muted {{ class }}">
-  {% if icon_name %}<i class="bi bi-{{ icon_name }} me-1"></i>{% endif %}{{ text }}
+  {% if icon %}<i class="bi bi-{{ icon }} me-1"></i>{% endif %}{{ text }}
 </p>
 {% endmacro %}
 
 {% macro card(title) %}
 <div class="card mb-3">
   <div class="card-header fw-semibold">{{ title }}</div>
-  <div class="card-body">{{ caller() }}</div>
+  <div class="card-body">{% if caller is defined %}{{ caller() }}{% endif %}</div>
 </div>
 {% endmacro %}
 
