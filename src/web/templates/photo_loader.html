@@ -299,7 +299,7 @@
                 <h2 class="h5">Последние batches</h2>
                 {% if batches %}
                 <div class="table-responsive">
-                    <table class="table table-sm">
+                    <table class="tga-table">
                         <thead><tr><th>ID</th><th>Target</th><th>Режим</th><th>Статус</th><th>Создан</th></tr></thead>
                         <tbody>
                         {% for batch in batches %}
@@ -328,7 +328,7 @@
                 <h2 class="h5">Auto Jobs</h2>
                 {% if auto_jobs %}
                 <div class="table-responsive">
-                    <table class="table table-sm">
+                    <table class="tga-table">
                         <thead><tr><th>ID</th><th>Папка</th><th>Интервал</th><th>Статус</th><th>Последний запуск</th><th></th></tr></thead>
                         <tbody>
                         {% for job in auto_jobs %}
@@ -367,7 +367,7 @@
                 <h2 class="h5">Последние photo items</h2>
                 {% if items %}
                 <div class="table-responsive">
-                    <table class="table table-sm">
+                    <table class="tga-table">
                         <thead><tr><th>ID</th><th>Target</th><th>Файлы</th><th>Время</th><th>Статус</th><th></th></tr></thead>
                         <tbody>
                         {% for item in items %}
