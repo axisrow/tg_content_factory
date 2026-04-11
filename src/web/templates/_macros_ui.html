@@ -1,0 +1,42 @@
+{# UI utility macros: status_dot, task_status_badge, task_status_text. #}
+{% from "_macros.html" import icon %}
+
+{% macro status_dot(ch) %}
+{% if ch.is_filtered %}<span class="badge-filtered" title="Отфильтрован">&#9679;</span>
+{% elif ch.is_active %}<span class="badge-active">{{ icon("active") }}</span>
+{% else %}<span class="badge-inactive">&#9679;</span>{% endif %}
+{% endmacro %}
+
+{% macro task_status_badge(task) %}
+{% if task.status == 'running' %}
+    <span class="spinner-border spinner-border-sm" role="status"></span>
+{% elif task.status == 'completed' %}
+    <span class="badge text-bg-success">OK</span>
+{% elif task.status == 'failed' %}
+    <span class="badge text-bg-danger">Ошибка</span>
+{% elif task.status == 'cancelled' %}
+    <span class="badge text-bg-secondary">Отменена</span>
+{% else %}
+    <span class="badge text-bg-warning">Ожидание</span>
+{% endif %}
+{% endmacro %}
+
+{% macro task_status_text(task) %}
+{% if task.status == 'running' %}
+    <span class="spinner-border spinner-border-sm" role="status"></span> Выполняется
+{% elif task.status == 'completed' %}
+    Завершено
+    {% if task.note %}<br><small class="text-muted">{{ task.note }}</small>{% endif %}
+{% elif task.status == 'failed' %}
+    <span class="badge text-bg-danger">Ошибка</span>
+    {% if task.error %}<br><small>{{ task.error[:100] }}</small>{% endif %}
+{% elif task.status == 'cancelled' %}
+    Отменена
+{% else %}
+    {% if task.run_after %}
+        Ожидание до {{ task.run_after|local_dt }}
+    {% else %}
+        Ожидание
+    {% endif %}
+{% endif %}
+{% endmacro %}
