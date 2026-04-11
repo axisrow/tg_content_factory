@@ -122,6 +122,10 @@ Each repository has a `_to_<model>(row)` static helper that maps `aiosqlite.Row`
 - **Content pipeline flow**: CONTENT_GENERATE task → `ContentGenerationService.generate()` → LLM text → optional image → `generation_runs` record → if AUTO publish mode, enqueues CONTENT_PUBLISH → `PublishService.publish_run()` sends to target channel
 - **Destructive tool confirmation**: agent tools that delete data require `confirm=true` argument; `require_confirmation()` in `_registry.py` returns a warning response if not confirmed
 - **HTMX progressive enhancement**: collect routes check `HX-Request` header to return HTML fragments vs redirects
+- **Frontend policy — HTMX vs fetch()**:
+  - **HTMX** — for operations where the server returns an HTML fragment to swap into the DOM (server-driven swaps): collect buttons, badge updates, form submissions with DOM replacement
+  - **fetch()** — only for: (1) JSON endpoints without DOM replacement, (2) streaming/SSE responses (agent chat, image gen), (3) complex client-side logic before/after the request
+  - PR review rule: reject fetch() where HTMX fits, and vice versa
 - **Identifier parsing**: `parse_identifiers()` splits text by comma/semicolon/newline; `extract_identifiers()` regex-extracts t.me links, @usernames, negative IDs; `parse_file()` handles txt/csv/xlsx
 - **aiosqlite connection cleanup**: in tests using raw `aiosqlite.connect()`, always wrap in `try/finally` with `await conn.close()` — an unclosed worker-thread blocks pytest process exit
 - **SQL in triple-quoted strings**: Python does NOT concatenate adjacent string literals inside `"""..."""`; for values with quotes use parameterized `execute()` with `?`-placeholders, not inline values in `executescript()`

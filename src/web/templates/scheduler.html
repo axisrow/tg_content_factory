@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% from "_macros.html" import icon %}
-{% from "_macros_ui.html" import empty_state %}
+{% from "_macros_ui.html" import empty_state, task_status_badge, task_status_text %}
 {% block title %}Планировщик — TG Agent{% endblock %}
 {% block content %}
 <h1>Планировщик</h1>
@@ -223,23 +223,7 @@
                         {% endif %}
                     </td>
                     <td>
-                        {% if t.status == 'running' %}
-                            <span class="spinner-border spinner-border-sm" role="status"></span> Выполняется
-                        {% elif t.status == 'completed' %}
-                            Завершено
-                            {% if t.note %}<br><small class="text-muted">{{ t.note }}</small>{% endif %}
-                        {% elif t.status == 'failed' %}
-                            <span class="badge text-bg-danger">Ошибка</span>
-                            {% if t.error %}<br><small>{{ t.error[:100] }}</small>{% endif %}
-                        {% elif t.status == 'cancelled' %}
-                            Отменена
-                        {% else %}
-                            {% if t.run_after %}
-                                Ожидание до {{ t.run_after|local_dt }}
-                            {% else %}
-                                Ожидание
-                            {% endif %}
-                        {% endif %}
+                        {{ task_status_text(t) }}
                     </td>
                     <td>
                         {% if t.task_type == 'stats_all' and t.payload and t.payload.channel_ids %}
@@ -278,17 +262,7 @@
                             {% if t.channel_username %}<br><small class="text-muted">@{{ t.channel_username }}</small>{% endif %}
                         </div>
                         <span>
-                            {% if t.status == 'running' %}
-                                <span class="spinner-border spinner-border-sm" role="status"></span>
-                            {% elif t.status == 'completed' %}
-                                <span class="badge text-bg-success">OK</span>
-                            {% elif t.status == 'failed' %}
-                                <span class="badge text-bg-danger">Ошибка</span>
-                            {% elif t.status == 'cancelled' %}
-                                <span class="badge text-bg-secondary">Отменена</span>
-                            {% else %}
-                                <span class="badge text-bg-warning">Ожидание</span>
-                            {% endif %}
+                            {{ task_status_badge(t) }}
                         </span>
                     </div>
                     <small class="text-muted">
