@@ -1,7 +1,7 @@
 {# UI utility macros: empty_state, card. #}
 
-{% macro empty_state(text, icon=None) %}
-<p class="text-muted text-center py-3">
+{% macro empty_state(text, icon=None, class='') %}
+<p class="text-muted {{ class }}">
   {% if icon %}<i class="bi bi-{{ icon }} me-1"></i>{% endif %}{{ text }}
 </p>
 {% endmacro %}

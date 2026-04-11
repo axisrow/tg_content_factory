@@ -1,3 +1,4 @@
+{% from "_macros_ui.html" import empty_state %}
 {% if not img_provider_writes_enabled %}
 <div class="alert alert-warning py-2">
     Для управления API-ключами генерации изображений требуется <code>SESSION_ENCRYPTION_KEY</code>. Без него настройки доступны только для чтения.
@@ -206,5 +207,5 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 </script>
 {% else %}
-<p class="text-muted mb-0">Провайдеры изображений ещё не добавлены.</p>
+{{ empty_state("Провайдеры изображений ещё не добавлены.", class="mb-0") }}
 {% endif %}

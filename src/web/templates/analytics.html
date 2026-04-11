@@ -95,7 +95,7 @@
         {% endfor %}
     </div>
     {% else %}
-    {{ empty_state("Нет данных. Реакции собираются при сборе сообщений.") }}
+    {{ empty_state("Нет данных. Реакции собираются при сборе сообщений.", class="card-body mb-0") }}
     {% endif %}
 </div>
 
@@ -119,7 +119,7 @@
             </table>
             </div>
             {% else %}
-            {{ empty_state("Нет данных.") }}
+            {{ empty_state("Нет данных.", class="card-body mb-0") }}
             {% endif %}
         </div>
     </div>
@@ -142,7 +142,7 @@
             </table>
             </div>
             {% else %}
-            {{ empty_state("Нет данных.") }}
+            {{ empty_state("Нет данных.", class="card-body mb-0") }}
             {% endif %}
         </div>
     </div>
