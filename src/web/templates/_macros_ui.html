@@ -1,5 +1,18 @@
-{# UI utility macros: status_dot, task_status_badge, task_status_text. #}
+{# UI utility macros: empty_state, card, status_dot, task_status_badge, task_status_text. #}
 {% from "_macros.html" import icon %}
+
+{% macro empty_state(text, icon_name=None, class='') %}
+<p class="text-muted {{ class }}">
+  {% if icon_name %}<i class="bi bi-{{ icon_name }} me-1"></i>{% endif %}{{ text }}
+</p>
+{% endmacro %}
+
+{% macro card(title) %}
+<div class="card mb-3">
+  <div class="card-header fw-semibold">{{ title }}</div>
+  <div class="card-body">{{ caller() }}</div>
+</div>
+{% endmacro %}
 
 {% macro status_dot(ch) %}
 {% if ch.is_filtered %}<span class="badge-filtered" title="Отфильтрован">&#9679;</span>
