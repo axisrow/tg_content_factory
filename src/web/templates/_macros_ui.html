@@ -9,6 +9,6 @@
 {% macro card(title) %}
 <div class="card mb-3">
   <div class="card-header fw-semibold">{{ title }}</div>
-  <div class="card-body">{{ caller() }}</div>
+  <div class="card-body">{% if caller is defined %}{{ caller() }}{% endif %}</div>
 </div>
 {% endmacro %}
