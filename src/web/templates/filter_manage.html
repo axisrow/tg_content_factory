@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% from "_macros.html" import filter_flags %}
+{% from "_macros_ui.html" import empty_state %}
 {% block title %}Очистка — TG Agent{% endblock %}
 {% block content %}
 <h1>Очистка каналов</h1>
@@ -78,7 +79,7 @@
     {% endif %}
 </div>
 {% else %}
-<p class="text-muted">Нет отфильтрованных каналов. Нажмите "Обновить фильтры" для анализа.</p>
+{{ empty_state('Нет отфильтрованных каналов. Нажмите "Обновить фильтры" для анализа.') }}
 {% endif %}
 
 <script>

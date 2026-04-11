@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% from "_macros.html" import icon %}
+{% from "_macros_ui.html" import empty_state %}
 {% block title %}Планировщик — TG Agent{% endblock %}
 {% block content %}
 <h1>Планировщик</h1>
@@ -325,7 +326,7 @@
         </nav>
         {% endif %}
         {% else %}
-        <p class="text-muted text-center py-3">Нет задач с выбранным фильтром.</p>
+        {{ empty_state("Нет задач с выбранным фильтром.") }}
         {% endif %}
     </div>
 </div>

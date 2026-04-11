@@ -1,3 +1,4 @@
+{% from "_macros_ui.html" import empty_state %}
 <form method="post" action="/settings/save-agent" data-busy>
     <input type="hidden" name="agent_form_scope" value="dev_mode">
     <div class="form-check form-switch mb-3">
@@ -255,6 +256,6 @@
     </div>
 </form>
 {% else %}
-<p class="text-muted mb-0">Провайдеры deepagents ещё не добавлены.</p>
+{{ empty_state("Провайдеры deepagents ещё не добавлены.") }}
 {% endif %}
 {% endif %}

@@ -1,0 +1,14 @@
+{# UI utility macros: empty_state, card. #}
+
+{% macro empty_state(text, icon=None) %}
+<p class="text-muted text-center py-3">
+  {% if icon %}<i class="bi bi-{{ icon }} me-1"></i>{% endif %}{{ text }}
+</p>
+{% endmacro %}
+
+{% macro card(title) %}
+<div class="card mb-3">
+  <div class="card-header fw-semibold">{{ title }}</div>
+  <div class="card-body">{{ caller() }}</div>
+</div>
+{% endmacro %}
