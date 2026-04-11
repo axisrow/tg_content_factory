@@ -25,7 +25,7 @@
             <div class="card-header fw-semibold">Топ тем ({{ topics|length }})</div>
             <div class="card-body p-0">
                 {% if topics %}
-                <table class="table table-sm table-hover mb-0">
+                <table class="tga-table-hover mb-0">
                     <thead><tr><th>Слово</th><th class="text-end">Упоминания</th></tr></thead>
                     <tbody>
                     {% for t in topics %}
@@ -48,7 +48,7 @@
             <div class="card-header fw-semibold">Топ каналов по просмотрам ({{ channels|length }})</div>
             <div class="card-body p-0">
                 {% if channels %}
-                <table class="table table-sm table-hover mb-0">
+                <table class="tga-table-hover mb-0">
                     <thead><tr><th>Канал</th><th class="text-end">Avg views</th><th class="text-end">Сообщений</th></tr></thead>
                     <tbody>
                     {% for ch in channels %}
