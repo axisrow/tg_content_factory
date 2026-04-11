@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_macros_ui.html" import empty_state %}
 
 {% block title %}Content Analytics{% endblock %}
 
@@ -93,7 +94,7 @@
                 </table>
             </div>
             {% else %}
-            <p class="text-muted">No pipelines configured.</p>
+            {{ empty_state("No pipelines configured.") }}
             {% endif %}
         </div>
     </div>

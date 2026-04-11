@@ -1,3 +1,4 @@
+{% from "_macros_ui.html" import empty_state %}
 <form method="post" action="/settings/save-translation" data-busy>
     <div class="row g-3">
         <div class="col-md-6">
@@ -72,7 +73,7 @@
             </tbody>
         </table>
         {% else %}
-        <p class="text-muted">Нет данных. Нажмите «Определить языки».</p>
+        {{ empty_state("Нет данных. Нажмите «Определить языки».") }}
         {% endif %}
     </div>
 </div>

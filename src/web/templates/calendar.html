@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_macros_ui.html" import empty_state %}
 
 {% block title %}Календарь контента{% endblock %}
 
@@ -156,7 +157,7 @@
             </table>
         </div>
         {% else %}
-        <p class="text-muted p-3 mb-0">Нет черновиков.</p>
+        {{ empty_state("Нет черновиков.", class="p-3 mb-0") }}
         {% endif %}
     </div>
 </div>

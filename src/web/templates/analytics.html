@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% from "_macros.html" import icon %}
+{% from "_macros_ui.html" import empty_state %}
 {% block title %}Аналитика — TG Agent{% endblock %}
 {% block content %}
 {% macro msg_text(text, max_len=100) %}{{ (text or '')[:max_len] }}{{ '…' if text and text|length > max_len else '' }}{% endmacro %}
@@ -94,7 +95,7 @@
         {% endfor %}
     </div>
     {% else %}
-    <div class="card-body text-muted">Нет данных. Реакции собираются при сборе сообщений.</div>
+    {{ empty_state("Нет данных. Реакции собираются при сборе сообщений.", class="card-body mb-0") }}
     {% endif %}
 </div>
 
@@ -118,7 +119,7 @@
             </table>
             </div>
             {% else %}
-            <div class="card-body text-muted">Нет данных.</div>
+            {{ empty_state("Нет данных.", class="card-body mb-0") }}
             {% endif %}
         </div>
     </div>
@@ -141,7 +142,7 @@
             </table>
             </div>
             {% else %}
-            <div class="card-body text-muted">Нет данных.</div>
+            {{ empty_state("Нет данных.", class="card-body mb-0") }}
             {% endif %}
         </div>
     </div>

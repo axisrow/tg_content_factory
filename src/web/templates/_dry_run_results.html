@@ -1,3 +1,4 @@
+{% from "_macros_ui.html" import empty_state %}
 <div class="card">
     <div class="card-header fw-semibold">
         Dry-run уведомлений
@@ -7,11 +8,11 @@
     </div>
     <div class="card-body">
         {% if no_queries %}
-            <p class="text-muted mb-0">Нет активных запросов с notify_on_collect.</p>
+            {{ empty_state("Нет активных запросов с notify_on_collect.", class="mb-0") }}
         {% elif not since %}
-            <p class="text-muted mb-0">Нет завершённых задач сбора — невозможно определить окно.</p>
+            {{ empty_state("Нет завершённых задач сбора — невозможно определить окно.", class="mb-0") }}
         {% elif not results %}
-            <p class="text-muted mb-0">Нет совпадений.</p>
+            {{ empty_state("Нет совпадений.", class="mb-0") }}
         {% else %}
             <table class="table table-sm table-striped mb-0">
                 <thead>
