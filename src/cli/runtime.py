@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 from src.config import load_config, resolve_session_encryption_secret
@@ -14,6 +15,7 @@ _DATA_ROOT = PROJECT_ROOT / "data"
 _LOG_FORMAT = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
 _LOG_DATEFMT = "%Y-%m-%d %H:%M:%S"
 _TUI_LOG_PATH = _DATA_ROOT / "agent_tui.log"
+APP_LOG_PATH = _DATA_ROOT / "app.log"
 
 
 def setup_logging() -> None:
@@ -22,6 +24,15 @@ def setup_logging() -> None:
         format=_LOG_FORMAT,
         datefmt=_LOG_DATEFMT,
     )
+    _DATA_ROOT.mkdir(parents=True, exist_ok=True)
+    rfh = RotatingFileHandler(
+        str(APP_LOG_PATH),
+        maxBytes=10 * 1024 * 1024,
+        backupCount=3,
+        encoding="utf-8",
+    )
+    rfh.setFormatter(logging.Formatter(_LOG_FORMAT, datefmt=_LOG_DATEFMT))
+    logging.getLogger().addHandler(rfh)
 
 
 def ensure_data_dirs() -> None:
@@ -48,7 +59,8 @@ def restore_logging(removed_handlers: list[logging.Handler] | logging.Handler | 
     """Restore console handlers after TUI exits."""
     root = logging.getLogger()
     for h in root.handlers[:]:
-        if isinstance(h, logging.FileHandler):
+        # Remove only plain FileHandlers (TUI log), not RotatingFileHandler (app.log)
+        if type(h) is logging.FileHandler:
             h.close()
             root.removeHandler(h)
     if isinstance(removed_handlers, list):

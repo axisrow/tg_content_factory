@@ -6,6 +6,7 @@ import os
 import resource
 
 from src.cli import runtime
+from src.cli.runtime import APP_LOG_PATH
 
 
 def run(args: argparse.Namespace) -> None:
@@ -14,21 +15,14 @@ def run(args: argparse.Namespace) -> None:
         try:
             if args.debug_action == "logs":
                 limit = args.limit
-                log_path = os.path.join(os.path.dirname(os.path.abspath("config.yaml")), "app.log")
-                if not os.path.exists(log_path):
-                    # Try common locations
-                    for candidate in ["app.log", "/tmp/tg_content_factory.log"]:
-                        if os.path.exists(candidate):
-                            log_path = candidate
-                            break
-                if os.path.exists(log_path):
-                    with open(log_path, encoding="utf-8", errors="replace") as f:
+                if APP_LOG_PATH.exists():
+                    with open(APP_LOG_PATH, encoding="utf-8", errors="replace") as f:
                         lines = f.readlines()
                     for line in lines[-limit:]:
                         print(line, end="")
                 else:
-                    print(f"No log file found at {log_path}")
-                    print("Tip: logs are typically written to stdout in this project.")
+                    print(f"No log file found at {APP_LOG_PATH}")
+                    print("Tip: start the server first — logs are written to data/app.log.")
 
             elif args.debug_action == "memory":
                 usage = resource.getrusage(resource.RUSAGE_SELF)
