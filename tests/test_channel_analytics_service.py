@@ -231,15 +231,16 @@ async def test_get_views_timeseries(db):
 async def test_get_post_frequency(db):
     await _seed_channel(db, channel_id=100123, title="Freq Chan")
     now = datetime.now(timezone.utc)
+    today_noon = now.replace(hour=12, minute=0, second=0, microsecond=0)
     messages = []
-    # 3 messages today
+    # 3 messages today (anchored to noon so they never cross midnight)
     for i in range(3):
         messages.append(Message(
             channel_id=100123,
             message_id=100 + i,
             text=f"today msg {i}",
             views=10,
-            date=now - timedelta(hours=i),
+            date=today_noon - timedelta(hours=i),
         ))
     # 2 yesterday
     for i in range(2):
@@ -247,18 +248,18 @@ async def test_get_post_frequency(db):
             channel_id=100123,
             message_id=200 + i,
             text=f"yesterday msg {i}",
-            date=now - timedelta(days=1),
+            date=today_noon - timedelta(days=1, hours=i),
         ))
     await _seed_messages_batch(db, 100123, messages)
 
     svc = ChannelAnalyticsService(db)
     freq = await svc.get_post_frequency(100123, days=7)
     assert len(freq) == 2
-    today_count = sum(e["count"] for e in freq if e["day"] == now.strftime("%Y-%m-%d"))
+    today_count = sum(e["count"] for e in freq if e["day"] == today_noon.strftime("%Y-%m-%d"))
     assert today_count == 3
     yesterday_count = sum(
         e["count"] for e in freq
-        if e["day"] == (now - timedelta(days=1)).strftime("%Y-%m-%d")
+        if e["day"] == (today_noon - timedelta(days=1)).strftime("%Y-%m-%d")
     )
     assert yesterday_count == 2
 
