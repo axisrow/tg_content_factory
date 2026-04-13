@@ -45,7 +45,10 @@ def render_ascii(graph: PipelineGraph) -> str:
     order.extend(remaining)
 
     lines: list[str] = []
-    for idx, nid in enumerate(order):
+    rendered: set[str] = set()
+    for idx, nid in enumerate(list(order)):
+        if nid in rendered:
+            continue
         node = node_by_id.get(nid)
         if node is None:
             continue
@@ -75,10 +78,7 @@ def render_ascii(graph: PipelineGraph) -> str:
                     else:
                         lines.append(f"{prefix}|")
                         lines.append(f"{prefix}+---> {label}")
-                # Skip children already rendered in fan-out
-                for child_id in children:
-                    if child_id in order:
-                        order.remove(child_id)
+                rendered.update(children)
 
     return "\n".join(lines)
 

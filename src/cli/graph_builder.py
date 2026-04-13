@@ -100,8 +100,12 @@ class GraphBuilder:
             config = dict(spec.config)
 
             # Inject channel_ids into user source node
-            if spec.type == PipelineNodeType.SOURCE and self._source_channel_ids:
-                config["channel_ids"] = self._source_channel_ids
+            if spec.type == PipelineNodeType.SOURCE:
+                cids = config.get("channel_ids")
+                if cids is not None and not isinstance(cids, list):
+                    config["channel_ids"] = [int(cids)]
+                if self._source_channel_ids:
+                    config["channel_ids"] = self._source_channel_ids
 
             node = PipelineNode(
                 id=nid,

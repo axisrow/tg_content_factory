@@ -569,6 +569,8 @@ class PipelineService:
             if n.id == node_id:
                 graph.nodes[i] = new_node
                 break
+        # If the new node has a different ID, update edges
+        if new_node.id != node_id:
             for edge in graph.edges:
                 if edge.from_node == node_id:
                     edge.from_node = new_node.id
