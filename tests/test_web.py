@@ -1643,6 +1643,24 @@ async def test_web_login_post_blocks_percent_encoded_backslash_redirect(unauth_c
 
 
 @pytest.mark.asyncio
+async def test_web_login_post_non_ascii_password_accepted(tmp_path, real_pool_harness_factory):
+    """Non-ASCII passwords (e.g. Cyrillic) must not raise TypeError in secrets.compare_digest."""
+    non_ascii_pw = "пароль123"
+    config = make_test_config(tmp_path, password=non_ascii_pw)
+    harness = real_pool_harness_factory()
+    app, _ = await build_web_app(config, harness)
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test", follow_redirects=False) as c:
+        resp = await c.post("/login", data={"password": non_ascii_pw, "next": "/"})
+    assert resp.status_code == 303
+
+    async with AsyncClient(transport=transport, base_url="http://test", follow_redirects=False) as c:
+        resp = await c.post("/login", data={"password": "wrong", "next": "/"})
+    assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
 async def test_web_login_redirects_authenticated_user_to_next(client):
     token = create_session_token("admin", "test_secret_key")
     transport = client._transport
