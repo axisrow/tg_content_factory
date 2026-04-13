@@ -1,5 +1,13 @@
 <p><a href="/auth/login" class="btn btn-primary btn-sm"><i class="bi bi-plus-lg me-1" aria-hidden="true"></i>Добавить аккаунт</a></p>
 
+{% if all_accounts_flooded %}
+<div class="alert alert-warning" role="alert">
+    Все подключённые аккаунты сейчас во Flood Wait.
+    {% if next_available_at %}Ближайшая разблокировка: <strong>{{ next_available_at|local_dt }}</strong>.{% endif %}
+    <a href="/scheduler" class="alert-link">Открыть планировщик и посмотреть рекомендации</a>.
+</div>
+{% endif %}
+
 {% if accounts %}
 <!-- Desktop: table -->
 <div class="table-responsive d-none d-md-block">
@@ -10,7 +18,7 @@
             <th>Статус</th>
             <th class="text-center">Premium</th>
             <th class="text-center">Primary</th>
-            <th class="text-center">Подключён</th>
+            <th class="text-center">Доступность</th>
             <th>Flood wait</th>
             <th>Добавлен</th>
             <th>Действия</th>
@@ -23,8 +31,20 @@
             <td>{% if acc.is_active %}<span class="badge-active">&#9679; Активен</span>{% else %}<span class="badge-inactive">&#9679; Отключён</span>{% endif %}</td>
             <td class="text-center">{% if acc.is_premium %}<span class="badge-active">&#9679;</span>{% else %}<span class="badge-inactive">&#9679;</span>{% endif %}</td>
             <td class="text-center">{% if acc.is_primary %}<span class="badge-active">&#9679;</span>{% else %}<span class="badge-inactive">&#9679;</span>{% endif %}</td>
-            <td class="text-center">{% if acc.phone in connected_phones %}<span class="badge-active">&#9679;</span>{% else %}<span class="badge-inactive">&#9679;</span>{% endif %}</td>
-            <td>{{ acc.flood_wait_until|local_dt("time") }}</td>
+            <td class="text-center">
+                {% if account_status[acc.phone].state == 'available' %}<span class="badge text-bg-success">OK</span>
+                {% elif account_status[acc.phone].state == 'flood' %}<span class="badge text-bg-warning">Flood</span>
+                {% elif account_status[acc.phone].state == 'disconnected' %}<span class="badge text-bg-secondary">Нет соединения</span>
+                {% else %}<span class="badge text-bg-secondary">Неактивен</span>{% endif %}
+            </td>
+            <td>
+                {% if acc.flood_wait_until and account_status[acc.phone].state == 'flood' %}
+                {{ acc.flood_wait_until|local_dt("time") }}
+                <br><small class="text-muted">ещё {{ account_status[acc.phone].remaining_minutes }} мин</small>
+                {% else %}
+                <span class="text-muted">—</span>
+                {% endif %}
+            </td>
             <td>{{ acc.created_at|local_dt("date") }}</td>
             <td class="text-nowrap">
                 <form method="post" action="/settings/{{ acc.id }}/toggle" class="d-inline" data-busy>
@@ -57,8 +77,9 @@
             <small class="text-muted">
                 {% if acc.is_premium %}Premium{% endif %}
                 {% if acc.is_primary %}&middot; Primary{% endif %}
-                {% if acc.phone in connected_phones %}&middot; Подключён{% endif %}
-                {% if acc.flood_wait_until %}&middot; Flood: {{ acc.flood_wait_until|local_dt("time") }}{% endif %}
+                {% if account_status[acc.phone].state == 'available' %}&middot; Доступен{% endif %}
+                {% if account_status[acc.phone].state == 'disconnected' %}&middot; Не подключён{% endif %}
+                {% if account_status[acc.phone].state == 'flood' %}&middot; Flood до {{ acc.flood_wait_until|local_dt("time") }} ({{ account_status[acc.phone].remaining_minutes }} мин){% endif %}
                 {% if acc.created_at %}&middot; {{ acc.created_at|local_dt("date") }}{% endif %}
             </small>
             <div class="card-actions">

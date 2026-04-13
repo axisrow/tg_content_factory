@@ -11,6 +11,7 @@
                 <p class="mb-1"><strong>{{ stats.get('accounts', 0) }}</strong> в базе</p>
                 <p class="mb-1"><strong>{{ accounts_connected }}</strong> подключено</p>
                 {% if accounts_flood_wait %}<p class="mb-0 text-warning"><strong>{{ accounts_flood_wait }}</strong> в flood-wait</p>{% endif %}
+                {% if collector_attention %}<p class="mb-0 small"><a href="/scheduler">Коллектор ограничен, открыть диагностику</a></p>{% endif %}
             </div>
             <div class="card-footer"><a href="/settings">Управление</a></div>
         </div>

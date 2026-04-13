@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -186,6 +187,21 @@ async def test_scheduler_shows_collector_status(client):
     # Should show collector status somewhere
     text_lower = resp.text.lower()
     assert "running" in text_lower or "остановлен" in text_lower or "запущен" in text_lower
+
+
+@pytest.mark.asyncio
+async def test_scheduler_shows_collector_health_card_when_all_accounts_flooded(client):
+    db = client._transport.app.state.db
+    accounts = await db.get_accounts(active_only=False)
+    future = datetime.now(timezone.utc) + timedelta(hours=1)
+    for acc in accounts:
+        await db.update_account_flood(acc.phone, future)
+
+    resp = await client.get("/scheduler/")
+    assert resp.status_code == 200
+    assert "Здоровье коллектора" in resp.text
+    assert "Flood Wait" in resp.text
+    assert "Что делать" in resp.text
 
 
 @pytest.mark.asyncio
