@@ -45,11 +45,13 @@
     {% if task.error %}<br><small>{{ task.error[:100] }}</small>{% endif %}
 {% elif task.status == 'cancelled' %}
     Отменена
+    {% if task.note %}<br><small class="text-muted">{{ task.note }}</small>{% endif %}
 {% else %}
     {% if task.run_after %}
         Ожидание до {{ task.run_after|local_dt }}
     {% else %}
         Ожидание
     {% endif %}
+    {% if task.note %}<br><small class="text-muted">{{ task.note }}</small>{% endif %}
 {% endif %}
 {% endmacro %}

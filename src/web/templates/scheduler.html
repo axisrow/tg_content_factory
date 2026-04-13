@@ -59,6 +59,78 @@
     </div>
 </div>
 
+{% if collector_health.state != 'healthy' or collector_health.load_level != 'ok' %}
+<div class="card mb-4 border-{% if collector_health.state in ['all_flooded', 'no_clients'] or collector_health.load_level == 'overload' %}danger{% else %}warning{% endif %}">
+    <div class="card-header fw-semibold">
+        Здоровье коллектора
+        {% if collector_health.state == 'all_flooded' %}
+        <span class="badge text-bg-danger ms-2">Все аккаунты во Flood Wait</span>
+        {% elif collector_health.state == 'no_clients' %}
+        <span class="badge text-bg-danger ms-2">Нет доступных клиентов</span>
+        {% elif collector_health.state == 'degraded' %}
+        <span class="badge text-bg-warning ms-2">Частичная деградация</span>
+        {% endif %}
+        {% if collector_health.load_level == 'overload' %}
+        <span class="badge text-bg-danger ms-1">Перегрузка</span>
+        {% elif collector_health.load_level == 'high' %}
+        <span class="badge text-bg-warning ms-1">Высокая нагрузка</span>
+        {% endif %}
+    </div>
+    <div class="card-body">
+        <div class="row g-3 mb-3">
+            <div class="col-6 col-md-3">
+                <div class="small text-muted">Аккаунты</div>
+                <div><strong>{{ collector_health.available_accounts_now }}</strong> доступно сейчас</div>
+                <div><strong>{{ collector_health.connected_accounts }}</strong> подключено</div>
+            </div>
+            <div class="col-6 col-md-3">
+                <div class="small text-muted">Flood Wait</div>
+                <div><strong>{{ collector_health.flooded_accounts_count }}</strong> заблокировано</div>
+                {% if collector_health.next_available_label %}
+                <div class="small">Раньше всего: {{ collector_health.next_available_label }}</div>
+                {% endif %}
+            </div>
+            <div class="col-6 col-md-3">
+                <div class="small text-muted">Нагрузка</div>
+                <div><strong>{{ collector_health.active_unfiltered_channels }}</strong> активных каналов</div>
+                <div class="small">Интервал: {{ collector_health.collect_interval_minutes }} мин</div>
+            </div>
+            <div class="col-6 col-md-3">
+                <div class="small text-muted">Симптом</div>
+                <div><strong>{{ collector_health.recent_zero_collect_count }}</strong> недавних задач с нулевым результатом</div>
+                <div class="small">{% if collector_health.is_running %}Коллектор занят{% else %}Коллектор ждёт{% endif %}</div>
+            </div>
+        </div>
+
+        {% if collector_health.flooded_accounts %}
+        <p class="mb-2"><strong>Почему сейчас не собираем:</strong> доступных аккаунтов нет или их недостаточно. Flood Wait активен для:
+        {% for item in collector_health.flooded_accounts %}
+            <code>{{ item.phone }}</code>{% if not loop.last %}, {% endif %}
+        {% endfor %}
+        </p>
+        {% endif %}
+
+        {% if collector_health.recommendations %}
+        <p class="mb-1"><strong>Что делать:</strong></p>
+        <ul class="mb-2">
+            {% for item in collector_health.recommendations %}
+            <li>{{ item }}</li>
+            {% endfor %}
+        </ul>
+        {% endif %}
+
+        {% if collector_health.recent_unavailability_events %}
+        <p class="mb-1"><strong>Последние причины недоступности:</strong></p>
+        <ul class="mb-0">
+            {% for item in collector_health.recent_unavailability_events %}
+            <li><small>{{ item }}</small></li>
+            {% endfor %}
+        </ul>
+        {% endif %}
+    </div>
+</div>
+{% endif %}
+
 <!-- Scheduler Jobs -->
 {% if scheduler_jobs %}
 <div class="card mb-4">

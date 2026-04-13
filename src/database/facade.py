@@ -624,9 +624,33 @@ class Database:
         messages_collected: int | None = None,
         error: str | None = None,
         note: str | None = None,
+        run_after: datetime | None = None,
     ) -> None:
         self._require()
-        await self._tasks.update_collection_task(task_id, status, messages_collected, error, note)
+        await self._tasks.update_collection_task(
+            task_id,
+            status,
+            messages_collected,
+            error,
+            note,
+            run_after,
+        )
+
+    async def reschedule_collection_task(
+        self,
+        task_id: int,
+        *,
+        run_after: datetime,
+        note: str | None = None,
+        messages_collected: int = 0,
+    ) -> None:
+        self._require()
+        await self._tasks.reschedule_collection_task(
+            task_id,
+            run_after=run_after,
+            note=note,
+            messages_collected=messages_collected,
+        )
 
     async def get_collection_task(self, task_id: int) -> CollectionTask | None:
         self._require()

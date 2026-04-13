@@ -49,7 +49,23 @@ class NoActiveStatsClientsError(RuntimeError):
     """Raised when there are no active connected clients for stats collection."""
 
 
+class NoActiveCollectionClientsError(RuntimeError):
+    """Raised when there are no active connected clients for message collection."""
+
+
 class AllStatsClientsFloodedError(RuntimeError):
+    """Raised when all active connected clients are in flood-wait."""
+
+    def __init__(self, retry_after_sec: int, next_available_at: datetime):
+        super().__init__(
+            "All active clients are flood-waited until "
+            f"{next_available_at.isoformat()} (retry in {retry_after_sec}s)"
+        )
+        self.retry_after_sec = retry_after_sec
+        self.next_available_at = next_available_at
+
+
+class AllCollectionClientsFloodedError(RuntimeError):
     """Raised when all active connected clients are in flood-wait."""
 
     def __init__(self, retry_after_sec: int, next_available_at: datetime):
@@ -80,6 +96,15 @@ class Collector:
         self._lock = asyncio.Lock()
         self._stats_lock = asyncio.Lock()
         self._stats_all_lock = asyncio.Lock()
+        self._last_unavailability_log: tuple[str, str | int | None, datetime | None] | None = None
+
+    async def get_collection_availability(self):
+        availability_fn = getattr(self._pool, "get_stats_availability", None)
+        if callable(availability_fn):
+            result = availability_fn()
+            if asyncio.iscoroutine(result):
+                return await result
+        return await self._fallback_collection_availability()
 
     @property
     def is_running(self) -> bool:
@@ -94,7 +119,77 @@ class Collector:
         return self._config.delay_between_channels_sec
 
     async def get_stats_availability(self):
-        return await self._pool.get_stats_availability()
+        return await self.get_collection_availability()
+
+    async def _fallback_collection_availability(self):
+        connected = bool(getattr(self._pool, "clients", {}))
+        if connected:
+            return type(
+                "Availability",
+                (),
+                {
+                    "state": "available",
+                    "retry_after_sec": None,
+                    "next_available_at_utc": None,
+                },
+            )()
+        return type(
+            "Availability",
+            (),
+            {
+                "state": "no_connected_active",
+                "retry_after_sec": None,
+                "next_available_at_utc": None,
+            },
+        )()
+
+    def _log_collection_unavailability_once(
+        self,
+        *,
+        state: str,
+        retry_after_sec: int | None = None,
+        next_available_at: datetime | None = None,
+    ) -> None:
+        signature = (state, retry_after_sec, next_available_at)
+        if self._last_unavailability_log == signature:
+            logger.debug(
+                "Collection clients still unavailable: state=%s retry_after_sec=%s next_available_at=%s",
+                state,
+                retry_after_sec,
+                next_available_at.isoformat() if next_available_at else None,
+            )
+            return
+        self._last_unavailability_log = signature
+        if state == "all_flooded" and retry_after_sec is not None and next_available_at is not None:
+            logger.error(
+                "No available clients for collection: all active clients are flood-waited until %s "
+                "(retry in %ss)",
+                next_available_at.isoformat(),
+                retry_after_sec,
+            )
+            return
+        logger.error("No available clients for collection: no active connected clients")
+
+    def _reset_collection_unavailability_log(self) -> None:
+        self._last_unavailability_log = None
+
+    async def _raise_collection_unavailability(self) -> None:
+        availability = await self.get_collection_availability()
+        self._log_collection_unavailability_once(
+            state=availability.state,
+            retry_after_sec=availability.retry_after_sec,
+            next_available_at=availability.next_available_at_utc,
+        )
+        if (
+            availability.state == "all_flooded"
+            and availability.retry_after_sec is not None
+            and availability.next_available_at_utc is not None
+        ):
+            raise AllCollectionClientsFloodedError(
+                retry_after_sec=availability.retry_after_sec,
+                next_available_at=availability.next_available_at_utc,
+            )
+        raise NoActiveCollectionClientsError("No active connected clients")
 
     async def cancel(self) -> None:
         self._cancel_event.set()
@@ -328,10 +423,10 @@ class Collector:
 
             result = await self._pool.get_available_client()
             if result is None:
-                logger.error("No available clients for collection")
-                return total_collected
+                await self._raise_collection_unavailability()
 
             session, phone = result
+            self._reset_collection_unavailability_log()
             session = adapt_transport_session(session, disconnect_on_close=False)
             # Populate entity cache when using PeerChannel
             # (StringSession loses cache between restarts).
