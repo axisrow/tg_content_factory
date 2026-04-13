@@ -355,6 +355,10 @@ class Collector:
                         stats["channels"] += 1
                         stats["messages"] += collected
                         await asyncio.sleep(self._config.delay_between_channels_sec)
+                    except (AllCollectionClientsFloodedError, NoActiveCollectionClientsError) as e:
+                        logger.error("Stopping collection: %s", e)
+                        stats["errors"] += 1
+                        break
                     except Exception as e:
                         logger.error("Error collecting channel %s: %s", channel.channel_id, e)
                         stats["errors"] += 1

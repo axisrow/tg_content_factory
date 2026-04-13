@@ -307,7 +307,16 @@ class CollectionQueue:
                 continue
             force = bool((task.payload or {}).get("force", False))
             full = bool((task.payload or {}).get("full", True))
-            await self._queue.put((task.id, channel, force, full))
+            if task.run_after is not None and task.run_after.timestamp() > time.time():
+                self._schedule_requeue_after_delay(
+                    task_id=task.id,
+                    channel=channel,
+                    force=force,
+                    full=full,
+                    run_after=task.run_after,
+                )
+            else:
+                await self._queue.put((task.id, channel, force, full))
             count += 1
         if count:
             self._ensure_worker()
