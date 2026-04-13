@@ -1390,8 +1390,12 @@ class MessagesRepository:
         cutoff_str = cutoff.isoformat()
         placeholders = ",".join("?" * len(channel_ids))
         cur = await self._db.execute(
-            f"SELECT * FROM messages WHERE channel_id IN ({placeholders})"
-            f" AND date >= ? ORDER BY date DESC",
+            f"""SELECT m.*, c.title AS channel_title, c.username AS channel_username
+                FROM messages m
+                JOIN channels c ON m.channel_id = c.id
+                WHERE m.channel_id IN ({placeholders})
+                  AND m.date >= ?
+                ORDER BY m.date DESC""",
             (*channel_ids, cutoff_str),
         )
         rows = await cur.fetchall()

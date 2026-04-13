@@ -21,18 +21,13 @@ from src.services.pipeline_service import (
     PipelineTargetRef,
     PipelineValidationError,
 )
+from src.services.pipeline_service import (
+    to_since_hours as _to_since_hours,
+)
 from src.web import deps
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
-
-
-def _to_since_hours(value: int, unit: str) -> float:
-    if unit == "m":
-        return value / 60.0
-    if unit == "d":
-        return value * 24.0
-    return float(value)  # "h"
 
 
 def _pipeline_redirect(

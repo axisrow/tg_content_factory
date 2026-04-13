@@ -426,10 +426,6 @@
 <div class="wizard-step" id="step-4">
     <h5 class="mb-3">Расписание</h5>
     <div class="row g-3">
-        <div class="col-12 col-md-6">
-            <label class="form-label">Название пайплайна</label>
-            <input class="form-control" type="text" name="name" required placeholder="Мой пайплайн">
-        </div>
         <div class="col-6 col-md-3">
             <label class="form-label">Интервал (мин)</label>
             <input class="form-control" type="number" name="generate_interval_minutes" min="1" value="60">
@@ -444,6 +440,10 @@
 {# === Step 5: Review === #}
 <div class="wizard-step" id="step-5">
     <h5 class="mb-3">Проверка</h5>
+    <div class="mb-3">
+        <label class="form-label">Название пайплайна</label>
+        <input class="form-control" type="text" name="name" placeholder="Мой пайплайн" id="wizard-name">
+    </div>
     <div id="wizard-review" class="card">
         <div class="card-body">
             <div id="review-content"></div>
@@ -460,10 +460,8 @@
         <button type="button" class="btn btn-primary" id="btn-next" onclick="goNext()">
             Далее <i class="bi bi-arrow-right"></i>
         </button>
-        <button type="submit" name="run_after" value="" class="btn btn-success d-none" id="btn-submit">
-            <i class="bi bi-check-lg"></i> Создать
-        </button>
         <div class="d-none align-items-center gap-2" id="run-controls">
+            <span class="text-muted small">Глубина:</span>
             <input type="number" name="since_value" id="since_value" value="24" min="1"
                    class="form-control form-control-sm" style="width:64px">
             <select name="since_unit" id="since_unit" class="form-select form-select-sm" style="width:72px">
@@ -478,6 +476,9 @@
                 <i class="bi bi-lightning"></i> Тест
             </button>
         </div>
+        <button type="submit" name="run_after" value="" class="btn btn-success d-none" id="btn-submit">
+            <i class="bi bi-check-lg"></i> Создать
+        </button>
     </div>
 </div>
 
@@ -537,9 +538,6 @@
                     if (ft.length === 0) { alert("Выберите целевые диалоги для пересылки"); return false; }
                 }
             }
-        } else if (step === 4) {
-            var n = document.querySelector('[name="name"]').value.trim();
-            if (!n) { alert("Введите название пайплайна"); return false; }
         }
         return true;
     }
@@ -769,9 +767,20 @@
         reviewEl.appendChild(dl);
     }
 
-    // Form submit: copy target_refs for filter_action forward into main target_refs
+    // Live-update name row in review table as user types
+    document.getElementById("wizard-name").addEventListener("input", function() {
+        var nameEl = document.querySelector("#review-content dt");
+        if (nameEl) {
+            var dd = nameEl.nextElementSibling;
+            if (dd) dd.textContent = this.value || "Без названия";
+        }
+    });
+
+    // Form submit: validate name, copy target_refs for filter_action forward into main target_refs
     var form = document.getElementById("wizard-form");
     form.addEventListener("submit", function(e) {
+        var n = document.getElementById("wizard-name").value.trim();
+        if (!n) { e.preventDefault(); alert("Введите название пайплайна"); return; }
         // For filter_action with forward: copy filter_target_refs as target_refs
         if (pipelineType === "filter_action" && document.querySelector('[name="action_type"]').value === "forward") {
             getFormValues("filter_target_refs").forEach(function(val) {
