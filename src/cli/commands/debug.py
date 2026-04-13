@@ -4,6 +4,7 @@ import argparse
 import asyncio
 import os
 import resource
+from collections import deque
 
 from src.cli import runtime
 from src.cli.runtime import APP_LOG_PATH
@@ -17,8 +18,8 @@ def run(args: argparse.Namespace) -> None:
                 limit = args.limit
                 if APP_LOG_PATH.exists():
                     with open(APP_LOG_PATH, encoding="utf-8", errors="replace") as f:
-                        lines = f.readlines()
-                    for line in lines[-limit:]:
+                        tail = deque(f, maxlen=limit)
+                    for line in tail:
                         print(line, end="")
                 else:
                     print(f"No log file found at {APP_LOG_PATH}")
