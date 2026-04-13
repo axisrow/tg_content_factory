@@ -238,18 +238,18 @@ def build_parser() -> argparse.ArgumentParser:
 
     pipeline_add = pipeline_sub.add_parser("add", help="Add pipeline")
     pipeline_add.add_argument("name", help="Pipeline name")
-    pipeline_add.add_argument("--prompt-template", required=True, help="Prompt template")
+    pipeline_add.add_argument("--prompt-template", default=None, help="Prompt template (legacy mode)")
     pipeline_add.add_argument(
         "--source",
         type=int,
         action="append",
-        required=True,
+        default=None,
         help="Source channel_id; repeat for multiple channels",
     )
     pipeline_add.add_argument(
         "--target",
         action="append",
-        required=True,
+        default=None,
         help="Target in PHONE|DIALOG_ID format; repeat for multiple targets",
     )
     pipeline_add.add_argument("--llm-model", default=None, help="Optional LLM model")
@@ -273,6 +273,26 @@ def build_parser() -> argparse.ArgumentParser:
         help="Generate interval in minutes",
     )
     pipeline_add.add_argument("--inactive", action="store_true", help="Create pipeline disabled")
+    pipeline_add.add_argument(
+        "--node",
+        action="append",
+        default=None,
+        dest="node_specs",
+        help="Node spec in type:key=value format; repeat for multiple nodes",
+    )
+    pipeline_add.add_argument(
+        "--edge",
+        action="append",
+        default=None,
+        help="Explicit edge FROM_ID->TO_ID; repeat for multiple edges",
+    )
+    pipeline_add.add_argument(
+        "--node-config",
+        action="append",
+        default=None,
+        dest="node_configs",
+        help="JSON config override for a node: NODE_ID='{\"key\":\"value\"}'",
+    )
 
     pipeline_edit = pipeline_sub.add_parser("edit", help="Edit pipeline")
     pipeline_edit.add_argument("id", type=int, help="Pipeline id")
@@ -419,6 +439,41 @@ def build_parser() -> argparse.ArgumentParser:
     pipeline_ai_edit.add_argument("id", type=int, help="Pipeline id")
     pipeline_ai_edit.add_argument("instruction", help="Instruction for the LLM (e.g. 'Add an image generation node')")
     pipeline_ai_edit.add_argument("--show", action="store_true", help="Print updated JSON after edit")
+
+    # Node CRUD
+    pipeline_node = pipeline_sub.add_parser("node", help="Node CRUD operations on pipeline graph")
+    node_sub = pipeline_node.add_subparsers(dest="node_action")
+
+    node_add = node_sub.add_parser("add", help="Add node to pipeline graph")
+    node_add.add_argument("pipeline_id", type=int, help="Pipeline id")
+    node_add.add_argument("node_spec", help="Node spec: type:key=value,...")
+
+    node_replace = node_sub.add_parser("replace", help="Replace node in pipeline graph")
+    node_replace.add_argument("pipeline_id", type=int, help="Pipeline id")
+    node_replace.add_argument("node_id", help="Node ID to replace")
+    node_replace.add_argument("node_spec", help="New node spec: type:key=value,...")
+
+    node_remove = node_sub.add_parser("remove", help="Remove node from pipeline graph")
+    node_remove.add_argument("pipeline_id", type=int, help="Pipeline id")
+    node_remove.add_argument("node_id", help="Node ID to remove")
+
+    # Edge CRUD
+    pipeline_edge = pipeline_sub.add_parser("edge", help="Edge CRUD operations on pipeline graph")
+    edge_sub = pipeline_edge.add_subparsers(dest="edge_action")
+
+    edge_add = edge_sub.add_parser("add", help="Add edge to pipeline graph")
+    edge_add.add_argument("pipeline_id", type=int, help="Pipeline id")
+    edge_add.add_argument("from_node", help="Source node ID")
+    edge_add.add_argument("to_node", help="Target node ID")
+
+    edge_rm = edge_sub.add_parser("remove", help="Remove edge from pipeline graph")
+    edge_rm.add_argument("pipeline_id", type=int, help="Pipeline id")
+    edge_rm.add_argument("from_node", help="Source node ID")
+    edge_rm.add_argument("to_node", help="Target node ID")
+
+    # Graph visualization
+    pipeline_graph = pipeline_sub.add_parser("graph", help="Show pipeline graph (ASCII)")
+    pipeline_graph.add_argument("id", type=int, help="Pipeline id")
 
     # ── image ──
     image_parser = sub.add_parser("image", help="Image generation")

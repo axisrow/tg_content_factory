@@ -11,8 +11,10 @@ from src.database import Database
 from src.database.bundles import PipelineBundle
 from src.models import (
     ContentPipeline,
+    PipelineEdge,
     PipelineGenerationBackend,
     PipelineGraph,
+    PipelineNode,
     PipelineNodeType,
     PipelinePublishMode,
     PipelineSource,
@@ -502,6 +504,97 @@ class PipelineService:
         except Exception as exc:
             logger.warning("edit_via_llm failed for pipeline_id=%s: %s", pipeline_id, exc, exc_info=True)
             return {"ok": False, "error": str(exc)}
+
+    # ------------------------------------------------------------------
+    # Graph CRUD operations
+    # ------------------------------------------------------------------
+
+    async def get_graph(self, pipeline_id: int) -> PipelineGraph | None:
+        """Return the pipeline graph, or None for legacy pipelines."""
+        pipeline = await self.get(pipeline_id)
+        if pipeline is None:
+            return None
+        return pipeline.pipeline_json
+
+    async def add_node(self, pipeline_id: int, node: PipelineNode) -> bool:
+        """Add *node* to the pipeline's graph. Returns False if pipeline/graph not found."""
+        graph = await self.get_graph(pipeline_id)
+        if graph is None:
+            return False
+        # Auto-assign position: place after the last node
+        if not node.position or (node.position.get("x") == 0 and node.position.get("y") == 0):
+            max_x = max((n.position.get("x", 0) for n in graph.nodes), default=0)
+            node = node.model_copy(update={"position": {"x": max_x + 200, "y": 0}})
+        graph.nodes.append(node)
+        await self._bundle.content_pipelines.set_pipeline_json(pipeline_id, graph)
+        return True
+
+    async def remove_node(self, pipeline_id: int, node_id: str) -> bool:
+        """Remove a node and all its edges. Returns False if not found."""
+        graph = await self.get_graph(pipeline_id)
+        if graph is None:
+            return False
+        original_len = len(graph.nodes)
+        graph.nodes = [n for n in graph.nodes if n.id != node_id]
+        if len(graph.nodes) == original_len:
+            return False  # node not found
+        # Remove edges referencing this node
+        graph.edges = [
+            e for e in graph.edges
+            if e.from_node != node_id and e.to_node != node_id
+        ]
+        await self._bundle.content_pipelines.set_pipeline_json(pipeline_id, graph)
+        return True
+
+    async def replace_node(self, pipeline_id: int, node_id: str, new_node: PipelineNode) -> bool:
+        """Replace a node in the pipeline's graph, preserving edges."""
+        graph = await self.get_graph(pipeline_id)
+        if graph is None:
+            return False
+        found = False
+        for i, n in enumerate(graph.nodes):
+            if n.id == node_id:
+                graph.nodes[i] = new_node
+                found = True
+                break
+        if not found:
+            return False
+        # If the new node has a different ID, update edges too
+        if new_node.id != node_id:
+            for edge in graph.edges:
+                if edge.from_node == node_id:
+                    edge.from_node = new_node.id
+                if edge.to_node == node_id:
+                    edge.to_node = new_node.id
+        await self._bundle.content_pipelines.set_pipeline_json(pipeline_id, graph)
+        return True
+
+    async def add_edge(self, pipeline_id: int, from_node: str, to_node: str) -> bool:
+        """Add an edge to the pipeline's graph. Returns False if pipeline/graph not found."""
+        graph = await self.get_graph(pipeline_id)
+        if graph is None:
+            return False
+        # Idempotent: don't add duplicate edges
+        existing = {(e.from_node, e.to_node) for e in graph.edges}
+        if (from_node, to_node) not in existing:
+            graph.edges.append(PipelineEdge(from_node=from_node, to_node=to_node))
+            await self._bundle.content_pipelines.set_pipeline_json(pipeline_id, graph)
+        return True
+
+    async def remove_edge(self, pipeline_id: int, from_node: str, to_node: str) -> bool:
+        """Remove an edge. Returns False if edge not found."""
+        graph = await self.get_graph(pipeline_id)
+        if graph is None:
+            return False
+        original_len = len(graph.edges)
+        graph.edges = [
+            e for e in graph.edges
+            if not (e.from_node == from_node and e.to_node == to_node)
+        ]
+        if len(graph.edges) == original_len:
+            return False
+        await self._bundle.content_pipelines.set_pipeline_json(pipeline_id, graph)
+        return True
 
     async def _normalize_targets(
         self,

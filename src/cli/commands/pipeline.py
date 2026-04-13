@@ -88,23 +88,117 @@ def run(args: argparse.Namespace) -> None:
                     print(f" - {target.phone}:{target.dialog_id} ({target.title or '—'})")
 
             elif args.pipeline_action == "add":
-                try:
-                    pipeline_id = await svc.add(
-                        name=args.name,
-                        prompt_template=args.prompt_template,
-                        source_channel_ids=args.source,
-                        target_refs=_parse_target_refs(args.target),
-                        llm_model=args.llm_model,
-                        image_model=args.image_model,
-                        publish_mode=args.publish_mode,
-                        generation_backend=args.generation_backend,
-                        generate_interval_minutes=args.interval,
-                        is_active=not args.inactive,
-                    )
-                except PipelineValidationError as exc:
-                    print(f"Error: {exc}")
-                    return
-                print(f"Added pipeline id={pipeline_id}: {args.name}")
+                node_specs_raw = getattr(args, "node_specs", None)
+                if node_specs_raw:
+                    # DAG mode: build graph from --node specs
+                    import json as _json
+
+                    from src.cli.graph_builder import GraphBuilder, GraphBuilderError
+                    from src.cli.node_dsl import NodeSpecError, parse_node_spec
+
+                    specs = []
+                    for raw in node_specs_raw:
+                        try:
+                            specs.append(parse_node_spec(raw))
+                        except NodeSpecError as exc:
+                            print(f"Invalid node spec '{raw}': {exc}")
+                            return
+
+                    builder = GraphBuilder()
+                    for spec in specs:
+                        builder.add_node_spec(spec)
+
+                    if args.source:
+                        builder.set_sources(args.source)
+
+                    target_refs_list = []
+                    if args.target:
+                        target_refs_list = [
+                            {"phone": t.phone, "dialog_id": t.dialog_id}
+                            for t in _parse_target_refs(args.target)
+                        ]
+                        builder.set_targets(target_refs_list)
+
+                    if getattr(args, "edge", None):
+                        for edge_str in args.edge:
+                            from_id, _, to_id = edge_str.partition("->")
+                            if not to_id:
+                                print(f"Invalid edge format '{edge_str}'; use FROM->TO")
+                                return
+                            builder.add_explicit_edge(from_id.strip(), to_id.strip())
+
+                    if getattr(args, "node_configs", None):
+                        for nc_str in args.node_configs:
+                            node_id, _, json_str = nc_str.partition("=")
+                            try:
+                                config = _json.loads(json_str)
+                            except _json.JSONDecodeError as exc:
+                                print(f"Invalid JSON in --node-config for {node_id}: {exc}")
+                                return
+                            builder.set_node_config_override(node_id.strip(), config)
+
+                    try:
+                        graph = builder.build()
+                    except GraphBuilderError as exc:
+                        print(f"Graph build error: {exc}")
+                        return
+
+                    try:
+                        pipeline_id = await svc.import_json(
+                            {
+                                "name": args.name,
+                                "prompt_template": args.prompt_template or ".",
+                                "llm_model": args.llm_model,
+                                "image_model": args.image_model,
+                                "generation_backend": args.generation_backend,
+                                "publish_mode": args.publish_mode,
+                                "generate_interval_minutes": args.interval,
+                                "pipeline_json": _json.loads(graph.to_json()),
+                                "source_ids": args.source or [],
+                                "target_refs": (
+                                    [f"{t.phone}|{t.dialog_id}" for t in _parse_target_refs(args.target)]
+                                    if args.target
+                                    else []
+                                ),
+                            },
+                        )
+                    except PipelineValidationError as exc:
+                        print(f"Error: {exc}")
+                        return
+
+                    # Activate if --inactive was not passed
+                    if not args.inactive and pipeline_id:
+                        await svc._bundle.set_active(pipeline_id, True)
+
+                    print(f"Added DAG pipeline id={pipeline_id}: {args.name}")
+                else:
+                    # Legacy mode: --prompt-template + --source + --target required
+                    if not args.prompt_template:
+                        print("Error: --prompt-template is required when not using --node")
+                        return
+                    if not args.source:
+                        print("Error: --source is required when not using --node")
+                        return
+                    if not args.target:
+                        print("Error: --target is required when not using --node")
+                        return
+                    try:
+                        pipeline_id = await svc.add(
+                            name=args.name,
+                            prompt_template=args.prompt_template,
+                            source_channel_ids=args.source,
+                            target_refs=_parse_target_refs(args.target),
+                            llm_model=args.llm_model,
+                            image_model=args.image_model,
+                            publish_mode=args.publish_mode,
+                            generation_backend=args.generation_backend,
+                            generate_interval_minutes=args.interval,
+                            is_active=not args.inactive,
+                        )
+                    except PipelineValidationError as exc:
+                        print(f"Error: {exc}")
+                        return
+                    print(f"Added pipeline id={pipeline_id}: {args.name}")
 
             elif args.pipeline_action == "edit":
                 existing = await svc.get(args.id)
@@ -484,6 +578,74 @@ def run(args: argparse.Namespace) -> None:
                         print(json.dumps(result["pipeline_json"], ensure_ascii=False, indent=2))
                 else:
                     print(f"Error: {result['error']}")
+
+            elif args.pipeline_action == "node":
+                from src.cli.node_dsl import NodeSpecError, parse_node_spec
+                from src.models import PipelineNode
+
+                if args.node_action == "add":
+                    try:
+                        spec = parse_node_spec(args.node_spec)
+                    except NodeSpecError as exc:
+                        print(f"Invalid node spec: {exc}")
+                        return
+                    from src.cli.node_dsl import generate_node_id
+
+                    node_id = spec.id or generate_node_id(spec.type, 0)
+                    node = PipelineNode(id=node_id, type=spec.type, name=spec.type.value, config=spec.config)
+                    ok = await svc.add_node(args.pipeline_id, node)
+                    if ok:
+                        print(f"Added node '{node_id}' to pipeline id={args.pipeline_id}")
+                    else:
+                        print(f"Pipeline id={args.pipeline_id} not found or has no graph")
+
+                elif args.node_action == "replace":
+                    try:
+                        spec = parse_node_spec(args.node_spec)
+                    except NodeSpecError as exc:
+                        print(f"Invalid node spec: {exc}")
+                        return
+                    node = PipelineNode(id=args.node_id, type=spec.type, name=spec.type.value, config=spec.config)
+                    ok = await svc.replace_node(args.pipeline_id, args.node_id, node)
+                    if ok:
+                        print(f"Replaced node '{args.node_id}' in pipeline id={args.pipeline_id}")
+                    else:
+                        print(f"Node '{args.node_id}' not found")
+
+                elif args.node_action == "remove":
+                    ok = await svc.remove_node(args.pipeline_id, args.node_id)
+                    if ok:
+                        print(f"Removed node '{args.node_id}' from pipeline id={args.pipeline_id}")
+                    else:
+                        print(f"Node '{args.node_id}' not found")
+
+            elif args.pipeline_action == "edge":
+                if args.edge_action == "add":
+                    ok = await svc.add_edge(args.pipeline_id, args.from_node, args.to_node)
+                    if ok:
+                        print(f"Added edge {args.from_node} -> {args.to_node}")
+                    else:
+                        print(f"Pipeline id={args.pipeline_id} not found or has no graph")
+
+                elif args.edge_action == "remove":
+                    ok = await svc.remove_edge(args.pipeline_id, args.from_node, args.to_node)
+                    if ok:
+                        print(f"Removed edge {args.from_node} -> {args.to_node}")
+                    else:
+                        print(f"Edge {args.from_node} -> {args.to_node} not found")
+
+            elif args.pipeline_action == "graph":
+                graph = await svc.get_graph(args.id)
+                if graph is None:
+                    pipeline = await svc.get(args.id)
+                    if pipeline is None:
+                        print(f"Pipeline id={args.id} not found")
+                    else:
+                        print(f"Pipeline id={args.id} has no graph (legacy pipeline)")
+                    return
+                from src.cli.graph_viz import render_ascii
+
+                print(render_ascii(graph))
 
         finally:
             if pool is not None:

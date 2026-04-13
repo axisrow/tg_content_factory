@@ -10,6 +10,7 @@ from src.database.bundles import PipelineBundle
 from src.models import (
     Account,
     Channel,
+    PipelineEdge,
     PipelineGraph,
     PipelineNode,
     PipelineNodeType,
@@ -854,3 +855,159 @@ async def test_init_with_database(db):
     # Should not raise -- bundle was created from db
     items = await svc.list()
     assert isinstance(items, list)
+
+
+# ---------------------------------------------------------------------------
+# Graph CRUD operations (get_graph, add_node, remove_node, replace_node,
+#                        add_edge, remove_edge)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+async def graph_pipeline_id(svc, db):
+    """Create a pipeline with a DAG graph for CRUD tests."""
+    pid = await svc.add(
+        name="GraphPipeline",
+        prompt_template="Test",
+        source_channel_ids=[1001],
+        target_refs=[PipelineTargetRef(phone="+100", dialog_id=77)],
+    )
+    graph = PipelineGraph(
+        nodes=[
+            PipelineNode(id="src", type=PipelineNodeType.SOURCE, name="source", config={"channel_ids": [1001]}),
+            PipelineNode(id="fetch", type=PipelineNodeType.FETCH_MESSAGES, name="fetch"),
+            PipelineNode(id="gen", type=PipelineNodeType.LLM_GENERATE, name="gen", config={"model": "claude"}),
+        ],
+        edges=[
+            PipelineEdge(from_node="src", to_node="fetch"),
+            PipelineEdge(from_node="fetch", to_node="gen"),
+        ],
+    )
+    await db.repos.content_pipelines.set_pipeline_json(pid, graph)
+    return pid
+
+
+@pytest.mark.asyncio
+async def test_get_graph_returns_graph(svc, graph_pipeline_id):
+    graph = await svc.get_graph(graph_pipeline_id)
+    assert graph is not None
+    assert len(graph.nodes) == 3
+
+
+@pytest.mark.asyncio
+async def test_get_graph_returns_none_for_legacy(svc, pipeline_id):
+    graph = await svc.get_graph(pipeline_id)
+    assert graph is None
+
+
+@pytest.mark.asyncio
+async def test_get_graph_pipeline_not_found(svc):
+    graph = await svc.get_graph(99999)
+    assert graph is None
+
+
+@pytest.mark.asyncio
+async def test_add_node(svc, graph_pipeline_id):
+    new_node = PipelineNode(id="pub", type=PipelineNodeType.PUBLISH, name="publish", config={"targets": []})
+    ok = await svc.add_node(graph_pipeline_id, new_node)
+    assert ok is True
+    graph = await svc.get_graph(graph_pipeline_id)
+    assert len(graph.nodes) == 4
+    assert graph.nodes[3].id == "pub"
+
+
+@pytest.mark.asyncio
+async def test_add_node_auto_position(svc, graph_pipeline_id):
+    new_node = PipelineNode(id="delay1", type=PipelineNodeType.DELAY, name="delay", config={})
+    await svc.add_node(graph_pipeline_id, new_node)
+    graph = await svc.get_graph(graph_pipeline_id)
+    added = next(n for n in graph.nodes if n.id == "delay1")
+    assert added.position["x"] > 0
+
+
+@pytest.mark.asyncio
+async def test_add_node_no_graph(svc, pipeline_id):
+    new_node = PipelineNode(id="x", type=PipelineNodeType.DELAY, name="d")
+    ok = await svc.add_node(pipeline_id, new_node)
+    assert ok is False
+
+
+@pytest.mark.asyncio
+async def test_remove_node_removes_edges(svc, graph_pipeline_id):
+    ok = await svc.remove_node(graph_pipeline_id, "fetch")
+    assert ok is True
+    graph = await svc.get_graph(graph_pipeline_id)
+    ids = [n.id for n in graph.nodes]
+    assert "fetch" not in ids
+    # Edges referencing "fetch" should also be removed
+    for e in graph.edges:
+        assert e.from_node != "fetch" and e.to_node != "fetch"
+
+
+@pytest.mark.asyncio
+async def test_remove_node_not_found(svc, graph_pipeline_id):
+    ok = await svc.remove_node(graph_pipeline_id, "nonexistent")
+    assert ok is False
+
+
+@pytest.mark.asyncio
+async def test_replace_node_preserves_edges(svc, graph_pipeline_id):
+    new_node = PipelineNode(id="gen", type=PipelineNodeType.AGENT_LOOP, name="agent", config={"max_steps": 5})
+    ok = await svc.replace_node(graph_pipeline_id, "gen", new_node)
+    assert ok is True
+    graph = await svc.get_graph(graph_pipeline_id)
+    replaced = next(n for n in graph.nodes if n.id == "gen")
+    assert replaced.type == PipelineNodeType.AGENT_LOOP
+    # Edges should still exist
+    edge_from_fetch = [e for e in graph.edges if e.from_node == "fetch"]
+    assert len(edge_from_fetch) == 1
+    assert edge_from_fetch[0].to_node == "gen"
+
+
+@pytest.mark.asyncio
+async def test_replace_node_with_new_id_updates_edges(svc, graph_pipeline_id):
+    new_node = PipelineNode(id="agent_v2", type=PipelineNodeType.AGENT_LOOP, name="agent", config={})
+    ok = await svc.replace_node(graph_pipeline_id, "gen", new_node)
+    assert ok is True
+    graph = await svc.get_graph(graph_pipeline_id)
+    # Old "gen" edges should now point to "agent_v2"
+    for e in graph.edges:
+        assert "gen" not in (e.from_node, e.to_node)
+    assert any(e.to_node == "agent_v2" for e in graph.edges)
+
+
+@pytest.mark.asyncio
+async def test_add_edge(svc, graph_pipeline_id):
+    ok = await svc.add_edge(graph_pipeline_id, "src", "gen")
+    assert ok is True
+    graph = await svc.get_graph(graph_pipeline_id)
+    assert any(e.from_node == "src" and e.to_node == "gen" for e in graph.edges)
+
+
+@pytest.mark.asyncio
+async def test_add_edge_idempotent(svc, graph_pipeline_id):
+    await svc.add_edge(graph_pipeline_id, "src", "gen")
+    graph1 = await svc.get_graph(graph_pipeline_id)
+    await svc.add_edge(graph_pipeline_id, "src", "gen")
+    graph2 = await svc.get_graph(graph_pipeline_id)
+    assert len(graph1.edges) == len(graph2.edges)
+
+
+@pytest.mark.asyncio
+async def test_add_edge_no_graph(svc, pipeline_id):
+    ok = await svc.add_edge(pipeline_id, "a", "b")
+    assert ok is False
+
+
+@pytest.mark.asyncio
+async def test_remove_edge(svc, graph_pipeline_id):
+    ok = await svc.remove_edge(graph_pipeline_id, "src", "fetch")
+    assert ok is True
+    graph = await svc.get_graph(graph_pipeline_id)
+    assert not any(e.from_node == "src" and e.to_node == "fetch" for e in graph.edges)
+
+
+@pytest.mark.asyncio
+async def test_remove_edge_not_found(svc, graph_pipeline_id):
+    ok = await svc.remove_edge(graph_pipeline_id, "src", "gen")
+    assert ok is False

@@ -901,3 +901,391 @@ def test_pipeline_list_empty(tmp_path, cli_init_patch, capsys):
 
     out = capsys.readouterr().out
     assert "No pipelines found" in out
+
+
+# ---------------------------------------------------------------------------
+# DAG mode tests (issue #426)
+# ---------------------------------------------------------------------------
+
+
+def test_pipeline_add_dag_with_node(tmp_path, cli_init_patch, capsys):
+    """DAG mode: pipeline add with --node creates a DAG pipeline."""
+    db_path = str(tmp_path / "cli_pipeline_dag_add.db")
+    db = Database(db_path)
+    asyncio.run(db.initialize())
+    _add_pipeline_prereqs(db)
+
+    with cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS):
+        from src.cli.commands.pipeline import run
+
+        run(
+            _ns(
+                pipeline_action="add",
+                name="React Pipeline",
+                prompt_template=None,
+                source=[1001],
+                target=["+100|77"],
+                llm_model=None,
+                image_model=None,
+                publish_mode="moderated",
+                generation_backend="chain",
+                interval=60,
+                inactive=False,
+                node_specs=["react:emoji=heart"],
+                edge=None,
+                node_configs=None,
+            )
+        )
+
+    out = capsys.readouterr().out
+    assert "Added DAG pipeline id=" in out
+    assert "React Pipeline" in out
+
+    # Verify graph was stored
+    verify_db = Database(db_path)
+    asyncio.run(verify_db.initialize())
+    pipelines = asyncio.run(verify_db.repos.content_pipelines.get_all())
+    asyncio.run(verify_db.close())
+    assert len(pipelines) == 1
+    p = pipelines[0]
+    assert p.pipeline_json is not None
+    types = [n.type.value for n in p.pipeline_json.nodes]
+    assert "source" in types
+    assert "fetch_messages" in types
+    assert "react" in types
+    assert "publish" in types
+
+
+def test_pipeline_add_dag_invalid_spec(tmp_path, cli_init_patch, capsys):
+    """DAG mode: invalid node spec prints error."""
+    db_path = str(tmp_path / "cli_pipeline_dag_invalid.db")
+    db = Database(db_path)
+    asyncio.run(db.initialize())
+
+    with cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS):
+        from src.cli.commands.pipeline import run
+
+        run(
+            _ns(
+                pipeline_action="add",
+                name="Bad",
+                prompt_template=None,
+                source=[1001],
+                target=None,
+                llm_model=None,
+                image_model=None,
+                publish_mode="moderated",
+                generation_backend="chain",
+                interval=60,
+                inactive=False,
+                node_specs=["nonexistent_type:x=1"],
+                edge=None,
+                node_configs=None,
+            )
+        )
+
+    out = capsys.readouterr().out
+    assert "Invalid node spec" in out
+
+
+def test_pipeline_add_legacy_requires_prompt_template(tmp_path, cli_init_patch, capsys):
+    """Legacy mode without --prompt-template prints error."""
+    db_path = str(tmp_path / "cli_pipeline_legacy_no_prompt.db")
+    db = Database(db_path)
+    asyncio.run(db.initialize())
+
+    with cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS):
+        from src.cli.commands.pipeline import run
+
+        run(
+            _ns(
+                pipeline_action="add",
+                name="NoPrompt",
+                prompt_template=None,
+                source=[1001],
+                target=["+100|77"],
+                llm_model=None,
+                image_model=None,
+                publish_mode="moderated",
+                generation_backend="chain",
+                interval=60,
+                inactive=False,
+                node_specs=None,
+                edge=None,
+                node_configs=None,
+            )
+        )
+
+    out = capsys.readouterr().out
+    assert "--prompt-template is required" in out
+
+
+def test_pipeline_add_dag_with_edges(tmp_path, cli_init_patch, capsys):
+    """DAG mode: --edge adds explicit edges on top of linear chain."""
+    db_path = str(tmp_path / "cli_pipeline_dag_edges.db")
+    db = Database(db_path)
+    asyncio.run(db.initialize())
+    _add_pipeline_prereqs(db)
+
+    with cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS):
+        from src.cli.commands.pipeline import run
+
+        run(
+            _ns(
+                pipeline_action="add",
+                name="EdgeTest",
+                prompt_template=None,
+                source=[1001],
+                target=["+100|77"],
+                llm_model=None,
+                image_model=None,
+                publish_mode="moderated",
+                generation_backend="chain",
+                interval=60,
+                inactive=False,
+                node_specs=["delay:id=a", "delay:id=b", "delay:id=c"],
+                edge=["a->c"],
+                node_configs=None,
+            )
+        )
+
+    out = capsys.readouterr().out
+    assert "Added DAG pipeline id=" in out
+
+    verify_db = Database(db_path)
+    asyncio.run(verify_db.initialize())
+    pipelines = asyncio.run(verify_db.repos.content_pipelines.get_all())
+    asyncio.run(verify_db.close())
+    p = pipelines[0]
+    edge_set = {(e.from_node, e.to_node) for e in p.pipeline_json.edges}
+    assert ("a", "c") in edge_set
+
+
+def test_pipeline_graph_cmd(tmp_path, cli_init_patch, capsys):
+    """pipeline graph shows ASCII visualization."""
+    db_path = str(tmp_path / "cli_pipeline_graph_cmd.db")
+    db = Database(db_path)
+    asyncio.run(db.initialize())
+    _add_pipeline_prereqs(db)
+
+    from src.models import PipelineEdge, PipelineGraph, PipelineNode, PipelineNodeType
+
+    pid = asyncio.run(
+        db.repos.content_pipelines.add(
+            pipeline=ContentPipeline(
+                name="GraphTest",
+                prompt_template=".",
+                publish_mode="moderated",
+            ),
+            source_channel_ids=[1001],
+            targets=[],
+        )
+    )
+    graph = PipelineGraph(
+        nodes=[
+            PipelineNode(id="s", type=PipelineNodeType.SOURCE, name="src"),
+            PipelineNode(id="f", type=PipelineNodeType.FETCH_MESSAGES, name="fetch"),
+        ],
+        edges=[PipelineEdge(from_node="s", to_node="f")],
+    )
+    asyncio.run(db.repos.content_pipelines.set_pipeline_json(pid, graph))
+
+    with cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS):
+        from src.cli.commands.pipeline import run
+
+        run(_ns(pipeline_action="graph", id=pid))
+
+    out = capsys.readouterr().out
+    assert "source" in out
+    assert "fetch_messages" in out
+
+
+def test_pipeline_graph_legacy_pipeline(tmp_path, cli_init_patch, capsys):
+    """pipeline graph on legacy pipeline shows 'has no graph' message."""
+    db_path = str(tmp_path / "cli_pipeline_graph_legacy.db")
+    db = Database(db_path)
+    asyncio.run(db.initialize())
+    _add_pipeline_prereqs(db)
+    pipeline_id = asyncio.run(
+        db.repos.content_pipelines.add(
+            pipeline=ContentPipeline(
+                name="Legacy",
+                prompt_template="Test",
+                publish_mode="moderated",
+            ),
+            source_channel_ids=[1001],
+            targets=[
+                PipelineTarget(
+                    pipeline_id=0, phone="+100", dialog_id=77, title="T", dialog_type="channel"
+                )
+            ],
+        )
+    )
+
+    with cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS):
+        from src.cli.commands.pipeline import run
+
+        run(_ns(pipeline_action="graph", id=pipeline_id))
+
+    out = capsys.readouterr().out
+    assert "has no graph" in out
+
+
+def test_pipeline_node_add(tmp_path, cli_init_patch, capsys):
+    """pipeline node add adds a node to existing graph."""
+    db_path = str(tmp_path / "cli_pipeline_node_add.db")
+    db = Database(db_path)
+    asyncio.run(db.initialize())
+    _add_pipeline_prereqs(db)
+
+    from src.models import PipelineGraph, PipelineNode, PipelineNodeType
+
+    pid = asyncio.run(
+        db.repos.content_pipelines.add(
+            pipeline=ContentPipeline(name="NodeAdd", prompt_template=".", publish_mode="moderated"),
+            source_channel_ids=[1001],
+            targets=[],
+        )
+    )
+    graph = PipelineGraph(
+        nodes=[PipelineNode(id="src", type=PipelineNodeType.SOURCE, name="src")],
+        edges=[],
+    )
+    asyncio.run(db.repos.content_pipelines.set_pipeline_json(pid, graph))
+
+    with cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS):
+        from src.cli.commands.pipeline import run
+
+        run(_ns(pipeline_action="node", node_action="add", pipeline_id=pid, node_spec="delay:min_seconds=1"))
+
+    out = capsys.readouterr().out
+    assert "Added node" in out
+
+    verify_db = Database(db_path)
+    asyncio.run(verify_db.initialize())
+    p = asyncio.run(verify_db.repos.content_pipelines.get_by_id(pid))
+    asyncio.run(verify_db.close())
+    assert len(p.pipeline_json.nodes) == 2
+
+
+def test_pipeline_node_remove(tmp_path, cli_init_patch, capsys):
+    """pipeline node remove removes a node and its edges."""
+    db_path = str(tmp_path / "cli_pipeline_node_rm.db")
+    db = Database(db_path)
+    asyncio.run(db.initialize())
+
+    from src.models import PipelineEdge, PipelineGraph, PipelineNode, PipelineNodeType
+
+    pid = asyncio.run(
+        db.repos.content_pipelines.add(
+            pipeline=ContentPipeline(name="NodeRm", prompt_template=".", publish_mode="moderated"),
+            source_channel_ids=[],
+            targets=[],
+        )
+    )
+    graph = PipelineGraph(
+        nodes=[
+            PipelineNode(id="a", type=PipelineNodeType.DELAY, name="d1"),
+            PipelineNode(id="b", type=PipelineNodeType.DELAY, name="d2"),
+        ],
+        edges=[PipelineEdge(from_node="a", to_node="b")],
+    )
+    asyncio.run(db.repos.content_pipelines.set_pipeline_json(pid, graph))
+
+    with cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS):
+        from src.cli.commands.pipeline import run
+
+        run(_ns(pipeline_action="node", node_action="remove", pipeline_id=pid, node_id="b"))
+
+    out = capsys.readouterr().out
+    assert "Removed node" in out
+
+
+def test_pipeline_node_replace(tmp_path, cli_init_patch, capsys):
+    """pipeline node replace swaps a node's type and config."""
+    db_path = str(tmp_path / "cli_pipeline_node_replace.db")
+    db = Database(db_path)
+    asyncio.run(db.initialize())
+
+    from src.models import PipelineGraph, PipelineNode, PipelineNodeType
+
+    pid = asyncio.run(
+        db.repos.content_pipelines.add(
+            pipeline=ContentPipeline(name="NodeReplace", prompt_template=".", publish_mode="moderated"),
+            source_channel_ids=[],
+            targets=[],
+        )
+    )
+    graph = PipelineGraph(
+        nodes=[
+            PipelineNode(id="gen", type=PipelineNodeType.LLM_GENERATE, name="gen", config={"model": "claude"}),
+            PipelineNode(id="pub", type=PipelineNodeType.PUBLISH, name="pub"),
+        ],
+        edges=[],
+    )
+    asyncio.run(db.repos.content_pipelines.set_pipeline_json(pid, graph))
+
+    with cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS):
+        from src.cli.commands.pipeline import run
+
+        run(
+            _ns(
+                pipeline_action="node",
+                node_action="replace",
+                pipeline_id=pid,
+                node_id="gen",
+                node_spec="agent_loop:max_steps=5",
+            )
+        )
+
+    out = capsys.readouterr().out
+    assert "Replaced node" in out
+
+    verify_db = Database(db_path)
+    asyncio.run(verify_db.initialize())
+    p = asyncio.run(verify_db.repos.content_pipelines.get_by_id(pid))
+    asyncio.run(verify_db.close())
+    replaced = next(n for n in p.pipeline_json.nodes if n.id == "gen")
+    assert replaced.type == PipelineNodeType.AGENT_LOOP
+    assert replaced.config["max_steps"] == 5
+
+
+def test_pipeline_edge_add_remove(tmp_path, cli_init_patch, capsys):
+    """pipeline edge add and remove work correctly."""
+    db_path = str(tmp_path / "cli_pipeline_edge.db")
+    db = Database(db_path)
+    asyncio.run(db.initialize())
+
+    from src.models import PipelineGraph, PipelineNode, PipelineNodeType
+
+    pid = asyncio.run(
+        db.repos.content_pipelines.add(
+            pipeline=ContentPipeline(name="EdgeTest", prompt_template=".", publish_mode="moderated"),
+            source_channel_ids=[],
+            targets=[],
+        )
+    )
+    graph = PipelineGraph(
+        nodes=[
+            PipelineNode(id="a", type=PipelineNodeType.DELAY, name="d1"),
+            PipelineNode(id="b", type=PipelineNodeType.DELAY, name="d2"),
+        ],
+        edges=[],
+    )
+    asyncio.run(db.repos.content_pipelines.set_pipeline_json(pid, graph))
+
+    with cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS):
+        from src.cli.commands.pipeline import run
+
+        run(_ns(pipeline_action="edge", edge_action="add", pipeline_id=pid, from_node="a", to_node="b"))
+
+    out = capsys.readouterr().out
+    assert "Added edge a -> b" in out
+
+    with cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS):
+        from src.cli.commands.pipeline import run
+
+        run(_ns(pipeline_action="edge", edge_action="remove", pipeline_id=pid, from_node="a", to_node="b"))
+
+    out = capsys.readouterr().out
+    assert "Removed edge a -> b" in out
