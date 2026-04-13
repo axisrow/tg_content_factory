@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import gc
 import platform
 import re
@@ -28,10 +29,13 @@ def _read_log_tail(path: Path | None = None, max_lines: int = 500) -> list[dict]
         path = APP_LOG_PATH
     if not path.exists():
         return []
-    lines: deque[str] = deque(maxlen=max_lines)
-    with open(path, encoding="utf-8", errors="replace") as f:
-        for line in f:
-            lines.append(line)
+    try:
+        lines: deque[str] = deque(maxlen=max_lines)
+        with open(path, encoding="utf-8", errors="replace") as f:
+            for line in f:
+                lines.append(line)
+    except OSError:
+        return []
     records: list[dict] = []
     for line in lines:
         m = _LOG_RE.match(line.rstrip())
@@ -44,13 +48,15 @@ def _read_log_tail(path: Path | None = None, max_lines: int = 500) -> list[dict]
 
 @router.get("/", response_class=HTMLResponse)
 async def debug_page(request: Request):
-    records = _read_log_tail()
+    loop = asyncio.get_running_loop()
+    records = await loop.run_in_executor(None, _read_log_tail)
     return deps.get_templates(request).TemplateResponse(request, "debug.html", {"records": records})
 
 
 @router.get("/logs", response_class=HTMLResponse)
 async def debug_logs_partial(request: Request):
-    records = _read_log_tail()
+    loop = asyncio.get_running_loop()
+    records = await loop.run_in_executor(None, _read_log_tail)
     return deps.get_templates(request).TemplateResponse(
         request, "_debug_logs.html", {"records": records}
     )

@@ -24,6 +24,10 @@ def setup_logging() -> None:
         format=_LOG_FORMAT,
         datefmt=_LOG_DATEFMT,
     )
+    root = logging.getLogger()
+    for h in root.handlers:
+        if isinstance(h, RotatingFileHandler) and getattr(h, "baseFilename", None) == str(APP_LOG_PATH):
+            return
     _DATA_ROOT.mkdir(parents=True, exist_ok=True)
     rfh = RotatingFileHandler(
         str(APP_LOG_PATH),
@@ -32,7 +36,7 @@ def setup_logging() -> None:
         encoding="utf-8",
     )
     rfh.setFormatter(logging.Formatter(_LOG_FORMAT, datefmt=_LOG_DATEFMT))
-    logging.getLogger().addHandler(rfh)
+    root.addHandler(rfh)
 
 
 def ensure_data_dirs() -> None:
