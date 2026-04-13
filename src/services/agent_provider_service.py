@@ -891,7 +891,10 @@ class AgentProviderService:
                 )
                 continue
             if key == "base_url" and provider_name == "zai":
-                normalized[key] = self._normalize_urlish(value or ZAI_DEFAULT_BASE_URL)
+                v = value or ZAI_DEFAULT_BASE_URL
+                if v.rstrip("/") == "https://api.z.ai/api/anthropic":
+                    v = "https://api.z.ai/api/anthropic/v1"
+                normalized[key] = self._normalize_urlish(v)
                 continue
             if key == "base_url" and provider_name in _OPENAI_STYLE_DEFAULT_BASE_URLS:
                 normalized[key] = self._normalize_urlish(
