@@ -238,7 +238,17 @@ def build_parser() -> argparse.ArgumentParser:
 
     pipeline_add = pipeline_sub.add_parser("add", help="Add pipeline")
     pipeline_add.add_argument("name", help="Pipeline name")
-    pipeline_add.add_argument("--prompt-template", default=None, help="Prompt template (legacy mode)")
+    pipeline_add.add_argument(
+        "--prompt-template",
+        default=None,
+        help="Prompt template (required unless --json-file/--node is used)",
+    )
+    pipeline_add.add_argument(
+        "--json-file",
+        default=None,
+        dest="json_file",
+        help="Path to pipeline DAG graph JSON file (enables DAG mode; --prompt-template optional)",
+    )
     pipeline_add.add_argument(
         "--source",
         type=int,
@@ -292,6 +302,42 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         dest="node_configs",
         help="JSON config override for a node: NODE_ID='{\"key\":\"value\"}'",
+    )
+    pipeline_add.add_argument(
+        "--run-after",
+        action="store_true",
+        dest="run_after",
+        help="Enqueue a pipeline run immediately after creation",
+    )
+    pipeline_add.add_argument(
+        "--since-value",
+        type=int,
+        default=24,
+        dest="since_value",
+        help="Lookback depth for --run-after (default 24)",
+    )
+    pipeline_add.add_argument(
+        "--since-unit",
+        choices=["m", "h", "d"],
+        default="h",
+        dest="since_unit",
+        help="Lookback unit for --run-after: m/h/d (default h)",
+    )
+
+    pipeline_drc = pipeline_sub.add_parser(
+        "dry-run-count",
+        help="Count messages available for given source channels",
+    )
+    pipeline_drc.add_argument(
+        "--source",
+        type=int,
+        action="append",
+        required=True,
+        help="Source channel_id; repeat for multiple channels",
+    )
+    pipeline_drc.add_argument("--since-value", type=int, default=24, dest="since_value")
+    pipeline_drc.add_argument(
+        "--since-unit", choices=["m", "h", "d"], default="h", dest="since_unit"
     )
 
     pipeline_edit = pipeline_sub.add_parser("edit", help="Edit pipeline")

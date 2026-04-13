@@ -34,6 +34,15 @@ def _group_by_pipeline(items: list) -> dict[int, list]:
     return result
 
 
+def to_since_hours(value: int, unit: str) -> float:
+    """Convert since_value + since_unit to a float number of hours."""
+    if unit == "m":
+        return value / 60.0
+    if unit == "d":
+        return value * 24.0
+    return float(value)  # "h"
+
+
 @dataclass(frozen=True)
 class PipelineTargetRef:
     phone: str

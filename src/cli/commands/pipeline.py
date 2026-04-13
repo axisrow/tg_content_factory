@@ -12,6 +12,7 @@ from src.services.pipeline_service import (
     PipelineService,
     PipelineTargetRef,
     PipelineValidationError,
+    to_since_hours,
 )
 from src.services.publish_service import PublishService
 
@@ -88,62 +89,82 @@ def run(args: argparse.Namespace) -> None:
                     print(f" - {target.phone}:{target.dialog_id} ({target.title or '—'})")
 
             elif args.pipeline_action == "add":
+                json_file = getattr(args, "json_file", None)
                 node_specs_raw = getattr(args, "node_specs", None)
-                if node_specs_raw:
-                    # DAG mode: build graph from --node specs
-                    import json as _json
+                try:
+                    if json_file:
+                        import json as _json
 
-                    from src.cli.graph_builder import GraphBuilder, GraphBuilderError
-                    from src.cli.node_dsl import NodeSpecError, parse_node_spec
+                        with open(json_file) as _f:
+                            graph_data = _json.load(_f)
+                        data = {
+                            "name": args.name,
+                            "prompt_template": args.prompt_template or ".",
+                            "llm_model": args.llm_model,
+                            "source_ids": args.source or [],
+                            "target_refs": (
+                                [{"phone": r.phone, "dialog_id": r.dialog_id}
+                                 for r in _parse_target_refs(args.target)]
+                                if args.target else []
+                            ),
+                            "generate_interval_minutes": args.interval,
+                            "pipeline_json": graph_data,
+                        }
+                        pipeline_id = await svc.import_json(data)
+                    elif node_specs_raw:
+                        # DAG mode: build graph from --node specs
+                        import json as _json
 
-                    specs = []
-                    for raw in node_specs_raw:
+                        from src.cli.graph_builder import GraphBuilder, GraphBuilderError
+                        from src.cli.node_dsl import NodeSpecError, parse_node_spec
+
+                        specs = []
+                        for raw in node_specs_raw:
+                            try:
+                                specs.append(parse_node_spec(raw))
+                            except NodeSpecError as exc:
+                                print(f"Invalid node spec '{raw}': {exc}")
+                                return
+
+                        builder = GraphBuilder()
+                        for spec in specs:
+                            builder.add_node_spec(spec)
+
+                        if args.source:
+                            builder.set_sources(args.source)
+
+                        target_refs_list = []
+                        if args.target:
+                            target_refs_list = [
+                                {"phone": t.phone, "dialog_id": t.dialog_id}
+                                for t in _parse_target_refs(args.target)
+                            ]
+                            builder.set_targets(target_refs_list)
+
+                        if getattr(args, "edge", None):
+                            for edge_str in args.edge:
+                                from_id, _, to_id = edge_str.partition("->")
+                                if not to_id:
+                                    print(f"Invalid edge format '{edge_str}'; use FROM->TO")
+                                    return
+                                builder.add_explicit_edge(from_id.strip(), to_id.strip())
+
+                        if getattr(args, "node_configs", None):
+                            for nc_str in args.node_configs:
+                                node_id, _, json_str = nc_str.partition("=")
+                                try:
+                                    config = _json.loads(json_str)
+                                except _json.JSONDecodeError as exc:
+                                    print(f"Invalid JSON in --node-config for {node_id}: {exc}")
+                                    return
+                                builder.set_node_config_override(node_id.strip(), config)
+
                         try:
-                            specs.append(parse_node_spec(raw))
-                        except NodeSpecError as exc:
-                            print(f"Invalid node spec '{raw}': {exc}")
+                            graph = builder.build()
+                        except GraphBuilderError as exc:
+                            print(f"Graph build error: {exc}")
                             return
 
-                    builder = GraphBuilder()
-                    for spec in specs:
-                        builder.add_node_spec(spec)
-
-                    if args.source:
-                        builder.set_sources(args.source)
-
-                    target_refs_list = []
-                    if args.target:
-                        target_refs_list = [
-                            {"phone": t.phone, "dialog_id": t.dialog_id}
-                            for t in _parse_target_refs(args.target)
-                        ]
-                        builder.set_targets(target_refs_list)
-
-                    if getattr(args, "edge", None):
-                        for edge_str in args.edge:
-                            from_id, _, to_id = edge_str.partition("->")
-                            if not to_id:
-                                print(f"Invalid edge format '{edge_str}'; use FROM->TO")
-                                return
-                            builder.add_explicit_edge(from_id.strip(), to_id.strip())
-
-                    if getattr(args, "node_configs", None):
-                        for nc_str in args.node_configs:
-                            node_id, _, json_str = nc_str.partition("=")
-                            try:
-                                config = _json.loads(json_str)
-                            except _json.JSONDecodeError as exc:
-                                print(f"Invalid JSON in --node-config for {node_id}: {exc}")
-                                return
-                            builder.set_node_config_override(node_id.strip(), config)
-
-                    try:
-                        graph = builder.build()
-                    except GraphBuilderError as exc:
-                        print(f"Graph build error: {exc}")
-                        return
-
-                    try:
                         pipeline_id = await svc.import_json(
                             {
                                 "name": args.name,
@@ -162,27 +183,21 @@ def run(args: argparse.Namespace) -> None:
                                 ),
                             },
                         )
-                    except PipelineValidationError as exc:
-                        print(f"Error: {exc}")
-                        return
 
-                    # Activate if --inactive was not passed
-                    if not args.inactive and pipeline_id:
-                        await svc._bundle.set_active(pipeline_id, True)
-
-                    print(f"Added DAG pipeline id={pipeline_id}: {args.name}")
-                else:
-                    # Legacy mode: --prompt-template + --source + --target required
-                    if not args.prompt_template:
-                        print("Error: --prompt-template is required when not using --node")
-                        return
-                    if not args.source:
-                        print("Error: --source is required when not using --node")
-                        return
-                    if not args.target:
-                        print("Error: --target is required when not using --node")
-                        return
-                    try:
+                        # Activate if --inactive was not passed
+                        if not args.inactive and pipeline_id:
+                            await svc._bundle.set_active(pipeline_id, True)
+                    else:
+                        # Legacy mode: --prompt-template + --source + --target required
+                        if not args.prompt_template:
+                            print("Error: --prompt-template is required when --json-file/--node is not used")
+                            return
+                        if not args.source:
+                            print("Error: --source is required")
+                            return
+                        if not args.target:
+                            print("Error: --target is required")
+                            return
                         pipeline_id = await svc.add(
                             name=args.name,
                             prompt_template=args.prompt_template,
@@ -195,10 +210,17 @@ def run(args: argparse.Namespace) -> None:
                             generate_interval_minutes=args.interval,
                             is_active=not args.inactive,
                         )
-                    except PipelineValidationError as exc:
-                        print(f"Error: {exc}")
-                        return
-                    print(f"Added pipeline id={pipeline_id}: {args.name}")
+                except PipelineValidationError as exc:
+                    print(f"Error: {exc}")
+                    return
+                print(f"Added pipeline id={pipeline_id}: {args.name}")
+                if getattr(args, "run_after", False):
+                    from src.services.task_enqueuer import TaskEnqueuer
+
+                    since_h = to_since_hours(args.since_value, args.since_unit)
+                    enqueuer = TaskEnqueuer(db)
+                    await enqueuer.enqueue_pipeline_run(pipeline_id, since_hours=since_h)
+                    print(f"Enqueued pipeline run (since={args.since_value}{args.since_unit})")
 
             elif args.pipeline_action == "edit":
                 existing = await svc.get(args.id)
@@ -566,6 +588,14 @@ def run(args: argparse.Namespace) -> None:
                     print(f"Created pipeline from template (id={pipeline_id})")
                 except PipelineValidationError as exc:
                     print(f"Validation error: {exc}")
+
+            elif args.pipeline_action == "dry-run-count":
+                since_h = to_since_hours(args.since_value, args.since_unit)
+                msgs = await db.repos.messages.get_recent_for_channels(args.source, since_h)
+                print(
+                    f"Messages found: {len(msgs)} "
+                    f"(sources={args.source}, since={args.since_value}{args.since_unit})"
+                )
 
             elif args.pipeline_action == "ai-edit":
                 instruction = args.instruction

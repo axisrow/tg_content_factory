@@ -938,7 +938,7 @@ def test_pipeline_add_dag_with_node(tmp_path, cli_init_patch, capsys):
         )
 
     out = capsys.readouterr().out
-    assert "Added DAG pipeline id=" in out
+    assert "Added pipeline id=" in out
     assert "React Pipeline" in out
 
     # Verify graph was stored
@@ -1050,7 +1050,7 @@ def test_pipeline_add_dag_with_edges(tmp_path, cli_init_patch, capsys):
         )
 
     out = capsys.readouterr().out
-    assert "Added DAG pipeline id=" in out
+    assert "Added pipeline id=" in out
 
     verify_db = Database(db_path)
     asyncio.run(verify_db.initialize())
