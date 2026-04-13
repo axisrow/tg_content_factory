@@ -977,6 +977,17 @@ async def test_replace_node_with_new_id_updates_edges(svc, graph_pipeline_id):
 
 
 @pytest.mark.asyncio
+async def test_replace_first_node_with_new_id_updates_edges(svc, graph_pipeline_id):
+    """Regression: replacing the first node (index 0) must still rewrite edges."""
+    new_node = PipelineNode(id="src_v2", type=PipelineNodeType.SOURCE, name="source", config={})
+    ok = await svc.replace_node(graph_pipeline_id, "src", new_node)
+    assert ok is True
+    graph = await svc.get_graph(graph_pipeline_id)
+    assert not any("src" in (e.from_node, e.to_node) for e in graph.edges)
+    assert any(e.from_node == "src_v2" for e in graph.edges)
+
+
+@pytest.mark.asyncio
 async def test_add_edge(svc, graph_pipeline_id):
     ok = await svc.add_edge(graph_pipeline_id, "src", "gen")
     assert ok is True

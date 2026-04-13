@@ -103,7 +103,10 @@ class GraphBuilder:
             if spec.type == PipelineNodeType.SOURCE:
                 cids = config.get("channel_ids")
                 if cids is not None and not isinstance(cids, list):
-                    config["channel_ids"] = [int(cids)]
+                    try:
+                        config["channel_ids"] = [int(cids)]
+                    except (ValueError, TypeError):
+                        raise GraphBuilderError(f"channel_ids must be an integer, got: {cids!r}") from None
                 if self._source_channel_ids:
                     config["channel_ids"] = self._source_channel_ids
 
