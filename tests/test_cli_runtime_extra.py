@@ -95,9 +95,9 @@ class TestRedirectLogging:
 
             # Console handler should be back
             assert console in root.handlers
-            # File handler should be gone
-            file_handlers = [h for h in root.handlers if isinstance(h, logging.FileHandler)]
-            assert len(file_handlers) == 0
+            # Plain TUI FileHandler should be gone; RotatingFileHandler (app.log) may remain
+            plain_file_handlers = [h for h in root.handlers if type(h) is logging.FileHandler]
+            assert len(plain_file_handlers) == 0
         finally:
             root.handlers = original_handlers
 
