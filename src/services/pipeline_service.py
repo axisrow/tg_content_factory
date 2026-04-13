@@ -517,9 +517,11 @@ class PipelineService:
         return pipeline.pipeline_json
 
     async def add_node(self, pipeline_id: int, node: PipelineNode) -> bool:
-        """Add *node* to the pipeline's graph. Returns False if pipeline/graph not found."""
+        """Add *node* to the pipeline's graph. Returns False if pipeline/graph not found or ID is a duplicate."""
         graph = await self.get_graph(pipeline_id)
         if graph is None:
+            return False
+        if any(n.id == node.id for n in graph.nodes):
             return False
         # Auto-assign position: place after the last node
         if not node.position or (node.position.get("x") == 0 and node.position.get("y") == 0):
@@ -554,13 +556,19 @@ class PipelineService:
         found = False
         for i, n in enumerate(graph.nodes):
             if n.id == node_id:
-                graph.nodes[i] = new_node
                 found = True
                 break
         if not found:
             return False
-        # If the new node has a different ID, update edges too
+        # If the new node has a different ID, check for collisions first
         if new_node.id != node_id:
+            if any(n.id == new_node.id for n in graph.nodes):
+                return False
+        # Perform the replacement
+        for i, n in enumerate(graph.nodes):
+            if n.id == node_id:
+                graph.nodes[i] = new_node
+                break
             for edge in graph.edges:
                 if edge.from_node == node_id:
                     edge.from_node = new_node.id
@@ -570,9 +578,12 @@ class PipelineService:
         return True
 
     async def add_edge(self, pipeline_id: int, from_node: str, to_node: str) -> bool:
-        """Add an edge to the pipeline's graph. Returns False if pipeline/graph not found."""
+        """Add an edge to the pipeline's graph. Returns False if pipeline/graph not found or endpoints don't exist."""
         graph = await self.get_graph(pipeline_id)
         if graph is None:
+            return False
+        node_ids = {n.id for n in graph.nodes}
+        if from_node not in node_ids or to_node not in node_ids:
             return False
         # Idempotent: don't add duplicate edges
         existing = {(e.from_node, e.to_node) for e in graph.edges}

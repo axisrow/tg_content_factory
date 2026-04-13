@@ -591,7 +591,21 @@ def run(args: argparse.Namespace) -> None:
                         return
                     from src.cli.node_dsl import generate_node_id
 
-                    node_id = spec.id or generate_node_id(spec.type, 0)
+                    if spec.id:
+                        node_id = spec.id
+                    else:
+                        graph = await svc.get_graph(args.pipeline_id)
+                        existing_type_prefix = spec.type.value
+                        max_idx = -1
+                        if graph:
+                            for n in graph.nodes:
+                                if n.id.startswith(existing_type_prefix + "_"):
+                                    try:
+                                        idx = int(n.id.split("_")[-1])
+                                        max_idx = max(max_idx, idx)
+                                    except (ValueError, IndexError):
+                                        pass
+                        node_id = generate_node_id(spec.type, max_idx + 1)
                     node = PipelineNode(id=node_id, type=spec.type, name=spec.type.value, config=spec.config)
                     ok = await svc.add_node(args.pipeline_id, node)
                     if ok:
@@ -605,7 +619,8 @@ def run(args: argparse.Namespace) -> None:
                     except NodeSpecError as exc:
                         print(f"Invalid node spec: {exc}")
                         return
-                    node = PipelineNode(id=args.node_id, type=spec.type, name=spec.type.value, config=spec.config)
+                    new_id = spec.id or args.node_id
+                    node = PipelineNode(id=new_id, type=spec.type, name=spec.type.value, config=spec.config)
                     ok = await svc.replace_node(args.pipeline_id, args.node_id, node)
                     if ok:
                         print(f"Replaced node '{args.node_id}' in pipeline id={args.pipeline_id}")

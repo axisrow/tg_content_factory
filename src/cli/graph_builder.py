@@ -162,7 +162,7 @@ class GraphBuilder:
         if self._target_refs:
             for node in nodes:
                 if node.type in (PipelineNodeType.PUBLISH, PipelineNodeType.FORWARD):
-                    if "targets" not in node.config:
+                    if not node.config.get("targets"):
                         node.config["targets"] = self._target_refs
                     break
 
@@ -173,14 +173,19 @@ class GraphBuilder:
             chain.append(source_node_id)
         if fetch_node_id:
             chain.append(fetch_node_id)
-        chain.extend(user_node_ids)
+        chain.extend(nid for nid in user_node_ids if nid not in chain)
 
         for i in range(len(chain) - 1):
             edges.append(PipelineEdge(from_node=chain[i], to_node=chain[i + 1]))
 
         # -- 7. Explicit edges ---------------------------------------------------
+        node_ids = {n.id for n in nodes}
         existing = {(e.from_node, e.to_node) for e in edges}
         for from_id, to_id in self._explicit_edges:
+            if from_id not in node_ids or to_id not in node_ids:
+                raise GraphBuilderError(
+                    f"Edge references non-existent node: {from_id} -> {to_id}"
+                )
             if (from_id, to_id) not in existing:
                 edges.append(PipelineEdge(from_node=from_id, to_node=to_id))
 
