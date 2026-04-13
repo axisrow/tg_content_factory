@@ -116,7 +116,7 @@ def register_builtin_endpoints(app: FastAPI) -> None:
     async def login_submit(request: Request, password: str = Form(...), next: str = Form("/")):
         target = sanitize_next(next)
         expected_password = request.app.state.config.web.password
-        if expected_password and secrets.compare_digest(password, expected_password):
+        if expected_password and secrets.compare_digest(password.encode("utf-8"), expected_password.encode("utf-8")):
             response = RedirectResponse(url=target, status_code=303)
             set_session_cookie(response, request)
             return response
