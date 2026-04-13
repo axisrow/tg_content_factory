@@ -8,11 +8,12 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from src.web.log_handler import LogBuffer
+from src.web.routes.debug import _read_log_tail
 
 
 @pytest.fixture
 async def client(base_app):
-    """Create test client with log buffer."""
+    """Create test client."""
     app, _, pool = base_app
 
     async def _resolve_channel(identifier):
@@ -37,34 +38,59 @@ async def client(base_app):
     ) as c:
         yield c
 
-@pytest.fixture
-async def client_no_buffer(base_app):
-    """Create test client without log buffer."""
-    app, _, pool = base_app
 
-    async def _resolve_channel(identifier):
-        return {
-            "channel_id": -1001234567890,
-            "title": "Test Channel",
-            "username": "testchannel",
-            "channel_type": "channel",
-        }
+# ─── _read_log_tail unit tests ───────────────────────────────────────
 
-    pool.clients = {}
-    pool.resolve_channel = _resolve_channel
-    app.state.log_buffer = None  # No buffer
-
-    transport = ASGITransport(app=app)
-    auth_header = base64.b64encode(b":testpass").decode()
-    async with AsyncClient(
-        transport=transport,
-        base_url="http://test",
-        follow_redirects=True,
-        headers={"Authorization": f"Basic {auth_header}", "Origin": "http://test"},
-    ) as c:
-        yield c
+def test_read_log_tail_missing_file(tmp_path):
+    """Returns empty list when log file does not exist."""
+    assert _read_log_tail(tmp_path / "nonexistent.log") == []
 
 
+def test_read_log_tail_parses_records(tmp_path):
+    """Parses standard log lines into dicts."""
+    log = tmp_path / "app.log"
+    log.write_text(
+        "2024-01-01 12:00:00 [INFO] myapp.service: Started\n"
+        "2024-01-01 12:00:01 [WARNING] myapp.db: Slow query\n",
+        encoding="utf-8",
+    )
+    records = _read_log_tail(log)
+    assert len(records) == 2
+    assert records[0] == {
+        "time": "2024-01-01 12:00:00", "level": "INFO",
+        "logger": "myapp.service", "message": "Started",
+    }
+    assert records[1]["level"] == "WARNING"
+    assert records[1]["logger"] == "myapp.db"
+
+
+def test_read_log_tail_multiline(tmp_path):
+    """Continuation lines are merged into the previous record."""
+    log = tmp_path / "app.log"
+    log.write_text(
+        "2024-01-01 12:00:00 [ERROR] app: Something failed\n"
+        "Traceback (most recent call last):\n"
+        "  File foo.py, line 1\n"
+        "ValueError: bad value\n",
+        encoding="utf-8",
+    )
+    records = _read_log_tail(log)
+    assert len(records) == 1
+    assert "Traceback" in records[0]["message"]
+    assert "ValueError" in records[0]["message"]
+
+
+def test_read_log_tail_respects_max_lines(tmp_path):
+    """Only the last max_lines lines are considered."""
+    log = tmp_path / "app.log"
+    lines = [f"2024-01-01 12:00:{i:02d} [INFO] app: msg {i}\n" for i in range(10)]
+    log.write_text("".join(lines), encoding="utf-8")
+    records = _read_log_tail(log, max_lines=3)
+    assert len(records) == 3
+    assert "msg 9" in records[-1]["message"]
+
+
+# ─── route smoke tests ───────────────────────────────────────────────
 
 @pytest.mark.asyncio
 async def test_debug_page_renders(client):
@@ -75,28 +101,24 @@ async def test_debug_page_renders(client):
 
 
 @pytest.mark.asyncio
-async def test_debug_page_with_records(client):
-    """Test debug page shows log records."""
-    # Add some log records
-    import logging
-
-    logger = logging.getLogger("test_debug")
-    handler = client._transport.app.state.log_buffer
-    handler.setFormatter(logging.Formatter())
-    logger.addHandler(handler)
-    logger.setLevel(logging.INFO)
-
-    logger.info("Test message 1")
-    logger.warning("Test warning message")
-
+async def test_debug_page_reads_from_file(client, tmp_path, monkeypatch):
+    """Debug page shows records read from log file."""
+    log = tmp_path / "app.log"
+    log.write_text(
+        "2024-01-01 12:00:00 [INFO] test.logger: Hello from file\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("src.web.routes.debug.APP_LOG_PATH", log)
     resp = await client.get("/debug/")
     assert resp.status_code == 200
+    assert "Hello from file" in resp.text
 
 
 @pytest.mark.asyncio
-async def test_debug_page_without_buffer(client_no_buffer):
-    """Test debug page when no log buffer configured."""
-    resp = await client_no_buffer.get("/debug/")
+async def test_debug_page_empty_when_no_file(client, tmp_path, monkeypatch):
+    """Debug page renders without error when log file is absent."""
+    monkeypatch.setattr("src.web.routes.debug.APP_LOG_PATH", tmp_path / "missing.log")
+    resp = await client.get("/debug/")
     assert resp.status_code == 200
 
 
@@ -108,9 +130,10 @@ async def test_debug_logs_partial(client):
 
 
 @pytest.mark.asyncio
-async def test_debug_logs_partial_without_buffer(client_no_buffer):
-    """Test debug logs partial when no buffer configured."""
-    resp = await client_no_buffer.get("/debug/logs")
+async def test_debug_page_empty_buffer(client):
+    """Kept for compatibility — debug page renders when buffer is empty."""
+    client._transport.app.state.log_buffer._records.clear()
+    resp = await client.get("/debug/")
     assert resp.status_code == 200
 
 
@@ -203,16 +226,6 @@ async def test_log_buffer_exception():
     assert "ValueError" in records[0]["message"]
 
 
-@pytest.mark.asyncio
-async def test_debug_page_empty_buffer(client):
-    """Test debug page with empty log buffer."""
-    # Clear buffer
-    client._transport.app.state.log_buffer._records.clear()
-
-    resp = await client.get("/debug/")
-    assert resp.status_code == 200
-
-
 # ─── timing endpoint tests ──────────────────────────────────────────
 
 
@@ -224,23 +237,9 @@ async def test_debug_timing_page(client):
 
 
 @pytest.mark.asyncio
-async def test_debug_timing_page_without_buffer(client_no_buffer):
-    """Test timing page when no timing buffer configured."""
-    resp = await client_no_buffer.get("/debug/timing")
-    assert resp.status_code == 200
-
-
-@pytest.mark.asyncio
 async def test_debug_timing_rows(client):
     """Test timing rows partial."""
     resp = await client.get("/debug/timing/rows")
-    assert resp.status_code == 200
-
-
-@pytest.mark.asyncio
-async def test_debug_timing_rows_without_buffer(client_no_buffer):
-    """Test timing rows without buffer."""
-    resp = await client_no_buffer.get("/debug/timing/rows")
     assert resp.status_code == 200
 
 
