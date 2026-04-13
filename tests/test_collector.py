@@ -1133,6 +1133,34 @@ async def test_requeue_startup_tasks_cancels_orphaned(db):
 
 
 @pytest.mark.asyncio
+async def test_requeue_startup_tasks_defers_future_run_after(db):
+    """Startup tasks with run_after in the future go to _delayed_requeues, not the main queue."""
+    from datetime import datetime, timedelta, timezone
+
+    from src.collection_queue import CollectionQueue
+
+    ch = Channel(channel_id=-100170, title="Future Task", username="future_ch")
+    await db.add_channel(ch)
+
+    task_id = await db.create_collection_task(
+        -100170, "Future Task", channel_username="future_ch"
+    )
+    run_after = datetime.now(tz=timezone.utc) + timedelta(minutes=5)
+    await db.repos.tasks.reschedule_collection_task(task_id, run_after=run_after)
+
+    pool = make_mock_pool(get_available_client=AsyncMock(return_value=None))
+    collector = Collector(pool, db, SchedulerConfig())
+    queue = CollectionQueue(collector, db)
+
+    count = await queue.requeue_startup_tasks()
+    assert count == 1
+    assert queue._queue.empty(), "Future-dated task should not be in the main queue"
+    assert len(queue._delayed_requeues) == 1, "Future-dated task should be in _delayed_requeues"
+
+    await queue.shutdown()
+
+
+@pytest.mark.asyncio
 async def test_collection_queue_cancels_deleted_channel(db):
     from src.collection_queue import CollectionQueue
 

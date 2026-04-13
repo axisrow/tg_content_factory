@@ -70,6 +70,11 @@ class CollectionQueue:
             else:
                 self._queue.task_done()
                 removed_from_memory += 1
+        # Cancel any delayed requeues (flood-wait timers) so they don't
+        # re-inject deleted task IDs back into the queue.
+        for task in list(self._delayed_requeues):
+            task.cancel()
+        self._delayed_requeues.clear()
         logger.info(
             "Cleared %d pending collection tasks from DB and %d queued items from memory",
             deleted,
@@ -126,9 +131,14 @@ class CollectionQueue:
             if task.run_after is not None:
                 remaining = task.run_after.timestamp() - time.time()
                 if remaining > 0:
-                    self._queue.put_nowait((task_id, channel, force, full))
+                    self._schedule_requeue_after_delay(
+                        task_id=task_id,
+                        channel=channel,
+                        force=force,
+                        full=full,
+                        run_after=task.run_after,
+                    )
                     self._queue.task_done()
-                    await asyncio.sleep(min(remaining, 60.0))
                     continue
 
             # Channel may become filtered after being queued.
