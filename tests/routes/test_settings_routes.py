@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -48,6 +49,27 @@ async def test_settings_shows_accounts(client):
         resp = await client.get("/settings/")
         assert resp.status_code == 200
         assert "+1234567890" in resp.text
+
+
+@pytest.mark.asyncio
+async def test_settings_shows_flood_banner_and_account_availability(client, db):
+    accounts = await db.get_accounts(active_only=False)
+    future = datetime.now(timezone.utc) + timedelta(hours=1)
+    for acc in accounts:
+        await db.update_account_flood(acc.phone, future)
+
+    with patch(
+        "src.web.routes.settings.AgentProviderService.load_provider_configs",
+        AsyncMock(return_value=[]),
+    ), patch(
+        "src.web.routes.settings.AgentProviderService.load_model_cache",
+        AsyncMock(return_value={}),
+    ):
+        resp = await client.get("/settings/")
+        assert resp.status_code == 200
+        assert "Все подключённые аккаунты сейчас во Flood Wait" in resp.text
+        assert "Открыть планировщик и посмотреть рекомендации" in resp.text
+        assert "Flood" in resp.text
 
 
 @pytest.mark.asyncio

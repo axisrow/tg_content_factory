@@ -42,6 +42,8 @@ async def dashboard(request: Request):
 
     now = datetime.now(tz=timezone.utc)
     flood_wait_count = 0
+    all_connected_flooded = True
+    connected_count = len(deps.get_pool(request).clients)
     for a in accounts:
         if a.flood_wait_until:
             until = a.flood_wait_until
@@ -49,6 +51,17 @@ async def dashboard(request: Request):
                 until = until.replace(tzinfo=timezone.utc)
             if until > now:
                 flood_wait_count += 1
+        if a.is_active and a.phone in deps.get_pool(request).clients:
+            until = a.flood_wait_until
+            if until is None:
+                all_connected_flooded = False
+            else:
+                if until.tzinfo is None:
+                    until = until.replace(tzinfo=timezone.utc)
+                if until <= now:
+                    all_connected_flooded = False
+    if connected_count == 0:
+        all_connected_flooded = False
 
     last_task = await db.repos.tasks.get_last_completed_collect_task()
     active_tasks = await db.repos.tasks.count_collection_tasks("active")
@@ -63,8 +76,9 @@ async def dashboard(request: Request):
             "stats": stats,
             "scheduler_running": scheduler.is_running,
             "scheduler_interval": scheduler.interval_minutes,
-            "accounts_connected": len(deps.get_pool(request).clients),
+            "accounts_connected": connected_count,
             "accounts_flood_wait": flood_wait_count,
+            "collector_attention": all_connected_flooded,
             "last_collect_ago": _time_ago(last_task.completed_at if last_task else None),
             "active_tasks": active_tasks,
             "content_pending": calendar_stats["pending"],

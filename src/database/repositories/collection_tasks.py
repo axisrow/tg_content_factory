@@ -241,6 +241,7 @@ class CollectionTasksRepository:
         messages_collected: int | None = None,
         error: str | None = None,
         note: str | None = None,
+        run_after: datetime | None = None,
     ) -> None:
         status_value = status.value if isinstance(status, CollectionTaskStatus) else status
         now = datetime.now(tz=timezone.utc).isoformat()
@@ -259,6 +260,40 @@ class CollectionTasksRepository:
         if error is not None:
             sets.append("error = ?")
             params.append(error)
+        if note is not None:
+            sets.append("note = ?")
+            params.append(note)
+        if run_after is not None:
+            sets.append("run_after = ?")
+            params.append(run_after.astimezone(timezone.utc).isoformat())
+        params.append(task_id)
+        await self._db.execute(
+            f"UPDATE collection_tasks SET {', '.join(sets)} WHERE id = ?",
+            tuple(params),
+        )
+        await self._db.commit()
+
+    async def reschedule_collection_task(
+        self,
+        task_id: int,
+        *,
+        run_after: datetime,
+        note: str | None = None,
+        messages_collected: int = 0,
+    ) -> None:
+        sets = [
+            "status = ?",
+            "run_after = ?",
+            "started_at = NULL",
+            "completed_at = NULL",
+            "error = NULL",
+            "messages_collected = ?",
+        ]
+        params: list[Any] = [
+            CollectionTaskStatus.PENDING.value,
+            run_after.astimezone(timezone.utc).isoformat(),
+            messages_collected,
+        ]
         if note is not None:
             sets.append("note = ?")
             params.append(note)
@@ -404,7 +439,7 @@ class CollectionTasksRepository:
         cur = await self._db.execute(
             "SELECT * FROM collection_tasks "
             "WHERE task_type = ? AND status = ? "
-            "ORDER BY id ASC",
+            "ORDER BY COALESCE(run_after, ''), id ASC",
             (
                 CollectionTaskType.CHANNEL_COLLECT.value,
                 CollectionTaskStatus.PENDING.value,

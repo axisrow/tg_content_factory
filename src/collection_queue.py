@@ -2,11 +2,17 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
+from datetime import timedelta, timezone
 
 from src.database import Database
 from src.database.bundles import ChannelBundle
 from src.models import Channel, CollectionTaskStatus
-from src.telegram.collector import Collector
+from src.telegram.collector import (
+    AllCollectionClientsFloodedError,
+    Collector,
+    NoActiveCollectionClientsError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +27,7 @@ class CollectionQueue:
         self._worker: asyncio.Task | None = None
         self._current_task_id: int | None = None
         self._retried_tasks: set[int] = set()
+        self._delayed_requeues: set[asyncio.Task] = set()
 
     async def enqueue(self, channel: Channel, force: bool = False, full: bool = True) -> int | None:
         """Enqueue a channel for collection, atomically skipping duplicates.
@@ -63,6 +70,11 @@ class CollectionQueue:
             else:
                 self._queue.task_done()
                 removed_from_memory += 1
+        # Cancel any delayed requeues (flood-wait timers) so they don't
+        # re-inject deleted task IDs back into the queue.
+        for task in list(self._delayed_requeues):
+            task.cancel()
+        self._delayed_requeues.clear()
         logger.info(
             "Cleared %d pending collection tasks from DB and %d queued items from memory",
             deleted,
@@ -73,6 +85,26 @@ class CollectionQueue:
     def _ensure_worker(self) -> None:
         if self._worker is None or self._worker.done():
             self._worker = asyncio.create_task(self._run_worker())
+
+    def _schedule_requeue_after_delay(
+        self,
+        *,
+        task_id: int,
+        channel: Channel,
+        force: bool,
+        full: bool,
+        run_after,
+    ) -> None:
+        async def _requeue_later() -> None:
+            remaining = max(0.0, run_after.timestamp() - time.time())
+            if remaining > 0:
+                await asyncio.sleep(remaining)
+            self._queue.put_nowait((task_id, channel, force, full))
+            self._ensure_worker()
+
+        task = asyncio.create_task(_requeue_later())
+        self._delayed_requeues.add(task)
+        task.add_done_callback(self._delayed_requeues.discard)
 
     async def _run_worker(self) -> None:
         while True:
@@ -96,6 +128,18 @@ class CollectionQueue:
             if task and task.status == CollectionTaskStatus.CANCELLED:
                 self._queue.task_done()
                 continue
+            if task.run_after is not None:
+                remaining = task.run_after.timestamp() - time.time()
+                if remaining > 0:
+                    self._schedule_requeue_after_delay(
+                        task_id=task_id,
+                        channel=channel,
+                        force=force,
+                        full=full,
+                        run_after=task.run_after,
+                    )
+                    self._queue.task_done()
+                    continue
 
             # Channel may become filtered after being queued.
             fresh_channel = None
@@ -161,6 +205,43 @@ class CollectionQueue:
                         note=note,
                     )
                     logger.info("Collected %d messages from channel %d", count, channel.channel_id)
+            except AllCollectionClientsFloodedError as exc:
+                run_after = exc.next_available_at + timedelta(seconds=5)
+                note = (
+                    "Отложено: все аккаунты во Flood Wait "
+                    f"до {exc.next_available_at.astimezone(timezone.utc).isoformat()}"
+                )
+                self._retried_tasks.discard(task_id)
+                await self._channels.reschedule_collection_task(
+                    task_id,
+                    run_after=run_after,
+                    note=note,
+                )
+                self._schedule_requeue_after_delay(
+                    task_id=task_id,
+                    channel=channel,
+                    force=force,
+                    full=full,
+                    run_after=run_after,
+                )
+                logger.warning(
+                    "Rescheduled collection task %d for channel %d until %s: all clients flooded",
+                    task_id,
+                    channel.channel_id,
+                    run_after.isoformat(),
+                )
+            except NoActiveCollectionClientsError as exc:
+                self._retried_tasks.discard(task_id)
+                await self._channels.update_collection_task(
+                    task_id,
+                    CollectionTaskStatus.FAILED,
+                    error=str(exc)[:500],
+                    note="Нет подключённых активных аккаунтов для сбора.",
+                )
+                logger.error(
+                    "Collection failed for channel %d: no active connected clients",
+                    channel.channel_id,
+                )
             except ConnectionError as exc:
                 requeued = await self._try_reconnect_and_requeue(task_id, channel, full, force, exc)
                 if not requeued:
@@ -236,7 +317,16 @@ class CollectionQueue:
                 continue
             force = bool((task.payload or {}).get("force", False))
             full = bool((task.payload or {}).get("full", True))
-            await self._queue.put((task.id, channel, force, full))
+            if task.run_after is not None and task.run_after.timestamp() > time.time():
+                self._schedule_requeue_after_delay(
+                    task_id=task.id,
+                    channel=channel,
+                    force=force,
+                    full=full,
+                    run_after=task.run_after,
+                )
+            else:
+                await self._queue.put((task.id, channel, force, full))
             count += 1
         if count:
             self._ensure_worker()
@@ -248,6 +338,13 @@ class CollectionQueue:
             self._worker.cancel()
             try:
                 await self._worker
+            except asyncio.CancelledError:
+                pass
+        for task in list(self._delayed_requeues):
+            task.cancel()
+        for task in list(self._delayed_requeues):
+            try:
+                await task
             except asyncio.CancelledError:
                 pass
         self._retried_tasks.clear()

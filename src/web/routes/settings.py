@@ -426,6 +426,38 @@ async def settings_page(request: Request):
                 await db.update_account_flood(_acc.phone, None)
                 _acc.flood_wait_until = None
     connected_phones = set(pool.clients.keys())
+    account_status: dict[str, dict[str, object]] = {}
+    flooded_connected = []
+    for _acc in accounts:
+        connected = _acc.phone in connected_phones
+        if not _acc.is_active:
+            state = "inactive"
+            remaining_seconds = 0
+        elif not connected:
+            state = "disconnected"
+            remaining_seconds = 0
+        elif _acc.flood_wait_until is not None:
+            _flood_until = _acc.flood_wait_until
+            if _flood_until.tzinfo is None:
+                _flood_until = _flood_until.replace(tzinfo=UTC)
+            remaining_seconds = max(0, int((_flood_until - _now).total_seconds()))
+            if remaining_seconds > 0:
+                state = "flood"
+                flooded_connected.append(_flood_until)
+            else:
+                state = "available"
+        else:
+            state = "available"
+            remaining_seconds = 0
+        account_status[_acc.phone] = {
+            "state": state,
+            "remaining_seconds": remaining_seconds,
+            "remaining_minutes": max(1, remaining_seconds // 60) if remaining_seconds else 0,
+        }
+    all_accounts_flooded = bool(flooded_connected) and len(flooded_connected) == len(
+        [acc for acc in accounts if acc.is_active and acc.phone in connected_phones]
+    )
+    next_available_at = min(flooded_connected) if flooded_connected else None
     notification_target = await deps.get_notification_target_service(request).describe_target()
     notification_bot = None
     notification_bot_error = None
@@ -487,8 +519,11 @@ async def settings_page(request: Request):
             "auto_delete_filtered": auto_delete_filtered,
             "auto_delete_on_collect": auto_delete_on_collect,
             "accounts": accounts,
+            "account_status": account_status,
             "account_phones": [acc.phone for acc in accounts],
             "connected_phones": connected_phones,
+            "all_accounts_flooded": all_accounts_flooded,
+            "next_available_at": next_available_at,
             "notification_target": notification_target,
             "notification_selected_phone": notification_target.configured_phone or "",
             "notification_bot": notification_bot,

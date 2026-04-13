@@ -1,5 +1,5 @@
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -9,7 +9,11 @@ from telethon.tl.types import PeerChannel
 
 from src.config import SchedulerConfig
 from src.models import Channel, ChannelStats, CollectionTaskStatus, Message, StatsAllTaskPayload
-from src.telegram.collector import Collector
+from src.telegram.collector import (
+    AllCollectionClientsFloodedError,
+    Collector,
+    NoActiveCollectionClientsError,
+)
 from tests.helpers import AsyncIterEmpty as _AsyncIterEmpty
 from tests.helpers import AsyncIterMessages as _AsyncIterMessages
 from tests.helpers import FakeTelethonClient, make_mock_message, make_mock_pool, make_mock_reactions
@@ -35,8 +39,9 @@ async def test_collect_no_clients(db):
     config = SchedulerConfig()
     collector = Collector(pool, db, config)
     stats = await collector.collect_all_channels()
-    assert stats["channels"] == 1
+    assert stats["channels"] == 0
     assert stats["messages"] == 0
+    assert stats["errors"] == 1
 
 
 @pytest.mark.asyncio
@@ -49,8 +54,9 @@ async def test_collect_all_skips_filtered_channels(db):
     collector = Collector(pool, db, SchedulerConfig())
 
     stats = await collector.collect_all_channels()
-    assert stats["channels"] == 1
+    assert stats["channels"] == 0
     assert stats["messages"] == 0
+    assert stats["errors"] == 1
 
 
 @pytest.mark.asyncio
@@ -63,8 +69,56 @@ async def test_collect_all_invalid_min_subscribers_setting_falls_back_to_zero(db
     collector = Collector(pool, db, SchedulerConfig())
 
     stats = await collector.collect_all_channels()
-    assert stats["channels"] == 1
-    assert stats["errors"] == 0
+    assert stats["channels"] == 0
+    assert stats["errors"] == 1
+
+
+@pytest.mark.asyncio
+async def test_collect_single_channel_raises_all_clients_flooded(db):
+    ch = Channel(channel_id=-100124, title="Flooded")
+    await db.add_channel(ch)
+
+    next_available_at = datetime.now(timezone.utc) - timedelta(seconds=10)
+    pool = make_mock_pool(
+        get_available_client=AsyncMock(return_value=None),
+        get_stats_availability=AsyncMock(
+            return_value=SimpleNamespace(
+                state="all_flooded",
+                retry_after_sec=120,
+                next_available_at_utc=next_available_at,
+            )
+        ),
+    )
+
+    collector = Collector(pool, db, SchedulerConfig())
+
+    with pytest.raises(AllCollectionClientsFloodedError) as exc:
+        await collector.collect_single_channel(ch)
+
+    assert exc.value.retry_after_sec == 120
+    assert exc.value.next_available_at == next_available_at
+
+
+@pytest.mark.asyncio
+async def test_collect_single_channel_raises_no_active_clients(db):
+    ch = Channel(channel_id=-100125, title="No Clients")
+    await db.add_channel(ch)
+
+    pool = make_mock_pool(
+        get_available_client=AsyncMock(return_value=None),
+        get_stats_availability=AsyncMock(
+            return_value=SimpleNamespace(
+                state="no_connected_active",
+                retry_after_sec=None,
+                next_available_at_utc=None,
+            )
+        ),
+    )
+
+    collector = Collector(pool, db, SchedulerConfig())
+
+    with pytest.raises(NoActiveCollectionClientsError):
+        await collector.collect_single_channel(ch)
 
 
 @pytest.mark.asyncio
@@ -678,7 +732,7 @@ async def test_collect_channel_rotates_on_long_flood_wait(db):
 
 @pytest.mark.asyncio
 async def test_collect_channel_long_flood_all_accounts_flooded_returns(db):
-    """FloodWait > max_flood_wait_sec with no other account available — return collected so far."""
+    """FloodWait > max_flood_wait_sec with no other account available surfaces unavailability."""
     ch = Channel(channel_id=-100173, title="AllFlood", username="allflood", last_collected_id=5)
     ch_id = await db.add_channel(ch)
     await db.update_channel_last_id(ch.channel_id, 5)
@@ -709,17 +763,26 @@ async def test_collect_channel_long_flood_all_accounts_flooded_returns(db):
                 (client1, "+70001"),  # first iteration
                 None,  # all accounts flooded on retry
             ]
-        )
+        ),
+        get_stats_availability=AsyncMock(
+            return_value=SimpleNamespace(
+                state="all_flooded",
+                retry_after_sec=600,
+                next_available_at_utc=datetime.now(timezone.utc) + timedelta(minutes=10),
+            )
+        ),
     )
     collector = Collector(
         pool,
         db,
         SchedulerConfig(delay_between_requests_sec=0, max_flood_wait_sec=10),
     )
-    count = await collector._collect_channel(stored)
+    with pytest.raises(AllCollectionClientsFloodedError):
+        await collector._collect_channel(stored)
 
-    # Returns what was collected before the flood
-    assert count == 1
+    updated = await db.get_channel_by_channel_id(stored.channel_id)
+    assert updated is not None
+    assert updated.last_collected_id == 6
     pool.report_flood.assert_awaited_once()
 
 
@@ -919,6 +982,65 @@ async def test_collection_queue_force_tasks_keep_full_collection(db):
 
 
 @pytest.mark.asyncio
+async def test_collection_queue_reschedules_when_all_clients_flooded(db):
+    from src.collection_queue import CollectionQueue
+
+    await db.add_channel(Channel(channel_id=-100163, title="Flood Wait", username="flood_wait_ch"))
+
+    collector = Collector(make_mock_pool(), db, SchedulerConfig())
+    next_available_at = datetime.now(timezone.utc)
+    collector.collect_single_channel = AsyncMock(
+        side_effect=AllCollectionClientsFloodedError(
+            retry_after_sec=180,
+            next_available_at=next_available_at,
+        )
+    )
+    queue = CollectionQueue(collector, db)
+    queue._ensure_worker = lambda: None
+
+    stored_ch = next(c for c in await db.get_channels() if c.channel_id == -100163)
+    task_id = await queue.enqueue(stored_ch, force=True)
+
+    await queue._run_worker()
+
+    task = await db.get_collection_task(task_id)
+    assert task is not None
+    assert task.status == CollectionTaskStatus.PENDING
+    assert task.run_after is not None
+    assert task.note is not None
+    assert "Flood Wait" in task.note
+
+    await queue.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_collection_queue_fails_when_no_active_clients(db):
+    from src.collection_queue import CollectionQueue
+
+    await db.add_channel(Channel(channel_id=-100164, title="No Clients", username="no_clients_ch"))
+
+    collector = Collector(make_mock_pool(), db, SchedulerConfig())
+    collector.collect_single_channel = AsyncMock(
+        side_effect=NoActiveCollectionClientsError("No active connected clients")
+    )
+    queue = CollectionQueue(collector, db)
+    queue._ensure_worker = lambda: None
+
+    stored_ch = next(c for c in await db.get_channels() if c.channel_id == -100164)
+    task_id = await queue.enqueue(stored_ch, force=True)
+
+    await queue._run_worker()
+
+    task = await db.get_collection_task(task_id)
+    assert task is not None
+    assert task.status == CollectionTaskStatus.FAILED
+    assert task.error == "No active connected clients"
+    assert task.note == "Нет подключённых активных аккаунтов для сбора."
+
+    await queue.shutdown()
+
+
+@pytest.mark.asyncio
 async def test_requeue_startup_tasks(db):
     """requeue_startup_tasks re-enqueues pending tasks that survived a restart."""
     from src.collection_queue import CollectionQueue
@@ -1008,6 +1130,34 @@ async def test_requeue_startup_tasks_cancels_orphaned(db):
 
     task = await db.get_collection_task(task_id)
     assert task.status == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_requeue_startup_tasks_defers_future_run_after(db):
+    """Startup tasks with run_after in the future go to _delayed_requeues, not the main queue."""
+    from datetime import datetime, timedelta, timezone
+
+    from src.collection_queue import CollectionQueue
+
+    ch = Channel(channel_id=-100170, title="Future Task", username="future_ch")
+    await db.add_channel(ch)
+
+    task_id = await db.create_collection_task(
+        -100170, "Future Task", channel_username="future_ch"
+    )
+    run_after = datetime.now(tz=timezone.utc) + timedelta(minutes=5)
+    await db.repos.tasks.reschedule_collection_task(task_id, run_after=run_after)
+
+    pool = make_mock_pool(get_available_client=AsyncMock(return_value=None))
+    collector = Collector(pool, db, SchedulerConfig())
+    queue = CollectionQueue(collector, db)
+
+    count = await queue.requeue_startup_tasks()
+    assert count == 1
+    assert queue._queue.empty(), "Future-dated task should not be in the main queue"
+    assert len(queue._delayed_requeues) == 1, "Future-dated task should be in _delayed_requeues"
+
+    await queue.shutdown()
 
 
 @pytest.mark.asyncio

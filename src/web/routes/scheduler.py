@@ -1,6 +1,6 @@
 import logging
 import re
-from datetime import timezone
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -30,6 +30,147 @@ def _job_label(job_id: str) -> str:
     if job_id.startswith("content_generate_"):
         return f"Генерация #{job_id.removeprefix('content_generate_')}"
     return job_id
+
+
+def _format_retry_hint(run_after) -> str:
+    if run_after is None:
+        return ""
+    return run_after.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+
+
+def _compute_load_level(
+    *,
+    interval_minutes: int,
+    active_unfiltered_channels: int,
+    available_accounts_now: int,
+    state: str,
+) -> str:
+    if state in {"all_flooded", "no_clients"}:
+        return "overload"
+    capacity_accounts = max(1, available_accounts_now)
+    pressure = active_unfiltered_channels / capacity_accounts
+    if interval_minutes <= 15 and pressure >= 60:
+        return "overload"
+    if interval_minutes <= 30 and pressure >= 40:
+        return "high"
+    if pressure >= 75:
+        return "high"
+    return "ok"
+
+
+def _collector_health_recommendations(
+    *,
+    state: str,
+    load_level: str,
+    interval_minutes: int,
+    active_unfiltered_channels: int,
+    available_accounts_now: int,
+) -> list[str]:
+    recommendations: list[str] = []
+    if state == "all_flooded":
+        recommendations.append("Дождаться ближайшего окна после Flood Wait и не запускать ручной collect-all повторно.")
+    if state == "no_clients":
+        recommendations.append("Проверить активность аккаунтов и переподключить хотя бы один рабочий клиент.")
+    if load_level in {"high", "overload"}:
+        recommendations.append(
+            f"Поднять интервал автосбора выше текущих {interval_minutes} мин, чтобы снизить частоту обращений."
+        )
+        recommendations.append(
+            "Сократить число активных отслеживаемых каналов: "
+            f"сейчас активных неотфильтрованных {active_unfiltered_channels}."
+        )
+    if available_accounts_now <= 1:
+        recommendations.append("Добавить ещё Telegram-аккаунты, чтобы распределить нагрузку по чтению.")
+    return recommendations
+
+
+async def _build_collector_health_context(request: Request) -> dict[str, object]:
+    db = deps.get_db(request)
+    pool = deps.get_pool(request)
+    collector = deps.get_collector(request)
+    accounts = await db.get_accounts(active_only=False)
+    connected_phones = set(pool.clients.keys())
+    active_accounts = [acc for acc in accounts if acc.is_active]
+    connected_active_accounts = [acc for acc in active_accounts if acc.phone in connected_phones]
+    now = datetime.now(timezone.utc)
+
+    flooded_accounts = []
+    next_available_at = None
+    for acc in connected_active_accounts:
+        flood_until = acc.flood_wait_until
+        if flood_until is None:
+            continue
+        if flood_until.tzinfo is None:
+            flood_until = flood_until.replace(tzinfo=timezone.utc)
+        if flood_until <= now:
+            continue
+        flooded_accounts.append({"phone": acc.phone, "until": flood_until})
+        if next_available_at is None or flood_until < next_available_at:
+            next_available_at = flood_until
+
+    availability = await collector.get_collection_availability()
+    availability_state = getattr(availability, "state", "no_connected_active")
+    availability_retry_after = getattr(availability, "retry_after_sec", None)
+    availability_next = getattr(availability, "next_available_at_utc", None)
+    if not isinstance(availability_next, datetime):
+        availability_next = None
+    if not isinstance(availability_retry_after, int):
+        availability_retry_after = None
+    available_accounts_now = max(0, len(connected_active_accounts) - len(flooded_accounts))
+    active_unfiltered_channels = len(await db.get_channels(active_only=True, include_filtered=False))
+    recent_tasks = await db.get_collection_tasks(limit=200)
+    recent_zero_collect_count = sum(
+        1
+        for task in recent_tasks
+        if task.task_type.value == "channel_collect"
+        and task.status == "completed"
+        and task.messages_collected == 0
+    )
+    recent_unavailability_events = [
+        task.note or task.error or ""
+        for task in recent_tasks
+        if (task.note and "Flood Wait" in task.note) or (task.error and "No active connected clients" in task.error)
+    ][:5]
+
+    state = "healthy"
+    if not connected_active_accounts:
+        state = "no_clients"
+    elif availability_state == "all_flooded" or available_accounts_now == 0:
+        state = "all_flooded"
+    elif flooded_accounts:
+        state = "degraded"
+
+    interval_minutes = max(1, getattr(deps.get_scheduler(request), "interval_minutes", 60))
+    load_level = _compute_load_level(
+        interval_minutes=interval_minutes,
+        active_unfiltered_channels=active_unfiltered_channels,
+        available_accounts_now=available_accounts_now,
+        state=state,
+    )
+    return {
+        "state": state,
+        "connected_accounts": len(connected_phones),
+        "active_accounts": len(active_accounts),
+        "available_accounts_now": available_accounts_now,
+        "flooded_accounts": flooded_accounts,
+        "flooded_accounts_count": len(flooded_accounts),
+        "next_available_at": next_available_at or availability_next,
+        "retry_after_sec": availability_retry_after,
+        "active_unfiltered_channels": active_unfiltered_channels,
+        "collect_interval_minutes": interval_minutes,
+        "load_level": load_level,
+        "recommendations": _collector_health_recommendations(
+            state=state,
+            load_level=load_level,
+            interval_minutes=interval_minutes,
+            active_unfiltered_channels=active_unfiltered_channels,
+            available_accounts_now=available_accounts_now,
+        ),
+        "recent_zero_collect_count": recent_zero_collect_count,
+        "recent_unavailability_events": recent_unavailability_events,
+        "is_running": collector.is_running,
+        "next_available_label": _format_retry_hint(next_available_at or availability_next),
+    }
 
 
 @router.post("/tasks/{task_id}/cancel")
@@ -163,6 +304,7 @@ async def _scheduler_page_inner(
     ) or bot is not None
 
     scheduler_jobs = await _build_jobs_context(sched, db)
+    collector_health = await _build_collector_health_context(request)
 
     context = {
         "is_running": sched.is_running,
@@ -181,6 +323,7 @@ async def _scheduler_page_inner(
         "bot_configured": bot_configured,
         "pending_collect_count": pending_collect_count,
         "scheduler_jobs": scheduler_jobs,
+        "collector_health": collector_health,
     }
 
     templates = deps.get_templates(request)
