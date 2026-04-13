@@ -184,7 +184,7 @@ class BasicAuthMiddleware(BaseHTTPMiddleware):
                 # Invalid Basic auth should degrade to anonymous flow, not fail the request.
                 decoded = ""
             _, _, pwd = decoded.partition(":")
-            if secrets.compare_digest(pwd, self.password):
+            if secrets.compare_digest(pwd.encode(), self.password.encode()):
                 response = await call_next(request)
                 set_session_cookie(response, request)
                 return response
