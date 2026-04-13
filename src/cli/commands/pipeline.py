@@ -12,6 +12,7 @@ from src.services.pipeline_service import (
     PipelineService,
     PipelineTargetRef,
     PipelineValidationError,
+    to_since_hours,
 )
 from src.services.publish_service import PublishService
 
@@ -88,23 +89,60 @@ def run(args: argparse.Namespace) -> None:
                     print(f" - {target.phone}:{target.dialog_id} ({target.title or '—'})")
 
             elif args.pipeline_action == "add":
+                json_file = getattr(args, "json_file", None)
                 try:
-                    pipeline_id = await svc.add(
-                        name=args.name,
-                        prompt_template=args.prompt_template,
-                        source_channel_ids=args.source,
-                        target_refs=_parse_target_refs(args.target),
-                        llm_model=args.llm_model,
-                        image_model=args.image_model,
-                        publish_mode=args.publish_mode,
-                        generation_backend=args.generation_backend,
-                        generate_interval_minutes=args.interval,
-                        is_active=not args.inactive,
-                    )
+                    if json_file:
+                        import json as _json
+
+                        with open(json_file) as _f:
+                            graph_data = _json.load(_f)
+                        data = {
+                            "name": args.name,
+                            "prompt_template": args.prompt_template or ".",
+                            "llm_model": args.llm_model,
+                            "source_ids": args.source or [],
+                            "target_refs": (
+                                [{"phone": r.phone, "dialog_id": r.dialog_id}
+                                 for r in _parse_target_refs(args.target)]
+                                if args.target else []
+                            ),
+                            "generate_interval_minutes": args.interval,
+                            "pipeline_json": graph_data,
+                        }
+                        pipeline_id = await svc.import_json(data)
+                    else:
+                        if not args.prompt_template:
+                            print("Error: --prompt-template is required when --json-file is not used")
+                            return
+                        if not args.source:
+                            print("Error: --source is required")
+                            return
+                        if not args.target:
+                            print("Error: --target is required")
+                            return
+                        pipeline_id = await svc.add(
+                            name=args.name,
+                            prompt_template=args.prompt_template,
+                            source_channel_ids=args.source,
+                            target_refs=_parse_target_refs(args.target),
+                            llm_model=args.llm_model,
+                            image_model=args.image_model,
+                            publish_mode=args.publish_mode,
+                            generation_backend=args.generation_backend,
+                            generate_interval_minutes=args.interval,
+                            is_active=not args.inactive,
+                        )
                 except PipelineValidationError as exc:
                     print(f"Error: {exc}")
                     return
                 print(f"Added pipeline id={pipeline_id}: {args.name}")
+                if getattr(args, "run_after", False):
+                    from src.services.task_enqueuer import TaskEnqueuer
+
+                    since_h = to_since_hours(args.since_value, args.since_unit)
+                    enqueuer = TaskEnqueuer(db)
+                    await enqueuer.enqueue_pipeline_run(pipeline_id, since_hours=since_h)
+                    print(f"Enqueued pipeline run (since={args.since_value}{args.since_unit})")
 
             elif args.pipeline_action == "edit":
                 existing = await svc.get(args.id)
@@ -472,6 +510,14 @@ def run(args: argparse.Namespace) -> None:
                     print(f"Created pipeline from template (id={pipeline_id})")
                 except PipelineValidationError as exc:
                     print(f"Validation error: {exc}")
+
+            elif args.pipeline_action == "dry-run-count":
+                since_h = to_since_hours(args.since_value, args.since_unit)
+                msgs = await db.repos.messages.get_recent_for_channels(args.source, since_h)
+                print(
+                    f"Messages found: {len(msgs)} "
+                    f"(sources={args.source}, since={args.since_value}{args.since_unit})"
+                )
 
             elif args.pipeline_action == "ai-edit":
                 instruction = args.instruction
