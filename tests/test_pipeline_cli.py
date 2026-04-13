@@ -1329,6 +1329,8 @@ def test_pipeline_add_node_dsl_integration(tmp_path, cli_init_patch, capsys):
         assert "source" in graph_out
         assert "react" in graph_out
 
+    asyncio.run(db.close())
+
     # Verify via a third fresh connection
     final_db = _make_db(tmp_path, "integ_dag.db")
     pipeline = asyncio.run(final_db.repos.content_pipelines.get_by_id(pipeline_id))
@@ -1366,6 +1368,8 @@ def test_pipeline_add_legacy_integration(tmp_path, cli_init_patch, capsys):
 
         run(_ns(pipeline_action="list"))
         assert "Legacy Integration" in capsys.readouterr().out
+
+    asyncio.run(db.close())
 
     final_db = _make_db(tmp_path, "integ_legacy.db")
     pipeline = asyncio.run(final_db.repos.content_pipelines.get_by_id(pipeline_id))

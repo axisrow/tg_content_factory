@@ -75,6 +75,7 @@ class GenerationService:
         temperature: float = 0.0,
         provider_override: Optional[str] = None,
         provider_callable: Optional[Callable[..., Awaitable[str]]] = None,
+        channel_id: int | None = None,
     ) -> AsyncIterator[Dict[str, Any]]:
         """Async generator that yields partial generation updates when the
         provider supports streaming. Each yield is a dict with keys:
@@ -87,7 +88,7 @@ class GenerationService:
         if prompt_template is None:
             prompt_template = self._default_prompt
 
-        messages = await self._collect_context(query, limit=limit)
+        messages = await self._collect_context(query, limit=limit, channel_id=channel_id)
         source_messages = self._build_source_messages(messages)
 
         rendered_prompt = render_prompt_template(
@@ -217,11 +218,12 @@ class GenerationService:
                 temperature=temperature,
                 provider_override=provider_override,
                 provider_callable=provider_callable,
+                channel_id=channel_id,
             ):
                 last = update
             if last is None:
                 # No output produced
-                messages = await self._collect_context(query, limit=limit)
+                messages = await self._collect_context(query, limit=limit, channel_id=channel_id)
                 return {
                     "prompt": render_prompt_template(
                         prompt_template, {"source_messages": self._build_source_messages(messages)}

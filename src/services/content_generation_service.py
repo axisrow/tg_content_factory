@@ -248,10 +248,15 @@ class ContentGenerationService:
         channel_id: int | None = None
         try:
             sources = await self._db.repos.content_pipelines.list_sources(pipeline.id)
-            if sources:
+            if len(sources) == 1:
                 channel_id = sources[0].channel_id
+            # For multi-source pipelines keep channel_id=None to retrieve from all channels
         except Exception:
-            pass
+            logger.warning(
+                "Failed to load pipeline sources for %s, continuing without channel scoping",
+                pipeline.id,
+                exc_info=True,
+            )
 
         return await gen.generate(
             query=query,
