@@ -17,6 +17,15 @@ class SettingsRepository:
         rows = await cur.fetchall()
         return [(r["key"], r["value"]) for r in rows]
 
+    async def get_settings_by_prefix(self, prefix: str) -> dict[str, str]:
+        escaped = prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        cur = await self._db.execute(
+            "SELECT key, value FROM settings WHERE key LIKE ? ESCAPE '\\'",
+            (f"{escaped}%",),
+        )
+        rows = await cur.fetchall()
+        return {r["key"]: r["value"] for r in rows}
+
     async def set_setting(self, key: str, value: str) -> None:
         await self._db.execute(
             "INSERT INTO settings (key, value) VALUES (?, ?) "

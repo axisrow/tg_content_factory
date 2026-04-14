@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import re
 from datetime import datetime, timezone
@@ -108,7 +109,11 @@ async def _build_collector_health_context(request: Request) -> dict[str, object]
         if next_available_at is None or flood_until < next_available_at:
             next_available_at = flood_until
 
-    availability = await collector.get_collection_availability()
+    try:
+        availability = await asyncio.wait_for(collector.get_collection_availability(), timeout=1.0)
+    except (asyncio.TimeoutError, Exception) as exc:  # noqa: BLE001
+        logger.warning("get_collection_availability timed out or failed: %s", exc)
+        availability = None
     availability_state = getattr(availability, "state", "no_connected_active")
     availability_retry_after = getattr(availability, "retry_after_sec", None)
     availability_next = getattr(availability, "next_available_at_utc", None)
@@ -237,8 +242,9 @@ async def _build_jobs_context(sched, db) -> list[dict]:
             for j in potential
         ]
 
+    disabled_map = await db.repos.settings.get_settings_by_prefix("scheduler_job_disabled:")
     for j in jobs:
-        val = await db.repos.settings.get_setting(f"scheduler_job_disabled:{j['job_id']}")
+        val = disabled_map.get(f"scheduler_job_disabled:{j['job_id']}")
         j["enabled"] = val != "1"
         j["interval_editable"] = j["job_id"] not in ("photo_due", "photo_auto")
     return jobs
@@ -270,13 +276,35 @@ async def _scheduler_page_inner(
     limit = max(10, min(limit, 100))
     status_filter = status if status in VALID_STATUS_FILTERS else "all"
 
-    # Get tasks with filter and pagination
     offset = (page - 1) * limit
-    tasks, filtered_count = await db.get_collection_tasks_paginated(
-        limit=limit, offset=offset, status_filter=status_filter
-    )
 
-    # Calculate pagination; clamp page and re-fetch if needed
+    async def _safe_bot_status():
+        try:
+            return await deps.notification_service(request).get_status()
+        except Exception:
+            return None
+
+    (
+        tasks_page,
+        all_count,
+        active_count,
+        pending_collect,
+        search_log,
+        bot,
+        scheduler_jobs,
+        collector_health,
+    ) = await asyncio.gather(
+        db.get_collection_tasks_paginated(limit=limit, offset=offset, status_filter=status_filter),
+        db.count_collection_tasks(),
+        db.count_collection_tasks("active"),
+        db.get_pending_channel_tasks(),
+        db.get_recent_searches(),
+        _safe_bot_status(),
+        _build_jobs_context(sched, db),
+        _build_collector_health_context(request),
+    )
+    tasks, filtered_count = tasks_page
+
     total_pages = max(1, (filtered_count + limit - 1) // limit)
     if page > total_pages:
         page = total_pages
@@ -285,26 +313,14 @@ async def _scheduler_page_inner(
             limit=limit, offset=offset, status_filter=status_filter
         )
 
-    # Get counts for all tabs
-    all_count = await db.count_collection_tasks()
-    active_count = await db.count_collection_tasks("active")
     completed_count = all_count - active_count
-
     has_active_tasks = active_count > 0
-    pending_collect_count = len(await db.get_pending_channel_tasks())
+    pending_collect_count = len(pending_collect)
 
-    search_log = await db.get_recent_searches()
     notifier = deps.get_notifier(request)
-    try:
-        bot = await deps.notification_service(request).get_status()
-    except Exception:
-        bot = None
     bot_configured = (
         notifier is not None and notifier.admin_chat_id is not None
     ) or bot is not None
-
-    scheduler_jobs = await _build_jobs_context(sched, db)
-    collector_health = await _build_collector_health_context(request)
 
     context = {
         "is_running": sched.is_running,
