@@ -244,3 +244,160 @@ async def test_backfill_language_detection(db):
     cur = await db.repos.messages._db.execute("SELECT detected_lang FROM messages WHERE message_id = 1")
     row = await cur.fetchone()
     assert row["detected_lang"] == "en"
+
+
+# ── detect_language exception fallback ──────────────────────────────
+
+
+def test_detect_language_exception_returns_none():
+    """detect_language returns None for text shorter than 8 chars after strip."""
+    # Text shorter than 8 chars triggers early return
+    assert TranslationService.detect_language("short") is None
+
+
+def test_detect_language_with_none_text():
+    assert TranslationService.detect_language(None) is None
+
+
+# ── translate_message with stub default provider ────────────────────
+
+
+@pytest.mark.asyncio
+async def test_translate_message_skips_stub_default_provider():
+    """When get_provider_callable returns the stub default, translate skips."""
+    svc = TranslationService(db=AsyncMock())
+
+    mock_default = AsyncMock(return_value="stub garbage")
+    mock_provider_service = MagicMock()
+    mock_provider_service.get_provider_callable.return_value = mock_default
+    mock_provider_service._registry = {"default": mock_default}
+    svc._provider_service = mock_provider_service
+
+    result = await svc.translate_message("text", "ru", "en")
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_translate_message_exception_returns_none():
+    """When provider raises, translate_message returns None."""
+    mock_provider = AsyncMock(side_effect=RuntimeError("API down"))
+    mock_provider_service = MagicMock()
+    mock_provider_service.get_provider_callable.return_value = mock_provider
+    # Make sure it's not the default stub
+    mock_provider_service._registry = {}
+
+    svc = TranslationService(db=AsyncMock(), provider_service=mock_provider_service)
+    result = await svc.translate_message("text", "ru", "en")
+    assert result is None
+
+
+# ── translate_batch edge cases ──────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_translate_batch_empty_messages():
+    svc = TranslationService(db=AsyncMock(), provider_service=MagicMock())
+    result = await svc.translate_batch([], "en")
+    assert result == []
+
+
+@pytest.mark.asyncio
+async def test_translate_batch_no_provider():
+    svc = TranslationService(db=AsyncMock(), provider_service=None)
+    msgs = [Message(id=1, channel_id=100, message_id=1, text="hi", detected_lang="ru", date=datetime.now(timezone.utc))]
+    result = await svc.translate_batch(msgs, "en")
+    assert result == []
+
+
+@pytest.mark.asyncio
+async def test_translate_batch_skips_stub_default_provider():
+    """Batch translation should skip when only stub default provider available."""
+    mock_default = AsyncMock(return_value="stub")
+    mock_ps = MagicMock()
+    mock_ps.get_provider_callable.return_value = mock_default
+    mock_ps._registry = {"default": mock_default}
+
+    svc = TranslationService(db=AsyncMock(), provider_service=mock_ps)
+    msgs = [
+        Message(id=1, channel_id=100, message_id=1, text="Привет", detected_lang="ru", date=datetime.now(timezone.utc)),
+    ]
+    result = await svc.translate_batch(msgs, "en")
+    assert result == []
+
+
+@pytest.mark.asyncio
+async def test_translate_batch_provider_exception():
+    """Batch translation returns [] when provider raises."""
+    mock_provider = AsyncMock(side_effect=RuntimeError("API error"))
+    mock_ps = MagicMock()
+    mock_ps.get_provider_callable.return_value = mock_provider
+    mock_ps._registry = {}
+
+    svc = TranslationService(db=AsyncMock(), provider_service=mock_ps)
+    msgs = [
+        Message(id=1, channel_id=100, message_id=1, text="Привет", detected_lang="ru", date=datetime.now(timezone.utc)),
+    ]
+    result = await svc.translate_batch(msgs, "en")
+    assert result == []
+
+
+@pytest.mark.asyncio
+async def test_translate_batch_provider_returns_none():
+    """Batch translation returns [] when provider returns None."""
+    mock_provider = AsyncMock(return_value=None)
+    mock_ps = MagicMock()
+    mock_ps.get_provider_callable.return_value = mock_provider
+    mock_ps._registry = {}
+
+    svc = TranslationService(db=AsyncMock(), provider_service=mock_ps)
+    msgs = [
+        Message(id=1, channel_id=100, message_id=1, text="Привет", detected_lang="ru", date=datetime.now(timezone.utc)),
+    ]
+    result = await svc.translate_batch(msgs, "en")
+    assert result == []
+
+
+# ── get_settings ────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_get_settings():
+    mock_db = AsyncMock()
+    mock_db.get_setting = AsyncMock(side_effect=lambda k: f"value_for_{k}")
+    svc = TranslationService(db=mock_db)
+    settings = await svc.get_settings()
+    assert "translation_provider" in settings
+    assert settings["translation_provider"] == "value_for_translation_provider"
+
+
+# ── _parse_numbered_response edge cases ─────────────────────────────
+
+
+def test_parse_numbered_response_empty():
+    result = TranslationService._parse_numbered_response("", 3)
+    assert result == {}
+
+
+def test_parse_numbered_response_out_of_range():
+    response = "1: Hello\n5: Out of range"
+    result = TranslationService._parse_numbered_response(response, 3)
+    assert 0 in result
+    assert result[0] == "Hello"
+    # 5 > expected_count(3) so it's ignored
+    assert 4 not in result
+
+
+def test_parse_numbered_response_empty_lines_with_current_block():
+    """Empty lines between numbered entries with a current block."""
+    response = "1: Hello\n\n2: World"
+    result = TranslationService._parse_numbered_response(response, 2)
+    assert result[0] == "Hello"
+    assert result[1] == "World"
+
+
+def test_parse_numbered_response_last_block_empty_text():
+    """Last block with only whitespace text is dropped."""
+    response = "1: Hello\n2:   "
+    result = TranslationService._parse_numbered_response(response, 2)
+    assert 0 in result
+    assert 1 not in result  # empty text is dropped
