@@ -243,7 +243,20 @@ class ContentGenerationService:
 
         gen = GenerationService(self._search, provider_callable=provider_callable)
 
-        query = pipeline.prompt_template or pipeline.name or ""
+        # Use pipeline name as search query; constrain to first source channel if available
+        query = pipeline.name or ""
+        channel_id: int | None = None
+        try:
+            sources = await self._db.repos.content_pipelines.list_sources(pipeline.id)
+            if len(sources) == 1:
+                channel_id = sources[0].channel_id
+            # For multi-source pipelines keep channel_id=None to retrieve from all channels
+        except Exception:
+            logger.warning(
+                "Failed to load pipeline sources for %s, continuing without channel scoping",
+                pipeline.id,
+                exc_info=True,
+            )
 
         return await gen.generate(
             query=query,
@@ -251,6 +264,7 @@ class ContentGenerationService:
             model=(model or pipeline.llm_model),
             max_tokens=max_tokens,
             temperature=temperature,
+            channel_id=channel_id,
         )
 
     async def _run_deep_agents(

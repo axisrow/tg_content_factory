@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 
 from src.agent.models import CLAUDE_MODELS
 
-ZAI_DEFAULT_BASE_URL = "https://api.z.ai/api/anthropic"
+ZAI_DEFAULT_BASE_URL = "https://api.z.ai/api/anthropic/v1"
 
 
 @dataclass(frozen=True, slots=True)

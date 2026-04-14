@@ -26,7 +26,9 @@ class GenerationService:
         self._provider = provider_callable
         self._default_prompt = default_prompt_template
 
-    async def _collect_context(self, query: str, limit: int = 8) -> List[Message]:
+    async def _collect_context(
+        self, query: str, limit: int = 8, channel_id: int | None = None
+    ) -> List[Message]:
         """Retrieve context messages using the SearchEngine.
 
         Uses hybrid (semantic+FTS) search when embeddings are available, falls back to
@@ -35,12 +37,21 @@ class GenerationService:
         import logging
 
         if getattr(self._search, "semantic_available", True):
-            result: SearchResult = await self._search.search_hybrid(query, limit=limit)
+            try:
+                result: SearchResult = await self._search.search_hybrid(
+                    query, channel_id=channel_id, limit=limit
+                )
+                return result.messages
+            except RuntimeError as exc:
+                logging.getLogger(__name__).warning(
+                    "Hybrid search failed (%s), falling back to FTS local search for context retrieval",
+                    exc,
+                )
         else:
             logging.getLogger(__name__).warning(
                 "Semantic search unavailable, falling back to FTS local search for context retrieval"
             )
-            result = await self._search.search_local(query, limit=limit)
+        result = await self._search.search_local(query, channel_id=channel_id, limit=limit)
         return result.messages
 
     def _build_source_messages(self, messages: List[Message]) -> str:
@@ -64,6 +75,7 @@ class GenerationService:
         temperature: float = 0.0,
         provider_override: Optional[str] = None,
         provider_callable: Optional[Callable[..., Awaitable[str]]] = None,
+        channel_id: int | None = None,
     ) -> AsyncIterator[Dict[str, Any]]:
         """Async generator that yields partial generation updates when the
         provider supports streaming. Each yield is a dict with keys:
@@ -76,7 +88,7 @@ class GenerationService:
         if prompt_template is None:
             prompt_template = self._default_prompt
 
-        messages = await self._collect_context(query, limit=limit)
+        messages = await self._collect_context(query, limit=limit, channel_id=channel_id)
         source_messages = self._build_source_messages(messages)
 
         rendered_prompt = render_prompt_template(
@@ -184,6 +196,7 @@ class GenerationService:
         provider_override: Optional[str] = None,
         stream: bool = False,
         provider_callable: Optional[Callable[..., Awaitable[str]]] = None,
+        channel_id: int | None = None,
     ) -> Dict[str, Any]:
         """Generate a draft from `query` using retrieval-augmented generation.
 
@@ -205,11 +218,12 @@ class GenerationService:
                 temperature=temperature,
                 provider_override=provider_override,
                 provider_callable=provider_callable,
+                channel_id=channel_id,
             ):
                 last = update
             if last is None:
                 # No output produced
-                messages = await self._collect_context(query, limit=limit)
+                messages = await self._collect_context(query, limit=limit, channel_id=channel_id)
                 return {
                     "prompt": render_prompt_template(
                         prompt_template, {"source_messages": self._build_source_messages(messages)}
@@ -224,7 +238,7 @@ class GenerationService:
             }
 
         # Non-streaming path (preserve existing behaviour)
-        messages = await self._collect_context(query, limit=limit)
+        messages = await self._collect_context(query, limit=limit, channel_id=channel_id)
         source_messages = self._build_source_messages(messages)
 
         rendered_prompt = render_prompt_template(
