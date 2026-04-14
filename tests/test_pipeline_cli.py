@@ -1612,6 +1612,7 @@ def test_pipeline_add_json_file(tmp_path, cli_init_patch, capsys):
             )
         )
 
+    asyncio.run(db.close())
     out = capsys.readouterr().out
     assert "Added pipeline id=" in out
     assert "JsonFilePipeline" in out
