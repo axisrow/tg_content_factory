@@ -54,7 +54,7 @@ def _make_msg(**overrides):
 
 def test_rfc822_none():
     result = _rfc822(None)
-    assert "@" in result or "2024" in result or "2025" in result or "2026" in result
+    assert str(datetime.now(timezone.utc).year) in result
 
 
 def test_rfc822_with_datetime():
