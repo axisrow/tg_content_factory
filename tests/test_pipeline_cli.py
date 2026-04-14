@@ -1418,6 +1418,7 @@ def test_pipeline_add_legacy_requires_source(tmp_path, cli_init_patch, capsys):
             )
         )
 
+    asyncio.run(db.close())
     out = capsys.readouterr().out
     assert "--source is required" in out
 
@@ -1451,6 +1452,7 @@ def test_pipeline_add_legacy_requires_target(tmp_path, cli_init_patch, capsys):
             )
         )
 
+    asyncio.run(db.close())
     out = capsys.readouterr().out
     assert "--target is required" in out
 
@@ -1493,6 +1495,7 @@ def test_pipeline_add_inactive_flag(tmp_path, cli_init_patch, capsys):
     assert "Added pipeline id=" in out
     assert "InactivePipeline" in out
 
+    asyncio.run(db.close())
     verify_db = Database(db_path)
     asyncio.run(verify_db.initialize())
     pipelines = asyncio.run(verify_db.repos.content_pipelines.get_all())
@@ -1549,6 +1552,7 @@ def test_pipeline_add_run_after(tmp_path, cli_init_patch, capsys):
             )
         )
 
+    asyncio.run(db.close())
     out = capsys.readouterr().out
     assert "Added pipeline id=" in out
     assert "Enqueued pipeline run" in out
