@@ -649,8 +649,6 @@ async def test_replicate_image_adapter_success(monkeypatch):
         json_data={"status": "succeeded", "output": "https://img.example.com/replicate.png"},
     )
 
-    call_count = 0
-
     class SessionWithPoll:
         async def __aenter__(self):
             return self
@@ -851,7 +849,6 @@ async def test_replicate_image_adapter_list_output(monkeypatch):
 @pytest.mark.asyncio
 async def test_replicate_image_adapter_timeout(monkeypatch):
     """Replicate adapter raises RuntimeError when prediction times out."""
-    import asyncio
 
     from src.services.provider_adapters import make_replicate_image_adapter
 

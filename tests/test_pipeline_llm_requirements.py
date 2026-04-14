@@ -1,4 +1,5 @@
-"""Unit tests for pipeline_needs_llm, pipeline_is_dag, pipeline_needs_publish_mode, get_react_emoji_config, get_dag_source_channel_ids helpers."""
+"""Unit tests for pipeline_needs_llm, pipeline_is_dag, pipeline_needs_publish_mode,
+get_react_emoji_config, get_dag_source_channel_ids helpers."""
 from __future__ import annotations
 
 from src.models import (

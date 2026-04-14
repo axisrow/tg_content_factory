@@ -5,23 +5,21 @@ from __future__ import annotations
 import asyncio
 import json
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from src.agent.manager import (
     AgentManager,
     DeepagentsBackend,
-    _SettingsCache,
-    _ToolTracker,
     _await_with_countdown,
     _diagnose_connection,
     _embed_history_in_prompt,
+    _SettingsCache,
     _summarize_tool_args,
+    _ToolTracker,
     _truncate,
 )
 from src.config import AppConfig
-
 
 # ── _embed_history_in_prompt ────────────────────────────────────────
 

@@ -18,7 +18,6 @@ from src.agent.permission_gate import (
     set_request_context,
 )
 
-
 # ── _text_response ──────────────────────────────────────────────────
 
 
@@ -267,7 +266,7 @@ async def test_check_cancelled_error_propagates():
         task = asyncio.create_task(gate.check("my_tool", ""))
 
         # Wait for the SSE event
-        event = await asyncio.wait_for(ctx.queue.get(), timeout=2.0)
+        await asyncio.wait_for(ctx.queue.get(), timeout=2.0)
 
         # Cancel the task
         task.cancel()

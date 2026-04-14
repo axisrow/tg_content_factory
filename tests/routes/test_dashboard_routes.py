@@ -127,8 +127,9 @@ async def test_time_ago_naive_datetime():
 @pytest.mark.asyncio
 async def test_dashboard_redirect_auth_not_configured(base_app):
     """Dashboard redirects to /settings when auth is not configured."""
-    from httpx import ASGITransport, AsyncClient
     import base64
+
+    from httpx import ASGITransport, AsyncClient
 
     app, db, pool_mock = base_app
     # Make auth unconfigured

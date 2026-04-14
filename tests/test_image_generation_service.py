@@ -1,3 +1,4 @@
+import asyncio
 import sys
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -272,7 +273,7 @@ def test_init_s3_logs_when_configured(monkeypatch, caplog):
     monkeypatch.delenv("REPLICATE_API_TOKEN", raising=False)
 
     with caplog.at_level(logging.INFO):
-        svc = ImageGenerationService(adapters=None)
+        ImageGenerationService(adapters=None)
     assert any("S3 image storage configured" in r.message for r in caplog.records)
 
 
@@ -293,7 +294,7 @@ def test_init_s3_no_log_when_not_configured(monkeypatch, caplog):
     monkeypatch.delenv("REPLICATE_API_TOKEN", raising=False)
 
     with caplog.at_level(logging.INFO):
-        svc = ImageGenerationService(adapters=None)
+        ImageGenerationService(adapters=None)
     assert not any("S3 image storage" in r.message for r in caplog.records)
 
 

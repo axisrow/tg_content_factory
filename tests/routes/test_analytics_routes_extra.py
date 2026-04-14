@@ -1,8 +1,7 @@
 """Tests for analytics routes — channel analytics and trends endpoints."""
 from __future__ import annotations
 
-from dataclasses import dataclass
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -77,8 +76,8 @@ async def test_api_channel_overview(client):
         err=2.5,
         err24=3.1,
     )
-    with patch("src.web.routes.analytics.ChannelAnalyticsService") as MockSvc:
-        instance = MockSvc.return_value
+    with patch("src.web.routes.analytics.ChannelAnalyticsService") as mock_svc:
+        instance = mock_svc.return_value
         instance.get_channel_overview = AsyncMock(return_value=overview)
         resp = await client.get("/analytics/channels/api/overview?channel_id=100")
         assert resp.status_code == 200
@@ -90,8 +89,8 @@ async def test_api_channel_overview(client):
 @pytest.mark.asyncio
 async def test_api_subscriber_history(client):
     """Test subscriber history API returns JSON."""
-    with patch("src.web.routes.analytics.ChannelAnalyticsService") as MockSvc:
-        instance = MockSvc.return_value
+    with patch("src.web.routes.analytics.ChannelAnalyticsService") as mock_svc:
+        instance = mock_svc.return_value
         instance.get_subscriber_history = AsyncMock(
             return_value=[{"date": "2025-01-01", "count": 100}]
         )
@@ -104,8 +103,8 @@ async def test_api_subscriber_history(client):
 @pytest.mark.asyncio
 async def test_api_views_timeseries(client):
     """Test views timeseries API returns JSON."""
-    with patch("src.web.routes.analytics.ChannelAnalyticsService") as MockSvc:
-        instance = MockSvc.return_value
+    with patch("src.web.routes.analytics.ChannelAnalyticsService") as mock_svc:
+        instance = mock_svc.return_value
         instance.get_views_timeseries = AsyncMock(
             return_value=[{"date": "2025-01-01", "avg_views": 50.0, "msg_count": 10}]
         )
@@ -118,8 +117,8 @@ async def test_api_views_timeseries(client):
 @pytest.mark.asyncio
 async def test_api_post_frequency(client):
     """Test post frequency API returns JSON."""
-    with patch("src.web.routes.analytics.ChannelAnalyticsService") as MockSvc:
-        instance = MockSvc.return_value
+    with patch("src.web.routes.analytics.ChannelAnalyticsService") as mock_svc:
+        instance = mock_svc.return_value
         instance.get_post_frequency = AsyncMock(
             return_value=[{"date": "2025-01-01", "count": 5}]
         )
@@ -132,8 +131,8 @@ async def test_api_post_frequency(client):
 @pytest.mark.asyncio
 async def test_api_err(client):
     """Test ERR API returns JSON."""
-    with patch("src.web.routes.analytics.ChannelAnalyticsService") as MockSvc:
-        instance = MockSvc.return_value
+    with patch("src.web.routes.analytics.ChannelAnalyticsService") as mock_svc:
+        instance = mock_svc.return_value
         instance.get_err = AsyncMock(return_value=2.5)
         instance.get_err24 = AsyncMock(return_value=3.1)
         resp = await client.get("/analytics/channels/api/err?channel_id=100")
@@ -146,8 +145,8 @@ async def test_api_err(client):
 @pytest.mark.asyncio
 async def test_api_hourly_activity(client):
     """Test hourly activity API returns JSON."""
-    with patch("src.web.routes.analytics.ChannelAnalyticsService") as MockSvc:
-        instance = MockSvc.return_value
+    with patch("src.web.routes.analytics.ChannelAnalyticsService") as mock_svc:
+        instance = mock_svc.return_value
         instance.get_hourly_activity = AsyncMock(
             return_value=[{"hour": 12, "count": 42}]
         )
@@ -162,8 +161,8 @@ async def test_api_citation_stats(client):
     """Test citation stats API returns JSON."""
     from src.services.channel_analytics_service import CitationStats
 
-    with patch("src.web.routes.analytics.ChannelAnalyticsService") as MockSvc:
-        instance = MockSvc.return_value
+    with patch("src.web.routes.analytics.ChannelAnalyticsService") as mock_svc:
+        instance = mock_svc.return_value
         instance.get_citation_stats = AsyncMock(
             return_value=CitationStats(total_forwards=100, post_count=50, avg_forwards=2.0)
         )
@@ -176,8 +175,8 @@ async def test_api_citation_stats(client):
 @pytest.mark.asyncio
 async def test_api_heatmap(client):
     """Test heatmap API returns JSON."""
-    with patch("src.web.routes.analytics.ChannelAnalyticsService") as MockSvc:
-        instance = MockSvc.return_value
+    with patch("src.web.routes.analytics.ChannelAnalyticsService") as mock_svc:
+        instance = mock_svc.return_value
         instance.get_heatmap = AsyncMock(
             return_value=[{"hour": 12, "weekday": 1, "count": 10}]
         )
@@ -190,8 +189,8 @@ async def test_api_heatmap(client):
 @pytest.mark.asyncio
 async def test_api_cross_citations(client):
     """Test cross-citations API returns JSON."""
-    with patch("src.web.routes.analytics.ChannelAnalyticsService") as MockSvc:
-        instance = MockSvc.return_value
+    with patch("src.web.routes.analytics.ChannelAnalyticsService") as mock_svc:
+        instance = mock_svc.return_value
         instance.get_cross_channel_citations = AsyncMock(
             return_value=[{"source_channel_id": 200, "count": 5}]
         )

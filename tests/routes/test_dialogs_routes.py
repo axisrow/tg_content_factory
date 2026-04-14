@@ -873,7 +873,6 @@ async def test_download_media_message_not_found(client):
 @pytest.mark.asyncio
 async def test_download_media_no_media(client):
     """Test download-media when message has no media."""
-    from tests.helpers import AsyncIterMessages
 
     msg = SimpleNamespace(id=42, media=None)
     native_mock = AsyncMock()
@@ -1413,9 +1412,9 @@ async def test_create_channel_post_no_client(client):
 @pytest.mark.asyncio
 async def test_create_channel_post_exception(client):
     """Test create channel POST handles exception."""
-    from unittest.mock import MagicMock as MM
+    from unittest.mock import MagicMock
 
-    mock_client = MM()
+    mock_client = MagicMock()
     mock_client.side_effect = Exception("Create failed")
     pool = client._transport.app.state.pool
     pool.clients["+1234567890"] = mock_client

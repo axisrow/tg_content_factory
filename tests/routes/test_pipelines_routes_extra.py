@@ -13,7 +13,6 @@ from src.models import (
     PipelineGraph,
     PipelineNode,
     PipelineNodeType,
-    PipelinePublishMode,
 )
 from src.services.pipeline_service import PipelineValidationError
 
@@ -172,7 +171,13 @@ async def test_create_wizard_submit_success(client_with_dialog, base_app):
     graph = {
         "nodes": [
             {"id": "src", "type": "source", "name": "src", "config": {}, "position": {"x": 0, "y": 0}},
-            {"id": "llm", "type": "llm_generate", "name": "llm", "config": {"model": "gpt-4o"}, "position": {"x": 100, "y": 0}},
+            {
+                "id": "llm",
+                "type": "llm_generate",
+                "name": "llm",
+                "config": {"model": "gpt-4o"},
+                "position": {"x": 100, "y": 0},
+            },
             {"id": "pub", "type": "publish", "name": "pub", "config": {}, "position": {"x": 200, "y": 0}},
         ],
         "edges": [

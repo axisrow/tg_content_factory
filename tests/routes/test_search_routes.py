@@ -299,8 +299,9 @@ async def test_extract_length_filter():
 @pytest.mark.asyncio
 async def test_search_redirects_when_auth_not_configured(base_app):
     """Test search page redirects to /settings when auth is not configured."""
-    from httpx import ASGITransport, AsyncClient
     import base64
+
+    from httpx import ASGITransport, AsyncClient
 
     app, db, pool_mock = base_app
     # Make auth unconfigured (api_id=0)
@@ -325,8 +326,9 @@ async def test_search_redirects_when_auth_not_configured(base_app):
 @pytest.mark.asyncio
 async def test_search_redirects_when_no_accounts(base_app):
     """Test search page redirects to /settings when no accounts exist."""
-    from httpx import ASGITransport, AsyncClient
     import base64
+
+    from httpx import ASGITransport, AsyncClient
 
     app, db, pool_mock = base_app
     # Delete all accounts
@@ -373,6 +375,7 @@ async def test_search_quota_failure(client, monkeypatch):
 async def _insert_message_get_id(db, channel_id, message_id, text, date=None):
     """Helper: insert a message and return its DB row id."""
     from datetime import datetime, timezone
+
     from src.models import Channel, Message
 
     await db.add_channel(Channel(channel_id=channel_id, title=f"Ch{channel_id}"))

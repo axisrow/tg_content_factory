@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from src.models import Channel, CollectionTaskStatus, SearchQuery, StatsAllTaskPayload
+from src.models import CollectionTaskStatus, SearchQuery
 
 
 @pytest.fixture
@@ -423,7 +423,7 @@ async def test_set_job_interval_pipeline(client, base_app):
     """Test set interval for pipeline_run job (lines 378-385)."""
     app, db, _ = base_app
 
-    from src.models import ContentPipeline, PipelineTarget
+    from src.models import ContentPipeline
     pipeline = ContentPipeline(name="Test Pipeline", target_channel_id=-1001234567890)
     pid = await db.repos.content_pipelines.add(pipeline, source_channel_ids=[], targets=[])
 
@@ -442,7 +442,7 @@ async def test_set_job_interval_content_generate(client, base_app):
     """Test set interval for content_generate job (lines 378-385)."""
     app, db, _ = base_app
 
-    from src.models import ContentPipeline, PipelineTarget
+    from src.models import ContentPipeline
     pipeline = ContentPipeline(name="Test Pipeline2", target_channel_id=-1001234567890)
     pid = await db.repos.content_pipelines.add(pipeline, source_channel_ids=[], targets=[])
 
@@ -603,7 +603,7 @@ async def test_dry_run_search_error(client, base_app, caplog):
     )
     await db.update_collection_task(task_id, CollectionTaskStatus.COMPLETED)
 
-    sq = await db.repos.search_queries.add(SearchQuery(
+    await db.repos.search_queries.add(SearchQuery(
         query="error_query",
         name="ErrorQuery",
         notify_on_collect=True,
