@@ -105,3 +105,41 @@ async def test_search_models_success(client, monkeypatch):
         body = resp.json()
         assert body["ok"] is True
         assert len(body["models"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_search_models_no_api_key(client, monkeypatch):
+    """Test search models when no API key is found."""
+    monkeypatch.setattr(
+        "src.web.routes.images._get_provider_api_key",
+        AsyncMock(return_value=""),
+    )
+    resp = await client.get("/images/models/search?provider=unknown&q=test")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["ok"] is True
+
+
+@pytest.mark.asyncio
+async def test_images_page_with_db_error(client, monkeypatch):
+    """Test images page when DB provider loading fails."""
+    with patch("src.services.image_provider_service.ImageProviderService", side_effect=Exception("DB error")):
+        resp = await client.get("/images/")
+    assert resp.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_generate_with_model(client, monkeypatch):
+    """Test generate with specific model selection."""
+    mock_svc = MagicMock()
+    mock_svc.is_available = AsyncMock(return_value=True)
+    mock_svc.generate = AsyncMock(return_value="https://img.example.com/2.png")
+    monkeypatch.setattr(
+        "src.web.routes.images._get_image_service",
+        AsyncMock(return_value=mock_svc),
+    )
+    resp = await client.post("/images/generate", data={"prompt": "a dog", "model": "test:model"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["ok"] is True
+    assert body["model"] == "test:model"

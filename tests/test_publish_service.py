@@ -354,3 +354,134 @@ async def test_publish_service_timeout():
     assert len(results) == 1
     assert results[0].success is False
     assert "Timeout" in results[0].error
+
+
+@pytest.mark.asyncio
+async def test_publish_service_missing_run_id():
+    """Missing run id returns early error."""
+    db = FakeDB()
+    pool = FakeClientPool()
+    service = PublishService(db, pool)
+
+    run = GenerationRun(id=None, pipeline_id=1, generated_text="text", moderation_status="approved")
+    results = await service.publish_run(run, make_pipeline())
+
+    assert len(results) == 1
+    assert results[0].success is False
+    assert "Missing" in results[0].error
+
+
+@pytest.mark.asyncio
+async def test_publish_service_missing_pipeline_id():
+    """Missing pipeline id returns early error."""
+    db = FakeDB()
+    pool = FakeClientPool()
+    service = PublishService(db, pool)
+
+    run = GenerationRun(id=1, pipeline_id=1, generated_text="text", moderation_status="approved")
+    results = await service.publish_run(run, make_pipeline(id=None))
+
+    assert len(results) == 1
+    assert results[0].success is False
+    assert "Missing" in results[0].error
+
+
+@pytest.mark.asyncio
+async def test_publish_service_with_reply_to():
+    """Sends message with reply_to when metadata has publish_reply."""
+    db = FakeDB()
+    db.repos.content_pipelines.set_targets(
+        [PipelineTarget(id=1, pipeline_id=1, phone="+1234567890", dialog_id=-1001234567890)]
+    )
+    pool = FakeClientPool(should_succeed=True)
+    service = PublishService(db, pool)
+
+    run = GenerationRun(
+        id=1,
+        pipeline_id=1,
+        generated_text="Reply content",
+        moderation_status="approved",
+        metadata={"publish_reply": True, "reply_to_message_id": 42},
+    )
+
+    results = await service.publish_run(run, make_pipeline(publish_mode=PipelinePublishMode.AUTO))
+
+    assert len(results) == 1
+    assert results[0].success is True
+
+
+@pytest.mark.asyncio
+async def test_publish_service_general_exception():
+    """General exception during publishing produces error result."""
+    db = FakeDB()
+    db.repos.content_pipelines.set_targets(
+        [PipelineTarget(id=1, pipeline_id=1, phone="+1234567890", dialog_id=-1001234567890)]
+    )
+
+    class ExceptionPool(FakeClientPool):
+        async def get_client_by_phone(self, phone):
+            raise ValueError("unexpected error")
+
+    pool = ExceptionPool(should_succeed=True)
+    service = PublishService(db, pool)
+
+    run = GenerationRun(
+        id=1,
+        pipeline_id=1,
+        generated_text="Test content",
+        moderation_status="approved",
+    )
+
+    results = await service.publish_run(run, make_pipeline())
+
+    assert len(results) == 1
+    assert results[0].success is False
+    assert "unexpected error" in results[0].error
+
+
+@pytest.mark.asyncio
+async def test_publish_service_preview_targets():
+    """preview_targets returns target info dicts."""
+    db = FakeDB()
+    db.repos.content_pipelines.set_targets(
+        [
+            PipelineTarget(
+                id=1, pipeline_id=1, phone="+1234567890",
+                dialog_id=-1001234567890, title="Test Channel", dialog_type="channel",
+            )
+        ]
+    )
+    pool = FakeClientPool()
+    service = PublishService(db, pool)
+
+    preview = await service.preview_targets(1)
+
+    assert len(preview) == 1
+    assert preview[0]["phone"] == "+1234567890"
+    assert preview[0]["title"] == "Test Channel"
+    assert preview[0]["type"] == "channel"
+
+
+@pytest.mark.asyncio
+async def test_publish_service_resolve_entity_fallback():
+    """_resolve_entity falls back to resolve_input_entity when pool has no resolver."""
+    db = FakeDB()
+    db.repos.content_pipelines.set_targets(
+        [PipelineTarget(id=1, pipeline_id=1, phone="+1234567890", dialog_id=-1001234567890)]
+    )
+
+    class NoResolverPool(FakeClientPool):
+        # Remove resolve_dialog_entity so fallback path is taken
+        resolve_dialog_entity = None
+
+    pool = NoResolverPool(should_succeed=True)
+    service = PublishService(db, pool)
+
+    run = GenerationRun(
+        id=1, pipeline_id=1, generated_text="Test",
+        moderation_status="approved",
+    )
+
+    results = await service.publish_run(run, make_pipeline(publish_mode=PipelinePublishMode.AUTO))
+    # Should succeed via fallback resolve_input_entity
+    assert results[0].success is True
