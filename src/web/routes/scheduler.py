@@ -18,6 +18,7 @@ JOB_LABELS = {
     "collect_all": "Сбор всех каналов",
     "photo_due": "Фото по расписанию",
     "photo_auto": "Автозагрузка фото",
+    "warm_all_dialogs": "Прогрев кэша диалогов",
 }
 
 
@@ -399,6 +400,11 @@ async def set_job_interval(request: Request, job_id: str):
             await db.repos.content_pipelines.update_generate_interval(pid, minutes)
             if sched.is_running:
                 await sched.sync_pipeline_jobs()
+    elif job_id == "warm_all_dialogs":
+        await db.repos.settings.set_setting("warm_dialogs_interval_minutes", str(minutes))
+        sched._warm_dialogs_interval_minutes = minutes
+        if sched.is_running:
+            await sched.sync_job_state(job_id, enabled=True)
     return RedirectResponse(url="/scheduler?msg=interval_updated", status_code=303)
 
 
@@ -426,6 +432,15 @@ async def trigger_collection(request: Request):
     result = await service.enqueue_all_channels()
     msg = bulk_enqueue_msg(result)
     return RedirectResponse(url=f"/scheduler?msg={msg}", status_code=303)
+
+
+@router.post("/trigger-warm")
+async def trigger_warm_dialogs(request: Request):
+    if getattr(request.app.state, "shutting_down", False):
+        return RedirectResponse(url="/scheduler?error=shutting_down", status_code=303)
+    sched = deps.get_scheduler(request)
+    await sched.trigger_warm_background()
+    return RedirectResponse(url="/scheduler?msg=warm_dialogs_started", status_code=303)
 
 
 @router.post("/test-notification")

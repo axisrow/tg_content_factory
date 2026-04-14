@@ -277,6 +277,12 @@ class Database:
         self._require()
         await self._channels.set_channel_type(channel_id, channel_type)
 
+    async def update_channel_preferred_phone(
+        self, channel_id: int, phone: str | None
+    ) -> None:
+        self._require()
+        await self._channels.update_channel_preferred_phone(channel_id, phone)
+
     async def update_channel_meta(
         self, channel_id: int, *, username: str | None, title: str | None
     ) -> None:

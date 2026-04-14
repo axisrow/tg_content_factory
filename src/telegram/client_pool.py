@@ -95,6 +95,9 @@ class ClientPool:
             native=self._native_backend,
         )
         self._dialogs_fetched: set[str] = set()
+        self._channel_phone_map: dict[int, str] = {}
+        # channel_id (positive MTProto) → phone that has it in dialogs
+        self._warming_task: asyncio.Task | None = None
         self._dialogs_cache: dict[tuple[str, str], DialogCacheEntry] = {}
         self._dialogs_cache_ttl_sec = 60.0
         self._dialogs_db_cache_ttl_sec = 3600.0  # 1 hour; stale DB cache triggers fresh Telegram fetch
@@ -107,6 +110,69 @@ class ClientPool:
     def mark_dialogs_fetched(self, phone: str) -> None:
         """Mark that get_dialogs() has been called for this phone."""
         self._dialogs_fetched.add(phone)
+
+    def connected_phones(self) -> set[str]:
+        """Return the set of currently connected phone numbers."""
+        return self._connected_phones()
+
+    def get_phone_for_channel(self, channel_id: int) -> str | None:
+        """Return the phone known to have channel_id in its dialogs, or None."""
+        return self._channel_phone_map.get(channel_id)
+
+    def register_channel_phone(self, channel_id: int, phone: str) -> None:
+        """Cache the discovered phone for a channel (for post-startup additions)."""
+        self._channel_phone_map[channel_id] = phone
+
+    def is_warming(self) -> bool:
+        """True while warm_all_dialogs() is still running."""
+        return self._warming_task is not None and not self._warming_task.done()
+
+    async def wait_for_warm(self, timeout: float = 30.0) -> None:
+        """Wait for warm_all_dialogs() to finish, up to `timeout` seconds."""
+        if self._warming_task is None or self._warming_task.done():
+            return
+        try:
+            await asyncio.wait_for(asyncio.shield(self._warming_task), timeout=timeout)
+        except (asyncio.TimeoutError, asyncio.CancelledError):
+            pass
+
+    async def warm_all_dialogs(self) -> None:
+        """Warm entity cache for all connected phones and persist channel→phone to DB.
+
+        Records which channels are accessible from which account so that
+        private-group collection can target the right phone without guessing.
+        Stores self._warming_task so the collector can wait during a race.
+        """
+        self._warming_task = asyncio.current_task()
+        for phone in list(self._connected_phones()):
+            result = await self.get_client_by_phone(phone)
+            if result is None:
+                continue
+            session, p = result
+            try:
+                dialogs = await asyncio.wait_for(session.warm_dialog_cache(), timeout=60.0)
+                self.mark_dialogs_fetched(p)
+                for dialog in dialogs or []:
+                    entity = getattr(dialog, "entity", None)
+                    if entity is None:
+                        continue
+                    eid = getattr(entity, "id", None)
+                    if eid and eid not in self._channel_phone_map:
+                        self._channel_phone_map[eid] = p
+                        # Persist to DB (first-wins; channel may not exist in our DB — OK)
+                        try:
+                            await self._db.repos.channels.update_channel_preferred_phone(
+                                eid, p
+                            )
+                        except Exception:
+                            pass
+                logger.info(
+                    "warm_all_dialogs: warmed %s (%d dialogs)", p, len(dialogs or [])
+                )
+            except Exception as e:
+                logger.warning("warm_all_dialogs: failed for %s: %s", p, e)
+            finally:
+                await self.release_client(p)
 
     def invalidate_dialogs_cache(self, phone: str | None = None) -> None:
         if phone is None:

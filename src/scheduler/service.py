@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -27,6 +28,7 @@ class SchedulerManager:
         search_query_bundle: SearchQueryBundle | None = None,
         task_enqueuer: TaskEnqueuer | None = None,
         pipeline_bundle: PipelineBundle | None = None,
+        warm_dialogs_callback: Callable[[], Awaitable[None]] | None = None,
     ):
         if config is None:
             config = SchedulerConfig()
@@ -35,10 +37,13 @@ class SchedulerManager:
         self._scheduler_bundle = scheduler_bundle
         self._sq_bundle = search_query_bundle
         self._pipeline_bundle = pipeline_bundle
+        self._warm_dialogs_callback = warm_dialogs_callback
         self._scheduler: AsyncIOScheduler | None = None
         self._job_id = "collect_all"
         self._photo_due_job_id = "photo_due"
         self._photo_auto_job_id = "photo_auto"
+        self._warm_dialogs_job_id = "warm_all_dialogs"
+        self._warm_dialogs_interval_minutes: int = 1440  # 24 hours default
         self._current_interval_minutes: int = config.collect_interval_minutes
         self._bg_task: asyncio.Task | None = None
         self._jobs_cache: dict[str, object] = {}
@@ -87,6 +92,13 @@ class SchedulerManager:
             self._scheduler.add_job(
                 self._run_photo_auto,
                 IntervalTrigger(minutes=1),
+                id=job_id,
+                replace_existing=True,
+            )
+        elif job_id == self._warm_dialogs_job_id and self._warm_dialogs_callback:
+            self._scheduler.add_job(
+                self._run_warm_dialogs,
+                IntervalTrigger(minutes=self._warm_dialogs_interval_minutes),
                 id=job_id,
                 replace_existing=True,
             )
@@ -169,6 +181,36 @@ class SchedulerManager:
             else:
                 logger.info("Job %s is disabled, skipping registration", self._photo_auto_job_id)
 
+        if self._warm_dialogs_callback:
+            if self._scheduler_bundle:
+                saved_warm = await self._scheduler_bundle.get_setting(
+                    "warm_dialogs_interval_minutes"
+                )
+            else:
+                saved_warm = None
+            self._warm_dialogs_interval_minutes = parse_int_setting(
+                saved_warm,
+                setting_name="warm_dialogs_interval_minutes",
+                default=1440,
+                logger=logger,
+            )
+            if await self.is_job_enabled(self._warm_dialogs_job_id):
+                self._scheduler.add_job(
+                    self._run_warm_dialogs,
+                    IntervalTrigger(minutes=self._warm_dialogs_interval_minutes),
+                    id=self._warm_dialogs_job_id,
+                    replace_existing=True,
+                )
+                logger.info(
+                    "Registered job %s (every %d min)",
+                    self._warm_dialogs_job_id,
+                    self._warm_dialogs_interval_minutes,
+                )
+            else:
+                logger.info(
+                    "Job %s is disabled, skipping registration", self._warm_dialogs_job_id
+                )
+
         self._scheduler.start()
         total_jobs = len(self._scheduler.get_jobs())
         logger.info("Scheduler started with %d jobs, collecting every %d min", total_jobs, collect_interval)
@@ -241,6 +283,20 @@ class SchedulerManager:
         if self._bg_task and not self._bg_task.done():
             return
         self._bg_task = asyncio.create_task(self._run_collection())
+
+    async def trigger_warm_background(self) -> None:
+        """Fire-and-forget dialog cache warm run."""
+        asyncio.create_task(self._run_warm_dialogs(), name="warm_all_dialogs_manual")
+
+    async def _run_warm_dialogs(self) -> None:
+        if not self._warm_dialogs_callback:
+            return
+        logger.info("Scheduler: starting dialog cache warm")
+        try:
+            await self._warm_dialogs_callback()
+            logger.info("Scheduler: dialog cache warm complete")
+        except Exception:
+            logger.exception("Scheduler: dialog cache warm failed")
 
     async def _run_collection(self) -> dict:
         """Enqueue all channels for collection."""
@@ -419,4 +475,9 @@ class SchedulerManager:
                         })
             except Exception:
                 logger.exception("Error fetching pipelines for potential jobs")
+        if self._warm_dialogs_callback is not None:
+            jobs.append({
+                "job_id": self._warm_dialogs_job_id,
+                "interval_minutes": self._warm_dialogs_interval_minutes,
+            })
         return jobs

@@ -69,6 +69,9 @@ class ChannelsRepository:
                 if "message_count" in keys and row["message_count"] is not None
                 else 0
             ),
+            preferred_phone=(
+                row["preferred_phone"] if "preferred_phone" in keys else None
+            ),
         )
 
     async def get_channels(
@@ -197,6 +200,16 @@ class ChannelsRepository:
         await self._db.execute(
             "UPDATE channels SET about = ?, linked_chat_id = ?, has_comments = ? WHERE channel_id = ?",
             (about, linked_chat_id, int(has_comments), channel_id),
+        )
+        await self._db.commit()
+
+    async def update_channel_preferred_phone(
+        self, channel_id: int, phone: str | None
+    ) -> None:
+        """Set or clear the preferred Telegram account phone for collecting this channel."""
+        await self._db.execute(
+            "UPDATE channels SET preferred_phone = ? WHERE channel_id = ?",
+            (phone, channel_id),
         )
         await self._db.commit()
 
