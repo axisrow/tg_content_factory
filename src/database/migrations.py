@@ -120,6 +120,9 @@ async def run_migrations(db: aiosqlite.Connection) -> bool:
     if "created_at" not in ch_columns:
         await db.execute("ALTER TABLE channels ADD COLUMN created_at TEXT")
         await db.commit()
+    if "preferred_phone" not in ch_columns:
+        await db.execute("ALTER TABLE channels ADD COLUMN preferred_phone TEXT")
+        await db.commit()
 
     cur = await db.execute("PRAGMA table_info(collection_tasks)")
     task_rows = await cur.fetchall()

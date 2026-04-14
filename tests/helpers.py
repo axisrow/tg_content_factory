@@ -386,8 +386,15 @@ class FakeClientPool(MagicMock):
         self.get_available_client = kwargs.pop("get_available_client", AsyncMock(return_value=None))
         self.get_stats_availability = kwargs.pop("get_stats_availability", AsyncMock())
         self._dialogs_fetched: set[str] = set()
+        self._channel_phone_map: dict[int, str] = {}
+        self._warming_task = None
         self.is_dialogs_fetched = lambda phone: phone in self._dialogs_fetched
         self.mark_dialogs_fetched = lambda phone: self._dialogs_fetched.add(phone)
+        self.connected_phones = lambda: set(self.clients.keys())
+        self.get_phone_for_channel = lambda cid: self._channel_phone_map.get(cid)
+        self.register_channel_phone = lambda cid, phone: self._channel_phone_map.__setitem__(cid, phone)
+        self.is_warming = lambda: False
+        self.wait_for_warm = AsyncMock()
         for key, value in kwargs.items():
             setattr(self, key, value)
 

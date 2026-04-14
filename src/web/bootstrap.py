@@ -178,6 +178,7 @@ async def build_container_with_templates(
         search_query_bundle=search_query_bundle,
         task_enqueuer=task_enqueuer,
         pipeline_bundle=pipeline_bundle,
+        warm_dialogs_callback=pool.warm_all_dialogs,
     )
     agent_manager = AgentManager(db, config, client_pool=pool, scheduler_manager=scheduler)
 
@@ -259,6 +260,13 @@ async def start_container(container: AppContainer) -> None:
                 "startup: telegram pool timed out after %ds — continuing without full init",
                 _POOL_INIT_TIMEOUT,
             )
+        # Warm entity cache + preferred_phone map for all accounts in background.
+        # Store the task so the collector can wait on it during a race condition.
+        if hasattr(container.pool, "warm_all_dialogs"):
+            _warm_task = asyncio.create_task(
+                container.pool.warm_all_dialogs(), name="warm_all_dialogs_startup"
+            )
+            container.pool._warming_task = _warm_task
     logger.info("startup: telegram pool done (%.1fs)", time.monotonic() - t_start)
     if _is_dev:
         logger.info("startup/start: telegram_pool %.2fs", time.monotonic() - t1)

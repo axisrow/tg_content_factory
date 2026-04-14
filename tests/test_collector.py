@@ -295,6 +295,69 @@ async def test_collect_channel_no_username_no_cache_reports_error(db):
 
 
 @pytest.mark.asyncio
+async def test_collect_private_group_uses_map_phone(db):
+    """When channel→phone map has an entry, get_client_by_phone is used directly."""
+    ch = Channel(channel_id=1877929309, title="Private Group")
+    await db.add_channel(ch)
+
+    mock_client = AsyncMock()
+    mock_client.get_entity = AsyncMock(return_value=SimpleNamespace())
+    mock_client.iter_messages = MagicMock(return_value=_AsyncIterEmpty())
+
+    pool = make_mock_pool(
+        clients={"+7001": object()},
+        get_client_by_phone=AsyncMock(return_value=(mock_client, "+7001")),
+    )
+    pool._channel_phone_map[1877929309] = "+7001"
+
+    collector = Collector(pool, db, SchedulerConfig())
+    stats = await collector.collect_all_channels()
+
+    assert stats["errors"] == 0
+    pool.get_available_client.assert_not_awaited()
+    pool.get_client_by_phone.assert_awaited_once_with("+7001")
+
+
+@pytest.mark.asyncio
+async def test_collect_private_group_discovers_access_phone(db):
+    """When channel not in map, _discover_phone_for_channel finds the right phone
+    and registers it so the next iteration uses it directly."""
+    ch = Channel(channel_id=1877929309, title="Private Group")
+    await db.add_channel(ch)
+
+    # Phone "+7000" doesn't have access; "+7001" does.
+    mock_client_7000 = AsyncMock()
+    mock_client_7000.get_entity = AsyncMock(
+        side_effect=ValueError("Could not find the input entity")
+    )
+    mock_client_7001 = AsyncMock()
+    mock_client_7001.get_entity = AsyncMock(return_value=SimpleNamespace())
+    mock_client_7001.iter_messages = MagicMock(return_value=_AsyncIterEmpty())
+
+    call_count = 0
+
+    async def get_client_by_phone_side_effect(phone):
+        nonlocal call_count
+        call_count += 1
+        if phone == "+7001":
+            return (mock_client_7001, "+7001")
+        return None
+
+    pool = make_mock_pool(
+        clients={"+7000": object(), "+7001": object()},
+        get_available_client=AsyncMock(return_value=(mock_client_7000, "+7000")),
+        get_client_by_phone=AsyncMock(side_effect=get_client_by_phone_side_effect),
+    )
+
+    collector = Collector(pool, db, SchedulerConfig())
+    stats = await collector.collect_all_channels()
+
+    assert stats["errors"] == 0
+    # "+7001" must have been registered into the map
+    assert pool._channel_phone_map.get(1877929309) == "+7001"
+
+
+@pytest.mark.asyncio
 async def test_collect_all_dialogs_timeout(db):
     """Hanging get_dialogs() must not block collection (30s timeout)."""
     ch = Channel(channel_id=123, title="Test", username="test")
