@@ -23,7 +23,7 @@ class CollectionQueue:
         if isinstance(channels, Database):
             channels = ChannelBundle.from_database(channels)
         self._channels = channels
-        self._queue: asyncio.Queue[tuple[int, Channel, bool, bool]] = asyncio.Queue()
+        self._queue: asyncio.Queue[tuple[int, Channel, bool, bool]] = asyncio.Queue(maxsize=500)
         self._worker: asyncio.Task | None = None
         self._current_task_id: int | None = None
         self._retried_tasks: set[int] = set()
@@ -99,7 +99,7 @@ class CollectionQueue:
             remaining = max(0.0, run_after.timestamp() - time.time())
             if remaining > 0:
                 await asyncio.sleep(remaining)
-            self._queue.put_nowait((task_id, channel, force, full))
+            await self._queue.put((task_id, channel, force, full))
             self._ensure_worker()
 
         task = asyncio.create_task(_requeue_later())
@@ -283,7 +283,7 @@ class CollectionQueue:
             return False
         self._retried_tasks.add(task_id)
         await self._channels.update_collection_task(task_id, CollectionTaskStatus.PENDING, note="Reconnect retry")
-        self._queue.put_nowait((task_id, channel, force, full))
+        await self._queue.put((task_id, channel, force, full))
         logger.warning(
             "ConnectionError for channel %d, reconnected and re-queued task %d: %s",
             channel.channel_id, task_id, exc,
@@ -340,11 +340,16 @@ class CollectionQueue:
                 await self._worker
             except asyncio.CancelledError:
                 pass
-        for task in list(self._delayed_requeues):
+        # Snapshot tasks before cancelling — the done_callback (discard)
+        # removes them from the set as soon as each resolves, so iterating
+        # the live set in a second loop would see an empty collection.
+        pending = list(self._delayed_requeues)
+        for task in pending:
             task.cancel()
-        for task in list(self._delayed_requeues):
+        for task in pending:
             try:
                 await task
             except asyncio.CancelledError:
                 pass
+        self._delayed_requeues.clear()
         self._retried_tasks.clear()
