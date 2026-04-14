@@ -306,7 +306,7 @@ class TestAnalyticsToolGetTopMessages:
     async def test_with_date_range(self, mock_db):
         mock_db.get_top_messages = AsyncMock(return_value=[])
         handlers = _get_tool_handlers(mock_db)
-        result = await handlers["get_top_messages"]({
+        await handlers["get_top_messages"]({
             "date_from": "2026-01-01", "date_to": "2026-01-31", "limit": 50,
         })
         mock_db.get_top_messages.assert_awaited_once()

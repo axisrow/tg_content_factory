@@ -4,13 +4,11 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-import sys
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from src.cli.commands.agent import _test_escaping, _test_tools, run
-
 
 # ---------------------------------------------------------------------------
 # Helpers

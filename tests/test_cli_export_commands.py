@@ -7,8 +7,6 @@ import json
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
-
 from src.cli.commands.export import _export_csv, _export_json, _export_rss, _rfc822, run
 
 

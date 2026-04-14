@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import argparse
-import sys
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -52,7 +51,7 @@ def test_serve_starts_server():
     from src.cli.commands.serve import run
     cfg = _make_config()
     with patch("src.cli.commands.serve.load_config", return_value=cfg), \
-         patch("src.cli.commands.serve.create_app", return_value=MagicMock()) as mock_app, \
+         patch("src.cli.commands.serve.create_app", return_value=MagicMock()), \
          patch("src.cli.commands.serve.register_current_process"), \
          patch("src.cli.commands.serve.uvicorn") as mock_uv, \
          patch("src.cli.commands.serve.unregister_current_process") as mock_unreg:

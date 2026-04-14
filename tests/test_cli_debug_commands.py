@@ -3,11 +3,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-from collections import deque
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
-
-import pytest
 
 from src.cli.commands.debug import run
 

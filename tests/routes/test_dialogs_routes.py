@@ -1463,16 +1463,14 @@ async def test_download_media_success(client, tmp_path):
 @pytest.mark.asyncio
 async def test_create_channel_post_success(client):
     """Test successful create channel."""
-    from unittest.mock import MagicMock as MM, AsyncMock as AM
-
-    mock_result = MM()
-    mock_channel = MM()
+    mock_result = MagicMock()
+    mock_channel = MagicMock()
     mock_channel.id = 123456
     mock_channel.username = "test_new_ch"
     mock_result.chats = [mock_channel]
 
-    mock_client = MM()
-    mock_client.__call__ = AM(return_value=mock_result)
+    mock_client = MagicMock()
+    mock_client.__call__ = AsyncMock(return_value=mock_result)
     pool = client._transport.app.state.pool
     pool.clients["+1234567890"] = mock_client
 
@@ -1487,16 +1485,14 @@ async def test_create_channel_post_success(client):
 @pytest.mark.asyncio
 async def test_create_channel_post_success_no_username(client):
     """Test create channel without username."""
-    from unittest.mock import MagicMock as MM, AsyncMock as AM
-
-    mock_result = MM()
-    mock_channel = MM()
+    mock_result = MagicMock()
+    mock_channel = MagicMock()
     mock_channel.id = 789012
     mock_channel.username = None
     mock_result.chats = [mock_channel]
 
-    mock_client = MM()
-    mock_client.__call__ = AM(return_value=mock_result)
+    mock_client = MagicMock()
+    mock_client.__call__ = AsyncMock(return_value=mock_result)
     pool = client._transport.app.state.pool
     pool.clients["+1234567890"] = mock_client
 
