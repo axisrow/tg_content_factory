@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from src.models import Channel, CollectionTask, CollectionTaskStatus
+from src.models import Channel, CollectionTask
 from src.services.channel_service import ChannelService
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -187,8 +185,22 @@ class TestGetDialogsWithAddedFlags:
 class TestAddBulkByDialogIds:
     async def test_adds_matching_dialogs(self):
         dialogs = [
-            {"channel_id": -100, "title": "ChA", "username": "cha", "channel_type": "channel", "deactivate": False, "created_at": None},
-            {"channel_id": -200, "title": "ChB", "username": "chb", "channel_type": "channel", "deactivate": False, "created_at": None},
+            {
+                "channel_id": -100,
+                "title": "ChA",
+                "username": "cha",
+                "channel_type": "channel",
+                "deactivate": False,
+                "created_at": None,
+            },
+            {
+                "channel_id": -200,
+                "title": "ChB",
+                "username": "chb",
+                "channel_type": "channel",
+                "deactivate": False,
+                "created_at": None,
+            },
         ]
 
         pool = _make_pool()
@@ -208,7 +220,14 @@ class TestAddBulkByDialogIds:
     async def test_skips_unknown_ids(self):
         pool = _make_pool()
         pool.get_dialogs = AsyncMock(return_value=[
-            {"channel_id": -100, "title": "Only", "username": None, "channel_type": None, "deactivate": False, "created_at": None},
+            {
+                "channel_id": -100,
+                "title": "Only",
+                "username": None,
+                "channel_type": None,
+                "deactivate": False,
+                "created_at": None,
+            },
         ])
 
         bundle = _make_bundle()
@@ -390,7 +409,7 @@ class TestRefreshAllChannelMeta:
 
         service = _make_service(bundle=bundle)
 
-        with patch.object(service, "refresh_channel_meta", return_value=True):
+        with patch.object(service, "refresh_channel_meta", new=AsyncMock(return_value=True)):
             ok, failed = await service.refresh_all_channel_meta()
 
         assert ok == 2
