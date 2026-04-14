@@ -14,9 +14,15 @@ from src.telegram.collector import AllStatsClientsFloodedError, Collector, NoAct
 def mock_pool():
     pool = AsyncMock()
     pool.get_available_client = AsyncMock()
+    pool.get_client_by_phone = AsyncMock(return_value=None)
     pool.release_client = AsyncMock()
     pool.report_flood = AsyncMock()
     pool.is_dialogs_fetched = MagicMock(return_value=True)
+    pool.get_phone_for_channel = MagicMock(return_value=None)
+    pool.register_channel_phone = MagicMock()
+    pool.connected_phones = MagicMock(return_value=set())
+    pool.is_warming = MagicMock(return_value=False)
+    pool.wait_for_warm = AsyncMock()
     return pool
 
 

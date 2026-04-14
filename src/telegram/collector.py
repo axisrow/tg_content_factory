@@ -6,7 +6,7 @@ import logging
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 
-from telethon.errors import UsernameInvalidError, UsernameNotOccupiedError
+from telethon.errors import FloodWaitError, UsernameInvalidError, UsernameNotOccupiedError
 from telethon.tl.types import (
     DocumentAttributeAnimated,
     DocumentAttributeAudio,
@@ -425,7 +425,25 @@ class Collector:
             channel_id = channel.channel_id
             min_id = channel.last_collected_id
 
-            result = await self._pool.get_available_client()
+            # For private groups (no username):
+            #   1. preferred_phone from DB (persists across restarts)
+            #   2. in-memory map built by warm_all_dialogs()
+            #   3. if warming is still in progress — wait, then re-check map
+            #   4. fall back to any available phone (new channel, no info yet)
+            if not channel.username:
+                preferred = channel.preferred_phone or self._pool.get_phone_for_channel(
+                    channel_id
+                )
+                if not preferred and self._pool.is_warming():
+                    await self._pool.wait_for_warm(timeout=30.0)
+                    preferred = self._pool.get_phone_for_channel(channel_id)
+                if preferred:
+                    result = await self._pool.get_client_by_phone(preferred)
+                else:
+                    result = await self._pool.get_available_client()
+            else:
+                result = await self._pool.get_available_client()
+
             if result is None:
                 await self._raise_collection_unavailability()
 
@@ -589,6 +607,39 @@ class Collector:
                     except HandledFloodWaitError as exc:
                         flood_wait_sec = exc.info.wait_seconds
                         raise
+                    except ValueError:
+                        # preferred_phone turned out to be wrong (account was kicked,
+                        # or channel added before warming finished). Invalidate and rediscover.
+                        if channel.preferred_phone or self._pool.get_phone_for_channel(
+                            channel_id
+                        ):
+                            channel = channel.model_copy(update={"preferred_phone": None})
+                            self._pool.clear_channel_phone(channel_id)
+                            try:
+                                await self._db.repos.channels.update_channel_preferred_phone(
+                                    channel_id, None
+                                )
+                            except Exception:
+                                pass
+                        found = await self._discover_phone_for_channel(
+                            channel_id, exclude=phone
+                        )
+                        if found is not None:
+                            self._pool.register_channel_phone(channel_id, found)
+                            try:
+                                await self._db.repos.channels.update_channel_preferred_phone(
+                                    channel_id, found
+                                )
+                            except Exception:
+                                pass
+                            logger.info(
+                                "Channel %d: rediscovered on %s, retrying",
+                                channel_id,
+                                found,
+                            )
+                            # finally releases current phone; next iter picks up found
+                            continue
+                        raise  # no phone has access — show error in UI
 
                 # Превентивная фильтрация по subscriber_ratio до загрузки
                 # сообщений.
@@ -864,6 +915,36 @@ class Collector:
                         # channel will be deleted on the next collection run.
 
             return total_collected + len(all_messages)
+
+    async def _discover_phone_for_channel(
+        self, channel_id: int, exclude: str
+    ) -> str | None:
+        """Try all connected phones (except `exclude`) to find one with access to channel_id.
+
+        Used when a private group was added after startup warming and its phone is not
+        yet in the pool's channel→phone map. Returns the first phone that can resolve
+        the entity, or None if no account has access.
+        """
+        for candidate in self._pool.connected_phones() - {exclude}:
+            result = await self._pool.get_client_by_phone(candidate)
+            if result is None:
+                continue
+            session, p = result
+            session = adapt_transport_session(session, disconnect_on_close=False)
+            try:
+                if not self._pool.is_dialogs_fetched(p):
+                    await session.warm_dialog_cache()
+                    self._pool.mark_dialogs_fetched(p)
+                await session.resolve_entity(PeerChannel(channel_id))
+                return p
+            except FloodWaitError as fwe:
+                self._pool.report_flood(p, fwe.seconds)
+                continue
+            except Exception:
+                continue
+            finally:
+                await self._pool.release_client(p)
+        return None
 
     async def _precheck_sample(self, session, entity, limit: int) -> list[str]:
         """Sample up to `limit` messages for cross-channel precheck."""
