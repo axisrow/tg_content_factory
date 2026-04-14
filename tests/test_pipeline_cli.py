@@ -1524,9 +1524,9 @@ def test_pipeline_add_run_after(tmp_path, cli_init_patch, capsys):
 
     with (
         cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS),
-        patch("src.services.task_enqueuer.TaskEnqueuer") as MockEnqueuer,
+        patch("src.services.task_enqueuer.TaskEnqueuer") as mock_enqueuer,
     ):
-        MockEnqueuer.return_value.enqueue_pipeline_run = fake_enqueue
+        mock_enqueuer.return_value.enqueue_pipeline_run = fake_enqueue
 
         from src.cli.commands.pipeline import run
 
