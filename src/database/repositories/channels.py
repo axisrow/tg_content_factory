@@ -213,6 +213,14 @@ class ChannelsRepository:
         )
         await self._db.commit()
 
+    async def get_preferred_phone(self, channel_id: int) -> str | None:
+        """Return the preferred phone for a channel, or None if not set."""
+        row = await self._db.fetchone(
+            "SELECT preferred_phone FROM channels WHERE channel_id = ?",
+            (channel_id,),
+        )
+        return row["preferred_phone"] if row else None
+
     async def update_channel_created_at(self, channel_id: int, created_at) -> None:
         """Set created_at only if currently NULL (backfill from entity.date)."""
         iso = created_at.isoformat() if hasattr(created_at, "isoformat") else created_at

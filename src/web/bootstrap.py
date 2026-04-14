@@ -263,7 +263,7 @@ async def start_container(container: AppContainer) -> None:
         # Warm entity cache + preferred_phone map for all accounts in background.
         # Store the task so the collector can wait on it during a race condition.
         if hasattr(container.pool, "warm_all_dialogs"):
-            _warm_task = asyncio.get_event_loop().create_task(
+            _warm_task = asyncio.create_task(
                 container.pool.warm_all_dialogs(), name="warm_all_dialogs_startup"
             )
             container.pool._warming_task = _warm_task

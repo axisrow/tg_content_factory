@@ -6,7 +6,7 @@ import logging
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 
-from telethon.errors import UsernameInvalidError, UsernameNotOccupiedError
+from telethon.errors import FloodWaitError, UsernameInvalidError, UsernameNotOccupiedError
 from telethon.tl.types import (
     DocumentAttributeAnimated,
     DocumentAttributeAudio,
@@ -614,7 +614,7 @@ class Collector:
                             channel_id
                         ):
                             channel = channel.model_copy(update={"preferred_phone": None})
-                            self._pool._channel_phone_map.pop(channel_id, None)
+                            self._pool.clear_channel_phone(channel_id)
                             try:
                                 await self._db.repos.channels.update_channel_preferred_phone(
                                     channel_id, None
@@ -937,6 +937,9 @@ class Collector:
                     self._pool.mark_dialogs_fetched(p)
                 await session.resolve_entity(PeerChannel(channel_id))
                 return p
+            except FloodWaitError as fwe:
+                self._pool.report_flood(p, fwe.seconds)
+                continue
             except Exception:
                 continue
             finally:

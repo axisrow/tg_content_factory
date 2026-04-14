@@ -16,7 +16,8 @@ from telethon.errors import (
     UsernameInvalidError,
     UsernameNotOccupiedError,
 )
-from telethon.tl.types import ChannelForbidden, PeerChannel, PeerUser
+from telethon.tl.types import Channel as TLChannel
+from telethon.tl.types import ChannelForbidden, Chat, PeerChannel, PeerUser
 
 from src.config import TelegramRuntimeConfig
 from src.database import Database
@@ -123,6 +124,10 @@ class ClientPool:
         """Cache the discovered phone for a channel (for post-startup additions)."""
         self._channel_phone_map[channel_id] = phone
 
+    def clear_channel_phone(self, channel_id: int) -> None:
+        """Remove cached phone mapping for a channel (used during error recovery)."""
+        self._channel_phone_map.pop(channel_id, None)
+
     def is_warming(self) -> bool:
         """True while warm_all_dialogs() is still running."""
         return self._warming_task is not None and not self._warming_task.done()
@@ -156,14 +161,19 @@ class ClientPool:
                     entity = getattr(dialog, "entity", None)
                     if entity is None:
                         continue
+                    if not isinstance(entity, (TLChannel, Chat)):
+                        continue
                     eid = getattr(entity, "id", None)
                     if eid and eid not in self._channel_phone_map:
                         self._channel_phone_map[eid] = p
-                        # Persist to DB (first-wins; channel may not exist in our DB — OK)
+                        # Persist to DB only if no preferred_phone set yet
+                        # (avoid overwriting a valid value from previous error recovery)
                         try:
-                            await self._db.repos.channels.update_channel_preferred_phone(
-                                eid, p
-                            )
+                            existing = await self._db.repos.channels.get_preferred_phone(eid)
+                            if not existing:
+                                await self._db.repos.channels.update_channel_preferred_phone(
+                                    eid, p
+                                )
                         except Exception:
                             pass
                 logger.info(
