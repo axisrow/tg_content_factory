@@ -277,3 +277,107 @@ class TestAnalyticsToolGetDailyStats:
             handlers = _get_tool_handlers(mock_db)
             result = await handlers["get_daily_stats"]({})
         assert "Ошибка" in _text(result)
+
+
+class TestAnalyticsToolGetTopMessages:
+    @pytest.mark.asyncio
+    async def test_empty(self, mock_db):
+        mock_db.get_top_messages = AsyncMock(return_value=[])
+        handlers = _get_tool_handlers(mock_db)
+        result = await handlers["get_top_messages"]({})
+        assert "не найдены" in _text(result) or "Нет" in _text(result)
+
+    @pytest.mark.asyncio
+    async def test_with_messages(self, mock_db):
+        msgs = [
+            {
+                "channel_id": 100, "channel_title": "TestChannel",
+                "message_id": 42, "text": "Hello world", "total_reactions": 50,
+            },
+        ]
+        mock_db.get_top_messages = AsyncMock(return_value=msgs)
+        handlers = _get_tool_handlers(mock_db)
+        result = await handlers["get_top_messages"]({"limit": 20})
+        text = _text(result)
+        assert "TestChannel" in text
+        assert "50" in text
+
+    @pytest.mark.asyncio
+    async def test_with_date_range(self, mock_db):
+        mock_db.get_top_messages = AsyncMock(return_value=[])
+        handlers = _get_tool_handlers(mock_db)
+        await handlers["get_top_messages"]({
+            "date_from": "2026-01-01", "date_to": "2026-01-31", "limit": 50,
+        })
+        mock_db.get_top_messages.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_error(self, mock_db):
+        mock_db.get_top_messages = AsyncMock(side_effect=Exception("db err"))
+        handlers = _get_tool_handlers(mock_db)
+        result = await handlers["get_top_messages"]({})
+        assert "Ошибка" in _text(result)
+
+
+class TestAnalyticsToolGetContentTypeStats:
+    @pytest.mark.asyncio
+    async def test_empty(self, mock_db):
+        mock_db.get_engagement_by_media_type = AsyncMock(return_value=[])
+        handlers = _get_tool_handlers(mock_db)
+        result = await handlers["get_content_type_stats"]({
+            "date_from": "2026-01-01", "date_to": "2026-01-31",
+        })
+        assert "не найдены" in _text(result) or "Нет данных" in _text(result)
+
+    @pytest.mark.asyncio
+    async def test_with_data(self, mock_db):
+        rows = [
+            {"content_type": "text", "message_count": 100, "avg_reactions": 5.0},
+            {"content_type": "photo", "message_count": 50, "avg_reactions": 10.0},
+        ]
+        mock_db.get_engagement_by_media_type = AsyncMock(return_value=rows)
+        handlers = _get_tool_handlers(mock_db)
+        result = await handlers["get_content_type_stats"]({
+            "date_from": "2026-01-01", "date_to": "2026-01-31",
+        })
+        text = _text(result)
+        assert "text" in text
+        assert "100" in text
+
+    @pytest.mark.asyncio
+    async def test_error(self, mock_db):
+        mock_db.get_engagement_by_media_type = AsyncMock(side_effect=Exception("err"))
+        handlers = _get_tool_handlers(mock_db)
+        result = await handlers["get_content_type_stats"]({
+            "date_from": "2026-01-01", "date_to": "2026-01-31",
+        })
+        assert "Ошибка" in _text(result)
+
+
+class TestAnalyticsToolGetHourlyActivity:
+    @pytest.mark.asyncio
+    async def test_empty(self, mock_db):
+        mock_db.get_hourly_activity = AsyncMock(return_value=[])
+        handlers = _get_tool_handlers(mock_db)
+        result = await handlers["get_hourly_activity"]({})
+        assert "не найдены" in _text(result) or "Нет" in _text(result)
+
+    @pytest.mark.asyncio
+    async def test_with_data(self, mock_db):
+        hours = [
+            {"hour": 9, "message_count": 500, "avg_reactions": 5.0},
+            {"hour": 18, "message_count": 800, "avg_reactions": 10.0},
+        ]
+        mock_db.get_hourly_activity = AsyncMock(return_value=hours)
+        handlers = _get_tool_handlers(mock_db)
+        result = await handlers["get_hourly_activity"]({"days": 7})
+        text = _text(result)
+        assert "09:00" in text
+        assert "500" in text
+
+    @pytest.mark.asyncio
+    async def test_error(self, mock_db):
+        mock_db.get_hourly_activity = AsyncMock(side_effect=Exception("err"))
+        handlers = _get_tool_handlers(mock_db)
+        result = await handlers["get_hourly_activity"]({})
+        assert "Ошибка" in _text(result)

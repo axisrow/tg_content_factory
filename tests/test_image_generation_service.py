@@ -1,5 +1,6 @@
+import asyncio
 import sys
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -250,3 +251,278 @@ def test_init_with_none_calls_register_from_env(monkeypatch):
     monkeypatch.delenv("REPLICATE_API_TOKEN", raising=False)
     svc = ImageGenerationService(adapters=None)
     assert svc.adapter_names == []  # no env vars set
+
+
+# ── _init_s3 tests ──
+
+
+def test_init_s3_logs_when_configured(monkeypatch, caplog):
+    """S3 storage is initialized when env vars are present."""
+    import logging
+
+    class FakeS3Store:
+        @classmethod
+        def from_env(cls):
+            return cls()
+
+    monkeypatch.setattr("src.services.s3_store.S3Store", FakeS3Store)
+    monkeypatch.delenv("TOGETHER_API_KEY", raising=False)
+    monkeypatch.delenv("HUGGINGFACE_API_KEY", raising=False)
+    monkeypatch.delenv("HUGGINGFACE_TOKEN", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("REPLICATE_API_TOKEN", raising=False)
+
+    with caplog.at_level(logging.INFO):
+        ImageGenerationService(adapters=None)
+    assert any("S3 image storage configured" in r.message for r in caplog.records)
+
+
+def test_init_s3_no_log_when_not_configured(monkeypatch, caplog):
+    """S3 storage logs nothing when env vars are absent."""
+    import logging
+
+    class FakeS3StoreNone:
+        @classmethod
+        def from_env(cls):
+            return None
+
+    monkeypatch.setattr("src.services.s3_store.S3Store", FakeS3StoreNone)
+    monkeypatch.delenv("TOGETHER_API_KEY", raising=False)
+    monkeypatch.delenv("HUGGINGFACE_API_KEY", raising=False)
+    monkeypatch.delenv("HUGGINGFACE_TOKEN", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("REPLICATE_API_TOKEN", raising=False)
+
+    with caplog.at_level(logging.INFO):
+        ImageGenerationService(adapters=None)
+    assert not any("S3 image storage" in r.message for r in caplog.records)
+
+
+# ── _resolve_adapter tests ──
+
+
+def test_resolve_adapter_returns_none_when_no_adapters():
+    svc = _make_clean_service()
+    assert svc._resolve_adapter("anything") is None
+    assert svc._resolve_adapter(None) is None
+
+
+# ── generate() S3 upload ──
+
+
+@pytest.mark.asyncio
+async def test_generate_uploads_to_s3_when_local_path():
+    """When adapter returns a non-http path and S3 is configured, uploads to S3."""
+    svc = _make_clean_service()
+
+    async def local_adapter(prompt: str, model: str) -> str:
+        return "/tmp/image.png"
+
+    svc.register_adapter("local", local_adapter)
+
+    # Mock S3 store - need to set it before _s3 check
+    svc._s3 = MagicMock()
+    svc._s3.upload_file = AsyncMock(return_value="https://s3.example.com/image.png")
+
+    result = await svc.generate("local:m", "a cat")
+    assert result == "https://s3.example.com/image.png"
+    svc._s3.upload_file.assert_called_once_with("/tmp/image.png")
+
+
+@pytest.mark.asyncio
+async def test_generate_skips_s3_when_adapter_returns_url():
+    """When adapter returns a URL, S3 upload is skipped."""
+    svc = _make_clean_service()
+
+    async def url_adapter(prompt: str, model: str) -> str:
+        return "https://already.a.url/image.png"
+
+    svc.register_adapter("url", url_adapter)
+
+    svc._s3 = MagicMock()
+    svc._s3.upload_file = AsyncMock(return_value="https://s3.example.com/image.png")
+
+    result = await svc.generate("url:m", "a cat")
+    assert result == "https://already.a.url/image.png"
+    svc._s3.upload_file.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_generate_s3_upload_fails_returns_local_path():
+    """When S3 upload fails, returns local path as fallback."""
+    svc = _make_clean_service()
+
+    async def local_adapter(prompt: str, model: str) -> str:
+        return "/tmp/local.png"
+
+    svc.register_adapter("local", local_adapter)
+
+    svc._s3 = MagicMock()
+    svc._s3.upload_file = AsyncMock(return_value=None)  # S3 upload returns None
+
+    result = await svc.generate("local:m", "a cat")
+    assert result == "/tmp/local.png"
+
+
+# ── generate() OSError and TimeoutError ──
+
+
+@pytest.mark.asyncio
+async def test_generate_catches_os_error():
+    svc = _make_clean_service()
+
+    async def oserr_adapter(prompt: str, model: str) -> str:
+        raise OSError("connection refused")
+
+    svc.register_adapter("oserr", oserr_adapter)
+    result = await svc.generate("oserr:m", "test")
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_generate_catches_timeout_error():
+    svc = _make_clean_service()
+
+    async def timeout_adapter(prompt: str, model: str) -> str:
+        raise asyncio.TimeoutError("timed out")
+
+    svc.register_adapter("timeout", timeout_adapter)
+    result = await svc.generate("timeout:m", "test")
+    assert result is None
+
+
+# ── generate() no adapter for provider ──
+
+
+@pytest.mark.asyncio
+async def test_generate_no_adapter_for_named_provider():
+    """When no adapters are registered at all, returns None."""
+    svc = _make_clean_service()
+    # No adapters at all — _resolve_adapter returns None
+    result = await svc.generate("beta:m", "test")
+    assert result is None
+
+
+# ── _register_from_env with env vars ──
+
+
+def test_register_from_env_together(monkeypatch):
+    monkeypatch.setenv("TOGETHER_API_KEY", "test-key")
+    monkeypatch.delenv("HUGGINGFACE_API_KEY", raising=False)
+    monkeypatch.delenv("HUGGINGFACE_TOKEN", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("REPLICATE_API_TOKEN", raising=False)
+    svc = ImageGenerationService(adapters=None)
+    assert "together" in svc.adapter_names
+
+
+def test_register_from_env_huggingface(monkeypatch):
+    monkeypatch.delenv("TOGETHER_API_KEY", raising=False)
+    monkeypatch.setenv("HUGGINGFACE_API_KEY", "test-key")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("REPLICATE_API_TOKEN", raising=False)
+    svc = ImageGenerationService(adapters=None)
+    assert "huggingface" in svc.adapter_names
+
+
+def test_register_from_env_openai(monkeypatch):
+    monkeypatch.delenv("TOGETHER_API_KEY", raising=False)
+    monkeypatch.delenv("HUGGINGFACE_API_KEY", raising=False)
+    monkeypatch.delenv("HUGGINGFACE_TOKEN", raising=False)
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.delenv("REPLICATE_API_TOKEN", raising=False)
+    svc = ImageGenerationService(adapters=None)
+    assert "openai" in svc.adapter_names
+
+
+def test_register_from_env_replicate(monkeypatch):
+    monkeypatch.delenv("TOGETHER_API_KEY", raising=False)
+    monkeypatch.delenv("HUGGINGFACE_API_KEY", raising=False)
+    monkeypatch.delenv("HUGGINGFACE_TOKEN", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setenv("REPLICATE_API_TOKEN", "test-token")
+    svc = ImageGenerationService(adapters=None)
+    assert "replicate" in svc.adapter_names
+
+
+# ── search_models static catalogs ──
+
+
+@pytest.mark.asyncio
+async def test_search_models_together_catalog():
+    svc = _make_clean_service()
+    models = await svc.search_models("together", query="flux")
+    assert len(models) == 2
+    assert all("together:" in m["model_string"] for m in models)
+
+
+@pytest.mark.asyncio
+async def test_search_models_openai_catalog():
+    svc = _make_clean_service()
+    models = await svc.search_models("openai")
+    assert len(models) == 2
+    assert any("dall-e-3" in m["id"] for m in models)
+
+
+@pytest.mark.asyncio
+async def test_search_models_unknown_provider():
+    svc = _make_clean_service()
+    models = await svc.search_models("unknown_provider")
+    assert models == []
+
+
+@pytest.mark.asyncio
+async def test_search_models_with_query_filter():
+    svc = _make_clean_service()
+    models = await svc.search_models("together", query="dev")
+    assert len(models) == 1
+    assert "dev" in models[0]["id"]
+
+
+# ── search_models Replicate (mocked HTTP) ──
+
+
+@pytest.mark.asyncio
+async def test_search_models_replicate_no_token(monkeypatch):
+    monkeypatch.delenv("REPLICATE_API_TOKEN", raising=False)
+    svc = _make_clean_service()
+    models = await svc.search_models("replicate", api_key="")
+    assert models == []
+
+
+@pytest.mark.asyncio
+async def test_search_models_replicate_with_token(monkeypatch):
+    class FakeAiohttpSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        def get(self, *args, **kwargs):
+            return self._FakeResp(
+                200,
+                {"results": [
+                    {"owner": "testowner", "name": "test-model", "description": "desc", "run_count": 5},
+                ]},
+            )
+
+        class _FakeResp:
+            def __init__(self, status, json_data):
+                self.status = status
+                self._json = json_data
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                return False
+
+            async def json(self):
+                return self._json
+
+    monkeypatch.setattr("aiohttp.ClientSession", FakeAiohttpSession)
+    svc = _make_clean_service()
+    models = await svc.search_models("replicate", api_key="fake-token")
+    assert len(models) == 1
+    assert models[0]["id"] == "testowner/test-model"

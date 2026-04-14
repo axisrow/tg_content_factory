@@ -378,3 +378,504 @@ async def test_context7_adapter_custom_base_url(monkeypatch):
     adapter = make_context7_adapter("test_key", base_url="https://custom.context7.api")
     out = await adapter("prompt")
     assert "Custom base" in out
+
+
+# === Anthropic adapter tests ===
+
+
+@pytest.mark.asyncio
+async def test_anthropic_adapter_success(monkeypatch):
+    from src.services.provider_adapters import make_anthropic_adapter
+
+    resp = FakeResp(
+        status=200,
+        json_data={"content": [{"text": "Claude response"}]},
+    )
+    monkeypatch.setattr("aiohttp.ClientSession", fake_client_session_factory(resp))
+    adapter = make_anthropic_adapter("fake-anthropic-key")
+    out = await adapter("hello")
+    assert "Claude response" in out
+
+
+@pytest.mark.asyncio
+async def test_anthropic_adapter_error_status(monkeypatch):
+    from src.services.provider_adapters import make_anthropic_adapter
+
+    resp = FakeResp(status=401, text_data="Unauthorized")
+    monkeypatch.setattr("aiohttp.ClientSession", fake_client_session_factory(resp))
+    adapter = make_anthropic_adapter("fake-key")
+    with pytest.raises(RuntimeError, match="401"):
+        await adapter("hello")
+
+
+@pytest.mark.asyncio
+async def test_anthropic_adapter_custom_base_url(monkeypatch):
+    from src.services.provider_adapters import make_anthropic_adapter
+
+    resp = FakeResp(
+        status=200,
+        json_data={"content": [{"text": "ZAI response"}]},
+    )
+    monkeypatch.setattr("aiohttp.ClientSession", fake_client_session_factory(resp))
+    adapter = make_anthropic_adapter("zai-key", base_url="https://zai.example.com/v1")
+    out = await adapter("hello", model="glm-4")
+    assert "ZAI response" in out
+
+
+@pytest.mark.asyncio
+async def test_anthropic_adapter_malformed_response(monkeypatch):
+    """When response JSON lacks expected structure, falls back to str()."""
+    from src.services.provider_adapters import make_anthropic_adapter
+
+    resp = FakeResp(status=200, json_data={"unexpected": "data"})
+    monkeypatch.setattr("aiohttp.ClientSession", fake_client_session_factory(resp))
+    adapter = make_anthropic_adapter("fake-key")
+    out = await adapter("hello")
+    # Falls back to str(data) when content[0].text fails
+    assert "unexpected" in out or "data" in out
+
+
+# === _parse_json_for_text edge cases (uncovered lines) ===
+
+
+@pytest.mark.asyncio
+async def test_parse_json_openai_choices_empty_list():
+    """Empty choices list falls through to str(data) fallback."""
+    data = {"choices": []}
+    result = await _parse_json_for_text(data)
+    assert "choices" in result
+
+
+@pytest.mark.asyncio
+async def test_parse_json_cohere_generations_empty():
+    """Empty generations list falls through."""
+    data = {"generations": []}
+    result = await _parse_json_for_text(data)
+    assert "generations" in result
+
+
+@pytest.mark.asyncio
+async def test_parse_json_outputs_non_dict_item():
+    """outputs with non-dict items falls to str(out)."""
+    data = {"outputs": [42]}
+    result = await _parse_json_for_text(data)
+    assert "42" in result
+
+
+@pytest.mark.asyncio
+async def test_parse_json_result_dict_nested():
+    """result dict with unknown keys falls to str(r)."""
+    data = {"result": {"random_key": 123}}
+    result = await _parse_json_for_text(data)
+    assert "random_key" in result
+
+
+@pytest.mark.asyncio
+async def test_parse_json_ollama_results_non_dict():
+    """results with non-dict items raises IndexError, falls to str(data)."""
+    data = {"results": []}
+    result = await _parse_json_for_text(data)
+    assert "results" in result
+
+
+@pytest.mark.asyncio
+async def test_parse_json_list_empty():
+    """Empty list falls to str(data)."""
+    result = await _parse_json_for_text([])
+    assert result == "[]"
+
+
+@pytest.mark.asyncio
+async def test_parse_json_result_non_dict_non_string():
+    """result that is neither str nor dict falls to str(r)."""
+    data = {"result": [1, 2, 3]}
+    result = await _parse_json_for_text(data)
+    # Falls through result dict checks to first-string-value fallback,
+    # which returns str(data) since no string values found
+    assert "[1, 2, 3]" in result
+
+
+# === Image adapter tests ===
+
+
+@pytest.mark.asyncio
+async def test_together_image_adapter_success(monkeypatch):
+    from src.services.provider_adapters import make_together_image_adapter
+
+    resp = FakeResp(
+        status=200,
+        json_data={"data": [{"url": "https://img.example.com/1.png"}]},
+    )
+    monkeypatch.setattr("aiohttp.ClientSession", fake_client_session_factory(resp))
+    adapter = make_together_image_adapter("fake-key")
+    result = await adapter("a cat", "black-forest-labs/FLUX.1-schnell")
+    assert result == "https://img.example.com/1.png"
+
+
+@pytest.mark.asyncio
+async def test_together_image_adapter_error_status(monkeypatch):
+    from src.services.provider_adapters import make_together_image_adapter
+
+    resp = FakeResp(status=500, text_data="Server error")
+    monkeypatch.setattr("aiohttp.ClientSession", fake_client_session_factory(resp))
+    adapter = make_together_image_adapter("fake-key")
+    with pytest.raises(RuntimeError, match="500"):
+        await adapter("a cat")
+
+
+@pytest.mark.asyncio
+async def test_together_image_adapter_empty_data(monkeypatch):
+    from src.services.provider_adapters import make_together_image_adapter
+
+    resp = FakeResp(status=200, json_data={"data": []})
+    monkeypatch.setattr("aiohttp.ClientSession", fake_client_session_factory(resp))
+    adapter = make_together_image_adapter("fake-key")
+    with pytest.raises(RuntimeError, match="empty"):
+        await adapter("a cat")
+
+
+@pytest.mark.asyncio
+async def test_huggingface_image_adapter_warns_no_slash(monkeypatch, caplog):
+    import logging
+
+    from src.services.provider_adapters import make_huggingface_image_adapter
+
+    # Provide an image-like response with content_type
+    class ImageResp(FakeResp):
+        content_type = "image/png"
+
+        def __init__(self):
+            super().__init__(status=200)
+            self._image_bytes = b"\x89PNG\r\n\x1a\n"
+
+        async def read(self):
+            return self._image_bytes
+
+    resp = ImageResp()
+    monkeypatch.setattr("aiohttp.ClientSession", fake_client_session_factory(resp))
+
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        adapter = make_huggingface_image_adapter("fake-token", output_dir=tmpdir)
+        with caplog.at_level(logging.WARNING):
+            result = await adapter("a cat", "noprovider")
+        # Should warn about missing '/' separator
+        assert any("lacks '/' separator" in r.message for r in caplog.records)
+        assert result is not None
+        assert result.endswith(".png")
+
+
+@pytest.mark.asyncio
+async def test_huggingface_image_adapter_error_status(monkeypatch):
+    from src.services.provider_adapters import make_huggingface_image_adapter
+
+    resp = FakeResp(status=403, text_data="Forbidden")
+    monkeypatch.setattr("aiohttp.ClientSession", fake_client_session_factory(resp))
+
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        adapter = make_huggingface_image_adapter("fake-token", output_dir=tmpdir)
+        with pytest.raises(RuntimeError, match="403"):
+            await adapter("a cat")
+
+
+@pytest.mark.asyncio
+async def test_huggingface_image_adapter_non_image_content_type(monkeypatch):
+    from src.services.provider_adapters import make_huggingface_image_adapter
+
+    class JsonResp(FakeResp):
+        content_type = "application/json"
+
+    resp = JsonResp(status=200, json_data={"error": "not an image"})
+    monkeypatch.setattr("aiohttp.ClientSession", fake_client_session_factory(resp))
+
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        adapter = make_huggingface_image_adapter("fake-token", output_dir=tmpdir)
+        with pytest.raises(RuntimeError, match="expected image"):
+            await adapter("a cat")
+
+
+@pytest.mark.asyncio
+async def test_openai_image_adapter_success(monkeypatch):
+    from src.services.provider_adapters import make_openai_image_adapter
+
+    resp = FakeResp(
+        status=200,
+        json_data={"data": [{"url": "https://img.example.com/dalle.png"}]},
+    )
+    monkeypatch.setattr("aiohttp.ClientSession", fake_client_session_factory(resp))
+    adapter = make_openai_image_adapter("fake-key")
+    result = await adapter("a sunset", "dall-e-3")
+    assert result == "https://img.example.com/dalle.png"
+
+
+@pytest.mark.asyncio
+async def test_openai_image_adapter_error_status(monkeypatch):
+    from src.services.provider_adapters import make_openai_image_adapter
+
+    resp = FakeResp(status=401, text_data="Unauthorized")
+    monkeypatch.setattr("aiohttp.ClientSession", fake_client_session_factory(resp))
+    adapter = make_openai_image_adapter("fake-key")
+    with pytest.raises(RuntimeError, match="401"):
+        await adapter("a sunset")
+
+
+@pytest.mark.asyncio
+async def test_openai_image_adapter_empty_data(monkeypatch):
+    from src.services.provider_adapters import make_openai_image_adapter
+
+    resp = FakeResp(status=200, json_data={"data": []})
+    monkeypatch.setattr("aiohttp.ClientSession", fake_client_session_factory(resp))
+    adapter = make_openai_image_adapter("fake-key")
+    with pytest.raises(RuntimeError, match="empty"):
+        await adapter("a sunset")
+
+
+@pytest.mark.asyncio
+async def test_replicate_image_adapter_success(monkeypatch):
+    from src.services.provider_adapters import make_replicate_image_adapter
+
+    # First call: create prediction; second+ calls: poll for status
+    create_resp = FakeResp(
+        status=201,
+        json_data={"urls": {"get": "https://api.replicate.com/v1/predictions/abc123"}},
+    )
+    poll_resp = FakeResp(
+        status=200,
+        json_data={"status": "succeeded", "output": "https://img.example.com/replicate.png"},
+    )
+
+    class SessionWithPoll:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        def post(self, *args, **kwargs):
+            return create_resp
+
+        def get(self, *args, **kwargs):
+            return poll_resp
+
+    monkeypatch.setattr("aiohttp.ClientSession", SessionWithPoll)
+    adapter = make_replicate_image_adapter("fake-token", timeout=10.0)
+    result = await adapter("a cat", "black-forest-labs/flux-schnell")
+    assert result == "https://img.example.com/replicate.png"
+
+
+@pytest.mark.asyncio
+async def test_replicate_image_adapter_create_error(monkeypatch):
+    from src.services.provider_adapters import make_replicate_image_adapter
+
+    resp = FakeResp(status=401, text_data="Unauthorized")
+
+    class SessionSingle:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        def post(self, *args, **kwargs):
+            return resp
+
+    monkeypatch.setattr("aiohttp.ClientSession", SessionSingle)
+    adapter = make_replicate_image_adapter("fake-token")
+    with pytest.raises(RuntimeError, match="401"):
+        await adapter("a cat")
+
+
+@pytest.mark.asyncio
+async def test_replicate_image_adapter_missing_poll_url(monkeypatch):
+    from src.services.provider_adapters import make_replicate_image_adapter
+
+    resp = FakeResp(status=201, json_data={"urls": {}})
+
+    class SessionSingle:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        def post(self, *args, **kwargs):
+            return resp
+
+    monkeypatch.setattr("aiohttp.ClientSession", SessionSingle)
+    adapter = make_replicate_image_adapter("fake-token")
+    with pytest.raises(RuntimeError, match="missing poll URL"):
+        await adapter("a cat")
+
+
+@pytest.mark.asyncio
+async def test_replicate_image_adapter_prediction_failed(monkeypatch):
+    from src.services.provider_adapters import make_replicate_image_adapter
+
+    create_resp = FakeResp(
+        status=201,
+        json_data={"urls": {"get": "https://api.replicate.com/v1/predictions/abc"}},
+    )
+    poll_resp = FakeResp(
+        status=200,
+        json_data={"status": "failed", "error": "model load error"},
+    )
+
+    class SessionWithPoll:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        def post(self, *args, **kwargs):
+            return create_resp
+
+        def get(self, *args, **kwargs):
+            return poll_resp
+
+    monkeypatch.setattr("aiohttp.ClientSession", SessionWithPoll)
+    adapter = make_replicate_image_adapter("fake-token", timeout=10.0)
+    with pytest.raises(RuntimeError, match="model load error"):
+        await adapter("a cat")
+
+
+@pytest.mark.asyncio
+async def test_replicate_image_adapter_prediction_canceled(monkeypatch):
+    from src.services.provider_adapters import make_replicate_image_adapter
+
+    create_resp = FakeResp(
+        status=201,
+        json_data={"urls": {"get": "https://api.replicate.com/v1/predictions/abc"}},
+    )
+    poll_resp = FakeResp(
+        status=200,
+        json_data={"status": "canceled", "error": "user canceled"},
+    )
+
+    class SessionWithPoll:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        def post(self, *args, **kwargs):
+            return create_resp
+
+        def get(self, *args, **kwargs):
+            return poll_resp
+
+    monkeypatch.setattr("aiohttp.ClientSession", SessionWithPoll)
+    adapter = make_replicate_image_adapter("fake-token", timeout=10.0)
+    with pytest.raises(RuntimeError, match="user canceled"):
+        await adapter("a cat")
+
+
+@pytest.mark.asyncio
+async def test_replicate_image_adapter_warns_no_slash(monkeypatch, caplog):
+    import logging
+
+    from src.services.provider_adapters import make_replicate_image_adapter
+
+    create_resp = FakeResp(
+        status=201,
+        json_data={"urls": {"get": "https://api.replicate.com/v1/predictions/abc"}},
+    )
+    poll_resp = FakeResp(
+        status=200,
+        json_data={"status": "succeeded", "output": "https://img.example.com/img.png"},
+    )
+
+    class SessionWithPoll:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        def post(self, *args, **kwargs):
+            return create_resp
+
+        def get(self, *args, **kwargs):
+            return poll_resp
+
+    monkeypatch.setattr("aiohttp.ClientSession", SessionWithPoll)
+    adapter = make_replicate_image_adapter("fake-token", timeout=10.0)
+
+    with caplog.at_level(logging.WARNING):
+        result = await adapter("a cat", "noprovider")
+    assert any("lacks '/' separator" in r.message for r in caplog.records)
+    assert result == "https://img.example.com/img.png"
+
+
+@pytest.mark.asyncio
+async def test_replicate_image_adapter_list_output(monkeypatch):
+    """Replicate adapter returns first item when output is a list."""
+    from src.services.provider_adapters import make_replicate_image_adapter
+
+    create_resp = FakeResp(
+        status=201,
+        json_data={"urls": {"get": "https://api.replicate.com/v1/predictions/abc"}},
+    )
+    poll_resp = FakeResp(
+        status=200,
+        json_data={"status": "succeeded", "output": ["https://img.example.com/1.png", "https://img.example.com/2.png"]},
+    )
+
+    class SessionWithPoll:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        def post(self, *args, **kwargs):
+            return create_resp
+
+        def get(self, *args, **kwargs):
+            return poll_resp
+
+    monkeypatch.setattr("aiohttp.ClientSession", SessionWithPoll)
+    adapter = make_replicate_image_adapter("fake-token", timeout=10.0)
+    result = await adapter("a cat")
+    assert result == "https://img.example.com/1.png"
+
+
+@pytest.mark.asyncio
+async def test_replicate_image_adapter_timeout(monkeypatch):
+    """Replicate adapter raises RuntimeError when prediction times out."""
+
+    from src.services.provider_adapters import make_replicate_image_adapter
+
+    create_resp = FakeResp(
+        status=201,
+        json_data={"urls": {"get": "https://api.replicate.com/v1/predictions/abc"}},
+    )
+    # Always return "starting" status to simulate timeout
+    poll_resp = FakeResp(
+        status=200,
+        json_data={"status": "starting"},
+    )
+
+    class SessionWithPoll:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        def post(self, *args, **kwargs):
+            return create_resp
+
+        def get(self, *args, **kwargs):
+            return poll_resp
+
+    monkeypatch.setattr("aiohttp.ClientSession", SessionWithPoll)
+    adapter = make_replicate_image_adapter("fake-token", timeout=2.0)
+    with pytest.raises(RuntimeError, match="timed out"):
+        await adapter("a cat")
