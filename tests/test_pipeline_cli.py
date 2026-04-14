@@ -1289,3 +1289,337 @@ def test_pipeline_edge_add_remove(tmp_path, cli_init_patch, capsys):
 
     out = capsys.readouterr().out
     assert "Removed edge a -> b" in out
+
+
+# ---------------------------------------------------------------------------
+# Integration tests: fresh DB connection per CLI call (fresh_database=True)
+# ---------------------------------------------------------------------------
+
+
+def _make_db(tmp_path, name):
+    db = Database(str(tmp_path / name))
+    asyncio.run(db.initialize())
+    return db
+
+
+def test_pipeline_add_node_dsl_integration(tmp_path, cli_init_patch, capsys):
+    """DAG pipeline via --node persists valid pipeline_json to SQLite (fresh connection per call)."""
+    db = _make_db(tmp_path, "integ_dag.db")
+    _add_pipeline_prereqs(db)
+
+    with cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS, fresh_database=True):
+        from src.cli.commands.pipeline import run
+
+        run(_ns(
+            pipeline_action="add", name="Integration DAG",
+            prompt_template=None, source=[1001], target=["+100|77"],
+            llm_model=None, image_model=None, publish_mode="moderated",
+            generation_backend="chain", interval=120, inactive=False,
+            node_specs=["react:emoji=fire"], edge=None, node_configs=None,
+        ))
+        add_out = capsys.readouterr().out
+        assert "Added pipeline id=" in add_out
+        pipeline_id = int(add_out.split("id=")[1].split(":")[0].strip())
+
+        run(_ns(pipeline_action="show", id=pipeline_id))
+        assert "Integration DAG" in capsys.readouterr().out
+
+        run(_ns(pipeline_action="graph", id=pipeline_id))
+        graph_out = capsys.readouterr().out
+        assert "source" in graph_out
+        assert "react" in graph_out
+
+    asyncio.run(db.close())
+
+    # Verify via a third fresh connection
+    final_db = _make_db(tmp_path, "integ_dag.db")
+    pipeline = asyncio.run(final_db.repos.content_pipelines.get_by_id(pipeline_id))
+    asyncio.run(final_db.close())
+
+    assert pipeline is not None and pipeline.pipeline_json is not None
+    node_types = {n.type.value for n in pipeline.pipeline_json.nodes}
+    assert {"source", "fetch_messages", "react", "publish"} <= node_types
+
+    edge_froms = {e.from_node for e in pipeline.pipeline_json.edges}
+    for node in pipeline.pipeline_json.nodes:
+        if node.type.value != "publish":
+            assert node.id in edge_froms, f"node {node.id} ({node.type}) has no outgoing edge"
+
+
+def test_pipeline_add_legacy_integration(tmp_path, cli_init_patch, capsys):
+    """Legacy prompt-template pipeline persists all fields to SQLite (fresh connection per call)."""
+    db = _make_db(tmp_path, "integ_legacy.db")
+    _add_pipeline_prereqs(db)
+
+    with cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS, fresh_database=True):
+        from src.cli.commands.pipeline import run
+
+        run(_ns(
+            pipeline_action="add", name="Legacy Integration",
+            prompt_template="Summarize: {source_messages}",
+            source=[1001], target=["+100|77"],
+            llm_model=None, image_model=None, publish_mode="auto",
+            generation_backend="chain", interval=30, inactive=False,
+            node_specs=None, edge=None, node_configs=None,
+        ))
+        add_out = capsys.readouterr().out
+        assert "Added pipeline id=" in add_out
+        pipeline_id = int(add_out.split("id=")[1].split(":")[0].strip())
+
+        run(_ns(pipeline_action="list"))
+        assert "Legacy Integration" in capsys.readouterr().out
+
+    asyncio.run(db.close())
+
+    final_db = _make_db(tmp_path, "integ_legacy.db")
+    pipeline = asyncio.run(final_db.repos.content_pipelines.get_by_id(pipeline_id))
+    sources = asyncio.run(final_db.repos.content_pipelines.list_sources(pipeline_id))
+    targets = asyncio.run(final_db.repos.content_pipelines.list_targets(pipeline_id))
+    asyncio.run(final_db.close())
+
+    assert pipeline.prompt_template == "Summarize: {source_messages}"
+    assert pipeline.publish_mode.value == "auto"
+    assert pipeline.generate_interval_minutes == 30
+    assert pipeline.is_active is True
+    assert len(sources) == 1 and sources[0].channel_id == 1001
+    assert len(targets) == 1 and targets[0].dialog_id == 77
+
+
+# ---------------------------------------------------------------------------
+# pipeline add – missing required fields validation (legacy mode)
+# ---------------------------------------------------------------------------
+
+
+def test_pipeline_add_legacy_requires_source(tmp_path, cli_init_patch, capsys):
+    """Legacy mode without --source prints error."""
+    db_path = str(tmp_path / "cli_pipeline_add_no_source.db")
+    db = Database(db_path)
+    asyncio.run(db.initialize())
+
+    with cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS):
+        from src.cli.commands.pipeline import run
+
+        run(
+            _ns(
+                pipeline_action="add",
+                name="NoSource",
+                prompt_template="Summarize {source_messages}",
+                source=None,
+                target=["+100|77"],
+                llm_model=None,
+                image_model=None,
+                publish_mode="moderated",
+                generation_backend="chain",
+                interval=60,
+                inactive=False,
+                node_specs=None,
+                edge=None,
+                node_configs=None,
+            )
+        )
+
+    asyncio.run(db.close())
+    out = capsys.readouterr().out
+    assert "--source is required" in out
+
+
+def test_pipeline_add_legacy_requires_target(tmp_path, cli_init_patch, capsys):
+    """Legacy mode without --target prints error."""
+    db_path = str(tmp_path / "cli_pipeline_add_no_target.db")
+    db = Database(db_path)
+    asyncio.run(db.initialize())
+    _add_pipeline_prereqs(db)
+
+    with cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS):
+        from src.cli.commands.pipeline import run
+
+        run(
+            _ns(
+                pipeline_action="add",
+                name="NoTarget",
+                prompt_template="Summarize {source_messages}",
+                source=[1001],
+                target=None,
+                llm_model=None,
+                image_model=None,
+                publish_mode="moderated",
+                generation_backend="chain",
+                interval=60,
+                inactive=False,
+                node_specs=None,
+                edge=None,
+                node_configs=None,
+            )
+        )
+
+    asyncio.run(db.close())
+    out = capsys.readouterr().out
+    assert "--target is required" in out
+
+
+# ---------------------------------------------------------------------------
+# pipeline add – --inactive flag
+# ---------------------------------------------------------------------------
+
+
+def test_pipeline_add_inactive_flag(tmp_path, cli_init_patch, capsys):
+    """--inactive creates a pipeline with is_active=False."""
+    db_path = str(tmp_path / "cli_pipeline_add_inactive.db")
+    db = Database(db_path)
+    asyncio.run(db.initialize())
+    _add_pipeline_prereqs(db)
+
+    with cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS):
+        from src.cli.commands.pipeline import run
+
+        run(
+            _ns(
+                pipeline_action="add",
+                name="InactivePipeline",
+                prompt_template="Summarize {source_messages}",
+                source=[1001],
+                target=["+100|77"],
+                llm_model=None,
+                image_model=None,
+                publish_mode="moderated",
+                generation_backend="chain",
+                interval=60,
+                inactive=True,
+                node_specs=None,
+                edge=None,
+                node_configs=None,
+            )
+        )
+
+    out = capsys.readouterr().out
+    assert "Added pipeline id=" in out
+    assert "InactivePipeline" in out
+
+    asyncio.run(db.close())
+    verify_db = Database(db_path)
+    asyncio.run(verify_db.initialize())
+    pipelines = asyncio.run(verify_db.repos.content_pipelines.get_all())
+    asyncio.run(verify_db.close())
+    assert len(pipelines) == 1
+    assert pipelines[0].is_active is False
+
+
+# ---------------------------------------------------------------------------
+# pipeline add – --run-after flag
+# ---------------------------------------------------------------------------
+
+
+def test_pipeline_add_run_after(tmp_path, cli_init_patch, capsys):
+    """--run-after enqueues a pipeline run immediately after creation."""
+    db_path = str(tmp_path / "cli_pipeline_add_run_after.db")
+    db = Database(db_path)
+    asyncio.run(db.initialize())
+    _add_pipeline_prereqs(db)
+
+    enqueued = {}
+
+    async def fake_enqueue(pipeline_id, since_hours=24):
+        enqueued["pipeline_id"] = pipeline_id
+        enqueued["since_hours"] = since_hours
+
+    with (
+        cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS),
+        patch("src.services.task_enqueuer.TaskEnqueuer") as mock_enqueuer,
+    ):
+        mock_enqueuer.return_value.enqueue_pipeline_run = fake_enqueue
+
+        from src.cli.commands.pipeline import run
+
+        run(
+            _ns(
+                pipeline_action="add",
+                name="RunAfterPipeline",
+                prompt_template="Summarize {source_messages}",
+                source=[1001],
+                target=["+100|77"],
+                llm_model=None,
+                image_model=None,
+                publish_mode="moderated",
+                generation_backend="chain",
+                interval=60,
+                inactive=False,
+                node_specs=None,
+                edge=None,
+                node_configs=None,
+                run_after=True,
+                since_value=12,
+                since_unit="h",
+            )
+        )
+
+    asyncio.run(db.close())
+    out = capsys.readouterr().out
+    assert "Added pipeline id=" in out
+    assert "Enqueued pipeline run" in out
+    assert enqueued.get("pipeline_id") is not None
+    assert enqueued["since_hours"] == 12
+
+
+# ---------------------------------------------------------------------------
+# pipeline add – --json-file import
+# ---------------------------------------------------------------------------
+
+
+def test_pipeline_add_json_file(tmp_path, cli_init_patch, capsys):
+    """--json-file imports a DAG pipeline from a JSON file."""
+    import json
+
+    db_path = str(tmp_path / "cli_pipeline_add_json.db")
+    db = Database(db_path)
+    asyncio.run(db.initialize())
+    _add_pipeline_prereqs(db)
+
+    graph_data = {
+        "nodes": [
+            {"id": "s", "type": "source", "name": "src", "config": {}},
+            {"id": "f", "type": "fetch_messages", "name": "fetch", "config": {}},
+            {"id": "p", "type": "publish", "name": "pub", "config": {}},
+        ],
+        "edges": [
+            {"from_node": "s", "to_node": "f"},
+            {"from_node": "f", "to_node": "p"},
+        ],
+    }
+    json_path = str(tmp_path / "graph.json")
+    with open(json_path, "w") as f:
+        json.dump(graph_data, f)
+
+    with cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS):
+        from src.cli.commands.pipeline import run
+
+        run(
+            _ns(
+                pipeline_action="add",
+                name="JsonFilePipeline",
+                prompt_template=None,
+                source=[1001],
+                target=["+100|77"],
+                llm_model=None,
+                image_model=None,
+                publish_mode="moderated",
+                generation_backend="chain",
+                interval=60,
+                inactive=False,
+                json_file=json_path,
+                node_specs=None,
+                edge=None,
+                node_configs=None,
+            )
+        )
+
+    asyncio.run(db.close())
+    out = capsys.readouterr().out
+    assert "Added pipeline id=" in out
+    assert "JsonFilePipeline" in out
+
+    verify_db = Database(db_path)
+    asyncio.run(verify_db.initialize())
+    pipelines = asyncio.run(verify_db.repos.content_pipelines.get_all())
+    asyncio.run(verify_db.close())
+    assert len(pipelines) == 1
+    assert pipelines[0].pipeline_json is not None

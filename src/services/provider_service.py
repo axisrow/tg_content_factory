@@ -58,6 +58,17 @@ class AgentProviderService:
         if openai_key:
             self.register_provider("openai", self._make_openai_provider(openai_key))
 
+        # optional Z.AI provider
+        zai_key = os.environ.get("ZAI_API_KEY")
+        if zai_key and "zai" not in self._registry:
+            try:
+                from src.agent.provider_registry import ZAI_DEFAULT_BASE_URL
+                from src.services.provider_adapters import make_anthropic_adapter
+
+                self.register_provider("zai", make_anthropic_adapter(zai_key, base_url=ZAI_DEFAULT_BASE_URL))
+            except Exception:
+                logger.debug("Failed to register zai adapter", exc_info=True)
+
         # optional Context7 provider (user may supply CONTEXT7_API_KEY)
         context7_key = os.environ.get("CONTEXT7_API_KEY") or os.environ.get("CTX7_API_KEY")
         if context7_key:
@@ -246,8 +257,8 @@ class AgentProviderService:
         if provider == "zai":
             from src.agent.provider_registry import ZAI_DEFAULT_BASE_URL
 
-            base_url = (cfg.plain_fields.get("base_url", "") or "").strip()
-            return make_anthropic_adapter(api_key, base_url=base_url or ZAI_DEFAULT_BASE_URL)
+            base_url = (cfg.plain_fields.get("base_url", "") or "").strip() or ZAI_DEFAULT_BASE_URL
+            return make_anthropic_adapter(api_key, base_url=base_url)
 
         if provider == "google_genai":
             # Google GenAI also needs a different request schema.
@@ -351,7 +362,9 @@ class AgentProviderService:
         the model preset to `name`.
         """
         if not name:
-            return self._registry["default"]
+            # Return the first non-default registered provider; fall back to stub.
+            real = next((fn for n, fn in self._registry.items() if n != "default"), None)
+            return real if real is not None else self._registry["default"]
         if name in self._registry:
             return self._registry[name]
         lower = name.lower() if isinstance(name, str) else ""
