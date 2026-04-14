@@ -198,3 +198,130 @@ async def test_filter_already_decided(tmp_path):
         assert "msg=rename_already_decided" in second.headers["location"]
     finally:
         await db.close()
+
+
+# ---------- rename_events_page ----------
+
+
+@pytest.mark.asyncio
+async def test_rename_events_page_renders(tmp_path):
+    """Test rename events page renders with events list."""
+    app, db = await _build_app_with_db(tmp_path)
+    try:
+        await db.create_rename_event(-100300, "OldName", "NewName", "old_un", "new_un")
+        transport = ASGITransport(app=app)
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            follow_redirects=True,
+            headers=_auth_headers(),
+        ) as c:
+            resp = await c.get("/channels/renames")
+        assert resp.status_code == 200
+        assert "OldName" in resp.text or "NewName" in resp.text or "renames" in resp.text.lower()
+    finally:
+        await db.close()
+
+
+# ---------- rename_events_count ----------
+
+
+@pytest.mark.asyncio
+async def test_rename_events_count_zero(tmp_path):
+    """Test rename events count returns empty when zero."""
+    app, db = await _build_app_with_db(tmp_path)
+    try:
+        transport = ASGITransport(app=app)
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            headers=_auth_headers(),
+        ) as c:
+            resp = await c.get("/channels/renames/count")
+        assert resp.status_code == 200
+        assert resp.text == ""
+    finally:
+        await db.close()
+
+
+@pytest.mark.asyncio
+async def test_rename_events_count_nonzero(tmp_path):
+    """Test rename events count returns badge when nonzero."""
+    app, db = await _build_app_with_db(tmp_path)
+    try:
+        await db.create_rename_event(-100301, "A", "B", "a", "b")
+        transport = ASGITransport(app=app)
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            headers=_auth_headers(),
+        ) as c:
+            resp = await c.get("/channels/renames/count")
+        assert resp.status_code == 200
+        assert "badge" in resp.text
+    finally:
+        await db.close()
+
+
+# ---------- _rename_required_flags unit test ----------
+
+
+def test_rename_required_flags_title_and_username():
+    """Both title and username changed."""
+    from src.web.routes.channel_renames import _rename_required_flags
+    flags = _rename_required_flags({
+        "old_title": "A", "new_title": "B",
+        "old_username": "a", "new_username": "b",
+    })
+    assert flags == {"title_changed", "username_changed"}
+
+
+def test_rename_required_flags_title_only():
+    """Only title changed."""
+    from src.web.routes.channel_renames import _rename_required_flags
+    flags = _rename_required_flags({
+        "old_title": "A", "new_title": "B",
+        "old_username": "same", "new_username": "same",
+    })
+    assert flags == {"title_changed"}
+
+
+def test_rename_required_flags_username_only():
+    """Only username changed."""
+    from src.web.routes.channel_renames import _rename_required_flags
+    flags = _rename_required_flags({
+        "old_title": "same", "new_title": "same",
+        "old_username": "a", "new_username": "b",
+    })
+    assert flags == {"username_changed"}
+
+
+def test_rename_required_flags_no_change():
+    """No change detected — fallback to username_changed."""
+    from src.web.routes.channel_renames import _rename_required_flags
+    flags = _rename_required_flags({
+        "old_title": "same", "new_title": "same",
+        "old_username": "same", "new_username": "same",
+    })
+    assert flags == {"username_changed"}
+
+
+# ---------- keep endpoint — channel removed ----------
+
+
+@pytest.mark.asyncio
+async def test_keep_channel_removed(tmp_path):
+    """Channel was deleted while event was pending — event closed."""
+    app, db = await _build_app_with_db(tmp_path)
+    try:
+        # Create event for a channel that doesn't exist in DB
+        event_id = await db.create_rename_event(-100999, "Old", "New", "old", "new")
+
+        resp = await _post(app, f"/channels/renames/{event_id}/keep")
+        assert resp.status_code == 303
+        assert "msg=rename_already_decided" in resp.headers["location"]
+
+        event = await db.get_rename_event(event_id)
+        assert event["decision"] == "keep"
+    finally:
+        await db.close()

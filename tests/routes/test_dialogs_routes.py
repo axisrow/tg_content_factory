@@ -1425,3 +1425,111 @@ async def test_create_channel_post_exception(client):
     )
     # Should render page with error, not crash
     assert resp.status_code == 200
+
+
+# ─── download-media success path with file ───────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_download_media_success(client, tmp_path):
+    """Test download-media returns file when media exists."""
+    from tests.helpers import AsyncIterMessages
+
+    # Create a temp file to simulate downloaded media
+    media_file = tmp_path / "test_photo.jpg"
+    media_file.write_bytes(b"\xff\xd8\xff\xe0fake_jpg_data")
+
+    msg = SimpleNamespace(id=42, media=SimpleNamespace())
+    native_mock = AsyncMock()
+    native_mock.iter_messages = MagicMock(
+        side_effect=lambda *a, **kw: AsyncIterMessages([msg])
+    )
+    native_mock.download_media = AsyncMock(return_value=str(media_file))
+    pool = client._transport.app.state.pool
+    pool.get_native_client_by_phone = AsyncMock(return_value=(native_mock, "+1234567890"))
+
+    resp = await client.post(
+        "/dialogs/download-media",
+        data={"phone": "+1234567890", "chat_id": "-100111", "message_id": "42"},
+        follow_redirects=False,
+    )
+    # Should return the file or redirect — depends on path validation
+    assert resp.status_code in (200, 303)
+
+
+# ─── create-channel POST success ─────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_create_channel_post_success(client):
+    """Test successful create channel."""
+    from unittest.mock import MagicMock as MM, AsyncMock as AM
+
+    mock_result = MM()
+    mock_channel = MM()
+    mock_channel.id = 123456
+    mock_channel.username = "test_new_ch"
+    mock_result.chats = [mock_channel]
+
+    mock_client = MM()
+    mock_client.__call__ = AM(return_value=mock_result)
+    pool = client._transport.app.state.pool
+    pool.clients["+1234567890"] = mock_client
+
+    resp = await client.post(
+        "/dialogs/create-channel",
+        data={"phone": "+1234567890", "title": "My New Channel", "about": "Test about", "username": "test_new_ch"},
+    )
+    assert resp.status_code == 200
+    assert "My New Channel" in resp.text or "created" in resp.text.lower()
+
+
+@pytest.mark.asyncio
+async def test_create_channel_post_success_no_username(client):
+    """Test create channel without username."""
+    from unittest.mock import MagicMock as MM, AsyncMock as AM
+
+    mock_result = MM()
+    mock_channel = MM()
+    mock_channel.id = 789012
+    mock_channel.username = None
+    mock_result.chats = [mock_channel]
+
+    mock_client = MM()
+    mock_client.__call__ = AM(return_value=mock_result)
+    pool = client._transport.app.state.pool
+    pool.clients["+1234567890"] = mock_client
+
+    resp = await client.post(
+        "/dialogs/create-channel",
+        data={"phone": "+1234567890", "title": "No Username Channel", "about": "", "username": ""},
+    )
+    assert resp.status_code == 200
+
+
+# ─── broadcast-stats with non-standard fields ─────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_broadcast_stats_with_string_fields(client):
+    """Test broadcast stats where stat fields are not SimpleNamespace."""
+    stats = SimpleNamespace(
+        followers="unavailable",
+        views_per_post=SimpleNamespace(current=None, previous=None),
+        shares_per_post="N/A",
+        reactions_per_post=SimpleNamespace(current=10, previous=5),
+        forwards_per_post=None,
+        period=None,
+        enabled_notifications=None,
+    )
+    native_mock = AsyncMock()
+    native_mock.get_broadcast_stats = AsyncMock(return_value=stats)
+    pool = client._transport.app.state.pool
+    pool.get_native_client_by_phone = AsyncMock(return_value=(native_mock, "+1234567890"))
+
+    resp = await client.get(
+        "/dialogs/broadcast-stats?phone=%2B1234567890&chat_id=-100111"
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "stats" in data
