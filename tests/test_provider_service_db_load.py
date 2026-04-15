@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.services.provider_service import AgentProviderService
+from src.services.provider_service import AgentProviderService, build_provider_service
 
 
 @pytest.fixture
@@ -151,6 +151,16 @@ async def test_reload_db_providers_clears_and_reloads(mock_db, mock_config):
 
     assert added == 0
     assert "groq" not in svc._registry
+
+
+@pytest.mark.asyncio
+async def test_build_provider_service_loads_db_providers(mock_db, mock_config):
+    """Async helper should eagerly load DB-backed providers when config is available."""
+    with patch("src.services.provider_service.AgentProviderService.load_db_providers", new=AsyncMock()) as mock_load:
+        svc = await build_provider_service(mock_db, mock_config)
+
+    assert isinstance(svc, AgentProviderService)
+    mock_load.assert_awaited_once()
 
 
 @pytest.mark.asyncio

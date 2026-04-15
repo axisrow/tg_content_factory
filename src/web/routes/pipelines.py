@@ -478,8 +478,10 @@ async def generate_stream(
     provider_callable = provider_service.get_provider_callable(pipeline.llm_model)
 
     from src.services.generation_service import GenerationService
+    from src.services.pipeline_service import PipelineService
 
     gen = GenerationService(engine, provider_callable=provider_callable)
+    scope = await PipelineService(db).get_retrieval_scope(pipeline)
 
     # persist run
     run_id = await db.repos.generation_runs.create_run(pipeline_id, pipeline.prompt_template)
@@ -488,17 +490,16 @@ async def generate_stream(
     except Exception:
         await db.repos.generation_runs.set_status(run_id, "failed")
         raise
-    retrieval_query = pipeline.prompt_template or pipeline.name or ""
-
     async def event_gen():
         last = None
         try:
             async for update in gen.generate_stream(
-                query=retrieval_query,
+                query=scope.query,
                 prompt_template=pipeline.prompt_template,
                 model=(model or pipeline.llm_model),
                 max_tokens=max_tokens,
                 temperature=temperature,
+                channel_id=scope.channel_id,
             ):
                 last = update
                 data = {
@@ -548,22 +549,24 @@ async def generate_pipeline(
     provider_callable = provider_service.get_provider_callable(pipeline.llm_model)
 
     from src.services.generation_service import GenerationService
+    from src.services.pipeline_service import PipelineService
 
     gen = GenerationService(engine, provider_callable=provider_callable)
+    scope = await PipelineService(db).get_retrieval_scope(pipeline)
     run_id = await db.repos.generation_runs.create_run(pipeline_id, pipeline.prompt_template)
     try:
         await db.repos.generation_runs.set_status(run_id, "running")
     except Exception:
         await db.repos.generation_runs.set_status(run_id, "failed")
         raise
-    retrieval_query = pipeline.prompt_template or pipeline.name or ""
     try:
         result = await gen.generate(
-            query=retrieval_query,
+            query=scope.query,
             prompt_template=pipeline.prompt_template,
             model=(model or pipeline.llm_model),
             max_tokens=max_tokens,
             temperature=temperature,
+            channel_id=scope.channel_id,
         )
         await db.repos.generation_runs.save_result(
             run_id, result.get("generated_text", ""), {"citations": result.get("citations", [])}
@@ -830,7 +833,7 @@ async def ai_edit_pipeline(request: Request, pipeline_id: int):
         instruction = body.get("instruction", "").strip()
         if not instruction:
             return JSONResponse(content={"ok": False, "error": "instruction is required"}, status_code=400)
-        result = await svc.edit_via_llm(pipeline_id, instruction, db)
+        result = await svc.edit_via_llm(pipeline_id, instruction, db, config=request.app.state.config)
         return JSONResponse(content=result)
     except Exception as exc:
         return JSONResponse(content={"ok": False, "error": str(exc)}, status_code=500)

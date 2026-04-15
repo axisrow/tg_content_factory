@@ -234,6 +234,7 @@ def build_deepagents_tools(db, client_pool=None, config=None) -> list[Callable]:
             from src.search.engine import SearchEngine
             from src.services.content_generation_service import ContentGenerationService
             from src.services.pipeline_service import PipelineService
+            from src.services.provider_service import build_provider_service
 
             svc = PipelineService(db)
             pipeline = _run_sync("run_pipeline_get", lambda: svc.get(pipeline_id))
@@ -241,7 +242,14 @@ def build_deepagents_tools(db, client_pool=None, config=None) -> list[Callable]:
                 return f"Пайплайн id={pipeline_id} не найден."
             engine = SearchEngine(db, config=config)
             image_service = _build_image_service_sync()
-            gen_svc = ContentGenerationService(db, engine, image_service=image_service)
+            provider_service = _run_sync("run_pipeline_provider_service", lambda: build_provider_service(db, config))
+            gen_svc = ContentGenerationService(
+                db,
+                engine,
+                config=config,
+                image_service=image_service,
+                provider_service=provider_service,
+            )
             run = _run_sync("run_pipeline", lambda: gen_svc.generate(pipeline))
             preview = (run.generated_text or "")[:300]
             return f"Генерация завершена (run id={run.id}). Превью:\n{preview}"

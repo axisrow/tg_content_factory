@@ -367,6 +367,7 @@ def register(db, client_pool, embedding_service, **kwargs):
             from src.search.engine import SearchEngine
             from src.services.content_generation_service import ContentGenerationService
             from src.services.pipeline_service import PipelineService
+            from src.services.provider_service import build_provider_service
 
             svc = PipelineService(db)
             pipeline = await svc.get(int(pipeline_id))
@@ -377,7 +378,14 @@ def register(db, client_pool, embedding_service, **kwargs):
 
             engine = SearchEngine(db, config=config)
             image_service = await _build_image_service()
-            gen_svc = ContentGenerationService(db, engine, image_service=image_service)
+            provider_service = await build_provider_service(db, config)
+            gen_svc = ContentGenerationService(
+                db,
+                engine,
+                config=config,
+                image_service=image_service,
+                provider_service=provider_service,
+            )
             run = await gen_svc.generate(pipeline)
 
             preview = (run.generated_text or "")[:500]
@@ -410,24 +418,32 @@ def register(db, client_pool, embedding_service, **kwargs):
             from src.search.engine import SearchEngine
             from src.services.generation_service import GenerationService
             from src.services.pipeline_service import PipelineService
-            from src.services.provider_service import AgentProviderService
+            from src.services.provider_service import build_provider_service
 
             engine = SearchEngine(db, config=config)
             prompt_template = None
             llm_model = None
+            channel_id = None
             if pipeline_id is not None:
                 svc = PipelineService(db)
                 pipeline = await svc.get(int(pipeline_id))
                 if pipeline is not None:
                     prompt_template = pipeline.prompt_template
                     llm_model = pipeline.llm_model
+                    scope = await svc.get_retrieval_scope(pipeline)
+                    channel_id = scope.channel_id
                     if not query:
-                        query = prompt_template or pipeline.name or ""
-            provider_service = AgentProviderService(db)
+                        query = scope.query
+            provider_service = await build_provider_service(db, config)
             provider_callable = provider_service.get_provider_callable(llm_model)
 
             gen = GenerationService(engine, provider_callable=provider_callable)
-            result = await gen.generate(query=query, limit=limit, prompt_template=prompt_template)
+            result = await gen.generate(
+                query=query,
+                limit=limit,
+                prompt_template=prompt_template,
+                channel_id=channel_id,
+            )
             text = result.get("generated_text", "")
             citations = result.get("citations", [])
             content = f"Generated draft:\n\n{text}\n\nCitations:\n" + "\n".join(
@@ -771,7 +787,7 @@ def register(db, client_pool, embedding_service, **kwargs):
             from src.services.pipeline_service import PipelineService
 
             svc = PipelineService(db)
-            result = await svc.edit_via_llm(int(pipeline_id), instruction, db)
+            result = await svc.edit_via_llm(int(pipeline_id), instruction, db, config=config)
             if result["ok"]:
                 preview = _json.dumps(result["pipeline_json"], ensure_ascii=False, indent=2)[:800]
                 return _text_response(

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import logging
 import os
 from typing import Any, Awaitable, Callable, Dict, Optional
@@ -19,6 +20,19 @@ _OPENAI_STYLE_BASE_URLS: Dict[str, str] = {
     "fireworks": "https://api.fireworks.ai/inference/v1",
     "mistralai": "https://api.mistral.ai/v1",
 }
+
+
+async def build_provider_service(
+    db: object | None = None,
+    config: object | None = None,
+) -> "AgentProviderService":
+    """Create AgentProviderService and eagerly load DB-backed providers when possible."""
+    svc = AgentProviderService(db, config)
+    if db is not None and config is not None:
+        maybe_awaitable = svc.load_db_providers()
+        if inspect.isawaitable(maybe_awaitable):
+            await maybe_awaitable
+    return svc
 
 
 class AgentProviderService:

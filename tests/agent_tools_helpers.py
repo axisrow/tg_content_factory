@@ -1,11 +1,23 @@
 """Shared helpers for agent tools tests."""
 from __future__ import annotations
 
-from unittest.mock import patch
+from unittest.mock import AsyncMock, MagicMock, patch
+
+
+def _normalize_get_setting_mock(mock_db) -> None:
+    """Default unconfigured Database.get_setting() mocks to None."""
+    get_setting = getattr(mock_db, "get_setting", None)
+    if not isinstance(get_setting, AsyncMock):
+        return
+    if get_setting.side_effect is not None:
+        return
+    if isinstance(get_setting.return_value, (AsyncMock, MagicMock)):
+        get_setting.return_value = None
 
 
 def _get_tool_handlers(mock_db, client_pool=None, config=None, **kwargs):
     """Build MCP tools and return their handlers keyed by name."""
+    _normalize_get_setting_mock(mock_db)
     captured_tools = []
     with patch(
         "src.agent.tools.create_sdk_mcp_server",
