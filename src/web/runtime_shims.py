@@ -90,7 +90,11 @@ class SnapshotSchedulerManager:
         self._interval_minutes = int(payload.get("interval_minutes", self._default_interval_minutes))
 
     async def start(self) -> None:
-        raise RuntimeError("Scheduler runtime is only available in the worker process.")
+        # Web mode cannot run the live scheduler loop; it only persists the
+        # `scheduler_autostart` setting via the route. The worker picks that up
+        # on next startup. We return silently so the web route can continue
+        # without crashing; callers must persist the setting themselves.
+        return None
 
     async def stop(self) -> None:
         return None
@@ -103,3 +107,15 @@ class SnapshotSchedulerManager:
 
     def get_all_jobs_next_run(self) -> dict[str, object]:
         return {}
+
+    async def trigger_warm_background(self) -> None:
+        # Live warm-dialogs runs only inside the worker process. In web mode
+        # the worker will pick up scheduled work on its own cadence, so this
+        # is a no-op here (the route response still redirects to /scheduler).
+        return None
+
+    async def sync_job_state(self, job_id: str, *, enabled: bool) -> None:
+        return None
+
+    async def set_interval(self, minutes: int) -> None:
+        return None

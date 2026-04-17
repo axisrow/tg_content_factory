@@ -293,7 +293,7 @@ async def get_participants(request: Request):
     limit = int(limit_str) if limit_str and limit_str.isdigit() else 200
     if not phone or not chat_id:
         return JSONResponse({"error": "phone and chat_id required"}, status_code=400)
-    scope = f"dialogs_participants:{phone}:{chat_id}:{search}:{limit}"
+    scope = f"dialogs_participants:{phone}:{chat_id}"
     snapshot = await deps.get_db(request).repos.runtime_snapshots.get_snapshot("dialogs_participants", scope)
     if snapshot is not None:
         return JSONResponse(snapshot.payload)

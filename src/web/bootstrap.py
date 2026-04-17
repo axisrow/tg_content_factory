@@ -293,6 +293,9 @@ async def start_container(container: AppContainer) -> None:
     gr_recovered = await container.db.repos.generation_runs.reset_running_on_startup()
     if gr_recovered:
         logger.warning("Reset %d stuck generation_runs to 'failed' on startup", gr_recovered)
+    tc_recovered = await container.db.repos.telegram_commands.reset_running_on_startup()
+    if tc_recovered:
+        logger.warning("Reset %d stuck telegram_commands from RUNNING to PENDING on startup", tc_recovered)
     logger.info("startup: recovery done (%.1fs)", time.monotonic() - t_start)
     if _is_dev:
         t1 = time.monotonic()

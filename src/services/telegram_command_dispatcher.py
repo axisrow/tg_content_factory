@@ -59,6 +59,11 @@ class TelegramCommandDispatcher:
             try:
                 result = await self._dispatch(command.command_type, command.payload)
             except asyncio.CancelledError:
+                await self._db.repos.telegram_commands.update_command(
+                    command.id,
+                    status=TelegramCommandStatus.PENDING,
+                    error="cancelled while running; reset for retry",
+                )
                 raise
             except Exception as exc:
                 logger.exception("Telegram command failed: id=%s type=%s", command.id, command.command_type)
@@ -217,10 +222,7 @@ class TelegramCommandDispatcher:
                 }
                 for p in participants
             ]
-            scope = (
-                "dialogs_participants:"
-                f"{phone}:{payload['chat_id']}:{payload.get('search', '')}:{payload.get('limit', 200)}"
-            )
+            scope = f"dialogs_participants:{phone}:{payload['chat_id']}"
             await self._db.repos.runtime_snapshots.upsert_snapshot(
                 RuntimeSnapshot(
                     snapshot_type="dialogs_participants",

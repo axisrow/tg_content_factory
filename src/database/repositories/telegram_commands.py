@@ -72,6 +72,52 @@ class TelegramCommandsRepository:
         rows = await cur.fetchall()
         return [self._to_command(row) for row in rows]
 
+    async def find_active_by_type(
+        self, command_type: str, *, payload: dict[str, Any] | None = None
+    ) -> TelegramCommand | None:
+        """Return the oldest PENDING/RUNNING command of the given type (and payload, if provided)."""
+        cur = await self._db.execute(
+            """
+            SELECT * FROM telegram_commands
+            WHERE command_type = ? AND status IN (?, ?)
+            ORDER BY id ASC
+            """,
+            (
+                command_type,
+                TelegramCommandStatus.PENDING.value,
+                TelegramCommandStatus.RUNNING.value,
+            ),
+        )
+        rows = await cur.fetchall()
+        if not rows:
+            return None
+        if payload is None:
+            return self._to_command(rows[0])
+        for row in rows:
+            row_payload = _parse_json(row["payload"]) or {}
+            if row_payload == payload:
+                return self._to_command(row)
+        return None
+
+    async def reset_running_on_startup(self) -> int:
+        """Move RUNNING commands back to PENDING on worker startup.
+
+        Commands can be left in RUNNING if the worker was killed mid-dispatch
+        (asyncio.CancelledError re-raise, SIGTERM, etc). Without this reset
+        they would stay claimed forever, since claim_next_command only picks
+        PENDING rows.
+        """
+        cur = await self._db.execute(
+            """
+            UPDATE telegram_commands
+            SET status = ?, started_at = NULL
+            WHERE status = ?
+            """,
+            (TelegramCommandStatus.PENDING.value, TelegramCommandStatus.RUNNING.value),
+        )
+        await self._db.commit()
+        return cur.rowcount or 0
+
     async def claim_next_command(self) -> TelegramCommand | None:
         now = datetime.now(timezone.utc).isoformat()
         await self._db.execute("BEGIN IMMEDIATE")
