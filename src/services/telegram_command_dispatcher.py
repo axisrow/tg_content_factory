@@ -562,7 +562,10 @@ class TelegramCommandDispatcher:
             except Exception as exc:
                 logger.warning("accounts.toggle: failed to add client %s: %s", account.phone, exc)
         else:
-            await self._pool.remove_client(account.phone)
+            try:
+                await self._pool.remove_client(account.phone)
+            except Exception as exc:
+                logger.warning("accounts.toggle: failed to remove client %s: %s", account.phone, exc)
         return {"account_id": account_id, "is_active": new_active}
 
     async def _handle_accounts_delete(self, payload: dict[str, Any]) -> dict[str, Any]:
