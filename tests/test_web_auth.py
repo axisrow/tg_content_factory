@@ -447,4 +447,4 @@ class TestVerifyCode:
 
         assert response.status_code == 303
         commands = await db.repos.telegram_commands.list_commands(limit=1)
-        assert commands[0].payload["is_primary"] is False
+        assert "is_primary" not in commands[0].payload  # worker recomputes from fresh DB state

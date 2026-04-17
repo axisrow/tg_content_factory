@@ -170,8 +170,7 @@ async def verify_code(
     db = request.app.state.db
 
     existing = await db.get_accounts()
-    is_primary = len(existing) == 0
-    # Preserve is_primary decision in payload for deterministic worker behavior if needed later.
+    _ = len(existing) == 0  # is_primary computed by worker from fresh DB state
     command_id = await deps.telegram_command_service(request).enqueue(
         "auth.verify_code",
         payload={
@@ -182,7 +181,6 @@ async def verify_code(
             "code_type": code_type or "",
             "next_type": next_type or "",
             "timeout": timeout or "",
-            "is_primary": is_primary,
         },
         requested_by="web:auth.verify_code",
     )

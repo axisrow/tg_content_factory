@@ -144,11 +144,13 @@ class TelegramCommandDispatcher:
         if self._auth is None or not self._auth.is_configured:
             raise RuntimeError("auth_not_configured")
         phone = str(payload["phone"]).strip()
+        password_2fa = str(payload.get("password_2fa", "")).strip() or None
+        payload["password_2fa"] = ""
         session_string = await self._auth.verify_code(
             phone,
             str(payload["code"]),
             str(payload["phone_code_hash"]),
-            str(payload["password_2fa"]).strip() or None,
+            password_2fa,
         )
         existing = await self._db.get_accounts()
         account = Account(

@@ -337,7 +337,7 @@ async def test_verify_code_sets_primary(client):
         follow_redirects=False,
     )
     commands = await db.repos.telegram_commands.list_commands(limit=1)
-    assert commands[0].payload["is_primary"] is False
+    assert "is_primary" not in commands[0].payload  # worker recomputes from fresh DB state
 
 
 @pytest.mark.asyncio
