@@ -4,10 +4,14 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from telethon import TelegramClient
 
+from src.config import AppConfig, DatabaseConfig
 from src.database import Database
 from src.search.engine import SearchEngine
-from src.web.bootstrap import start_container
+from src.web.bootstrap import build_web_container, start_container
+from src.web.log_handler import LogBuffer
+from src.web.runtime_shims import SnapshotClientPool
 
 
 def _make_container(db: Database) -> MagicMock:
@@ -165,3 +169,37 @@ async def test_search_engine_accepts_none_pool(tmp_path):
         assert quota is None
     finally:
         await db.close()
+
+
+@pytest.mark.asyncio
+async def test_build_web_container_does_not_connect_telethon(tmp_path, monkeypatch):
+    """Regression for #444 Test Plan: web startup without internet must not
+    initiate a single Telegram connect/reconnect.
+
+    We verify two things:
+    1. The web container uses SnapshotClientPool, not live ClientPool.
+    2. No TelegramClient.connect() call was made while building the container.
+    """
+    connect_calls: list[object] = []
+
+    real_connect = TelegramClient.connect
+
+    async def _tracking_connect(self, *args, **kwargs):
+        connect_calls.append(self)
+        return await real_connect(self, *args, **kwargs)
+
+    monkeypatch.setattr(TelegramClient, "connect", _tracking_connect)
+
+    config = AppConfig(database=DatabaseConfig(path=str(tmp_path / "test.db")))
+    log_buffer = LogBuffer()
+
+    container = await build_web_container(config, log_buffer=log_buffer)
+    try:
+        assert container.runtime_mode == "web"
+        assert isinstance(container.pool, SnapshotClientPool)
+        assert connect_calls == [], (
+            f"web container must not connect to Telegram during build; "
+            f"got {len(connect_calls)} connect call(s)"
+        )
+    finally:
+        await container.db.close()

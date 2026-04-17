@@ -26,6 +26,7 @@ async def agent_page(request: Request, thread_id: int | None = None):
     agent_manager = deps.get_agent_manager(request)
     threads = await db.get_agent_threads()
     agent_status = None
+    agent_disabled_reason = None
     if agent_manager is not None:
         runtime_status = await agent_manager.get_runtime_status()
         agent_status = {
@@ -39,6 +40,11 @@ async def agent_page(request: Request, thread_id: int | None = None):
             "using_override": runtime_status.using_override,
             "error": runtime_status.error,
         }
+    else:
+        agent_disabled_reason = (
+            "Agent chat is only available in the worker process. "
+            "Run `python -m src.main worker` alongside the web server to enable it."
+        )
 
     messages = []
     active_thread = None
@@ -66,6 +72,7 @@ async def agent_page(request: Request, thread_id: int | None = None):
             "active_thread": active_thread,
             "messages": messages,
             "agent_status": agent_status,
+            "agent_disabled_reason": agent_disabled_reason,
             "model_options": CLAUDE_MODELS,
         },
     )
@@ -193,7 +200,13 @@ async def resolve_permission(request: Request, thread_id: int, request_id: str):
         raise HTTPException(status_code=400, detail="Invalid choice")
     agent_manager = deps.get_agent_manager(request)
     if agent_manager is None:
-        raise HTTPException(status_code=503, detail="AgentManager not initialized")
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Agent chat is only available in the worker process. "
+                "Run `python -m src.main worker` alongside the web server."
+            ),
+        )
     ok = agent_manager.permission_gate.resolve(request_id, choice)
     return JSONResponse({"ok": ok})
 
@@ -222,7 +235,13 @@ async def chat(request: Request, thread_id: int):
     db = deps.get_db(request)
     agent_manager = deps.get_agent_manager(request)
     if agent_manager is None:
-        raise HTTPException(status_code=503, detail="AgentManager not initialized")
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Agent chat is only available in the worker process. "
+                "Run `python -m src.main worker` alongside the web server."
+            ),
+        )
     runtime_status = await agent_manager.get_runtime_status()
     if runtime_status.selected_backend is None:
         raise HTTPException(

@@ -515,6 +515,12 @@
 {% block content %}
 <h1>Агент</h1>
 
+{% if agent_disabled_reason %}
+<div class="alert alert-warning" role="alert">
+    <strong>Чат недоступен в web-процессе.</strong> {{ agent_disabled_reason }}
+</div>
+{% endif %}
+
 <!-- Mobile toolbar -->
 <div class="mobile-agent-toolbar gap-2 mb-2" style="display:none">
     <button class="btn btn-outline-secondary btn-sm" type="button" data-bs-toggle="offcanvas" data-bs-target="#sidebar-offcanvas">Треды</button>

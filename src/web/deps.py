@@ -23,7 +23,6 @@ from src.database.bundles import (
 from src.scheduler.service import SchedulerManager
 from src.search.ai_search import AISearchEngine
 from src.search.engine import SearchEngine
-from src.services.account_service import AccountService
 from src.services.channel_service import ChannelService
 from src.services.collection_service import CollectionService
 from src.services.filter_deletion_service import FilterDeletionService
@@ -273,14 +272,6 @@ def channel_service(request: Request) -> ChannelService:
         request,
         "_channel_service",
         lambda: ChannelService(get_db(request), get_pool(request), get_queue(request)),
-    )
-
-
-def account_service(request: Request) -> AccountService:
-    return _request_cached(
-        request,
-        "_account_service",
-        lambda: AccountService(get_account_bundle(request), get_pool(request)),
     )
 
 
