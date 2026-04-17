@@ -503,18 +503,17 @@ class UnifiedDispatcher:
 
             db = self._db
             notification_service = DraftNotificationService(db, self._notifier)
-            quality_service = QualityScoringService(db)
-
             image_service = await self._build_image_service()
             provider_service = self._llm_provider_service
             if provider_service is None:
-                from src.services.provider_service import AgentProviderService
+                from src.services.provider_service import build_provider_service
 
-                provider_service = AgentProviderService(db, self._config)
-                await provider_service.load_db_providers()
+                provider_service = await build_provider_service(db, self._config)
+            quality_service = QualityScoringService(db, provider_service=provider_service)
             gen = ContentGenerationService(
                 db,
                 self._search_engine,
+                config=self._config,
                 image_service=image_service,
                 notification_service=notification_service,
                 quality_service=quality_service,
@@ -595,18 +594,17 @@ class UnifiedDispatcher:
 
             db = self._db
             notification_service = DraftNotificationService(db, self._notifier)
-            quality_service = QualityScoringService(db)
-
             image_service = await self._build_image_service()
             provider_service = self._llm_provider_service
             if provider_service is None:
-                from src.services.provider_service import AgentProviderService
+                from src.services.provider_service import build_provider_service
 
-                provider_service = AgentProviderService(db, self._config)
-                await provider_service.load_db_providers()
+                provider_service = await build_provider_service(db, self._config)
+            quality_service = QualityScoringService(db, provider_service=provider_service)
             gen = ContentGenerationService(
                 db,
                 self._search_engine,
+                config=self._config,
                 image_service=image_service,
                 notification_service=notification_service,
                 quality_service=quality_service,
@@ -745,14 +743,14 @@ class UnifiedDispatcher:
             return
 
         try:
-            from src.services.provider_service import AgentProviderService
+            from src.services.provider_service import build_provider_service
             from src.services.translation_service import TranslationService
 
             # Load translation settings
             provider_name = await self._db.get_setting("translation_provider")
             model = await self._db.get_setting("translation_model")
 
-            provider_service = AgentProviderService(self._db)
+            provider_service = await build_provider_service(self._db, self._config)
 
             # Fail fast if no real provider is configured (only stub default available)
             resolved = provider_service.get_provider_callable(provider_name)

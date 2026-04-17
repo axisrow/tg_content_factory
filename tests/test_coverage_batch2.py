@@ -1060,6 +1060,9 @@ class TestPipelinesToolGenerateDraft:
         gen_result = {"generated_text": "Pipeline draft", "citations": []}
         with patch("src.services.pipeline_service.PipelineService") as mock_ps:
             mock_ps.return_value.get = AsyncMock(return_value=p)
+            mock_ps.return_value.get_retrieval_scope = AsyncMock(
+                return_value=SimpleNamespace(query="P", channel_id=None)
+            )
             with patch("src.search.engine.SearchEngine"):
                 with patch("src.services.generation_service.GenerationService") as mock_gen:
                     with patch("src.services.provider_service.AgentProviderService") as mock_aps:

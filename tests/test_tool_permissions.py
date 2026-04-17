@@ -148,13 +148,17 @@ class TestRequirePhonePermission:
         mock_db.get_setting = AsyncMock(return_value=None)
         assert await require_phone_permission(mock_db, "+79990001111", "leave_dialogs") is None
 
-    async def test_db_error_allows(self, mock_db):
+    async def test_db_error_blocks(self, mock_db):
         mock_db.get_setting = AsyncMock(side_effect=Exception("DB down"))
-        assert await require_phone_permission(mock_db, "+79990001111", "leave_dialogs") is None
+        result = await require_phone_permission(mock_db, "+79990001111", "leave_dialogs")
+        assert result is not None
+        assert "заблокировано" in _text(result)
 
-    async def test_malformed_json_allows(self, mock_db):
+    async def test_malformed_json_blocks(self, mock_db):
         mock_db.get_setting = AsyncMock(return_value="not json{{{")
-        assert await require_phone_permission(mock_db, "+79990001111", "leave_dialogs") is None
+        result = await require_phone_permission(mock_db, "+79990001111", "leave_dialogs")
+        assert result is not None
+        assert "поврежд" in _text(result)
 
     async def test_phone_in_allowed(self, mock_db):
         perms = {"+79990001111": {"leave_dialogs": True}}

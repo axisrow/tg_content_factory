@@ -6,7 +6,6 @@ import logging
 import os
 import shutil
 import time
-import uuid
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
 from contextlib import suppress
 from dataclasses import dataclass, field
@@ -419,9 +418,6 @@ class ClaudeSdkBackend:
         extra: dict = {}
         if resolved_model:
             extra["model"] = resolved_model
-        # claude-agent-sdk ≥0.1.52 requires a fresh valid UUID per call
-        extra["session_id"] = str(uuid.uuid4())
-
         stderr_lines: list[str] = []
         debug_lines: list[str] = []
         # Heartbeat: updated when real SDK events arrive (text, tools, results).

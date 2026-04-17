@@ -52,9 +52,11 @@ class QualityScoringService:
         self,
         db: Database,
         default_threshold: float = 0.7,
+        provider_service=None,
     ):
         self._db = db
         self._default_threshold = default_threshold
+        self._provider_service = provider_service
 
     async def score_content(
         self,
@@ -85,7 +87,7 @@ class QualityScoringService:
             return _default_score
 
         try:
-            provider_service = AgentProviderService(self._db)
+            provider_service = self._provider_service or AgentProviderService(self._db)
             provider_callable = provider_service.get_provider_callable(model)
 
             prompt = f"{QUALITY_RUBRIC}\n\nКонтент для оценки:\n{text}"

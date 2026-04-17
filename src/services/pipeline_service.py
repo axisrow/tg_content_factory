@@ -4,7 +4,7 @@ import asyncio
 import json
 import logging
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Awaitable, Callable
 
 from src.agent.prompt_template import PromptTemplateError, validate_prompt_template
 from src.database import Database
@@ -47,6 +47,34 @@ def to_since_hours(value: int, unit: str) -> float:
 class PipelineTargetRef:
     phone: str
     dialog_id: int
+
+
+@dataclass(frozen=True)
+class PipelineRetrievalScope:
+    query: str
+    channel_id: int | None
+
+
+async def resolve_retrieval_scope(
+    pipeline: ContentPipeline,
+    list_sources: Callable[[int], Awaitable[list[Any]]] | None = None,
+) -> PipelineRetrievalScope:
+    """Return retrieval query and optional single-source scope for a pipeline."""
+    query = pipeline.name or ""
+    channel_id: int | None = None
+    if list_sources is None:
+        return PipelineRetrievalScope(query=query, channel_id=channel_id)
+    try:
+        sources = await list_sources(pipeline.id)
+        if len(sources) == 1:
+            channel_id = sources[0].channel_id
+    except Exception:
+        logger.warning(
+            "Failed to load pipeline sources for %s, continuing without channel scoping",
+            pipeline.id,
+            exc_info=True,
+        )
+    return PipelineRetrievalScope(query=query, channel_id=channel_id)
 
 
 class PipelineValidationError(ValueError):
@@ -464,7 +492,18 @@ class PipelineService:
         targets = await self._normalize_targets(target_refs) if target_refs else []
         return await self._bundle.add(pipeline, sources, targets)
 
-    async def edit_via_llm(self, pipeline_id: int, instruction: str, db: Database) -> dict:
+    async def get_retrieval_scope(self, pipeline: ContentPipeline) -> PipelineRetrievalScope:
+        """Return the retrieval query and optional single-source channel scope for a pipeline."""
+        return await resolve_retrieval_scope(pipeline, self._bundle.list_sources)
+
+    async def edit_via_llm(
+        self,
+        pipeline_id: int,
+        instruction: str,
+        db: Database,
+        *,
+        config: Any | None = None,
+    ) -> dict:
         """Edit a pipeline's JSON config via LLM instruction.
 
         Returns {"ok": True, "pipeline_json": {...}} or {"ok": False, "error": "..."}.
@@ -494,10 +533,16 @@ class PipelineService:
         )
 
         try:
-            from src.services.provider_service import AgentProviderService
-            provider_service = AgentProviderService(db)
+            from src.services.provider_service import build_provider_service
+
+            provider_service = await build_provider_service(db, config)
             provider_callable = provider_service.get_provider_callable(pipeline.llm_model)
-            result = await provider_callable(prompt, model=pipeline.llm_model or "", max_tokens=4096, temperature=0.2)
+            result = await provider_callable(
+                prompt,
+                model=pipeline.llm_model or "",
+                max_tokens=4096,
+                temperature=0.2,
+            )
             raw = result if isinstance(result, str) else (result.get("text") or result.get("generated_text") or "")
             # Strip markdown fences if present
             raw = raw.strip()
