@@ -481,10 +481,15 @@ class TelegramCommandDispatcher:
             if msg is None:
                 raise RuntimeError("message_not_found")
             output_dir = Path(__file__).resolve().parents[2] / "data" / "downloads"
-            path = await client.download_media(msg, file=str(output_dir))
+            output_dir.mkdir(parents=True, exist_ok=True)
+            output_dir_resolved = output_dir.resolve()
+            path = await client.download_media(msg, file=str(output_dir_resolved))
             if not path:
                 raise RuntimeError("no_media")
-            return {"phone": phone, "path": str(path)}
+            resolved = Path(path).resolve()
+            if output_dir_resolved not in resolved.parents:
+                raise RuntimeError("path_escape")
+            return {"phone": phone, "path": str(resolved)}
         finally:
             await self._pool.release_client(phone)
 
