@@ -17,9 +17,11 @@ from src.database.repositories.messages import MessagesRepository
 from src.database.repositories.notification_bots import NotificationBotsRepository
 from src.database.repositories.photo_loader import PhotoLoaderRepository
 from src.database.repositories.pipeline_templates import PipelineTemplatesRepository
+from src.database.repositories.runtime_snapshots import RuntimeSnapshotsRepository
 from src.database.repositories.search_log import SearchLogRepository
 from src.database.repositories.search_queries import SearchQueriesRepository
 from src.database.repositories.settings import SettingsRepository
+from src.database.repositories.telegram_commands import TelegramCommandsRepository
 from src.models import (
     Account,
     Channel,
@@ -63,6 +65,8 @@ class DatabaseRepositories:
     generation_runs: GenerationRunsRepository
     generated_images: GeneratedImagesRepository
     pipeline_templates: PipelineTemplatesRepository
+    telegram_commands: TelegramCommandsRepository
+    runtime_snapshots: RuntimeSnapshotsRepository
 
 
 @dataclass(frozen=True)

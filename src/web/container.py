@@ -30,6 +30,7 @@ from src.services.photo_publish_service import PhotoPublishService
 from src.services.photo_task_service import PhotoTaskService
 from src.services.provider_service import AgentProviderService
 from src.services.task_enqueuer import TaskEnqueuer
+from src.services.telegram_command_dispatcher import TelegramCommandDispatcher
 from src.services.translation_service import TranslationService
 from src.services.unified_dispatcher import UnifiedDispatcher
 from src.telegram.auth import TelegramAuth
@@ -42,6 +43,7 @@ from src.web.timing import TimingBuffer
 
 @dataclass(slots=True)
 class AppContainer:
+    runtime_mode: str
     config: AppConfig
     db: Database
     repos: DatabaseRepositories
@@ -55,19 +57,20 @@ class AppContainer:
     scheduler_bundle: SchedulerBundle
     search_query_bundle: SearchQueryBundle
     auth: TelegramAuth
-    pool: ClientPool
+    pool: ClientPool | object
     notification_target_service: NotificationTargetService
     notifier: Notifier | None
     photo_publish_service: PhotoPublishService
     photo_task_service: PhotoTaskService
     photo_auto_upload_service: PhotoAutoUploadService
-    collector: Collector
+    collector: Collector | object
     collection_queue: CollectionQueue | None
     task_enqueuer: TaskEnqueuer | None
     unified_dispatcher: UnifiedDispatcher | None
+    telegram_command_dispatcher: TelegramCommandDispatcher | None
     search_engine: SearchEngine
     ai_search: AISearchEngine
-    scheduler: SchedulerManager
+    scheduler: SchedulerManager | object
     templates: Jinja2Templates
     log_buffer: LogBuffer | None
     timing_buffer: TimingBuffer | None

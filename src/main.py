@@ -14,6 +14,7 @@ from src.cli.commands import (
     search,
     search_query,
     serve,
+    worker,
 )
 from src.cli.commands import test as test_cmd
 from src.cli.main import main
@@ -48,6 +49,10 @@ def cmd_serve(args: argparse.Namespace) -> None:
 
 def cmd_collect(args: argparse.Namespace) -> None:
     _run_with_legacy_runtime(collect.run, args)
+
+
+def cmd_worker(args: argparse.Namespace) -> None:
+    worker.run(args)
 
 
 def cmd_search(args: argparse.Namespace) -> None:

@@ -4,6 +4,7 @@ from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from src.models import Account
+from src.web import deps
 
 logger = logging.getLogger(__name__)
 
@@ -137,7 +138,6 @@ async def verify_code(
 ):
     auth = request.app.state.auth
     db = request.app.state.db
-    pool = request.app.state.pool
 
     try:
         session_string = await auth.verify_code(phone, code, phone_code_hash, password_2fa or None)
@@ -145,27 +145,18 @@ async def verify_code(
         existing = await db.get_accounts()
         is_primary = len(existing) == 0
 
-        await pool.add_client(phone, session_string)
-
-        is_premium = False
-        acquired = await pool.get_client_by_phone(phone)
-        if acquired:
-            session, acquired_phone = acquired
-            try:
-                me = await session.fetch_me()
-                is_premium = bool(getattr(me, "premium", False))
-            except Exception as e:
-                logger.warning("Failed to get premium status during auth for %s: %s", phone, e)
-            finally:
-                await pool.release_client(acquired_phone)
-
         account = Account(
             phone=phone,
             session_string=session_string,
             is_primary=is_primary,
-            is_premium=is_premium,
+            is_premium=False,
         )
         await db.add_account(account)
+        await deps.telegram_command_service(request).enqueue(
+            "accounts.connect",
+            payload={"phone": phone, "session_string": session_string},
+            requested_by="web:auth.verify_code",
+        )
 
         return RedirectResponse(url="/settings?msg=account_connected", status_code=303)
     except ValueError as e:

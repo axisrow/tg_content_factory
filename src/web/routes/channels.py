@@ -11,6 +11,15 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+async def _enqueue_channel_command(request: Request, command_type: str, payload: dict) -> RedirectResponse:
+    command_id = await deps.telegram_command_service(request).enqueue(
+        command_type,
+        payload=payload,
+        requested_by="web:channels",
+    )
+    return RedirectResponse(url=f"/channels?command_id={command_id}", status_code=303)
+
+
 @router.get("/", response_class=HTMLResponse)
 async def channels_list(request: Request):
     service = deps.channel_service(request)
@@ -36,22 +45,13 @@ async def channels_list(request: Request):
 
 @router.post("/add")
 async def add_channel(request: Request, identifier: str = Form(...)):
-    service = deps.channel_service(request)
-    try:
-        ok = await service.add_by_identifier(identifier)
-    except RuntimeError as exc:
-        if str(exc) == "no_client":
-            logger.warning("Channel add failed: no client for identifier=%r", identifier)
-            return RedirectResponse(url="/channels?error=no_client", status_code=303)
-        logger.exception("Channel add runtime failure: identifier=%r", identifier)
-        ok = False
-    except Exception:
-        logger.exception("Channel add failed: identifier=%r", identifier)
-        ok = False
-
-    if not ok:
+    if not identifier.strip():
         return RedirectResponse(url="/channels?error=resolve", status_code=303)
-    return RedirectResponse(url="/channels?msg=channel_added", status_code=303)
+    return await _enqueue_channel_command(
+        request,
+        "channels.add_identifier",
+        {"identifier": identifier.strip()},
+    )
 
 
 @router.get("/dialogs")
@@ -86,59 +86,12 @@ async def delete_channel(request: Request, pk: int):
 
 @router.post("/refresh-types")
 async def refresh_channel_types(request: Request):
-    db = deps.get_db(request)
-    pool = deps.get_pool(request)
-    channels = await db.get_channels(active_only=True)
-    updated = 0
-    failed = 0
-    for ch in channels:
-        identifier = ch.username or str(ch.channel_id)
-        try:
-            info = await pool.resolve_channel(identifier)
-        except Exception:
-            info = None
-        if info is False:
-            await db.set_channel_active(ch.id, False)
-            await db.set_channel_type(ch.channel_id, "unavailable")
-            failed += 1
-            continue
-        if not info or info.get("channel_type") is None:
-            failed += 1
-            continue
-        await db.set_channel_type(ch.channel_id, info["channel_type"])
-        updated += 1
-    return RedirectResponse(
-        url=f"/channels?msg=types_refreshed&updated={updated}&failed={failed}",
-        status_code=303,
-    )
+    return await _enqueue_channel_command(request, "channels.refresh_types", {})
 
 
 @router.post("/refresh-meta")
 async def refresh_channel_meta(request: Request):
-    db = deps.get_db(request)
-    pool = deps.get_pool(request)
-    channels = await db.get_channels(active_only=True)
-    ok = 0
-    failed = 0
-    for ch in channels:
-        try:
-            meta = await pool.fetch_channel_meta(ch.channel_id, ch.channel_type)
-        except Exception:
-            meta = None
-        if meta:
-            await db.update_channel_full_meta(
-                ch.channel_id,
-                about=meta["about"],
-                linked_chat_id=meta["linked_chat_id"],
-                has_comments=meta["has_comments"],
-            )
-            ok += 1
-        else:
-            failed += 1
-    return RedirectResponse(
-        url=f"/channels?msg=meta_refreshed&updated={ok}&failed={failed}",
-        status_code=303,
-    )
+    return await _enqueue_channel_command(request, "channels.refresh_meta", {})
 
 
 # ── Tag endpoints ────────────────────────────────────────────────────────────

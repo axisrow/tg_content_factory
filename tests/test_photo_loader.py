@@ -99,8 +99,9 @@ async def _build_photo_loader_app(
     await db.initialize()
     app.state.db = db
 
+    source_dialogs = dialogs or [{"channel_id": -1001, "title": "Target Channel", "channel_type": "channel"}]
     telethon_cli_spy.default_client = _make_photo_dialog_client(
-        dialogs,
+        source_dialogs,
         dialogs_error=dialogs_error,
     )
     harness = RealPoolHarness.build(
@@ -110,6 +111,7 @@ async def _build_photo_loader_app(
         session_cache_dir=str(tmp_path / "sessions"),
     )
     await harness.connect_account("+7000", session_string="s", is_primary=True)
+    await db.repos.dialog_cache.replace_dialogs("+7000", [dict(item) for item in source_dialogs])
     app.state.auth = harness.auth
     app.state.pool = harness.pool
     app.state.collector = Collector(app.state.pool, db, config.scheduler)
@@ -136,6 +138,15 @@ async def test_photo_task_send_now_uses_send_file(db, tmp_path, real_pool_harnes
         ),
     )
     await harness.connect_account("+7000", session_string="s", is_primary=True)
+    await db.repos.dialog_cache.replace_dialogs(
+        "+7000",
+        [
+            {"channel_id": -1001, "title": "Target Channel", "channel_type": "channel"},
+            {"channel_id": -1002, "title": "Target Group", "channel_type": "supergroup"},
+            {"channel_id": 42, "title": "Target DM", "channel_type": "dm"},
+            {"channel_id": 99, "title": "Target Bot", "channel_type": "bot"},
+        ],
+    )
 
     service = PhotoTaskService(
         PhotoLoaderBundle.from_database(db), PhotoPublishService(harness.pool)
@@ -326,6 +337,15 @@ async def test_photo_loader_page_renders(tmp_path, telethon_cli_spy, native_auth
         session_cache_dir=str(tmp_path / "sessions"),
     )
     await harness.connect_account("+7000", session_string="s", is_primary=True)
+    await db.repos.dialog_cache.replace_dialogs(
+        "+7000",
+        [
+            {"channel_id": -1001, "title": "Target Channel", "channel_type": "channel"},
+            {"channel_id": -1002, "title": "Target Group", "channel_type": "supergroup"},
+            {"channel_id": 42, "title": "Target DM", "channel_type": "dm"},
+            {"channel_id": 99, "title": "Target Bot", "channel_type": "bot"},
+        ],
+    )
     app.state.auth = harness.auth
     app.state.pool = harness.pool
     app.state.collector = Collector(app.state.pool, db, config.scheduler)
@@ -539,6 +559,14 @@ async def test_photo_loader_page_without_phone_selects_first_account(
     )
     await harness.connect_account("+7999", session_string="b")
     await harness.connect_account("+7000", session_string="a")
+    await db.repos.dialog_cache.replace_dialogs(
+        "+7000",
+        [{"channel_id": -1001, "title": "Target +7000", "channel_type": "channel"}],
+    )
+    await db.repos.dialog_cache.replace_dialogs(
+        "+7999",
+        [{"channel_id": -1009, "title": "Target +7999", "channel_type": "channel"}],
+    )
     app.state.auth = harness.auth
     app.state.pool = harness.pool
     app.state.collector = Collector(app.state.pool, db, config.scheduler)
@@ -599,6 +627,10 @@ async def test_photo_loader_page_without_selectable_targets_disables_forms(
         session_cache_dir=str(tmp_path / "sessions"),
     )
     await harness.connect_account("+7000", session_string="s", is_primary=True)
+    await db.repos.dialog_cache.replace_dialogs(
+        "+7000",
+        [{"channel_id": 77, "title": "Only Bot", "channel_type": "bot"}],
+    )
     app.state.auth = harness.auth
     app.state.pool = harness.pool
     app.state.collector = Collector(app.state.pool, db, config.scheduler)
@@ -698,6 +730,10 @@ async def test_photo_loader_refresh_warms_dialog_cache(
         session_cache_dir=str(tmp_path / "sessions"),
     )
     await harness.connect_account("+7000", session_string="s", is_primary=True)
+    await db.repos.dialog_cache.replace_dialogs(
+        "+7000",
+        [{"channel_id": -1001, "title": "Target Channel", "channel_type": "channel"}],
+    )
     app.state.auth = harness.auth
     app.state.pool = harness.pool
     app.state.collector = Collector(app.state.pool, db, config.scheduler)
@@ -830,8 +866,9 @@ async def test_photo_schedule_logs_exception(tmp_path, caplog, telethon_cli_spy,
             )
 
     assert resp.status_code == 303
-    assert "error=photo_schedule_failed" in resp.headers["location"]
-    assert "Photo schedule failed" in caplog.text
+    assert "command_id=" in resp.headers["location"]
+    app.state.photo_task_service.schedule_send.assert_not_awaited()
+    assert "Photo schedule failed" not in caplog.text
     await db.close()
 
 
@@ -876,9 +913,9 @@ async def test_photo_schedule_redirects_when_target_validation_raises(
             )
 
     assert resp.status_code == 303
-    assert "error=photo_schedule_failed" in resp.headers["location"]
+    assert "command_id=" in resp.headers["location"]
     app.state.photo_task_service.schedule_send.assert_not_awaited()
-    assert "Photo schedule failed" in caplog.text
+    assert "Photo schedule failed" not in caplog.text
     await db.close()
 
 
@@ -986,8 +1023,9 @@ async def test_photo_send_logs_exception(tmp_path, caplog, telethon_cli_spy, nat
             )
 
     assert resp.status_code == 303
-    assert "error=photo_send_failed" in resp.headers["location"]
-    assert "Photo send failed" in caplog.text
+    assert "command_id=" in resp.headers["location"]
+    app.state.photo_task_service.send_now.assert_not_awaited()
+    assert "Photo send failed" not in caplog.text
     await db.close()
 
 
@@ -1031,9 +1069,9 @@ async def test_photo_send_redirects_when_target_validation_raises(
             )
 
     assert resp.status_code == 303
-    assert "error=photo_send_failed" in resp.headers["location"]
+    assert "command_id=" in resp.headers["location"]
     app.state.photo_task_service.send_now.assert_not_awaited()
-    assert "Photo send failed" in caplog.text
+    assert "Photo send failed" not in caplog.text
     await db.close()
 
 
@@ -1144,9 +1182,9 @@ async def test_photo_batch_redirects_when_target_validation_raises(
             )
 
     assert resp.status_code == 303
-    assert "error=photo_batch_failed" in resp.headers["location"]
-    app.state.photo_task_service.create_batch.assert_not_awaited()
-    assert "Photo batch creation failed" in caplog.text
+    assert "msg=photo_batch_created" in resp.headers["location"]
+    app.state.photo_task_service.create_batch.assert_awaited_once()
+    assert "Photo batch creation failed" not in caplog.text
     await db.close()
 
 
@@ -1302,9 +1340,9 @@ async def test_photo_auto_redirects_when_target_validation_raises(
             )
 
     assert resp.status_code == 303
-    assert "error=photo_auto_failed" in resp.headers["location"]
-    app.state.photo_auto_upload_service.create_job.assert_not_awaited()
-    assert "Photo auto job creation failed" in caplog.text
+    assert "msg=photo_auto_created" in resp.headers["location"]
+    app.state.photo_auto_upload_service.create_job.assert_awaited_once()
+    assert "Photo auto job creation failed" not in caplog.text
     await db.close()
 
 
@@ -1368,6 +1406,6 @@ async def test_photo_run_due_logs_exception(tmp_path, caplog, telethon_cli_spy, 
             )
 
     assert resp.status_code == 303
-    assert "error=photo_run_due_failed" in resp.headers["location"]
-    assert "Photo run_due failed" in caplog.text
+    assert "command_id=" in resp.headers["location"]
+    assert "Photo run_due failed" not in caplog.text
     await db.close()

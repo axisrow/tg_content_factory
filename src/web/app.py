@@ -244,6 +244,7 @@ async def lifespan(app: FastAPI):
         log_buffer=app.state.log_buffer,
         timing_buffer=app.state.timing_buffer,
         templates=app.state.templates,
+        runtime_mode="web",
     )
     configure_app(app, container)
     logger.info("Application started")

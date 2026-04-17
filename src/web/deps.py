@@ -37,6 +37,7 @@ from src.services.provider_service import AgentProviderService
 from src.services.search_query_service import SearchQueryService
 from src.services.search_service import SearchService
 from src.services.task_enqueuer import TaskEnqueuer
+from src.services.telegram_command_service import TelegramCommandService
 from src.services.unified_dispatcher import UnifiedDispatcher
 from src.telegram.auth import TelegramAuth
 from src.telegram.client_pool import ClientPool
@@ -67,9 +68,6 @@ def _require_app_state_attr(request: Request, name: str):
 
 
 def get_container(request: Request) -> AppContainer:
-    container = getattr(request.app.state, "container", None)
-    if container is not None:
-        return container
     cached = getattr(request.state, "_container", None)
     if cached is not None:
         return cached
@@ -107,6 +105,7 @@ def get_container(request: Request) -> AppContainer:
     if templates is None:
         templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
     container = AppContainer(
+        runtime_mode=getattr(request.app.state, "runtime_mode", "web"),
         config=_require_app_state_attr(request, "config"),
         db=db,
         repos=repos,
@@ -130,6 +129,7 @@ def get_container(request: Request) -> AppContainer:
         collection_queue=getattr(request.app.state, "collection_queue", None),
         task_enqueuer=getattr(request.app.state, "task_enqueuer", None),
         unified_dispatcher=getattr(request.app.state, "unified_dispatcher", None),
+        telegram_command_dispatcher=getattr(request.app.state, "telegram_command_dispatcher", None),
         search_engine=_require_app_state_attr(request, "search_engine"),
         ai_search=_require_app_state_attr(request, "ai_search"),
         scheduler=_require_app_state_attr(request, "scheduler"),
@@ -272,7 +272,7 @@ def channel_service(request: Request) -> ChannelService:
     return _request_cached(
         request,
         "_channel_service",
-        lambda: ChannelService(get_channel_bundle(request), get_pool(request), get_queue(request)),
+        lambda: ChannelService(get_db(request), get_pool(request), get_queue(request)),
     )
 
 
@@ -293,6 +293,14 @@ def collection_service(request: Request) -> CollectionService:
             get_collector(request),
             get_queue(request),
         ),
+    )
+
+
+def telegram_command_service(request: Request) -> TelegramCommandService:
+    return _request_cached(
+        request,
+        "_telegram_command_service",
+        lambda: TelegramCommandService(get_db(request)),
     )
 
 

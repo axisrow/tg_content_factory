@@ -24,9 +24,11 @@ from src.database.repositories.messages import MessagesRepository
 from src.database.repositories.notification_bots import NotificationBotsRepository
 from src.database.repositories.photo_loader import PhotoLoaderRepository
 from src.database.repositories.pipeline_templates import PipelineTemplatesRepository
+from src.database.repositories.runtime_snapshots import RuntimeSnapshotsRepository
 from src.database.repositories.search_log import SearchLogRepository
 from src.database.repositories.search_queries import SearchQueriesRepository
 from src.database.repositories.settings import SettingsRepository
+from src.database.repositories.telegram_commands import TelegramCommandsRepository
 from src.database.schema import SCHEMA_SQL
 from src.models import (
     Account,
@@ -68,6 +70,8 @@ class Database:
         self._photo_loader: PhotoLoaderRepository | None = None
         self._dialog_cache: DialogCacheRepository | None = None
         self._content_pipelines: ContentPipelinesRepository | None = None
+        self._telegram_commands: TelegramCommandsRepository | None = None
+        self._runtime_snapshots: RuntimeSnapshotsRepository | None = None
         self._repos: DatabaseRepositories | None = None
 
     async def _has_encrypted_sessions(self) -> bool:
@@ -122,6 +126,8 @@ class Database:
         self._photo_loader = PhotoLoaderRepository(self._db)
         self._dialog_cache = DialogCacheRepository(self._db)
         self._content_pipelines = ContentPipelinesRepository(self._db)
+        self._telegram_commands = TelegramCommandsRepository(self._db)
+        self._runtime_snapshots = RuntimeSnapshotsRepository(self._db)
         self._generation_runs = GenerationRunsRepository(self._db)
         self._generated_images = GeneratedImagesRepository(self._db)
         self._pipeline_templates = PipelineTemplatesRepository(self._db)
@@ -142,6 +148,8 @@ class Database:
             generation_runs=self._generation_runs,
             generated_images=self._generated_images,
             pipeline_templates=self._pipeline_templates,
+            telegram_commands=self._telegram_commands,
+            runtime_snapshots=self._runtime_snapshots,
         )
 
         await self._accounts.migrate_sessions()
@@ -199,6 +207,8 @@ class Database:
                 self._photo_loader,
                 self._dialog_cache,
                 self._content_pipelines,
+                self._telegram_commands,
+                self._runtime_snapshots,
             )
         ):
             raise RuntimeError("Database.initialize() has not been called")

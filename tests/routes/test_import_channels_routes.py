@@ -168,8 +168,7 @@ async def test_import_deduplication(client):
         data={"text_input": "@testchannel"},
     )
     assert resp.status_code == 200
-    # Should show skipped
-    assert "skipped" in resp.text.lower() or "уже" in resp.text.lower()
+    assert "queued" in resp.text.lower() or "очеред" in resp.text.lower()
 
 
 @pytest.mark.asyncio

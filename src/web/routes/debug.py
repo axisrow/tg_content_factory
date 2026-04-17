@@ -90,13 +90,17 @@ async def debug_memory(request: Request):
     pool = deps.get_pool(request)
     agent_manager = deps.get_agent_manager(request)
     collection_queue = getattr(request.app.state, "collection_queue", None)
+    dialogs_cache = getattr(pool, "_dialogs_cache", {})
+    active_leases = getattr(pool, "_active_leases", {})
+    premium_flood_waits = getattr(pool, "_premium_flood_wait_until", {})
+    session_overrides = getattr(pool, "_session_overrides", {})
 
     pool_info = {
         "connected_clients": len(pool.clients),
-        "dialogs_cache_entries": len(pool._dialogs_cache),
-        "active_leases": {k: len(v) for k, v in pool._active_leases.items()},
-        "premium_flood_waits": len(pool._premium_flood_wait_until),
-        "session_overrides": len(pool._session_overrides),
+        "dialogs_cache_entries": len(dialogs_cache),
+        "active_leases": {k: len(v) for k, v in active_leases.items()} if isinstance(active_leases, dict) else {},
+        "premium_flood_waits": len(premium_flood_waits) if hasattr(premium_flood_waits, "__len__") else 0,
+        "session_overrides": len(session_overrides) if hasattr(session_overrides, "__len__") else 0,
     }
 
     return {
