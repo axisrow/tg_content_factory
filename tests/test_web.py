@@ -21,6 +21,7 @@ from src.models import (
     CollectionTaskStatus,
     CollectionTaskType,
     Message,
+    RuntimeSnapshot,
     StatsAllTaskPayload,
 )
 from src.scheduler.service import SchedulerManager
@@ -314,13 +315,17 @@ async def test_startup_continues_after_pool_initialize_timeout(tmp_path, db, cap
     ai_search = SimpleNamespace(initialize=lambda: None)
     scheduler = SimpleNamespace(load_settings=AsyncMock(), start=AsyncMock())
     gen_runs = SimpleNamespace(reset_running_on_startup=AsyncMock(return_value=0))
+    tg_cmds = SimpleNamespace(reset_running_on_startup=AsyncMock(return_value=0))
 
     container = SimpleNamespace(
         auth=auth,
         pool=pool,
         channel_bundle=channel_bundle,
         photo_task_service=photo_task_service,
-        db=SimpleNamespace(repos=SimpleNamespace(generation_runs=gen_runs), get_setting=AsyncMock(return_value=None)),
+        db=SimpleNamespace(
+            repos=SimpleNamespace(generation_runs=gen_runs, telegram_commands=tg_cmds),
+            get_setting=AsyncMock(return_value=None),
+        ),
         collection_queue=None,
         unified_dispatcher=None,
         ai_search=ai_search,
@@ -1798,20 +1803,17 @@ async def test_settings_rejects_invalid_api_id(client):
 
 @pytest.mark.asyncio
 async def test_resolve_channel_success(client):
-    """Adding a channel via identifier resolves and saves it."""
+    """Adding a channel via identifier queues a worker command."""
+    db = client._transport.app.state.db
     resp = await client.post("/channels/add", data={"identifier": "@testchan"})
     assert resp.status_code == 200
-    assert "Resolved Channel" in resp.text
+    commands = await db.repos.telegram_commands.list_commands(limit=1)
+    assert commands[0].command_type == "channels.add_identifier"
 
 
 @pytest.mark.asyncio
 async def test_channels_add_logs_unexpected_error(client, monkeypatch, caplog):
-    monkeypatch.setattr(
-        client._transport.app.state.pool,
-        "resolve_channel",
-        AsyncMock(side_effect=RuntimeError("boom")),
-    )
-
+    db = client._transport.app.state.db
     with caplog.at_level(logging.ERROR, logger="src.web.routes.channels"):
         resp = await client.post(
             "/channels/add",
@@ -1820,8 +1822,10 @@ async def test_channels_add_logs_unexpected_error(client, monkeypatch, caplog):
         )
 
     assert resp.status_code == 303
-    assert resp.headers["location"] == "/channels?error=resolve"
-    assert "Channel add runtime failure" in caplog.text
+    assert "command_id=" in resp.headers["location"]
+    commands = await db.repos.telegram_commands.list_commands(limit=1)
+    assert commands[0].payload["identifier"] == "@broken"
+    assert "Channel add runtime failure" not in caplog.text
 
 
 @pytest.mark.asyncio
@@ -1842,17 +1846,12 @@ async def test_auth_send_code_logs_exception(client, monkeypatch, caplog):
 
 @pytest.mark.asyncio
 async def test_notification_setup_logs_exception(client, monkeypatch, caplog):
-    from src.web.routes import settings as settings_routes
-
-    fake_service = SimpleNamespace(setup_bot=AsyncMock(side_effect=ValueError("boom")))
-    monkeypatch.setattr(settings_routes, "_notification_service", lambda request: fake_service)
-
     with caplog.at_level(logging.ERROR, logger="src.web.routes.settings"):
         resp = await client.post("/settings/notifications/setup", follow_redirects=False)
 
     assert resp.status_code == 303
-    assert resp.headers["location"] == "/settings?error=notification_action_failed"
-    assert "Notification setup failed" in caplog.text
+    assert "command_id=" in resp.headers["location"]
+    assert "Notification setup failed" not in caplog.text
 
 
 @pytest.mark.asyncio
@@ -2010,7 +2009,7 @@ async def test_resolve_channel_fail(tmp_path):
     ) as c:
         resp = await c.post("/channels/add", data={"identifier": "@nonexistent"}, follow_redirects=False)
         assert resp.status_code == 303
-        assert "error=resolve" in resp.headers.get("location", "")
+        assert "command_id=" in resp.headers.get("location", "")
 
     await db.close()
 
@@ -2018,6 +2017,14 @@ async def test_resolve_channel_fail(tmp_path):
 @pytest.mark.asyncio
 async def test_dialogs_endpoint(client):
     """GET /channels/dialogs returns JSON list of channels."""
+    db = client._transport.app.state.db
+    await db.repos.dialog_cache.replace_dialogs(
+        "+1234567890",
+        [
+            {"channel_id": -100111, "title": "Dialog Chan 1", "channel_type": "channel"},
+            {"channel_id": -100222, "title": "Dialog Chan 2", "channel_type": "channel"},
+        ],
+    )
     resp = await client.get("/channels/dialogs")
     assert resp.status_code == 200
     data = resp.json()
@@ -2030,6 +2037,14 @@ async def test_dialogs_endpoint(client):
 @pytest.mark.asyncio
 async def test_add_bulk(client):
     """POST /channels/add-bulk adds selected channels from dialogs."""
+    db = client._transport.app.state.db
+    await db.repos.dialog_cache.replace_dialogs(
+        "+1234567890",
+        [
+            {"channel_id": -100111, "title": "Dialog Chan 1", "channel_type": "channel"},
+            {"channel_id": -100222, "title": "Dialog Chan 2", "channel_type": "channel"},
+        ],
+    )
     resp = await client.post(
         "/channels/add-bulk",
         data={"channel_ids": ["-100111", "-100222"]},
@@ -2043,12 +2058,12 @@ async def test_add_bulk(client):
 
 @pytest.mark.asyncio
 async def test_add_channel_redirect_has_msg(client):
-    """Adding a channel redirects with ?msg=channel_added."""
+    """Adding a channel redirects with queued command id."""
     resp = await client.post(
         "/channels/add", data={"identifier": "@testchan"}, follow_redirects=False
     )
     assert resp.status_code == 303
-    assert "msg=channel_added" in resp.headers["location"]
+    assert "command_id=" in resp.headers["location"]
 
 
 @pytest.mark.asyncio
@@ -2088,6 +2103,21 @@ async def test_notification_status_returns_error_for_unavailable_selected_accoun
     db = client._transport.app.state.db
     await db.add_account(Account(phone="+79990000002", session_string="session", is_primary=True))
     await db.set_setting("notification_account_phone", "+79990000002")
+    await db.repos.runtime_snapshots.upsert_snapshot(
+        RuntimeSnapshot(
+            snapshot_type="notification_target_status",
+            payload={
+                "target": {
+                    "mode": "selected",
+                    "state": "disconnected",
+                    "message": "Аккаунт +79990000002 не подключён.",
+                    "configured_phone": "+79990000002",
+                    "effective_phone": "+79990000002",
+                },
+                "bot": {"configured": False},
+            },
+        )
+    )
 
     resp = await client.get(
         "/settings/notifications/status",
@@ -2102,7 +2132,11 @@ async def test_notification_status_returns_error_for_unavailable_selected_accoun
 @pytest.mark.asyncio
 async def test_channel_type_displayed(client):
     """Channel type column is shown on channels page after adding a channel."""
-    await client.post("/channels/add", data={"identifier": "@testchan"})
+    from src.models import Channel
+
+    await client._transport.app.state.db.add_channel(
+        Channel(channel_id=-100123, title="Test", username="testchan", channel_type="channel")
+    )
     resp = await client.get("/channels/")
     assert resp.status_code == 200
     assert "Канал" in resp.text
@@ -2111,7 +2145,7 @@ async def test_channel_type_displayed(client):
 
 @pytest.mark.asyncio
 async def test_add_scam_channel_is_inactive(tmp_path):
-    """Adding a scam channel via /channels/add creates it with is_active=False."""
+    """Adding a scam channel via /channels/add queues a worker command."""
     config = AppConfig()
     config.database.path = str(tmp_path / "test.db")
     config.telegram.api_id = 12345
@@ -2174,9 +2208,8 @@ async def test_add_scam_channel_is_inactive(tmp_path):
         resp = await c.post("/channels/add", data={"identifier": "@scamchan"})
         assert resp.status_code == 200
 
-    channels = await db.get_channels()
-    assert len(channels) == 1
-    assert channels[0].is_active is False
+    commands = await db.repos.telegram_commands.list_commands(limit=1)
+    assert commands[0].command_type == "channels.add_identifier"
 
     await db.close()
 
@@ -2194,6 +2227,18 @@ async def test_bulk_add_scam_dialog_is_inactive(tmp_path):
     db = Database(config.database.path)
     await db.initialize()
     app.state.db = db
+    await db.repos.dialog_cache.replace_dialogs(
+        "+1234567890",
+        [
+            {
+                "channel_id": -100777,
+                "title": "Scam Dialog",
+                "username": "scamdialog",
+                "channel_type": "scam",
+                "deactivate": True,
+            }
+        ],
+    )
 
     async def _no_users(self):
         return []
@@ -2874,23 +2919,15 @@ async def test_notification_setup_and_delete_json(client, monkeypatch):
         "/settings/notifications/setup",
         headers={"Accept": "application/json"},
     )
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["bot_username"] == "leadhunter_owner_bot"
-
-    status_resp = await client.get(
-        "/settings/notifications/status",
-        headers={"Accept": "application/json"},
-    )
-    assert status_resp.status_code == 200
-    assert status_resp.json()["configured"] is True
+    assert resp.status_code == 202
+    assert resp.json()["status"] == "queued"
 
     delete_resp = await client.post(
         "/settings/notifications/delete",
         headers={"Accept": "application/json"},
     )
-    assert delete_resp.status_code == 200
-    assert delete_resp.json() == {"deleted": True}
+    assert delete_resp.status_code == 202
+    assert delete_resp.json()["status"] == "queued"
 
 
 @pytest.mark.asyncio
@@ -2905,47 +2942,45 @@ async def test_notification_setup_returns_conflict_when_account_unavailable(clie
         "/settings/notifications/setup",
         headers={"Accept": "application/json"},
     )
-    assert resp.status_code == 409
-    assert "не подключён" in resp.json()["error"]
+    assert resp.status_code == 202
+    assert resp.json()["status"] == "queued"
 
 
 @pytest.mark.asyncio
-async def test_collect_stats_route_marks_task_completed(client):
-    from src.models import ChannelStats
+async def test_collect_stats_route_enqueues_command(client):
+    """Web route only enqueues a telegram command; worker executes the collection."""
+    from src.models import Channel
 
     db = client._transport.app.state.db
-    await client.post("/channels/add", data={"identifier": "@teststats"})
+    await db.add_channel(Channel(channel_id=-1002001, title="Stats", username="teststats", channel_type="channel"))
     channel = next(ch for ch in await db.get_channels() if ch.username == "teststats")
 
-    client._transport.app.state.collector.collect_channel_stats = AsyncMock(
-        return_value=ChannelStats(channel_id=channel.channel_id, subscriber_count=10)
-    )
+    # Sanity: even if collector is mocked, route must not call it directly.
+    client._transport.app.state.collector.collect_channel_stats = AsyncMock()
 
     resp = await client.post(f"/channels/{channel.id}/stats", follow_redirects=False)
     assert resp.status_code == 303
-    assert "msg=stats_collection_started" in resp.headers["location"]
+    assert "stats_collection_queued" in resp.headers["location"]
+    assert "command_id=" in resp.headers["location"]
 
-    tasks = await db.get_collection_tasks()
-    assert tasks[0].status == CollectionTaskStatus.COMPLETED
-    assert tasks[0].messages_collected == 1
+    # No direct Telegram RPC from the web request.
+    client._transport.app.state.collector.collect_channel_stats.assert_not_awaited()
+
+    commands = await db.repos.telegram_commands.list_commands(limit=1)
+    assert commands[0].command_type == "channels.collect_stats"
+    assert commands[0].payload == {"channel_pk": channel.id}
 
 
 @pytest.mark.asyncio
-async def test_collect_stats_route_marks_task_failed(client):
+async def test_collect_stats_route_missing_channel(client):
+    """If the channel does not exist, the route redirects to /channels without enqueueing."""
     db = client._transport.app.state.db
-    await client.post("/channels/add", data={"identifier": "@teststatsfail"})
-    channel = next(ch for ch in await db.get_channels() if ch.username == "teststatsfail")
 
-    client._transport.app.state.collector.collect_channel_stats = AsyncMock(
-        side_effect=RuntimeError("stats broken")
-    )
-
-    resp = await client.post(f"/channels/{channel.id}/stats", follow_redirects=False)
+    resp = await client.post("/channels/999999/stats", follow_redirects=False)
     assert resp.status_code == 303
 
-    tasks = await db.get_collection_tasks()
-    assert tasks[0].status == CollectionTaskStatus.FAILED
-    assert tasks[0].error == "stats broken"
+    commands = await db.repos.telegram_commands.list_commands(limit=5)
+    assert not any(c.command_type == "channels.collect_stats" for c in commands)
 
 
 @pytest.mark.asyncio
@@ -3098,8 +3133,8 @@ class TestWebAgent:
         assert len(resp_ch.json()) > 0
 
         resp_topics = await client.get("/agent/forum-topics?channel_id=1")
-        assert resp_topics.status_code == 200
-        assert resp_topics.json()[0]["title"] == "Topic"
+        assert resp_topics.status_code == 202
+        assert resp_topics.json()["status"] == "queued"
 
     @pytest.mark.asyncio
     async def test_inject_context_success(self, client):

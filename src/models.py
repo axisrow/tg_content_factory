@@ -93,6 +93,34 @@ class CollectionTaskType(StrEnum):
     TRANSLATE_BATCH = "translate_batch"
 
 
+class TelegramCommandStatus(StrEnum):
+    PENDING = "pending"
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+class TelegramCommand(BaseModel):
+    id: int | None = None
+    command_type: str
+    payload: dict[str, Any] = Field(default_factory=dict)
+    status: TelegramCommandStatus = TelegramCommandStatus.PENDING
+    requested_by: str | None = None
+    created_at: datetime | None = None
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    error: str | None = None
+    result_payload: dict[str, Any] | None = None
+
+
+class RuntimeSnapshot(BaseModel):
+    snapshot_type: str
+    scope: str = "global"
+    payload: dict[str, Any] = Field(default_factory=dict)
+    updated_at: datetime | None = None
+
+
 class ContentGenerateTaskPayload(BaseModel):
     task_kind: str = "content_generate"
     pipeline_id: int

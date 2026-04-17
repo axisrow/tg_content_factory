@@ -14,6 +14,8 @@ def build_parser() -> argparse.ArgumentParser:
     serve_parser = sub.add_parser("serve", help="Start web server")
     serve_parser.add_argument("--web-pass", help="Web panel password (overrides config)")
 
+    sub.add_parser("worker", help="Start Telegram worker runtime")
+
     sub.add_parser("stop", help="Stop web server started by this app")
 
     restart_parser = sub.add_parser("restart", help="Restart web server")

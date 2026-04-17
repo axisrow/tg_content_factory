@@ -115,9 +115,9 @@ async def test_get_forum_topics_empty(client, db, pool_mock):
     pool_mock.get_forum_topics = AsyncMock(return_value=[])
 
     resp = await client.get("/agent/forum-topics?channel_id=100")
-    assert resp.status_code == 200
+    assert resp.status_code == 202
     data = json.loads(resp.text)
-    assert isinstance(data, list)
+    assert "command_id" in data
 
 
 @pytest.mark.asyncio
@@ -127,10 +127,9 @@ async def test_get_forum_topics_returns_data(client, db, pool_mock):
     pool_mock.get_forum_topics = AsyncMock(return_value=topics)
 
     resp = await client.get("/agent/forum-topics?channel_id=100")
-    assert resp.status_code == 200
+    assert resp.status_code == 202
     data = json.loads(resp.text)
-    assert len(data) == 1
-    assert data[0]["title"] == "Topic 1"
+    assert "command_id" in data
 
 
 @pytest.mark.asyncio
@@ -365,6 +364,6 @@ async def test_get_forum_topics_fallback(client, db, pool_mock):
     pool_mock.get_forum_topics = AsyncMock(return_value=[])
 
     resp = await client.get("/agent/forum-topics?channel_id=100")
-    assert resp.status_code == 200
+    assert resp.status_code == 202
     data = json.loads(resp.text)
-    assert isinstance(data, list)
+    assert "command_id" in data

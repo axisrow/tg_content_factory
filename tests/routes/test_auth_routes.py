@@ -206,21 +206,18 @@ async def test_resend_code_error(client):
 async def test_verify_code_success(client):
     """Test verify code success."""
     auth = client._transport.app.state.auth
+    db = client._transport.app.state.db
     pool = client._transport.app.state.pool
-
-    mock_session = MagicMock()
-    mock_session.fetch_me = AsyncMock(return_value=SimpleNamespace(premium=False))
 
     with patch.object(auth, "verify_code", new_callable=AsyncMock) as mock_verify:
         mock_verify.return_value = "session_string_123"
 
-        with patch.object(pool, "add_client", new_callable=AsyncMock):
+        with patch.object(pool, "add_client", new_callable=AsyncMock) as mock_add_client:
             with patch.object(
                 pool,
                 "get_client_by_phone",
                 new_callable=AsyncMock,
-                return_value=(mock_session, "+1234567890"),
-            ):
+            ) as mock_get_client:
                 with patch.object(pool, "release_client", new_callable=AsyncMock):
                     resp = await client.post(
                         "/auth/verify-code",
@@ -237,6 +234,12 @@ async def test_verify_code_success(client):
                     )
                     assert resp.status_code == 303
                     assert "/settings" in resp.headers.get("location", "")
+                    mock_add_client.assert_not_awaited()
+                    mock_get_client.assert_not_awaited()
+    commands = await db.repos.telegram_commands.list_commands(limit=1)
+    assert commands[0].command_type == "accounts.connect"
+    assert commands[0].payload["phone"] == "+1234567890"
+    assert "session_string" not in commands[0].payload
 
 
 @pytest.mark.asyncio
@@ -381,40 +384,27 @@ async def test_verify_code_sets_primary(client):
 
 @pytest.mark.asyncio
 async def test_verify_code_detects_premium(client):
-    """Test verify code detects premium status."""
+    """Test verify code defers premium detection to worker."""
     auth = client._transport.app.state.auth
-    pool = client._transport.app.state.pool
-
-    mock_session = MagicMock()
-    mock_session.fetch_me = AsyncMock(return_value=SimpleNamespace(premium=True))
 
     with patch.object(auth, "verify_code", new_callable=AsyncMock) as mock_verify:
         mock_verify.return_value = "session_string"
 
-        with patch.object(pool, "add_client", new_callable=AsyncMock):
-            with patch.object(
-                pool,
-                "get_client_by_phone",
-                new_callable=AsyncMock,
-                return_value=(mock_session, "+1234567890"),
-            ):
-                with patch.object(pool, "release_client", new_callable=AsyncMock):
-                    await client.post(
-                        "/auth/verify-code",
-                        data={
-                            "phone": "+1234567890",
-                            "code": "12345",
-                            "phone_code_hash": "hash",
-                            "password_2fa": "",
-                        },
-                        follow_redirects=False,
-                    )
+        await client.post(
+            "/auth/verify-code",
+            data={
+                "phone": "+1234567890",
+                "code": "12345",
+                "phone_code_hash": "hash",
+                "password_2fa": "",
+            },
+            follow_redirects=False,
+        )
 
-                    # Check premium was detected
-                    db = client._transport.app.state.db
-                    accounts = await db.get_accounts()
-                    if accounts:
-                        assert accounts[-1].is_premium is True
+        db = client._transport.app.state.db
+        accounts = await db.get_accounts()
+        if accounts:
+            assert accounts[-1].is_premium is False
 
 
 @pytest.mark.asyncio

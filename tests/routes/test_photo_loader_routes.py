@@ -63,6 +63,7 @@ async def test_photo_loader_page_shows_no_jobs(client, db):
 @pytest.mark.asyncio
 async def test_photo_refresh_redirects(client):
     """Test photo refresh redirects."""
+    db = client._transport.app.state.db
     with patch("src.web.routes.photo_loader.deps.channel_service") as mock_svc:
         mock_svc.return_value.get_my_dialogs = AsyncMock(return_value=[])
         resp = await client.post(
@@ -71,6 +72,10 @@ async def test_photo_refresh_redirects(client):
             follow_redirects=False,
         )
         assert resp.status_code == 303
+        assert "command_id=" in resp.headers["location"]
+        mock_svc.return_value.get_my_dialogs.assert_not_awaited()
+    commands = await db.repos.telegram_commands.list_commands(limit=1)
+    assert commands[0].command_type == "dialogs.refresh"
 
 
 @pytest.mark.asyncio
@@ -124,9 +129,10 @@ async def test_photo_send_no_files(client):
     """Test photo send with empty persisted files."""
     from io import BytesIO
 
+    db = client._transport.app.state.db
     with patch(
         "src.web.routes.photo_loader._persist_uploads",
-        AsyncMock(return_value=[]),
+        AsyncMock(return_value=["/tmp/one.jpg"]),
     ), patch("src.web.routes.photo_loader.deps.channel_service") as mock_svc, patch(
         "src.web.routes.photo_loader.deps.get_photo_task_service"
     ) as mock_task_svc:
@@ -144,8 +150,12 @@ async def test_photo_send_no_files(client):
             files={"photos": ("test.jpg", file_content, "image/jpeg")},
             follow_redirects=False,
         )
-        # Should succeed (files are persisted as empty list)
         assert resp.status_code == 303
+        assert "command_id=" in resp.headers["location"]
+        mock_task_svc.return_value.send_now.assert_not_awaited()
+    commands = await db.repos.telegram_commands.list_commands(limit=1)
+    assert commands[0].command_type == "photo.send_now"
+    assert commands[0].payload["file_paths"] == ["/tmp/one.jpg"]
 
 
 @pytest.mark.asyncio
@@ -173,6 +183,7 @@ async def test_photo_schedule_missing_target(client):
 @pytest.mark.asyncio
 async def test_photo_run_due_redirects(client):
     """Test photo run due redirects."""
+    db = client._transport.app.state.db
     with patch(
         "src.web.routes.photo_loader.deps.get_photo_task_service"
     ) as mock_task_svc, patch(
@@ -186,6 +197,11 @@ async def test_photo_run_due_redirects(client):
             follow_redirects=False,
         )
         assert resp.status_code == 303
+        assert "command_id=" in resp.headers["location"]
+        mock_task_svc.return_value.run_due.assert_not_awaited()
+        mock_auto_svc.return_value.run_due.assert_not_awaited()
+    commands = await db.repos.telegram_commands.list_commands(limit=1)
+    assert commands[0].command_type == "photo.run_due"
 
 
 @pytest.mark.asyncio

@@ -966,8 +966,24 @@ class TestWebCacheClear:
         assert resp.status_code == 200
 
 
+async def _assert_enqueued(app, expected_type: str, expected_payload_subset: dict | None = None):
+    """Verify at least one telegram_commands row exists with given type and payload."""
+    db = app.state.db
+    commands = await db.repos.telegram_commands.list_commands(limit=20)
+    matches = [c for c in commands if c.command_type == expected_type]
+    assert matches, (
+        f"expected a command of type {expected_type!r}, got {[c.command_type for c in commands]}"
+    )
+    if expected_payload_subset:
+        latest = matches[0]
+        for k, v in expected_payload_subset.items():
+            assert latest.payload.get(k) == v, (
+                f"payload[{k!r}] expected {v!r}, got {latest.payload.get(k)!r}"
+            )
+
+
 class TestWebSend:
-    """POST /dialogs/send."""
+    """POST /dialogs/send — queued-command model."""
 
     @pytest.mark.asyncio
     async def test_send_missing_fields(self, web_client):
@@ -977,38 +993,20 @@ class TestWebSend:
         assert "error=missing_fields" in str(resp.url)
 
     @pytest.mark.asyncio
-    async def test_send_client_unavailable(self, web_client):
+    async def test_send_enqueues(self, web_client):
         c, app = web_client
-        pool = app.state.pool
-        pool.get_native_client_by_phone = AsyncMock(return_value=None)
-        resp = await c.post("/dialogs/send", data={"phone": _PHONE, "recipient": "@u", "text": "hi"})
-        assert resp.status_code == 200
-        assert "error=client_unavailable" in str(resp.url)
-
-    @pytest.mark.asyncio
-    async def test_send_ok(self, web_client):
-        c, app = web_client
-        mock_client = AsyncMock()
-        mock_client.get_entity = AsyncMock(return_value=SimpleNamespace(id=1))
-        mock_client.send_message = AsyncMock()
-        app.state.pool.get_native_client_by_phone = AsyncMock(return_value=(mock_client, _PHONE))
-        resp = await c.post("/dialogs/send", data={"phone": _PHONE, "recipient": "@u", "text": "hi"})
-        assert resp.status_code == 200
-        assert "msg=message_sent" in str(resp.url)
-
-    @pytest.mark.asyncio
-    async def test_send_error(self, web_client):
-        c, app = web_client
-        mock_client = AsyncMock()
-        mock_client.get_entity = AsyncMock(side_effect=RuntimeError("oops"))
-        app.state.pool.get_native_client_by_phone = AsyncMock(return_value=(mock_client, _PHONE))
-        resp = await c.post("/dialogs/send", data={"phone": _PHONE, "recipient": "@u", "text": "hi"})
-        assert resp.status_code == 200
-        assert "error=send_failed" in str(resp.url)
+        resp = await c.post(
+            "/dialogs/send",
+            data={"phone": _PHONE, "recipient": "@u", "text": "hi"},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        assert "command_id=" in resp.headers["location"]
+        await _assert_enqueued(app, "dialogs.send", {"phone": _PHONE, "recipient": "@u", "text": "hi"})
 
 
 class TestWebEditMessage:
-    """POST /dialogs/edit-message."""
+    """POST /dialogs/edit-message — queued-command model."""
 
     @pytest.mark.asyncio
     async def test_edit_missing_fields(self, web_client):
@@ -1019,40 +1017,20 @@ class TestWebEditMessage:
         assert "error=missing_fields" in str(resp.url)
 
     @pytest.mark.asyncio
-    async def test_edit_ok(self, web_client):
+    async def test_edit_enqueues(self, web_client):
         c, app = web_client
-        mock_client = AsyncMock()
-        mock_client.get_entity = AsyncMock(return_value=SimpleNamespace(id=1))
-        mock_client.edit_message = AsyncMock()
-        app.state.pool.get_native_client_by_phone = AsyncMock(return_value=(mock_client, _PHONE))
-        resp = await c.post("/dialogs/edit-message", data={
-            "phone": _PHONE, "chat_id": "@ch", "message_id": "42", "text": "new",
-        })
-        assert "msg=message_edited" in str(resp.url)
-
-    @pytest.mark.asyncio
-    async def test_edit_client_unavailable(self, web_client):
-        c, app = web_client
-        app.state.pool.get_native_client_by_phone = AsyncMock(return_value=None)
-        resp = await c.post("/dialogs/edit-message", data={
-            "phone": _PHONE, "chat_id": "@ch", "message_id": "42", "text": "new",
-        })
-        assert "error=client_unavailable" in str(resp.url)
-
-    @pytest.mark.asyncio
-    async def test_edit_error(self, web_client):
-        c, app = web_client
-        mock_client = AsyncMock()
-        mock_client.get_entity = AsyncMock(side_effect=RuntimeError("err"))
-        app.state.pool.get_native_client_by_phone = AsyncMock(return_value=(mock_client, _PHONE))
-        resp = await c.post("/dialogs/edit-message", data={
-            "phone": _PHONE, "chat_id": "@ch", "message_id": "42", "text": "new",
-        })
-        assert "error=edit_failed" in str(resp.url)
+        resp = await c.post(
+            "/dialogs/edit-message",
+            data={"phone": _PHONE, "chat_id": "@ch", "message_id": "42", "text": "new"},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        assert "command_id=" in resp.headers["location"]
+        await _assert_enqueued(app, "dialogs.edit_message", {"phone": _PHONE, "chat_id": "@ch"})
 
 
 class TestWebDeleteMessage:
-    """POST /dialogs/delete-message."""
+    """POST /dialogs/delete-message — queued-command model."""
 
     @pytest.mark.asyncio
     async def test_delete_missing_fields(self, web_client):
@@ -1071,31 +1049,20 @@ class TestWebDeleteMessage:
         assert "error=invalid_ids" in str(resp.url)
 
     @pytest.mark.asyncio
-    async def test_delete_ok(self, web_client):
+    async def test_delete_enqueues(self, web_client):
         c, app = web_client
-        mock_client = AsyncMock()
-        mock_client.get_entity = AsyncMock(return_value=SimpleNamespace(id=1))
-        mock_client.delete_messages = AsyncMock()
-        app.state.pool.get_native_client_by_phone = AsyncMock(return_value=(mock_client, _PHONE))
-        resp = await c.post("/dialogs/delete-message", data={
-            "phone": _PHONE, "chat_id": "@ch", "message_ids": "1,2",
-        })
-        assert "msg=messages_deleted" in str(resp.url)
-
-    @pytest.mark.asyncio
-    async def test_delete_error(self, web_client):
-        c, app = web_client
-        mock_client = AsyncMock()
-        mock_client.get_entity = AsyncMock(side_effect=RuntimeError("err"))
-        app.state.pool.get_native_client_by_phone = AsyncMock(return_value=(mock_client, _PHONE))
-        resp = await c.post("/dialogs/delete-message", data={
-            "phone": _PHONE, "chat_id": "@ch", "message_ids": "1",
-        })
-        assert "error=delete_failed" in str(resp.url)
+        resp = await c.post(
+            "/dialogs/delete-message",
+            data={"phone": _PHONE, "chat_id": "@ch", "message_ids": "1,2"},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        assert "command_id=" in resp.headers["location"]
+        await _assert_enqueued(app, "dialogs.delete_message", {"phone": _PHONE, "chat_id": "@ch"})
 
 
 class TestWebForwardMessages:
-    """POST /dialogs/forward-messages."""
+    """POST /dialogs/forward-messages — queued-command model."""
 
     @pytest.mark.asyncio
     async def test_forward_missing_fields(self, web_client):
@@ -1114,40 +1081,20 @@ class TestWebForwardMessages:
         assert "error=invalid_ids" in str(resp.url)
 
     @pytest.mark.asyncio
-    async def test_forward_ok(self, web_client):
+    async def test_forward_enqueues(self, web_client):
         c, app = web_client
-        mock_client = AsyncMock()
-        mock_client.get_entity = AsyncMock(return_value=SimpleNamespace(id=1))
-        mock_client.forward_messages = AsyncMock()
-        app.state.pool.get_native_client_by_phone = AsyncMock(return_value=(mock_client, _PHONE))
-        resp = await c.post("/dialogs/forward-messages", data={
-            "phone": _PHONE, "from_chat": "@a", "to_chat": "@b", "message_ids": "1,2",
-        })
-        assert "msg=messages_forwarded" in str(resp.url)
-
-    @pytest.mark.asyncio
-    async def test_forward_error(self, web_client):
-        c, app = web_client
-        mock_client = AsyncMock()
-        mock_client.get_entity = AsyncMock(side_effect=RuntimeError("err"))
-        app.state.pool.get_native_client_by_phone = AsyncMock(return_value=(mock_client, _PHONE))
-        resp = await c.post("/dialogs/forward-messages", data={
-            "phone": _PHONE, "from_chat": "@a", "to_chat": "@b", "message_ids": "1",
-        })
-        assert "error=forward_failed" in str(resp.url)
-
-    @pytest.mark.asyncio
-    async def test_forward_client_unavailable(self, web_client):
-        c, app = web_client
-        app.state.pool.get_native_client_by_phone = AsyncMock(return_value=None)
-        resp = await c.post("/dialogs/forward-messages", data={
-            "phone": _PHONE, "from_chat": "@a", "to_chat": "@b", "message_ids": "1",
-        })
-        assert "error=client_unavailable" in str(resp.url)
+        resp = await c.post(
+            "/dialogs/forward-messages",
+            data={"phone": _PHONE, "from_chat": "@a", "to_chat": "@b", "message_ids": "1,2"},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        assert "command_id=" in resp.headers["location"]
+        await _assert_enqueued(app, "dialogs.forward_messages", {"phone": _PHONE})
 
 
 class TestWebPinMessage:
-    """POST /dialogs/pin-message."""
+    """POST /dialogs/pin-message — queued-command model."""
 
     @pytest.mark.asyncio
     async def test_pin_missing_fields(self, web_client):
@@ -1158,31 +1105,20 @@ class TestWebPinMessage:
         assert "error=missing_fields" in str(resp.url)
 
     @pytest.mark.asyncio
-    async def test_pin_ok(self, web_client):
+    async def test_pin_enqueues(self, web_client):
         c, app = web_client
-        mock_client = AsyncMock()
-        mock_client.get_entity = AsyncMock(return_value=SimpleNamespace(id=1))
-        mock_client.pin_message = AsyncMock()
-        app.state.pool.get_native_client_by_phone = AsyncMock(return_value=(mock_client, _PHONE))
-        resp = await c.post("/dialogs/pin-message", data={
-            "phone": _PHONE, "chat_id": "@ch", "message_id": "10", "notify": "1",
-        })
-        assert "msg=message_pinned" in str(resp.url)
-
-    @pytest.mark.asyncio
-    async def test_pin_error(self, web_client):
-        c, app = web_client
-        mock_client = AsyncMock()
-        mock_client.get_entity = AsyncMock(side_effect=RuntimeError("err"))
-        app.state.pool.get_native_client_by_phone = AsyncMock(return_value=(mock_client, _PHONE))
-        resp = await c.post("/dialogs/pin-message", data={
-            "phone": _PHONE, "chat_id": "@ch", "message_id": "10",
-        })
-        assert "error=pin_failed" in str(resp.url)
+        resp = await c.post(
+            "/dialogs/pin-message",
+            data={"phone": _PHONE, "chat_id": "@ch", "message_id": "10", "notify": "1"},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        assert "command_id=" in resp.headers["location"]
+        await _assert_enqueued(app, "dialogs.pin_message", {"phone": _PHONE, "chat_id": "@ch"})
 
 
 class TestWebUnpinMessage:
-    """POST /dialogs/unpin-message."""
+    """POST /dialogs/unpin-message — queued-command model."""
 
     @pytest.mark.asyncio
     async def test_unpin_missing_fields(self, web_client):
@@ -1193,52 +1129,35 @@ class TestWebUnpinMessage:
         assert "error=missing_fields" in str(resp.url)
 
     @pytest.mark.asyncio
-    async def test_unpin_ok(self, web_client):
+    async def test_unpin_enqueues(self, web_client):
         c, app = web_client
-        mock_client = AsyncMock()
-        mock_client.get_entity = AsyncMock(return_value=SimpleNamespace(id=1))
-        mock_client.unpin_message = AsyncMock()
-        app.state.pool.get_native_client_by_phone = AsyncMock(return_value=(mock_client, _PHONE))
-        resp = await c.post("/dialogs/unpin-message", data={
-            "phone": _PHONE, "chat_id": "@ch", "message_id": "10",
-        })
-        assert "msg=message_unpinned" in str(resp.url)
+        resp = await c.post(
+            "/dialogs/unpin-message",
+            data={"phone": _PHONE, "chat_id": "@ch", "message_id": "10"},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        assert "command_id=" in resp.headers["location"]
+        await _assert_enqueued(app, "dialogs.unpin_message", {"phone": _PHONE, "chat_id": "@ch"})
 
     @pytest.mark.asyncio
-    async def test_unpin_all(self, web_client):
+    async def test_unpin_all_enqueues(self, web_client):
         c, app = web_client
-        mock_client = AsyncMock()
-        mock_client.get_entity = AsyncMock(return_value=SimpleNamespace(id=1))
-        mock_client.unpin_message = AsyncMock()
-        app.state.pool.get_native_client_by_phone = AsyncMock(return_value=(mock_client, _PHONE))
-        resp = await c.post("/dialogs/unpin-message", data={
-            "phone": _PHONE, "chat_id": "@ch",
-        })
-        assert "msg=message_unpinned" in str(resp.url)
-
-    @pytest.mark.asyncio
-    async def test_unpin_error(self, web_client):
-        c, app = web_client
-        mock_client = AsyncMock()
-        mock_client.get_entity = AsyncMock(side_effect=RuntimeError("err"))
-        app.state.pool.get_native_client_by_phone = AsyncMock(return_value=(mock_client, _PHONE))
-        resp = await c.post("/dialogs/unpin-message", data={
-            "phone": _PHONE, "chat_id": "@ch",
-        })
-        assert "error=unpin_failed" in str(resp.url)
-
-    @pytest.mark.asyncio
-    async def test_unpin_client_unavailable(self, web_client):
-        c, app = web_client
-        app.state.pool.get_native_client_by_phone = AsyncMock(return_value=None)
-        resp = await c.post("/dialogs/unpin-message", data={
-            "phone": _PHONE, "chat_id": "@ch",
-        })
-        assert "error=client_unavailable" in str(resp.url)
+        resp = await c.post(
+            "/dialogs/unpin-message",
+            data={"phone": _PHONE, "chat_id": "@ch"},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        assert "command_id=" in resp.headers["location"]
 
 
 class TestWebParticipants:
-    """GET /dialogs/participants."""
+    """GET /dialogs/participants — queued-command model.
+
+    Returns cached snapshot if available, otherwise enqueues a command and
+    responds 202.
+    """
 
     @pytest.mark.asyncio
     async def test_participants_missing_params(self, web_client):
@@ -1247,38 +1166,20 @@ class TestWebParticipants:
         assert resp.status_code == 400
 
     @pytest.mark.asyncio
-    async def test_participants_client_unavailable(self, web_client):
+    async def test_participants_enqueues_when_no_snapshot(self, web_client):
         c, app = web_client
-        app.state.pool.get_native_client_by_phone = AsyncMock(return_value=None)
-        resp = await c.get(f"/dialogs/participants?phone={_PHONE}&chat_id=@ch")
-        assert resp.status_code == 503
-
-    @pytest.mark.asyncio
-    async def test_participants_ok(self, web_client):
-        c, app = web_client
-        mock_client = AsyncMock()
-        p1 = SimpleNamespace(id=1, first_name="Alice", last_name="B", username="alice")
-        mock_client.get_entity = AsyncMock(return_value=SimpleNamespace(id=1))
-        mock_client.get_participants = AsyncMock(return_value=[p1])
-        app.state.pool.get_native_client_by_phone = AsyncMock(return_value=(mock_client, _PHONE))
-        resp = await c.get(f"/dialogs/participants?phone={_PHONE}&chat_id=@ch")
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["total"] == 1
-        assert data["participants"][0]["first_name"] == "Alice"
-
-    @pytest.mark.asyncio
-    async def test_participants_error(self, web_client):
-        c, app = web_client
-        mock_client = AsyncMock()
-        mock_client.get_entity = AsyncMock(side_effect=RuntimeError("err"))
-        app.state.pool.get_native_client_by_phone = AsyncMock(return_value=(mock_client, _PHONE))
-        resp = await c.get(f"/dialogs/participants?phone={_PHONE}&chat_id=@ch")
-        assert resp.status_code == 500
+        phone_enc = _PHONE.replace("+", "%2B")
+        resp = await c.get(f"/dialogs/participants?phone={phone_enc}&chat_id=@ch")
+        # no snapshot yet → 202 Accepted with queued status
+        assert resp.status_code == 202
+        body = resp.json()
+        assert body.get("status") == "queued"
+        assert "command_id" in body
+        await _assert_enqueued(app, "dialogs.participants", {"phone": _PHONE, "chat_id": "@ch"})
 
 
 class TestWebArchive:
-    """POST /dialogs/archive and /unarchive."""
+    """POST /dialogs/archive and /unarchive — queued-command model."""
 
     @pytest.mark.asyncio
     async def test_archive_missing_fields(self, web_client):
@@ -1287,49 +1188,28 @@ class TestWebArchive:
         assert "error=missing_fields" in str(resp.url)
 
     @pytest.mark.asyncio
-    async def test_archive_ok(self, web_client):
+    async def test_archive_enqueues(self, web_client):
         c, app = web_client
-        mock_client = AsyncMock()
-        mock_client.get_entity = AsyncMock(return_value=SimpleNamespace(id=1))
-        mock_client.edit_folder = AsyncMock()
-        app.state.pool.get_native_client_by_phone = AsyncMock(return_value=(mock_client, _PHONE))
-        resp = await c.post("/dialogs/archive", data={"phone": _PHONE, "chat_id": "@ch"})
-        assert "msg=dialog_archived" in str(resp.url)
+        resp = await c.post(
+            "/dialogs/archive",
+            data={"phone": _PHONE, "chat_id": "@ch"},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        assert "command_id=" in resp.headers["location"]
+        await _assert_enqueued(app, "dialogs.archive", {"phone": _PHONE, "chat_id": "@ch"})
 
     @pytest.mark.asyncio
-    async def test_archive_error(self, web_client):
+    async def test_unarchive_enqueues(self, web_client):
         c, app = web_client
-        mock_client = AsyncMock()
-        mock_client.get_entity = AsyncMock(side_effect=RuntimeError("err"))
-        app.state.pool.get_native_client_by_phone = AsyncMock(return_value=(mock_client, _PHONE))
-        resp = await c.post("/dialogs/archive", data={"phone": _PHONE, "chat_id": "@ch"})
-        assert "error=archive_failed" in str(resp.url)
-
-    @pytest.mark.asyncio
-    async def test_archive_client_unavailable(self, web_client):
-        c, app = web_client
-        app.state.pool.get_native_client_by_phone = AsyncMock(return_value=None)
-        resp = await c.post("/dialogs/archive", data={"phone": _PHONE, "chat_id": "@ch"})
-        assert "error=client_unavailable" in str(resp.url)
-
-    @pytest.mark.asyncio
-    async def test_unarchive_ok(self, web_client):
-        c, app = web_client
-        mock_client = AsyncMock()
-        mock_client.get_entity = AsyncMock(return_value=SimpleNamespace(id=1))
-        mock_client.edit_folder = AsyncMock()
-        app.state.pool.get_native_client_by_phone = AsyncMock(return_value=(mock_client, _PHONE))
-        resp = await c.post("/dialogs/unarchive", data={"phone": _PHONE, "chat_id": "@ch"})
-        assert "msg=dialog_unarchived" in str(resp.url)
-
-    @pytest.mark.asyncio
-    async def test_unarchive_error(self, web_client):
-        c, app = web_client
-        mock_client = AsyncMock()
-        mock_client.get_entity = AsyncMock(side_effect=RuntimeError("err"))
-        app.state.pool.get_native_client_by_phone = AsyncMock(return_value=(mock_client, _PHONE))
-        resp = await c.post("/dialogs/unarchive", data={"phone": _PHONE, "chat_id": "@ch"})
-        assert "error=unarchive_failed" in str(resp.url)
+        resp = await c.post(
+            "/dialogs/unarchive",
+            data={"phone": _PHONE, "chat_id": "@ch"},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        assert "command_id=" in resp.headers["location"]
+        await _assert_enqueued(app, "dialogs.unarchive", {"phone": _PHONE, "chat_id": "@ch"})
 
     @pytest.mark.asyncio
     async def test_unarchive_missing_fields(self, web_client):
@@ -1339,7 +1219,7 @@ class TestWebArchive:
 
 
 class TestWebMarkRead:
-    """POST /dialogs/mark-read."""
+    """POST /dialogs/mark-read — queued-command model."""
 
     @pytest.mark.asyncio
     async def test_mark_read_missing_fields(self, web_client):
@@ -1348,46 +1228,31 @@ class TestWebMarkRead:
         assert "error=missing_fields" in str(resp.url)
 
     @pytest.mark.asyncio
-    async def test_mark_read_ok(self, web_client):
+    async def test_mark_read_enqueues(self, web_client):
         c, app = web_client
-        mock_client = AsyncMock()
-        mock_client.get_entity = AsyncMock(return_value=SimpleNamespace(id=1))
-        mock_client.send_read_acknowledge = AsyncMock()
-        app.state.pool.get_native_client_by_phone = AsyncMock(return_value=(mock_client, _PHONE))
-        resp = await c.post("/dialogs/mark-read", data={"phone": _PHONE, "chat_id": "@ch"})
-        assert "msg=messages_marked_read" in str(resp.url)
+        resp = await c.post(
+            "/dialogs/mark-read",
+            data={"phone": _PHONE, "chat_id": "@ch"},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        assert "command_id=" in resp.headers["location"]
+        await _assert_enqueued(app, "dialogs.mark_read", {"phone": _PHONE, "chat_id": "@ch"})
 
     @pytest.mark.asyncio
-    async def test_mark_read_with_max_id(self, web_client):
+    async def test_mark_read_with_max_id_enqueues(self, web_client):
         c, app = web_client
-        mock_client = AsyncMock()
-        mock_client.get_entity = AsyncMock(return_value=SimpleNamespace(id=1))
-        mock_client.send_read_acknowledge = AsyncMock()
-        app.state.pool.get_native_client_by_phone = AsyncMock(return_value=(mock_client, _PHONE))
-        resp = await c.post("/dialogs/mark-read", data={
-            "phone": _PHONE, "chat_id": "@ch", "max_id": "100",
-        })
-        assert "msg=messages_marked_read" in str(resp.url)
-
-    @pytest.mark.asyncio
-    async def test_mark_read_error(self, web_client):
-        c, app = web_client
-        mock_client = AsyncMock()
-        mock_client.get_entity = AsyncMock(side_effect=RuntimeError("err"))
-        app.state.pool.get_native_client_by_phone = AsyncMock(return_value=(mock_client, _PHONE))
-        resp = await c.post("/dialogs/mark-read", data={"phone": _PHONE, "chat_id": "@ch"})
-        assert "error=mark_read_failed" in str(resp.url)
-
-    @pytest.mark.asyncio
-    async def test_mark_read_client_unavailable(self, web_client):
-        c, app = web_client
-        app.state.pool.get_native_client_by_phone = AsyncMock(return_value=None)
-        resp = await c.post("/dialogs/mark-read", data={"phone": _PHONE, "chat_id": "@ch"})
-        assert "error=client_unavailable" in str(resp.url)
+        resp = await c.post(
+            "/dialogs/mark-read",
+            data={"phone": _PHONE, "chat_id": "@ch", "max_id": "100"},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        await _assert_enqueued(app, "dialogs.mark_read", {"phone": _PHONE, "max_id": 100})
 
 
 class TestWebEditAdmin:
-    """POST /dialogs/edit-admin."""
+    """POST /dialogs/edit-admin — queued-command model."""
 
     @pytest.mark.asyncio
     async def test_edit_admin_missing_fields(self, web_client):
@@ -1398,40 +1263,23 @@ class TestWebEditAdmin:
         assert "error=missing_fields" in str(resp.url)
 
     @pytest.mark.asyncio
-    async def test_edit_admin_ok(self, web_client):
+    async def test_edit_admin_enqueues(self, web_client):
         c, app = web_client
-        mock_client = AsyncMock()
-        mock_client.get_entity = AsyncMock(return_value=SimpleNamespace(id=1))
-        mock_client.edit_admin = AsyncMock()
-        app.state.pool.get_native_client_by_phone = AsyncMock(return_value=(mock_client, _PHONE))
-        resp = await c.post("/dialogs/edit-admin", data={
-            "phone": _PHONE, "chat_id": "@ch", "user_id": "@u", "is_admin": "1", "title": "Boss",
-        })
-        assert "msg=admin_updated" in str(resp.url)
-
-    @pytest.mark.asyncio
-    async def test_edit_admin_error(self, web_client):
-        c, app = web_client
-        mock_client = AsyncMock()
-        mock_client.get_entity = AsyncMock(side_effect=RuntimeError("err"))
-        app.state.pool.get_native_client_by_phone = AsyncMock(return_value=(mock_client, _PHONE))
-        resp = await c.post("/dialogs/edit-admin", data={
-            "phone": _PHONE, "chat_id": "@ch", "user_id": "@u",
-        })
-        assert "error=edit_admin_failed" in str(resp.url)
-
-    @pytest.mark.asyncio
-    async def test_edit_admin_client_unavailable(self, web_client):
-        c, app = web_client
-        app.state.pool.get_native_client_by_phone = AsyncMock(return_value=None)
-        resp = await c.post("/dialogs/edit-admin", data={
-            "phone": _PHONE, "chat_id": "@ch", "user_id": "@u",
-        })
-        assert "error=client_unavailable" in str(resp.url)
+        resp = await c.post(
+            "/dialogs/edit-admin",
+            data={
+                "phone": _PHONE, "chat_id": "@ch", "user_id": "@u",
+                "is_admin": "1", "title": "Boss",
+            },
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        assert "command_id=" in resp.headers["location"]
+        await _assert_enqueued(app, "dialogs.edit_admin", {"phone": _PHONE, "chat_id": "@ch"})
 
 
 class TestWebEditPermissions:
-    """POST /dialogs/edit-permissions."""
+    """POST /dialogs/edit-permissions — queued-command model."""
 
     @pytest.mark.asyncio
     async def test_edit_permissions_no_flags(self, web_client):
@@ -1450,31 +1298,23 @@ class TestWebEditPermissions:
         assert "error=missing_fields" in str(resp.url)
 
     @pytest.mark.asyncio
-    async def test_edit_permissions_ok(self, web_client):
+    async def test_edit_permissions_enqueues(self, web_client):
         c, app = web_client
-        mock_client = AsyncMock()
-        mock_client.get_entity = AsyncMock(return_value=SimpleNamespace(id=1))
-        mock_client.edit_permissions = AsyncMock()
-        app.state.pool.get_native_client_by_phone = AsyncMock(return_value=(mock_client, _PHONE))
-        resp = await c.post("/dialogs/edit-permissions", data={
-            "phone": _PHONE, "chat_id": "@ch", "user_id": "@u", "send_messages": "true",
-        })
-        assert "msg=permissions_updated" in str(resp.url)
-
-    @pytest.mark.asyncio
-    async def test_edit_permissions_error(self, web_client):
-        c, app = web_client
-        mock_client = AsyncMock()
-        mock_client.get_entity = AsyncMock(side_effect=RuntimeError("err"))
-        app.state.pool.get_native_client_by_phone = AsyncMock(return_value=(mock_client, _PHONE))
-        resp = await c.post("/dialogs/edit-permissions", data={
-            "phone": _PHONE, "chat_id": "@ch", "user_id": "@u", "send_messages": "1",
-        })
-        assert "error=edit_permissions_failed" in str(resp.url)
+        resp = await c.post(
+            "/dialogs/edit-permissions",
+            data={
+                "phone": _PHONE, "chat_id": "@ch", "user_id": "@u",
+                "send_messages": "true",
+            },
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        assert "command_id=" in resp.headers["location"]
+        await _assert_enqueued(app, "dialogs.edit_permissions", {"phone": _PHONE, "chat_id": "@ch"})
 
 
 class TestWebKick:
-    """POST /dialogs/kick."""
+    """POST /dialogs/kick — queued-command model."""
 
     @pytest.mark.asyncio
     async def test_kick_missing_fields(self, web_client):
@@ -1485,40 +1325,20 @@ class TestWebKick:
         assert "error=missing_fields" in str(resp.url)
 
     @pytest.mark.asyncio
-    async def test_kick_ok(self, web_client):
+    async def test_kick_enqueues(self, web_client):
         c, app = web_client
-        mock_client = AsyncMock()
-        mock_client.get_entity = AsyncMock(return_value=SimpleNamespace(id=1))
-        mock_client.kick_participant = AsyncMock()
-        app.state.pool.get_native_client_by_phone = AsyncMock(return_value=(mock_client, _PHONE))
-        resp = await c.post("/dialogs/kick", data={
-            "phone": _PHONE, "chat_id": "@ch", "user_id": "@u",
-        })
-        assert "msg=user_kicked" in str(resp.url)
-
-    @pytest.mark.asyncio
-    async def test_kick_error(self, web_client):
-        c, app = web_client
-        mock_client = AsyncMock()
-        mock_client.get_entity = AsyncMock(side_effect=RuntimeError("err"))
-        app.state.pool.get_native_client_by_phone = AsyncMock(return_value=(mock_client, _PHONE))
-        resp = await c.post("/dialogs/kick", data={
-            "phone": _PHONE, "chat_id": "@ch", "user_id": "@u",
-        })
-        assert "error=kick_failed" in str(resp.url)
-
-    @pytest.mark.asyncio
-    async def test_kick_client_unavailable(self, web_client):
-        c, app = web_client
-        app.state.pool.get_native_client_by_phone = AsyncMock(return_value=None)
-        resp = await c.post("/dialogs/kick", data={
-            "phone": _PHONE, "chat_id": "@ch", "user_id": "@u",
-        })
-        assert "error=client_unavailable" in str(resp.url)
+        resp = await c.post(
+            "/dialogs/kick",
+            data={"phone": _PHONE, "chat_id": "@ch", "user_id": "@u"},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        assert "command_id=" in resp.headers["location"]
+        await _assert_enqueued(app, "dialogs.kick", {"phone": _PHONE, "chat_id": "@ch"})
 
 
 class TestWebBroadcastStats:
-    """GET /dialogs/broadcast-stats."""
+    """GET /dialogs/broadcast-stats — queued-command model."""
 
     @pytest.mark.asyncio
     async def test_broadcast_stats_missing_params(self, web_client):
@@ -1527,64 +1347,36 @@ class TestWebBroadcastStats:
         assert resp.status_code == 400
 
     @pytest.mark.asyncio
-    async def test_broadcast_stats_ok(self, web_client):
+    async def test_broadcast_stats_enqueues_when_no_snapshot(self, web_client):
         c, app = web_client
-        mock_client = AsyncMock()
-        mock_client.get_entity = AsyncMock(return_value=SimpleNamespace(id=1))
-        stats = SimpleNamespace(
-            followers=SimpleNamespace(current=100, previous=90),
-            views_per_post=None,
-            shares_per_post=None,
-            reactions_per_post=None,
-            forwards_per_post=None,
-            period=None,
-            enabled_notifications=None,
-        )
-        mock_client.get_broadcast_stats = AsyncMock(return_value=stats)
-        app.state.pool.get_native_client_by_phone = AsyncMock(return_value=(mock_client, _PHONE))
-        resp = await c.get(f"/dialogs/broadcast-stats?phone={_PHONE}&chat_id=@ch")
-        assert resp.status_code == 200
-        data = resp.json()
-        assert "stats" in data
-        assert data["stats"]["followers"]["current"] == 100
-
-    @pytest.mark.asyncio
-    async def test_broadcast_stats_error(self, web_client):
-        c, app = web_client
-        mock_client = AsyncMock()
-        mock_client.get_entity = AsyncMock(side_effect=RuntimeError("err"))
-        app.state.pool.get_native_client_by_phone = AsyncMock(return_value=(mock_client, _PHONE))
-        resp = await c.get(f"/dialogs/broadcast-stats?phone={_PHONE}&chat_id=@ch")
-        assert resp.status_code == 500
-
-    @pytest.mark.asyncio
-    async def test_broadcast_stats_client_unavailable(self, web_client):
-        c, app = web_client
-        app.state.pool.get_native_client_by_phone = AsyncMock(return_value=None)
-        resp = await c.get(f"/dialogs/broadcast-stats?phone={_PHONE}&chat_id=@ch")
-        assert resp.status_code == 503
+        phone_enc = _PHONE.replace("+", "%2B")
+        resp = await c.get(f"/dialogs/broadcast-stats?phone={phone_enc}&chat_id=@ch")
+        # no snapshot yet → 202 Accepted with queued status
+        assert resp.status_code == 202
+        body = resp.json()
+        assert body.get("status") == "queued"
+        assert "command_id" in body
+        await _assert_enqueued(app, "dialogs.broadcast_stats", {"phone": _PHONE, "chat_id": "@ch"})
 
 
 class TestWebLeave:
-    """POST /dialogs/leave."""
+    """POST /dialogs/leave — queued-command model."""
 
     @pytest.mark.asyncio
-    async def test_leave_ok(self, web_client):
+    async def test_leave_enqueues(self, web_client):
         c, app = web_client
-        with patch(
-            _SVC_LEAVE,
-            new_callable=AsyncMock,
-            return_value={-100111: True, -100222: False},
-        ):
-            resp = await c.post("/dialogs/leave", data={
-                "phone": _PHONE, "channel_ids": ["-100111:channel", "-100222:supergroup"],
-            })
-        assert "left=1" in str(resp.url)
-        assert "failed=1" in str(resp.url)
+        resp = await c.post(
+            "/dialogs/leave",
+            data={"phone": _PHONE, "channel_ids": ["-100111:channel", "-100222:supergroup"]},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        assert "command_id=" in resp.headers["location"]
+        await _assert_enqueued(app, "dialogs.leave", {"phone": _PHONE})
 
 
 class TestWebDownloadMedia:
-    """POST /dialogs/download-media."""
+    """POST /dialogs/download-media — queued-command model."""
 
     @pytest.mark.asyncio
     async def test_download_missing_fields(self, web_client):
@@ -1595,63 +1387,20 @@ class TestWebDownloadMedia:
         assert "error=missing_fields" in str(resp.url)
 
     @pytest.mark.asyncio
-    async def test_download_client_unavailable(self, web_client):
+    async def test_download_enqueues(self, web_client):
         c, app = web_client
-        app.state.pool.get_native_client_by_phone = AsyncMock(return_value=None)
-        resp = await c.post("/dialogs/download-media", data={
-            "phone": _PHONE, "chat_id": "@ch", "message_id": "1",
-        })
-        assert "error=client_unavailable" in str(resp.url)
-
-    @pytest.mark.asyncio
-    async def test_download_message_not_found(self, web_client):
-        c, app = web_client
-        mock_client = AsyncMock()
-        mock_client.get_entity = AsyncMock(return_value=SimpleNamespace(id=1))
-
-        async def _empty_iter(entity, ids):
-            return
-            yield  # make it an async generator
-
-        mock_client.iter_messages = MagicMock(return_value=_empty_iter(None, None))
-        app.state.pool.get_native_client_by_phone = AsyncMock(return_value=(mock_client, _PHONE))
-        resp = await c.post("/dialogs/download-media", data={
-            "phone": _PHONE, "chat_id": "@ch", "message_id": "1",
-        })
-        assert "error=message_not_found" in str(resp.url)
-
-    @pytest.mark.asyncio
-    async def test_download_no_media(self, web_client):
-        c, app = web_client
-        mock_client = AsyncMock()
-        mock_client.get_entity = AsyncMock(return_value=SimpleNamespace(id=1))
-        msg = SimpleNamespace(id=1, media=None)
-
-        async def _iter(entity, ids):
-            yield msg
-
-        mock_client.iter_messages = MagicMock(return_value=_iter(None, None))
-        mock_client.download_media = AsyncMock(return_value=None)
-        app.state.pool.get_native_client_by_phone = AsyncMock(return_value=(mock_client, _PHONE))
-        resp = await c.post("/dialogs/download-media", data={
-            "phone": _PHONE, "chat_id": "@ch", "message_id": "1",
-        })
-        assert "error=no_media" in str(resp.url)
-
-    @pytest.mark.asyncio
-    async def test_download_error(self, web_client):
-        c, app = web_client
-        mock_client = AsyncMock()
-        mock_client.get_entity = AsyncMock(side_effect=RuntimeError("err"))
-        app.state.pool.get_native_client_by_phone = AsyncMock(return_value=(mock_client, _PHONE))
-        resp = await c.post("/dialogs/download-media", data={
-            "phone": _PHONE, "chat_id": "@ch", "message_id": "1",
-        })
-        assert "error=download_failed" in str(resp.url)
+        resp = await c.post(
+            "/dialogs/download-media",
+            data={"phone": _PHONE, "chat_id": "@ch", "message_id": "1"},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        assert "command_id=" in resp.headers["location"]
+        await _assert_enqueued(app, "dialogs.download_media", {"phone": _PHONE, "chat_id": "@ch"})
 
 
 class TestWebCreateChannel:
-    """GET and POST /dialogs/create-channel."""
+    """GET and POST /dialogs/create-channel — queued-command model."""
 
     @pytest.mark.asyncio
     async def test_create_channel_page(self, web_client):
@@ -1660,22 +1409,15 @@ class TestWebCreateChannel:
         assert resp.status_code == 200
 
     @pytest.mark.asyncio
-    async def test_create_channel_no_client(self, web_client):
+    async def test_create_channel_enqueues(self, web_client):
         c, app = web_client
-        resp = await c.post("/dialogs/create-channel", data={
-            "phone": "+000", "title": "Test", "about": "", "username": "",
-        })
-        assert resp.status_code == 200
-        assert "error=no_client" in str(resp.url)
-
-    @pytest.mark.asyncio
-    async def test_create_channel_error(self, web_client):
-        c, app = web_client
-        # The pool.clients[phone] will be the real pool client, patch it to raise
-        mock_client = AsyncMock()
-        mock_client.side_effect = RuntimeError("Telegram error")
-        app.state.pool.clients[_PHONE] = mock_client
-        resp = await c.post("/dialogs/create-channel", data={
-            "phone": _PHONE, "title": "Test", "about": "", "username": "",
-        })
-        assert resp.status_code == 200
+        resp = await c.post(
+            "/dialogs/create-channel",
+            data={"phone": _PHONE, "title": "Test", "about": "", "username": ""},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        assert "command_id=" in resp.headers["location"]
+        await _assert_enqueued(
+            app, "dialogs.create_channel", {"phone": _PHONE, "title": "Test"},
+        )

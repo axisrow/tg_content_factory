@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 import os
 import secrets
@@ -31,6 +32,7 @@ from src.services.photo_auto_upload_service import PhotoAutoUploadService
 from src.services.photo_publish_service import PhotoPublishService
 from src.services.photo_task_service import PhotoTaskService
 from src.services.task_enqueuer import TaskEnqueuer
+from src.services.telegram_command_dispatcher import TelegramCommandDispatcher
 from src.services.unified_dispatcher import UnifiedDispatcher
 from src.settings_utils import parse_int_setting
 from src.telegram.auth import TelegramAuth
@@ -40,6 +42,7 @@ from src.telegram.notifier import Notifier
 from src.web.container import AppContainer
 from src.web.log_handler import LogBuffer
 from src.web.paths import TEMPLATES_DIR
+from src.web.runtime_shims import SnapshotClientPool, SnapshotCollector, SnapshotSchedulerManager
 from src.web.template_globals import configure_template_globals
 from src.web.timing import TimingBuffer
 
@@ -66,7 +69,25 @@ async def load_telegram_credentials(db: Database, config: AppConfig) -> tuple[in
 
 
 async def build_container(config: AppConfig, *, log_buffer: LogBuffer) -> AppContainer:
-    return await build_container_with_templates(config, log_buffer=log_buffer, templates=None)
+    return await build_web_container(config, log_buffer=log_buffer)
+
+
+async def build_web_container(config: AppConfig, *, log_buffer: LogBuffer) -> AppContainer:
+    return await build_container_with_templates(
+        config,
+        log_buffer=log_buffer,
+        templates=None,
+        runtime_mode="web",
+    )
+
+
+async def build_worker_container(config: AppConfig, *, log_buffer: LogBuffer) -> AppContainer:
+    return await build_container_with_templates(
+        config,
+        log_buffer=log_buffer,
+        templates=None,
+        runtime_mode="worker",
+    )
 
 
 async def build_container_with_templates(
@@ -75,6 +96,7 @@ async def build_container_with_templates(
     log_buffer: LogBuffer,
     timing_buffer: TimingBuffer | None = None,
     templates: Jinja2Templates | None,
+    runtime_mode: str = "web",
 ) -> AppContainer:
     if _is_dev:
         t_build = time.monotonic()
@@ -128,22 +150,37 @@ async def build_container_with_templates(
 
     api_id, api_hash = await load_telegram_credentials(db, config)
     auth = TelegramAuth(api_id, api_hash)
-    pool = ClientPool(
-        auth,
-        db,
-        config.scheduler.max_flood_wait_sec,
-        runtime_config=config.telegram_runtime,
-    )
+    if runtime_mode == "worker":
+        pool = ClientPool(
+            auth,
+            db,
+            config.scheduler.max_flood_wait_sec,
+            runtime_config=config.telegram_runtime,
+        )
+    else:
+        pool = SnapshotClientPool(db)
+        await pool.refresh()
     notification_target_service = NotificationTargetService(notification_bundle, pool)
     photo_publish_service = PhotoPublishService(pool)
     photo_task_service = PhotoTaskService(photo_loader_bundle, photo_publish_service)
     photo_auto_upload_service = PhotoAutoUploadService(photo_loader_bundle, photo_publish_service)
-    notifier = Notifier(
-        notification_target_service, config.notifications.admin_chat_id, notification_bundle
-    )
-    collector = Collector(pool, db, config.scheduler, notifier)
-    collection_queue = CollectionQueue(collector, channel_bundle)
-    search_engine = SearchEngine(search_bundle, pool, config=config)
+    notifier = None
+    collection_queue = None
+    unified_dispatcher = None
+    telegram_command_dispatcher = None
+    agent_manager = None
+    if runtime_mode == "worker":
+        notifier = Notifier(
+            notification_target_service, config.notifications.admin_chat_id, notification_bundle
+        )
+        collector = Collector(pool, db, config.scheduler, notifier)
+        collection_queue = CollectionQueue(collector, channel_bundle)
+        search_pool = pool
+    else:
+        collector = SnapshotCollector(db)
+        await collector.refresh()
+        search_pool = None
+    search_engine = SearchEngine(search_bundle, search_pool, config=config)
     ai_search = AISearchEngine(config.llm, search_bundle)
     search_query_bundle = SearchQueryBundle(repos.search_queries, repos.messages)
 
@@ -157,30 +194,35 @@ async def build_container_with_templates(
     llm_provider_service = AgentProviderService(db, config)
     await llm_provider_service.load_db_providers()
 
-    unified_dispatcher = UnifiedDispatcher(
-        collector,
-        channel_bundle,
-        repos.tasks,
-        sq_bundle=search_query_bundle,
-        photo_task_service=photo_task_service,
-        photo_auto_upload_service=photo_auto_upload_service,
-        search_engine=search_engine,
-        pipeline_bundle=pipeline_bundle,
-        db=db,
-        client_pool=pool,
-        notifier=notifier,
-        config=config,
-        llm_provider_service=llm_provider_service,
-    )
-    scheduler = SchedulerManager(
-        config.scheduler,
-        scheduler_bundle=scheduler_bundle,
-        search_query_bundle=search_query_bundle,
-        task_enqueuer=task_enqueuer,
-        pipeline_bundle=pipeline_bundle,
-        warm_dialogs_callback=pool.warm_all_dialogs,
-    )
-    agent_manager = AgentManager(db, config, client_pool=pool, scheduler_manager=scheduler)
+    if runtime_mode == "worker":
+        unified_dispatcher = UnifiedDispatcher(
+            collector,
+            channel_bundle,
+            repos.tasks,
+            sq_bundle=search_query_bundle,
+            photo_task_service=photo_task_service,
+            photo_auto_upload_service=photo_auto_upload_service,
+            search_engine=search_engine,
+            pipeline_bundle=pipeline_bundle,
+            db=db,
+            client_pool=pool,
+            notifier=notifier,
+            config=config,
+            llm_provider_service=llm_provider_service,
+        )
+        telegram_command_dispatcher = TelegramCommandDispatcher(db, pool, config, collector)
+        scheduler = SchedulerManager(
+            config.scheduler,
+            scheduler_bundle=scheduler_bundle,
+            search_query_bundle=search_query_bundle,
+            task_enqueuer=task_enqueuer,
+            pipeline_bundle=pipeline_bundle,
+            warm_dialogs_callback=pool.warm_all_dialogs,
+        )
+        agent_manager = AgentManager(db, config, client_pool=pool, scheduler_manager=scheduler)
+    else:
+        scheduler = SnapshotSchedulerManager(db, config.scheduler.collect_interval_minutes)
+        await scheduler.load_settings()
 
     from src.services.translation_service import TranslationService
 
@@ -196,6 +238,7 @@ async def build_container_with_templates(
         logger.info("startup/build: container_build %.2fs", time.monotonic() - t_build)
 
     return AppContainer(
+        runtime_mode=runtime_mode,
         config=config,
         db=db,
         repos=repos,
@@ -219,6 +262,7 @@ async def build_container_with_templates(
         collection_queue=collection_queue,
         task_enqueuer=task_enqueuer,
         unified_dispatcher=unified_dispatcher,
+        telegram_command_dispatcher=telegram_command_dispatcher,
         search_engine=search_engine,
         ai_search=ai_search,
         scheduler=scheduler,
@@ -236,6 +280,7 @@ async def build_container_with_templates(
 
 async def start_container(container: AppContainer) -> None:
     t_start = time.monotonic()
+    runtime_mode = getattr(container, "runtime_mode", "worker")
     if _is_dev:
         t1 = time.monotonic()
 
@@ -248,11 +293,17 @@ async def start_container(container: AppContainer) -> None:
     gr_recovered = await container.db.repos.generation_runs.reset_running_on_startup()
     if gr_recovered:
         logger.warning("Reset %d stuck generation_runs to 'failed' on startup", gr_recovered)
+    if runtime_mode == "worker":
+        tc_recovered = await container.db.repos.telegram_commands.reset_running_on_startup()
+        if tc_recovered:
+            logger.warning(
+                "Reset %d stuck telegram_commands from RUNNING to PENDING on startup", tc_recovered
+            )
     logger.info("startup: recovery done (%.1fs)", time.monotonic() - t_start)
     if _is_dev:
         t1 = time.monotonic()
 
-    if container.auth.is_configured:
+    if runtime_mode == "worker" and container.auth.is_configured:
         try:
             await asyncio.wait_for(container.pool.initialize(), timeout=_POOL_INIT_TIMEOUT)
         except asyncio.TimeoutError:
@@ -271,7 +322,7 @@ async def start_container(container: AppContainer) -> None:
     if _is_dev:
         logger.info("startup/start: telegram_pool %.2fs", time.monotonic() - t1)
 
-    if container.collection_queue is not None:
+    if runtime_mode == "worker" and container.collection_queue is not None:
         requeued = await container.collection_queue.requeue_startup_tasks()
         if requeued:
             logger.info("Re-enqueued %d pending collection tasks on startup", requeued)
@@ -279,12 +330,21 @@ async def start_container(container: AppContainer) -> None:
 
     if _is_dev:
         t1 = time.monotonic()
-    if container.unified_dispatcher is not None:
-        await container.unified_dispatcher.start()
+    if runtime_mode == "worker" and container.unified_dispatcher is not None:
+        result = container.unified_dispatcher.start()
+        if inspect.isawaitable(result):
+            await result
+    telegram_command_dispatcher = getattr(container, "telegram_command_dispatcher", None)
+    if runtime_mode == "worker" and telegram_command_dispatcher is not None:
+        start = getattr(telegram_command_dispatcher, "start", None)
+        if callable(start):
+            result = start()
+            if inspect.isawaitable(result):
+                await result
     logger.info("startup: dispatcher done (%.1fs)", time.monotonic() - t_start)
     container.ai_search.initialize()
     logger.info("startup: ai_search done (%.1fs)", time.monotonic() - t_start)
-    if container.agent_manager is not None:
+    if runtime_mode == "worker" and container.agent_manager is not None:
         await container.agent_manager.refresh_settings_cache(preflight=True)
         container.agent_manager.initialize()
     logger.info("startup: agent_manager done (%.1fs)", time.monotonic() - t_start)
@@ -292,11 +352,12 @@ async def start_container(container: AppContainer) -> None:
         logger.info("startup/start: dispatcher+ai+agent %.2fs", time.monotonic() - t1)
         t1 = time.monotonic()
 
-    await container.scheduler.load_settings()
-    autostart = await container.db.get_setting("scheduler_autostart")
-    if autostart == "1":
-        logger.info("Auto-starting scheduler (scheduler_autostart=1)")
-        await container.scheduler.start()
+    if runtime_mode == "worker":
+        await container.scheduler.load_settings()
+        autostart = await container.db.get_setting("scheduler_autostart")
+        if autostart == "1":
+            logger.info("Auto-starting scheduler (scheduler_autostart=1)")
+            await container.scheduler.start()
     logger.info("startup: scheduler done (%.1fs)", time.monotonic() - t_start)
     logger.info("startup: READY (total %.1fs)", time.monotonic() - t_start)
     if _is_dev:
@@ -317,6 +378,8 @@ async def stop_container(container: AppContainer) -> None:
     shutdown_coroutines = []
     if container.unified_dispatcher is not None:
         shutdown_coroutines.append(("unified_dispatcher", container.unified_dispatcher.stop()))
+    if container.telegram_command_dispatcher is not None:
+        shutdown_coroutines.append(("telegram_command_dispatcher", container.telegram_command_dispatcher.stop()))
     if container.collection_queue is not None:
         shutdown_coroutines.append(("collection_queue", container.collection_queue.shutdown()))
     if container.agent_manager is not None:

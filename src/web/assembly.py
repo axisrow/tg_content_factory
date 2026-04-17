@@ -30,6 +30,7 @@ def _legacy_dialogs_redirect(request: Request) -> RedirectResponse:
 def configure_app(app: FastAPI, container: AppContainer | None) -> None:
     if container is not None:
         app.state.container = container
+        app.state.runtime_mode = container.runtime_mode
         app.state.templates = container.templates
         # Expose frequently accessed attributes for backward compat with
         # code that reads app.state.<attr> directly (routes, tests).
@@ -37,6 +38,7 @@ def configure_app(app: FastAPI, container: AppContainer | None) -> None:
         app.state.auth = container.auth
         app.state.pool = container.pool
         app.state.collector = container.collector
+        app.state.telegram_command_dispatcher = container.telegram_command_dispatcher
         app.state.search_engine = container.search_engine
         app.state.ai_search = container.ai_search
         app.state.scheduler = container.scheduler
@@ -157,6 +159,7 @@ def register_routes(app: FastAPI) -> None:
     from src.web.routes.search import router as search_router
     from src.web.routes.search_queries import router as search_queries_router
     from src.web.routes.settings import router as settings_router
+    from src.web.routes.telegram_commands import router as telegram_commands_router
 
     app.include_router(agent_router, prefix="/agent")
     app.include_router(calendar_router, prefix="/calendar")
@@ -176,6 +179,7 @@ def register_routes(app: FastAPI) -> None:
     app.include_router(settings_router, prefix="/settings")
     app.include_router(accounts_router, prefix="/settings")
     app.include_router(dialogs_router, prefix="/dialogs")
+    app.include_router(telegram_commands_router, prefix="/telegram-commands")
     app.include_router(photo_loader_router, prefix="/dialogs/photos")
     app.include_router(debug_router, prefix="/debug")
     app.include_router(images_router, prefix="/images")

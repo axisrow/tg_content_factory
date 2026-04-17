@@ -19,6 +19,7 @@ from src.cli.commands import (
     search_query,
     serve,
     server_control,
+    worker,
 )
 from src.cli.commands import agent as agent_cmd
 from src.cli.commands import analytics as analytics_cmd
@@ -43,6 +44,7 @@ def main() -> None:
 
     commands = {
         "serve": serve.run,
+        "worker": worker.run,
         "stop": server_control.run_stop,
         "restart": server_control.run_restart,
         "collect": collect.run,
