@@ -478,10 +478,9 @@ async def generate_stream(
     provider_callable = provider_service.get_provider_callable(pipeline.llm_model)
 
     from src.services.generation_service import GenerationService
-    from src.services.pipeline_service import PipelineService
 
     gen = GenerationService(engine, provider_callable=provider_callable)
-    scope = await PipelineService(db).get_retrieval_scope(pipeline)
+    scope = await svc.get_retrieval_scope(pipeline)
 
     # persist run
     run_id = await db.repos.generation_runs.create_run(pipeline_id, pipeline.prompt_template)
@@ -549,10 +548,9 @@ async def generate_pipeline(
     provider_callable = provider_service.get_provider_callable(pipeline.llm_model)
 
     from src.services.generation_service import GenerationService
-    from src.services.pipeline_service import PipelineService
 
     gen = GenerationService(engine, provider_callable=provider_callable)
-    scope = await PipelineService(db).get_retrieval_scope(pipeline)
+    scope = await svc.get_retrieval_scope(pipeline)
     run_id = await db.repos.generation_runs.create_run(pipeline_id, pipeline.prompt_template)
     try:
         await db.repos.generation_runs.set_status(run_id, "running")

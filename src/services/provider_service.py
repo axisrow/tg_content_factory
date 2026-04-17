@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import inspect
 import logging
 import os
 from typing import Any, Awaitable, Callable, Dict, Optional
@@ -29,9 +28,7 @@ async def build_provider_service(
     """Create AgentProviderService and eagerly load DB-backed providers when possible."""
     svc = AgentProviderService(db, config)
     if db is not None and config is not None:
-        maybe_awaitable = svc.load_db_providers()
-        if inspect.isawaitable(maybe_awaitable):
-            await maybe_awaitable
+        await svc.load_db_providers()
     return svc
 
 

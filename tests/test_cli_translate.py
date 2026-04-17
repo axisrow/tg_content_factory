@@ -24,6 +24,11 @@ def cli_env(cli_db):
         yield cli_db
 
 
+def _prep_prov_mock(mock_prov_svc):
+    """Configure the class-level mock so that an instance's load_db_providers() is awaitable."""
+    mock_prov_svc.return_value.load_db_providers = AsyncMock(return_value=0)
+
+
 class TestStats:
     @patch("src.database.repositories.messages.MessagesRepository.get_language_stats")
     def test_stats_no_data(self, mock_stats, cli_env, capsys):
@@ -96,6 +101,7 @@ class TestRun:
     @patch("src.services.provider_service.AgentProviderService")
     @patch("src.database.repositories.messages.MessagesRepository.get_untranslated_messages")
     def test_run_no_messages(self, mock_get, mock_prov_svc, mock_trans_svc, cli_env, capsys):
+        _prep_prov_mock(mock_prov_svc)
         mock_get.return_value = []
         from src.cli.commands.translate import run
         run(_ns(translate_action="run"))
@@ -107,6 +113,7 @@ class TestRun:
     @patch("src.services.provider_service.AgentProviderService")
     @patch("src.database.repositories.messages.MessagesRepository.get_untranslated_messages")
     def test_run_translates_messages(self, mock_get, mock_prov_svc, mock_trans_svc, mock_update, cli_env, capsys):
+        _prep_prov_mock(mock_prov_svc)
         msgs = [SimpleNamespace(id=1), SimpleNamespace(id=2)]
         mock_get.return_value = msgs
         svc = mock_trans_svc.return_value
@@ -121,6 +128,7 @@ class TestRun:
     @patch("src.services.provider_service.AgentProviderService")
     @patch("src.database.repositories.messages.MessagesRepository.get_untranslated_messages")
     def test_run_with_source_filter(self, mock_get, mock_prov_svc, mock_trans_svc, cli_env, capsys):
+        _prep_prov_mock(mock_prov_svc)
         msgs = [SimpleNamespace(id=1)]
         mock_get.return_value = msgs
         svc = mock_trans_svc.return_value
@@ -134,6 +142,7 @@ class TestRun:
     @patch("src.services.provider_service.AgentProviderService")
     @patch("src.database.repositories.messages.MessagesRepository.get_untranslated_messages")
     def test_run_with_limit(self, mock_get, mock_prov_svc, mock_trans_svc, cli_env, capsys):
+        _prep_prov_mock(mock_prov_svc)
         mock_get.return_value = []
         from src.cli.commands.translate import run
         run(_ns(translate_action="run", limit=10))
@@ -145,6 +154,7 @@ class TestRun:
     @patch("src.services.provider_service.AgentProviderService")
     @patch("src.database.repositories.messages.MessagesRepository.get_untranslated_messages")
     def test_run_partial_failure(self, mock_get, mock_prov_svc, mock_trans_svc, mock_update, cli_env, capsys):
+        _prep_prov_mock(mock_prov_svc)
         msgs = [SimpleNamespace(id=1), SimpleNamespace(id=2), SimpleNamespace(id=3)]
         mock_get.return_value = msgs
         svc = mock_trans_svc.return_value
@@ -177,6 +187,7 @@ class TestMessage:
     @patch("src.services.provider_service.AgentProviderService")
     @patch("src.database.repositories.messages.MessagesRepository.get_by_id")
     def test_message_success(self, mock_get, mock_prov_svc, mock_trans_svc, mock_update, cli_env, capsys):
+        _prep_prov_mock(mock_prov_svc)
         mock_get.return_value = SimpleNamespace(id=1, text="Привет мир")
         svc = mock_trans_svc.return_value
         svc.translate_batch = AsyncMock(return_value=[(1, "Hello world")])
@@ -190,6 +201,7 @@ class TestMessage:
     @patch("src.services.provider_service.AgentProviderService")
     @patch("src.database.repositories.messages.MessagesRepository.get_by_id")
     def test_message_translation_failed(self, mock_get, mock_prov_svc, mock_trans_svc, cli_env, capsys):
+        _prep_prov_mock(mock_prov_svc)
         mock_get.return_value = SimpleNamespace(id=1, text="Some text here")
         svc = mock_trans_svc.return_value
         svc.translate_batch = AsyncMock(return_value=[])
@@ -203,6 +215,7 @@ class TestMessage:
     @patch("src.services.provider_service.AgentProviderService")
     @patch("src.database.repositories.messages.MessagesRepository.get_by_id")
     def test_message_with_custom_target(self, mock_get, mock_prov_svc, mock_trans_svc, mock_update, cli_env, capsys):
+        _prep_prov_mock(mock_prov_svc)
         mock_get.return_value = SimpleNamespace(id=1, text="Hello")
         svc = mock_trans_svc.return_value
         svc.translate_batch = AsyncMock(return_value=[(1, "Hallo")])

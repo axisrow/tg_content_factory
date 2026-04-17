@@ -94,6 +94,11 @@ async def require_phone_permission(db: object, phone: str, tool_name: str) -> di
         return _text_response(
             f"❌ ACL для '{tool_name}' повреждён. Действие заблокировано до исправления настроек."
         )
+    if not isinstance(perms, dict):
+        logger.warning("Agent tool permissions JSON is not an object; blocking '%s'", tool_name)
+        return _text_response(
+            f"❌ ACL для '{tool_name}' повреждён. Действие заблокировано до исправления настроек."
+        )
     # Collect phones allowed for this tool
     allowed_phones = [p for p, tools in perms.items() if isinstance(tools, dict) and tools.get(tool_name, False)]
     if not allowed_phones:

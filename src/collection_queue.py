@@ -47,7 +47,15 @@ class CollectionQueue:
         )
         if task_id is None:
             return None
-        await self._queue.put((task_id, channel, force, full))
+        try:
+            self._queue.put_nowait((task_id, channel, force, full))
+        except asyncio.QueueFull:
+            logger.warning(
+                "Collection queue full (maxsize=%d); task %d stays PENDING in DB "
+                "and will be picked up on the next restart/requeue cycle",
+                self._queue.maxsize,
+                task_id,
+            )
         self._ensure_worker()
         return task_id
 
@@ -99,7 +107,14 @@ class CollectionQueue:
             remaining = max(0.0, run_after.timestamp() - time.time())
             if remaining > 0:
                 await asyncio.sleep(remaining)
-            await self._queue.put((task_id, channel, force, full))
+            try:
+                self._queue.put_nowait((task_id, channel, force, full))
+            except asyncio.QueueFull:
+                logger.warning(
+                    "Collection queue full on delayed requeue; task %d stays PENDING "
+                    "in DB and will be picked up by requeue_startup_tasks",
+                    task_id,
+                )
             self._ensure_worker()
 
         task = asyncio.create_task(_requeue_later())
@@ -283,7 +298,15 @@ class CollectionQueue:
             return False
         self._retried_tasks.add(task_id)
         await self._channels.update_collection_task(task_id, CollectionTaskStatus.PENDING, note="Reconnect retry")
-        await self._queue.put((task_id, channel, force, full))
+        try:
+            self._queue.put_nowait((task_id, channel, force, full))
+        except asyncio.QueueFull:
+            logger.warning(
+                "Collection queue full on reconnect requeue; task %d stays PENDING "
+                "and will be picked up by requeue_startup_tasks",
+                task_id,
+            )
+            return False
         logger.warning(
             "ConnectionError for channel %d, reconnected and re-queued task %d: %s",
             channel.channel_id, task_id, exc,
@@ -326,7 +349,15 @@ class CollectionQueue:
                     run_after=task.run_after,
                 )
             else:
-                await self._queue.put((task.id, channel, force, full))
+                try:
+                    self._queue.put_nowait((task.id, channel, force, full))
+                except asyncio.QueueFull:
+                    logger.warning(
+                        "Collection queue full during startup requeue; task %d stays PENDING "
+                        "in DB and will be picked up after the queue drains",
+                        task.id,
+                    )
+                    break
             count += 1
         if count:
             self._ensure_worker()
