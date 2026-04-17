@@ -14,34 +14,52 @@ async def client(route_client):
 
 
 @pytest.mark.asyncio
-async def test_toggle_account(client, base_app):
-    """Toggle account active/inactive."""
+async def test_toggle_account_enqueues_command(client, base_app):
+    """Web toggle only enqueues `accounts.toggle`; worker reconciles the pool."""
     app, db, pool = base_app
     accounts = await db.get_accounts(active_only=False)
     assert len(accounts) > 0
     acc = accounts[0]
 
     resp = await client.post(f"/settings/{acc.id}/toggle", follow_redirects=False)
-    assert resp.status_code in (303, 302), f"Expected redirect, got {resp.status_code}"
-    assert "/settings" in resp.headers.get("location", "")
+    assert resp.status_code in (303, 302)
+    location = resp.headers.get("location", "")
+    assert "/settings" in location
+    assert "account_toggle_queued" in location
+    assert "command_id=" in location
+
+    pool.add_client.assert_not_called() if hasattr(pool, "add_client") else None
+    pool.remove_client.assert_not_called()
+
+    commands = await db.repos.telegram_commands.list_commands(limit=1)
+    assert commands[0].command_type == "accounts.toggle"
+    assert commands[0].payload == {"account_id": acc.id}
 
 
 @pytest.mark.asyncio
-async def test_delete_account(client, base_app):
-    """Delete account."""
+async def test_delete_account_enqueues_command(client, base_app):
+    """Web delete only enqueues `accounts.delete`; the DB row survives until the worker runs."""
     app, db, pool = base_app
-    # Add a second account so we still have one after deletion
     await db.add_account(Account(phone="+9999999999", session_string="session_del"))
     accounts = await db.get_accounts(active_only=False)
     to_delete = next(a for a in accounts if a.phone == "+9999999999")
 
     resp = await client.post(f"/settings/{to_delete.id}/delete", follow_redirects=False)
     assert resp.status_code in (303, 302)
-    assert "/settings" in resp.headers.get("location", "")
+    location = resp.headers.get("location", "")
+    assert "/settings" in location
+    assert "account_delete_queued" in location
+    assert "command_id=" in location
 
-    # Verify deleted
+    # Web must not have touched the DB row directly — only a worker running
+    # `accounts.delete` is allowed to delete.
+    pool.remove_client.assert_not_called()
     remaining = await db.get_accounts(active_only=False)
-    assert not any(a.phone == "+9999999999" for a in remaining)
+    assert any(a.phone == "+9999999999" for a in remaining)
+
+    commands = await db.repos.telegram_commands.list_commands(limit=1)
+    assert commands[0].command_type == "accounts.delete"
+    assert commands[0].payload == {"account_id": to_delete.id}
 
 
 @pytest.mark.asyncio

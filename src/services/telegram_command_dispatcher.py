@@ -548,6 +548,38 @@ class TelegramCommandDispatcher:
         await self._db.update_account_premium(phone, is_premium)
         return {"phone": phone, "is_premium": is_premium}
 
+    async def _handle_accounts_toggle(self, payload: dict[str, Any]) -> dict[str, Any]:
+        account_id = int(payload["account_id"])
+        accounts = await self._db.get_accounts()
+        account = next((a for a in accounts if a.id == account_id), None)
+        if account is None:
+            raise RuntimeError(f"account_not_found:{account_id}")
+        new_active = not account.is_active
+        await self._db.set_account_active(account_id, new_active)
+        if new_active:
+            try:
+                await self._pool.add_client(account.phone, account.session_string)
+            except Exception as exc:
+                logger.warning("accounts.toggle: failed to add client %s: %s", account.phone, exc)
+        else:
+            try:
+                await self._pool.remove_client(account.phone)
+            except Exception as exc:
+                logger.warning("accounts.toggle: failed to remove client %s: %s", account.phone, exc)
+        return {"account_id": account_id, "is_active": new_active}
+
+    async def _handle_accounts_delete(self, payload: dict[str, Any]) -> dict[str, Any]:
+        account_id = int(payload["account_id"])
+        accounts = await self._db.get_accounts()
+        account = next((a for a in accounts if a.id == account_id), None)
+        if account is not None:
+            try:
+                await self._pool.remove_client(account.phone)
+            except Exception as exc:
+                logger.warning("accounts.delete: failed to remove client %s: %s", account.phone, exc)
+        await self._db.delete_account(account_id)
+        return {"account_id": account_id, "deleted": True}
+
     async def _handle_notifications_setup_bot(self, payload: dict[str, Any]) -> dict[str, Any]:
         bot = await self._notification_service().setup_bot()
         return {"bot_username": bot.bot_username, "bot_id": bot.bot_id}
