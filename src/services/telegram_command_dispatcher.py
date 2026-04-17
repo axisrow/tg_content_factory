@@ -78,6 +78,7 @@ class TelegramCommandDispatcher:
                     command.id,
                     status=TelegramCommandStatus.FAILED,
                     error=str(exc),
+                    payload=command.payload,
                 )
             else:
                 await self._db.repos.telegram_commands.update_command(
