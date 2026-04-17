@@ -32,6 +32,36 @@ async def _publish_snapshots(container) -> None:
             },
         )
     )
+    pool = container.pool
+    dialogs_cache = getattr(pool, "_dialogs_cache", {})
+    active_leases = getattr(pool, "_active_leases", {})
+    premium_flood_waits = getattr(pool, "_premium_flood_wait_until", {})
+    session_overrides = getattr(pool, "_session_overrides", {})
+    await container.db.repos.runtime_snapshots.upsert_snapshot(
+        RuntimeSnapshot(
+            snapshot_type="pool_counters",
+            payload={
+                "dialogs_cache_entries": (
+                    len(dialogs_cache) if hasattr(dialogs_cache, "__len__") else 0
+                ),
+                "active_leases": (
+                    {k: len(v) for k, v in active_leases.items()}
+                    if isinstance(active_leases, dict)
+                    else {}
+                ),
+                "premium_flood_waits": (
+                    len(premium_flood_waits)
+                    if hasattr(premium_flood_waits, "__len__")
+                    else 0
+                ),
+                "session_overrides": (
+                    len(session_overrides)
+                    if hasattr(session_overrides, "__len__")
+                    else 0
+                ),
+            },
+        )
+    )
     await container.db.repos.runtime_snapshots.upsert_snapshot(
         RuntimeSnapshot(
             snapshot_type="collector_status",

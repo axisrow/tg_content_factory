@@ -90,17 +90,40 @@ async def debug_memory(request: Request):
     pool = deps.get_pool(request)
     agent_manager = deps.get_agent_manager(request)
     collection_queue = getattr(request.app.state, "collection_queue", None)
+
+    runtime_mode = getattr(request.app.state, "runtime_mode", "web")
+    pool_counters_source = "live"
     dialogs_cache = getattr(pool, "_dialogs_cache", {})
     active_leases = getattr(pool, "_active_leases", {})
     premium_flood_waits = getattr(pool, "_premium_flood_wait_until", {})
     session_overrides = getattr(pool, "_session_overrides", {})
+    dialogs_cache_entries = len(dialogs_cache) if hasattr(dialogs_cache, "__len__") else 0
+    active_leases_info = (
+        {k: len(v) for k, v in active_leases.items()} if isinstance(active_leases, dict) else {}
+    )
+    premium_flood_count = (
+        len(premium_flood_waits) if hasattr(premium_flood_waits, "__len__") else 0
+    )
+    session_overrides_count = (
+        len(session_overrides) if hasattr(session_overrides, "__len__") else 0
+    )
+    if runtime_mode != "worker":
+        snap = await deps.get_db(request).repos.runtime_snapshots.get_snapshot("pool_counters")
+        pool_counters_source = "snapshot" if snap is not None else "empty"
+        if snap is not None:
+            payload = snap.payload or {}
+            dialogs_cache_entries = int(payload.get("dialogs_cache_entries") or 0)
+            active_leases_info = payload.get("active_leases") or {}
+            premium_flood_count = int(payload.get("premium_flood_waits") or 0)
+            session_overrides_count = int(payload.get("session_overrides") or 0)
 
     pool_info = {
         "connected_clients": len(pool.clients),
-        "dialogs_cache_entries": len(dialogs_cache),
-        "active_leases": {k: len(v) for k, v in active_leases.items()} if isinstance(active_leases, dict) else {},
-        "premium_flood_waits": len(premium_flood_waits) if hasattr(premium_flood_waits, "__len__") else 0,
-        "session_overrides": len(session_overrides) if hasattr(session_overrides, "__len__") else 0,
+        "dialogs_cache_entries": dialogs_cache_entries,
+        "active_leases": active_leases_info,
+        "premium_flood_waits": premium_flood_count,
+        "session_overrides": session_overrides_count,
+        "source": pool_counters_source,
     }
 
     return {
@@ -108,6 +131,7 @@ async def debug_memory(request: Request):
         "gc_counts": gc.get_count(),
         "gc_stats": gc.get_stats(),
         "pool": pool_info,
+        "runtime_mode": runtime_mode,
         "agent_active_tasks": len(agent_manager._active_tasks) if agent_manager else 0,
         "collection_retried_tasks": len(collection_queue._retried_tasks) if collection_queue else 0,
     }
