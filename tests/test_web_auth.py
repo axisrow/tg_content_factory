@@ -6,13 +6,12 @@ with /login which is for the web panel itself).
 
 from __future__ import annotations
 
-from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from src.config import AppConfig
-from src.models import Account
+from src.models import Account, TelegramCommand, TelegramCommandStatus
 from src.telegram.auth import TelegramAuth
 from tests.helpers import build_web_app, make_auth_client
 
@@ -128,7 +127,7 @@ class TestSendCode:
 
     @pytest.mark.asyncio
     async def test_send_code_success(self, db, real_pool_harness_factory):
-        """Test successful code sending."""
+        """Test send-code enqueues command instead of direct RPC."""
         config = AppConfig()
         config.web.password = "testpass"
         config.telegram.api_id = 12345
@@ -139,30 +138,22 @@ class TestSendCode:
         app, _ = await build_web_app(config, harness, db=db, add_account=None)
         app.state.auth = auth
 
-        with patch.object(
-            auth,
-            "send_code",
-            new_callable=AsyncMock,
-            return_value={
-                "phone_code_hash": "abc123",
-                "code_type": "SMS",
-                "next_type": "call",
-                "timeout": 120,
-            },
-        ):
+        with patch.object(auth, "send_code", new_callable=AsyncMock) as mock_send:
             async with make_auth_client(app, password="testpass", with_auth=True) as client:
                 response = await client.post(
                     "/auth/send-code",
                     data={"phone": "+70001112233"},
+                    follow_redirects=False,
                 )
 
-        assert response.status_code == 200
-        # Should show code input step
-        assert "code" in response.text.lower() or "код" in response.text.lower()
+        assert response.status_code == 303
+        mock_send.assert_not_awaited()
+        commands = await db.repos.telegram_commands.list_commands(limit=1)
+        assert commands[0].command_type == "auth.send_code"
 
     @pytest.mark.asyncio
     async def test_send_code_exception(self, db, real_pool_harness_factory):
-        """Test send-code handles exceptions gracefully."""
+        """Test send-code route does not execute auth inline."""
         config = AppConfig()
         config.web.password = "testpass"
         config.telegram.api_id = 12345
@@ -178,16 +169,16 @@ class TestSendCode:
             "send_code",
             new_callable=AsyncMock,
             side_effect=Exception("Phone number invalid"),
-        ):
+        ) as mock_send:
             async with make_auth_client(app, password="testpass", with_auth=True) as client:
                 response = await client.post(
                     "/auth/send-code",
                     data={"phone": "+70001112233"},
+                    follow_redirects=False,
                 )
 
-        assert response.status_code == 200
-        # Should show error message
-        assert "Phone number invalid" in response.text
+        assert response.status_code == 303
+        mock_send.assert_not_awaited()
 
 
 class TestResendCode:
@@ -195,7 +186,7 @@ class TestResendCode:
 
     @pytest.mark.asyncio
     async def test_resend_code_success(self, db, real_pool_harness_factory):
-        """Test successful code resend."""
+        """Test resend-code enqueues command instead of direct RPC."""
         config = AppConfig()
         config.web.password = "testpass"
         config.telegram.api_id = 12345
@@ -206,29 +197,22 @@ class TestResendCode:
         app, _ = await build_web_app(config, harness, db=db, add_account=None)
         app.state.auth = auth
 
-        with patch.object(
-            auth,
-            "resend_code",
-            new_callable=AsyncMock,
-            return_value={
-                "phone_code_hash": "xyz789",
-                "code_type": "call",
-                "next_type": None,
-                "timeout": 60,
-            },
-        ):
+        with patch.object(auth, "resend_code", new_callable=AsyncMock) as mock_resend:
             async with make_auth_client(app, password="testpass", with_auth=True) as client:
                 response = await client.post(
                     "/auth/resend-code",
                     data={"phone": "+70001112233", "phone_code_hash": "abc123"},
+                    follow_redirects=False,
                 )
 
-        assert response.status_code == 200
-        assert "code" in response.text.lower() or "код" in response.text.lower()
+        assert response.status_code == 303
+        mock_resend.assert_not_awaited()
+        commands = await db.repos.telegram_commands.list_commands(limit=1)
+        assert commands[0].command_type == "auth.resend_code"
 
     @pytest.mark.asyncio
     async def test_resend_code_exception(self, db, real_pool_harness_factory):
-        """Test resend-code handles exceptions gracefully."""
+        """Test resend-code route does not execute auth inline."""
         config = AppConfig()
         config.web.password = "testpass"
         config.telegram.api_id = 12345
@@ -244,15 +228,16 @@ class TestResendCode:
             "resend_code",
             new_callable=AsyncMock,
             side_effect=Exception("Rate limit exceeded"),
-        ):
+        ) as mock_resend:
             async with make_auth_client(app, password="testpass", with_auth=True) as client:
                 response = await client.post(
                     "/auth/resend-code",
                     data={"phone": "+70001112233", "phone_code_hash": "abc123"},
+                    follow_redirects=False,
                 )
 
-        assert response.status_code == 200
-        assert "Rate limit exceeded" in response.text
+        assert response.status_code == 303
+        mock_resend.assert_not_awaited()
 
 
 class TestVerifyCode:
@@ -260,64 +245,7 @@ class TestVerifyCode:
 
     @pytest.mark.asyncio
     async def test_verify_code_success(self, db, real_pool_harness_factory):
-        """Test successful code verification."""
-        config = AppConfig()
-        config.web.password = "testpass"
-        config.telegram.api_id = 12345
-        config.telegram.api_hash = "test_hash"
-
-        harness = real_pool_harness_factory()
-        auth = TelegramAuth(12345, "test_hash")
-        app, _ = await build_web_app(config, harness, db=db, add_account=None)
-        app.state.auth = auth
-
-        # Mock pool.add_client to capture the session
-        added_sessions = []
-
-        async def mock_add_client(phone, session_string):
-            added_sessions.append((phone, session_string))
-
-        app.state.pool.add_client = mock_add_client
-
-        # Mock pool.get_client_by_phone and release_client
-        mock_client = MagicMock()
-        mock_client.fetch_me = AsyncMock(return_value=SimpleNamespace(premium=False))
-        app.state.pool.get_client_by_phone = AsyncMock(return_value=(mock_client, "+70001112233"))
-        app.state.pool.release_client = AsyncMock()
-
-        with patch.object(
-            auth,
-            "verify_code",
-            new_callable=AsyncMock,
-            return_value="session_string_123",
-        ):
-            async with make_auth_client(app, password="testpass", with_auth=True) as client:
-                response = await client.post(
-                    "/auth/verify-code",
-                    data={
-                        "phone": "+70001112233",
-                        "code": "12345",
-                        "phone_code_hash": "abc123",
-                        "password_2fa": "",
-                        "code_type": "",
-                        "next_type": "",
-                        "timeout": "",
-                    },
-                    follow_redirects=False,
-                )
-
-        assert response.status_code == 303
-        assert "settings" in response.headers["location"]
-
-        # Verify account was added to DB
-        accounts = await db.get_accounts()
-        assert len(accounts) == 1
-        assert accounts[0].phone == "+70001112233"
-        assert accounts[0].is_primary is True  # First account is primary
-
-    @pytest.mark.asyncio
-    async def test_verify_code_2fa_required(self, db, real_pool_harness_factory):
-        """Test code verification when 2FA password is required."""
+        """Test verify-code enqueues command instead of direct RPC."""
         config = AppConfig()
         config.web.password = "testpass"
         config.telegram.api_id = 12345
@@ -332,126 +260,6 @@ class TestVerifyCode:
             auth,
             "verify_code",
             new_callable=AsyncMock,
-            side_effect=ValueError("2FA password required"),
-        ):
-            async with make_auth_client(app, password="testpass", with_auth=True) as client:
-                response = await client.post(
-                    "/auth/verify-code",
-                    data={
-                        "phone": "+70001112233",
-                        "code": "12345",
-                        "phone_code_hash": "abc123",
-                        "password_2fa": "",
-                        "code_type": "",
-                        "next_type": "",
-                        "timeout": "",
-                    },
-                )
-
-        assert response.status_code == 200
-        # Should show 2FA password input
-        assert "2fa" in response.text.lower() or "password" in response.text.lower()
-
-    @pytest.mark.asyncio
-    async def test_verify_code_invalid_code(self, db, real_pool_harness_factory):
-        """Test code verification with invalid code."""
-        config = AppConfig()
-        config.web.password = "testpass"
-        config.telegram.api_id = 12345
-        config.telegram.api_hash = "test_hash"
-
-        harness = real_pool_harness_factory()
-        auth = TelegramAuth(12345, "test_hash")
-        app, _ = await build_web_app(config, harness, db=db, add_account=None)
-        app.state.auth = auth
-
-        with patch.object(
-            auth,
-            "verify_code",
-            new_callable=AsyncMock,
-            side_effect=ValueError("Invalid code"),
-        ):
-            async with make_auth_client(app, password="testpass", with_auth=True) as client:
-                response = await client.post(
-                    "/auth/verify-code",
-                    data={
-                        "phone": "+70001112233",
-                        "code": "00000",
-                        "phone_code_hash": "abc123",
-                        "password_2fa": "",
-                        "code_type": "SMS",
-                        "next_type": "call",
-                        "timeout": "120",
-                    },
-                )
-
-        assert response.status_code == 200
-        assert "Invalid code" in response.text
-
-    @pytest.mark.asyncio
-    async def test_verify_code_exception(self, db, real_pool_harness_factory):
-        """Test code verification handles general exceptions."""
-        config = AppConfig()
-        config.web.password = "testpass"
-        config.telegram.api_id = 12345
-        config.telegram.api_hash = "test_hash"
-
-        harness = real_pool_harness_factory()
-        auth = TelegramAuth(12345, "test_hash")
-        app, _ = await build_web_app(config, harness, db=db, add_account=None)
-        app.state.auth = auth
-
-        with patch.object(
-            auth,
-            "verify_code",
-            new_callable=AsyncMock,
-            side_effect=Exception("Flood wait: 60 seconds"),
-        ):
-            async with make_auth_client(app, password="testpass", with_auth=True) as client:
-                response = await client.post(
-                    "/auth/verify-code",
-                    data={
-                        "phone": "+70001112233",
-                        "code": "12345",
-                        "phone_code_hash": "abc123",
-                        "password_2fa": "",
-                        "code_type": "",
-                        "next_type": "",
-                        "timeout": "",
-                    },
-                )
-
-        assert response.status_code == 200
-        assert "Flood wait" in response.text
-
-    @pytest.mark.asyncio
-    async def test_verify_code_with_2fa_password(self, db, real_pool_harness_factory):
-        """Test code verification with 2FA password provided."""
-        config = AppConfig()
-        config.web.password = "testpass"
-        config.telegram.api_id = 12345
-        config.telegram.api_hash = "test_hash"
-
-        harness = real_pool_harness_factory()
-        auth = TelegramAuth(12345, "test_hash")
-        app, _ = await build_web_app(config, harness, db=db, add_account=None)
-        app.state.auth = auth
-
-        # Mock pool methods
-        async def mock_add_client(phone, session_string):
-            pass
-
-        app.state.pool.add_client = mock_add_client
-        mock_client = MagicMock()
-        mock_client.fetch_me = AsyncMock(return_value=SimpleNamespace(premium=True))
-        app.state.pool.get_client_by_phone = AsyncMock(return_value=(mock_client, "+70001112233"))
-        app.state.pool.release_client = AsyncMock()
-
-        with patch.object(
-            auth,
-            "verify_code",
-            new_callable=AsyncMock,
-            return_value="session_string_with_2fa",
         ) as mock_verify:
             async with make_auth_client(app, password="testpass", with_auth=True) as client:
                 response = await client.post(
@@ -460,7 +268,7 @@ class TestVerifyCode:
                         "phone": "+70001112233",
                         "code": "12345",
                         "phone_code_hash": "abc123",
-                        "password_2fa": "my2fapassword",
+                        "password_2fa": "",
                         "code_type": "",
                         "next_type": "",
                         "timeout": "",
@@ -469,17 +277,144 @@ class TestVerifyCode:
                 )
 
         assert response.status_code == 303
-        # Verify 2FA password was passed to verify_code
-        mock_verify.assert_awaited_once_with("+70001112233", "12345", "abc123", "my2fapassword")
+        assert "command_id=" in response.headers["location"]
+        mock_verify.assert_not_awaited()
+        commands = await db.repos.telegram_commands.list_commands(limit=1)
+        assert commands[0].command_type == "auth.verify_code"
 
-        # Premium status is now refreshed asynchronously by the worker.
-        accounts = await db.get_accounts()
-        assert len(accounts) == 1
-        assert accounts[0].is_premium is False
+    @pytest.mark.asyncio
+    async def test_verify_code_2fa_required(self, db, real_pool_harness_factory):
+        """Test login page shows 2FA state from failed queued command."""
+        config = AppConfig()
+        config.web.password = "testpass"
+        config.telegram.api_id = 12345
+        config.telegram.api_hash = "test_hash"
+
+        harness = real_pool_harness_factory()
+        auth = TelegramAuth(12345, "test_hash")
+        app, _ = await build_web_app(config, harness, db=db, add_account=None)
+        app.state.auth = auth
+
+        cid = await db.repos.telegram_commands.create_command(
+            TelegramCommand(
+                command_type="auth.verify_code",
+                payload={"phone": "+70001112233", "code": "12345", "phone_code_hash": "abc123"},
+                status=TelegramCommandStatus.FAILED,
+                error="2FA password required",
+            )
+        )
+        async with make_auth_client(app, password="testpass", with_auth=True) as client:
+            response = await client.get(f"/auth/login?command_id={cid}")
+
+        assert response.status_code == 200
+        assert "2fa" in response.text.lower() or "password" in response.text.lower()
+
+    @pytest.mark.asyncio
+    async def test_verify_code_invalid_code(self, db, real_pool_harness_factory):
+        """Test login page surfaces invalid-code error from failed queued command."""
+        config = AppConfig()
+        config.web.password = "testpass"
+        config.telegram.api_id = 12345
+        config.telegram.api_hash = "test_hash"
+
+        harness = real_pool_harness_factory()
+        auth = TelegramAuth(12345, "test_hash")
+        app, _ = await build_web_app(config, harness, db=db, add_account=None)
+        app.state.auth = auth
+
+        cid = await db.repos.telegram_commands.create_command(
+            TelegramCommand(
+                command_type="auth.verify_code",
+                payload={
+                    "phone": "+70001112233",
+                    "code": "00000",
+                    "phone_code_hash": "abc123",
+                    "code_type": "SMS",
+                    "next_type": "call",
+                    "timeout": "120",
+                },
+            )
+        )
+        await db.repos.telegram_commands.update_command(
+            cid,
+            status=TelegramCommandStatus.FAILED,
+            error="Invalid code",
+        )
+        async with make_auth_client(app, password="testpass", with_auth=True) as client:
+            response = await client.get(f"/auth/login?command_id={cid}")
+
+        assert response.status_code == 200
+        assert "Invalid code" in response.text
+
+    @pytest.mark.asyncio
+    async def test_verify_code_exception(self, db, real_pool_harness_factory):
+        """Test login page surfaces generic queued verify error."""
+        config = AppConfig()
+        config.web.password = "testpass"
+        config.telegram.api_id = 12345
+        config.telegram.api_hash = "test_hash"
+
+        harness = real_pool_harness_factory()
+        auth = TelegramAuth(12345, "test_hash")
+        app, _ = await build_web_app(config, harness, db=db, add_account=None)
+        app.state.auth = auth
+
+        cid = await db.repos.telegram_commands.create_command(
+            TelegramCommand(
+                command_type="auth.verify_code",
+                payload={
+                    "phone": "+70001112233",
+                    "code": "12345",
+                    "phone_code_hash": "abc123",
+                },
+            )
+        )
+        await db.repos.telegram_commands.update_command(
+            cid,
+            status=TelegramCommandStatus.FAILED,
+            error="Flood wait: 60 seconds",
+        )
+        async with make_auth_client(app, password="testpass", with_auth=True) as client:
+            response = await client.get(f"/auth/login?command_id={cid}")
+
+        assert response.status_code == 200
+        assert "Flood wait" in response.text
+
+    @pytest.mark.asyncio
+    async def test_verify_code_with_2fa_password(self, db, real_pool_harness_factory):
+        """Test verify-code enqueues 2FA password for worker processing."""
+        config = AppConfig()
+        config.web.password = "testpass"
+        config.telegram.api_id = 12345
+        config.telegram.api_hash = "test_hash"
+
+        harness = real_pool_harness_factory()
+        auth = TelegramAuth(12345, "test_hash")
+        app, _ = await build_web_app(config, harness, db=db, add_account=None)
+        app.state.auth = auth
+
+        async with make_auth_client(app, password="testpass", with_auth=True) as client:
+            response = await client.post(
+                "/auth/verify-code",
+                data={
+                    "phone": "+70001112233",
+                    "code": "12345",
+                    "phone_code_hash": "abc123",
+                    "password_2fa": "my2fapassword",
+                    "code_type": "",
+                    "next_type": "",
+                    "timeout": "",
+                },
+                follow_redirects=False,
+            )
+
+        assert response.status_code == 303
+        commands = await db.repos.telegram_commands.list_commands(limit=1)
+        assert commands[0].payload["password_2fa"] == "my2fapassword"
 
     @pytest.mark.asyncio
     async def test_verify_code_existing_account_not_primary(self, db, real_pool_harness_factory):
-        """Test that subsequent accounts are not marked as primary."""
+        """Test queued verify-code carries non-primary context for later accounts."""
         config = AppConfig()
         config.web.password = "testpass"
         config.telegram.api_id = 12345
@@ -495,41 +430,21 @@ class TestVerifyCode:
             Account(phone="+70001110000", session_string="first_session", is_primary=True)
         )
 
-        # Mock pool methods
-        async def mock_add_client(phone, session_string):
-            pass
-
-        app.state.pool.add_client = mock_add_client
-        mock_client = MagicMock()
-        mock_client.fetch_me = AsyncMock(return_value=SimpleNamespace(premium=False))
-        app.state.pool.get_client_by_phone = AsyncMock(return_value=(mock_client, "+70001112233"))
-        app.state.pool.release_client = AsyncMock()
-
-        with patch.object(
-            auth,
-            "verify_code",
-            new_callable=AsyncMock,
-            return_value="second_session",
-        ):
-            async with make_auth_client(app, password="testpass", with_auth=True) as client:
-                response = await client.post(
-                    "/auth/verify-code",
-                    data={
-                        "phone": "+70001112233",
-                        "code": "12345",
-                        "phone_code_hash": "abc123",
-                        "password_2fa": "",
-                        "code_type": "",
-                        "next_type": "",
-                        "timeout": "",
-                    },
-                    follow_redirects=False,
-                )
+        async with make_auth_client(app, password="testpass", with_auth=True) as client:
+            response = await client.post(
+                "/auth/verify-code",
+                data={
+                    "phone": "+70001112233",
+                    "code": "12345",
+                    "phone_code_hash": "abc123",
+                    "password_2fa": "",
+                    "code_type": "",
+                    "next_type": "",
+                    "timeout": "",
+                },
+                follow_redirects=False,
+            )
 
         assert response.status_code == 303
-
-        # Verify second account is NOT primary
-        accounts = await db.get_accounts()
-        assert len(accounts) == 2
-        new_account = next(a for a in accounts if a.phone == "+70001112233")
-        assert new_account.is_primary is False
+        commands = await db.repos.telegram_commands.list_commands(limit=1)
+        assert "is_primary" not in commands[0].payload  # worker recomputes from fresh DB state

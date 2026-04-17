@@ -396,31 +396,53 @@ class TestSchedulerStartStop:
 
     @pytest.mark.asyncio
     async def test_start_and_stop_scheduler(self, auth_client, app_with_db):
-        app, _ = app_with_db
+        app, db = app_with_db
         sched = app.state.scheduler
 
         assert sched.is_running is False
 
-        # Start
-        resp = await auth_client.post("/scheduler/start")
-        assert resp.status_code == 200
-        assert sched.is_running is True
+        # Start — now enqueues scheduler.reconcile command
+        transport = ASGITransport(app=app)
+        auth_header = base64.b64encode(b":testpass").decode()
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            follow_redirects=False,
+            headers={"Authorization": f"Basic {auth_header}", "Origin": "http://test"},
+        ) as c:
+            resp = await c.post("/scheduler/start")
+            assert resp.status_code == 303
+            assert "scheduler_started" in resp.headers["location"]
+        assert await db.get_setting("scheduler_autostart") == "1"
 
         # Stop
-        resp = await auth_client.post("/scheduler/stop")
-        assert resp.status_code == 200
-        assert sched.is_running is False
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            follow_redirects=False,
+            headers={"Authorization": f"Basic {auth_header}", "Origin": "http://test"},
+        ) as c:
+            resp = await c.post("/scheduler/stop")
+            assert resp.status_code == 303
+            assert "scheduler_stopped" in resp.headers["location"]
+        assert await db.get_setting("scheduler_autostart") == "0"
 
     @pytest.mark.asyncio
     async def test_double_start_is_safe(self, auth_client, app_with_db):
         app, _ = app_with_db
-        sched = app.state.scheduler
 
-        await auth_client.post("/scheduler/start")
-        await auth_client.post("/scheduler/start")  # should not crash
-        assert sched.is_running is True
-
-        await auth_client.post("/scheduler/stop")
+        transport = ASGITransport(app=app)
+        auth_header = base64.b64encode(b":testpass").decode()
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            follow_redirects=False,
+            headers={"Authorization": f"Basic {auth_header}", "Origin": "http://test"},
+        ) as c:
+            resp1 = await c.post("/scheduler/start")
+            assert resp1.status_code == 303
+            resp2 = await c.post("/scheduler/start")  # should not crash
+            assert resp2.status_code == 303
 
     @pytest.mark.asyncio
     async def test_trigger_enqueues_channels(self, app_with_db):

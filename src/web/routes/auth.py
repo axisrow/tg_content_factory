@@ -3,7 +3,7 @@ import logging
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
-from src.models import Account
+from src.models import TelegramCommandStatus
 from src.web import deps
 
 logger = logging.getLogger(__name__)
@@ -19,14 +19,89 @@ def _is_api_configured(request: Request) -> bool:
     return request.app.state.auth.is_configured
 
 
+async def _auth_command(request: Request):
+    raw = request.query_params.get("command_id", "").strip()
+    if not raw.isdigit():
+        return None
+    return await deps.telegram_command_service(request).get(int(raw))
+
+
+def _auth_redirect(request: Request, command_id: int, *, phone: str = "") -> RedirectResponse:
+    target = f"/auth/login?command_id={command_id}"
+    if phone:
+        target += f"&phone={phone}"
+    return RedirectResponse(url=target, status_code=303)
+
+
 @router.get("/login", response_class=HTMLResponse)
 async def login_page(request: Request):
     api_configured = _is_api_configured(request)
     step = "phone" if api_configured else "credentials"
+    command = await _auth_command(request)
+    context = {"step": step, "error": None, "phone": "", "api_configured": api_configured}
+    if command is not None and command.command_type.startswith("auth."):
+        payload = command.payload or {}
+        result = command.result_payload or {}
+        context["phone"] = payload.get("phone", request.query_params.get("phone", ""))
+        if command.status in {TelegramCommandStatus.PENDING, TelegramCommandStatus.RUNNING}:
+            context.update(
+                {
+                    "step": "pending",
+                    "command_id": command.id,
+                    "pending_action": command.command_type,
+                }
+            )
+        elif command.command_type in {"auth.send_code", "auth.resend_code"}:
+            if command.status == TelegramCommandStatus.SUCCEEDED:
+                context.update(
+                    {
+                        "step": "code",
+                        "phone": result.get("phone", context["phone"]),
+                        "phone_code_hash": result.get("phone_code_hash", ""),
+                        "code_type": result.get("code_type"),
+                        "next_type": result.get("next_type"),
+                        "timeout": result.get("timeout"),
+                    }
+                )
+            else:
+                context.update(
+                    {
+                        "step": "code" if command.command_type == "auth.resend_code" else "phone",
+                        "error": command.error,
+                        "phone_code_hash": payload.get("phone_code_hash", ""),
+                        "code_type": payload.get("code_type", ""),
+                        "next_type": payload.get("next_type", ""),
+                        "timeout": payload.get("timeout", ""),
+                    }
+                )
+        elif command.command_type == "auth.verify_code":
+            if command.status == TelegramCommandStatus.SUCCEEDED:
+                return RedirectResponse(url="/settings?msg=account_connected", status_code=303)
+            error = command.error or ""
+            if "2FA" in error or "password" in error.lower():
+                context.update(
+                    {
+                        "step": "2fa",
+                        "error": error,
+                        "code": payload.get("code", ""),
+                        "phone_code_hash": payload.get("phone_code_hash", ""),
+                    }
+                )
+            else:
+                context.update(
+                    {
+                        "step": "code",
+                        "error": error,
+                        "phone_code_hash": payload.get("phone_code_hash", ""),
+                        "code_type": payload.get("code_type", ""),
+                        "next_type": payload.get("next_type", ""),
+                        "timeout": payload.get("timeout", ""),
+                    }
+                )
     return _render(
         request,
         "login.html",
-        {"step": step, "error": None, "phone": "", "api_configured": api_configured},
+        context,
     )
 
 
@@ -48,9 +123,7 @@ async def save_credentials(
 
 @router.post("/send-code")
 async def send_code(request: Request, phone: str = Form(...)):
-    auth = request.app.state.auth
-
-    if not auth.is_configured:
+    if not _is_api_configured(request):
         return _render(
             request,
             "login.html",
@@ -61,30 +134,12 @@ async def send_code(request: Request, phone: str = Form(...)):
                 "api_configured": False,
             },
         )
-
-    try:
-        info = await auth.send_code(phone)
-        return _render(
-            request,
-            "login.html",
-            {
-                "step": "code",
-                "phone": phone,
-                "phone_code_hash": info["phone_code_hash"],
-                "code_type": info["code_type"],
-                "next_type": info["next_type"],
-                "timeout": info["timeout"],
-                "error": None,
-                "api_configured": True,
-            },
-        )
-    except Exception as e:
-        logger.exception("Failed to send auth code for phone=%s", phone)
-        return _render(
-            request,
-            "login.html",
-            {"step": "phone", "error": str(e), "phone": phone, "api_configured": True},
-        )
+    command_id = await deps.telegram_command_service(request).enqueue(
+        "auth.send_code",
+        payload={"phone": phone},
+        requested_by="web:auth.send_code",
+    )
+    return _auth_redirect(request, command_id, phone=phone)
 
 
 @router.post("/resend-code")
@@ -93,36 +148,12 @@ async def resend_code(
     phone: str = Form(...),
     phone_code_hash: str = Form(...),
 ):
-    auth = request.app.state.auth
-    try:
-        info = await auth.resend_code(phone)
-        return _render(
-            request,
-            "login.html",
-            {
-                "step": "code",
-                "phone": phone,
-                "phone_code_hash": info["phone_code_hash"],
-                "code_type": info["code_type"],
-                "next_type": info["next_type"],
-                "timeout": info["timeout"],
-                "error": None,
-                "api_configured": True,
-            },
-        )
-    except Exception as e:
-        logger.exception("Failed to resend auth code for phone=%s", phone)
-        return _render(
-            request,
-            "login.html",
-            {
-                "step": "code",
-                "phone": phone,
-                "phone_code_hash": phone_code_hash,
-                "error": str(e),
-                "api_configured": True,
-            },
-        )
+    command_id = await deps.telegram_command_service(request).enqueue(
+        "auth.resend_code",
+        payload={"phone": phone, "phone_code_hash": phone_code_hash},
+        requested_by="web:auth.resend_code",
+    )
+    return _auth_redirect(request, command_id, phone=phone)
 
 
 @router.post("/verify-code")
@@ -136,63 +167,17 @@ async def verify_code(
     next_type: str = Form(""),
     timeout: str = Form(""),
 ):
-    auth = request.app.state.auth
-    db = request.app.state.db
-
-    try:
-        session_string = await auth.verify_code(phone, code, phone_code_hash, password_2fa or None)
-
-        existing = await db.get_accounts()
-        is_primary = len(existing) == 0
-
-        account = Account(
-            phone=phone,
-            session_string=session_string,
-            is_primary=is_primary,
-            is_premium=False,
-        )
-        await db.add_account(account)
-        await deps.telegram_command_service(request).enqueue(
-            "accounts.connect",
-            payload={"phone": phone},
-            requested_by="web:auth.verify_code",
-        )
-
-        return RedirectResponse(url="/settings?msg=account_connected", status_code=303)
-    except ValueError as e:
-        error = str(e)
-        timeout_val = int(timeout) if timeout.isdigit() else None
-        if "2FA" in error or "password" in error.lower():
-            return _render(
-                request,
-                "login.html",
-                {
-                    "step": "2fa",
-                    "phone": phone,
-                    "code": code,
-                    "phone_code_hash": phone_code_hash,
-                    "error": error,
-                    "api_configured": True,
-                },
-            )
-        return _render(
-            request,
-            "login.html",
-            {
-                "step": "code",
-                "phone": phone,
-                "phone_code_hash": phone_code_hash,
-                "code_type": code_type or None,
-                "next_type": next_type or None,
-                "timeout": timeout_val,
-                "error": error,
-                "api_configured": True,
-            },
-        )
-    except Exception as e:
-        logger.exception("Failed to verify auth code for phone=%s", phone)
-        return _render(
-            request,
-            "login.html",
-            {"step": "phone", "phone": phone, "error": str(e), "api_configured": True},
-        )
+    command_id = await deps.telegram_command_service(request).enqueue(
+        "auth.verify_code",
+        payload={
+            "phone": phone,
+            "code": code,
+            "phone_code_hash": phone_code_hash,
+            "password_2fa": password_2fa or "",
+            "code_type": code_type or "",
+            "next_type": next_type or "",
+            "timeout": timeout or "",
+        },
+        requested_by="web:auth.verify_code",
+    )
+    return _auth_redirect(request, command_id, phone=phone)
