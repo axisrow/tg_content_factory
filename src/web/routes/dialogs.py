@@ -294,9 +294,16 @@ async def get_participants(request: Request):
     if not phone or not chat_id:
         return JSONResponse({"error": "phone and chat_id required"}, status_code=400)
     scope = f"dialogs_participants:{phone}:{chat_id}"
-    snapshot = await deps.get_db(request).repos.runtime_snapshots.get_snapshot("dialogs_participants", scope)
-    if snapshot is not None:
-        return JSONResponse(snapshot.payload)
+    # The cached snapshot is keyed only by (phone, chat_id), so it does not
+    # reflect a specific search string. When the caller asks for a filtered
+    # search, bypass the cache and always enqueue a fresh command; otherwise
+    # an older search result would be returned silently.
+    if not search:
+        snapshot = await deps.get_db(request).repos.runtime_snapshots.get_snapshot(
+            "dialogs_participants", scope
+        )
+        if snapshot is not None:
+            return JSONResponse(snapshot.payload)
     command_id = await deps.telegram_command_service(request).enqueue(
         "dialogs.participants",
         payload={"phone": phone, "chat_id": chat_id, "limit": limit, "search": search},

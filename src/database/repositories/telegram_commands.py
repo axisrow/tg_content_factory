@@ -172,18 +172,35 @@ class TelegramCommandsRepository:
             TelegramCommandStatus.CANCELLED,
         }:
             finished_at = datetime.now(timezone.utc).isoformat()
-        await self._db.execute(
-            """
-            UPDATE telegram_commands
-            SET status = ?, error = ?, result_payload = ?, finished_at = COALESCE(?, finished_at)
-            WHERE id = ?
-            """,
-            (
-                status.value,
-                error,
-                json.dumps(result_payload) if result_payload is not None else None,
-                finished_at,
-                command_id,
-            ),
-        )
+        if status == TelegramCommandStatus.PENDING:
+            # Reset started_at when re-queueing so a retried command shows
+            # a fresh run timestamp rather than the interrupted attempt's.
+            await self._db.execute(
+                """
+                UPDATE telegram_commands
+                SET status = ?, error = ?, result_payload = ?, started_at = NULL, finished_at = NULL
+                WHERE id = ?
+                """,
+                (
+                    status.value,
+                    error,
+                    json.dumps(result_payload) if result_payload is not None else None,
+                    command_id,
+                ),
+            )
+        else:
+            await self._db.execute(
+                """
+                UPDATE telegram_commands
+                SET status = ?, error = ?, result_payload = ?, finished_at = COALESCE(?, finished_at)
+                WHERE id = ?
+                """,
+                (
+                    status.value,
+                    error,
+                    json.dumps(result_payload) if result_payload is not None else None,
+                    finished_at,
+                    command_id,
+                ),
+            )
         await self._db.commit()
