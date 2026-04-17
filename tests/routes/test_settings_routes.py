@@ -137,23 +137,31 @@ async def test_save_credentials_invalid_id(client):
 
 
 @pytest.mark.asyncio
-async def test_toggle_account(client):
-    """Test toggle account."""
-    with patch("src.web.routes.settings.deps.account_service") as mock_svc:
-        mock_svc.return_value.toggle = AsyncMock()
-        resp = await client.post("/settings/1/toggle", follow_redirects=False)
-        assert resp.status_code == 303
-        assert "msg=account_toggled" in resp.headers["location"]
+async def test_toggle_account_enqueues_command(client):
+    """Web route only enqueues a telegram command; worker flips is_active and reconciles the pool."""
+    resp = await client.post("/settings/1/toggle", follow_redirects=False)
+    assert resp.status_code == 303
+    assert "msg=account_toggle_queued" in resp.headers["location"]
+    assert "command_id=" in resp.headers["location"]
+
+    db = client._transport.app.state.db
+    commands = await db.repos.telegram_commands.list_commands(limit=1)
+    assert commands[0].command_type == "accounts.toggle"
+    assert commands[0].payload == {"account_id": 1}
 
 
 @pytest.mark.asyncio
-async def test_delete_account(client):
-    """Test delete account."""
-    with patch("src.web.routes.settings.deps.account_service") as mock_svc:
-        mock_svc.return_value.delete = AsyncMock()
-        resp = await client.post("/settings/1/delete", follow_redirects=False)
-        assert resp.status_code == 303
-        assert "msg=account_deleted" in resp.headers["location"]
+async def test_delete_account_enqueues_command(client):
+    """Web route only enqueues a telegram command; worker removes the client and deletes the row."""
+    resp = await client.post("/settings/1/delete", follow_redirects=False)
+    assert resp.status_code == 303
+    assert "msg=account_delete_queued" in resp.headers["location"]
+    assert "command_id=" in resp.headers["location"]
+
+    db = client._transport.app.state.db
+    commands = await db.repos.telegram_commands.list_commands(limit=1)
+    assert commands[0].command_type == "accounts.delete"
+    assert commands[0].payload == {"account_id": 1}
 
 
 @pytest.mark.asyncio

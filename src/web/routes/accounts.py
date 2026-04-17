@@ -12,14 +12,28 @@ router = APIRouter()
 
 @router.post("/{account_id}/toggle")
 async def toggle_account(request: Request, account_id: int):
-    await deps.account_service(request).toggle(account_id)
-    return RedirectResponse(url="/settings?msg=account_toggled", status_code=303)
+    command_id = await deps.telegram_command_service(request).enqueue(
+        "accounts.toggle",
+        payload={"account_id": account_id},
+        requested_by="web:accounts.toggle",
+    )
+    return RedirectResponse(
+        url=f"/settings?msg=account_toggle_queued&command_id={command_id}",
+        status_code=303,
+    )
 
 
 @router.post("/{account_id}/delete")
 async def delete_account(request: Request, account_id: int):
-    await deps.account_service(request).delete(account_id)
-    return RedirectResponse(url="/settings?msg=account_deleted", status_code=303)
+    command_id = await deps.telegram_command_service(request).enqueue(
+        "accounts.delete",
+        payload={"account_id": account_id},
+        requested_by="web:accounts.delete",
+    )
+    return RedirectResponse(
+        url=f"/settings?msg=account_delete_queued&command_id={command_id}",
+        status_code=303,
+    )
 
 
 @router.get("/flood-status")
