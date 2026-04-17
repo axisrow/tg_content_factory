@@ -153,60 +153,70 @@ class TestChannelCRUD:
 
     @pytest.mark.asyncio
     async def test_full_channel_lifecycle(self, auth_client, test_db):
-        # Add channel via identifier (resolve_channel is mocked in fixture)
+        """Add is now queued; toggle/delete remain synchronous."""
+        # 1. POST /channels/add enqueues a channels.add_identifier command
         resp = await auth_client.post(
             "/channels/add",
             data={"identifier": "@test_channel"},
+            follow_redirects=False,
         )
-        assert resp.status_code == 200  # redirected + followed
+        assert resp.status_code == 303
+        assert "command_id=" in resp.headers["location"]
+        commands = await test_db.repos.telegram_commands.list_commands(limit=1)
+        assert len(commands) == 1
+        assert commands[0].command_type == "channels.add_identifier"
+        assert commands[0].payload.get("identifier") == "@test_channel"
 
-        # Verify in DB
+        # 2. Simulate what the worker would do: insert the channel directly,
+        #    then verify toggle / delete still work synchronously.
+        ch = Channel(
+            channel_id=-1001234567890,
+            title="Resolved Channel",
+            is_active=True,
+        )
+        await test_db.add_channel(ch)
         channels = await test_db.get_channels()
         assert len(channels) == 1
-        ch = channels[0]
-        assert ch.channel_id == -1001234567890
-        assert ch.title == "Resolved Channel"
-        assert ch.is_active is True
+        stored = channels[0]
 
         # Toggle active (deactivate)
-        resp = await auth_client.post(f"/channels/{ch.id}/toggle")
+        resp = await auth_client.post(f"/channels/{stored.id}/toggle")
         assert resp.status_code == 200
         channels = await test_db.get_channels()
         assert channels[0].is_active is False
 
         # Toggle again (reactivate)
-        resp = await auth_client.post(f"/channels/{ch.id}/toggle")
+        resp = await auth_client.post(f"/channels/{stored.id}/toggle")
         assert resp.status_code == 200
         channels = await test_db.get_channels()
         assert channels[0].is_active is True
 
         # Delete
-        resp = await auth_client.post(f"/channels/{ch.id}/delete")
+        resp = await auth_client.post(f"/channels/{stored.id}/delete")
         assert resp.status_code == 200
         channels = await test_db.get_channels()
         assert len(channels) == 0
 
     @pytest.mark.asyncio
-    async def test_add_channel_resolve_fail(self, auth_client, app_with_db, test_db):
-        app, _ = app_with_db
-
-        async def _fail_resolve(self, identifier):
-            raise ValueError("not found")
-
-        original = app.state.pool.resolve_channel
-        app.state.pool.resolve_channel = _fail_resolve
-
+    async def test_add_channel_enqueues_regardless_of_resolve(self, auth_client, app_with_db, test_db):
+        """Under queued model, web just enqueues the command; resolve failure
+        is the worker's concern. Web always redirects with command_id=."""
         resp = await auth_client.post(
             "/channels/add",
             data={"identifier": "@nonexistent"},
+            follow_redirects=False,
         )
-        assert resp.status_code == 200
-        assert "error=resolve" in str(resp.url) or "Не удалось найти" in resp.text
+        assert resp.status_code == 303
+        assert "command_id=" in resp.headers["location"]
 
+        # No channel inserted synchronously
         channels = await test_db.get_channels()
         assert len(channels) == 0
 
-        app.state.pool.resolve_channel = original
+        # Command row created
+        commands = await test_db.repos.telegram_commands.list_commands(limit=1)
+        assert commands[0].command_type == "channels.add_identifier"
+        assert commands[0].payload.get("identifier") == "@nonexistent"
 
     @pytest.mark.asyncio
     async def test_channels_page_lists_channels(self, auth_client, test_db):

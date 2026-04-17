@@ -103,15 +103,20 @@ async def client_no_accounts(tmp_path, real_pool_harness_factory):
 
 
 @pytest.mark.asyncio
-async def test_import_no_client_shows_error(client_no_accounts):
+async def test_import_no_client_still_enqueues(client_no_accounts):
+    """Under queued model, web just enqueues a channels.import_batch command.
+
+    Account availability is checked by the worker; web path does not validate.
+    """
     resp = await client_no_accounts.post(
         "/channels/import",
         data={"text_input": "@chan1\n@chan2\n@chan3"},
     )
     assert resp.status_code == 200
-    assert "Нет доступных аккаунтов" in resp.text
-    # All 3 should fail
-    assert "Ошибок: <strong>3</strong>" in resp.text
+    # All 3 identifiers should appear as queued
+    assert "chan1" in resp.text
+    assert "chan2" in resp.text
+    assert "chan3" in resp.text
 
 
 @pytest.mark.asyncio
@@ -160,18 +165,6 @@ async def client_scam(tmp_path, real_pool_harness_factory):
     await db.close()
 
 
-@pytest.mark.asyncio
-async def test_import_scam_channel_is_inactive(client_scam):
-    """Importing a scam channel creates it with is_active=False."""
-    c, db = client_scam
-    resp = await c.post(
-        "/channels/import",
-        data={"text_input": "@scamimport"},
-    )
-    assert resp.status_code == 200
-    assert "Добавлен" in resp.text
-    assert "неактивен" in resp.text
-
-    channels = await db.get_channels()
-    assert len(channels) == 1
-    assert channels[0].is_active is False
+# removed: replaced by queued-command model — web only enqueues channels.import_batch;
+# scam detection / is_active handling is now the worker's responsibility and exercised
+# in telegram_command_dispatcher tests.

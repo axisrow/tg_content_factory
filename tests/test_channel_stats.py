@@ -346,7 +346,8 @@ async def test_collect_channel_stats_no_client(db):
 
 
 @pytest.mark.asyncio
-async def test_stats_web_endpoint(tmp_path):
+async def test_stats_web_endpoint_enqueues_command(tmp_path):
+    """Web route only enqueues a telegram command; worker executes it."""
     import base64
 
     from httpx import ASGITransport, AsyncClient
@@ -367,55 +368,15 @@ async def test_stats_web_endpoint(tmp_path):
         ) as c:
             resp = await c.post(f"/channels/{pk}/stats")
             assert resp.status_code == 303
-            assert "msg=stats_collection_started" in resp.headers["location"]
+            assert "stats_collection_queued" in resp.headers["location"]
+            assert "command_id=" in resp.headers["location"]
 
-        tasks = await db.get_collection_tasks()
-        assert len(tasks) == 1
-        assert tasks[0].channel_id == -100123
-        assert tasks[0].channel_username == "test"
-        assert tasks[0].id is not None
-
-        task = await _wait_for_task_status(db, tasks[0].id, "completed")
-        assert task.messages_collected == 1
-        assert len(collector.calls) == 1
-        assert collector.calls[0].channel_id == -100123
-        assert collector.calls[0].username == "test"
-    finally:
-        await db.close()
-
-
-@pytest.mark.asyncio
-async def test_stats_web_endpoint_marks_task_failed(tmp_path):
-    import base64
-
-    from httpx import ASGITransport, AsyncClient
-
-    collector = _FakeRouteStatsCollector(error=RuntimeError("stats route failed"))
-    app, db, pk = await _create_stats_web_test_context(tmp_path, collector)
-
-    try:
-        transport = ASGITransport(app=app)
-        auth_header = base64.b64encode(b":testpass").decode()
-        async with AsyncClient(
-            transport=transport,
-            base_url="http://test",
-            follow_redirects=False,
-            headers={"Authorization": f"Basic {auth_header}", "Origin": "http://test"},
-        ) as c:
-            resp = await c.post(f"/channels/{pk}/stats")
-            assert resp.status_code == 303
-            assert "msg=stats_collection_started" in resp.headers["location"]
-
-        tasks = await db.get_collection_tasks()
-        assert len(tasks) == 1
-        assert tasks[0].id is not None
-
-        task = await _wait_for_task_status(db, tasks[0].id, "failed")
-        assert task.error == "stats route failed"
-        assert task.messages_collected == 0
-        assert len(collector.calls) == 1
-        assert collector.calls[0].channel_id == -100123
-        assert collector.calls[0].username == "test"
+        commands = await db.repos.telegram_commands.list_commands(limit=1)
+        assert len(commands) == 1
+        assert commands[0].command_type == "channels.collect_stats"
+        assert commands[0].payload == {"channel_pk": pk}
+        # Route must not have invoked the live collector directly.
+        assert collector.calls == []
     finally:
         await db.close()
 
