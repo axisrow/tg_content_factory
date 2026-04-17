@@ -13,16 +13,24 @@ from src.services.notification_target_service import NotificationTargetService
 from src.services.photo_auto_upload_service import PhotoAutoUploadService
 from src.services.photo_task_service import PhotoTarget, PhotoTaskService
 from src.telegram.client_pool import ClientPool
+from src.telegram.collector import Collector
 from src.telegram.notifier import Notifier
 
 logger = logging.getLogger(__name__)
 
 
 class TelegramCommandDispatcher:
-    def __init__(self, db: Database, pool: ClientPool, config: AppConfig | None = None):
+    def __init__(
+        self,
+        db: Database,
+        pool: ClientPool,
+        config: AppConfig | None = None,
+        collector: Collector | None = None,
+    ):
         self._db = db
         self._pool = pool
         self._config = config
+        self._collector = collector
         self._task: asyncio.Task | None = None
         self._stop_event = asyncio.Event()
 
@@ -394,6 +402,16 @@ class TelegramCommandDispatcher:
             )
         )
         return {"channel_id": info["channel_id"]}
+
+    async def _handle_channels_collect_stats(self, payload: dict[str, Any]) -> dict[str, Any]:
+        if self._collector is None:
+            raise RuntimeError("collector_unavailable")
+        channel_pk = int(payload["channel_pk"])
+        channel = await self._db.get_channel_by_pk(channel_pk)
+        if channel is None:
+            raise RuntimeError("channel_not_found")
+        result = await self._collector.collect_channel_stats(channel)
+        return {"channel_id": channel.channel_id, "collected": bool(result)}
 
     async def _handle_channels_refresh_types(self, payload: dict[str, Any]) -> dict[str, Any]:
         channels = await self._db.get_channels(active_only=True)

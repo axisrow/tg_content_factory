@@ -2,9 +2,8 @@ import logging
 
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
-from starlette.background import BackgroundTask
 
-from src.models import CollectionTaskStatus, StatsAllTaskPayload
+from src.models import StatsAllTaskPayload
 from src.services.collection_service import BulkEnqueueResult
 from src.web import deps
 
@@ -169,32 +168,15 @@ async def collect_stats(request: Request, pk: int):
         return RedirectResponse(url="/channels", status_code=303)
 
     collector = deps.get_collector(request)
-    if collector.is_stats_running:
+    if getattr(collector, "is_stats_running", False):
         return RedirectResponse(url="/channels?error=stats_running", status_code=303)
 
-    db = deps.get_db(request)
-    task_id = await db.create_collection_task(
-        channel.channel_id, channel.title, channel_username=channel.username
+    cmd_id = await deps.telegram_command_service(request).enqueue(
+        "channels.collect_stats",
+        payload={"channel_pk": pk},
+        requested_by="web:collect_stats",
     )
-    await db.update_collection_task(task_id, CollectionTaskStatus.RUNNING)
-
-    async def _run_channel_stats():
-        try:
-            result = await collector.collect_channel_stats(channel)
-            await db.update_collection_task(
-                task_id,
-                CollectionTaskStatus.COMPLETED,
-                messages_collected=1 if result else 0,
-            )
-        except Exception as exc:
-            logger.exception("collect_channel_stats failed")
-            await db.update_collection_task(
-                task_id,
-                CollectionTaskStatus.FAILED,
-                error=str(exc),
-            )
-
-    task = BackgroundTask(_run_channel_stats)
     return RedirectResponse(
-        url="/channels?msg=stats_collection_started", status_code=303, background=task
+        url=f"/channels?msg=stats_collection_queued&command_id={cmd_id}",
+        status_code=303,
     )

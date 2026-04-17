@@ -2943,46 +2943,40 @@ async def test_notification_setup_returns_conflict_when_account_unavailable(clie
 
 
 @pytest.mark.asyncio
-async def test_collect_stats_route_marks_task_completed(client):
-    from src.models import Channel, ChannelStats
+async def test_collect_stats_route_enqueues_command(client):
+    """Web route only enqueues a telegram command; worker executes the collection."""
+    from src.models import Channel
 
     db = client._transport.app.state.db
     await db.add_channel(Channel(channel_id=-1002001, title="Stats", username="teststats", channel_type="channel"))
     channel = next(ch for ch in await db.get_channels() if ch.username == "teststats")
 
-    client._transport.app.state.collector.collect_channel_stats = AsyncMock(
-        return_value=ChannelStats(channel_id=channel.channel_id, subscriber_count=10)
-    )
+    # Sanity: even if collector is mocked, route must not call it directly.
+    client._transport.app.state.collector.collect_channel_stats = AsyncMock()
 
     resp = await client.post(f"/channels/{channel.id}/stats", follow_redirects=False)
     assert resp.status_code == 303
-    assert "msg=stats_collection_started" in resp.headers["location"]
+    assert "stats_collection_queued" in resp.headers["location"]
+    assert "command_id=" in resp.headers["location"]
 
-    tasks = await db.get_collection_tasks()
-    assert tasks[0].status == CollectionTaskStatus.COMPLETED
-    assert tasks[0].messages_collected == 1
+    # No direct Telegram RPC from the web request.
+    client._transport.app.state.collector.collect_channel_stats.assert_not_awaited()
+
+    commands = await db.repos.telegram_commands.list_commands(limit=1)
+    assert commands[0].command_type == "channels.collect_stats"
+    assert commands[0].payload == {"channel_pk": channel.id}
 
 
 @pytest.mark.asyncio
-async def test_collect_stats_route_marks_task_failed(client):
-    from src.models import Channel
-
+async def test_collect_stats_route_missing_channel(client):
+    """If the channel does not exist, the route redirects to /channels without enqueueing."""
     db = client._transport.app.state.db
-    await db.add_channel(
-        Channel(channel_id=-1002002, title="Stats Fail", username="teststatsfail", channel_type="channel")
-    )
-    channel = next(ch for ch in await db.get_channels() if ch.username == "teststatsfail")
 
-    client._transport.app.state.collector.collect_channel_stats = AsyncMock(
-        side_effect=RuntimeError("stats broken")
-    )
-
-    resp = await client.post(f"/channels/{channel.id}/stats", follow_redirects=False)
+    resp = await client.post("/channels/999999/stats", follow_redirects=False)
     assert resp.status_code == 303
 
-    tasks = await db.get_collection_tasks()
-    assert tasks[0].status == CollectionTaskStatus.FAILED
-    assert tasks[0].error == "stats broken"
+    commands = await db.repos.telegram_commands.list_commands(limit=5)
+    assert not any(c.command_type == "channels.collect_stats" for c in commands)
 
 
 @pytest.mark.asyncio
