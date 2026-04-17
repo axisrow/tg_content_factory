@@ -6,7 +6,6 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
-from src.telegram.notifier import Notifier
 from src.web import deps
 from src.web.routes.channel_collection import bulk_enqueue_msg
 
@@ -251,6 +250,30 @@ async def _build_jobs_context(sched, db) -> list[dict]:
     return jobs
 
 
+async def _notification_snapshot_payload(request: Request) -> dict[str, object]:
+    snapshot = await deps.get_db(request).repos.runtime_snapshots.get_snapshot("notification_target_status")
+    payload = snapshot.payload if snapshot is not None else {}
+    return payload if isinstance(payload, dict) else {}
+
+
+async def _enqueue_scheduler_command(
+    request: Request,
+    command_type: str,
+    *,
+    payload: dict[str, object] | None = None,
+    redirect_code: str,
+):
+    command_id = await deps.telegram_command_service(request).enqueue(
+        command_type,
+        payload=payload or {},
+        requested_by=f"web:scheduler.{command_type}",
+    )
+    return RedirectResponse(
+        url=f"/scheduler?msg={redirect_code}&command_id={command_id}",
+        status_code=303,
+    )
+
+
 @router.get("/", response_class=HTMLResponse)
 async def scheduler_page(
     request: Request,
@@ -279,11 +302,9 @@ async def _scheduler_page_inner(
 
     offset = (page - 1) * limit
 
-    async def _safe_bot_status():
-        try:
-            return await deps.notification_service(request).get_status()
-        except Exception:
-            return None
+    notification_snapshot = await _notification_snapshot_payload(request)
+    bot_payload = notification_snapshot.get("bot")
+    bot_configured = bool(isinstance(bot_payload, dict) and bot_payload.get("configured"))
 
     (
         tasks_page,
@@ -291,7 +312,6 @@ async def _scheduler_page_inner(
         active_count,
         pending_collect,
         search_log,
-        bot,
         scheduler_jobs,
         collector_health,
     ) = await asyncio.gather(
@@ -300,7 +320,6 @@ async def _scheduler_page_inner(
         db.count_collection_tasks("active"),
         db.get_pending_channel_tasks(),
         db.get_recent_searches(),
-        _safe_bot_status(),
         _build_jobs_context(sched, db),
         _build_collector_health_context(request),
     )
@@ -317,11 +336,6 @@ async def _scheduler_page_inner(
     completed_count = all_count - active_count
     has_active_tasks = active_count > 0
     pending_collect_count = len(pending_collect)
-
-    notifier = deps.get_notifier(request)
-    bot_configured = (
-        notifier is not None and notifier.admin_chat_id is not None
-    ) or bot is not None
 
     context = {
         "is_running": sched.is_running,
@@ -360,10 +374,11 @@ async def toggle_scheduler_job(request: Request, job_id: str):
     current = await db.repos.settings.get_setting(key)
     new_disabled = current != "1"
     await db.repos.settings.set_setting(key, "1" if new_disabled else "0")
-    sched = deps.get_scheduler(request)
-    if sched.is_running:
-        await sched.sync_job_state(job_id, enabled=not new_disabled)
-    return RedirectResponse(url="/scheduler?msg=job_toggled", status_code=303)
+    return await _enqueue_scheduler_command(
+        request,
+        "scheduler.reconcile",
+        redirect_code="job_toggled",
+    )
 
 
 @router.post("/jobs/{job_id}/set-interval")
@@ -381,47 +396,48 @@ async def set_job_interval(request: Request, job_id: str):
     except (KeyError, ValueError):
         return RedirectResponse(url="/scheduler?error=invalid_interval", status_code=303)
     db = deps.get_db(request)
-    sched = deps.get_scheduler(request)
     if job_id == "collect_all":
         await db.repos.settings.set_setting("collect_interval_minutes", str(minutes))
-        sched.update_interval(minutes)
     elif job_id.startswith("sq_"):
         sq_id = int(job_id.removeprefix("sq_"))
         sq = await db.repos.search_queries.get_by_id(sq_id)
         if sq:
             await db.repos.search_queries.update(sq_id, sq.model_copy(update={"interval_minutes": minutes}))
-            if sched.is_running:
-                await sched.sync_search_query_jobs()
     elif job_id.startswith(("pipeline_run_", "content_generate_")):
         pid_str = job_id.removeprefix("pipeline_run_").removeprefix("content_generate_")
         pid = int(pid_str)
         pipeline = await db.repos.content_pipelines.get_by_id(pid)
         if pipeline:
             await db.repos.content_pipelines.update_generate_interval(pid, minutes)
-            if sched.is_running:
-                await sched.sync_pipeline_jobs()
     elif job_id == "warm_all_dialogs":
         await db.repos.settings.set_setting("warm_dialogs_interval_minutes", str(minutes))
-        sched._warm_dialogs_interval_minutes = minutes
-        if sched.is_running:
-            await sched.sync_job_state(job_id, enabled=True)
-    return RedirectResponse(url="/scheduler?msg=interval_updated", status_code=303)
+    return await _enqueue_scheduler_command(
+        request,
+        "scheduler.reconcile",
+        redirect_code="interval_updated",
+    )
 
 
 @router.post("/start")
 async def start_scheduler(request: Request):
     if getattr(request.app.state, "shutting_down", False):
         return RedirectResponse(url="/scheduler?error=shutting_down", status_code=303)
-    await deps.scheduler_service(request).start()
     await deps.get_db(request).set_setting("scheduler_autostart", "1")
-    return RedirectResponse(url="/scheduler?msg=scheduler_started", status_code=303)
+    return await _enqueue_scheduler_command(
+        request,
+        "scheduler.reconcile",
+        redirect_code="scheduler_started",
+    )
 
 
 @router.post("/stop")
 async def stop_scheduler(request: Request):
-    await deps.scheduler_service(request).stop()
     await deps.get_db(request).set_setting("scheduler_autostart", "0")
-    return RedirectResponse(url="/scheduler?msg=scheduler_stopped", status_code=303)
+    return await _enqueue_scheduler_command(
+        request,
+        "scheduler.reconcile",
+        redirect_code="scheduler_stopped",
+    )
 
 
 @router.post("/trigger")
@@ -438,51 +454,22 @@ async def trigger_collection(request: Request):
 async def trigger_warm_dialogs(request: Request):
     if getattr(request.app.state, "shutting_down", False):
         return RedirectResponse(url="/scheduler?error=shutting_down", status_code=303)
-    sched = deps.get_scheduler(request)
-    await sched.trigger_warm_background()
-    return RedirectResponse(url="/scheduler?msg=warm_dialogs_started", status_code=303)
+    return await _enqueue_scheduler_command(
+        request,
+        "scheduler.trigger_warm",
+        redirect_code="warm_dialogs_started",
+    )
 
 
 @router.post("/test-notification")
 async def test_notification(request: Request):
     if getattr(request.app.state, "shutting_down", False):
         return RedirectResponse(url="/scheduler?error=shutting_down", status_code=303)
-
-    notifier = deps.get_notifier(request)
-    admin_chat_id = notifier.admin_chat_id if notifier else None
-    try:
-        bot = await deps.notification_service(request).get_status()
-    except Exception:
-        bot = None
-    if not admin_chat_id and bot:
-        admin_chat_id = bot.tg_user_id
-    if not admin_chat_id and not bot:
-        return RedirectResponse(url="/scheduler?error=bot_not_configured", status_code=303)
-
-    db = deps.get_db(request)
-    queries = await db.repos.search_queries.get_all(active_only=True)
-    sample_query = next((sq for sq in queries if not sq.is_regex), None)
-    if not sample_query:
-        text = "🔔 Тест уведомлений: нет поисковых запросов"
-    else:
-        messages, _ = await db.search_messages_for_query(sample_query, limit=1)
-        if messages:
-            msg = messages[0]
-            preview = (msg.text or "")[:200]
-            if msg.channel_username:
-                link = f"https://t.me/{msg.channel_username}/{msg.message_id}"
-            else:
-                bare_id = str(msg.channel_id).lstrip("-").removeprefix("100")
-                link = f"https://t.me/c/{bare_id}/{msg.message_id}"
-            text = f"🔔 Тест уведомлений:\n{preview}\n{link}"
-        else:
-            text = "🔔 Тест уведомлений: нет сообщений для отправки"
-
-    target_svc = deps.get_notification_target_service(request)
-    test_notifier = Notifier(target_svc, admin_chat_id, deps.get_notification_bundle(request))
-    ok = await test_notifier.notify(text)
-    msg = "test_notification_sent" if ok else "test_notification_failed"
-    return RedirectResponse(url=f"/scheduler?msg={msg}", status_code=303)
+    return await _enqueue_scheduler_command(
+        request,
+        "notifications.test",
+        redirect_code="test_notification_queued",
+    )
 
 
 @router.post("/dry-run-notifications", response_class=HTMLResponse)
