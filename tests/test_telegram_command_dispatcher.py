@@ -136,3 +136,39 @@ async def test_accounts_connect_raises_for_unknown_phone(tmp_path):
         pool.add_client.assert_not_awaited()
     finally:
         await db.close()
+
+
+@pytest.mark.asyncio
+async def test_notification_service_uses_config_prefixes(tmp_path):
+    """dispatcher._notification_service must propagate bot prefixes from AppConfig."""
+    from src.config import AppConfig
+
+    db = Database(str(tmp_path / "test.db"))
+    await db.initialize()
+    try:
+        config = AppConfig()
+        config.notifications.bot_name_prefix = "CustomName"
+        config.notifications.bot_username_prefix = "custom_"
+
+        pool = MagicMock()
+        dispatcher = TelegramCommandDispatcher(db, pool, config)
+        svc = dispatcher._notification_service()
+        assert svc._bot_name_prefix == "CustomName"
+        assert svc._bot_username_prefix == "custom_"
+    finally:
+        await db.close()
+
+
+@pytest.mark.asyncio
+async def test_notification_service_without_config_uses_defaults(tmp_path):
+    db = Database(str(tmp_path / "test.db"))
+    await db.initialize()
+    try:
+        pool = MagicMock()
+        dispatcher = TelegramCommandDispatcher(db, pool)
+        svc = dispatcher._notification_service()
+        # Defaults from notification_service module
+        assert svc._bot_name_prefix == "LeadHunter"
+        assert svc._bot_username_prefix == "leadhunter_"
+    finally:
+        await db.close()

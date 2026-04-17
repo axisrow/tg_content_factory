@@ -5,6 +5,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from src.config import AppConfig
 from src.database import Database
 from src.models import RuntimeSnapshot, TelegramCommandStatus
 from src.services.notification_service import NotificationService
@@ -18,9 +19,10 @@ logger = logging.getLogger(__name__)
 
 
 class TelegramCommandDispatcher:
-    def __init__(self, db: Database, pool: ClientPool):
+    def __init__(self, db: Database, pool: ClientPool, config: AppConfig | None = None):
         self._db = db
         self._pool = pool
+        self._config = config
         self._task: asyncio.Task | None = None
         self._stop_event = asyncio.Event()
 
@@ -93,7 +95,11 @@ class TelegramCommandDispatcher:
         from src.database.bundles import NotificationBundle
 
         target_service = NotificationTargetService(NotificationBundle.from_database(self._db), self._pool)
-        return NotificationService(self._db, target_service)
+        kwargs: dict[str, Any] = {}
+        if self._config is not None:
+            kwargs["bot_name_prefix"] = self._config.notifications.bot_name_prefix
+            kwargs["bot_username_prefix"] = self._config.notifications.bot_username_prefix
+        return NotificationService(self._db, target_service, **kwargs)
 
     def _notification_target_service(self) -> NotificationTargetService:
         from src.database.bundles import NotificationBundle

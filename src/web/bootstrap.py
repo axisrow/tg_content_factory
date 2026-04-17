@@ -210,7 +210,7 @@ async def build_container_with_templates(
             config=config,
             llm_provider_service=llm_provider_service,
         )
-        telegram_command_dispatcher = TelegramCommandDispatcher(db, pool)
+        telegram_command_dispatcher = TelegramCommandDispatcher(db, pool, config)
         scheduler = SchedulerManager(
             config.scheduler,
             scheduler_bundle=scheduler_bundle,
