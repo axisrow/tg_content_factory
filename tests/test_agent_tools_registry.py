@@ -174,18 +174,20 @@ class TestRequirePhonePermission:
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_malformed_json_allows_all(self):
+    async def test_malformed_json_blocks(self):
         db = MagicMock()
         db.get_setting = AsyncMock(return_value="not-json")
         result = await require_phone_permission(db, "+7900", "search_messages")
-        assert result is None
+        assert result is not None
+        assert "заблокировано" in result["content"][0]["text"]
 
     @pytest.mark.asyncio
-    async def test_db_exception_allows_all(self):
+    async def test_db_exception_blocks(self):
         db = MagicMock()
         db.get_setting = AsyncMock(side_effect=Exception("err"))
         result = await require_phone_permission(db, "+7900", "search_messages")
-        assert result is None
+        assert result is not None
+        assert "заблокировано" in result["content"][0]["text"]
 
     @pytest.mark.asyncio
     async def test_phone_in_allowed_list(self):

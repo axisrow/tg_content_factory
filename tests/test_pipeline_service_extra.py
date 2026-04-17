@@ -95,6 +95,28 @@ async def test_get_nonexistent(svc):
 
 
 @pytest.mark.asyncio
+async def test_get_retrieval_scope_single_source(svc):
+    pipeline_id = await svc.add(
+        name="SingleSource",
+        prompt_template="Prompt {source_messages}",
+        source_channel_ids=[1001],
+        target_refs=[PipelineTargetRef(phone="+100", dialog_id=77)],
+    )
+    pipeline = await svc.get(pipeline_id)
+    scope = await svc.get_retrieval_scope(pipeline)
+    assert scope.query == "SingleSource"
+    assert scope.channel_id == 1001
+
+
+@pytest.mark.asyncio
+async def test_get_retrieval_scope_multi_source(svc, pipeline_id):
+    pipeline = await svc.get(pipeline_id)
+    scope = await svc.get_retrieval_scope(pipeline)
+    assert scope.query == "TestPipeline"
+    assert scope.channel_id is None
+
+
+@pytest.mark.asyncio
 async def test_toggle_deactivates(svc, pipeline_id):
     result = await svc.toggle(pipeline_id)
     assert result is True

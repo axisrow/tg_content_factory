@@ -19,6 +19,15 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _log_task_exception(task: asyncio.Task) -> None:
+    """Done-callback that logs unhandled exceptions from fire-and-forget tasks."""
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc is not None:
+        logger.error("Background task %s failed: %s", task.get_name(), exc)
+
+
 class SchedulerManager:
     def __init__(
         self,
@@ -286,7 +295,8 @@ class SchedulerManager:
 
     async def trigger_warm_background(self) -> None:
         """Fire-and-forget dialog cache warm run."""
-        asyncio.create_task(self._run_warm_dialogs(), name="warm_all_dialogs_manual")
+        task = asyncio.create_task(self._run_warm_dialogs(), name="warm_all_dialogs_manual")
+        task.add_done_callback(_log_task_exception)
 
     async def _run_warm_dialogs(self) -> None:
         if not self._warm_dialogs_callback:

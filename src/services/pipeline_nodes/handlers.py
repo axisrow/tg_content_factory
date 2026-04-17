@@ -49,14 +49,16 @@ class RetrieveContextHandler(BaseNodeHandler):
         query = context.get_global("generation_query", "") or context.get_global("prompt_template", "")
         limit = int(node_config.get("limit", 8))
         method = node_config.get("method", "hybrid")
+        source_channel_ids = context.get_global("source_channel_ids", [])
+        channel_id = source_channel_ids[0] if len(source_channel_ids) == 1 else context.get_global("channel_id")
 
         try:
             if method == "hybrid" and search_engine.semantic_available:
-                result = await search_engine.search_hybrid(query, limit=limit)
+                result = await search_engine.search_hybrid(query, channel_id=channel_id, limit=limit)
             elif method == "semantic" and search_engine.semantic_available:
-                result = await search_engine.search_semantic(query, limit=limit)
+                result = await search_engine.search_semantic(query, channel_id=channel_id, limit=limit)
             else:
-                result = await search_engine.search_local(query, limit=limit)
+                result = await search_engine.search_local(query, channel_id=channel_id, limit=limit)
             context.set_global("context_messages", result.messages)
         except Exception:
             logger.warning("RetrieveContextHandler: search failed, using empty context", exc_info=True)

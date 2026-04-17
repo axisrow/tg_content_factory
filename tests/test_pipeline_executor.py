@@ -314,7 +314,8 @@ class TestExecuteSeedsContext:
 
         assert captured_context is not None
         assert captured_context.get_global("prompt_template") == "my prompt"
-        assert captured_context.get_global("generation_query") == "my prompt"
+        assert captured_context.get_global("generation_query") == "test-pipeline"
+        assert captured_context.get_global("channel_id") is None
         assert captured_context.get_global("default_model") == "gpt-4o"
         # publish_mode falls back to pipeline's value
         assert result["publish_mode"] == PipelinePublishMode.MODERATED.value

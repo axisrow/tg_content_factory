@@ -99,6 +99,7 @@ def test_run_no_messages(capsys):
     db = _make_db()
     db.repos.messages.get_untranslated_messages = AsyncMock(return_value=[])
     mock_ps = MagicMock()
+    mock_ps.load_db_providers = AsyncMock(return_value=0)
     mock_ts = MagicMock()
     mock_ts.translate_batch = AsyncMock(return_value=[])
     with _patches(db)[0], _patches(db)[1], \
@@ -114,6 +115,7 @@ def test_run_with_messages(capsys):
     db.repos.messages.get_untranslated_messages = AsyncMock(return_value=msgs)
     db.repos.messages.update_translation = AsyncMock()
     mock_ps = MagicMock()
+    mock_ps.load_db_providers = AsyncMock(return_value=0)
     mock_ts = MagicMock()
     mock_ts.translate_batch = AsyncMock(return_value=[(1, "translated text")])
     with _patches(db)[0], _patches(db)[1], \
@@ -153,6 +155,7 @@ def test_message_with_text(capsys):
     db.repos.messages.get_by_id = AsyncMock(return_value=msg)
     db.repos.messages.update_translation = AsyncMock()
     mock_ps = MagicMock()
+    mock_ps.load_db_providers = AsyncMock(return_value=0)
     mock_ts = MagicMock()
     mock_ts.translate_batch = AsyncMock(return_value=[(1, "Hello world")])
     with _patches(db)[0], _patches(db)[1], \
@@ -169,6 +172,7 @@ def test_message_translation_failed(capsys):
     msg = MagicMock(text="Привет")
     db.repos.messages.get_by_id = AsyncMock(return_value=msg)
     mock_ps = MagicMock()
+    mock_ps.load_db_providers = AsyncMock(return_value=0)
     mock_ts = MagicMock()
     mock_ts.translate_batch = AsyncMock(return_value=[])
     with _patches(db)[0], _patches(db)[1], \

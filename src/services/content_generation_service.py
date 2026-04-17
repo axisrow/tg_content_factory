@@ -30,6 +30,7 @@ class ContentGenerationService:
         self,
         db: Database,
         search_engine: SearchEngine,
+        config: Any | None = None,
         agent_manager: Any | None = None,
         image_service: Any | None = None,
         notification_service: "DraftNotificationService | None" = None,
@@ -39,6 +40,7 @@ class ContentGenerationService:
     ) -> None:
         self._db = db
         self._search = search_engine
+        self._config = config
         self._agent_manager = agent_manager
         self._image_service = image_service
         self._notification_service = notification_service
@@ -190,8 +192,15 @@ class ContentGenerationService:
     ) -> dict[str, Any]:
         """Execute the pipeline using the node-based DAG executor."""
         from src.services.pipeline_executor import PipelineExecutor
+        from src.services.pipeline_service import resolve_retrieval_scope
 
-        provider_callable = self._get_provider_callable(pipeline.llm_model)
+        provider_callable = await self._get_provider_callable(pipeline.llm_model)
+        list_sources = getattr(
+            getattr(getattr(self._db, "repos", None), "content_pipelines", None),
+            "list_sources",
+            None,
+        )
+        scope = await resolve_retrieval_scope(pipeline, list_sources)
 
         default_image_model = await self._db.get_setting("default_image_model") or ""
 
@@ -205,6 +214,8 @@ class ContentGenerationService:
             "default_image_model": pipeline.image_model or default_image_model,
             "db": self._db,
             "since_hours": since_hours,
+            "generation_query": scope.query,
+            "channel_id": scope.channel_id,
         }
 
         # Inject read-only agent tools for AgentLoopHandler
@@ -239,32 +250,25 @@ class ContentGenerationService:
         temperature: float,
     ) -> dict[str, Any]:
         """Run RAG-based generation using GenerationService."""
-        provider_callable = self._get_provider_callable(pipeline.llm_model)
+        from src.services.pipeline_service import resolve_retrieval_scope
+
+        provider_callable = await self._get_provider_callable(pipeline.llm_model)
 
         gen = GenerationService(self._search, provider_callable=provider_callable)
-
-        # Use pipeline name as search query; constrain to first source channel if available
-        query = pipeline.name or ""
-        channel_id: int | None = None
-        try:
-            sources = await self._db.repos.content_pipelines.list_sources(pipeline.id)
-            if len(sources) == 1:
-                channel_id = sources[0].channel_id
-            # For multi-source pipelines keep channel_id=None to retrieve from all channels
-        except Exception:
-            logger.warning(
-                "Failed to load pipeline sources for %s, continuing without channel scoping",
-                pipeline.id,
-                exc_info=True,
-            )
+        list_sources = getattr(
+            getattr(getattr(self._db, "repos", None), "content_pipelines", None),
+            "list_sources",
+            None,
+        )
+        scope = await resolve_retrieval_scope(pipeline, list_sources)
 
         return await gen.generate(
-            query=query,
+            query=scope.query,
             prompt_template=pipeline.prompt_template,
             model=(model or pipeline.llm_model),
             max_tokens=max_tokens,
             temperature=temperature,
-            channel_id=channel_id,
+            channel_id=scope.channel_id,
         )
 
     async def _run_deep_agents(
@@ -316,7 +320,7 @@ class ContentGenerationService:
         temperature: float,
     ) -> str:
         """Apply each refinement step sequentially, replacing {text} with current output."""
-        provider_callable = self._get_provider_callable(pipeline.llm_model)
+        provider_callable = await self._get_provider_callable(pipeline.llm_model)
 
         for step in pipeline.refinement_steps:
             step_prompt = step.get("prompt", "")
@@ -361,10 +365,15 @@ class ContentGenerationService:
             return None
         return await self._image_service.generate(model or pipeline.image_model, text)
 
-    def _get_provider_callable(self, model: str | None) -> Any:
-        """Resolve provider callable — prefer injected shared service, fall back to local."""
-        if self._provider_service is not None:
-            return self._provider_service.get_provider_callable(model)
-        from src.services.provider_service import AgentProviderService
+    async def _ensure_provider_service(self) -> Any:
+        """Resolve or build provider service, loading DB-backed providers when config is available."""
+        if self._provider_service is None:
+            from src.services.provider_service import build_provider_service
 
-        return AgentProviderService(self._db).get_provider_callable(model)
+            self._provider_service = await build_provider_service(self._db, self._config)
+        return self._provider_service
+
+    async def _get_provider_callable(self, model: str | None) -> Any:
+        """Resolve provider callable — prefer injected shared service, fall back to local."""
+        provider_service = await self._ensure_provider_service()
+        return provider_service.get_provider_callable(model)

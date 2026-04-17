@@ -130,7 +130,7 @@ async def test_pipeline_run_handler_uses_content_generation_service(monkeypatch)
             captured["notification_notifier"] = notifier
 
     class FakeQualityScoringService:
-        def __init__(self, db):
+        def __init__(self, db, **kwargs):
             captured["quality_db"] = db
 
     class FakeContentGenerationService:

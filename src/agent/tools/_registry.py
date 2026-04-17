@@ -81,13 +81,24 @@ async def require_phone_permission(db: object, phone: str, tool_name: str) -> di
 
         raw = await db.get_setting(TOOL_PERMISSIONS_SETTING)
     except Exception:
-        return None  # DB error → allow all
+        logger.warning("Failed to load agent tool permissions; blocking '%s'", tool_name, exc_info=True)
+        return _text_response(
+            f"❌ Не удалось загрузить ACL для '{tool_name}'. Действие заблокировано до восстановления настроек."
+        )
     if not raw:
         return None  # no restrictions configured → allow all
     try:
         perms = _json.loads(raw)
     except (ValueError, TypeError):
-        return None  # malformed → allow all
+        logger.warning("Malformed agent tool permissions JSON; blocking '%s'", tool_name)
+        return _text_response(
+            f"❌ ACL для '{tool_name}' повреждён. Действие заблокировано до исправления настроек."
+        )
+    if not isinstance(perms, dict):
+        logger.warning("Agent tool permissions JSON is not an object; blocking '%s'", tool_name)
+        return _text_response(
+            f"❌ ACL для '{tool_name}' повреждён. Действие заблокировано до исправления настроек."
+        )
     # Collect phones allowed for this tool
     allowed_phones = [p for p, tools in perms.items() if isinstance(tools, dict) and tools.get(tool_name, False)]
     if not allowed_phones:

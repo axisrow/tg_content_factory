@@ -39,7 +39,7 @@ def run(args: argparse.Namespace) -> None:
                 print(f"Language detection complete: {total_updated} messages updated.")
 
             elif action == "run":
-                from src.services.provider_service import AgentProviderService
+                from src.services.provider_service import build_provider_service
                 from src.services.translation_service import TranslationService
 
                 target = getattr(args, "target", "en")
@@ -53,7 +53,7 @@ def run(args: argparse.Namespace) -> None:
                 provider_name = await db.get_setting("translation_provider")
                 model = await db.get_setting("translation_model")
 
-                provider_service = AgentProviderService(db)
+                provider_service = await build_provider_service(db, _config)
                 svc = TranslationService(db, provider_service=provider_service)
 
                 msgs = await db.repos.messages.get_untranslated_messages(
@@ -70,7 +70,7 @@ def run(args: argparse.Namespace) -> None:
                 print(f"Translated {len(results)}/{len(msgs)} messages.")
 
             elif action == "message":
-                from src.services.provider_service import AgentProviderService
+                from src.services.provider_service import build_provider_service
                 from src.services.translation_service import TranslationService
 
                 message_id = args.message_id
@@ -87,7 +87,7 @@ def run(args: argparse.Namespace) -> None:
 
                 provider_name = await db.get_setting("translation_provider")
                 model = await db.get_setting("translation_model")
-                provider_service = AgentProviderService(db)
+                provider_service = await build_provider_service(db, _config)
                 svc = TranslationService(db, provider_service=provider_service)
 
                 results = await svc.translate_batch([msg], target, provider_name=provider_name, model=model)

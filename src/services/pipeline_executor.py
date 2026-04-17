@@ -89,7 +89,8 @@ class PipelineExecutor:
 
         # Seed initial values from pipeline model (for legacy-compat)
         context.set_global("prompt_template", pipeline.prompt_template or "")
-        context.set_global("generation_query", pipeline.prompt_template or pipeline.name or "")
+        context.set_global("generation_query", services.get("generation_query", pipeline.name or ""))
+        context.set_global("channel_id", services.get("channel_id"))
         context.set_global("default_model", pipeline.llm_model or "")
 
         ordered = _topological_sort(graph)

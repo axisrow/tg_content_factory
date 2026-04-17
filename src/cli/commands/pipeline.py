@@ -302,15 +302,16 @@ def run(args: argparse.Namespace) -> None:
                 )
                 await db.repos.generation_runs.set_status(run_id, "running")
                 print(f"Created generation run id={run_id}")
-                retrieval_query = pipeline.prompt_template or pipeline.name or ""
+                scope = await svc.get_retrieval_scope(pipeline)
                 try:
                     result = await gen_svc.generate(
-                        query=retrieval_query,
+                        query=scope.query,
                         prompt_template=pipeline.prompt_template,
                         limit=args.limit,
                         model=pipeline.llm_model,
                         max_tokens=args.max_tokens,
                         temperature=args.temperature,
+                        channel_id=scope.channel_id,
                     )
                     await db.repos.generation_runs.save_result(
                         run_id,
@@ -355,8 +356,9 @@ def run(args: argparse.Namespace) -> None:
                 gen_svc = ContentGenerationService(
                     db,
                     engine,
+                    config=config,
                     agent_manager=agent_manager,
-                    quality_service=QualityScoringService(db),
+                    quality_service=QualityScoringService(db, provider_service=provider_svc),
                     provider_service=provider_svc,
                 )
                 try:
@@ -599,7 +601,7 @@ def run(args: argparse.Namespace) -> None:
 
             elif args.pipeline_action == "ai-edit":
                 instruction = args.instruction
-                result = await svc.edit_via_llm(args.id, instruction, db)
+                result = await svc.edit_via_llm(args.id, instruction, db, config=config)
                 import json
 
                 if result["ok"]:

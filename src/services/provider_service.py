@@ -21,6 +21,17 @@ _OPENAI_STYLE_BASE_URLS: Dict[str, str] = {
 }
 
 
+async def build_provider_service(
+    db: object | None = None,
+    config: object | None = None,
+) -> "AgentProviderService":
+    """Create AgentProviderService and eagerly load DB-backed providers when possible."""
+    svc = AgentProviderService(db, config)
+    if db is not None and config is not None:
+        await svc.load_db_providers()
+    return svc
+
+
 class AgentProviderService:
     """Simple provider registry for generation providers.
 

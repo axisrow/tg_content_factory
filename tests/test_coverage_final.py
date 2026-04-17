@@ -56,6 +56,11 @@ def _make_pool_with_clients(phones=None):
 
 def _get_messaging_handlers(mock_db, client_pool=None):
     """Build MCP tools and return messaging handlers keyed by name."""
+    get_setting = getattr(mock_db, "get_setting", None)
+    if isinstance(get_setting, AsyncMock) and get_setting.side_effect is None and isinstance(
+        get_setting.return_value, (AsyncMock, MagicMock)
+    ):
+        get_setting.return_value = None
     captured_tools = []
 
     with patch(
@@ -1683,6 +1688,7 @@ class TestImageToolEdgeCases:
         mock_db.get_accounts = AsyncMock(return_value=[
             Account(id=1, phone="+1111", session_string="s", is_active=True, is_primary=True),
         ])
+        mock_db.get_setting = AsyncMock(return_value=None)
         mock_db.repos.settings = MagicMock()
         mock_db.repos.settings.get = AsyncMock(return_value=None)
         mock_db.repos.tool_permissions = MagicMock()
@@ -1763,6 +1769,7 @@ class TestCollectionToolErrors:
         mock_db.get_accounts = AsyncMock(return_value=[
             Account(id=1, phone="+1111", session_string="s", is_active=True, is_primary=True),
         ])
+        mock_db.get_setting = AsyncMock(return_value=None)
         mock_db.repos.settings = MagicMock()
         mock_db.repos.settings.get = AsyncMock(return_value=None)
         mock_db.repos.tool_permissions = MagicMock()
@@ -1824,6 +1831,7 @@ class TestFilterToolEdge:
         mock_db.get_accounts = AsyncMock(return_value=[
             Account(id=1, phone="+1111", session_string="s", is_active=True, is_primary=True),
         ])
+        mock_db.get_setting = AsyncMock(return_value=None)
         mock_db.repos.settings = MagicMock()
         mock_db.repos.settings.get = AsyncMock(return_value=None)
         mock_db.repos.tool_permissions = MagicMock()
@@ -1866,6 +1874,7 @@ class TestNotificationToolErrors:
         mock_db.get_accounts = AsyncMock(return_value=[
             Account(id=1, phone="+1111", session_string="s", is_active=True, is_primary=True),
         ])
+        mock_db.get_setting = AsyncMock(return_value=None)
         mock_db.repos.settings = MagicMock()
         mock_db.repos.settings.get = AsyncMock(return_value=None)
         mock_db.repos.tool_permissions = MagicMock()
@@ -2005,6 +2014,7 @@ class TestMyTelegramToolErrors:
         mock_db.get_accounts = AsyncMock(return_value=[
             Account(id=1, phone="+1111", session_string="s", is_active=True, is_primary=True),
         ])
+        mock_db.get_setting = AsyncMock(return_value=None)
         mock_db.repos.settings = MagicMock()
         mock_db.repos.settings.get = AsyncMock(return_value=None)
         mock_db.repos.tool_permissions = MagicMock()
@@ -2098,6 +2108,7 @@ class TestPhotoLoaderToolErrors:
         mock_db.get_accounts = AsyncMock(return_value=[
             Account(id=1, phone="+1111", session_string="s", is_active=True, is_primary=True),
         ])
+        mock_db.get_setting = AsyncMock(return_value=None)
         mock_db.repos.settings = MagicMock()
         mock_db.repos.settings.get = AsyncMock(return_value=None)
         mock_db.repos.tool_permissions = MagicMock()

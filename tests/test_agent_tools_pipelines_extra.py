@@ -1209,6 +1209,9 @@ class TestGenerateDraftTool:
         ):
             mock_se.return_value = MagicMock()
             mock_pipe_svc.return_value.get = AsyncMock(return_value=pipeline)
+            mock_pipe_svc.return_value.get_retrieval_scope = AsyncMock(
+                return_value=SimpleNamespace(query="pipeline", channel_id=None)
+            )
             mock_prov_svc.return_value.get_provider_callable = MagicMock(
                 return_value=None
             )

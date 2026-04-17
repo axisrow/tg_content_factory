@@ -722,6 +722,8 @@ async def test_run_graph_passes_services():
         assert captured_services["image_service"] is image_svc
         assert captured_services["notification_service"] is notification_svc
         assert captured_services["client_pool"] is client_pool
+        assert captured_services["generation_query"] == "GraphTest"
+        assert captured_services["channel_id"] is None
     finally:
         _restore_provider(orig)
         if original_execute:

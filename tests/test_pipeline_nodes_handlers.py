@@ -117,6 +117,27 @@ async def test_retrieve_context_search_exception():
     assert ctx.get_global("context_messages") == []
 
 
+@pytest.mark.asyncio
+async def test_retrieve_context_single_source_scopes_channel():
+    ctx = NodeContext()
+    ctx.set_global("source_channel_ids", [42])
+    engine = _search_engine([_msg("hybrid")])
+    await RetrieveContextHandler().execute({"method": "hybrid"}, ctx, {"search_engine": engine})
+    _, kwargs = engine.search_hybrid.await_args
+    assert kwargs["channel_id"] == 42
+
+
+@pytest.mark.asyncio
+async def test_retrieve_context_uses_preseeded_channel_scope_when_multiple_sources():
+    ctx = NodeContext()
+    ctx.set_global("source_channel_ids", [1, 2])
+    ctx.set_global("channel_id", 99)
+    engine = _search_engine([_msg("hybrid")])
+    await RetrieveContextHandler().execute({"method": "hybrid"}, ctx, {"search_engine": engine})
+    _, kwargs = engine.search_hybrid.await_args
+    assert kwargs["channel_id"] == 99
+
+
 # ── LlmGenerateHandler ────────────────────────────────────────────────────────
 
 
