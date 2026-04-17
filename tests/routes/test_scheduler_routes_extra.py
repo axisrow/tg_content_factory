@@ -472,96 +472,57 @@ async def test_test_notification_shutting_down(client):
 
 @pytest.mark.asyncio
 async def test_test_notification_bot_not_configured(client):
-    """Test notification when no notifier and no bot (line 428-429)."""
-    with patch("src.web.routes.scheduler.deps.get_notifier") as mock_get_notifier:
-        mock_get_notifier.return_value = None
-
-        with patch(
-            "src.web.routes.scheduler.deps.notification_service"
-        ) as mock_notif_svc:
-            mock_service = MagicMock()
-            mock_service.get_status = AsyncMock(return_value=None)
-            mock_notif_svc.return_value = mock_service
-
-            resp = await client.post(
-                "/scheduler/test-notification",
-                follow_redirects=False,
-            )
-            assert resp.status_code == 303
-            location = resp.headers.get("location", "")
-            assert "error=bot_not_configured" in location
+    """Test notification route now queues a worker command."""
+    db = client._transport.app.state.db
+    resp = await client.post(
+        "/scheduler/test-notification",
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    location = resp.headers.get("location", "")
+    assert "msg=test_notification_queued" in location
+    commands = await db.repos.telegram_commands.list_commands(limit=1)
+    assert commands[0].command_type == "notifications.test"
 
 
 @pytest.mark.asyncio
 async def test_test_notification_with_search_query(client, base_app):
-    """Test notification with an active search query (lines 432-448)."""
+    """Test notification route queues command even when queries exist."""
     app, db, _ = base_app
 
     await db.repos.search_queries.add(SearchQuery(
         query="test_keyword", name="TestQuery",
         notify_on_collect=True, is_active=True, is_fts=False,
     ))
-
-    with patch("src.web.routes.scheduler.deps.get_notifier") as mock_get_notifier:
-        mock_notifier = MagicMock()
-        mock_notifier.admin_chat_id = 12345
-        mock_get_notifier.return_value = mock_notifier
-
-        with patch(
-            "src.web.routes.scheduler.deps.notification_service"
-        ) as mock_notif_svc:
-            mock_service = MagicMock()
-            mock_service.get_status = AsyncMock(return_value=None)
-            mock_notif_svc.return_value = mock_service
-
-            with patch("src.web.routes.scheduler.Notifier") as mock_notifier_cls:
-                mock_instance = MagicMock()
-                mock_instance.notify = AsyncMock(return_value=True)
-                mock_notifier_cls.return_value = mock_instance
-
-                resp = await client.post(
-                    "/scheduler/test-notification",
-                    follow_redirects=False,
-                )
-                assert resp.status_code == 303
-                location = resp.headers.get("location", "")
-                assert "msg=test_notification_sent" in location
+    resp = await client.post(
+        "/scheduler/test-notification",
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    location = resp.headers.get("location", "")
+    assert "msg=test_notification_queued" in location
+    commands = await db.repos.telegram_commands.list_commands(limit=1)
+    assert commands[0].command_type == "notifications.test"
 
 
 @pytest.mark.asyncio
 async def test_test_notification_no_messages(client, base_app):
-    """Test notification with query but no messages (lines 447-448)."""
+    """Test notification route queues command when there are no matches."""
     app, db, _ = base_app
 
     await db.repos.search_queries.add(SearchQuery(
         query="nonexistent_keyword_xyz", name="NoMatch",
         notify_on_collect=True, is_active=True, is_fts=False,
     ))
-
-    with patch("src.web.routes.scheduler.deps.get_notifier") as mock_get_notifier:
-        mock_notifier = MagicMock()
-        mock_notifier.admin_chat_id = 12345
-        mock_get_notifier.return_value = mock_notifier
-
-        with patch(
-            "src.web.routes.scheduler.deps.notification_service"
-        ) as mock_notif_svc:
-            mock_service = MagicMock()
-            mock_service.get_status = AsyncMock(return_value=None)
-            mock_notif_svc.return_value = mock_service
-
-            with patch("src.web.routes.scheduler.Notifier") as mock_notifier_cls:
-                mock_instance = MagicMock()
-                mock_instance.notify = AsyncMock(return_value=True)
-                mock_notifier_cls.return_value = mock_instance
-
-                resp = await client.post(
-                    "/scheduler/test-notification",
-                    follow_redirects=False,
-                )
-                assert resp.status_code == 303
-                location = resp.headers.get("location", "")
-                assert "msg=test_notification_sent" in location
+    resp = await client.post(
+        "/scheduler/test-notification",
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    location = resp.headers.get("location", "")
+    assert "msg=test_notification_queued" in location
+    commands = await db.repos.telegram_commands.list_commands(limit=1)
+    assert commands[0].command_type == "notifications.test"
 
 
 # ── dry-run-notifications: lines 490-492 ────────────────────────────────

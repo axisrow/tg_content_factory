@@ -28,7 +28,22 @@
 <div class="alert alert-danger" role="alert">{{ error }}</div>
 {% endif %}
 
-{% if step == 'credentials' %}
+{% if step == 'pending' %}
+<div class="card mb-4">
+    <div class="card-body">
+        <p class="mb-2">Команда отправлена в worker и сейчас обрабатывается.</p>
+        <p class="text-muted small mb-0">Страница обновится автоматически, когда команда завершится.</p>
+    </div>
+</div>
+<script>
+(function() {
+    setTimeout(function() {
+        window.location.reload();
+    }, 1500);
+})();
+</script>
+
+{% elif step == 'credentials' %}
 <div class="card mb-4">
     <div class="card-header fw-semibold">Шаг 1: API Credentials</div>
     <div class="card-body">

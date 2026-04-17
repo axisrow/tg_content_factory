@@ -1830,6 +1830,7 @@ async def test_channels_add_logs_unexpected_error(client, monkeypatch, caplog):
 
 @pytest.mark.asyncio
 async def test_auth_send_code_logs_exception(client, monkeypatch, caplog):
+    db = client._transport.app.state.db
     monkeypatch.setattr(
         client._transport.app.state.auth,
         "send_code",
@@ -1837,11 +1838,14 @@ async def test_auth_send_code_logs_exception(client, monkeypatch, caplog):
     )
 
     with caplog.at_level(logging.ERROR, logger="src.web.routes.auth"):
-        resp = await client.post("/auth/send-code", data={"phone": "+7000"})
+        resp = await client.post("/auth/send-code", data={"phone": "+7000"}, follow_redirects=False)
 
-    assert resp.status_code == 200
-    assert "boom" in resp.text
-    assert "Failed to send auth code for phone=+7000" in caplog.text
+    assert resp.status_code == 303
+    assert "command_id=" in resp.headers["location"]
+    commands = await db.repos.telegram_commands.list_commands(limit=1)
+    assert commands[0].command_type == "auth.send_code"
+    assert commands[0].payload["phone"] == "+7000"
+    assert "Failed to send auth code for phone=+7000" not in caplog.text
 
 
 @pytest.mark.asyncio
@@ -3202,71 +3206,51 @@ class TestWebAgent:
 
 @pytest.mark.asyncio
 async def test_test_notification_no_bot(client):
-    """No notifier and no bot → bot_not_configured error."""
-    app = client._transport.app
-    app.state.notifier = None
-
+    """Route now queues worker-side notification test command."""
+    db = client._transport.app.state.db
     resp = await client.post("/scheduler/test-notification", follow_redirects=False)
     assert resp.status_code == 303
-    assert "error=bot_not_configured" in resp.headers.get("location", "")
+    assert "msg=test_notification_queued" in resp.headers.get("location", "")
+    commands = await db.repos.telegram_commands.list_commands(limit=1)
+    assert commands[0].command_type == "notifications.test"
 
 
 @pytest.mark.asyncio
 async def test_test_notification_no_queries(client, monkeypatch):
-    """Notifier configured but no search queries → fallback text."""
-    app = client._transport.app
-    app.state.notifier = SimpleNamespace(admin_chat_id=123)
-
-    captured = {}
-
-    async def fake_notify(self, text):
-        captured["text"] = text
-        return True
-
-    monkeypatch.setattr("src.telegram.notifier.Notifier.notify", fake_notify)
-
+    """Notification route queues command even without matching queries."""
+    db = client._transport.app.state.db
     resp = await client.post("/scheduler/test-notification", follow_redirects=False)
     assert resp.status_code == 303
-    assert "нет поисковых запросов" in captured["text"]
-    assert "msg=test_notification_sent" in resp.headers.get("location", "")
+    assert "msg=test_notification_queued" in resp.headers.get("location", "")
+    commands = await db.repos.telegram_commands.list_commands(limit=1)
+    assert commands[0].command_type == "notifications.test"
 
 
 @pytest.mark.asyncio
 async def test_test_notification_no_messages(client, monkeypatch):
-    """Active query exists but no matching messages → fallback text."""
+    """Active query exists but web still only queues notification command."""
     from src.models import SearchQuery
 
     db = client._transport.app.state.db
-    app = client._transport.app
-    app.state.notifier = SimpleNamespace(admin_chat_id=123)
 
     await db.repos.search_queries.add(
         SearchQuery(query="testword", notify_on_collect=True, is_active=True)
     )
 
-    captured = {}
-
-    async def fake_notify(self, text):
-        captured["text"] = text
-        return True
-
-    monkeypatch.setattr("src.telegram.notifier.Notifier.notify", fake_notify)
-
     resp = await client.post("/scheduler/test-notification")
     assert resp.status_code == 200
-    assert "нет сообщений для отправки" in captured["text"]
+    commands = await db.repos.telegram_commands.list_commands(limit=1)
+    assert commands[0].command_type == "notifications.test"
 
 
 @pytest.mark.asyncio
 async def test_test_notification_with_public_channel_message(client, monkeypatch):
-    """Message with channel username → t.me/username/id link."""
+    """Message preview generation moved to worker; web only queues command."""
     from datetime import datetime, timezone
 
     from src.models import Channel, Message, SearchQuery
 
     db = client._transport.app.state.db
-    app = client._transport.app
-    app.state.notifier = SimpleNamespace(admin_chat_id=123)
 
     await db.repos.search_queries.add(
         SearchQuery(query="hello", notify_on_collect=True, is_active=True)
@@ -3281,30 +3265,20 @@ async def test_test_notification_with_public_channel_message(client, monkeypatch
         )
     )
 
-    captured = {}
-
-    async def fake_notify(self, text):
-        captured["text"] = text
-        return True
-
-    monkeypatch.setattr("src.telegram.notifier.Notifier.notify", fake_notify)
-
     resp = await client.post("/scheduler/test-notification")
     assert resp.status_code == 200
-    assert "hello world" in captured["text"]
-    assert "https://t.me/mychan/42" in captured["text"]
+    commands = await db.repos.telegram_commands.list_commands(limit=1)
+    assert commands[0].command_type == "notifications.test"
 
 
 @pytest.mark.asyncio
 async def test_test_notification_with_private_channel_message(client, monkeypatch):
-    """Private channel → t.me/c/channel_id/id link."""
+    """Private channel preview generation moved to worker; web only queues command."""
     from datetime import datetime, timezone
 
     from src.models import Channel, Message, SearchQuery
 
     db = client._transport.app.state.db
-    app = client._transport.app
-    app.state.notifier = SimpleNamespace(admin_chat_id=123)
 
     await db.repos.search_queries.add(
         SearchQuery(query="secret", notify_on_collect=True, is_active=True)
@@ -3319,34 +3293,21 @@ async def test_test_notification_with_private_channel_message(client, monkeypatc
         )
     )
 
-    captured = {}
-
-    async def fake_notify(self, text):
-        captured["text"] = text
-        return True
-
-    monkeypatch.setattr("src.telegram.notifier.Notifier.notify", fake_notify)
-
     resp = await client.post("/scheduler/test-notification")
     assert resp.status_code == 200
-    assert "secret data here" in captured["text"]
-    assert "https://t.me/c/888/77" in captured["text"]
+    commands = await db.repos.telegram_commands.list_commands(limit=1)
+    assert commands[0].command_type == "notifications.test"
 
 
 @pytest.mark.asyncio
 async def test_test_notification_notify_fails(client, monkeypatch):
-    """Notifier.notify returns False → failure flash."""
-    app = client._transport.app
-    app.state.notifier = SimpleNamespace(admin_chat_id=123)
-
-    async def fake_notify(self, text):
-        return False
-
-    monkeypatch.setattr("src.telegram.notifier.Notifier.notify", fake_notify)
-
+    """Route now queues command and leaves success/failure to worker result."""
+    db = client._transport.app.state.db
     resp = await client.post("/scheduler/test-notification", follow_redirects=False)
     assert resp.status_code == 303
-    assert "msg=test_notification_failed" in resp.headers.get("location", "")
+    assert "msg=test_notification_queued" in resp.headers.get("location", "")
+    commands = await db.repos.telegram_commands.list_commands(limit=1)
+    assert commands[0].command_type == "notifications.test"
 
 
 # --- Global error handler ---

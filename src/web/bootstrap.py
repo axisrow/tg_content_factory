@@ -210,7 +210,6 @@ async def build_container_with_templates(
             config=config,
             llm_provider_service=llm_provider_service,
         )
-        telegram_command_dispatcher = TelegramCommandDispatcher(db, pool, config, collector)
         scheduler = SchedulerManager(
             config.scheduler,
             scheduler_bundle=scheduler_bundle,
@@ -218,6 +217,14 @@ async def build_container_with_templates(
             task_enqueuer=task_enqueuer,
             pipeline_bundle=pipeline_bundle,
             warm_dialogs_callback=pool.warm_all_dialogs,
+        )
+        telegram_command_dispatcher = TelegramCommandDispatcher(
+            db,
+            pool,
+            config,
+            collector,
+            scheduler=scheduler,
+            auth=auth,
         )
         agent_manager = AgentManager(db, config, client_pool=pool, scheduler_manager=scheduler)
     else:

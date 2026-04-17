@@ -164,6 +164,7 @@ class TelegramCommandsRepository:
         status: TelegramCommandStatus,
         error: str | None = None,
         result_payload: dict[str, Any] | None = None,
+        payload: dict[str, Any] | None = None,
     ) -> None:
         finished_at = None
         if status in {
@@ -172,35 +173,38 @@ class TelegramCommandsRepository:
             TelegramCommandStatus.CANCELLED,
         }:
             finished_at = datetime.now(timezone.utc).isoformat()
+        payload_json = json.dumps(payload) if payload is not None else None
         if status == TelegramCommandStatus.PENDING:
             # Reset started_at when re-queueing so a retried command shows
             # a fresh run timestamp rather than the interrupted attempt's.
+            sets = ["status = ?", "error = ?", "result_payload = ?", "started_at = NULL", "finished_at = NULL"]
+            params: list[Any] = [
+                status.value,
+                error,
+                json.dumps(result_payload) if result_payload is not None else None,
+            ]
+            if payload_json is not None:
+                sets.append("payload = ?")
+                params.append(payload_json)
+            params.append(command_id)
             await self._db.execute(
-                """
-                UPDATE telegram_commands
-                SET status = ?, error = ?, result_payload = ?, started_at = NULL, finished_at = NULL
-                WHERE id = ?
-                """,
-                (
-                    status.value,
-                    error,
-                    json.dumps(result_payload) if result_payload is not None else None,
-                    command_id,
-                ),
+                f"UPDATE telegram_commands SET {', '.join(sets)} WHERE id = ?",
+                tuple(params),
             )
         else:
+            sets = ["status = ?", "error = ?", "result_payload = ?", "finished_at = COALESCE(?, finished_at)"]
+            params = [
+                status.value,
+                error,
+                json.dumps(result_payload) if result_payload is not None else None,
+                finished_at,
+            ]
+            if payload_json is not None:
+                sets.append("payload = ?")
+                params.append(payload_json)
+            params.append(command_id)
             await self._db.execute(
-                """
-                UPDATE telegram_commands
-                SET status = ?, error = ?, result_payload = ?, finished_at = COALESCE(?, finished_at)
-                WHERE id = ?
-                """,
-                (
-                    status.value,
-                    error,
-                    json.dumps(result_payload) if result_payload is not None else None,
-                    finished_at,
-                    command_id,
-                ),
+                f"UPDATE telegram_commands SET {', '.join(sets)} WHERE id = ?",
+                tuple(params),
             )
         await self._db.commit()

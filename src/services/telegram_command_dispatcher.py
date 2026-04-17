@@ -7,11 +7,13 @@ from typing import Any
 
 from src.config import AppConfig
 from src.database import Database
-from src.models import RuntimeSnapshot, TelegramCommandStatus
+from src.models import Account, RuntimeSnapshot, TelegramCommandStatus
+from src.scheduler.service import SchedulerManager
 from src.services.notification_service import NotificationService
 from src.services.notification_target_service import NotificationTargetService
 from src.services.photo_auto_upload_service import PhotoAutoUploadService
 from src.services.photo_task_service import PhotoTarget, PhotoTaskService
+from src.telegram.auth import TelegramAuth
 from src.telegram.client_pool import ClientPool
 from src.telegram.collector import Collector
 from src.telegram.notifier import Notifier
@@ -26,11 +28,16 @@ class TelegramCommandDispatcher:
         pool: ClientPool,
         config: AppConfig | None = None,
         collector: Collector | None = None,
+        *,
+        scheduler: SchedulerManager | None = None,
+        auth: TelegramAuth | None = None,
     ):
         self._db = db
         self._pool = pool
         self._config = config
         self._collector = collector
+        self._scheduler = scheduler
+        self._auth = auth
         self._task: asyncio.Task | None = None
         self._stop_event = asyncio.Event()
 
@@ -71,12 +78,14 @@ class TelegramCommandDispatcher:
                     command.id,
                     status=TelegramCommandStatus.FAILED,
                     error=str(exc),
+                    payload=command.payload,
                 )
             else:
                 await self._db.repos.telegram_commands.update_command(
                     command.id,
                     status=TelegramCommandStatus.SUCCEEDED,
-                    result_payload=result or {},
+                    result_payload=result.get("result") or {},
+                    payload=result.get("payload_update"),
                 )
 
     async def _dispatch(self, command_type: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -118,6 +127,64 @@ class TelegramCommandDispatcher:
         from src.database.bundles import NotificationBundle
 
         return NotificationTargetService(NotificationBundle.from_database(self._db), self._pool)
+
+    async def _handle_auth_send_code(self, payload: dict[str, Any]) -> dict[str, Any]:
+        if self._auth is None or not self._auth.is_configured:
+            raise RuntimeError("auth_not_configured")
+        phone = str(payload["phone"]).strip()
+        result = await self._auth.send_code(phone)
+        return {"phone": phone, **result}
+
+    async def _handle_auth_resend_code(self, payload: dict[str, Any]) -> dict[str, Any]:
+        if self._auth is None or not self._auth.is_configured:
+            raise RuntimeError("auth_not_configured")
+        phone = str(payload["phone"]).strip()
+        result = await self._auth.resend_code(phone)
+        return {"phone": phone, **result}
+
+    async def _handle_auth_verify_code(self, payload: dict[str, Any]) -> dict[str, Any]:
+        if self._auth is None or not self._auth.is_configured:
+            raise RuntimeError("auth_not_configured")
+        phone = str(payload["phone"]).strip()
+        password_2fa = str(payload.get("password_2fa", "")).strip() or None
+        payload["password_2fa"] = ""
+        session_string = await self._auth.verify_code(
+            phone,
+            str(payload["code"]),
+            str(payload["phone_code_hash"]),
+            password_2fa,
+        )
+        existing = await self._db.get_accounts()
+        account = Account(
+            phone=phone,
+            session_string=session_string,
+            is_primary=not any(acc.phone == phone for acc in existing) and len(existing) == 0,
+            is_premium=False,
+        )
+        await self._db.add_account(account)
+        connect_result = await self._handle_accounts_connect({"phone": phone})
+        return {"result": {"phone": phone, **connect_result}, "payload_update": {**payload}}
+
+    async def _handle_scheduler_reconcile(self, payload: dict[str, Any]) -> dict[str, Any]:
+        if self._scheduler is None:
+            raise RuntimeError("scheduler_unavailable")
+        autostart = await self._db.get_setting("scheduler_autostart")
+        desired_running = autostart == "1"
+        if not desired_running:
+            await self._scheduler.stop()
+            await self._scheduler.load_settings()
+            return {"running": False}
+        if self._scheduler.is_running:
+            await self._scheduler.stop()
+        await self._scheduler.load_settings()
+        await self._scheduler.start()
+        return {"running": True, "interval_minutes": self._scheduler.interval_minutes}
+
+    async def _handle_scheduler_trigger_warm(self, payload: dict[str, Any]) -> dict[str, Any]:
+        if self._scheduler is None:
+            raise RuntimeError("scheduler_unavailable")
+        await self._scheduler.trigger_warm_background()
+        return {"started": True}
 
     async def _handle_dialogs_refresh(self, payload: dict[str, Any]) -> dict[str, Any]:
         phone = str(payload["phone"])

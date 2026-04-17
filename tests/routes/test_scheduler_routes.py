@@ -297,24 +297,20 @@ async def test_scheduler_search_interval_minutes(client):
 
 @pytest.mark.asyncio
 async def test_start_scheduler_calls_service(client):
-    """Test start scheduler calls service method."""
-    mock_service = MagicMock()
-    mock_service.start = AsyncMock()
-
-    with patch("src.web.routes.scheduler.deps.scheduler_service", return_value=mock_service):
-        await client.post("/scheduler/start")
-        mock_service.start.assert_called_once()
+    """Test start scheduler enqueues reconcile command."""
+    db = client._transport.app.state.db
+    await client.post("/scheduler/start")
+    commands = await db.repos.telegram_commands.list_commands(limit=1)
+    assert commands[0].command_type == "scheduler.reconcile"
 
 
 @pytest.mark.asyncio
 async def test_stop_scheduler_calls_service(client):
-    """Test stop scheduler calls service method."""
-    mock_service = MagicMock()
-    mock_service.stop = AsyncMock()
-
-    with patch("src.web.routes.scheduler.deps.scheduler_service", return_value=mock_service):
-        await client.post("/scheduler/stop")
-        mock_service.stop.assert_called_once()
+    """Test stop scheduler enqueues reconcile command."""
+    db = client._transport.app.state.db
+    await client.post("/scheduler/stop")
+    commands = await db.repos.telegram_commands.list_commands(limit=1)
+    assert commands[0].command_type == "scheduler.reconcile"
 
 
 @pytest.mark.asyncio
