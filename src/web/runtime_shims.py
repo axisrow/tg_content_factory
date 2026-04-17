@@ -119,3 +119,20 @@ class SnapshotSchedulerManager:
 
     async def set_interval(self, minutes: int) -> None:
         return None
+
+    def update_interval(self, minutes: int) -> None:
+        # /settings/save-scheduler and /scheduler/jobs/*/set-interval call
+        # this synchronously after persisting the setting. The worker
+        # re-reads the interval on its own load cycle, so the web-side
+        # call is a no-op here.
+        return None
+
+    async def sync_search_query_jobs(self) -> None:
+        # Search-query mutation routes call this when the scheduler is
+        # running (snapshot says is_running=True). The worker will pick
+        # up the DB change on its next sync cycle.
+        return None
+
+    async def sync_pipeline_jobs(self) -> None:
+        # Pipeline mutation routes call this too; same rationale as above.
+        return None

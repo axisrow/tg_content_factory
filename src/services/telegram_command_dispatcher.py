@@ -223,13 +223,17 @@ class TelegramCommandDispatcher:
                 for p in participants
             ]
             scope = f"dialogs_participants:{phone}:{payload['chat_id']}"
-            await self._db.repos.runtime_snapshots.upsert_snapshot(
-                RuntimeSnapshot(
-                    snapshot_type="dialogs_participants",
-                    scope=scope,
-                    payload={"participants": data, "total": len(data)},
+            # Only cache unfiltered (full) participant lists. A search-filtered
+            # result would otherwise overwrite the shared snapshot, so later
+            # no-search GETs would return only the filtered subset.
+            if not str(payload.get("search", "")):
+                await self._db.repos.runtime_snapshots.upsert_snapshot(
+                    RuntimeSnapshot(
+                        snapshot_type="dialogs_participants",
+                        scope=scope,
+                        payload={"participants": data, "total": len(data)},
+                    )
                 )
-            )
             return {"phone": phone, "scope": scope, "total": len(data)}
         finally:
             await self._pool.release_client(phone)
