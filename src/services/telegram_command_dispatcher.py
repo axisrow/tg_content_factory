@@ -490,8 +490,11 @@ class TelegramCommandDispatcher:
 
     async def _handle_accounts_connect(self, payload: dict[str, Any]) -> dict[str, Any]:
         phone = str(payload["phone"])
-        session_string = str(payload["session_string"])
-        await self._pool.add_client(phone, session_string)
+        accounts = await self._db.get_accounts()
+        account = next((a for a in accounts if a.phone == phone), None)
+        if account is None:
+            raise RuntimeError(f"account_not_found:{phone}")
+        await self._pool.add_client(phone, account.session_string)
         result = await self._pool.get_client_by_phone(phone)
         is_premium = False
         if result is not None:

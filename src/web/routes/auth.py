@@ -154,7 +154,7 @@ async def verify_code(
         await db.add_account(account)
         await deps.telegram_command_service(request).enqueue(
             "accounts.connect",
-            payload={"phone": phone, "session_string": session_string},
+            payload={"phone": phone},
             requested_by="web:auth.verify_code",
         )
 

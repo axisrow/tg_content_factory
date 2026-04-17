@@ -239,6 +239,7 @@ async def test_verify_code_success(client):
     commands = await db.repos.telegram_commands.list_commands(limit=1)
     assert commands[0].command_type == "accounts.connect"
     assert commands[0].payload["phone"] == "+1234567890"
+    assert "session_string" not in commands[0].payload
 
 
 @pytest.mark.asyncio
