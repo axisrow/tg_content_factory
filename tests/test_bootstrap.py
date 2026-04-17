@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from src.database import Database
+from src.search.engine import SearchEngine
 from src.web.bootstrap import start_container
 
 
@@ -148,5 +149,19 @@ async def test_start_container_worker_mode_initializes_runtime(tmp_path):
         container.pool.initialize.assert_awaited_once()
         container.unified_dispatcher.start.assert_awaited_once()
         container.scheduler.load_settings.assert_awaited_once()
+    finally:
+        await db.close()
+
+
+@pytest.mark.asyncio
+async def test_search_engine_accepts_none_pool(tmp_path):
+    """SearchEngine built with pool=None (web-mode) must not raise on check_search_quota."""
+    db = Database(str(tmp_path / "test.db"))
+    await db.initialize()
+    try:
+        engine = SearchEngine(db, pool=None)
+        assert engine._telegram._pool is None
+        quota = await engine.check_search_quota("test")
+        assert quota is None
     finally:
         await db.close()

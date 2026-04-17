@@ -175,10 +175,12 @@ async def build_container_with_templates(
         )
         collector = Collector(pool, db, config.scheduler, notifier)
         collection_queue = CollectionQueue(collector, channel_bundle)
+        search_pool = pool
     else:
         collector = SnapshotCollector(db)
         await collector.refresh()
-    search_engine = SearchEngine(search_bundle, pool, config=config)
+        search_pool = None
+    search_engine = SearchEngine(search_bundle, search_pool, config=config)
     ai_search = AISearchEngine(config.llm, search_bundle)
     search_query_bundle = SearchQueryBundle(repos.search_queries, repos.messages)
 
