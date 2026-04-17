@@ -223,10 +223,11 @@ class TelegramCommandDispatcher:
                 for p in participants
             ]
             scope = f"dialogs_participants:{phone}:{payload['chat_id']}"
+            search_value = str(payload.get("search", ""))
             # Only cache unfiltered (full) participant lists. A search-filtered
             # result would otherwise overwrite the shared snapshot, so later
             # no-search GETs would return only the filtered subset.
-            if not str(payload.get("search", "")):
+            if not search_value:
                 await self._db.repos.runtime_snapshots.upsert_snapshot(
                     RuntimeSnapshot(
                         snapshot_type="dialogs_participants",
@@ -234,7 +235,12 @@ class TelegramCommandDispatcher:
                         payload={"participants": data, "total": len(data)},
                     )
                 )
-            return {"phone": phone, "scope": scope, "total": len(data)}
+            result = {"phone": phone, "scope": scope, "total": len(data)}
+            if search_value:
+                # Search results are intentionally not cached; return them
+                # inline so the client can read them via GET /telegram-commands/{id}.
+                result["participants"] = data
+            return result
         finally:
             await self._pool.release_client(phone)
 
