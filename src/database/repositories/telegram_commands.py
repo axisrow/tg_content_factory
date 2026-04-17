@@ -75,34 +75,41 @@ class TelegramCommandsRepository:
     async def claim_next_command(self) -> TelegramCommand | None:
         now = datetime.now(timezone.utc).isoformat()
         await self._db.execute("BEGIN IMMEDIATE")
-        cur = await self._db.execute(
-            """
-            SELECT * FROM telegram_commands
-            WHERE status = ?
-            ORDER BY id ASC
-            LIMIT 1
-            """,
-            (TelegramCommandStatus.PENDING.value,),
-        )
-        row = await cur.fetchone()
-        if row is None:
+        try:
+            cur = await self._db.execute(
+                """
+                SELECT * FROM telegram_commands
+                WHERE status = ?
+                ORDER BY id ASC
+                LIMIT 1
+                """,
+                (TelegramCommandStatus.PENDING.value,),
+            )
+            row = await cur.fetchone()
+            if row is None:
+                await self._db.commit()
+                return None
+            await self._db.execute(
+                """
+                UPDATE telegram_commands
+                SET status = ?, started_at = ?
+                WHERE id = ? AND status = ?
+                """,
+                (
+                    TelegramCommandStatus.RUNNING.value,
+                    now,
+                    row["id"],
+                    TelegramCommandStatus.PENDING.value,
+                ),
+            )
             await self._db.commit()
-            return None
-        await self._db.execute(
-            """
-            UPDATE telegram_commands
-            SET status = ?, started_at = ?
-            WHERE id = ? AND status = ?
-            """,
-            (
-                TelegramCommandStatus.RUNNING.value,
-                now,
-                row["id"],
-                TelegramCommandStatus.PENDING.value,
-            ),
-        )
-        await self._db.commit()
-        return await self.get_command(row["id"])
+            return await self.get_command(row["id"])
+        except BaseException:
+            try:
+                await self._db.rollback()
+            except Exception:
+                pass
+            raise
 
     async def update_command(
         self,
