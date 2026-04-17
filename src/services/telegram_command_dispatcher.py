@@ -83,7 +83,8 @@ class TelegramCommandDispatcher:
                 await self._db.repos.telegram_commands.update_command(
                     command.id,
                     status=TelegramCommandStatus.SUCCEEDED,
-                    result_payload=result or {},
+                    result_payload=result.get("result") or {},
+                    payload=result.get("payload_update"),
                 )
 
     async def _dispatch(self, command_type: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -161,7 +162,7 @@ class TelegramCommandDispatcher:
         )
         await self._db.add_account(account)
         connect_result = await self._handle_accounts_connect({"phone": phone})
-        return {"phone": phone, **connect_result}
+        return {"result": {"phone": phone, **connect_result}, "payload_update": {**payload}}
 
     async def _handle_scheduler_reconcile(self, payload: dict[str, Any]) -> dict[str, Any]:
         if self._scheduler is None:

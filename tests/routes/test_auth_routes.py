@@ -347,7 +347,7 @@ async def test_verify_code_detects_premium(client):
     await client.post(
         "/auth/verify-code",
         data={
-            "phone": "+1234567890",
+            "phone": "+9999999999",
             "code": "12345",
             "phone_code_hash": "hash",
             "password_2fa": "",
@@ -355,7 +355,7 @@ async def test_verify_code_detects_premium(client):
         follow_redirects=False,
     )
     accounts = await db.get_accounts()
-    assert len(accounts) == 1
+    assert len(accounts) == 1  # only the fixture account, new phone not added synchronously
 
 
 @pytest.mark.asyncio

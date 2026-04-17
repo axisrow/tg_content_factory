@@ -167,10 +167,6 @@ async def verify_code(
     next_type: str = Form(""),
     timeout: str = Form(""),
 ):
-    db = request.app.state.db
-
-    existing = await db.get_accounts()
-    _ = len(existing) == 0  # is_primary computed by worker from fresh DB state
     command_id = await deps.telegram_command_service(request).enqueue(
         "auth.verify_code",
         payload={
