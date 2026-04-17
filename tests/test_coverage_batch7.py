@@ -287,12 +287,12 @@ class TestWebSettingsRoutes:
 
     @pytest.mark.asyncio
     async def test_settings_notification_status(self, route_client):
-        """GET /settings/notification returns 200."""
-        with patch("src.web.routes.settings._notification_service") as mock_fn:
-            svc = MagicMock()
-            svc.get_status = AsyncMock(return_value=None)
-            mock_fn.return_value = svc
-            resp = await route_client.get("/settings/notification")
+        """GET /settings/notifications/status returns 200 or redirect.
+
+        Queued-command model: _notification_service helper was removed,
+        route now reads from runtime snapshot or reports unknown status.
+        """
+        resp = await route_client.get("/settings/notifications/status")
         assert resp.status_code in (200, 302, 303, 404)
 
     @pytest.mark.asyncio

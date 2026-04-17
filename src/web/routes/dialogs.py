@@ -13,6 +13,35 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
+async def _enqueue_dialog_command(
+    request: Request,
+    command_type: str,
+    *,
+    payload: dict,
+    phone: str | None = None,
+    target_path: str = "/dialogs/",
+) -> RedirectResponse:
+    command_id = await deps.telegram_command_service(request).enqueue(
+        command_type,
+        payload=payload,
+        requested_by="web:dialogs",
+    )
+    separator = "&" if "?" in target_path else "?"
+    if phone and "phone=" not in target_path:
+        target_path = f"{target_path}{separator}phone={quote(phone, safe='')}"
+        separator = "&"
+    return RedirectResponse(
+        url=f"{target_path}{separator}command_id={command_id}",
+        status_code=303,
+    )
+
+
+async def _get_command_state(request: Request, command_id: str | None):
+    if not command_id or not command_id.isdigit():
+        return None
+    return await deps.telegram_command_service(request).get(int(command_id))
+
+
 @router.get("/", response_class=HTMLResponse)
 async def dialogs_page(
     request: Request,
@@ -21,16 +50,15 @@ async def dialogs_page(
     failed: int = 0,
 ):
     started_at = time.perf_counter()
-    pool = deps.get_pool(request)
-    accounts = sorted(pool.clients.keys())
-    selected_phone = phone if phone in pool.clients else None
+    db = deps.get_db(request)
+    accounts = sorted(account.phone for account in await db.get_accounts(active_only=False))
+    selected_phone = phone if phone in accounts else None
     dialogs = []
     dialogs_cached_at = None
+    command = await _get_command_state(request, request.query_params.get("command_id"))
     if selected_phone:
         dialogs = await deps.channel_service(request).get_my_dialogs(selected_phone)
-        dialogs_cached_at = await deps.get_db(request).repos.dialog_cache.get_cached_at(
-            selected_phone
-        )
+        dialogs_cached_at = await db.repos.dialog_cache.get_cached_at(selected_phone)
     elapsed_ms = int((time.perf_counter() - started_at) * 1000)
     logger.info(
         "dialogs_page: phone=%s accounts=%d dialogs=%d duration_ms=%d",
@@ -49,16 +77,18 @@ async def dialogs_page(
             "dialogs_cached_at": dialogs_cached_at,
             "left": left,
             "failed": failed,
+            "command": command,
         },
     )
 
 
 @router.post("/refresh")
 async def refresh_dialogs(request: Request, phone: str = Form(...)):
-    await deps.channel_service(request).get_my_dialogs(phone, refresh=True)
-    return RedirectResponse(
-        url=f"/dialogs/?phone={quote(phone, safe='')}",
-        status_code=303,
+    return await _enqueue_dialog_command(
+        request,
+        "dialogs.refresh",
+        payload={"phone": phone},
+        phone=phone,
     )
 
 
@@ -80,18 +110,11 @@ async def cache_status(request: Request):
 
 @router.post("/cache-clear")
 async def cache_clear(request: Request, phone: str = Form("")):
-    pool = deps.get_pool(request)
-    db = deps.get_db(request)
-    if phone:
-        pool.invalidate_dialogs_cache(phone)
-        await db.repos.dialog_cache.clear_dialogs(phone)
-    else:
-        pool.invalidate_dialogs_cache()
-        await db.repos.dialog_cache.clear_all_dialogs()
-    redirect_phone = f"?phone={quote(phone, safe='')}" if phone else ""
-    return RedirectResponse(
-        url=f"/dialogs/{redirect_phone}&msg=cache_cleared" if phone else "/dialogs/?msg=cache_cleared",
-        status_code=303,
+    return await _enqueue_dialog_command(
+        request,
+        "dialogs.cache_clear",
+        payload={"phone": phone},
+        phone=phone or None,
     )
 
 
@@ -104,12 +127,14 @@ async def leave_dialogs(request: Request):
         parts = item.split(":", 1)
         if len(parts) == 2 and parts[0].lstrip("-").isdigit():
             dialogs.append((int(parts[0]), parts[1]))
-    results = await deps.channel_service(request).leave_dialogs(phone, dialogs)
-    left = sum(1 for v in results.values() if v)
-    failed = len(results) - left
-    return RedirectResponse(
-        url=f"/dialogs/?phone={quote(phone, safe='')}&left={left}&failed={failed}",
-        status_code=303,
+    return await _enqueue_dialog_command(
+        request,
+        "dialogs.leave",
+        payload={
+            "phone": phone,
+            "dialogs": [{"dialog_id": dialog_id, "title": title} for dialog_id, title in dialogs],
+        },
+        phone=phone or None,
     )
 
 
@@ -119,33 +144,17 @@ async def send_message(request: Request):
     phone = form.get("phone", "")
     recipient = form.get("recipient", "")
     text = form.get("text", "")
-    pool = deps.get_pool(request)
     if not phone or not recipient or not text:
         return RedirectResponse(
             url=f"/dialogs/?phone={quote(phone, safe='')}&error=missing_fields",
             status_code=303,
         )
-    result = await pool.get_native_client_by_phone(phone)
-    if result is None:
-        return RedirectResponse(
-            url=f"/dialogs/?phone={quote(phone, safe='')}&error=client_unavailable",
-            status_code=303,
-        )
-    client, _ = result
-    try:
-        entity = await client.get_entity(recipient)
-        await client.send_message(entity, text)
-        logger.info("Message sent from %s to %s", phone, recipient)
-        return RedirectResponse(
-            url=f"/dialogs/?phone={quote(phone, safe='')}&msg=message_sent",
-            status_code=303,
-        )
-    except Exception as exc:
-        logger.exception("Failed to send message: %s", exc)
-        return RedirectResponse(
-            url=f"/dialogs/?phone={quote(phone, safe='')}&error=send_failed",
-            status_code=303,
-        )
+    return await _enqueue_dialog_command(
+        request,
+        "dialogs.send",
+        payload={"phone": phone, "recipient": recipient, "text": text},
+        phone=phone,
+    )
 
 
 @router.post("/edit-message")
@@ -155,32 +164,17 @@ async def edit_message(request: Request):
     chat_id = form.get("chat_id", "")
     message_id = form.get("message_id", "")
     text = form.get("text", "")
-    pool = deps.get_pool(request)
     if not phone or not chat_id or not message_id or not text:
         return RedirectResponse(
             url=f"/dialogs/?phone={quote(phone, safe='')}&error=missing_fields",
             status_code=303,
         )
-    result = await pool.get_native_client_by_phone(phone)
-    if result is None:
-        return RedirectResponse(
-            url=f"/dialogs/?phone={quote(phone, safe='')}&error=client_unavailable",
-            status_code=303,
-        )
-    client, _ = result
-    try:
-        entity = await client.get_entity(chat_id)
-        await client.edit_message(entity, int(message_id), text)
-        return RedirectResponse(
-            url=f"/dialogs/?phone={quote(phone, safe='')}&msg=message_edited",
-            status_code=303,
-        )
-    except Exception as exc:
-        logger.exception("Failed to edit message: %s", exc)
-        return RedirectResponse(
-            url=f"/dialogs/?phone={quote(phone, safe='')}&error=edit_failed",
-            status_code=303,
-        )
+    return await _enqueue_dialog_command(
+        request,
+        "dialogs.edit_message",
+        payload={"phone": phone, "chat_id": chat_id, "message_id": message_id, "text": text},
+        phone=phone,
+    )
 
 
 @router.post("/delete-message")
@@ -189,7 +183,6 @@ async def delete_message(request: Request):
     phone = form.get("phone", "")
     chat_id = form.get("chat_id", "")
     message_ids_str = form.get("message_ids", "")
-    pool = deps.get_pool(request)
     if not phone or not chat_id or not message_ids_str:
         return RedirectResponse(
             url=f"/dialogs/?phone={quote(phone, safe='')}&error=missing_fields",
@@ -201,26 +194,12 @@ async def delete_message(request: Request):
             url=f"/dialogs/?phone={quote(phone, safe='')}&error=invalid_ids",
             status_code=303,
         )
-    result = await pool.get_native_client_by_phone(phone)
-    if result is None:
-        return RedirectResponse(
-            url=f"/dialogs/?phone={quote(phone, safe='')}&error=client_unavailable",
-            status_code=303,
-        )
-    client, _ = result
-    try:
-        entity = await client.get_entity(chat_id)
-        await client.delete_messages(entity, ids)
-        return RedirectResponse(
-            url=f"/dialogs/?phone={quote(phone, safe='')}&msg=messages_deleted",
-            status_code=303,
-        )
-    except Exception as exc:
-        logger.exception("Failed to delete messages: %s", exc)
-        return RedirectResponse(
-            url=f"/dialogs/?phone={quote(phone, safe='')}&error=delete_failed",
-            status_code=303,
-        )
+    return await _enqueue_dialog_command(
+        request,
+        "dialogs.delete_message",
+        payload={"phone": phone, "chat_id": chat_id, "message_ids": ids},
+        phone=phone,
+    )
 
 
 @router.post("/forward-messages")
@@ -230,7 +209,6 @@ async def forward_messages(request: Request):
     from_chat = form.get("from_chat", "")
     to_chat = form.get("to_chat", "")
     message_ids_str = form.get("message_ids", "")
-    pool = deps.get_pool(request)
     if not phone or not from_chat or not to_chat or not message_ids_str:
         return RedirectResponse(
             url=f"/dialogs/?phone={quote(phone, safe='')}&error=missing_fields",
@@ -242,27 +220,12 @@ async def forward_messages(request: Request):
             url=f"/dialogs/?phone={quote(phone, safe='')}&error=invalid_ids",
             status_code=303,
         )
-    result = await pool.get_native_client_by_phone(phone)
-    if result is None:
-        return RedirectResponse(
-            url=f"/dialogs/?phone={quote(phone, safe='')}&error=client_unavailable",
-            status_code=303,
-        )
-    client, _ = result
-    try:
-        from_entity = await client.get_entity(from_chat)
-        to_entity = await client.get_entity(to_chat)
-        await client.forward_messages(to_entity, ids, from_entity)
-        return RedirectResponse(
-            url=f"/dialogs/?phone={quote(phone, safe='')}&msg=messages_forwarded",
-            status_code=303,
-        )
-    except Exception as exc:
-        logger.exception("Failed to forward messages: %s", exc)
-        return RedirectResponse(
-            url=f"/dialogs/?phone={quote(phone, safe='')}&error=forward_failed",
-            status_code=303,
-        )
+    return await _enqueue_dialog_command(
+        request,
+        "dialogs.forward_messages",
+        payload={"phone": phone, "from_chat": from_chat, "to_chat": to_chat, "message_ids": ids},
+        phone=phone,
+    )
 
 
 @router.post("/pin-message")
@@ -272,28 +235,16 @@ async def pin_message(request: Request):
     chat_id = form.get("chat_id", "")
     message_id = form.get("message_id", "")
     notify = form.get("notify", "") in ("1", "true", "on")
-    pool = deps.get_pool(request)
     if not phone or not chat_id or not message_id:
         return RedirectResponse(
             url=f"/dialogs/?phone={quote(phone, safe='')}&error=missing_fields", status_code=303
         )
-    result = await pool.get_native_client_by_phone(phone)
-    if result is None:
-        return RedirectResponse(
-            url=f"/dialogs/?phone={quote(phone, safe='')}&error=client_unavailable", status_code=303
-        )
-    client, _ = result
-    try:
-        entity = await client.get_entity(chat_id)
-        await client.pin_message(entity, int(message_id), notify=notify)
-        return RedirectResponse(
-            url=f"/dialogs/?phone={quote(phone, safe='')}&msg=message_pinned", status_code=303
-        )
-    except Exception as exc:
-        logger.exception("Failed to pin message: %s", exc)
-        return RedirectResponse(
-            url=f"/dialogs/?phone={quote(phone, safe='')}&error=pin_failed", status_code=303
-        )
+    return await _enqueue_dialog_command(
+        request,
+        "dialogs.pin_message",
+        payload={"phone": phone, "chat_id": chat_id, "message_id": message_id, "notify": notify},
+        phone=phone,
+    )
 
 
 @router.post("/unpin-message")
@@ -303,79 +254,34 @@ async def unpin_message(request: Request):
     chat_id = form.get("chat_id", "")
     message_id_str = form.get("message_id", "")
     message_id = int(message_id_str) if message_id_str and message_id_str.isdigit() else None
-    pool = deps.get_pool(request)
     if not phone or not chat_id:
         return RedirectResponse(
             url=f"/dialogs/?phone={quote(phone, safe='')}&error=missing_fields", status_code=303
         )
-    result = await pool.get_native_client_by_phone(phone)
-    if result is None:
-        return RedirectResponse(
-            url=f"/dialogs/?phone={quote(phone, safe='')}&error=client_unavailable", status_code=303
-        )
-    client, _ = result
-    try:
-        entity = await client.get_entity(chat_id)
-        await client.unpin_message(entity, message_id)
-        return RedirectResponse(
-            url=f"/dialogs/?phone={quote(phone, safe='')}&msg=message_unpinned", status_code=303
-        )
-    except Exception as exc:
-        logger.exception("Failed to unpin message: %s", exc)
-        return RedirectResponse(
-            url=f"/dialogs/?phone={quote(phone, safe='')}&error=unpin_failed", status_code=303
-        )
+    return await _enqueue_dialog_command(
+        request,
+        "dialogs.unpin_message",
+        payload={"phone": phone, "chat_id": chat_id, "message_id": message_id},
+        phone=phone,
+    )
 
 
 @router.post("/download-media")
 async def download_media(request: Request):
-    import os
-    import pathlib
-
-    from fastapi.responses import FileResponse
-
     form = await request.form()
     phone = form.get("phone", "")
     chat_id = form.get("chat_id", "")
     message_id = form.get("message_id", "")
-    pool = deps.get_pool(request)
     if not phone or not chat_id or not message_id:
         return RedirectResponse(
             url=f"/dialogs/?phone={quote(phone, safe='')}&error=missing_fields", status_code=303
         )
-    result = await pool.get_native_client_by_phone(phone)
-    if result is None:
-        return RedirectResponse(
-            url=f"/dialogs/?phone={quote(phone, safe='')}&error=client_unavailable", status_code=303
-        )
-    client, _ = result
-    try:
-        entity = await client.get_entity(chat_id)
-        msg = None
-        async for m in client.iter_messages(entity, ids=int(message_id)):
-            msg = m
-            break
-        if msg is None:
-            return RedirectResponse(
-                url=f"/dialogs/?phone={quote(phone, safe='')}&error=message_not_found", status_code=303
-            )
-        output_dir = pathlib.Path(__file__).resolve().parents[3] / "data" / "downloads"
-        path = await client.download_media(msg, file=str(output_dir))
-        if not path:
-            return RedirectResponse(
-                url=f"/dialogs/?phone={quote(phone, safe='')}&error=no_media", status_code=303
-            )
-        resolved = pathlib.Path(path).resolve()
-        if not resolved.is_relative_to(output_dir.resolve()):
-            return RedirectResponse(
-                url=f"/dialogs/?phone={quote(phone, safe='')}&error=path_escape", status_code=303
-            )
-        return FileResponse(path=path, filename=os.path.basename(path))
-    except Exception as exc:
-        logger.exception("Failed to download media: %s", exc)
-        return RedirectResponse(
-            url=f"/dialogs/?phone={quote(phone, safe='')}&error=download_failed", status_code=303
-        )
+    return await _enqueue_dialog_command(
+        request,
+        "dialogs.download_media",
+        payload={"phone": phone, "chat_id": chat_id, "message_id": message_id},
+        phone=phone,
+    )
 
 
 @router.get("/participants")
@@ -385,29 +291,25 @@ async def get_participants(request: Request):
     limit_str = request.query_params.get("limit", "")
     search = request.query_params.get("search", "")
     limit = int(limit_str) if limit_str and limit_str.isdigit() else 200
-    pool = deps.get_pool(request)
     if not phone or not chat_id:
         return JSONResponse({"error": "phone and chat_id required"}, status_code=400)
-    result = await pool.get_native_client_by_phone(phone)
-    if result is None:
-        return JSONResponse({"error": "client unavailable"}, status_code=503)
-    client, _ = result
-    try:
-        entity = await client.get_entity(chat_id)
-        participants = await client.get_participants(entity, limit=limit, search=search)
-        data = [
-            {
-                "id": p.id,
-                "first_name": getattr(p, "first_name", None) or "",
-                "last_name": getattr(p, "last_name", None) or "",
-                "username": getattr(p, "username", None) or "",
-            }
-            for p in participants
-        ]
-        return JSONResponse({"participants": data, "total": len(data)})
-    except Exception as exc:
-        logger.exception("Failed to get participants: %s", exc)
-        return JSONResponse({"error": str(exc)}, status_code=500)
+    scope = f"dialogs_participants:{phone}:{chat_id}"
+    # The cached snapshot is keyed only by (phone, chat_id), so it does not
+    # reflect a specific search string. When the caller asks for a filtered
+    # search, bypass the cache and always enqueue a fresh command; otherwise
+    # an older search result would be returned silently.
+    if not search:
+        snapshot = await deps.get_db(request).repos.runtime_snapshots.get_snapshot(
+            "dialogs_participants", scope
+        )
+        if snapshot is not None:
+            return JSONResponse(snapshot.payload)
+    command_id = await deps.telegram_command_service(request).enqueue(
+        "dialogs.participants",
+        payload={"phone": phone, "chat_id": chat_id, "limit": limit, "search": search},
+        requested_by="web:dialogs",
+    )
+    return JSONResponse({"status": "queued", "command_id": command_id}, status_code=202)
 
 
 @router.post("/edit-admin")
@@ -418,38 +320,20 @@ async def edit_admin(request: Request):
     user_id = form.get("user_id", "")
     title = form.get("title", "") or None
     is_admin = form.get("is_admin", "0") in ("1", "true", "on")
-    pool = deps.get_pool(request)
     if not phone or not chat_id or not user_id:
         return RedirectResponse(
             url=f"/dialogs/?phone={quote(phone, safe='')}&error=missing_fields", status_code=303
         )
-    result = await pool.get_native_client_by_phone(phone)
-    if result is None:
-        return RedirectResponse(
-            url=f"/dialogs/?phone={quote(phone, safe='')}&error=client_unavailable", status_code=303
-        )
-    client, _ = result
-    try:
-        entity = await client.get_entity(chat_id)
-        user = await client.get_entity(user_id)
-        kwargs = {"is_admin": is_admin}
-        if title:
-            kwargs["title"] = title
-        await client.edit_admin(entity, user, **kwargs)
-        return RedirectResponse(
-            url=f"/dialogs/?phone={quote(phone, safe='')}&msg=admin_updated", status_code=303
-        )
-    except Exception as exc:
-        logger.exception("Failed to edit admin: %s", exc)
-        return RedirectResponse(
-            url=f"/dialogs/?phone={quote(phone, safe='')}&error=edit_admin_failed", status_code=303
-        )
+    return await _enqueue_dialog_command(
+        request,
+        "dialogs.edit_admin",
+        payload={"phone": phone, "chat_id": chat_id, "user_id": user_id, "title": title, "is_admin": is_admin},
+        phone=phone,
+    )
 
 
 @router.post("/edit-permissions")
 async def edit_permissions(request: Request):
-    from datetime import datetime
-
     form = await request.form()
     phone = form.get("phone", "")
     chat_id = form.get("chat_id", "")
@@ -457,7 +341,6 @@ async def edit_permissions(request: Request):
     until_date_str = form.get("until_date", "") or None
     send_messages_str = form.get("send_messages")
     send_media_str = form.get("send_media")
-    pool = deps.get_pool(request)
     if send_messages_str is None and send_media_str is None:
         return RedirectResponse(
             url=f"/dialogs/?phone={quote(phone, safe='')}&error=no_permission_flags", status_code=303
@@ -466,30 +349,19 @@ async def edit_permissions(request: Request):
         return RedirectResponse(
             url=f"/dialogs/?phone={quote(phone, safe='')}&error=missing_fields", status_code=303
         )
-    result = await pool.get_native_client_by_phone(phone)
-    if result is None:
-        return RedirectResponse(
-            url=f"/dialogs/?phone={quote(phone, safe='')}&error=client_unavailable", status_code=303
-        )
-    client, _ = result
-    try:
-        entity = await client.get_entity(chat_id)
-        user = await client.get_entity(user_id)
-        until_date = datetime.fromisoformat(until_date_str) if until_date_str else None
-        kwargs = {"until_date": until_date}
-        if send_messages_str is not None:
-            kwargs["send_messages"] = send_messages_str in ("1", "true", "on")
-        if send_media_str is not None:
-            kwargs["send_media"] = send_media_str in ("1", "true", "on")
-        await client.edit_permissions(entity, user, **kwargs)
-        return RedirectResponse(
-            url=f"/dialogs/?phone={quote(phone, safe='')}&msg=permissions_updated", status_code=303
-        )
-    except Exception as exc:
-        logger.exception("Failed to edit permissions: %s", exc)
-        return RedirectResponse(
-            url=f"/dialogs/?phone={quote(phone, safe='')}&error=edit_permissions_failed", status_code=303
-        )
+    payload = {"phone": phone, "chat_id": chat_id, "user_id": user_id}
+    if until_date_str:
+        payload["until_date"] = until_date_str
+    if send_messages_str is not None:
+        payload["send_messages"] = send_messages_str in ("1", "true", "on")
+    if send_media_str is not None:
+        payload["send_media"] = send_media_str in ("1", "true", "on")
+    return await _enqueue_dialog_command(
+        request,
+        "dialogs.edit_permissions",
+        payload=payload,
+        phone=phone,
+    )
 
 
 @router.post("/kick")
@@ -498,73 +370,34 @@ async def kick_participant(request: Request):
     phone = form.get("phone", "")
     chat_id = form.get("chat_id", "")
     user_id = form.get("user_id", "")
-    pool = deps.get_pool(request)
     if not phone or not chat_id or not user_id:
         return RedirectResponse(
             url=f"/dialogs/?phone={quote(phone, safe='')}&error=missing_fields", status_code=303
         )
-    result = await pool.get_native_client_by_phone(phone)
-    if result is None:
-        return RedirectResponse(
-            url=f"/dialogs/?phone={quote(phone, safe='')}&error=client_unavailable", status_code=303
-        )
-    client, _ = result
-    try:
-        entity = await client.get_entity(chat_id)
-        user = await client.get_entity(user_id)
-        await client.kick_participant(entity, user)
-        return RedirectResponse(
-            url=f"/dialogs/?phone={quote(phone, safe='')}&msg=user_kicked", status_code=303
-        )
-    except Exception as exc:
-        logger.exception("Failed to kick participant: %s", exc)
-        return RedirectResponse(
-            url=f"/dialogs/?phone={quote(phone, safe='')}&error=kick_failed", status_code=303
-        )
+    return await _enqueue_dialog_command(
+        request,
+        "dialogs.kick",
+        payload={"phone": phone, "chat_id": chat_id, "user_id": user_id},
+        phone=phone,
+    )
 
 
 @router.get("/broadcast-stats")
 async def broadcast_stats(request: Request):
     phone = request.query_params.get("phone", "")
     chat_id = request.query_params.get("chat_id", "")
-    pool = deps.get_pool(request)
     if not phone or not chat_id:
         return JSONResponse({"error": "phone and chat_id required"}, status_code=400)
-    result = await pool.get_native_client_by_phone(phone)
-    if result is None:
-        return JSONResponse({"error": "client unavailable"}, status_code=503)
-    client, _ = result
-    try:
-        entity = await client.get_entity(chat_id)
-        stats = await client.get_broadcast_stats(entity)
-        fields = {}
-        for attr in ("followers", "views_per_post", "shares_per_post",
-                      "reactions_per_post", "forwards_per_post"):
-            val = getattr(stats, attr, None)
-            if val is not None:
-                current = getattr(val, "current", None)
-                previous = getattr(val, "previous", None)
-                if current is not None:
-                    fields[attr] = {"current": current, "previous": previous}
-                else:
-                    fields[attr] = str(val)
-        period = getattr(stats, "period", None)
-        if period is not None:
-            min_d = getattr(period, "min_date", None)
-            max_d = getattr(period, "max_date", None)
-            fields["period"] = {
-                "min_date": min_d.isoformat() if min_d else None,
-                "max_date": max_d.isoformat() if max_d else None,
-            }
-        en = getattr(stats, "enabled_notifications", None)
-        if en is not None:
-            fields["enabled_notifications"] = en
-        if not fields:
-            fields["raw"] = str(stats)
-        return JSONResponse({"stats": fields})
-    except Exception as exc:
-        logger.exception("Failed to get broadcast stats: %s", exc)
-        return JSONResponse({"error": str(exc)}, status_code=500)
+    scope = f"dialogs_broadcast_stats:{phone}:{chat_id}"
+    snapshot = await deps.get_db(request).repos.runtime_snapshots.get_snapshot("dialogs_broadcast_stats", scope)
+    if snapshot is not None:
+        return JSONResponse(snapshot.payload)
+    command_id = await deps.telegram_command_service(request).enqueue(
+        "dialogs.broadcast_stats",
+        payload={"phone": phone, "chat_id": chat_id},
+        requested_by="web:dialogs",
+    )
+    return JSONResponse({"status": "queued", "command_id": command_id}, status_code=202)
 
 
 @router.post("/archive")
@@ -572,28 +405,16 @@ async def archive_dialog(request: Request):
     form = await request.form()
     phone = form.get("phone", "")
     chat_id = form.get("chat_id", "")
-    pool = deps.get_pool(request)
     if not phone or not chat_id:
         return RedirectResponse(
             url=f"/dialogs/?phone={quote(phone, safe='')}&error=missing_fields", status_code=303
         )
-    result = await pool.get_native_client_by_phone(phone)
-    if result is None:
-        return RedirectResponse(
-            url=f"/dialogs/?phone={quote(phone, safe='')}&error=client_unavailable", status_code=303
-        )
-    client, _ = result
-    try:
-        entity = await client.get_entity(chat_id)
-        await client.edit_folder(entity, 1)
-        return RedirectResponse(
-            url=f"/dialogs/?phone={quote(phone, safe='')}&msg=dialog_archived", status_code=303
-        )
-    except Exception as exc:
-        logger.exception("Failed to archive dialog: %s", exc)
-        return RedirectResponse(
-            url=f"/dialogs/?phone={quote(phone, safe='')}&error=archive_failed", status_code=303
-        )
+    return await _enqueue_dialog_command(
+        request,
+        "dialogs.archive",
+        payload={"phone": phone, "chat_id": chat_id},
+        phone=phone,
+    )
 
 
 @router.post("/unarchive")
@@ -601,28 +422,16 @@ async def unarchive_dialog(request: Request):
     form = await request.form()
     phone = form.get("phone", "")
     chat_id = form.get("chat_id", "")
-    pool = deps.get_pool(request)
     if not phone or not chat_id:
         return RedirectResponse(
             url=f"/dialogs/?phone={quote(phone, safe='')}&error=missing_fields", status_code=303
         )
-    result = await pool.get_native_client_by_phone(phone)
-    if result is None:
-        return RedirectResponse(
-            url=f"/dialogs/?phone={quote(phone, safe='')}&error=client_unavailable", status_code=303
-        )
-    client, _ = result
-    try:
-        entity = await client.get_entity(chat_id)
-        await client.edit_folder(entity, 0)
-        return RedirectResponse(
-            url=f"/dialogs/?phone={quote(phone, safe='')}&msg=dialog_unarchived", status_code=303
-        )
-    except Exception as exc:
-        logger.exception("Failed to unarchive dialog: %s", exc)
-        return RedirectResponse(
-            url=f"/dialogs/?phone={quote(phone, safe='')}&error=unarchive_failed", status_code=303
-        )
+    return await _enqueue_dialog_command(
+        request,
+        "dialogs.unarchive",
+        payload={"phone": phone, "chat_id": chat_id},
+        phone=phone,
+    )
 
 
 @router.post("/mark-read")
@@ -632,38 +441,27 @@ async def mark_read(request: Request):
     chat_id = form.get("chat_id", "")
     max_id_str = form.get("max_id", "") or None
     max_id = int(max_id_str) if max_id_str and max_id_str.isdigit() else None
-    pool = deps.get_pool(request)
     if not phone or not chat_id:
         return RedirectResponse(
             url=f"/dialogs/?phone={quote(phone, safe='')}&error=missing_fields", status_code=303
         )
-    result = await pool.get_native_client_by_phone(phone)
-    if result is None:
-        return RedirectResponse(
-            url=f"/dialogs/?phone={quote(phone, safe='')}&error=client_unavailable", status_code=303
-        )
-    client, _ = result
-    try:
-        entity = await client.get_entity(chat_id)
-        await client.send_read_acknowledge(entity, max_id=max_id)
-        return RedirectResponse(
-            url=f"/dialogs/?phone={quote(phone, safe='')}&msg=messages_marked_read", status_code=303
-        )
-    except Exception as exc:
-        logger.exception("Failed to mark messages as read: %s", exc)
-        return RedirectResponse(
-            url=f"/dialogs/?phone={quote(phone, safe='')}&error=mark_read_failed", status_code=303
-        )
+    return await _enqueue_dialog_command(
+        request,
+        "dialogs.mark_read",
+        payload={"phone": phone, "chat_id": chat_id, "max_id": max_id},
+        phone=phone,
+    )
 
 
 @router.get("/create-channel", response_class=HTMLResponse)
 async def create_channel_page(request: Request):
-    pool = deps.get_pool(request)
-    accounts = sorted(pool.clients.keys())
+    db = deps.get_db(request)
+    accounts = sorted(account.phone for account in await db.get_accounts(active_only=False))
+    command = await _get_command_state(request, request.query_params.get("command_id"))
     return deps.get_templates(request).TemplateResponse(
         request,
         "dialogs_create_channel.html",
-        {"accounts": accounts},
+        {"accounts": accounts, "command": command},
     )
 
 
@@ -675,62 +473,17 @@ async def create_channel(
     about: str = Form(""),
     username: str = Form(""),
 ):
-    pool = deps.get_pool(request)
-    client = pool.clients.get(phone)
-    if client is None:
-        return RedirectResponse(
-            url="/dialogs/create-channel?error=no_client",
-            status_code=303,
-        )
-    try:
-        from telethon.tl.functions.channels import CreateChannelRequest
-
-        result = await client(
-            CreateChannelRequest(
-                title=title.strip(),
-                about=about.strip(),
-                broadcast=True,
-                megagroup=False,
-            )
-        )
-        channel = result.chats[0] if result.chats else None
-        if channel is None:
-            raise RuntimeError("Telegram returned empty response — channel may not have been created")
-        channel_id = channel.id
-        channel_username = getattr(channel, "username", None) or ""
-
-        if username.strip() and channel_id:
-            try:
-                from telethon.tl.functions.channels import UpdateUsernameRequest
-
-                await client(UpdateUsernameRequest(channel, username.strip()))
-                channel_username = username.strip()
-            except Exception:
-                logger.warning(
-                    "Could not set username %r for new channel id=%s", username, channel_id
-                )
-
-        logger.info("Created channel id=%s title=%r by %s", channel_id, title, phone)
-        invite_link = f"https://t.me/{channel_username}" if channel_username else ""
-        return deps.get_templates(request).TemplateResponse(
-            request,
-            "dialogs_create_channel.html",
-            {
-                "accounts": sorted(pool.clients.keys()),
-                "created": True,
-                "channel_id": channel_id,
-                "channel_title": title,
-                "channel_username": channel_username,
-                "invite_link": invite_link,
-            },
-        )
-    except Exception as exc:
-        logger.exception("Failed to create channel: %s", exc)
-        return deps.get_templates(request).TemplateResponse(
-            request,
-            "dialogs_create_channel.html",
-            {
-                "accounts": sorted(pool.clients.keys()),
-                "error": str(exc)[:200],
-            },
-        )
+    command_id = await deps.telegram_command_service(request).enqueue(
+        "dialogs.create_channel",
+        payload={
+            "phone": phone,
+            "title": title,
+            "about": about,
+            "username": username,
+        },
+        requested_by="web:dialogs",
+    )
+    return RedirectResponse(
+        url=f"/dialogs/create-channel?command_id={command_id}",
+        status_code=303,
+    )

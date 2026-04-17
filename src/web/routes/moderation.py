@@ -5,7 +5,7 @@ import logging
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
-from src.services.publish_service import PublishService
+from src.services.publish_service import PublishService  # noqa: F401
 from src.web import deps
 
 logger = logging.getLogger(__name__)
@@ -100,13 +100,12 @@ async def publish_run(request: Request, run_id: int):
     if run.moderation_status != "approved":
         return _moderation_redirect("run_not_approved", error=True)
 
-    publish_service = PublishService(db, deps.get_pool(request))
-    results = await publish_service.publish_run(run, pipeline)
-    if not results or not all(result.success for result in results):
-        logger.warning("Moderation publish failed for run %s: %s", run_id, results)
-        return _moderation_redirect("pipeline_run_failed", error=True)
-
-    return _moderation_redirect("run_published")
+    command_id = await deps.telegram_command_service(request).enqueue(
+        "moderation.publish_run",
+        payload={"run_id": run_id, "pipeline_id": run.pipeline_id},
+        requested_by="web:moderation",
+    )
+    return RedirectResponse(url=f"/moderation?command_id={command_id}", status_code=303)
 
 
 @router.post("/bulk-approve")

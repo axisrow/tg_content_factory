@@ -496,23 +496,17 @@ async def test_create_channel_page_renders(client):
 
 @pytest.mark.asyncio
 async def test_leave_dialogs_calls_channel_service(client):
-    """Test leave_dialogs delegates to channel_service.leave_dialogs."""
-    from unittest.mock import patch
-
-    with patch("src.web.routes.dialogs.deps.channel_service") as mock_svc:
-        mock_svc.return_value.leave_dialogs = AsyncMock(
-            return_value={-100111: True}
-        )
-        resp = await client.post(
-            "/dialogs/leave",
-            data={
-                "phone": "+1234567890",
-                "channel_ids": ["-100111:Test"],
-            },
-            follow_redirects=False,
-        )
-        assert resp.status_code == 303
-        mock_svc.return_value.leave_dialogs.assert_called_once()
+    """Test leave_dialogs queues a command."""
+    resp = await client.post(
+        "/dialogs/leave",
+        data={
+            "phone": "+1234567890",
+            "channel_ids": ["-100111:Test"],
+        },
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    assert "command_id=" in resp.headers["location"]
 
 
 # ─── send_message success / error paths ─────────────────────────────
@@ -532,7 +526,7 @@ async def test_send_message_exception(client):
         follow_redirects=False,
     )
     assert resp.status_code == 303
-    assert "error=send_failed" in resp.headers["location"]
+    assert "command_id=" in resp.headers["location"]
 
 
 # ─── edit_message success / no_client / error ───────────────────────
@@ -550,7 +544,7 @@ async def test_edit_message_no_client(client):
         follow_redirects=False,
     )
     assert resp.status_code == 303
-    assert "error=client_unavailable" in resp.headers["location"]
+    assert "command_id=" in resp.headers["location"]
 
 
 @pytest.mark.asyncio
@@ -567,7 +561,7 @@ async def test_edit_message_success(client):
         follow_redirects=False,
     )
     assert resp.status_code == 303
-    assert "msg=message_edited" in resp.headers["location"]
+    assert "command_id=" in resp.headers["location"]
 
 
 @pytest.mark.asyncio
@@ -584,7 +578,7 @@ async def test_edit_message_exception(client):
         follow_redirects=False,
     )
     assert resp.status_code == 303
-    assert "error=edit_failed" in resp.headers["location"]
+    assert "command_id=" in resp.headers["location"]
 
 
 # ─── delete_message success / no_client / error ─────────────────────
@@ -602,7 +596,7 @@ async def test_delete_message_no_client(client):
         follow_redirects=False,
     )
     assert resp.status_code == 303
-    assert "error=client_unavailable" in resp.headers["location"]
+    assert "command_id=" in resp.headers["location"]
 
 
 @pytest.mark.asyncio
@@ -619,7 +613,7 @@ async def test_delete_message_success(client):
         follow_redirects=False,
     )
     assert resp.status_code == 303
-    assert "msg=messages_deleted" in resp.headers["location"]
+    assert "command_id=" in resp.headers["location"]
 
 
 @pytest.mark.asyncio
@@ -636,7 +630,7 @@ async def test_delete_message_exception(client):
         follow_redirects=False,
     )
     assert resp.status_code == 303
-    assert "error=delete_failed" in resp.headers["location"]
+    assert "command_id=" in resp.headers["location"]
 
 
 # ─── forward_messages success / no_client / error / invalid_ids ──────
@@ -676,7 +670,7 @@ async def test_forward_messages_no_client(client):
         follow_redirects=False,
     )
     assert resp.status_code == 303
-    assert "error=client_unavailable" in resp.headers["location"]
+    assert "command_id=" in resp.headers["location"]
 
 
 @pytest.mark.asyncio
@@ -698,7 +692,7 @@ async def test_forward_messages_success(client):
         follow_redirects=False,
     )
     assert resp.status_code == 303
-    assert "msg=messages_forwarded" in resp.headers["location"]
+    assert "command_id=" in resp.headers["location"]
 
 
 @pytest.mark.asyncio
@@ -720,7 +714,7 @@ async def test_forward_messages_exception(client):
         follow_redirects=False,
     )
     assert resp.status_code == 303
-    assert "error=forward_failed" in resp.headers["location"]
+    assert "command_id=" in resp.headers["location"]
 
 
 # ─── pin_message success / no_client / error ────────────────────────
@@ -738,7 +732,7 @@ async def test_pin_message_no_client(client):
         follow_redirects=False,
     )
     assert resp.status_code == 303
-    assert "error=client_unavailable" in resp.headers["location"]
+    assert "command_id=" in resp.headers["location"]
 
 
 @pytest.mark.asyncio
@@ -755,7 +749,7 @@ async def test_pin_message_success(client):
         follow_redirects=False,
     )
     assert resp.status_code == 303
-    assert "msg=message_pinned" in resp.headers["location"]
+    assert "command_id=" in resp.headers["location"]
 
 
 @pytest.mark.asyncio
@@ -772,7 +766,7 @@ async def test_pin_message_exception(client):
         follow_redirects=False,
     )
     assert resp.status_code == 303
-    assert "error=pin_failed" in resp.headers["location"]
+    assert "command_id=" in resp.headers["location"]
 
 
 # ─── unpin_message success / no_client / error ──────────────────────
@@ -790,7 +784,7 @@ async def test_unpin_message_no_client(client):
         follow_redirects=False,
     )
     assert resp.status_code == 303
-    assert "error=client_unavailable" in resp.headers["location"]
+    assert "command_id=" in resp.headers["location"]
 
 
 @pytest.mark.asyncio
@@ -807,7 +801,7 @@ async def test_unpin_message_success(client):
         follow_redirects=False,
     )
     assert resp.status_code == 303
-    assert "msg=message_unpinned" in resp.headers["location"]
+    assert "command_id=" in resp.headers["location"]
 
 
 @pytest.mark.asyncio
@@ -824,7 +818,7 @@ async def test_unpin_message_exception(client):
         follow_redirects=False,
     )
     assert resp.status_code == 303
-    assert "error=unpin_failed" in resp.headers["location"]
+    assert "command_id=" in resp.headers["location"]
 
 
 # ─── download-media ─────────────────────────────────────────────────
@@ -850,7 +844,7 @@ async def test_download_media_no_client(client):
         follow_redirects=False,
     )
     assert resp.status_code == 303
-    assert "error=client_unavailable" in resp.headers["location"]
+    assert "command_id=" in resp.headers["location"]
 
 
 @pytest.mark.asyncio
@@ -867,7 +861,7 @@ async def test_download_media_message_not_found(client):
         follow_redirects=False,
     )
     assert resp.status_code == 303
-    assert "error=message_not_found" in resp.headers["location"]
+    assert "command_id=" in resp.headers["location"]
 
 
 @pytest.mark.asyncio
@@ -889,7 +883,7 @@ async def test_download_media_no_media(client):
         follow_redirects=False,
     )
     assert resp.status_code == 303
-    assert "error=no_media" in resp.headers["location"]
+    assert "command_id=" in resp.headers["location"]
 
 
 @pytest.mark.asyncio
@@ -906,7 +900,7 @@ async def test_download_media_exception(client):
         follow_redirects=False,
     )
     assert resp.status_code == 303
-    assert "error=download_failed" in resp.headers["location"]
+    assert "command_id=" in resp.headers["location"]
 
 
 # ─── participants success / no_client / error ───────────────────────
@@ -921,7 +915,7 @@ async def test_participants_no_client(client):
     resp = await client.get(
         "/dialogs/participants?phone=%2B1234567890&chat_id=-100111"
     )
-    assert resp.status_code == 503
+    assert resp.status_code == 202
 
 
 @pytest.mark.asyncio
@@ -936,10 +930,8 @@ async def test_participants_success(client):
     resp = await client.get(
         "/dialogs/participants?phone=%2B1234567890&chat_id=-100111"
     )
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["total"] == 1
-    assert data["participants"][0]["first_name"] == "Alice"
+    assert resp.status_code == 202
+    assert "command_id" in resp.json()
 
 
 @pytest.mark.asyncio
@@ -953,7 +945,7 @@ async def test_participants_exception(client):
     resp = await client.get(
         "/dialogs/participants?phone=%2B1234567890&chat_id=-100111"
     )
-    assert resp.status_code == 500
+    assert resp.status_code == 202
 
 
 # ─── edit-admin ─────────────────────────────────────────────────────
@@ -979,7 +971,7 @@ async def test_edit_admin_no_client(client):
         follow_redirects=False,
     )
     assert resp.status_code == 303
-    assert "error=client_unavailable" in resp.headers["location"]
+    assert "command_id=" in resp.headers["location"]
 
 
 @pytest.mark.asyncio
@@ -996,7 +988,7 @@ async def test_edit_admin_success(client):
         follow_redirects=False,
     )
     assert resp.status_code == 303
-    assert "msg=admin_updated" in resp.headers["location"]
+    assert "command_id=" in resp.headers["location"]
 
 
 @pytest.mark.asyncio
@@ -1013,7 +1005,7 @@ async def test_edit_admin_exception(client):
         follow_redirects=False,
     )
     assert resp.status_code == 303
-    assert "error=edit_admin_failed" in resp.headers["location"]
+    assert "command_id=" in resp.headers["location"]
 
 
 # ─── edit-permissions ───────────────────────────────────────────────
@@ -1055,7 +1047,7 @@ async def test_edit_permissions_no_client(client):
         follow_redirects=False,
     )
     assert resp.status_code == 303
-    assert "error=client_unavailable" in resp.headers["location"]
+    assert "command_id=" in resp.headers["location"]
 
 
 @pytest.mark.asyncio
@@ -1079,7 +1071,7 @@ async def test_edit_permissions_success(client):
         follow_redirects=False,
     )
     assert resp.status_code == 303
-    assert "msg=permissions_updated" in resp.headers["location"]
+    assert "command_id=" in resp.headers["location"]
 
 
 @pytest.mark.asyncio
@@ -1096,7 +1088,7 @@ async def test_edit_permissions_exception(client):
         follow_redirects=False,
     )
     assert resp.status_code == 303
-    assert "error=edit_permissions_failed" in resp.headers["location"]
+    assert "command_id=" in resp.headers["location"]
 
 
 # ─── kick ───────────────────────────────────────────────────────────
@@ -1122,7 +1114,7 @@ async def test_kick_no_client(client):
         follow_redirects=False,
     )
     assert resp.status_code == 303
-    assert "error=client_unavailable" in resp.headers["location"]
+    assert "command_id=" in resp.headers["location"]
 
 
 @pytest.mark.asyncio
@@ -1139,7 +1131,7 @@ async def test_kick_success(client):
         follow_redirects=False,
     )
     assert resp.status_code == 303
-    assert "msg=user_kicked" in resp.headers["location"]
+    assert "command_id=" in resp.headers["location"]
 
 
 @pytest.mark.asyncio
@@ -1156,7 +1148,7 @@ async def test_kick_exception(client):
         follow_redirects=False,
     )
     assert resp.status_code == 303
-    assert "error=kick_failed" in resp.headers["location"]
+    assert "command_id=" in resp.headers["location"]
 
 
 # ─── broadcast-stats ────────────────────────────────────────────────
@@ -1178,7 +1170,7 @@ async def test_broadcast_stats_no_client(client):
     resp = await client.get(
         "/dialogs/broadcast-stats?phone=%2B1234567890&chat_id=-100111"
     )
-    assert resp.status_code == 503
+    assert resp.status_code == 202
 
 
 @pytest.mark.asyncio
@@ -1204,10 +1196,8 @@ async def test_broadcast_stats_success(client):
     resp = await client.get(
         "/dialogs/broadcast-stats?phone=%2B1234567890&chat_id=-100111"
     )
-    assert resp.status_code == 200
-    data = resp.json()
-    assert "stats" in data
-    assert data["stats"]["enabled_notifications"] == 42
+    assert resp.status_code == 202
+    assert "command_id" in resp.json()
 
 
 @pytest.mark.asyncio
@@ -1222,9 +1212,8 @@ async def test_broadcast_stats_empty(client):
     resp = await client.get(
         "/dialogs/broadcast-stats?phone=%2B1234567890&chat_id=-100111"
     )
-    assert resp.status_code == 200
-    data = resp.json()
-    assert "raw" in data["stats"]
+    assert resp.status_code == 202
+    assert "command_id" in resp.json()
 
 
 @pytest.mark.asyncio
@@ -1238,7 +1227,7 @@ async def test_broadcast_stats_exception(client):
     resp = await client.get(
         "/dialogs/broadcast-stats?phone=%2B1234567890&chat_id=-100111"
     )
-    assert resp.status_code == 500
+    assert resp.status_code == 202
 
 
 # ─── archive / unarchive success + error ────────────────────────────
@@ -1256,7 +1245,7 @@ async def test_archive_no_client(client):
         follow_redirects=False,
     )
     assert resp.status_code == 303
-    assert "error=client_unavailable" in resp.headers["location"]
+    assert "command_id=" in resp.headers["location"]
 
 
 @pytest.mark.asyncio
@@ -1273,7 +1262,7 @@ async def test_archive_success(client):
         follow_redirects=False,
     )
     assert resp.status_code == 303
-    assert "msg=dialog_archived" in resp.headers["location"]
+    assert "command_id=" in resp.headers["location"]
 
 
 @pytest.mark.asyncio
@@ -1290,7 +1279,7 @@ async def test_archive_exception(client):
         follow_redirects=False,
     )
     assert resp.status_code == 303
-    assert "error=archive_failed" in resp.headers["location"]
+    assert "command_id=" in resp.headers["location"]
 
 
 @pytest.mark.asyncio
@@ -1305,7 +1294,7 @@ async def test_unarchive_no_client(client):
         follow_redirects=False,
     )
     assert resp.status_code == 303
-    assert "error=client_unavailable" in resp.headers["location"]
+    assert "command_id=" in resp.headers["location"]
 
 
 @pytest.mark.asyncio
@@ -1322,7 +1311,7 @@ async def test_unarchive_success(client):
         follow_redirects=False,
     )
     assert resp.status_code == 303
-    assert "msg=dialog_unarchived" in resp.headers["location"]
+    assert "command_id=" in resp.headers["location"]
 
 
 @pytest.mark.asyncio
@@ -1339,7 +1328,7 @@ async def test_unarchive_exception(client):
         follow_redirects=False,
     )
     assert resp.status_code == 303
-    assert "error=unarchive_failed" in resp.headers["location"]
+    assert "command_id=" in resp.headers["location"]
 
 
 # ─── mark-read success / no_client / error ──────────────────────────
@@ -1357,7 +1346,7 @@ async def test_mark_read_no_client(client):
         follow_redirects=False,
     )
     assert resp.status_code == 303
-    assert "error=client_unavailable" in resp.headers["location"]
+    assert "command_id=" in resp.headers["location"]
 
 
 @pytest.mark.asyncio
@@ -1374,7 +1363,7 @@ async def test_mark_read_success(client):
         follow_redirects=False,
     )
     assert resp.status_code == 303
-    assert "msg=messages_marked_read" in resp.headers["location"]
+    assert "command_id=" in resp.headers["location"]
 
 
 @pytest.mark.asyncio
@@ -1391,7 +1380,7 @@ async def test_mark_read_exception(client):
         follow_redirects=False,
     )
     assert resp.status_code == 303
-    assert "error=mark_read_failed" in resp.headers["location"]
+    assert "command_id=" in resp.headers["location"]
 
 
 # ─── create-channel POST ────────────────────────────────────────────
@@ -1406,7 +1395,7 @@ async def test_create_channel_post_no_client(client):
         follow_redirects=False,
     )
     assert resp.status_code == 303
-    assert "error=no_client" in resp.headers["location"]
+    assert "command_id=" in resp.headers["location"]
 
 
 @pytest.mark.asyncio
@@ -1423,7 +1412,6 @@ async def test_create_channel_post_exception(client):
         "/dialogs/create-channel",
         data={"phone": "+1234567890", "title": "Test", "about": "", "username": ""},
     )
-    # Should render page with error, not crash
     assert resp.status_code == 200
 
 
@@ -1526,6 +1514,5 @@ async def test_broadcast_stats_with_string_fields(client):
     resp = await client.get(
         "/dialogs/broadcast-stats?phone=%2B1234567890&chat_id=-100111"
     )
-    assert resp.status_code == 200
-    data = resp.json()
-    assert "stats" in data
+    assert resp.status_code == 202
+    assert "command_id" in resp.json()

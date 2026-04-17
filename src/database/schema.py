@@ -69,6 +69,30 @@ CREATE TABLE IF NOT EXISTS collection_tasks (
     completed_at TEXT
 );
 
+CREATE TABLE IF NOT EXISTS telegram_commands (
+    id INTEGER PRIMARY KEY,
+    command_type TEXT NOT NULL,
+    payload TEXT,
+    status TEXT NOT NULL DEFAULT 'pending',
+    requested_by TEXT,
+    created_at TEXT DEFAULT (datetime('now')),
+    started_at TEXT,
+    finished_at TEXT,
+    error TEXT,
+    result_payload TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_telegram_commands_status_id
+    ON telegram_commands(status, id);
+
+CREATE TABLE IF NOT EXISTS runtime_snapshots (
+    snapshot_type TEXT NOT NULL,
+    scope TEXT NOT NULL DEFAULT 'global',
+    payload TEXT NOT NULL DEFAULT '{}',
+    updated_at TEXT DEFAULT (datetime('now')),
+    PRIMARY KEY (snapshot_type, scope)
+);
+
 CREATE TABLE IF NOT EXISTS search_log (
     id INTEGER PRIMARY KEY,
     phone TEXT NOT NULL,

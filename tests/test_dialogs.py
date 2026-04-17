@@ -159,8 +159,13 @@ async def test_dialogs_page_renders(client):
 
 
 @pytest.mark.asyncio
-async def test_dialogs_page_shows_dialogs(client):
-    resp = await client.get("/dialogs/?phone=%2B1234567890")
+async def test_dialogs_page_shows_dialogs(db, real_pool_harness_factory):
+    # Under the queued-command model, the dialogs page reads from dialog_cache;
+    # seed the cache so it has something to render.
+    app, db, harness = await _build_dialogs_app(db, real_pool_harness_factory)
+    await db.repos.dialog_cache.replace_dialogs("+1234567890", list(_FAKE_DIALOGS))
+    async with make_auth_client(app) as client:
+        resp = await client.get("/dialogs/?phone=%2B1234567890")
     assert resp.status_code == 200
     assert "My Channel" in resp.text
     assert "My Group" in resp.text
@@ -174,6 +179,8 @@ async def test_dialogs_page_shows_dialogs(client):
     assert 'action="/dialogs/refresh"' in resp.text
     assert "Обновить диалоги" in resp.text
     assert "Показан сохранённый список диалогов" in resp.text
+
+    await app.state.collection_queue.shutdown()
 
 
 @pytest.mark.asyncio
@@ -306,31 +313,37 @@ async def test_leave_channels_flood_breaks_loop():
 
 @pytest.mark.asyncio
 async def test_leave_dialogs_post(client):
-    """POST /dialogs/leave redirects with left/failed counts."""
+    """POST /dialogs/leave enqueues a dialogs.leave command."""
     resp = await client.post(
         "/dialogs/leave",
         data={"phone": "+1234567890", "channel_ids": ["-100111:channel", "-100222:supergroup"]},
+        follow_redirects=False,
     )
-    assert resp.status_code == 200  # follow_redirects=True → final GET
-    assert "left=2" in str(resp.url) or "Отписались" in resp.text
+    assert resp.status_code == 303
+    assert "command_id=" in resp.headers["location"]
+    assert "phone=" in resp.headers["location"]
 
 
 @pytest.mark.asyncio
-async def test_refresh_dialogs_post_warms_cache(db, real_pool_harness_factory):
+async def test_refresh_dialogs_post_enqueues_command(db, real_pool_harness_factory):
+    """POST /dialogs/refresh enqueues a dialogs.refresh command (queued model)."""
     app, db, harness = await _build_dialogs_app(db, real_pool_harness_factory)
 
     async with make_auth_client(app) as c:
-        resp = await c.post("/dialogs/refresh", data={"phone": "+1234567890"})
+        resp = await c.post(
+            "/dialogs/refresh",
+            data={"phone": "+1234567890"},
+            follow_redirects=False,
+        )
 
-    assert resp.status_code == 200
-    assert "My Channel" in resp.text
-    cached = await db.repos.dialog_cache.list_dialogs("+1234567890")
-    assert _strip_extra_dialog_fields(cached) == _strip_extra_dialog_fields(_FAKE_DIALOGS)
-    # With persistent sessions, the same connection is reused for the refresh request
-    assert len(harness.telethon_cli_spy.created) == 1
+    assert resp.status_code == 303
+    assert "command_id=" in resp.headers["location"]
+    commands = await db.repos.telegram_commands.list_commands(limit=1)
+    assert len(commands) == 1
+    assert commands[0].command_type == "dialogs.refresh"
+    assert commands[0].payload.get("phone") == "+1234567890"
 
     await app.state.collection_queue.shutdown()
-    await db.close()
 
 
 @pytest.mark.asyncio
@@ -345,7 +358,11 @@ async def test_leave_dialogs_flash_message(client):
 
 @pytest.mark.asyncio
 async def test_get_my_dialogs_enriches_already_added(db):
-    """get_my_dialogs() marks dialogs already in the channel DB."""
+    """get_my_dialogs() marks dialogs already in the channel DB.
+
+    Under the queued-command model, get_my_dialogs reads from dialog_cache
+    when refresh=False; the pool is not consulted. Seed the cache directly.
+    """
     from src.models import Channel
 
     await db.add_channel(
@@ -357,6 +374,7 @@ async def test_get_my_dialogs_enriches_already_added(db):
             is_active=True,
         )
     )
+    await db.repos.dialog_cache.replace_dialogs("+1234567890", list(_FAKE_DIALOGS))
 
     pool = MagicMock()
     pool.get_dialogs_for_phone = AsyncMock(return_value=list(_FAKE_DIALOGS))
@@ -365,12 +383,8 @@ async def test_get_my_dialogs_enriches_already_added(db):
     service = ChannelService(db, pool, queue)
     dialogs = await service.get_my_dialogs("+1234567890")
 
-    pool.get_dialogs_for_phone.assert_awaited_once_with(
-        "+1234567890",
-        include_dm=True,
-        mode="full",
-        refresh=False,
-    )
+    # pool must NOT be called in the read path (queued model)
+    pool.get_dialogs_for_phone.assert_not_called()
     by_id = {d["channel_id"]: d for d in dialogs}
     assert by_id[-100111]["already_added"] is True
     assert by_id[-100222]["already_added"] is False

@@ -994,98 +994,54 @@ async def _route_client_b3(_base_app_b3):
 
 @pytest.mark.asyncio
 async def test_channels_refresh_types_redirect(_route_client_b3):
-    """POST /channels/refresh-types redirects with types_refreshed."""
+    """POST /channels/refresh-types enqueues a channels.refresh_types command."""
     client = _route_client_b3
     pool = client._pool
-    pool.resolve_channel = AsyncMock(
-        return_value={
-            "channel_id": 100,
-            "title": "Test",
-            "username": "test",
-            "channel_type": "channel",
-        }
-    )
+    db = client._db
     resp = await client.post("/channels/refresh-types", follow_redirects=False)
     assert resp.status_code == 303
-    assert "types_refreshed" in resp.headers["location"]
+    assert "command_id=" in resp.headers["location"]
+    # web layer must not touch the pool directly anymore
+    pool.resolve_channel.assert_not_called()
+    commands = await db.repos.telegram_commands.list_commands(limit=1)
+    assert len(commands) == 1
+    assert commands[0].command_type == "channels.refresh_types"
 
 
 @pytest.mark.asyncio
-async def test_channels_refresh_types_info_false(_route_client_b3):
-    """refresh-types when resolve returns False → deactivates channel."""
+async def test_channels_refresh_types_enqueues_single_command(_route_client_b3):
+    """A second invocation enqueues another command; web path never calls pool."""
     client = _route_client_b3
     pool = client._pool
-    pool.resolve_channel = AsyncMock(return_value=False)
+    db = client._db
     resp = await client.post("/channels/refresh-types", follow_redirects=False)
     assert resp.status_code == 303
-    assert "types_refreshed" in resp.headers["location"]
+    pool.resolve_channel.assert_not_called()
+    commands = await db.repos.telegram_commands.list_commands(limit=5)
+    assert any(c.command_type == "channels.refresh_types" for c in commands)
 
 
-@pytest.mark.asyncio
-async def test_channels_refresh_types_no_type(_route_client_b3):
-    """refresh-types when resolve returns info without channel_type → failed++."""
-    client = _route_client_b3
-    pool = client._pool
-    pool.resolve_channel = AsyncMock(
-        return_value={"channel_id": 100, "title": "T", "username": "t", "channel_type": None}
-    )
-    resp = await client.post("/channels/refresh-types", follow_redirects=False)
-    assert resp.status_code == 303
-    assert "failed=1" in resp.headers["location"]
-
-
-@pytest.mark.asyncio
-async def test_channels_refresh_types_exception(_route_client_b3):
-    """refresh-types when resolve raises → failed++."""
-    client = _route_client_b3
-    pool = client._pool
-    pool.resolve_channel = AsyncMock(side_effect=Exception("network error"))
-    resp = await client.post("/channels/refresh-types", follow_redirects=False)
-    assert resp.status_code == 303
-    assert "types_refreshed" in resp.headers["location"]
+# removed: replaced by queued-command model — web no longer runs resolve inline
+# removed: replaced by queued-command model — web no longer runs resolve inline
 
 
 @pytest.mark.asyncio
 async def test_channels_refresh_meta_success(_route_client_b3):
-    """POST /channels/refresh-meta redirects with meta_refreshed."""
+    """POST /channels/refresh-meta enqueues a channels.refresh_meta command."""
     client = _route_client_b3
     pool = client._pool
-    pool.fetch_channel_meta = AsyncMock(
-        return_value={"about": "A", "linked_chat_id": None, "has_comments": False}
-    )
-    # update_channel_full_meta is not on the Database facade; patch it
-    with patch(
-        "src.database.facade.Database.update_channel_full_meta",
-        new=AsyncMock(),
-        create=True,
-    ):
-        resp = await client.post("/channels/refresh-meta", follow_redirects=False)
-    assert resp.status_code == 303
-    assert "meta_refreshed" in resp.headers["location"]
-    assert "updated=1" in resp.headers["location"]
-
-
-@pytest.mark.asyncio
-async def test_channels_refresh_meta_fail(_route_client_b3):
-    """refresh-meta when fetch_channel_meta returns None → failed."""
-    client = _route_client_b3
-    pool = client._pool
-    pool.fetch_channel_meta = AsyncMock(return_value=None)
+    db = client._db
     resp = await client.post("/channels/refresh-meta", follow_redirects=False)
     assert resp.status_code == 303
-    assert "meta_refreshed" in resp.headers["location"]
-    assert "failed=1" in resp.headers["location"]
+    assert "command_id=" in resp.headers["location"]
+    pool.fetch_channel_meta.assert_not_called()
+    commands = await db.repos.telegram_commands.list_commands(limit=1)
+    assert len(commands) == 1
+    assert commands[0].command_type == "channels.refresh_meta"
 
 
-@pytest.mark.asyncio
-async def test_channels_refresh_meta_exception(_route_client_b3):
-    """refresh-meta when fetch_channel_meta raises → failed."""
-    client = _route_client_b3
-    pool = client._pool
-    pool.fetch_channel_meta = AsyncMock(side_effect=Exception("boom"))
-    resp = await client.post("/channels/refresh-meta", follow_redirects=False)
-    assert resp.status_code == 303
-    assert "meta_refreshed" in resp.headers["location"]
+# removed: replaced by queued-command model — web no longer fetches meta inline
+# removed: replaced by queued-command model — web no longer fetches meta inline
 
 
 # --- Settings routes ---

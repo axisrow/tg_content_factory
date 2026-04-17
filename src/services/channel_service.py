@@ -22,6 +22,7 @@ class ChannelService:
         pool: ClientPool,
         queue: CollectionQueue | None,
     ):
+        self._db: Database | None = channels if isinstance(channels, Database) else None
         if isinstance(channels, Database):
             channels = ChannelBundle.from_database(channels)
         self._channels = channels
@@ -59,13 +60,23 @@ class ChannelService:
     async def get_dialogs_with_added_flags(self) -> list[dict]:
         existing = await self._channels.list_channels()
         existing_ids = {ch.channel_id for ch in existing}
-        dialogs = await self._pool.get_dialogs()
+        if self._db is not None:
+            dialogs = []
+            for phone in await self._db.repos.dialog_cache.get_all_phones():
+                dialogs.extend(await self._db.repos.dialog_cache.list_dialogs(phone))
+        else:
+            dialogs = await self._pool.get_dialogs()
         for dialog in dialogs:
             dialog["already_added"] = dialog["channel_id"] in existing_ids
         return dialogs
 
     async def add_bulk_by_dialog_ids(self, channel_ids: list[str]) -> None:
-        dialogs = await self._pool.get_dialogs()
+        if self._db is not None:
+            dialogs = []
+            for phone in await self._db.repos.dialog_cache.get_all_phones():
+                dialogs.extend(await self._db.repos.dialog_cache.list_dialogs(phone))
+        else:
+            dialogs = await self._pool.get_dialogs()
         dialogs_map = {str(d["channel_id"]): d for d in dialogs}
         for cid in channel_ids:
             if cid not in dialogs_map:
@@ -87,12 +98,22 @@ class ChannelService:
         started_at = time.perf_counter()
         existing_ids = {ch.channel_id for ch in await self._channels.list_channels()}
         db_elapsed_ms = int((time.perf_counter() - started_at) * 1000)
-        dialogs = await self._pool.get_dialogs_for_phone(
-            phone,
-            include_dm=True,
-            mode="full",
-            refresh=refresh,
-        )
+        if refresh and hasattr(self._pool, "get_dialogs_for_phone"):
+            dialogs = await self._pool.get_dialogs_for_phone(
+                phone,
+                include_dm=True,
+                mode="full",
+                refresh=True,
+            )
+        elif self._db is not None:
+            dialogs = await self._db.repos.dialog_cache.list_dialogs(phone)
+        else:
+            dialogs = await self._pool.get_dialogs_for_phone(
+                phone,
+                include_dm=True,
+                mode="full",
+                refresh=False,
+            )
         enrich_started_at = time.perf_counter()
         for d in dialogs:
             d["already_added"] = d["channel_id"] in existing_ids

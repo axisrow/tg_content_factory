@@ -20,10 +20,17 @@ logger = logging.getLogger(__name__)
 UPLOAD_ROOT = Path("data/photo_uploads")
 
 
-def _redirect(phone: str, code: str, error: bool = False) -> RedirectResponse:
+def _redirect(
+    phone: str,
+    code: str,
+    error: bool = False,
+    *,
+    command_id: int | None = None,
+) -> RedirectResponse:
     key = "error" if error else "msg"
+    suffix = f"&command_id={command_id}" if command_id is not None else ""
     return RedirectResponse(
-        url=f"/dialogs/photos?phone={quote(phone, safe='')}&{key}={code}",
+        url=f"/dialogs/photos?phone={quote(phone, safe='')}&{key}={code}{suffix}",
         status_code=303,
     )
 
@@ -276,11 +283,12 @@ async def photo_loader_page(request: Request, phone: str | None = None):
 
 @router.post("/refresh")
 async def photo_loader_refresh(request: Request, phone: str = Form(...)):
-    await deps.channel_service(request).get_my_dialogs(phone, refresh=True)
-    return RedirectResponse(
-        url=f"/dialogs/photos?phone={quote(phone, safe='')}",
-        status_code=303,
+    command_id = await deps.telegram_command_service(request).enqueue(
+        "dialogs.refresh",
+        payload={"phone": phone},
+        requested_by="web:photo_loader.refresh",
     )
+    return _redirect(phone, "dialogs_refresh_queued", command_id=command_id)
 
 
 @router.post("/send")
@@ -307,12 +315,18 @@ async def photo_send(
         if target_error:
             return _redirect(phone, target_error, error=True)
         saved = await _persist_uploads(photos, f"manual_{uuid.uuid4().hex}")
-        await deps.get_photo_task_service(request).send_now(
-            phone=phone,
-            target=target,
-            file_paths=saved,
-            mode=send_mode,
-            caption=caption or None,
+        command_id = await deps.telegram_command_service(request).enqueue(
+            "photo.send_now",
+            payload={
+                "phone": phone,
+                "target_dialog_id": target.dialog_id,
+                "target_title": target.title,
+                "target_type": target.target_type,
+                "file_paths": saved,
+                "mode": send_mode,
+                "caption": caption or None,
+            },
+            requested_by="web:photo_loader.send",
         )
     except Exception:
         logger.exception(
@@ -326,7 +340,7 @@ async def photo_send(
             len(saved),
         )
         return _redirect(phone, "photo_send_failed", error=True)
-    return _redirect(phone, "photo_sent")
+    return _redirect(phone, "photo_send_queued", command_id=command_id)
 
 
 @router.post("/schedule")
@@ -355,13 +369,19 @@ async def photo_schedule(
             return _redirect(phone, target_error, error=True)
         saved = await _persist_uploads(photos, f"scheduled_{uuid.uuid4().hex}")
         parsed_schedule_at = _parse_schedule_at(schedule_at)
-        await deps.get_photo_task_service(request).schedule_send(
-            phone=phone,
-            target=target,
-            file_paths=saved,
-            mode=send_mode,
-            schedule_at=parsed_schedule_at,
-            caption=caption or None,
+        command_id = await deps.telegram_command_service(request).enqueue(
+            "photo.schedule_send",
+            payload={
+                "phone": phone,
+                "target_dialog_id": target.dialog_id,
+                "target_title": target.title,
+                "target_type": target.target_type,
+                "file_paths": saved,
+                "mode": send_mode,
+                "schedule_at": parsed_schedule_at.isoformat(),
+                "caption": caption or None,
+            },
+            requested_by="web:photo_loader.schedule",
         )
     except Exception:
         logger.exception(
@@ -376,7 +396,7 @@ async def photo_schedule(
             schedule_at,
         )
         return _redirect(phone, "photo_schedule_failed", error=True)
-    return _redirect(phone, "photo_scheduled")
+    return _redirect(phone, "photo_schedule_queued", command_id=command_id)
 
 
 @router.post("/batch")
@@ -477,12 +497,15 @@ async def photo_auto_create(
 @router.post("/run-due")
 async def photo_run_due(request: Request, phone: str = Form("")):
     try:
-        await deps.get_photo_task_service(request).run_due()
-        await deps.get_photo_auto_upload_service(request).run_due()
+        command_id = await deps.telegram_command_service(request).enqueue(
+            "photo.run_due",
+            payload={},
+            requested_by="web:photo_loader.run_due",
+        )
     except Exception:
         logger.exception("Photo run_due failed: phone=%s", phone)
         return _redirect(phone, "photo_run_due_failed", error=True)
-    return _redirect(phone, "photo_run_due_ok")
+    return _redirect(phone, "photo_run_due_queued", command_id=command_id)
 
 
 @router.post("/items/{item_id}/cancel")

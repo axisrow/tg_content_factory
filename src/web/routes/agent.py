@@ -119,21 +119,15 @@ async def get_channels_json(request: Request):
 @router.get("/forum-topics")
 async def get_forum_topics(request: Request, channel_id: int):
     db = deps.get_db(request)
-    pool = deps.get_pool(request)
-
-    # Try to refresh from Telegram API (topics may be renamed)
-    fresh_topics = await pool.get_forum_topics(channel_id)
-    if fresh_topics:
-        await db.upsert_forum_topics(channel_id, fresh_topics)
-        await db.set_channel_type(channel_id, "forum")
-        return JSONResponse(fresh_topics)
-
-    # Fallback: serve from DB if API is unavailable (flood wait, etc.)
     cached = await db.get_forum_topics(channel_id)
     if cached:
         return JSONResponse(cached)
-
-    return JSONResponse([])
+    command_id = await deps.telegram_command_service(request).enqueue(
+        "agent.forum_topics_refresh",
+        payload={"channel_id": channel_id},
+        requested_by="web:agent",
+    )
+    return JSONResponse({"status": "queued", "command_id": command_id}, status_code=202)
 
 
 @router.post("/threads/{thread_id}/context")

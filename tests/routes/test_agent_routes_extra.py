@@ -89,9 +89,9 @@ async def test_get_forum_topics_api_fails_falls_back_to_db(client, db, pool_mock
     pool_mock.get_forum_topics = AsyncMock(return_value=None)
 
     resp = await client.get("/agent/forum-topics?channel_id=100")
-    assert resp.status_code == 200
+    assert resp.status_code == 202
     data = json.loads(resp.text)
-    assert isinstance(data, list)
+    assert "command_id" in data
 
 
 @pytest.mark.asyncio
@@ -101,9 +101,9 @@ async def test_get_forum_topics_api_returns_data_caches_to_db(client, db, pool_m
     pool_mock.get_forum_topics = AsyncMock(return_value=topics)
 
     resp = await client.get("/agent/forum-topics?channel_id=100")
-    assert resp.status_code == 200
+    assert resp.status_code == 202
     data = json.loads(resp.text)
-    assert len(data) == 2
+    assert "command_id" in data
 
 
 # ── inject_context: line 134, 142-153 ──────────────────────────────────

@@ -472,10 +472,10 @@ class TestVerifyCode:
         # Verify 2FA password was passed to verify_code
         mock_verify.assert_awaited_once_with("+70001112233", "12345", "abc123", "my2fapassword")
 
-        # Verify premium status was fetched
+        # Premium status is now refreshed asynchronously by the worker.
         accounts = await db.get_accounts()
         assert len(accounts) == 1
-        assert accounts[0].is_premium is True
+        assert accounts[0].is_premium is False
 
     @pytest.mark.asyncio
     async def test_verify_code_existing_account_not_primary(self, db, real_pool_harness_factory):

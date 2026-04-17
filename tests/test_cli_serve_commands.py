@@ -20,6 +20,7 @@ def _make_config():
     cfg.web.password = "testpass"
     cfg.web.host = "0.0.0.0"
     cfg.web.port = 8080
+    cfg.database.path = "data/test.db"
     return cfg
 
 
@@ -71,6 +72,17 @@ def test_serve_with_web_pass_override():
         mock_uv.run = MagicMock()
         run(_args(web_pass="newpass"))
     assert cfg.web.password == "newpass"
+
+
+def test_worker_starts_runtime():
+    from src.cli.commands.worker import run
+
+    cfg = _make_config()
+    with patch("src.cli.commands.worker.load_config", return_value=cfg), \
+         patch("src.cli.commands.worker.run_worker") as mock_run_worker:
+        run(_args())
+
+    mock_run_worker.assert_called_once_with(cfg)
 
 
 # ---------------------------------------------------------------------------

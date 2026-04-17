@@ -44,7 +44,28 @@ def _run(args, pool, cli_db):
 
 def test_cli_dialogs_list(cli_db, capsys):
     """Test `dialogs list` command prints dialog table."""
+    import asyncio
+
     pool = _mock_pool()
+
+    # channel_service.get_my_dialogs() now reads from dialog_cache by default
+    # (live pool calls only happen on --refresh, owned by the worker).
+    async def _seed():
+        await cli_db.repos.dialog_cache.replace_dialogs(
+            "+1234567890",
+            [
+                {
+                    "channel_id": 100111,
+                    "title": "My Channel",
+                    "username": "mychan",
+                    "channel_type": "channel",
+                    "is_dm": False,
+                }
+            ],
+        )
+
+    asyncio.run(_seed())
+
     _run(_ns(dialogs_action="list", phone="+1234567890"), pool, cli_db)
     out = capsys.readouterr().out
     assert "My Channel" in out

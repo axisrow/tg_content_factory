@@ -264,3 +264,61 @@ async def test_debug_memory_pool_info(client):
     data = resp.json()
     assert "connected_clients" in data["pool"]
     assert "dialogs_cache_entries" in data["pool"]
+
+
+@pytest.mark.asyncio
+async def test_debug_memory_uses_snapshot_in_web_mode(client, base_app):
+    """In web-mode, pool counters must come from runtime_snapshots.pool_counters."""
+    from datetime import datetime, timezone
+
+    from src.models import RuntimeSnapshot
+
+    app, db, _ = base_app
+    app.state.runtime_mode = "web"
+    await db.repos.runtime_snapshots.upsert_snapshot(
+        RuntimeSnapshot(
+            snapshot_type="pool_counters",
+            payload={
+                "dialogs_cache_entries": 7,
+                "active_leases": {"+1234567890": 2},
+                "premium_flood_waits": 1,
+                "session_overrides": 3,
+            },
+            updated_at=datetime.now(timezone.utc),
+        )
+    )
+    resp = await client.get("/debug/memory")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["runtime_mode"] == "web"
+    assert body["pool"]["source"] == "snapshot"
+    assert body["pool"]["dialogs_cache_entries"] == 7
+    assert body["pool"]["active_leases"] == {"+1234567890": 2}
+    assert body["pool"]["premium_flood_waits"] == 1
+    assert body["pool"]["session_overrides"] == 3
+
+
+@pytest.mark.asyncio
+async def test_debug_memory_reports_empty_source_without_snapshot(client, base_app):
+    """web-mode without a snapshot yet: source=empty and counters are zero."""
+    app, _, _ = base_app
+    app.state.runtime_mode = "web"
+    resp = await client.get("/debug/memory")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["pool"]["source"] == "empty"
+    assert body["pool"]["dialogs_cache_entries"] == 0
+
+
+@pytest.mark.asyncio
+async def test_debug_memory_live_counters_in_worker_mode(client, base_app):
+    """worker-mode: counters come from live pool, not snapshot."""
+    app, _, pool = base_app
+    app.state.runtime_mode = "worker"
+    pool._dialogs_cache = {"+1": object(), "+2": object()}
+    resp = await client.get("/debug/memory")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["runtime_mode"] == "worker"
+    assert body["pool"]["source"] == "live"
+    assert body["pool"]["dialogs_cache_entries"] == 2

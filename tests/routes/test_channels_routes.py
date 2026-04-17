@@ -53,45 +53,37 @@ async def test_add_channel_success(client, pool_mock):
         }
     )
 
-    with patch("src.web.routes.channels.deps.channel_service") as mock_svc:
-        mock_svc.return_value.add_by_identifier = AsyncMock(return_value=True)
-        resp = await client.post(
-            "/channels/add",
-            data={"identifier": "newchannel"},
-            follow_redirects=False,
-        )
-        assert resp.status_code == 303
-        assert "msg=channel_added" in resp.headers["location"]
+    resp = await client.post(
+        "/channels/add",
+        data={"identifier": "newchannel"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    assert "command_id=" in resp.headers["location"]
 
 
 @pytest.mark.asyncio
 async def test_add_channel_no_client(client):
     """Test add channel with no client available."""
-    with patch("src.web.routes.channels.deps.channel_service") as mock_svc:
-        mock_svc.return_value.add_by_identifier = AsyncMock(
-            side_effect=RuntimeError("no_client")
-        )
-        resp = await client.post(
-            "/channels/add",
-            data={"identifier": "testchannel"},
-            follow_redirects=False,
-        )
-        assert resp.status_code == 303
-        assert "error=no_client" in resp.headers["location"]
+    resp = await client.post(
+        "/channels/add",
+        data={"identifier": "testchannel"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    assert "command_id=" in resp.headers["location"]
 
 
 @pytest.mark.asyncio
 async def test_add_channel_resolve_fail(client):
     """Test add channel when resolve fails."""
-    with patch("src.web.routes.channels.deps.channel_service") as mock_svc:
-        mock_svc.return_value.add_by_identifier = AsyncMock(return_value=False)
-        resp = await client.post(
-            "/channels/add",
-            data={"identifier": "badchannel"},
-            follow_redirects=False,
-        )
-        assert resp.status_code == 303
-        assert "error=resolve" in resp.headers["location"]
+    resp = await client.post(
+        "/channels/add",
+        data={"identifier": "badchannel"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    assert "command_id=" in resp.headers["location"]
 
 
 @pytest.mark.asyncio

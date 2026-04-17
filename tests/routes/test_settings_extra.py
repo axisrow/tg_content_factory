@@ -93,7 +93,7 @@ async def test_settings_page_inactive_account(client, db):
 
 @pytest.mark.asyncio
 async def test_settings_page_notification_bot_error(client, db):
-    """Test settings page when notification bot fails to load (lines 467-471)."""
+    """Test settings page renders without inline notification bot fetch."""
     with patch(
         "src.web.routes.settings.AgentProviderService.load_provider_configs",
         AsyncMock(return_value=[]),
@@ -106,15 +106,8 @@ async def test_settings_page_notification_bot_error(client, db):
         mock_target_svc.return_value.describe_target = AsyncMock(
             return_value=MagicMock(state="available", configured_phone="+1234567890")
         )
-        with patch(
-            "src.web.routes.settings.NotificationService"
-        ) as mock_notif_cls:
-            mock_notif = MagicMock()
-            mock_notif.get_status = AsyncMock(side_effect=RuntimeError("No client"))
-            mock_notif_cls.return_value = mock_notif
-
-            resp = await client.get("/settings/")
-            assert resp.status_code == 200
+        resp = await client.get("/settings/")
+        assert resp.status_code == 200
 
 
 # ── save_scheduler: line 560-566 (interval update via scheduler) ───────
@@ -860,78 +853,37 @@ async def test_save_credentials_no_changes(client, db):
 
 @pytest.mark.asyncio
 async def test_notification_setup_general_exception(client, db):
-    """Test notification setup with general exception (lines 1104-1108)."""
-    with patch(
-        "src.web.routes.settings.deps.get_notification_target_service"
-    ) as mock_svc:
-        mock_svc.return_value.describe_target = AsyncMock(
-            return_value=MagicMock(state="available", configured_phone="+1234567890")
-        )
-        with patch(
-            "src.web.routes.settings.NotificationService"
-        ) as mock_notif_cls:
-            mock_notif = MagicMock()
-            mock_notif.setup_bot = AsyncMock(side_effect=Exception("Unexpected"))
-            mock_notif_cls.return_value = mock_notif
-
-            resp = await client.post(
-                "/settings/notifications/setup",
-                follow_redirects=False,
-            )
-            assert resp.status_code == 303
-            assert "error=notification_action_failed" in resp.headers["location"]
+    """Test notification setup redirect is queued."""
+    resp = await client.post(
+        "/settings/notifications/setup",
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    assert "command_id=" in resp.headers["location"]
 
 
 @pytest.mark.asyncio
 async def test_notification_setup_general_exception_json(client, db):
-    """Test notification setup with general exception, JSON response (line 1107)."""
-    with patch(
-        "src.web.routes.settings.deps.get_notification_target_service"
-    ) as mock_svc:
-        mock_svc.return_value.describe_target = AsyncMock(
-            return_value=MagicMock(state="available", configured_phone="+1234567890")
-        )
-        with patch(
-            "src.web.routes.settings.NotificationService"
-        ) as mock_notif_cls:
-            mock_notif = MagicMock()
-            mock_notif.setup_bot = AsyncMock(side_effect=Exception("Unexpected"))
-            mock_notif_cls.return_value = mock_notif
-
-            resp = await client.post(
-                "/settings/notifications/setup",
-                headers={"Accept": "application/json"},
-                follow_redirects=False,
-            )
-            assert resp.status_code == 500
-            data = resp.json()
-            assert "Unexpected" in data["error"]
+    """Test notification setup JSON response is queued."""
+    resp = await client.post(
+        "/settings/notifications/setup",
+        headers={"Accept": "application/json"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 202
+    data = resp.json()
+    assert data["status"] == "queued"
 
 
 @pytest.mark.asyncio
 async def test_notification_setup_success_redirect(client, db):
-    """Test notification setup success with redirect (line 1117)."""
-    with patch(
-        "src.web.routes.settings.deps.get_notification_target_service"
-    ) as mock_svc:
-        mock_svc.return_value.describe_target = AsyncMock(
-            return_value=MagicMock(state="available", configured_phone="+1234567890")
-        )
-        with patch(
-            "src.web.routes.settings.NotificationService"
-        ) as mock_notif_cls:
-            mock_notif = MagicMock()
-            mock_notif.setup_bot = AsyncMock(
-                return_value=MagicMock(bot_username="test_bot", bot_id=12345)
-            )
-            mock_notif_cls.return_value = mock_notif
-
-            resp = await client.post(
-                "/settings/notifications/setup",
-                follow_redirects=False,
-            )
-            assert resp.status_code == 303
-            assert "msg=notification_bot_created" in resp.headers["location"]
+    """Test notification setup success path is queued."""
+    resp = await client.post(
+        "/settings/notifications/setup",
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    assert "msg=notification_setup_queued" in resp.headers["location"]
 
 
 # ── notifications/delete: lines 1142-1153 ──────────────────────────────
@@ -939,104 +891,48 @@ async def test_notification_setup_success_redirect(client, db):
 
 @pytest.mark.asyncio
 async def test_notification_delete_runtime_error_account(client, db):
-    """Test notification delete RuntimeError mentioning 'аккаунт' (lines 1146-1148)."""
-    with patch(
-        "src.web.routes.settings.deps.get_notification_target_service"
-    ) as mock_svc:
-        mock_svc.return_value.describe_target = AsyncMock(
-            return_value=MagicMock(state="available")
-        )
-        with patch(
-            "src.web.routes.settings.NotificationService"
-        ) as mock_notif_cls:
-            mock_notif = MagicMock()
-            mock_notif.teardown_bot = AsyncMock(
-                side_effect=RuntimeError("Аккаунт недоступен")
-            )
-            mock_notif_cls.return_value = mock_notif
-
-            resp = await client.post(
-                "/settings/notifications/delete",
-                follow_redirects=False,
-            )
-            assert resp.status_code == 303
-            assert "error=notification_account_unavailable" in resp.headers["location"]
+    """Test notification delete is queued."""
+    resp = await client.post(
+        "/settings/notifications/delete",
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    assert "command_id=" in resp.headers["location"]
 
 
 @pytest.mark.asyncio
 async def test_notification_delete_runtime_error_other(client, db):
-    """Test notification delete RuntimeError with other message (lines 1142-1148)."""
-    with patch(
-        "src.web.routes.settings.deps.get_notification_target_service"
-    ) as mock_svc:
-        mock_svc.return_value.describe_target = AsyncMock(
-            return_value=MagicMock(state="available")
-        )
-        with patch(
-            "src.web.routes.settings.NotificationService"
-        ) as mock_notif_cls:
-            mock_notif = MagicMock()
-            mock_notif.teardown_bot = AsyncMock(
-                side_effect=RuntimeError("Bot not found")
-            )
-            mock_notif_cls.return_value = mock_notif
-
-            resp = await client.post(
-                "/settings/notifications/delete",
-                follow_redirects=False,
-            )
-            assert resp.status_code == 303
-            assert "error=notification_bot_missing" in resp.headers["location"]
+    """Test notification delete keeps queued contract regardless of runtime outcome."""
+    resp = await client.post(
+        "/settings/notifications/delete",
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    assert "msg=notification_delete_queued" in resp.headers["location"]
 
 
 @pytest.mark.asyncio
 async def test_notification_delete_general_exception(client, db):
-    """Test notification delete with general exception (lines 1149-1153)."""
-    with patch(
-        "src.web.routes.settings.deps.get_notification_target_service"
-    ) as mock_svc:
-        mock_svc.return_value.describe_target = AsyncMock(
-            return_value=MagicMock(state="available")
-        )
-        with patch(
-            "src.web.routes.settings.NotificationService"
-        ) as mock_notif_cls:
-            mock_notif = MagicMock()
-            mock_notif.teardown_bot = AsyncMock(side_effect=Exception("Unexpected"))
-            mock_notif_cls.return_value = mock_notif
-
-            resp = await client.post(
-                "/settings/notifications/delete",
-                follow_redirects=False,
-            )
-            assert resp.status_code == 303
-            assert "error=notification_action_failed" in resp.headers["location"]
+    """Test notification delete redirect remains queued."""
+    resp = await client.post(
+        "/settings/notifications/delete",
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    assert "command_id=" in resp.headers["location"]
 
 
 @pytest.mark.asyncio
 async def test_notification_delete_general_exception_json(client, db):
-    """Test notification delete general exception with JSON response (line 1151-1152)."""
-    with patch(
-        "src.web.routes.settings.deps.get_notification_target_service"
-    ) as mock_svc:
-        mock_svc.return_value.describe_target = AsyncMock(
-            return_value=MagicMock(state="available")
-        )
-        with patch(
-            "src.web.routes.settings.NotificationService"
-        ) as mock_notif_cls:
-            mock_notif = MagicMock()
-            mock_notif.teardown_bot = AsyncMock(side_effect=Exception("Unexpected"))
-            mock_notif_cls.return_value = mock_notif
-
-            resp = await client.post(
-                "/settings/notifications/delete",
-                headers={"Accept": "application/json"},
-                follow_redirects=False,
-            )
-            assert resp.status_code == 500
-            data = resp.json()
-            assert "Unexpected" in data["error"]
+    """Test notification delete JSON response is queued."""
+    resp = await client.post(
+        "/settings/notifications/delete",
+        headers={"Accept": "application/json"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 202
+    data = resp.json()
+    assert data["status"] == "queued"
 
 
 # ── notifications/test: lines 1167, 1169-1170, 1175-1184, 1192 ────────
@@ -1044,102 +940,35 @@ async def test_notification_delete_general_exception_json(client, db):
 
 @pytest.mark.asyncio
 async def test_test_notification_no_notifier_no_bot(client, db):
-    """Test notification test when no notifier and no bot (lines 1169-1170)."""
-    with patch(
-        "src.web.routes.settings.deps.get_notifier"
-    ) as mock_get_notifier:
-        mock_get_notifier.return_value = None
-
-        with patch(
-            "src.web.routes.settings.NotificationService"
-        ) as mock_notif_cls:
-            mock_notif = MagicMock()
-            mock_notif.get_status = AsyncMock(return_value=None)
-            mock_notif_cls.return_value = mock_notif
-
-            resp = await client.post(
-                "/settings/notifications/test",
-                follow_redirects=False,
-            )
-            assert resp.status_code == 303
-            assert "error=notification_test_failed" in resp.headers["location"]
+    """Test notification test is queued even without cached notifier state."""
+    resp = await client.post(
+        "/settings/notifications/test",
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    assert "command_id=" in resp.headers["location"]
 
 
 @pytest.mark.asyncio
 async def test_test_notification_bot_sends_start(client, db):
-    """Test notification test sends /start to bot (lines 1174-1184)."""
-    mock_bot_status = MagicMock()
-    mock_bot_status.bot_username = "test_notify_bot"
-    mock_bot_status.tg_user_id = 12345
-
-    mock_notifier = MagicMock()
-    mock_notifier.admin_chat_id = None
-
-    mock_client = AsyncMock()
-
-    with patch(
-        "src.web.routes.settings.deps.get_notifier"
-    ) as mock_get_notifier, patch(
-        "src.web.routes.settings.deps.get_notification_target_service"
-    ) as mock_target_svc, patch(
-        "src.web.routes.settings.NotificationService"
-    ) as mock_notif_cls, patch(
-        "src.web.routes.settings.Notifier"
-    ) as mock_notifier_cls:
-        mock_get_notifier.return_value = mock_notifier
-        mock_notif = MagicMock()
-        mock_notif.get_status = AsyncMock(return_value=mock_bot_status)
-        mock_notif_cls.return_value = mock_notif
-
-        mock_target_svc.return_value.use_client.return_value.__aenter__ = AsyncMock(
-            return_value=(mock_client, None)
-        )
-        mock_target_svc.return_value.use_client.return_value.__aexit__ = AsyncMock(
-            return_value=None
-        )
-
-        mock_notifier_instance = MagicMock()
-        mock_notifier_instance.notify = AsyncMock(return_value=True)
-        mock_notifier_cls.return_value = mock_notifier_instance
-
-        resp = await client.post(
-            "/settings/notifications/test",
-            follow_redirects=False,
-        )
-        assert resp.status_code == 303
-        assert "msg=notification_test_sent" in resp.headers["location"]
+    """Test notification test success path is queued."""
+    resp = await client.post(
+        "/settings/notifications/test",
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    assert "msg=notification_test_queued" in resp.headers["location"]
 
 
 @pytest.mark.asyncio
 async def test_test_notification_notify_fails(client, db):
-    """Test notification test when notify returns False (line 1192)."""
-    with patch(
-        "src.web.routes.settings.deps.get_notifier"
-    ) as mock_get_notifier:
-        mock_notifier = MagicMock()
-        mock_notifier.admin_chat_id = 12345
-        mock_get_notifier.return_value = mock_notifier
-
-        with patch(
-            "src.web.routes.settings.NotificationService"
-        ) as mock_notif_cls:
-            mock_notif = MagicMock()
-            mock_notif.get_status = AsyncMock(return_value=None)
-            mock_notif_cls.return_value = mock_notif
-
-            with patch(
-                "src.web.routes.settings.Notifier"
-            ) as mock_notifier_cls:
-                mock_notifier_instance = MagicMock()
-                mock_notifier_instance.notify = AsyncMock(return_value=False)
-                mock_notifier_cls.return_value = mock_notifier_instance
-
-                resp = await client.post(
-                    "/settings/notifications/test",
-                    follow_redirects=False,
-                )
-                assert resp.status_code == 303
-                assert "error=notification_test_failed" in resp.headers["location"]
+    """Test notification test retains queued redirect contract."""
+    resp = await client.post(
+        "/settings/notifications/test",
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    assert "command_id=" in resp.headers["location"]
 
 
 # ── Image Providers: lines 1202-1262 ───────────────────────────────────

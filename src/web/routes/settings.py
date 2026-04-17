@@ -2,6 +2,7 @@ import asyncio
 import logging
 import os
 from datetime import UTC, datetime
+from types import SimpleNamespace
 
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
@@ -39,27 +40,14 @@ from src.services.image_provider_service import (
     ImageProviderService,
     image_provider_spec,
 )
-from src.services.notification_service import NotificationService
+from src.services.notification_service import NotificationService  # noqa: F401
 from src.settings_utils import parse_int_setting
-from src.telegram.notifier import Notifier
 from src.web import deps
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
 CREDENTIALS_MASK = "••••••••"
-
-
-
-def _notification_service(request: Request) -> NotificationService:
-    notif_cfg = request.app.state.config.notifications
-    return NotificationService(
-        deps.get_db(request),
-        deps.get_notification_target_service(request),
-        notif_cfg.bot_name_prefix,
-        notif_cfg.bot_username_prefix,
-    )
-
 
 def _image_provider_service(request: Request) -> ImageProviderService:
     return ImageProviderService(deps.get_db(request), request.app.state.config)
@@ -71,6 +59,49 @@ def _wants_json(request: Request) -> bool:
 
 def _agent_provider_service(request: Request) -> AgentProviderService:
     return AgentProviderService(deps.get_db(request), request.app.state.config)
+
+
+async def _notification_snapshot_payload(request: Request) -> dict[str, object]:
+    snapshot = await deps.get_db(request).repos.runtime_snapshots.get_snapshot("notification_target_status")
+    payload = snapshot.payload if snapshot is not None else {}
+    return payload if isinstance(payload, dict) else {}
+
+
+async def _notification_snapshot_bot(request: Request):
+    payload = await _notification_snapshot_payload(request)
+    raw_bot = payload.get("bot")
+    if not isinstance(raw_bot, dict) or not raw_bot.get("configured"):
+        return None
+    return SimpleNamespace(
+        bot_username=raw_bot.get("bot_username"),
+        bot_id=raw_bot.get("bot_id"),
+        created_at=(
+            datetime.fromisoformat(raw_bot["created_at"])
+            if isinstance(raw_bot.get("created_at"), str)
+            else None
+        ),
+    )
+
+
+async def _enqueue_notification_command(
+    request: Request,
+    command_type: str,
+    *,
+    requested_by: str,
+    redirect_code: str,
+    payload: dict[str, object] | None = None,
+):
+    command_id = await deps.telegram_command_service(request).enqueue(
+        command_type,
+        payload=payload or {},
+        requested_by=requested_by,
+    )
+    if _wants_json(request):
+        return JSONResponse({"status": "queued", "command_id": command_id}, status_code=202)
+    return RedirectResponse(
+        url=f"/settings?msg={redirect_code}&command_id={command_id}",
+        status_code=303,
+    )
 
 
 async def _reload_llm_providers(request: Request) -> None:
@@ -459,16 +490,8 @@ async def settings_page(request: Request):
     )
     next_available_at = min(flooded_connected) if flooded_connected else None
     notification_target = await deps.get_notification_target_service(request).describe_target()
-    notification_bot = None
-    notification_bot_error = None
-    if notification_target.state == "available" and callable(
-        getattr(pool, "get_client_by_phone", None)
-    ):
-        try:
-            notification_bot = await _notification_service(request).get_status()
-        except RuntimeError as exc:
-            notification_bot_error = str(exc)
-            logger.warning("Failed to load notification bot status: %s", exc)
+    notification_bot = await _notification_snapshot_bot(request)
+    notification_bot_error = ""
     provider_configs = await provider_service.load_provider_configs()
     provider_cache = await provider_service.load_model_cache()
     provider_views = provider_service.build_provider_views(provider_configs, provider_cache)
@@ -1092,37 +1115,24 @@ async def save_credentials(request: Request):
 
 @router.post("/notifications/setup")
 async def setup_notification_bot(request: Request):
-    try:
-        bot = await _notification_service(request).setup_bot()
-    except RuntimeError as exc:
-        if _wants_json(request):
-            return JSONResponse({"error": str(exc)}, status_code=409)
-        return RedirectResponse(
-            url="/settings?error=notification_account_unavailable",
-            status_code=303,
-        )
-    except Exception as exc:
-        logger.exception("Notification setup failed")
-        if _wants_json(request):
-            return JSONResponse({"error": str(exc)}, status_code=500)
-        return RedirectResponse(url="/settings?error=notification_action_failed", status_code=303)
-
-    if _wants_json(request):
-        return JSONResponse(
-            {
-                "bot_username": bot.bot_username,
-                "bot_id": bot.bot_id,
-            }
-        )
-    return RedirectResponse(url="/settings?msg=notification_bot_created", status_code=303)
+    return await _enqueue_notification_command(
+        request,
+        "notifications.setup_bot",
+        requested_by="web:settings.notifications.setup",
+        redirect_code="notification_setup_queued",
+    )
 
 
 @router.get("/notifications/status")
 async def notification_bot_status(request: Request):
-    try:
-        bot = await _notification_service(request).get_status()
-    except RuntimeError as exc:
-        return JSONResponse({"configured": False, "error": str(exc)}, status_code=409)
+    payload = await _notification_snapshot_payload(request)
+    raw_target = payload.get("target")
+    if isinstance(raw_target, dict) and raw_target.get("state") not in {None, "available"}:
+        return JSONResponse(
+            {"configured": False, "error": raw_target.get("message", "")},
+            status_code=409,
+        )
+    bot = await _notification_snapshot_bot(request)
     if bot is None:
         return JSONResponse({"configured": False})
     return JSONResponse(
@@ -1137,59 +1147,22 @@ async def notification_bot_status(request: Request):
 
 @router.post("/notifications/delete")
 async def delete_notification_bot(request: Request):
-    try:
-        await _notification_service(request).teardown_bot()
-    except RuntimeError as exc:
-        if _wants_json(request):
-            return JSONResponse({"error": str(exc)}, status_code=409)
-        error_code = "notification_bot_missing"
-        if "аккаунт" in str(exc).lower():
-            error_code = "notification_account_unavailable"
-        return RedirectResponse(url=f"/settings?error={error_code}", status_code=303)
-    except Exception as exc:
-        logger.exception("Notification bot deletion failed")
-        if _wants_json(request):
-            return JSONResponse({"error": str(exc)}, status_code=500)
-        return RedirectResponse(url="/settings?error=notification_action_failed", status_code=303)
-
-    if _wants_json(request):
-        return JSONResponse({"deleted": True})
-    return RedirectResponse(url="/settings?msg=notification_bot_deleted", status_code=303)
+    return await _enqueue_notification_command(
+        request,
+        "notifications.delete_bot",
+        requested_by="web:settings.notifications.delete",
+        redirect_code="notification_delete_queued",
+    )
 
 
 @router.post("/notifications/test")
 async def test_notification(request: Request):
-    notifier = deps.get_notifier(request)
-    admin_chat_id = notifier.admin_chat_id if notifier else None
-
-    bot = await _notification_service(request).get_status()
-    if not admin_chat_id and bot:
-        admin_chat_id = bot.tg_user_id
-
-    if not admin_chat_id and not bot:
-        return RedirectResponse(url="/settings?error=notification_test_failed", status_code=303)
-
-    target_svc = deps.get_notification_target_service(request)
-
-    if bot:
-        try:
-            # Send /start from the notification account to the bot so the bot
-            # can initiate a conversation back. This assumes the notification
-            # account IS the admin user receiving push notifications.
-            async with target_svc.use_client() as (client, _):
-                await asyncio.wait_for(
-                    client.send_message(bot.bot_username, "/start"), timeout=30.0
-                )
-        except Exception as exc:
-            logger.warning("Could not send /start to @%s: %s", bot.bot_username, exc)
-
-    msg = "✅ Тест уведомлений: соединение установлено"
-    ok = await Notifier(target_svc, admin_chat_id, deps.get_notification_bundle(request)).notify(
-        msg
+    return await _enqueue_notification_command(
+        request,
+        "notifications.test",
+        requested_by="web:settings.notifications.test",
+        redirect_code="notification_test_queued",
     )
-    if ok:
-        return RedirectResponse(url="/settings?msg=notification_test_sent", status_code=303)
-    return RedirectResponse(url="/settings?error=notification_test_failed", status_code=303)
 
 
 # ── Image Providers ──

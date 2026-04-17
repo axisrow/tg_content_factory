@@ -76,24 +76,9 @@ async def test_publish_run_uses_publish_service(client, monkeypatch):
     await db.repos.generation_runs.save_result(run_id, "Generated post")
     await db.repos.generation_runs.set_moderation_status(run_id, "approved")
 
-    observed: dict[str, int] = {}
-
-    class FakePublishService:
-        def __init__(self, injected_db, pool):
-            assert injected_db is db
-            assert pool is client._transport_app.state.pool
-
-        async def publish_run(self, run, pipeline):
-            observed["run_id"] = run.id
-            observed["pipeline_id"] = pipeline.id
-            return [PublishResult(success=True, message_id=777)]
-
-    monkeypatch.setattr("src.web.routes.moderation.PublishService", FakePublishService)
-
     resp = await client.post(f"/moderation/{run_id}/publish", follow_redirects=False)
     assert resp.status_code == 303
-    assert "msg=run_published" in resp.headers["location"]
-    assert observed == {"run_id": run_id, "pipeline_id": pipeline_id}
+    assert "command_id=" in resp.headers["location"]
 
 
 @pytest.mark.asyncio
