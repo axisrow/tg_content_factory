@@ -173,3 +173,62 @@ async def test_collect_single_channel_full():
     count = await svc.collect_single_channel_full(ch)
     assert count == 42
     collector.collect_single_channel.assert_called_once_with(ch, full=True)
+
+
+# ── cancel_task / clear_pending_collect_tasks fallback (fix for #457) ─────
+
+
+@pytest.mark.asyncio
+async def test_cancel_task_with_live_queue_delegates():
+    """With a live queue the service must delegate so RUNNING tasks get interrupted."""
+    channels = MagicMock()
+    channels.cancel_collection_task = AsyncMock(return_value=True)
+    collector = MagicMock()
+    queue = MagicMock()
+    queue.cancel_task = AsyncMock(return_value=True)
+
+    svc = CollectionService(channels, collector, collection_queue=queue)
+    result = await svc.cancel_task(77, note="manual stop")
+    assert result is True
+    queue.cancel_task.assert_awaited_once_with(77, note="manual stop")
+    channels.cancel_collection_task.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_cancel_task_without_queue_falls_back_to_db():
+    """In web-mode (queue=None) the DB path must keep the route from 500'ing (#457)."""
+    channels = MagicMock()
+    channels.cancel_collection_task = AsyncMock(return_value=True)
+    collector = MagicMock()
+
+    svc = CollectionService(channels, collector, collection_queue=None)
+    result = await svc.cancel_task(77)
+    assert result is True
+    channels.cancel_collection_task.assert_awaited_once_with(77, note=None)
+
+
+@pytest.mark.asyncio
+async def test_clear_pending_collect_tasks_with_live_queue_delegates():
+    """With a queue the service must delegate to drain memory + cancel requeue timers."""
+    channels = MagicMock()
+    collector = MagicMock()
+    queue = MagicMock()
+    queue.clear_pending_tasks = AsyncMock(return_value=12)
+
+    svc = CollectionService(channels, collector, collection_queue=queue)
+    result = await svc.clear_pending_collect_tasks()
+    assert result == 12
+    queue.clear_pending_tasks.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_clear_pending_collect_tasks_without_queue_falls_back_to_db():
+    """Without a queue the service just deletes PENDING rows — memory lives in the worker."""
+    channels = MagicMock()
+    channels.delete_pending_channel_tasks = AsyncMock(return_value=5)
+    collector = MagicMock()
+
+    svc = CollectionService(channels, collector, collection_queue=None)
+    result = await svc.clear_pending_collect_tasks()
+    assert result == 5
+    channels.delete_pending_channel_tasks.assert_awaited_once()

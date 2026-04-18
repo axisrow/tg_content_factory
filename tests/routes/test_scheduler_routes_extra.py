@@ -39,151 +39,10 @@ async def client(base_app):
         yield c
 
 
-# ── _format_retry_hint: line 38 ────────────────────────────────────────
-
-
-@pytest.mark.asyncio
-async def test_format_retry_hint_with_value():
-    """Test _format_retry_hint with a datetime value (line 38)."""
-    from src.web.routes.scheduler import _format_retry_hint
-
-    dt = datetime(2025, 6, 15, 12, 30, 0, tzinfo=timezone.utc)
-    result = _format_retry_hint(dt)
-    assert "2025-06-15" in result
-    assert "12:30:00" in result
-
-
-@pytest.mark.asyncio
-async def test_format_retry_hint_none():
-    """Test _format_retry_hint with None (line 37)."""
-    from src.web.routes.scheduler import _format_retry_hint
-
-    result = _format_retry_hint(None)
-    assert result == ""
-
-
-# ── _compute_load_level: lines 53, 55, 57 ──────────────────────────────
-
-
-@pytest.mark.asyncio
-async def test_compute_load_level_overload_short_interval():
-    """Test load level overload with short interval and high pressure (line 53)."""
-    from src.web.routes.scheduler import _compute_load_level
-
-    result = _compute_load_level(
-        interval_minutes=15,
-        active_unfiltered_channels=120,
-        available_accounts_now=2,
-        state="healthy",
-    )
-    assert result == "overload"
-
-
-@pytest.mark.asyncio
-async def test_compute_load_level_high_medium_interval():
-    """Test load level high with medium interval and moderate pressure (line 55)."""
-    from src.web.routes.scheduler import _compute_load_level
-
-    result = _compute_load_level(
-        interval_minutes=30,
-        active_unfiltered_channels=80,
-        available_accounts_now=2,
-        state="healthy",
-    )
-    assert result == "high"
-
-
-@pytest.mark.asyncio
-async def test_compute_load_level_high_very_high_pressure():
-    """Test load level high with very high pressure regardless of interval (line 57)."""
-    from src.web.routes.scheduler import _compute_load_level
-
-    result = _compute_load_level(
-        interval_minutes=60,
-        active_unfiltered_channels=150,
-        available_accounts_now=2,
-        state="healthy",
-    )
-    assert result == "high"
-
-
-@pytest.mark.asyncio
-async def test_compute_load_level_ok():
-    """Test load level ok with normal parameters."""
-    from src.web.routes.scheduler import _compute_load_level
-
-    result = _compute_load_level(
-        interval_minutes=60,
-        active_unfiltered_channels=10,
-        available_accounts_now=2,
-        state="healthy",
-    )
-    assert result == "ok"
-
-
-@pytest.mark.asyncio
-async def test_compute_load_level_overload_all_flooded():
-    """Test load level overload when all flooded (line 48)."""
-    from src.web.routes.scheduler import _compute_load_level
-
-    result = _compute_load_level(
-        interval_minutes=60,
-        active_unfiltered_channels=10,
-        available_accounts_now=2,
-        state="all_flooded",
-    )
-    assert result == "overload"
-
-
-# ── _collector_health_recommendations: line 71 ─────────────────────────
-
-
-@pytest.mark.asyncio
-async def test_collector_health_recommendations_no_clients():
-    """Test recommendations for no_clients state (line 73)."""
-    from src.web.routes.scheduler import _collector_health_recommendations
-
-    recs = _collector_health_recommendations(
-        state="no_clients",
-        load_level="ok",
-        interval_minutes=60,
-        active_unfiltered_channels=10,
-        available_accounts_now=0,
-    )
-    assert any("переподключить" in r.lower() for r in recs)
-
-
-@pytest.mark.asyncio
-async def test_collector_health_recommendations_single_account():
-    """Test recommendations for single account (line 83)."""
-    from src.web.routes.scheduler import _collector_health_recommendations
-
-    recs = _collector_health_recommendations(
-        state="healthy",
-        load_level="ok",
-        interval_minutes=60,
-        active_unfiltered_channels=10,
-        available_accounts_now=1,
-    )
-    assert any("Добавить ещё Telegram-аккаунт" in r for r in recs)
-
-
-@pytest.mark.asyncio
-async def test_collector_health_recommendations_high_load():
-    """Test recommendations for high load (lines 78-81)."""
-    from src.web.routes.scheduler import _collector_health_recommendations
-
-    recs = _collector_health_recommendations(
-        state="healthy",
-        load_level="high",
-        interval_minutes=30,
-        active_unfiltered_channels=100,
-        available_accounts_now=2,
-    )
-    assert len(recs) >= 2
-    assert any("интервал" in r.lower() for r in recs)
-    assert any("Сократить" in r for r in recs)
-
+# NOTE: pure-function tests for _format_retry_hint / _compute_load_level /
+# _collector_health_recommendations / _job_label live in
+# tests/test_web_scheduler_helpers.py (introduced in #456). Route-level tests
+# that actually exercise HTTP behaviour stay here.
 
 # ── cancel_task: line 179 (shutting_down) ──────────────────────────────
 
@@ -597,43 +456,7 @@ async def test_scheduler_health_with_naive_flood_wait(client, base_app):
     assert resp.status_code == 200
 
 
-# ── _job_label: various job IDs ────────────────────────────────────────
-
-
-@pytest.mark.asyncio
-async def test_job_label_search_query():
-    """Test _job_label for search query job."""
-    from src.web.routes.scheduler import _job_label
-
-    result = _job_label("sq_42")
-    assert "42" in result
-
-
-@pytest.mark.asyncio
-async def test_job_label_pipeline_run():
-    """Test _job_label for pipeline run job."""
-    from src.web.routes.scheduler import _job_label
-
-    result = _job_label("pipeline_run_7")
-    assert "7" in result
-
-
-@pytest.mark.asyncio
-async def test_job_label_content_generate():
-    """Test _job_label for content generate job."""
-    from src.web.routes.scheduler import _job_label
-
-    result = _job_label("content_generate_3")
-    assert "3" in result
-
-
-@pytest.mark.asyncio
-async def test_job_label_unknown():
-    """Test _job_label for unknown job."""
-    from src.web.routes.scheduler import _job_label
-
-    result = _job_label("custom_job")
-    assert result == "custom_job"
+# NOTE: _job_label() has full unit coverage in tests/test_web_scheduler_helpers.py (#456).
 
 
 # ── _build_jobs_context: lines 202-244 ─────────────────────────────────
@@ -687,3 +510,366 @@ async def test_trigger_collection_uses_bulk_enqueue_msg(client, base_app):
         resp = await client.post("/scheduler/trigger", follow_redirects=False)
         assert resp.status_code == 303
         mock_msg.assert_called_once_with(result)
+
+
+# ── _is_worker_alive / state=worker_down (fix for #457) ────────────────
+
+
+@pytest.mark.asyncio
+async def test_is_worker_alive_fresh_heartbeat(base_app):
+    """Fresh heartbeat → worker is alive."""
+    from src.web.routes.scheduler import _is_worker_alive
+
+    _, db, _ = base_app
+    # Default base_app fixture already stamps a fresh heartbeat.
+    assert await _is_worker_alive(db) is True
+
+
+@pytest.mark.asyncio
+async def test_is_worker_alive_missing_heartbeat(tmp_path):
+    """No heartbeat snapshot → worker is considered down.
+
+    Uses a clean DB (not `base_app`) so no default heartbeat is stamped.
+    """
+    from src.database import Database
+    from src.web.routes.scheduler import _is_worker_alive
+
+    db = Database(str(tmp_path / "worker_down.db"))
+    await db.initialize()
+    try:
+        assert await _is_worker_alive(db) is False
+    finally:
+        await db.close()
+
+
+@pytest.mark.asyncio
+async def test_is_worker_alive_stale_heartbeat(base_app):
+    """Heartbeat older than threshold → worker is considered down."""
+    from src.models import RuntimeSnapshot
+    from src.web.routes.scheduler import _is_worker_alive
+
+    _, db, _ = base_app
+    stale = datetime.now(timezone.utc) - timedelta(minutes=5)
+    await db.repos.runtime_snapshots.upsert_snapshot(
+        RuntimeSnapshot(
+            snapshot_type="worker_heartbeat",
+            payload={"status": "alive"},
+            updated_at=stale,
+        )
+    )
+    assert await _is_worker_alive(db) is False
+
+
+@pytest.mark.asyncio
+async def test_is_worker_alive_naive_datetime(base_app):
+    """Heartbeat with a naive datetime must still be comparable (UTC assumed)."""
+    from src.models import RuntimeSnapshot
+    from src.web.routes.scheduler import _is_worker_alive
+
+    _, db, _ = base_app
+    # Stamp a recent naive datetime — the helper must treat it as UTC.
+    now_naive = datetime.now(timezone.utc).replace(tzinfo=None)
+    await db.repos.runtime_snapshots.upsert_snapshot(
+        RuntimeSnapshot(
+            snapshot_type="worker_heartbeat",
+            payload={"status": "alive"},
+            updated_at=now_naive,
+        )
+    )
+    assert await _is_worker_alive(db) is True
+
+
+@pytest.mark.asyncio
+async def test_scheduler_page_renders_worker_down_banner(client, base_app):
+    """/scheduler/ surfaces the `worker_down` banner when the heartbeat is stale.
+
+    Regression guard for #457: before the fix, web mode silently dropped all
+    collection tasks into a PENDING pile without any UI signal that no worker
+    was executing them.
+    """
+    from src.models import RuntimeSnapshot
+
+    _, db, _ = base_app
+    # Override the fresh heartbeat stamped by base_app with a stale one.
+    stale = datetime.now(timezone.utc) - timedelta(minutes=5)
+    await db.repos.runtime_snapshots.upsert_snapshot(
+        RuntimeSnapshot(
+            snapshot_type="worker_heartbeat",
+            payload={"status": "alive"},
+            updated_at=stale,
+        )
+    )
+
+    resp = await client.get("/scheduler/")
+    assert resp.status_code == 200
+    body = resp.text
+    assert "Telegram-воркер не запущен" in body
+    assert "python -m src.main worker" in body
+
+
+@pytest.mark.asyncio
+async def test_scheduler_page_no_worker_banner_when_heartbeat_fresh(client, base_app):
+    """Fresh heartbeat must NOT render the worker_down banner."""
+    resp = await client.get("/scheduler/")
+    assert resp.status_code == 200
+    assert "Telegram-воркер не запущен" not in resp.text
+
+
+# ── web_mode fixture sanity (#457 round 3) ─────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_web_mode_app_has_snapshot_shims(web_mode_app):
+    """Sanity check — the new fixture must really produce the web-mode wiring."""
+    from src.web.runtime_shims import (
+        SnapshotClientPool,
+        SnapshotCollector,
+        SnapshotSchedulerManager,
+    )
+    app, container = web_mode_app
+    assert app.state.runtime_mode == "web"
+    assert app.state.collection_queue is None
+    assert app.state.unified_dispatcher is None
+    # Note: task_enqueuer is NOT None in web-mode (it only writes rows to
+    # collection_tasks; no asyncio.Queue involved). So pipelines /run etc.
+    # stay as silent no-ops rather than 500s — that's expected behaviour.
+    assert app.state.task_enqueuer is not None
+    assert isinstance(app.state.pool, SnapshotClientPool)
+    assert isinstance(app.state.collector, SnapshotCollector)
+    assert isinstance(app.state.scheduler, SnapshotSchedulerManager)
+    # Production-parity: the real container agrees.
+    assert isinstance(container.pool, SnapshotClientPool)
+
+
+@pytest.mark.asyncio
+async def test_web_mode_scheduler_page_renders(web_mode_client):
+    """/scheduler/ must render a 200 OK under the real web-mode wiring, no 500."""
+    resp = await web_mode_client.get("/scheduler/", follow_redirects=True)
+    assert resp.status_code == 200
+
+
+# ── web-mode fallback: collection_queue=None must not 500 (fix for #457 round 2) ─
+
+
+@pytest.mark.asyncio
+async def test_clear_pending_collect_web_mode_falls_back_to_db(client, base_app):
+    """POST /scheduler/tasks/clear-pending-collect must NOT 500 in web-mode.
+
+    Regression guard for the second half of #457: before the fix,
+    `deps.get_queue()` returned None and the route crashed with
+    `AttributeError: 'NoneType' object has no attribute 'clear_pending_tasks'`.
+    """
+    from src.models import Channel
+
+    app, db, _ = base_app
+    # Drop the live CollectionQueue so the route sees the same state as `serve`
+    # running without a worker.
+    app.state.collection_queue = None
+
+    # Seed a pending task so the DELETE has something to count.
+    channel_pk = await db.add_channel(Channel(channel_id=555, title="Pending Clear"))
+    task_id = await db.repos.tasks.create_collection_task_if_not_active(
+        channel_id=555,
+        channel_title="Pending Clear",
+    )
+    assert task_id is not None
+    assert channel_pk is not None
+
+    resp = await client.post(
+        "/scheduler/tasks/clear-pending-collect", follow_redirects=False
+    )
+    assert resp.status_code == 303
+    location = resp.headers.get("location", "")
+    assert "pending_collect_tasks_deleted" in location or "pending_collect_tasks_empty" in location
+
+    # The row must be gone from the DB.
+    remaining = await db.repos.tasks.get_pending_channel_tasks()
+    assert not any(t.id == task_id for t in remaining)
+
+
+@pytest.mark.asyncio
+async def test_cancel_task_web_mode_falls_back_to_db(client, base_app):
+    """POST /scheduler/tasks/{id}/cancel must NOT 500 in web-mode.
+
+    Same class of regression as clear-pending-collect: the route used to dereference
+    a None queue. With the fix it delegates through CollectionService, which flips
+    the DB row to CANCELLED without the in-memory queue.
+    """
+    from src.models import Channel, CollectionTaskStatus
+
+    app, db, _ = base_app
+    app.state.collection_queue = None
+
+    await db.add_channel(Channel(channel_id=777, title="Cancel Target"))
+    task_id = await db.repos.tasks.create_collection_task_if_not_active(
+        channel_id=777,
+        channel_title="Cancel Target",
+    )
+    assert task_id is not None
+
+    resp = await client.post(
+        f"/scheduler/tasks/{task_id}/cancel", follow_redirects=False
+    )
+    assert resp.status_code == 303
+    assert "task_cancelled" in resp.headers.get("location", "")
+
+    # DB status must reflect the cancellation even though no worker was listening.
+    task = await db.repos.tasks.get_collection_task(task_id)
+    assert task is not None
+    assert task.status == CollectionTaskStatus.CANCELLED
+
+
+# ── #457 round 3: filter preserved on redirect ────────────────────────────
+#
+# Before round 3, every POST-handler in scheduler.py redirected to
+# `/scheduler?msg=...` and dropped the user's `?status=active&page=N&limit=M`
+# query. Clicking "Запустить" on the "Активные" tab threw the user back to
+# "Все" (default status=all) — on a big DB that looked like the button replaced
+# the page with 143 pages of unrelated tasks. These tests lock that fixed
+# behaviour in place for every POST route in scheduler.py.
+
+
+@pytest.fixture
+def _filter_qs() -> str:
+    return "status=active&page=3&limit=25"
+
+
+async def _assert_filter_preserved(resp, expected_msg_or_error: str) -> str:
+    """Redirect must carry status/page/limit AND the msg/error code."""
+    assert resp.status_code == 303, f"expected 303, got {resp.status_code} body={resp.text[:200]}"
+    location = resp.headers.get("location", "")
+    assert "status=active" in location, location
+    assert "page=3" in location, location
+    assert "limit=25" in location, location
+    assert expected_msg_or_error in location, location
+    return location
+
+
+@pytest.mark.asyncio
+async def test_trigger_preserves_filter(web_mode_client, _filter_qs):
+    resp = await web_mode_client.post(f"/scheduler/trigger?{_filter_qs}")
+    # On empty DB there are no active channels → bulk_enqueue_msg returns
+    # a `collect_all_*` code; we don't care which, as long as the filter survives.
+    assert resp.status_code == 303
+    loc = resp.headers.get("location", "")
+    assert "status=active" in loc
+    assert "page=3" in loc
+    assert "limit=25" in loc
+
+
+@pytest.mark.asyncio
+async def test_start_scheduler_preserves_filter(web_mode_client, _filter_qs):
+    resp = await web_mode_client.post(f"/scheduler/start?{_filter_qs}")
+    await _assert_filter_preserved(resp, "msg=scheduler_started")
+
+
+@pytest.mark.asyncio
+async def test_stop_scheduler_preserves_filter(web_mode_client, _filter_qs):
+    resp = await web_mode_client.post(f"/scheduler/stop?{_filter_qs}")
+    await _assert_filter_preserved(resp, "msg=scheduler_stopped")
+
+
+@pytest.mark.asyncio
+async def test_trigger_warm_preserves_filter(web_mode_client, _filter_qs):
+    resp = await web_mode_client.post(f"/scheduler/trigger-warm?{_filter_qs}")
+    await _assert_filter_preserved(resp, "msg=warm_dialogs_started")
+
+
+@pytest.mark.asyncio
+async def test_test_notification_preserves_filter(web_mode_client, _filter_qs):
+    resp = await web_mode_client.post(f"/scheduler/test-notification?{_filter_qs}")
+    await _assert_filter_preserved(resp, "msg=test_notification_queued")
+
+
+@pytest.mark.asyncio
+async def test_clear_pending_collect_preserves_filter(web_mode_client, _filter_qs):
+    resp = await web_mode_client.post(
+        f"/scheduler/tasks/clear-pending-collect?{_filter_qs}"
+    )
+    await _assert_filter_preserved(resp, "msg=pending_collect_tasks_empty")
+
+
+@pytest.mark.asyncio
+async def test_cancel_task_preserves_filter(web_mode_client, web_mode_app, _filter_qs):
+    _, container = web_mode_app
+    task_id = await container.db.repos.tasks.create_collection_task_if_not_active(
+        channel_id=-1001, channel_title="Web Mode Test Channel",
+    )
+    resp = await web_mode_client.post(f"/scheduler/tasks/{task_id}/cancel?{_filter_qs}")
+    await _assert_filter_preserved(resp, "msg=task_cancelled")
+
+
+@pytest.mark.asyncio
+async def test_toggle_scheduler_job_preserves_filter(web_mode_client, _filter_qs):
+    resp = await web_mode_client.post(f"/scheduler/jobs/collect_all/toggle?{_filter_qs}")
+    await _assert_filter_preserved(resp, "msg=job_toggled")
+
+
+@pytest.mark.asyncio
+async def test_set_job_interval_preserves_filter(web_mode_client, _filter_qs):
+    resp = await web_mode_client.post(
+        f"/scheduler/jobs/collect_all/set-interval?{_filter_qs}",
+        data={"interval_minutes": "15"},
+    )
+    await _assert_filter_preserved(resp, "msg=interval_updated")
+
+
+# Error branches also must keep the filter — otherwise an invalid_job bounces
+# the user to status=all on top of the error, which was the actual bad UX.
+
+
+@pytest.mark.asyncio
+async def test_invalid_job_toggle_preserves_filter(web_mode_client, _filter_qs):
+    resp = await web_mode_client.post(f"/scheduler/jobs/not-a-real-job/toggle?{_filter_qs}")
+    await _assert_filter_preserved(resp, "error=invalid_job")
+
+
+@pytest.mark.asyncio
+async def test_shutting_down_preserves_filter(web_mode_app, web_mode_client, _filter_qs):
+    app, _ = web_mode_app
+    app.state.shutting_down = True
+    try:
+        resp = await web_mode_client.post(f"/scheduler/start?{_filter_qs}")
+        await _assert_filter_preserved(resp, "error=shutting_down")
+    finally:
+        app.state.shutting_down = False
+
+
+@pytest.mark.asyncio
+async def test_default_filter_omitted_from_url(web_mode_client):
+    """When user is already on default filters, the redirect URL stays clean."""
+    resp = await web_mode_client.post("/scheduler/start")
+    assert resp.status_code == 303
+    loc = resp.headers.get("location", "")
+    # Default tab (status=all, page=1, limit=50) — we *don't* want those echoed.
+    assert "status=" not in loc
+    assert "page=" not in loc
+    assert "limit=" not in loc
+    assert "msg=scheduler_started" in loc
+
+
+# Regression guard: all POST routes listed here must return 2xx/3xx in web-mode,
+# never 500. This catches the next #457-class bug (route dereferencing a None
+# nullable service) automatically.
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "method, path, form",
+    [
+        ("POST", "/scheduler/start", None),
+        ("POST", "/scheduler/stop", None),
+        ("POST", "/scheduler/trigger", None),
+        ("POST", "/scheduler/trigger-warm", None),
+        ("POST", "/scheduler/test-notification", None),
+        ("POST", "/scheduler/tasks/clear-pending-collect", None),
+        ("POST", "/scheduler/jobs/collect_all/toggle", None),
+        ("POST", "/scheduler/jobs/collect_all/set-interval", {"interval_minutes": "15"}),
+    ],
+)
+async def test_scheduler_post_routes_never_500_in_web_mode(web_mode_client, method, path, form):
+    resp = await web_mode_client.request(method, path, data=form)
+    assert resp.status_code < 500, (
+        f"{method} {path} returned {resp.status_code} "
+        f"(body: {resp.text[:300]}) — web-mode must never 500"
+    )

@@ -87,6 +87,34 @@ class CollectionService:
             total_candidates=len(channels),
         )
 
+    async def cancel_task(self, task_id: int, note: str | None = None) -> bool:
+        """Cancel a pending/running collection task.
+
+        When the worker process is live (`self._queue is not None`) the call is
+        delegated to `CollectionQueue.cancel_task` so an in-flight collection
+        gets interrupted immediately. In web-mode (`self._queue is None`) we
+        fall back to a DB-only status flip — the worker will pick up the
+        cancellation on its next fetch of the task row.
+
+        Mirrors the `_enqueue_channel` fallback pattern so that /scheduler
+        routes do not 500 when `collection_queue` is absent (#457).
+        """
+        if self._queue is not None:
+            return await self._queue.cancel_task(task_id, note=note)
+        return await self._channels.cancel_collection_task(task_id, note=note)
+
+    async def clear_pending_collect_tasks(self) -> int:
+        """Delete every PENDING channel-collect task.
+
+        With a live queue this also drains the in-memory asyncio.Queue and
+        cancels any Flood-Wait requeue timers. Without a queue (web-mode) we
+        just delete the DB rows — memory state lives only in the worker
+        process, which is not running anyway.
+        """
+        if self._queue is not None:
+            return await self._queue.clear_pending_tasks()
+        return await self._channels.delete_pending_channel_tasks()
+
     async def collect_channel_stats(self, channel: Channel) -> None:
         await self._collector.collect_channel_stats(channel)
 

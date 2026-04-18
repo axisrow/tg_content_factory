@@ -53,13 +53,28 @@ AGENT_FALLBACK_MODEL=      # опционально, provider:model для deepa
 AGENT_FALLBACK_API_KEY=    # опционально, явный API key для fallback-провайдера
 ```
 
-Запустите сервер:
+Запустите сервер — одна команда, всё работает:
 
 ```bash
 python -m src.main serve
 ```
 
 Откройте http://localhost:8080 в браузере и введите пароль из `WEB_PASS`.
+
+### Split-деплой (Docker / k8s)
+
+По умолчанию `serve` поднимает встроенный Telegram-воркер в том же процессе,
+поэтому одна команда `python -m src.main serve` даёт и веб-панель, и реальный
+сбор. Для Docker/k8s, где веб и воркер живут в разных контейнерах, передайте
+`--no-worker` и запустите отдельный воркер-сервис:
+
+```bash
+# контейнер 1 — только веб-панель и API
+python -m src.main serve --no-worker
+
+# контейнер 2 — Telegram-воркер (общий SQLite-том)
+python -m src.main worker
+```
 
 ## Docker
 
@@ -125,10 +140,13 @@ search остаются целевым контрактом.
 ## CLI
 
 ```bash
-# Веб-сервер
-python -m src.main [--config CONFIG] serve [--web-pass PASS]
+# Веб-сервер (по умолчанию поднимает встроенный Telegram-воркер)
+python -m src.main [--config CONFIG] serve [--web-pass PASS] [--no-worker]
 python -m src.main [--config CONFIG] stop
 python -m src.main [--config CONFIG] restart [--web-pass PASS]
+
+# Отдельный Telegram-воркер (нужен только с `serve --no-worker` в split-деплое)
+python -m src.main [--config CONFIG] worker
 
 # Разовый сбор
 python -m src.main [--config CONFIG] collect [--channel-id ID]

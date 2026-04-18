@@ -54,13 +54,29 @@ AGENT_FALLBACK_MODEL=      # optional, provider:model for deepagents fallback
 AGENT_FALLBACK_API_KEY=    # optional, explicit API key for deepagents fallback provider
 ```
 
-Start the server:
+Start the server — one command, everything works:
 
 ```bash
 python -m src.main serve
 ```
 
 Open http://localhost:8080 in your browser and enter the `WEB_PASS` password.
+
+### Split deployment (Docker / k8s)
+
+`serve` spawns an embedded Telegram worker inside the same process by default,
+so a single `python -m src.main serve` command runs the web UI and the
+collection worker together. For Docker or Kubernetes where you want the web
+and worker in separate containers, pass `--no-worker` and run a dedicated
+worker service:
+
+```bash
+# container 1 — web UI + API only
+python -m src.main serve --no-worker
+
+# container 2 — Telegram worker (shared SQLite volume)
+python -m src.main worker
+```
 
 ## Docker
 
@@ -133,10 +149,13 @@ Supports `${ENV_VAR}` substitution. Empty env vars are dropped (defaults apply).
 ## CLI
 
 ```bash
-# Web server
-python -m src.main [--config CONFIG] serve [--web-pass PASS]
+# Web server (spawns the embedded Telegram worker by default)
+python -m src.main [--config CONFIG] serve [--web-pass PASS] [--no-worker]
 python -m src.main [--config CONFIG] stop
 python -m src.main [--config CONFIG] restart [--web-pass PASS]
+
+# Standalone Telegram worker (only needed with `serve --no-worker` in split deployments)
+python -m src.main [--config CONFIG] worker
 
 # One-shot collection
 python -m src.main [--config CONFIG] collect [--channel-id ID]
