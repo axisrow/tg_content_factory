@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
@@ -163,7 +164,7 @@ class PipelineService:
                     if node.type == PipelineNodeType.SOURCE:
                         node.config["channel_ids"] = dag_source_channel_ids
             if react_emoji is not None:
-                emojis = [e.strip() for e in react_emoji.split(",") if e.strip()]
+                emojis = [e for e in re.split(r"[,\s]+", react_emoji.strip()) if e]
                 for node in updated_graph.nodes:
                     if node.type == PipelineNodeType.REACT:
                         if len(emojis) > 1:

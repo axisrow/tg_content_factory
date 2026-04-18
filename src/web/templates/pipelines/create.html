@@ -203,8 +203,8 @@
         <div class="row g-3">
             <div class="col-12 col-md-6">
                 <label class="form-label">Emoji реакция</label>
-                <input class="form-control" type="text" name="react_emoji" maxlength="10" placeholder="emoji, например: 👍" value="">
-                <div class="form-text">Одиночный emoji или список через запятую для случайного выбора</div>
+                <input class="form-control" type="text" name="react_emoji" placeholder="Например: 👍 🔥 ❤️" value="">
+                <div class="form-text">Один emoji или несколько через пробел/запятую — при каждом запуске будет выбран случайный.</div>
             </div>
         </div>
         <h6 class="mt-4 mb-2">Задержка (опционально)</h6>
@@ -627,11 +627,12 @@
 
         } else if (pipelineType === "react") {
             var emojiRaw = document.querySelector('[name="react_emoji"]').value.trim();
+            var emojiTokens = emojiRaw.split(/[,\s]+/).filter(Boolean);
             var reactConfig;
-            if (emojiRaw.indexOf(",") !== -1) {
-                reactConfig = { random_emojis: emojiRaw.split(",").map(function(e) { return e.trim(); }).filter(Boolean) };
+            if (emojiTokens.length > 1) {
+                reactConfig = { emoji: emojiTokens[0], random_emojis: emojiTokens };
             } else {
-                reactConfig = { emoji: emojiRaw || "" };
+                reactConfig = { emoji: emojiTokens[0] || "", random_emojis: [] };
             }
             var delayMin = parseFloat(document.querySelector('[name="delay_min"]').value) || 0;
             var delayMax = parseFloat(document.querySelector('[name="delay_max"]').value) || 0;

@@ -95,8 +95,8 @@
     {% if react_emoji is not none %}
     <div class="mb-3">
         <label class="form-label"><i class="bi bi-emoji-smile"></i> Реакция</label>
-        <input class="form-control" type="text" name="react_emoji" value="{{ react_emoji }}" placeholder="emoji, например: 👍">
-        <div class="form-text">Один или несколько emoji через запятую для случайного выбора при каждом запуске.</div>
+        <input class="form-control" type="text" name="react_emoji" value="{{ react_emoji }}" placeholder="Например: 👍 🔥 ❤️">
+        <div class="form-text">Один или несколько emoji через запятую или пробел — на каждое сообщение будет выбрана случайная.</div>
     </div>
     {% endif %}
 
