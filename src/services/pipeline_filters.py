@@ -82,6 +82,8 @@ def normalize_filter_config(raw_config: dict | None) -> dict:
 
 
 def filter_messages(messages: Iterable, raw_config: dict | None) -> list:
+    if not raw_config:
+        return list(messages)
     return [message for message in messages if match_message_filter(message, raw_config)]
 
 

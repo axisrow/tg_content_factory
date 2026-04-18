@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import logging
 import os
 import time
 from pathlib import Path
 
 import aiosqlite
+
+logger = logging.getLogger(__name__)
 
 _PROFILING_ENABLED = os.environ.get("ENV", "PROD").upper() == "DEV"
 
@@ -98,6 +101,7 @@ class DBConnection:
     async def execute(self, sql: str, params: tuple = ()) -> aiosqlite.Cursor:
         assert self.db is not None
         if sql.strip().upper().startswith("BEGIN") and self.db.in_transaction:
+            logger.warning("DBConnection.execute: rolling back active transaction before BEGIN")
             await self.db.rollback()
         return await self.db.execute(sql, params)
 
