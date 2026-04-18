@@ -4,10 +4,12 @@ import argparse
 import asyncio
 
 from src.cli import runtime
+from src.models import PipelineNode, PipelineNodeType
 from src.search.engine import SearchEngine
 from src.services.content_generation_service import ContentGenerationService
-from src.services.generation_service import GenerationService
+from src.services.pipeline_filters import normalize_filter_config
 from src.services.pipeline_llm_requirements import pipeline_needs_llm
+from src.services.pipeline_result import result_kind_label
 from src.services.pipeline_service import (
     PipelineService,
     PipelineTargetRef,
@@ -38,6 +40,105 @@ def _preview_text(value: str | None, limit: int = 60) -> str:
     if len(compact) <= limit:
         return compact
     return f"{compact[: limit - 3]}..."
+
+
+def _str_to_bool(value: str | None) -> bool | None:
+    if value is None:
+        return None
+    return value == "true"
+
+
+def _find_filter_node(graph) -> PipelineNode | None:
+    return next((node for node in graph.nodes if node.type == PipelineNodeType.FILTER), None)
+
+
+def _build_message_filter_config(args: argparse.Namespace) -> dict:
+    return {
+        "type": "message_filter",
+        "message_kinds": list(getattr(args, "message_kinds", None) or []),
+        "service_actions": list(getattr(args, "service_actions", None) or []),
+        "media_types": list(getattr(args, "media_types", None) or []),
+        "sender_kinds": list(getattr(args, "sender_kinds", None) or []),
+        "keywords": list(getattr(args, "keywords", None) or []),
+        "regex": getattr(args, "regex", None) or "",
+        "forwarded": _str_to_bool(getattr(args, "forwarded", None)),
+        "has_text": _str_to_bool(getattr(args, "has_text", None)),
+    }
+
+
+def _format_filter_config(config: dict) -> list[str]:
+    normalized = normalize_filter_config(config)
+    return [
+        f"message_kinds={','.join(normalized.get('message_kinds', [])) or '—'}",
+        f"service_actions={','.join(normalized.get('service_actions', [])) or '—'}",
+        f"media_types={','.join(normalized.get('media_types', [])) or '—'}",
+        f"sender_kinds={','.join(normalized.get('sender_kinds', [])) or '—'}",
+        f"keywords={','.join(normalized.get('keywords', [])) or '—'}",
+        f"regex={normalized.get('regex') or '—'}",
+        f"forwarded={normalized.get('forwarded') if normalized.get('forwarded') is not None else '—'}",
+        f"has_text={normalized.get('has_text') if normalized.get('has_text') is not None else '—'}",
+    ]
+
+
+async def _upsert_filter_node(svc: PipelineService, pipeline_id: int, config: dict) -> bool:
+    graph = await svc.get_graph(pipeline_id)
+    if graph is None:
+        return False
+
+    existing = _find_filter_node(graph)
+    if existing is not None:
+        replacement = existing.model_copy(update={"config": config})
+        return await svc.replace_node(pipeline_id, existing.id, replacement)
+
+    new_node = PipelineNode(
+        id="filter_1",
+        type=PipelineNodeType.FILTER,
+        name="Фильтр",
+        config=config,
+        position={"x": 330.0, "y": 0.0},
+    )
+    if not await svc.add_node(pipeline_id, new_node):
+        return False
+
+    graph = await svc.get_graph(pipeline_id)
+    if graph is None:
+        return False
+
+    upstream_id = None
+    for candidate in ("fetch_1", "source_1"):
+        if any(node.id == candidate for node in graph.nodes):
+            upstream_id = candidate
+            break
+    if upstream_id is None and graph.nodes:
+        upstream_id = graph.nodes[0].id
+
+    downstream_ids = [edge.to_node for edge in graph.edges if edge.from_node == upstream_id] if upstream_id else []
+    for downstream_id in downstream_ids:
+        await svc.remove_edge(pipeline_id, upstream_id, downstream_id)
+    if upstream_id:
+        await svc.add_edge(pipeline_id, upstream_id, "filter_1")
+    for downstream_id in downstream_ids:
+        if downstream_id != "filter_1":
+            await svc.add_edge(pipeline_id, "filter_1", downstream_id)
+    return True
+
+
+async def _clear_filter_node(svc: PipelineService, pipeline_id: int) -> bool:
+    graph = await svc.get_graph(pipeline_id)
+    if graph is None:
+        return False
+    existing = _find_filter_node(graph)
+    if existing is None:
+        return True
+    incoming = [edge.from_node for edge in graph.edges if edge.to_node == existing.id]
+    outgoing = [edge.to_node for edge in graph.edges if edge.from_node == existing.id]
+    ok = await svc.remove_node(pipeline_id, existing.id)
+    if not ok:
+        return False
+    for source in incoming:
+        for target in outgoing:
+            await svc.add_edge(pipeline_id, source, target)
+    return True
 
 
 def run(args: argparse.Namespace) -> None:
@@ -81,6 +182,12 @@ def run(args: argparse.Namespace) -> None:
                 print(f"active={pipeline.is_active}")
                 print(f"llm_model={pipeline.llm_model or '—'}")
                 print(f"image_model={pipeline.image_model or '—'}")
+                if pipeline.pipeline_json is not None:
+                    filter_node = _find_filter_node(pipeline.pipeline_json)
+                    if filter_node is not None:
+                        print("filter:")
+                        for line in _format_filter_config(filter_node.config):
+                            print(f" - {line}")
                 print("sources:")
                 for title in detail["source_titles"]:
                     print(f" - {title}")
@@ -285,6 +392,7 @@ def run(args: argparse.Namespace) -> None:
                 engine = SearchEngine(db)
 
                 from src.services.provider_service import AgentProviderService
+                from src.services.quality_scoring_service import QualityScoringService
 
                 provider_service = AgentProviderService(db, config)
                 await provider_service.load_db_providers()
@@ -294,41 +402,36 @@ def run(args: argparse.Namespace) -> None:
                         "env var (e.g. OPENAI_API_KEY). Non-LLM pipelines run without a provider."
                     )
                     return
-                provider_callable = provider_service.get_provider_callable(pipeline.llm_model)
 
-                gen_svc = GenerationService(engine, provider_callable=provider_callable)
-                run_id = await db.repos.generation_runs.create_run(
-                    pipeline.id, pipeline.prompt_template
+                gen_svc = ContentGenerationService(
+                    db,
+                    engine,
+                    config=config,
+                    quality_service=QualityScoringService(db, provider_service=provider_service),
+                    provider_service=provider_service,
                 )
-                await db.repos.generation_runs.set_status(run_id, "running")
-                print(f"Created generation run id={run_id}")
-                scope = await svc.get_retrieval_scope(pipeline)
                 try:
-                    result = await gen_svc.generate(
-                        query=scope.query,
-                        prompt_template=pipeline.prompt_template,
-                        limit=args.limit,
+                    run_obj = await gen_svc.generate(
+                        pipeline=pipeline,
                         model=pipeline.llm_model,
                         max_tokens=args.max_tokens,
                         temperature=args.temperature,
-                        channel_id=scope.channel_id,
                     )
-                    await db.repos.generation_runs.save_result(
-                        run_id,
-                        result.get("generated_text", ""),
-                        {"citations": result.get("citations", [])},
+                    print(f"Created generation run id={run_obj.id}")
+                    print(f"Generation completed for run id={run_obj.id}")
+                    print(
+                        f"result_kind={run_obj.result_kind} "
+                        f"result_count={run_obj.result_count}"
                     )
-                    print(f"Generation completed for run id={run_id}")
-                    if args.preview:
+                    if args.preview and run_obj.generated_text:
                         print("--- DRAFT PREVIEW ---")
-                        print(result.get("generated_text"))
+                        print(run_obj.generated_text)
                     if args.publish:
                         print(
                             "Publish requested — publishing via targets is not implemented in CLI; "
                             "Use the web UI or implement account targets."
                         )
                 except Exception as exc:
-                    await db.repos.generation_runs.set_status(run_id, "failed")
                     print(f"Generation failed: {exc}")
 
             elif args.pipeline_action == "generate":
@@ -388,11 +491,12 @@ def run(args: argparse.Namespace) -> None:
                 if not runs:
                     print("No generation runs found.")
                     return
-                print(f"{'ID':<8} {'Status':<12} {'ModStatus':<12} {'Created':<20}")
-                print("-" * 56)
+                print(f"{'ID':<8} {'Status':<12} {'ModStatus':<12} {'Result':<22} {'Created':<20}")
+                print("-" * 82)
                 for r in runs:
                     created = r.created_at.isoformat() if r.created_at else "—"
-                    print(f"{r.id:<8} {r.status:<12} {r.moderation_status:<12} {created:<20}")
+                    result_summary = f"{r.result_kind}:{r.result_count}"
+                    print(f"{r.id:<8} {r.status:<12} {r.moderation_status:<12} {result_summary:<22} {created:<20}")
 
             elif args.pipeline_action == "run-show":
                 run = await db.repos.generation_runs.get(args.run_id)
@@ -403,16 +507,34 @@ def run(args: argparse.Namespace) -> None:
                 print(f"pipeline_id={run.pipeline_id}")
                 print(f"status={run.status}")
                 print(f"moderation_status={run.moderation_status}")
+                print(f"result_kind={run.result_kind}")
+                print(f"result_count={run.result_count}")
                 print(f"created_at={run.created_at}")
                 if run.generated_text:
                     print("--- GENERATED TEXT ---")
                     print(run.generated_text[:500])
                     if len(run.generated_text) > 500:
                         print(f"... ({len(run.generated_text) - 500} more chars)")
+                else:
+                    print(f"result_label={result_kind_label(run.result_kind)}")
                 if run.image_url:
                     print(f"image_url={run.image_url}")
                 if run.published_at:
                     print(f"published_at={run.published_at}")
+                metadata = run.metadata if isinstance(run.metadata, dict) else {}
+                node_errors = metadata.get("node_errors")
+                if isinstance(node_errors, list) and node_errors:
+                    print(f"Ошибки нод: {len(node_errors)}")
+                    for err in node_errors:
+                        if not isinstance(err, dict):
+                            continue
+                        node_id = err.get("node_id", "?")
+                        code = err.get("code", "unknown")
+                        detail = err.get("detail", "")
+                        line = f"  - [{node_id}] {code}: {detail}"
+                        if err.get("retry_after") is not None:
+                            line += f" retry_after={err['retry_after']}"
+                        print(line)
 
             elif args.pipeline_action == "queue":
                 pipeline = await svc.get(args.id)
@@ -611,9 +733,43 @@ def run(args: argparse.Namespace) -> None:
                 else:
                     print(f"Error: {result['error']}")
 
+            elif args.pipeline_action == "filter":
+                pipeline = await svc.get(args.id)
+                if pipeline is None:
+                    print(f"Pipeline id={args.id} not found")
+                    return
+                graph = await svc.get_graph(args.id)
+                if graph is None:
+                    print(f"Pipeline id={args.id} has no graph (legacy pipeline)")
+                    return
+
+                if args.filter_action == "set":
+                    config = _build_message_filter_config(args)
+                    ok = await _upsert_filter_node(svc, args.id, config)
+                    if not ok:
+                        print(f"Failed to update filter for pipeline id={args.id}")
+                        return
+                    print(f"Updated filter for pipeline id={args.id}")
+                    for line in _format_filter_config(config):
+                        print(line)
+
+                elif args.filter_action == "show":
+                    filter_node = _find_filter_node(graph)
+                    if filter_node is None:
+                        print(f"Pipeline id={args.id} has no filter")
+                        return
+                    for line in _format_filter_config(filter_node.config):
+                        print(line)
+
+                elif args.filter_action == "clear":
+                    ok = await _clear_filter_node(svc, args.id)
+                    if not ok:
+                        print(f"Failed to clear filter for pipeline id={args.id}")
+                        return
+                    print(f"Cleared filter for pipeline id={args.id}")
+
             elif args.pipeline_action == "node":
                 from src.cli.node_dsl import NodeSpecError, parse_node_spec
-                from src.models import PipelineNode
 
                 if args.node_action == "add":
                     try:

@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 
 import aiosqlite
 
+from src.database.repositories._transactions import begin_immediate
 from src.models import (
     PhotoAutoUploadJob,
     PhotoBatch,
@@ -253,7 +254,7 @@ class PhotoLoaderRepository:
     async def claim_next_due_item(self, now: datetime) -> PhotoBatchItem | None:
         now_iso = now.astimezone(timezone.utc).isoformat()
         try:
-            await self._db.execute("BEGIN IMMEDIATE")
+            await begin_immediate(self._db)
             cur = await self._db.execute(
                 """
                 SELECT id FROM photo_batch_items

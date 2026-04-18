@@ -17,10 +17,21 @@
 
 <form id="wizard-form" method="post" action="/pipelines/create-wizard" data-busy>
 
-<div class="mb-4">
-    <label class="form-label fw-semibold">Название пайплайна</label>
-    <input class="form-control" type="text" name="name" placeholder="Мой пайплайн" id="wizard-name" required>
-    <div class="form-text">Обязательное поле — заполните до перехода на следующий шаг.</div>
+<div class="row g-3 mb-4">
+    <div class="col-12 col-lg-6">
+        <label class="form-label fw-semibold">Название пайплайна</label>
+        <input class="form-control" type="text" name="name" placeholder="Мой пайплайн" id="wizard-name" required>
+        <div class="form-text">Обязательное поле — заполните до перехода на следующий шаг.</div>
+    </div>
+    <div class="col-6 col-md-3 col-lg-2">
+        <label class="form-label">Аккаунт</label>
+        <select class="form-select" name="account_phone">
+            <option value="">Автовыбор</option>
+            {% for account in accounts %}
+            <option value="{{ account.phone }}">{{ account.phone }}</option>
+            {% endfor %}
+        </select>
+    </div>
 </div>
 
 {# === Step 1: Pipeline Type === #}
@@ -244,17 +255,59 @@
             <input class="form-control" type="text" name="filter_pattern" placeholder="https?://\S+">
         </div>
         <div id="filter-service" class="mb-3 d-none">
-            <div class="form-check">
-                <input class="form-check-input" type="checkbox" name="filter_joined" value="1" checked>
-                <label class="form-check-label">user_joined</label>
-            </div>
-            <div class="form-check">
-                <input class="form-check-input" type="checkbox" name="filter_left" value="1" checked>
-                <label class="form-check-label">user_left</label>
+            <div class="row g-3">
+                <div class="col-12 col-md-6">
+                    <label class="form-label">Message kind</label>
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" name="filter_message_kind_service" value="1" checked>
+                        <label class="form-check-label">service</label>
+                    </div>
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" name="filter_message_kind_regular" value="1">
+                        <label class="form-check-label">regular</label>
+                    </div>
+                </div>
+                <div class="col-12 col-md-6">
+                    <label class="form-label">Sender kind</label>
+                    {% for value in ["user", "anonymous_admin", "channel", "unknown"] %}
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" name="filter_sender_kind_{{ value }}" value="1">
+                        <label class="form-check-label">{{ value }}</label>
+                    </div>
+                    {% endfor %}
+                </div>
+                <div class="col-12">
+                    <label class="form-label">Service actions</label>
+                    <div class="d-flex flex-wrap gap-3">
+                        {% for value in ["join", "leave", "pin", "title_changed", "photo_changed", "migrate", "created", "other"] %}
+                        <label class="form-check">
+                            <input class="form-check-input" type="checkbox" name="filter_service_action_{{ value }}" value="1" {{ "checked" if value in ["join", "leave"] else "" }}>
+                            <span class="form-check-label">{{ value }}</span>
+                        </label>
+                        {% endfor %}
+                    </div>
+                </div>
+                <div class="col-12">
+                    <label class="form-label">Media types</label>
+                    <div class="d-flex flex-wrap gap-3">
+                        {% for value in ["service", "text", "photo", "video", "voice", "audio", "sticker", "document", "poll"] %}
+                        <label class="form-check">
+                            <input class="form-check-input" type="checkbox" name="filter_media_type_{{ value }}" value="1">
+                            <span class="form-check-label">{{ value }}</span>
+                        </label>
+                        {% endfor %}
+                    </div>
+                </div>
+                <div class="col-12 col-md-6">
+                    <div class="form-check mt-2">
+                        <input class="form-check-input" type="checkbox" name="filter_has_text" value="1">
+                        <label class="form-check-label">Только сообщения с текстом</label>
+                    </div>
+                </div>
             </div>
         </div>
         <div id="filter-anonymous" class="mb-3 d-none">
-            <p class="text-muted">Будут отфильтрованы все сообщения от анонимных отправителей.</p>
+            <p class="text-muted">Будут отфильтрованы сообщения c `sender_kind=anonymous_admin`.</p>
         </div>
 
         <h5 class="mt-4 mb-3">Действие с отфильтрованными</h5>
@@ -653,12 +706,34 @@
             } else if (ft === "regex") {
                 filterConfig = { type: "regex", pattern: document.querySelector('[name="filter_pattern"]').value };
             } else if (ft === "service_message") {
-                var stypes = [];
-                if (document.querySelector('[name="filter_joined"]').checked) stypes.push("user_joined");
-                if (document.querySelector('[name="filter_left"]').checked) stypes.push("user_left");
-                filterConfig = { type: "service_message", service_types: stypes };
+                var messageKinds = [];
+                if (document.querySelector('[name="filter_message_kind_service"]').checked) messageKinds.push("service");
+                if (document.querySelector('[name="filter_message_kind_regular"]').checked) messageKinds.push("regular");
+                var serviceActions = [];
+                ["join", "leave", "pin", "title_changed", "photo_changed", "migrate", "created", "other"].forEach(function(value) {
+                    var el = document.querySelector('[name="filter_service_action_' + value + '"]');
+                    if (el && el.checked) serviceActions.push(value);
+                });
+                var senderKinds = [];
+                ["user", "anonymous_admin", "channel", "unknown"].forEach(function(value) {
+                    var el = document.querySelector('[name="filter_sender_kind_' + value + '"]');
+                    if (el && el.checked) senderKinds.push(value);
+                });
+                var mediaTypes = [];
+                ["service", "text", "photo", "video", "voice", "audio", "sticker", "document", "poll"].forEach(function(value) {
+                    var el = document.querySelector('[name="filter_media_type_' + value + '"]');
+                    if (el && el.checked) mediaTypes.push(value);
+                });
+                filterConfig = {
+                    type: "message_filter",
+                    message_kinds: messageKinds,
+                    service_actions: serviceActions,
+                    sender_kinds: senderKinds,
+                    media_types: mediaTypes,
+                    has_text: document.querySelector('[name="filter_has_text"]').checked ? true : null
+                };
             } else {
-                filterConfig = { type: "anonymous_sender" };
+                filterConfig = { type: "message_filter", sender_kinds: ["anonymous_admin"] };
             }
             nodes.push({ id: "filter_1", type: "filter", name: "Фильтр", config: filterConfig, position: { x: 220, y: 0 } });
             edges.push({ from: lastSourceId, to: "filter_1" });
@@ -680,7 +755,7 @@
             edges.push({ from: "filter_1", to: "action_1" });
 
         } else if (pipelineType === "cleanup") {
-            nodes.push({ id: "filter_1", type: "filter", name: "Фильтр join/leave", config: { type: "service_message", service_types: ["user_joined", "user_left"] }, position: { x: 220, y: 0 } });
+            nodes.push({ id: "filter_1", type: "filter", name: "Фильтр join/leave", config: { type: "message_filter", message_kinds: ["service"], service_actions: ["join", "leave"] }, position: { x: 220, y: 0 } });
             edges.push({ from: lastSourceId, to: "filter_1" });
             nodes.push({ id: "delete_1", type: "delete_message", name: "Удаление", config: {}, position: { x: 440, y: 0 } });
             edges.push({ from: "filter_1", to: "delete_1" });

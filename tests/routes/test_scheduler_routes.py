@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from src.models import Channel, CollectionTaskStatus, SearchQuery, StatsAllTaskPayload
+from src.models import Channel, CollectionTaskStatus, ContentPipeline, SearchQuery, StatsAllTaskPayload
 
 
 @pytest.fixture
@@ -165,6 +165,40 @@ async def test_scheduler_page_shows_tasks(client):
 
     resp = await client.get("/scheduler/")
     assert resp.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_scheduler_page_shows_processed_message_label_for_pipeline_runs(client):
+    db = client._transport.app.state.db
+
+    pipeline_id = await db.repos.content_pipelines.add(
+        pipeline=ContentPipeline(name="Reaction Pipeline", prompt_template=".", publish_mode="moderated"),
+        source_channel_ids=[],
+        targets=[],
+    )
+    run_id = await db.repos.generation_runs.create_run(pipeline_id, ".")
+    await db.repos.generation_runs.save_result(
+        run_id,
+        "",
+        {"result_kind": "processed_messages", "result_count": 3, "action_counts": {"react": 3}},
+    )
+    await db.repos.tasks.create_generic_task(
+        task_type="pipeline_run",
+        title="Reaction Pipeline",
+        payload={"task_kind": "pipeline_run", "pipeline_id": pipeline_id, "dry_run": False, "since_hours": 24.0},
+    )
+    tasks = await db.get_collection_tasks(limit=5)
+    task_id = next(t.id for t in tasks if t.note is None and t.task_type.value == "pipeline_run")
+    await db.repos.tasks.update_collection_task(
+        task_id,
+        CollectionTaskStatus.COMPLETED,
+        messages_collected=3,
+        note=f"Pipeline run id={run_id}",
+    )
+
+    resp = await client.get("/scheduler/")
+    assert resp.status_code == 200
+    assert "Обработано" in resp.text
 
 
 @pytest.mark.asyncio
@@ -557,3 +591,254 @@ async def test_dry_run_excludes_disabled_scheduler_job(client):
     assert resp.status_code == 200
     assert "enabled_job_query" in resp.text
     assert "disabled_job_query" not in resp.text
+
+
+# ── Issue #463: semantic scheduler cell assertions ───────────────────────────
+
+
+async def _seed_pipeline_run_for_scheduler(
+    db,
+    *,
+    pipeline_id: int = 1,
+    generated_text: str = "",
+    metadata: dict | None = None,
+    messages_collected: int = 0,
+) -> int:
+    """Seed a completed pipeline_run task + generation_run; return task_id."""
+    from src.models import CollectionTaskStatus, CollectionTaskType, PipelineRunTaskPayload
+
+    run_id = await db.repos.generation_runs.create_run(pipeline_id, "prompt")
+    await db.repos.generation_runs.save_result(run_id, generated_text, metadata or {})
+
+    task_id = await db.repos.tasks.create_generic_task(
+        CollectionTaskType.PIPELINE_RUN,
+        payload=PipelineRunTaskPayload(pipeline_id=pipeline_id),
+    )
+    await db.repos.tasks.update_collection_task(
+        task_id,
+        CollectionTaskStatus.COMPLETED,
+        messages_collected=messages_collected,
+        note=f"Pipeline run id={run_id}",
+    )
+    return task_id
+
+
+def _find_scheduler_row_by_task_id(soup, task_id):
+    """Find a scheduler table row for the given task_id.
+
+    For running/pending tasks, matches the cancel-form action.
+    For completed tasks (no form), falls back to searching the /pipelines/ links
+    or other task-id-bearing attributes. If none, returns None.
+    """
+    form = soup.find(
+        "form",
+        attrs={
+            "action": lambda v: v is not None and f"/scheduler/tasks/{task_id}/cancel" in v
+        },
+    )
+    if form:
+        return form.find_parent("tr")
+    # Completed tasks have no cancel form — fall back to rows where the task
+    # metadata is embedded elsewhere. The current template does not stamp a
+    # data-task-id, so we can't locate by id alone for COMPLETED rows. Callers
+    # should assert on page-level text in that case.
+    return None
+
+
+def _scheduler_desktop_rows(soup):
+    """Return all <tr> rows inside the Tasks desktop table."""
+    # The tasks table is preceded by card-header "Задачи"; select tbody rows.
+    tables = soup.select("table.tga-table-striped")
+    rows: list = []
+    for table in tables:
+        tbody = table.find("tbody")
+        if tbody is None:
+            continue
+        rows.extend(tbody.find_all("tr"))
+    return rows
+
+
+def _pipeline_row(soup):
+    """Return the <tr> whose first <td> badge text equals 'pipeline_run' label.
+
+    The task-type badge is rendered via `task_type_label(t)` in the template;
+    for PIPELINE_RUN that returns a Russian label. We look for rows whose first
+    cell contains any of the expected labels.
+    """
+    for row in _scheduler_desktop_rows(soup):
+        tds = row.find_all("td")
+        if not tds:
+            continue
+        first_text = tds[0].get_text(strip=True, separator=" ")
+        if "pipeline" in first_text.lower() or "пайплайн" in first_text.lower():
+            return row
+    return None
+
+
+def _non_pipeline_rows(soup):
+    return [
+        r
+        for r in _scheduler_desktop_rows(soup)
+        if (
+            r.find_all("td")
+            and "pipeline" not in r.find_all("td")[0].get_text(strip=True).lower()
+            and "пайплайн" not in r.find_all("td")[0].get_text(strip=True).lower()
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_scheduler_renders_processed_label_for_action_only_run(base_app, route_client):
+    """Action-only pipeline run should render «Обработано» label + action count."""
+    from bs4 import BeautifulSoup
+
+    _, db, _ = base_app
+    await _seed_pipeline_run_for_scheduler(
+        db,
+        pipeline_id=1,
+        generated_text="",
+        metadata={
+            "citations": [],
+            "action_counts": {"react": 5},
+            "result_kind": "processed_messages",
+            "result_count": 5,
+        },
+        messages_collected=5,
+    )
+
+    resp = await route_client.get("/scheduler/?status=all")
+    assert resp.status_code == 200
+
+    soup = BeautifulSoup(resp.text, "html.parser")
+    row = _pipeline_row(soup)
+    assert row is not None, "scheduler must render the pipeline_run task row"
+    result_cell_text = row.find_all("td")[3].get_text(strip=True, separator=" ")
+    assert "Обработано" in result_cell_text, (
+        f"Expected 'Обработано' in result cell, got: {result_cell_text!r}"
+    )
+    assert "5" in result_cell_text
+
+
+@pytest.mark.asyncio
+async def test_scheduler_renders_generation_label_for_generation_run(base_app, route_client):
+    from bs4 import BeautifulSoup
+
+    _, db, _ = base_app
+    await _seed_pipeline_run_for_scheduler(
+        db,
+        pipeline_id=1,
+        generated_text="draft",
+        metadata={
+            "citations": [{"id": 1}, {"id": 2}, {"id": 3}],
+            "result_kind": "generated_items",
+            "result_count": 3,
+        },
+        messages_collected=3,
+    )
+
+    resp = await route_client.get("/scheduler/?status=all")
+    assert resp.status_code == 200
+
+    soup = BeautifulSoup(resp.text, "html.parser")
+    row = _pipeline_row(soup)
+    assert row is not None
+    result_cell_text = row.find_all("td")[3].get_text(strip=True, separator=" ")
+    assert "Сгенерировано" in result_cell_text, (
+        f"Expected 'Сгенерировано' in result cell, got: {result_cell_text!r}"
+    )
+    assert "3" in result_cell_text
+
+
+@pytest.mark.asyncio
+async def test_scheduler_shows_warning_badge_when_run_has_node_errors(base_app, route_client):
+    """Issue #463: when metadata.node_errors is non-empty, scheduler must render
+    a warning badge with count next to result_count, so users see why 0.
+    """
+    from bs4 import BeautifulSoup
+
+    _, db, _ = base_app
+    await _seed_pipeline_run_for_scheduler(
+        db,
+        pipeline_id=1,
+        generated_text="",
+        metadata={
+            "citations": [],
+            "result_kind": "processed_messages",
+            "result_count": 0,
+            "node_errors": [
+                {"node_id": "react", "code": "flood_wait", "detail": "..."}
+            ],
+        },
+        messages_collected=0,
+    )
+
+    resp = await route_client.get("/scheduler/?status=all")
+    assert resp.status_code == 200
+    soup = BeautifulSoup(resp.text, "html.parser")
+    row = _pipeline_row(soup)
+    assert row is not None
+    cell_html = str(row.find_all("td")[3])
+    assert "⚠" in cell_html or "pipe-run-warning" in cell_html
+
+
+@pytest.mark.asyncio
+async def test_scheduler_mixed_page_non_pipeline_tasks_unaffected(base_app, route_client):
+    """When a pipeline_run coexists with a plain non-pipeline task on /scheduler,
+    the non-pipeline row must keep its plain messages_collected display
+    (no spurious «Обработано»/«Сгенерировано» labels).
+    """
+    from bs4 import BeautifulSoup
+
+    from src.models import CollectionTaskStatus, CollectionTaskType
+
+    _, db, _ = base_app
+
+    # Pipeline-run task (generation semantics).
+    await _seed_pipeline_run_for_scheduler(
+        db,
+        pipeline_id=1,
+        generated_text="draft",
+        metadata={
+            "citations": [{"id": 1}, {"id": 2}],
+            "result_kind": "generated_items",
+            "result_count": 2,
+        },
+        messages_collected=2,
+    )
+
+    # Plain non-pipeline task sharing the same scheduler page.
+    plain_task_id = await db.repos.tasks.create_generic_task(
+        CollectionTaskType.STATS_ALL,
+    )
+    await db.repos.tasks.update_collection_task(
+        plain_task_id,
+        CollectionTaskStatus.COMPLETED,
+        messages_collected=42,
+    )
+
+    resp = await route_client.get("/scheduler/?status=all")
+    assert resp.status_code == 200
+
+    soup = BeautifulSoup(resp.text, "html.parser")
+    pipe_row = _pipeline_row(soup)
+    plain_rows = _non_pipeline_rows(soup)
+
+    assert pipe_row is not None, "pipeline row missing"
+    assert plain_rows, "plain (non-pipeline) row missing"
+    pipe_text = pipe_row.find_all("td")[3].get_text(strip=True, separator=" ")
+    # pick the plain row whose result cell contains '42' (our seeded value)
+    plain_text = None
+    for r in plain_rows:
+        cell = r.find_all("td")[3].get_text(strip=True, separator=" ")
+        if "42" in cell:
+            plain_text = cell
+            break
+    assert plain_text is not None, (
+        "Could not find non-pipeline row with messages_collected=42"
+    )
+
+    assert "Сгенерировано" in pipe_text
+    # Plain (non-pipeline) row must NOT inherit the pipeline-specific labels.
+    assert "Сгенерировано" not in plain_text
+    assert "Обработано" not in plain_text
+    assert "42" in plain_text

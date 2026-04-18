@@ -12,7 +12,11 @@ from src.models import (
     Channel,
     ContentPipeline,
     GenerationRun,
+    PipelineEdge,
     PipelineGenerationBackend,
+    PipelineGraph,
+    PipelineNode,
+    PipelineNodeType,
     PipelinePublishMode,
     PipelineTarget,
 )
@@ -237,6 +241,125 @@ def test_pipeline_generate_prints_draft_preview(tmp_path, cli_init_patch, capsys
     assert "Created generation run id=123" in out
     assert "--- DRAFT PREVIEW ---" in out
     assert "Generated draft for CLI" in out
+
+
+def _make_simple_dag_pipeline(db: Database, name: str = "React DAG") -> int:
+    return asyncio.run(
+        db.repos.content_pipelines.add(
+            pipeline=ContentPipeline(
+                name=name,
+                prompt_template=".",
+                publish_mode=PipelinePublishMode.MODERATED,
+                generation_backend=PipelineGenerationBackend.CHAIN,
+                pipeline_json=PipelineGraph(
+                    nodes=[
+                        PipelineNode(
+                            id="source_1",
+                            type=PipelineNodeType.SOURCE,
+                            name="Источник",
+                            config={"channel_ids": [1001]},
+                        ),
+                        PipelineNode(
+                            id="fetch_1",
+                            type=PipelineNodeType.FETCH_MESSAGES,
+                            name="Загрузка сообщений",
+                            config={},
+                        ),
+                        PipelineNode(
+                            id="react_1",
+                            type=PipelineNodeType.REACT,
+                            name="Реакция",
+                            config={"emoji": "👍"},
+                        ),
+                    ],
+                    edges=[
+                        PipelineEdge(from_node="source_1", to_node="fetch_1"),
+                        PipelineEdge(from_node="fetch_1", to_node="react_1"),
+                    ],
+                ),
+            ),
+            source_channel_ids=[1001],
+            targets=[],
+        )
+    )
+
+
+def test_pipeline_filter_set_show_clear(tmp_path, cli_init_patch, capsys):
+    db_path = str(tmp_path / "cli_pipeline_filter.db")
+    db = Database(db_path)
+    asyncio.run(db.initialize())
+    _add_pipeline_prereqs(db)
+    pipeline_id = _make_simple_dag_pipeline(db)
+
+    with cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS):
+        from src.cli.commands.pipeline import run
+
+        run(
+            _ns(
+                pipeline_action="filter",
+                filter_action="set",
+                id=pipeline_id,
+                message_kinds=["service"],
+                service_actions=["join"],
+                media_types=[],
+                sender_kinds=[],
+                keywords=[],
+                regex=None,
+                forwarded=None,
+                has_text=None,
+            )
+        )
+        run(_ns(pipeline_action="filter", filter_action="show", id=pipeline_id))
+        run(_ns(pipeline_action="filter", filter_action="clear", id=pipeline_id))
+
+    out = capsys.readouterr().out
+    assert f"Updated filter for pipeline id={pipeline_id}" in out
+    assert "service_actions=join" in out
+    assert f"Cleared filter for pipeline id={pipeline_id}" in out
+
+    verify_db = Database(db_path)
+    asyncio.run(verify_db.initialize())
+    stored = asyncio.run(verify_db.repos.content_pipelines.get_by_id(pipeline_id))
+    asyncio.run(verify_db.close())
+    assert stored is not None
+    assert stored.pipeline_json is not None
+    node_ids = {node.id for node in stored.pipeline_json.nodes}
+    assert "filter_1" not in node_ids
+    edge_pairs = {(edge.from_node, edge.to_node) for edge in stored.pipeline_json.edges}
+    assert ("fetch_1", "react_1") in edge_pairs
+
+
+def test_pipeline_show_includes_filter_summary(tmp_path, cli_init_patch, capsys):
+    db_path = str(tmp_path / "cli_pipeline_show_filter.db")
+    db = Database(db_path)
+    asyncio.run(db.initialize())
+    _add_pipeline_prereqs(db)
+    pipeline_id = _make_simple_dag_pipeline(db, name="Show Filter")
+
+    with cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS):
+        from src.cli.commands.pipeline import run
+
+        run(
+            _ns(
+                pipeline_action="filter",
+                filter_action="set",
+                id=pipeline_id,
+                message_kinds=["service"],
+                service_actions=["join"],
+                media_types=[],
+                sender_kinds=[],
+                keywords=[],
+                regex=None,
+                forwarded=None,
+                has_text=None,
+            )
+        )
+        run(_ns(pipeline_action="show", id=pipeline_id))
+
+    out = capsys.readouterr().out
+    assert "name=Show Filter" in out
+    assert "filter:" in out
+    assert "service_actions=join" in out
 
 
 def test_pipeline_generate_wires_agent_manager_for_deep_agents(tmp_path, cli_init_patch, capsys):
@@ -560,7 +683,12 @@ def test_pipeline_delete(tmp_path, cli_init_patch, capsys):
 
 
 def test_pipeline_run_with_preview(tmp_path, cli_init_patch, capsys):
-    """Test run action with preview flag."""
+    """Test run action with preview flag.
+
+    Since the CLI `run` now flows through ContentGenerationService →
+    _run_generation (RAG for pipelines without pipeline_json), we patch
+    _run_generation directly to return a deterministic payload.
+    """
     db_path = str(tmp_path / "cli_pipeline_run_preview.db")
     db = Database(db_path)
     asyncio.run(db.initialize())
@@ -586,16 +714,21 @@ def test_pipeline_run_with_preview(tmp_path, cli_init_patch, capsys):
         )
     )
 
-    class FakeGenerationService:
-        def __init__(self, engine, provider_callable=None):
-            pass
-
-        async def generate(self, **kwargs):
-            return {"generated_text": "Preview content here", "citations": []}
+    async def fake_run_generation(self, pipeline, model, max_tokens, temperature, since_hours=24.0):
+        return {
+            "generated_text": "Preview content here",
+            "citations": [{"id": 1}],
+            "publish_mode": None,
+            "result_kind": "generated_items",
+            "result_count": 1,
+        }
 
     with (
         cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS),
-        patch("src.cli.commands.pipeline.GenerationService", FakeGenerationService),
+        patch(
+            "src.services.content_generation_service.ContentGenerationService._run_generation",
+            fake_run_generation,
+        ),
         patch("src.services.provider_service.AgentProviderService.has_providers", return_value=True),
     ):
         from src.cli.commands.pipeline import run
@@ -795,6 +928,87 @@ def test_pipeline_run_show_not_found(tmp_path, cli_init_patch, capsys):
 
     out = capsys.readouterr().out
     assert "not found" in out
+
+
+def test_pipeline_run_show_prints_result_semantics(tmp_path, cli_init_patch, capsys):
+    db_path = str(tmp_path / "cli_pipeline_runshow_result.db")
+    db = Database(db_path)
+    asyncio.run(db.initialize())
+    _add_pipeline_prereqs(db)
+    import src.cli.runtime  # noqa: F401
+
+    pipeline_id = asyncio.run(
+        db.repos.content_pipelines.add(
+            pipeline=ContentPipeline(
+                name="Reaction Pipeline",
+                prompt_template=".",
+                pipeline_json=PipelineGraph(
+                    nodes=[PipelineNode(id="react", type=PipelineNodeType.REACT, name="React", config={})],
+                    edges=[],
+                ),
+                publish_mode=PipelinePublishMode.MODERATED,
+            ),
+            source_channel_ids=[1001],
+            targets=[],
+        )
+    )
+    run_id = asyncio.run(db.repos.generation_runs.create_run(pipeline_id, "."))
+    asyncio.run(
+        db.repos.generation_runs.save_result(
+            run_id,
+            "",
+            {
+                "result_kind": "processed_messages",
+                "result_count": 4,
+                "action_counts": {"react": 4},
+            },
+        )
+    )
+
+    with cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS):
+        from src.cli.commands.pipeline import run
+
+        run(_ns(pipeline_action="run-show", run_id=run_id))
+
+    out = capsys.readouterr().out
+    assert "result_kind=processed_messages" in out
+    assert "result_count=4" in out
+
+
+def test_pipeline_runs_prints_result_columns(tmp_path, cli_init_patch, capsys):
+    db_path = str(tmp_path / "cli_pipeline_runs_result.db")
+    db = Database(db_path)
+    asyncio.run(db.initialize())
+    _add_pipeline_prereqs(db)
+    pipeline_id = asyncio.run(
+        db.repos.content_pipelines.add(
+            pipeline=ContentPipeline(
+                name="Runs Result Pipeline",
+                prompt_template=".",
+                publish_mode=PipelinePublishMode.MODERATED,
+            ),
+            source_channel_ids=[1001],
+            targets=[],
+        )
+    )
+    run_id = asyncio.run(db.repos.generation_runs.create_run(pipeline_id, "prompt"))
+    asyncio.run(
+        db.repos.generation_runs.save_result(
+            run_id,
+            "",
+            {"result_kind": "processed_messages", "result_count": 2},
+        )
+    )
+
+    with cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS):
+        from src.cli.commands.pipeline import run
+
+        run(_ns(pipeline_action="runs", id=pipeline_id, limit=20, status=None))
+
+    out = capsys.readouterr().out
+    assert "Result" in out
+    assert "processed_messages" in out
+    assert "2" in out
 
 
 def test_pipeline_approve_not_found(tmp_path, cli_init_patch, capsys):
@@ -1623,3 +1837,447 @@ def test_pipeline_add_json_file(tmp_path, cli_init_patch, capsys):
     asyncio.run(verify_db.close())
     assert len(pipelines) == 1
     assert pipelines[0].pipeline_json is not None
+
+
+# ── Issue #463: runs/run-show semantic display ───────────────────────────────
+
+
+def _add_pipeline_and_return_id(db: Database, name: str = "Digest") -> int:
+    _add_pipeline_prereqs(db)
+    return asyncio.run(
+        db.repos.content_pipelines.add(
+            pipeline=ContentPipeline(
+                name=name,
+                prompt_template="Summarize {source_messages}",
+                publish_mode="moderated",
+            ),
+            source_channel_ids=[1001],
+            targets=[
+                PipelineTarget(
+                    pipeline_id=0,
+                    phone="+100",
+                    dialog_id=77,
+                    title="Target A",
+                    dialog_type="channel",
+                )
+            ],
+        )
+    )
+
+
+def _seed_generation_run(db: Database, *, pipeline_id: int, generated_text: str, metadata: dict) -> int:
+    """Insert a generation run with explicit generated_text/metadata via repo API."""
+    run_id = asyncio.run(db.repos.generation_runs.create_run(pipeline_id, "prompt"))
+    asyncio.run(db.repos.generation_runs.save_result(run_id, generated_text, metadata))
+    return run_id
+
+
+def test_pipeline_runs_shows_semantic_result_for_generation(tmp_path, cli_init_patch, capsys):
+    db_path = str(tmp_path / "cli_runs_gen.db")
+    db = Database(db_path)
+    asyncio.run(db.initialize())
+    pipeline_id = _add_pipeline_and_return_id(db, name="Gen")
+    _seed_generation_run(
+        db,
+        pipeline_id=pipeline_id,
+        generated_text="draft",
+        metadata={
+            "citations": [{"id": 1}, {"id": 2}, {"id": 3}],
+            "result_kind": "generated_items",
+            "result_count": 3,
+        },
+    )
+    asyncio.run(db.close())
+
+    verify_db = Database(db_path)
+    asyncio.run(verify_db.initialize())
+    with cli_init_patch(verify_db, *_PIPELINE_INIT_DB_TARGETS):
+        from src.cli.commands.pipeline import run
+
+        run(_ns(pipeline_action="runs", id=pipeline_id, limit=10, status=None))
+    asyncio.run(verify_db.close())
+
+    out = capsys.readouterr().out
+    assert "generated_items:3" in out
+    assert "completed" in out
+
+
+def test_pipeline_runs_shows_semantic_result_for_action_only(tmp_path, cli_init_patch, capsys):
+    db_path = str(tmp_path / "cli_runs_act.db")
+    db = Database(db_path)
+    asyncio.run(db.initialize())
+    pipeline_id = _add_pipeline_and_return_id(db, name="ActOnly")
+    _seed_generation_run(
+        db,
+        pipeline_id=pipeline_id,
+        generated_text="",
+        metadata={
+            "citations": [],
+            "action_counts": {"react": 5},
+            "result_kind": "processed_messages",
+            "result_count": 5,
+        },
+    )
+    asyncio.run(db.close())
+
+    verify_db = Database(db_path)
+    asyncio.run(verify_db.initialize())
+    with cli_init_patch(verify_db, *_PIPELINE_INIT_DB_TARGETS):
+        from src.cli.commands.pipeline import run
+
+        run(_ns(pipeline_action="runs", id=pipeline_id, limit=10, status=None))
+    asyncio.run(verify_db.close())
+
+    out = capsys.readouterr().out
+    assert "processed_messages:5" in out
+
+
+def test_pipeline_run_show_prints_semantic_fields_when_text_empty(tmp_path, cli_init_patch, capsys):
+    """Regression #463: run_show must expose result_kind/result_count even when
+    generated_text is empty (action-only run).
+    """
+    db_path = str(tmp_path / "cli_show_empty.db")
+    db = Database(db_path)
+    asyncio.run(db.initialize())
+    pipeline_id = _add_pipeline_and_return_id(db, name="ShowEmpty")
+    run_id = _seed_generation_run(
+        db,
+        pipeline_id=pipeline_id,
+        generated_text="",
+        metadata={
+            "citations": [],
+            "action_counts": {"react": 7},
+            "result_kind": "processed_messages",
+            "result_count": 7,
+        },
+    )
+    asyncio.run(db.close())
+
+    verify_db = Database(db_path)
+    asyncio.run(verify_db.initialize())
+    with cli_init_patch(verify_db, *_PIPELINE_INIT_DB_TARGETS):
+        from src.cli.commands.pipeline import run as cli_run
+
+        cli_run(_ns(pipeline_action="run-show", run_id=run_id))
+    asyncio.run(verify_db.close())
+
+    out = capsys.readouterr().out
+    assert "result_kind=processed_messages" in out
+    assert "result_count=7" in out
+    assert "result_label=Обработано" in out
+    assert "GENERATED TEXT" not in out  # no preview block for empty text
+
+
+def test_pipeline_run_show_prints_node_errors(tmp_path, cli_init_patch, capsys):
+    """Regression #463: run-show must surface metadata.node_errors so users
+    can diagnose why an action-only pipeline produced result_count=0.
+    """
+    db_path = str(tmp_path / "cli_show_errs.db")
+    db = Database(db_path)
+    asyncio.run(db.initialize())
+    pipeline_id = _add_pipeline_and_return_id(db, name="Errs")
+    run_id = _seed_generation_run(
+        db,
+        pipeline_id=pipeline_id,
+        generated_text="",
+        metadata={
+            "citations": [],
+            "result_kind": "processed_messages",
+            "result_count": 0,
+            "node_errors": [
+                {
+                    "node_id": "react_1",
+                    "code": "flood_wait",
+                    "detail": "FloodWaitError: 120 seconds",
+                    "retry_after": 120,
+                },
+                {
+                    "node_id": "react_1",
+                    "code": "chat_write_forbidden",
+                    "detail": "ChatWriteForbiddenError on service message",
+                },
+            ],
+        },
+    )
+    asyncio.run(db.close())
+
+    verify_db = Database(db_path)
+    asyncio.run(verify_db.initialize())
+    with cli_init_patch(verify_db, *_PIPELINE_INIT_DB_TARGETS):
+        from src.cli.commands.pipeline import run as cli_run
+
+        cli_run(_ns(pipeline_action="run-show", run_id=run_id))
+    asyncio.run(verify_db.close())
+
+    out = capsys.readouterr().out
+    assert "Ошибки нод:" in out
+    assert "flood_wait" in out
+    assert "chat_write_forbidden" in out
+    assert "retry_after=120" in out
+    assert "react_1" in out
+
+
+def test_pipeline_run_show_no_errors_section_when_clean(tmp_path, cli_init_patch, capsys):
+    """A clean run must not print an empty Ошибки нод: section."""
+    db_path = str(tmp_path / "cli_show_clean.db")
+    db = Database(db_path)
+    asyncio.run(db.initialize())
+    pipeline_id = _add_pipeline_and_return_id(db, name="Clean")
+    run_id = _seed_generation_run(
+        db,
+        pipeline_id=pipeline_id,
+        generated_text="hi",
+        metadata={
+            "citations": [{"id": 1}],
+            "result_kind": "generated_items",
+            "result_count": 1,
+        },
+    )
+    asyncio.run(db.close())
+
+    verify_db = Database(db_path)
+    asyncio.run(verify_db.initialize())
+    with cli_init_patch(verify_db, *_PIPELINE_INIT_DB_TARGETS):
+        from src.cli.commands.pipeline import run as cli_run
+
+        cli_run(_ns(pipeline_action="run-show", run_id=run_id))
+    asyncio.run(verify_db.close())
+
+    out = capsys.readouterr().out
+    assert "Ошибки нод" not in out
+
+
+def test_pipeline_run_show_generation_case_shows_text_preview(tmp_path, cli_init_patch, capsys):
+    db_path = str(tmp_path / "cli_show_gen.db")
+    db = Database(db_path)
+    asyncio.run(db.initialize())
+    pipeline_id = _add_pipeline_and_return_id(db, name="ShowGen")
+    run_id = _seed_generation_run(
+        db,
+        pipeline_id=pipeline_id,
+        generated_text="hello world",
+        metadata={
+            "citations": [{"id": 1}, {"id": 2}],
+            "result_kind": "generated_items",
+            "result_count": 2,
+        },
+    )
+    asyncio.run(db.close())
+
+    verify_db = Database(db_path)
+    asyncio.run(verify_db.initialize())
+    with cli_init_patch(verify_db, *_PIPELINE_INIT_DB_TARGETS):
+        from src.cli.commands.pipeline import run as cli_run
+
+        cli_run(_ns(pipeline_action="run-show", run_id=run_id))
+    asyncio.run(verify_db.close())
+
+    out = capsys.readouterr().out
+    assert "result_kind=generated_items" in out
+    assert "result_count=2" in out
+    assert "hello world" in out
+
+
+# ── Regression: CLI `pipeline run` must use ContentGenerationService ──────────
+
+
+def test_pipeline_run_action_only_records_result_count(tmp_path, cli_init_patch, capsys):
+    """Regression: `pipeline run <id>` on an action-only pipeline must exercise
+    the pipeline graph (PipelineExecutor), so action_counts accumulate and
+    result_count reflects the number of actions — NOT zero.
+
+    Prior bug: CLI called GenerationService (legacy RAG) directly, which had no
+    concept of action nodes, so action-only pipelines always saved result_count=0.
+    """
+    from unittest.mock import AsyncMock, patch
+
+    from src.services.pipeline_result import increment_action_count
+
+    db_path = str(tmp_path / "cli_run_action.db")
+    db = Database(db_path)
+    asyncio.run(db.initialize())
+    _add_pipeline_prereqs(db)
+
+    graph = PipelineGraph(
+        nodes=[
+            PipelineNode(id="src", type=PipelineNodeType.SOURCE, name="src", config={}),
+            PipelineNode(id="react", type=PipelineNodeType.REACT, name="react", config={}),
+        ],
+        edges=[PipelineEdge(from_node="src", to_node="react")],
+    )
+    pipeline_id = asyncio.run(
+        db.repos.content_pipelines.add(
+            pipeline=ContentPipeline(
+                name="ActionOnlyCLI",
+                prompt_template="",
+                publish_mode="moderated",
+                pipeline_json=graph,
+            ),
+            source_channel_ids=[1001],
+            targets=[
+                PipelineTarget(
+                    pipeline_id=0,
+                    phone="+100",
+                    dialog_id=77,
+                    title="Target A",
+                    dialog_type="channel",
+                )
+            ],
+        )
+    )
+    asyncio.run(db.close())
+
+    # Fake handlers: SOURCE is a no-op, REACT bumps the action counter 3 times
+    # (as if 3 messages got a reaction). This mirrors ReactHandler's contract
+    # without touching Telegram.
+    def fake_get_handler(node_type):
+        h = AsyncMock()
+
+        async def _execute(config, ctx, services):
+            if node_type == PipelineNodeType.REACT:
+                increment_action_count(ctx, "react", amount=3)
+
+        h.execute.side_effect = _execute
+        return h
+
+    verify_db = Database(db_path)
+    asyncio.run(verify_db.initialize())
+    with (
+        cli_init_patch(verify_db, *_PIPELINE_INIT_DB_TARGETS),
+        patch(
+            "src.services.pipeline_executor.get_handler",
+            side_effect=fake_get_handler,
+        ),
+    ):
+        from src.cli.commands.pipeline import run
+
+        run(
+            _ns(
+                pipeline_action="run",
+                id=pipeline_id,
+                preview=False,
+                publish=False,
+                limit=20,
+                max_tokens=256,
+                temperature=0.0,
+            )
+        )
+    asyncio.run(verify_db.close())
+
+    verify_db2 = Database(db_path)
+    asyncio.run(verify_db2.initialize())
+    runs = asyncio.run(
+        verify_db2.repos.generation_runs.list_by_pipeline(pipeline_id, limit=10)
+    )
+    asyncio.run(verify_db2.close())
+    assert runs, "pipeline run must create a generation_run row"
+    run_row = runs[0]
+    assert run_row.status == "completed", (
+        f"expected status=completed, got {run_row.status!r}"
+    )
+    assert run_row.result_kind == "processed_messages", (
+        f"expected processed_messages, got {run_row.result_kind!r}"
+    )
+    assert run_row.result_count == 3, (
+        f"expected result_count=3 from 3 reactions, got {run_row.result_count}"
+    )
+    assert (run_row.metadata or {}).get("action_counts") == {"react": 3}
+
+
+def test_pipeline_run_generation_pipeline_preserves_result_metadata(
+    tmp_path, cli_init_patch, capsys
+):
+    """Sibling to the action-only regression: generation-flavour pipelines run
+    through the graph and end up with generated_items metadata as well (not the
+    bare {citations: []} that legacy RAG wrote).
+    """
+    from unittest.mock import AsyncMock, patch
+
+    db_path = str(tmp_path / "cli_run_gen.db")
+    db = Database(db_path)
+    asyncio.run(db.initialize())
+    _add_pipeline_prereqs(db)
+
+    graph = PipelineGraph(
+        nodes=[
+            PipelineNode(id="src", type=PipelineNodeType.SOURCE, name="src", config={}),
+            PipelineNode(
+                id="gen", type=PipelineNodeType.LLM_GENERATE, name="gen", config={}
+            ),
+        ],
+        edges=[PipelineEdge(from_node="src", to_node="gen")],
+    )
+    pipeline_id = asyncio.run(
+        db.repos.content_pipelines.add(
+            pipeline=ContentPipeline(
+                name="GenCLI",
+                prompt_template="hi",
+                llm_model="test-model",
+                publish_mode="moderated",
+                pipeline_json=graph,
+            ),
+            source_channel_ids=[1001],
+            targets=[
+                PipelineTarget(
+                    pipeline_id=0,
+                    phone="+100",
+                    dialog_id=77,
+                    title="Target A",
+                    dialog_type="channel",
+                )
+            ],
+        )
+    )
+    asyncio.run(db.close())
+
+    def fake_get_handler(node_type):
+        h = AsyncMock()
+
+        async def _execute(config, ctx, services):
+            if node_type == PipelineNodeType.LLM_GENERATE:
+                ctx.set_global("generated_text", "hello from graph")
+                ctx.set_global("citations", [{"id": 1}, {"id": 2}])
+
+        h.execute.side_effect = _execute
+        return h
+
+    verify_db = Database(db_path)
+    asyncio.run(verify_db.initialize())
+    with (
+        cli_init_patch(verify_db, *_PIPELINE_INIT_DB_TARGETS),
+        patch(
+            "src.services.pipeline_executor.get_handler",
+            side_effect=fake_get_handler,
+        ),
+        patch(
+            "src.services.provider_service.AgentProviderService.has_providers",
+            lambda self: True,
+        ),
+    ):
+        from src.cli.commands.pipeline import run
+
+        run(
+            _ns(
+                pipeline_action="run",
+                id=pipeline_id,
+                preview=False,
+                publish=False,
+                limit=20,
+                max_tokens=256,
+                temperature=0.0,
+            )
+        )
+    asyncio.run(verify_db.close())
+
+    verify_db2 = Database(db_path)
+    asyncio.run(verify_db2.initialize())
+    runs = asyncio.run(
+        verify_db2.repos.generation_runs.list_by_pipeline(pipeline_id, limit=10)
+    )
+    asyncio.run(verify_db2.close())
+    assert runs
+    run_row = runs[0]
+    assert run_row.status == "completed"
+    assert run_row.generated_text == "hello from graph"
+    assert run_row.result_kind == "generated_items"
+    assert run_row.result_count == 2

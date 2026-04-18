@@ -212,6 +212,9 @@
                             <i class="bi bi-circle text-secondary" title="Неактивен"></i>
                             {% endif %}
                             <strong class="text-truncate">{{ pipeline.name }}</strong>
+                            {% if pipeline.id is not none %}
+                            <span class="badge bg-light text-dark border">ID: {{ pipeline.id }}</span>
+                            {% endif %}
                         </div>
                         <div class="small text-muted">
                             {{ pipeline.generation_backend.value }} / {{ pipeline.publish_mode.value }}

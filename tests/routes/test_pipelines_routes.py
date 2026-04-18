@@ -92,6 +92,17 @@ async def test_pipelines_page_lists_pipeline(client):
 
 
 @pytest.mark.asyncio
+async def test_pipelines_page_shows_pipeline_id(client):
+    await client.post(
+        "/pipelines/add",
+        data={**_ADD_DATA, "name": "Pipeline With Id"},
+    )
+    resp = await client.get("/pipelines/")
+    assert resp.status_code == 200
+    assert "ID: 1" in resp.text
+
+
+@pytest.mark.asyncio
 async def test_toggle_pipeline(client):
     await client.post("/pipelines/add", data=_ADD_DATA)
     resp = await client.post("/pipelines/1/toggle", follow_redirects=False)

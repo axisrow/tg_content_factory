@@ -238,6 +238,7 @@ async def test_content_generate_auto_publish_failure():
     mock_pipeline.id = 1
     mock_pipeline.llm_model = "gpt-4"
     mock_pipeline.publish_mode = MagicMock(value="auto")
+    mock_pipeline.pipeline_json = None
 
     mock_pipeline_bundle = MagicMock()
     mock_pipeline_bundle.get_by_id = AsyncMock(return_value=mock_pipeline)
@@ -315,6 +316,7 @@ async def test_content_publish_with_approved_runs():
 
     mock_pipeline = MagicMock()
     mock_pipeline.id = 1
+    mock_pipeline.pipeline_json = None
     mock_pipeline_bundle = MagicMock()
     mock_pipeline_bundle.get_by_id = AsyncMock(return_value=mock_pipeline)
 
@@ -691,6 +693,7 @@ async def test_content_generate_moderated_mode_no_publish():
     mock_pipeline.id = 1
     mock_pipeline.llm_model = "gpt-4"
     mock_pipeline.publish_mode = MagicMock(value="moderated")
+    mock_pipeline.pipeline_json = None
 
     mock_pipeline_bundle = MagicMock()
     mock_pipeline_bundle.get_by_id = AsyncMock(return_value=mock_pipeline)

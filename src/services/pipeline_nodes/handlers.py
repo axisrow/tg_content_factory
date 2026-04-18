@@ -6,9 +6,54 @@ import logging
 import random
 import re
 
+from src.services.pipeline_filters import filter_messages
 from src.services.pipeline_nodes.base import BaseNodeHandler, NodeContext
+from src.services.pipeline_result import increment_action_count
+
+try:  # telethon is an optional dependency at test-time
+    from telethon.errors import (
+        ChatWriteForbiddenError,
+        FloodWaitError,
+        ReactionInvalidError,
+    )
+except ImportError:  # pragma: no cover — handlers import path used without telethon
+    class FloodWaitError(Exception):  # type: ignore[no-redef]
+        seconds = 0
+
+    class ChatWriteForbiddenError(Exception):  # type: ignore[no-redef]
+        pass
+
+    class ReactionInvalidError(Exception):  # type: ignore[no-redef]
+        pass
+
 
 logger = logging.getLogger(__name__)
+
+
+def _current_node_id(services: dict, default: str = "?") -> str:
+    """Return the node id for the currently-executing handler.
+
+    PipelineExecutor.execute injects ``_current_node_id`` into services right
+    before dispatching each handler so that node-level error records carry the
+    source-of-truth id (issue #463).
+    """
+    value = services.get("_current_node_id")
+    return str(value) if value else default
+
+
+def _resolve_account_phone(account_phone: str | None, services: dict, context: NodeContext) -> str | None:
+    """Return explicit account_phone, or discover one from source channel access map."""
+    if account_phone:
+        return account_phone
+    client_pool = services.get("client_pool")
+    if client_pool is None:
+        return None
+    source_ids = context.get_global("source_channel_ids") or []
+    for cid in source_ids:
+        phone = client_pool.get_phone_for_channel(cid)
+        if phone:
+            return phone
+    return None
 
 
 class SourceHandler(BaseNodeHandler):
@@ -221,46 +266,8 @@ class FilterHandler(BaseNodeHandler):
     """Filter messages by various criteria."""
 
     async def execute(self, node_config: dict, context: NodeContext, services: dict) -> None:
-        filter_type = node_config.get("type", "keywords")
         messages = context.get_global("context_messages", [])
-        filtered = []
-
-        if filter_type == "keywords":
-            keywords = [k.lower() for k in node_config.get("keywords", []) if k]
-            match_links = bool(node_config.get("match_links", False))
-            for m in messages:
-                text_lower = (m.text or "").lower()
-                if match_links and re.search(r"https?://\S+|t\.me/\S+", m.text or ""):
-                    filtered.append(m)
-                elif any(kw in text_lower for kw in keywords):
-                    filtered.append(m)
-
-        elif filter_type == "service_message":
-            service_types = node_config.get("service_types", ["user_joined", "user_left"])
-            for m in messages:
-                text_lower = (m.text or "").lower()
-                if any(st in text_lower for st in service_types):
-                    filtered.append(m)
-
-        elif filter_type == "anonymous_sender":
-            for m in messages:
-                if m.sender_id is None or m.sender_name is None:
-                    filtered.append(m)
-
-        elif filter_type == "regex":
-            pattern_str = node_config.get("pattern", "")
-            if pattern_str:
-                try:
-                    pattern = re.compile(pattern_str, re.IGNORECASE)
-                    for m in messages:
-                        if pattern.search(m.text or ""):
-                            filtered.append(m)
-                except re.error:
-                    logger.warning("FilterHandler: invalid regex pattern: %s", pattern_str)
-
-        else:
-            filtered = messages
-
+        filtered = filter_messages(messages, node_config)
         context.set_global("filtered_messages", filtered)
         context.set_global("context_messages", filtered)
 
@@ -283,26 +290,77 @@ class ReactHandler(BaseNodeHandler):
     """Put a reaction on messages (requires Telegram client)."""
 
     async def execute(self, node_config: dict, context: NodeContext, services: dict) -> None:
+        node_id = _current_node_id(services, default="react")
         client_pool = services.get("client_pool")
         if client_pool is None:
-            logger.warning("ReactHandler: no client_pool, skipping")
+            context.record_error(
+                node_id=node_id,
+                code="no_client_pool",
+                detail="client_pool not available in services",
+            )
+            logger.warning("ReactHandler[%s]: no client_pool, skipping", node_id)
             return
 
         messages = context.get_global("context_messages", [])
         emoji = node_config.get("emoji") or "👍"
         random_emoji_list = node_config.get("random_emojis", [])
+        resolved_phone = _resolve_account_phone(services.get("account_phone"), services, context)
 
         for message in messages:
             acquired_phone: str | None = None
             try:
-                result = await client_pool.get_available_client()
+                if resolved_phone:
+                    result = await client_pool.get_client_by_phone(resolved_phone)
+                else:
+                    result = await client_pool.get_available_client()
                 if result is None:
+                    context.record_error(
+                        node_id=node_id,
+                        code="no_available_client",
+                        detail=(
+                            f"no client_pool slot available for phone={resolved_phone}"
+                            if resolved_phone
+                            else "all accounts are flood-waited or disconnected"
+                        ),
+                    )
                     break
                 session, acquired_phone = result
                 chosen_emoji = random.choice(random_emoji_list) if random_emoji_list else emoji
                 await session.send_reaction(message.channel_id, message.message_id, chosen_emoji)
-            except Exception:
-                logger.warning("ReactHandler: failed to react to message %s", message.message_id, exc_info=True)
+                increment_action_count(context, "react")
+            except FloodWaitError as exc:
+                context.record_error(
+                    node_id=node_id,
+                    code="flood_wait",
+                    detail=f"FloodWaitError on message {message.message_id}: {exc}",
+                    retry_after=int(getattr(exc, "seconds", 0) or 0),
+                )
+            except ChatWriteForbiddenError as exc:
+                context.record_error(
+                    node_id=node_id,
+                    code="chat_write_forbidden",
+                    detail=(
+                        f"ChatWriteForbiddenError on message {message.message_id}: {exc}"
+                    ),
+                )
+            except ReactionInvalidError as exc:
+                context.record_error(
+                    node_id=node_id,
+                    code="reaction_invalid",
+                    detail=f"ReactionInvalidError on message {message.message_id}: {exc}",
+                )
+            except Exception as exc:
+                context.record_error(
+                    node_id=node_id,
+                    code="unexpected_error",
+                    detail=f"{type(exc).__name__}: {exc}",
+                )
+                logger.warning(
+                    "ReactHandler[%s]: failed to react to message %s",
+                    node_id,
+                    message.message_id,
+                    exc_info=True,
+                )
             finally:
                 if acquired_phone is not None:
                     await client_pool.release_client(acquired_phone)
@@ -312,9 +370,15 @@ class ForwardHandler(BaseNodeHandler):
     """Forward messages to target dialogs (requires Telegram client)."""
 
     async def execute(self, node_config: dict, context: NodeContext, services: dict) -> None:
+        node_id = _current_node_id(services, default="forward")
         client_pool = services.get("client_pool")
         if client_pool is None:
-            logger.warning("ForwardHandler: no client_pool, skipping")
+            context.record_error(
+                node_id=node_id,
+                code="no_client_pool",
+                detail="client_pool not available in services",
+            )
+            logger.warning("ForwardHandler[%s]: no client_pool, skipping", node_id)
             return
 
         messages = context.get_global("context_messages", [])
@@ -329,12 +393,43 @@ class ForwardHandler(BaseNodeHandler):
             try:
                 result = await client_pool.get_client_by_phone(phone)
                 if result is None:
+                    context.record_error(
+                        node_id=node_id,
+                        code="no_available_client",
+                        detail=(
+                            f"no client_pool slot available for phone={phone}"
+                        ),
+                    )
                     continue
                 session, acquired_phone = result
                 for message in messages:
                     await session.forward_messages(dialog_id, message.message_id, message.channel_id)
-            except Exception:
-                logger.warning("ForwardHandler: failed to forward to %s", dialog_id, exc_info=True)
+                    increment_action_count(context, "forward")
+            except FloodWaitError as exc:
+                context.record_error(
+                    node_id=node_id,
+                    code="flood_wait",
+                    detail=f"FloodWaitError forwarding to {dialog_id}: {exc}",
+                    retry_after=int(getattr(exc, "seconds", 0) or 0),
+                )
+            except ChatWriteForbiddenError as exc:
+                context.record_error(
+                    node_id=node_id,
+                    code="chat_write_forbidden",
+                    detail=f"ChatWriteForbiddenError forwarding to {dialog_id}: {exc}",
+                )
+            except Exception as exc:
+                context.record_error(
+                    node_id=node_id,
+                    code="unexpected_error",
+                    detail=f"{type(exc).__name__}: {exc}",
+                )
+                logger.warning(
+                    "ForwardHandler[%s]: failed to forward to %s",
+                    node_id,
+                    dialog_id,
+                    exc_info=True,
+                )
             finally:
                 if acquired_phone is not None:
                     await client_pool.release_client(acquired_phone)
@@ -344,24 +439,67 @@ class DeleteMessageHandler(BaseNodeHandler):
     """Delete filtered messages (requires Telegram client)."""
 
     async def execute(self, node_config: dict, context: NodeContext, services: dict) -> None:
+        node_id = _current_node_id(services, default="delete_message")
         client_pool = services.get("client_pool")
         if client_pool is None:
-            logger.warning("DeleteMessageHandler: no client_pool, skipping")
+            context.record_error(
+                node_id=node_id,
+                code="no_client_pool",
+                detail="client_pool not available in services",
+            )
+            logger.warning("DeleteMessageHandler[%s]: no client_pool, skipping", node_id)
             return
 
         messages = context.get_global("context_messages", [])
+        resolved_phone = _resolve_account_phone(services.get("account_phone"), services, context)
 
         for message in messages:
             acquired_phone: str | None = None
             try:
-                result = await client_pool.get_available_client()
+                if resolved_phone:
+                    result = await client_pool.get_client_by_phone(resolved_phone)
+                else:
+                    result = await client_pool.get_available_client()
                 if result is None:
+                    context.record_error(
+                        node_id=node_id,
+                        code="no_available_client",
+                        detail=(
+                            f"no client_pool slot available for phone={resolved_phone}"
+                            if resolved_phone
+                            else "all accounts are flood-waited or disconnected"
+                        ),
+                    )
                     break
                 session, acquired_phone = result
                 await session.delete_messages(message.channel_id, [message.message_id])
-            except Exception:
+                increment_action_count(context, "delete_message")
+            except FloodWaitError as exc:
+                context.record_error(
+                    node_id=node_id,
+                    code="flood_wait",
+                    detail=f"FloodWaitError deleting message {message.message_id}: {exc}",
+                    retry_after=int(getattr(exc, "seconds", 0) or 0),
+                )
+            except ChatWriteForbiddenError as exc:
+                context.record_error(
+                    node_id=node_id,
+                    code="chat_write_forbidden",
+                    detail=(
+                        f"ChatWriteForbiddenError deleting message {message.message_id}: {exc}"
+                    ),
+                )
+            except Exception as exc:
+                context.record_error(
+                    node_id=node_id,
+                    code="unexpected_error",
+                    detail=f"{type(exc).__name__}: {exc}",
+                )
                 logger.warning(
-                    "DeleteMessageHandler: failed to delete message %s", message.message_id, exc_info=True
+                    "DeleteMessageHandler[%s]: failed to delete message %s",
+                    node_id,
+                    message.message_id,
+                    exc_info=True,
                 )
             finally:
                 if acquired_phone is not None:

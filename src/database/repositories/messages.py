@@ -107,17 +107,24 @@ class MessagesRepository:
             cur = await self._db.execute(
                 """INSERT OR IGNORE INTO messages
                    (channel_id, message_id, sender_id, sender_name,
-                    text, media_type, topic_id, reactions_json,
+                    text, message_kind, media_type, service_action_raw,
+                    service_action_semantic, service_action_payload_json, sender_kind,
+                    topic_id, reactions_json,
                     views, forwards, reply_count, date, detected_lang,
                     forward_from_channel_id)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     msg.channel_id,
                     msg.message_id,
                     msg.sender_id,
                     msg.sender_name,
                     msg.text,
+                    msg.message_kind,
                     msg.media_type,
+                    msg.service_action_raw,
+                    msg.service_action_semantic,
+                    msg.service_action_payload_json,
+                    msg.sender_kind,
                     msg.topic_id,
                     msg.reactions_json,
                     msg.views,
@@ -173,7 +180,12 @@ class MessagesRepository:
                 m.sender_id,
                 m.sender_name,
                 m.text,
+                m.message_kind,
                 m.media_type,
+                m.service_action_raw,
+                m.service_action_semantic,
+                m.service_action_payload_json,
+                m.sender_kind,
                 m.topic_id,
                 m.reactions_json,
                 m.views,
@@ -189,10 +201,12 @@ class MessagesRepository:
             cur = await self._db.executemany(
                 """INSERT OR IGNORE INTO messages
                    (channel_id, message_id, sender_id, sender_name,
-                    text, media_type, topic_id, reactions_json,
+                    text, message_kind, media_type, service_action_raw,
+                    service_action_semantic, service_action_payload_json, sender_kind,
+                    topic_id, reactions_json,
                     views, forwards, reply_count, date, detected_lang,
                     forward_from_channel_id)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 data,
             )
             await self._db.commit()
@@ -690,7 +704,16 @@ class MessagesRepository:
                 sender_id=r["sender_id"],
                 sender_name=r["sender_name"],
                 text=r["text"],
+                message_kind=r["message_kind"] if "message_kind" in r.keys() else None,
                 media_type=r["media_type"],
+                service_action_raw=r["service_action_raw"] if "service_action_raw" in r.keys() else None,
+                service_action_semantic=(
+                    r["service_action_semantic"] if "service_action_semantic" in r.keys() else None
+                ),
+                service_action_payload_json=(
+                    r["service_action_payload_json"] if "service_action_payload_json" in r.keys() else None
+                ),
+                sender_kind=r["sender_kind"] if "sender_kind" in r.keys() else None,
                 topic_id=r["topic_id"],
                 reactions_json=r["reactions_json"],
                 views=r["views"],
