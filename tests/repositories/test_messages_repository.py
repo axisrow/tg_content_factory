@@ -549,3 +549,47 @@ async def test_get_stats_empty(messages_repo):
     assert stats["channels"] == 0
     assert stats["messages"] == 0
     assert stats["search_queries"] == 0
+
+
+# get_recent_for_channels tests
+# Regression: join must be m.channel_id = c.channel_id, NOT c.id.
+# Using c.id would silently return 0 for any channel whose DB pk differs
+# from its Telegram channel_id — which broke react pipelines dry-run-count.
+
+
+async def test_get_recent_for_channels_joins_on_channel_id_not_pk(
+    messages_repo, channels_repo
+):
+    """Ensure join uses Telegram channel_id — would fail if joined on c.id."""
+    from src.models import Channel
+
+    # Seed a few dummy channels first so the target channel gets pk > 1,
+    # making the bug deterministic (pk 3 ≠ channel_id 2694960513).
+    await channels_repo.add_channel(Channel(channel_id=1001, title="Dummy 1"))
+    await channels_repo.add_channel(Channel(channel_id=1002, title="Dummy 2"))
+    target_pk = await channels_repo.add_channel(
+        Channel(channel_id=2694960513, title="Claude Code Community")
+    )
+    assert target_pk != 2694960513  # pk ≠ channel_id → the bug's trigger
+
+    now = datetime.now(timezone.utc)
+    await messages_repo.insert_message(
+        make_message(channel_id=2694960513, message_id=1, text="fresh", date=now)
+    )
+    await messages_repo.insert_message(
+        make_message(
+            channel_id=2694960513,
+            message_id=2,
+            text="old",
+            date=now - timedelta(hours=48),
+        )
+    )
+
+    rows = await messages_repo.get_recent_for_channels([2694960513], since_hours=24)
+    assert len(rows) == 1
+    assert rows[0].text == "fresh"
+
+
+async def test_get_recent_for_channels_empty_ids(messages_repo):
+    """Empty channel_ids returns [] without hitting the DB."""
+    assert await messages_repo.get_recent_for_channels([], since_hours=24) == []

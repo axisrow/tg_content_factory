@@ -1392,7 +1392,7 @@ class MessagesRepository:
         cur = await self._db.execute(
             f"""SELECT m.*, c.title AS channel_title, c.username AS channel_username
                 FROM messages m
-                JOIN channels c ON m.channel_id = c.id
+                JOIN channels c ON m.channel_id = c.channel_id
                 WHERE m.channel_id IN ({placeholders})
                   AND m.date >= ?
                 ORDER BY m.date DESC""",

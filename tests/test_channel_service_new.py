@@ -51,6 +51,14 @@ async def test_add_by_identifier_success():
     result = await svc.add_by_identifier("@testch")
     assert result is True
     channels.add_channel.assert_called_once()
+    # Channel must be persisted with the metadata resolved from Telegram — not
+    # with whatever the caller typed.
+    added = channels.add_channel.call_args.args[0]
+    assert added.channel_id == -100123
+    assert added.title == "Test Channel"
+    assert added.username == "testch"
+    assert added.channel_type == "channel"
+    assert added.about == "Test about"
 
 
 @pytest.mark.asyncio

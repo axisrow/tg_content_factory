@@ -524,6 +524,80 @@ async def test_import_json_empty_sources_and_targets(svc):
     assert new_id > 0
 
 
+@pytest.mark.asyncio
+async def test_import_json_injects_source_ids_into_dag_source_node(svc):
+    """Regression: source_ids from --source must backfill DAG source node config.
+
+    Previously only the sidecar pipeline_sources table was populated; the
+    SOURCE node in pipeline_json kept channel_ids=[] and /dry-run-count
+    reported 0 messages even when the channel had traffic.
+    """
+    data = {
+        "name": "DAGSourceInject",
+        "source_ids": [1001],
+        "pipeline_json": {
+            "nodes": [
+                {
+                    "id": "s1",
+                    "type": "source",
+                    "name": "Источник",
+                    "config": {"channel_ids": []},
+                    "position": {"x": 0, "y": 0},
+                },
+                {
+                    "id": "f1",
+                    "type": "fetch_messages",
+                    "name": "Fetch",
+                    "config": {},
+                    "position": {"x": 110, "y": 0},
+                },
+            ],
+            "edges": [{"from": "s1", "to": "f1"}],
+        },
+    }
+    new_id = await svc.import_json(data)
+    imported = await svc.get(new_id)
+    src_node = next(
+        n for n in imported.pipeline_json.nodes if n.type == PipelineNodeType.SOURCE
+    )
+    assert src_node.config["channel_ids"] == [1001]
+
+
+@pytest.mark.asyncio
+async def test_import_json_preserves_explicit_channel_ids(svc):
+    """If the imported SOURCE node already has channel_ids, don't overwrite."""
+    data = {
+        "name": "ExplicitChannels",
+        "source_ids": [1001],
+        "pipeline_json": {
+            "nodes": [
+                {
+                    "id": "s1",
+                    "type": "source",
+                    "name": "Источник",
+                    "config": {"channel_ids": [1002]},
+                    "position": {"x": 0, "y": 0},
+                },
+                {
+                    "id": "f1",
+                    "type": "fetch_messages",
+                    "name": "Fetch",
+                    "config": {},
+                    "position": {"x": 110, "y": 0},
+                },
+            ],
+            "edges": [{"from": "s1", "to": "f1"}],
+        },
+    }
+    new_id = await svc.import_json(data)
+    imported = await svc.get(new_id)
+    src_node = next(
+        n for n in imported.pipeline_json.nodes if n.type == PipelineNodeType.SOURCE
+    )
+    # Explicit override in JSON wins over sidecar source_ids
+    assert src_node.config["channel_ids"] == [1002]
+
+
 # ---------------------------------------------------------------------------
 # list_templates
 # ---------------------------------------------------------------------------

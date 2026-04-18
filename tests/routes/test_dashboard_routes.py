@@ -13,11 +13,15 @@ async def client(route_client):
 
 @pytest.mark.asyncio
 async def test_dashboard_renders_with_data(client, base_app):
-    """Dashboard renders with stats when auth configured and accounts exist."""
+    """Dashboard renders with stats cards when auth configured and accounts exist."""
     app, db, pool = base_app
     # base_app already adds an account, so dashboard should render
     resp = await client.get("/dashboard/")
     assert resp.status_code == 200
+    assert "Панель" in resp.text
+    # Required dashboard cards
+    assert "Аккаунты" in resp.text
+    assert "Каналы" in resp.text
 
 
 @pytest.mark.asyncio
@@ -55,12 +59,19 @@ async def test_dashboard_redirect_no_accounts(base_app):
 
 @pytest.mark.asyncio
 async def test_dashboard_contains_stats(client, base_app):
-    """Dashboard page contains stats information."""
+    """Dashboard page renders the stats numbers from db.get_stats()."""
     app, db, pool = base_app
     stats = await db.get_stats()
     assert stats is not None
+    # db.get_stats() must expose the counters the template depends on.
+    for key in ("accounts", "channels", "channels_filtered", "channels_tracked"):
+        assert key in stats
     resp = await client.get("/dashboard/")
     assert resp.status_code == 200
+    # The template renders the raw numbers from stats — check at least the
+    # accounts and channels counters appear in the rendered HTML.
+    assert f"<strong>{stats['accounts']}</strong> в базе" in resp.text
+    assert f"В базе: <strong>{stats['channels']}</strong>" in resp.text
 
 
 # ── _time_ago helper tests ──────────────────────────────────────────
@@ -156,7 +167,7 @@ async def test_dashboard_redirect_auth_not_configured(base_app):
 
 @pytest.mark.asyncio
 async def test_dashboard_with_active_flood_wait(client, base_app):
-    """Dashboard renders when account has active flood wait."""
+    """Dashboard surfaces flood-wait count on accounts card when accounts are flooded."""
     app, db, pool = base_app
     # Set flood_wait_until in the future for the existing account
     future_time = datetime.now(tz=timezone.utc) + timedelta(hours=1)
@@ -166,11 +177,13 @@ async def test_dashboard_with_active_flood_wait(client, base_app):
 
     resp = await client.get("/dashboard/")
     assert resp.status_code == 200
+    # Template renders an explicit flood-wait warning when >0 accounts are flooded.
+    assert "flood-wait" in resp.text
 
 
 @pytest.mark.asyncio
 async def test_dashboard_with_expired_flood_wait(client, base_app):
-    """Dashboard renders when account has expired flood wait."""
+    """Dashboard does NOT warn about flood-wait after it expires."""
     app, db, pool = base_app
     past_time = datetime.now(tz=timezone.utc) - timedelta(hours=1)
     accounts = await db.get_accounts(active_only=False)
@@ -179,11 +192,13 @@ async def test_dashboard_with_expired_flood_wait(client, base_app):
 
     resp = await client.get("/dashboard/")
     assert resp.status_code == 200
+    # Expired flood wait must not surface as an active warning.
+    assert "flood-wait" not in resp.text
 
 
 @pytest.mark.asyncio
 async def test_dashboard_all_connected_flooded(client, base_app):
-    """Dashboard shows collector_attention when all connected are flooded."""
+    """Dashboard shows collector_attention link when all connected accounts are flooded."""
     app, db, pool = base_app
     future_time = datetime.now(tz=timezone.utc) + timedelta(hours=1)
     accounts = await db.get_accounts(active_only=False)
@@ -192,6 +207,8 @@ async def test_dashboard_all_connected_flooded(client, base_app):
 
     resp = await client.get("/dashboard/")
     assert resp.status_code == 200
+    # Template only renders this link when collector_attention is truthy.
+    assert "Коллектор ограничен" in resp.text
 
 
 @pytest.mark.asyncio
