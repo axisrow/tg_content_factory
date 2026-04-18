@@ -107,9 +107,12 @@ class EmbeddedWorker:
             logger.exception(
                 "[embedded-worker] failed to start; UI will show worker_down banner"
             )
-            # A start-up failure must not kill the web process — the user still
-            # gets an accessible dashboard (round 1's worker_down banner will
-            # fire after ~60s of missing heartbeats).
+            if self._container is not None:
+                try:
+                    await stop_container(self._container)
+                except Exception:
+                    logger.exception("[embedded-worker] stop_container during startup-failure cleanup raised")
+                self._container = None
             return
 
         try:

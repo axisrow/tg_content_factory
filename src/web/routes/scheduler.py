@@ -75,8 +75,9 @@ def _collector_health_recommendations(
     recommendations: list[str] = []
     if state == "worker_down":
         recommendations.append(
-            "Запустите Telegram-воркер во втором терминале: `python -m src.main worker`. "
-            "Без него задачи сбора и планировщика копятся в БД, но не исполняются."
+            "Telegram-воркер не запущен. Если используете `serve` — перезапустите его; "
+            "если `serve --no-worker` — запустите воркер отдельно: `python -m src.main worker`. "
+            "Без воркера задачи сбора копятся в БД, но не исполняются."
         )
     if state == "all_flooded":
         recommendations.append("Дождаться ближайшего окна после Flood Wait и не запускать ручной collect-all повторно.")
