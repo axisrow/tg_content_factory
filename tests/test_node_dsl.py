@@ -4,7 +4,6 @@ from __future__ import annotations
 import pytest
 
 from src.cli.node_dsl import (
-    NodeSpec,
     NodeSpecError,
     _coerce_bare,
     _parse_relaxed_array,
@@ -13,7 +12,6 @@ from src.cli.node_dsl import (
     parse_node_spec,
 )
 from src.models import PipelineNodeType
-
 
 # --- generate_node_id ---
 

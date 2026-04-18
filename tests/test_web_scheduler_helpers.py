@@ -10,7 +10,6 @@ from src.web.routes.scheduler import (
     _job_label,
 )
 
-
 # --- _job_label ---
 
 

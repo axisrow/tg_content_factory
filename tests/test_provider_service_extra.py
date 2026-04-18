@@ -3,8 +3,6 @@ from __future__ import annotations
 import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
-
 from src.services.provider_service import AgentProviderService
 
 
@@ -111,12 +109,14 @@ async def test_build_provider_status_list():
     mock_cfg.last_validation_error = ""
 
     # The method creates a new APS internally, so we need to mock at module level
-    with patch("src.services.agent_provider_service.AgentProviderService") as MockAPS:
+    with patch("src.services.agent_provider_service.AgentProviderService") as mock_aps:
         mock_instance = MagicMock()
         mock_instance.load_provider_configs = AsyncMock(return_value=[mock_cfg])
-        MockAPS.return_value = mock_instance
+        mock_aps.return_value = mock_instance
         statuses = await svc.get_provider_status_list()
         assert len(statuses) >= 1
+        assert statuses[0]["provider"] == "openai"
+        assert "status" in statuses[0]
 
 
 def test_has_valid_secrets_empty():

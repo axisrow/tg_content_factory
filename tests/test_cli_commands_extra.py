@@ -10,19 +10,15 @@ Covers:
 """
 from __future__ import annotations
 
-import argparse
 import asyncio
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
-
-from src.cli.commands.messages import _print_messages, _print_live_messages
-from src.cli.commands.filter import _parse_pks, _print_result, _build_deletion_service
+from src.cli.commands.filter import _build_deletion_service, _parse_pks, _print_result
+from src.cli.commands.messages import _print_live_messages, _print_messages
 from src.models import Account, Channel, Message, SearchQuery, SearchQueryDailyStat
 from tests.helpers import cli_ns
-
 
 # ---------------------------------------------------------------------------
 # Helper: make runtime.init_db return an awaitable that yields (config, db)
@@ -1005,7 +1001,7 @@ class TestFilterAnalyze:
 
     def test_analyze_with_channels(self, capsys):
         from src.cli.commands.filter import run
-        from src.filters.models import FilterReport, ChannelFilterResult
+        from src.filters.models import ChannelFilterResult, FilterReport
 
         result_item = ChannelFilterResult(
             channel_id=100,

@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from pathlib import Path
-
 from src.web.paths import DATA_IMAGE_DIR, PROJECT_ROOT, STATIC_DIR, TEMPLATES_DIR, WEB_DIR
 
 

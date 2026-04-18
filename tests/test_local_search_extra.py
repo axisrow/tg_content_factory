@@ -1,7 +1,6 @@
 """Tests for LocalSearch numpy fallback and hybrid paths."""
 from __future__ import annotations
 
-from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest

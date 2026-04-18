@@ -353,7 +353,7 @@ async def test_dialogs_cache_clear_phone():
     pool = _mock_pool()
     pool.invalidate_dialogs_cache = MagicMock()
     d = _dispatcher(db=db, pool=pool)
-    r = await d._handle_dialogs_cache_clear({"phone": "+1"})
+    await d._handle_dialogs_cache_clear({"phone": "+1"})
     db.repos.dialog_cache.clear_dialogs.assert_awaited_once_with("+1")
 
 
@@ -713,9 +713,9 @@ async def test_dialogs_create_channel():
     c.get_entity = AsyncMock(return_value="entity")
     pool.get_native_client_by_phone.return_value = (c, "+1")
     d = _dispatcher(pool=pool)
-    with patch("telethon.tl.functions.channels.CreateChannelRequest") as MockReq, \
+    with patch("telethon.tl.functions.channels.CreateChannelRequest") as mock_req, \
          patch("telethon.tl.functions.channels.UpdateUsernameRequest"):
-        MockReq.return_value = "req"
+        mock_req.return_value = "req"
         r = await d._handle_dialogs_create_channel({"phone": "+1", "title": "Test Channel", "about": "desc"})
     assert r["phone"] == "+1"
 
@@ -750,12 +750,12 @@ async def test_notifications_test():
     db = _mock_db()
     pool = _mock_pool()
     d = _dispatcher(db=db, pool=pool)
-    with patch.object(mod, "Notifier") as MockNotifier, \
-         patch("src.database.bundles.NotificationBundle") as MockBundle:
-        MockBundle.from_database.return_value = MagicMock()
+    with patch.object(mod, "Notifier") as mock_notifier, \
+         patch("src.database.bundles.NotificationBundle") as mock_bundle:
+        mock_bundle.from_database.return_value = MagicMock()
         mock_instance = MagicMock()
         mock_instance.notify = AsyncMock(return_value=True)
-        MockNotifier.return_value = mock_instance
+        mock_notifier.return_value = mock_instance
         r = await d._handle_notifications_test({})
     assert r["sent"] is True
 
@@ -764,12 +764,12 @@ async def test_notifications_test_failed():
     db = _mock_db()
     pool = _mock_pool()
     d = _dispatcher(db=db, pool=pool)
-    with patch.object(mod, "Notifier") as MockNotifier, \
-         patch("src.database.bundles.NotificationBundle") as MockBundle:
-        MockBundle.from_database.return_value = MagicMock()
+    with patch.object(mod, "Notifier") as mock_notifier, \
+         patch("src.database.bundles.NotificationBundle") as mock_bundle:
+        mock_bundle.from_database.return_value = MagicMock()
         mock_instance = MagicMock()
         mock_instance.notify = AsyncMock(return_value=False)
-        MockNotifier.return_value = mock_instance
+        mock_notifier.return_value = mock_instance
         with pytest.raises(RuntimeError, match="notification_test_failed"):
             await d._handle_notifications_test({})
 
@@ -871,7 +871,6 @@ async def test_run_loop_cancelled():
     d = _dispatcher(db=db, pool=pool)
 
     call_count = 0
-    original_claim = db.repos.telegram_commands.claim_next_command
 
     async def claim_once():
         nonlocal call_count
@@ -1185,7 +1184,7 @@ async def test_channels_add_identifier_deactivate():
     }
     pool.fetch_channel_meta.return_value = {"about": "a", "linked_chat_id": None, "has_comments": False}
     d = _dispatcher(db=db, pool=pool)
-    r = await d._handle_channels_add_identifier({"identifier": "@t"})
+    await d._handle_channels_add_identifier({"identifier": "@t"})
     added_ch = db.add_channel.call_args[0][0]
     assert added_ch.is_active is False
 
@@ -1228,9 +1227,9 @@ async def test_dialogs_create_channel_with_username():
     c.get_entity = AsyncMock(return_value="entity")
     pool.get_native_client_by_phone.return_value = (c, "+1")
     d = _dispatcher(pool=pool)
-    with patch("telethon.tl.functions.channels.CreateChannelRequest") as MockReq, \
-         patch("telethon.tl.functions.channels.UpdateUsernameRequest") as MockUpdate:
-        MockReq.return_value = "req"
+    with patch("telethon.tl.functions.channels.CreateChannelRequest") as mock_req, \
+         patch("telethon.tl.functions.channels.UpdateUsernameRequest"):
+        mock_req.return_value = "req"
         r = await d._handle_dialogs_create_channel({
             "phone": "+1", "title": "Test Channel", "about": "desc", "username": "my_channel",
         })
@@ -1255,9 +1254,9 @@ async def test_dialogs_create_channel_username_fails():
     c.get_entity = AsyncMock(return_value="entity")
     pool.get_native_client_by_phone.return_value = (c, "+1")
     d = _dispatcher(pool=pool)
-    with patch("telethon.tl.functions.channels.CreateChannelRequest") as MockReq, \
+    with patch("telethon.tl.functions.channels.CreateChannelRequest") as mock_req, \
          patch("telethon.tl.functions.channels.UpdateUsernameRequest"):
-        MockReq.return_value = "req"
+        mock_req.return_value = "req"
         r = await d._handle_dialogs_create_channel({
             "phone": "+1", "title": "Test Channel", "username": "taken_name",
         })
@@ -1278,8 +1277,8 @@ async def test_dialogs_create_channel_no_chats():
     c.get_entity = AsyncMock(return_value="entity")
     pool.get_native_client_by_phone.return_value = (c, "+1")
     d = _dispatcher(pool=pool)
-    with patch("telethon.tl.functions.channels.CreateChannelRequest") as MockReq:
-        MockReq.return_value = "req"
+    with patch("telethon.tl.functions.channels.CreateChannelRequest") as mock_req:
+        mock_req.return_value = "req"
         with pytest.raises(RuntimeError, match="Telegram returned empty response"):
             await d._handle_dialogs_create_channel({"phone": "+1", "title": "Test"})
 
@@ -1433,7 +1432,7 @@ async def test_dialogs_broadcast_stats_str_value():
     c.get_broadcast_stats = AsyncMock(return_value=stats)
     pool.get_native_client_by_phone.return_value = (c, "+1")
     d = _dispatcher(db=db, pool=pool)
-    r = await d._handle_dialogs_broadcast_stats({"phone": "+1", "chat_id": -100})
+    await d._handle_dialogs_broadcast_stats({"phone": "+1", "chat_id": -100})
     snap_call = db.repos.runtime_snapshots.upsert_snapshot.call_args
     snap_payload = snap_call[0][0].payload
     assert snap_payload["stats"]["followers"] == "some_string_value"
@@ -1462,7 +1461,7 @@ async def test_dialogs_broadcast_stats_with_period():
     c.get_broadcast_stats = AsyncMock(return_value=stats)
     pool.get_native_client_by_phone.return_value = (c, "+1")
     d = _dispatcher(db=db, pool=pool)
-    r = await d._handle_dialogs_broadcast_stats({"phone": "+1", "chat_id": -100})
+    await d._handle_dialogs_broadcast_stats({"phone": "+1", "chat_id": -100})
     snap_call = db.repos.runtime_snapshots.upsert_snapshot.call_args
     snap_payload = snap_call[0][0].payload
     assert "period" in snap_payload["stats"]
@@ -1579,8 +1578,8 @@ async def test_moderation_publish_run_pipeline_not_found():
     run_mock = MagicMock()
     db.repos.generation_runs.get.return_value = run_mock
     d = _dispatcher(db=db, pool=pool)
-    with patch("src.services.pipeline_service.PipelineService") as MockPS:
-        MockPS.return_value.get = AsyncMock(return_value=None)
+    with patch("src.services.pipeline_service.PipelineService") as mock_ps:
+        mock_ps.return_value.get = AsyncMock(return_value=None)
         with pytest.raises(RuntimeError, match="pipeline_invalid"):
             await d._handle_moderation_publish_run({"run_id": 1, "pipeline_id": 1})
 
@@ -1595,11 +1594,11 @@ async def test_moderation_publish_run_success():
     db.repos.generation_runs.get.return_value = run_mock
     pipeline_mock = MagicMock()
     d = _dispatcher(db=db, pool=pool)
-    with patch("src.services.pipeline_service.PipelineService") as MockPS, \
-         patch("src.services.publish_service.PublishService") as MockPubSvc:
-        MockPS.return_value.get = AsyncMock(return_value=pipeline_mock)
+    with patch("src.services.pipeline_service.PipelineService") as mock_ps, \
+         patch("src.services.publish_service.PublishService") as mock_pubsvc:
+        mock_ps.return_value.get = AsyncMock(return_value=pipeline_mock)
         pub_result = MagicMock(success=True)
-        MockPubSvc.return_value.publish_run = AsyncMock(return_value=[pub_result])
+        mock_pubsvc.return_value.publish_run = AsyncMock(return_value=[pub_result])
         r = await d._handle_moderation_publish_run({"run_id": 1, "pipeline_id": 1})
     assert r["run_id"] == 1
     assert r["published"] == 1
@@ -1615,11 +1614,11 @@ async def test_moderation_publish_run_publish_fails():
     db.repos.generation_runs.get.return_value = run_mock
     pipeline_mock = MagicMock()
     d = _dispatcher(db=db, pool=pool)
-    with patch("src.services.pipeline_service.PipelineService") as MockPS, \
-         patch("src.services.publish_service.PublishService") as MockPubSvc:
-        MockPS.return_value.get = AsyncMock(return_value=pipeline_mock)
+    with patch("src.services.pipeline_service.PipelineService") as mock_ps, \
+         patch("src.services.publish_service.PublishService") as mock_pubsvc:
+        mock_ps.return_value.get = AsyncMock(return_value=pipeline_mock)
         pub_result = MagicMock(success=False)
-        MockPubSvc.return_value.publish_run = AsyncMock(return_value=[pub_result])
+        mock_pubsvc.return_value.publish_run = AsyncMock(return_value=[pub_result])
         with pytest.raises(RuntimeError, match="pipeline_run_failed"):
             await d._handle_moderation_publish_run({"run_id": 1, "pipeline_id": 1})
 
@@ -1634,10 +1633,10 @@ async def test_moderation_publish_run_empty_results():
     db.repos.generation_runs.get.return_value = run_mock
     pipeline_mock = MagicMock()
     d = _dispatcher(db=db, pool=pool)
-    with patch("src.services.pipeline_service.PipelineService") as MockPS, \
-         patch("src.services.publish_service.PublishService") as MockPubSvc:
-        MockPS.return_value.get = AsyncMock(return_value=pipeline_mock)
-        MockPubSvc.return_value.publish_run = AsyncMock(return_value=[])
+    with patch("src.services.pipeline_service.PipelineService") as mock_ps, \
+         patch("src.services.publish_service.PublishService") as mock_pubsvc:
+        mock_ps.return_value.get = AsyncMock(return_value=pipeline_mock)
+        mock_pubsvc.return_value.publish_run = AsyncMock(return_value=[])
         with pytest.raises(RuntimeError, match="pipeline_run_failed"):
             await d._handle_moderation_publish_run({"run_id": 1, "pipeline_id": 1})
 
@@ -1787,11 +1786,11 @@ async def test_notification_target_service():
     db = _mock_db()
     pool = _mock_pool()
     d = _dispatcher(db=db, pool=pool)
-    with patch("src.services.telegram_command_dispatcher.NotificationTargetService") as MockNTS, \
-         patch("src.database.bundles.NotificationBundle") as MockBundle:
-        MockBundle.from_database.return_value = MagicMock()
-        svc = d._notification_target_service()
-        MockNTS.assert_called_once()
+    with patch("src.services.telegram_command_dispatcher.NotificationTargetService") as mock_nts, \
+         patch("src.database.bundles.NotificationBundle") as mock_bundle:
+        mock_bundle.from_database.return_value = MagicMock()
+        d._notification_target_service()
+        mock_nts.assert_called_once()
 
 
 # --- _handle_dialogs_send: message without id attr ---

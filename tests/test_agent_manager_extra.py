@@ -17,8 +17,6 @@ import pytest
 
 from src.agent.manager import (
     AgentManager,
-    AgentRuntimeStatus,
-    ClaudeSdkBackend,
     DeepagentsBackend,
     _await_with_countdown,
     _embed_history_in_prompt,
@@ -28,7 +26,6 @@ from src.agent.manager import (
 from src.agent.provider_registry import ProviderRuntimeConfig
 from src.config import AppConfig
 from src.database import Database
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -555,7 +552,7 @@ class TestClaudeSdkBackendChatStreamErrors:
             call_count += 1
             if call_count <= 2:
                 raise BaseExceptionGroup("errors", [RuntimeError("stream closed unexpectedly")])
-            from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
+            from claude_agent_sdk import ResultMessage
 
             yield _make_assistant_msg("ok")
             yield MagicMock(spec=ResultMessage)
@@ -612,7 +609,6 @@ class TestClaudeSdkBackendChatStreamErrors:
             call_count += 1
             if call_count == 1:
                 raise RuntimeError("Control request timeout")
-            from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
 
             yield _make_assistant_msg("recovered")
             yield _make_result_msg()
@@ -655,7 +651,7 @@ class TestClaudeSdkBackendChatStreamErrors:
         thread_id = await db.create_agent_thread("rate-limit")
         await db.save_agent_message(thread_id, "user", "test")
 
-        from claude_agent_sdk import AssistantMessage, RateLimitEvent, ResultMessage, TextBlock
+        from claude_agent_sdk import RateLimitEvent
 
         rl_event = MagicMock(spec=RateLimitEvent)
         rl_info = MagicMock()
@@ -687,7 +683,7 @@ class TestClaudeSdkBackendChatStreamErrors:
         thread_id = await db.create_agent_thread("rate-limit-ok")
         await db.save_agent_message(thread_id, "user", "test")
 
-        from claude_agent_sdk import AssistantMessage, RateLimitEvent, ResultMessage, TextBlock
+        from claude_agent_sdk import RateLimitEvent
 
         rl_event = MagicMock(spec=RateLimitEvent)
         rl_info = MagicMock()
@@ -721,7 +717,7 @@ class TestClaudeSdkBackendChatStreamErrors:
         thread_id = await db.create_agent_thread("rl-none-info")
         await db.save_agent_message(thread_id, "user", "test")
 
-        from claude_agent_sdk import AssistantMessage, RateLimitEvent, ResultMessage, TextBlock
+        from claude_agent_sdk import RateLimitEvent
 
         rl_event = MagicMock(spec=RateLimitEvent)
         rl_event.rate_limit_info = None
@@ -808,7 +804,7 @@ class TestClaudeSdkBackendChatStreamErrors:
         thread_id = await db.create_agent_thread("block-start")
         await db.save_agent_message(thread_id, "user", "test")
 
-        from claude_agent_sdk import AssistantMessage, ResultMessage, StreamEvent, TextBlock
+        from claude_agent_sdk import StreamEvent
 
         def _make_event(event_dict):
             ev = MagicMock(spec=StreamEvent)
@@ -873,7 +869,6 @@ class TestClaudeSdkBackendChatStreamErrors:
         thread_id = await db.create_agent_thread("unhandled-msg")
         await db.save_agent_message(thread_id, "user", "test")
 
-        from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
 
         async def mock_query(prompt, options):
             yield MagicMock()  # unknown type
@@ -1161,7 +1156,7 @@ class TestDeepagentsBackendBuildAgent:
 
         with patch("src.agent.react_agent.OllamaReActAgent") as mock_react:
             mock_react.return_value = MagicMock()
-            agent = backend._build_agent(cfg, record_last_used=True)
+            backend._build_agent(cfg, record_last_used=True)
             mock_react.assert_called_once()
             assert backend._last_used_provider == "ollama"
             assert backend._last_used_model == "kimi-k2.5"
@@ -1812,7 +1807,6 @@ class TestAgentManagerChatStreamErrors:
         thread_id = await db.create_agent_thread("invalid-model")
         await db.save_agent_message(thread_id, "user", "test")
 
-        from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
 
         async def mock_query(prompt, options):
             assert options.model is None  # model should be None for invalid model
@@ -2316,8 +2310,9 @@ class TestAsPromptStream:
 class TestAutoApproveTool:
     @pytest.mark.asyncio
     async def test_returns_allow(self):
-        from src.agent.manager import _auto_approve_tool
         from claude_agent_sdk import PermissionResultAllow
+
+        from src.agent.manager import _auto_approve_tool
 
         result = await _auto_approve_tool("tool", {}, MagicMock())
         assert isinstance(result, PermissionResultAllow)

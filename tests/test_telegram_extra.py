@@ -4,18 +4,17 @@ from __future__ import annotations
 
 import asyncio
 import json
-import time
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from telethon.errors import FloodWaitError, UsernameInvalidError, UsernameNotOccupiedError
+from telethon.tl.types import Channel as TLChannel
 from telethon.tl.types import (
     ChannelForbidden,
     DocumentAttributeAnimated,
     DocumentAttributeAudio,
-    DocumentAttributeSticker,
     DocumentAttributeVideo,
     MessageMediaContact,
     MessageMediaDice,
@@ -23,23 +22,14 @@ from telethon.tl.types import (
     MessageMediaGame,
     MessageMediaGeo,
     MessageMediaGeoLive,
-    MessageMediaPhoto,
-    MessageMediaPoll,
     MessageMediaWebPage,
-    PeerChannel,
-    PeerUser,
 )
-from telethon.tl.custom import Dialog
-from telethon.tl.types import Channel as TLChannel
-from telethon.tl.types import Chat
 
 from src.config import SchedulerConfig, TelegramRuntimeConfig
-from src.models import Account, Channel, ChannelStats, Message
+from src.models import Account, Channel, ChannelStats
 from src.telegram.backends import TelegramTransportSession
 from src.telegram.client_pool import (
     ClientPool,
-    DialogCacheEntry,
-    DialogFetchStats,
     StatsClientAvailability,
 )
 from src.telegram.collector import (
@@ -52,13 +42,9 @@ from src.telegram.collector import (
 from tests.helpers import (
     AsyncIterEmpty,
     AsyncIterMessages,
-    FakeClientPool,
-    FakeTelethonClient,
     make_mock_message,
     make_mock_pool,
-    make_mock_reactions,
 )
-
 
 # ---------------------------------------------------------------------------
 # ClientPool fixtures
@@ -840,10 +826,6 @@ async def test_disconnect_all_timeout_forces_cleanup(pool):
     client.disconnect = AsyncMock(side_effect=asyncio.TimeoutError())
     pool.clients["+7001"] = TelegramTransportSession(client, disconnect_on_close=False)
 
-    # remove_client will timeout because disconnect hangs
-    # Patch to force the timeout path
-    original_remove = pool.remove_client
-
     async def _slow_remove(phone):
         raise asyncio.TimeoutError()
 
@@ -1165,7 +1147,8 @@ async def test_get_media_type_dice():
 
 @pytest.mark.asyncio
 async def test_get_media_type_game():
-    msg = SimpleNamespace(media=MessageMediaGame(game=SimpleNamespace(id=0, access_hash=0, short_name="", title="", description="")))
+    game = SimpleNamespace(id=0, access_hash=0, short_name="", title="", description="")
+    msg = SimpleNamespace(media=MessageMediaGame(game=game))
     assert Collector._get_media_type(msg) == "game"
 
 

@@ -1,126 +1,90 @@
-"""Tests for web routes dialogs and remaining small modules."""
+"""Tests for web route helpers and small module behaviors."""
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
-
-import pytest
+from unittest.mock import MagicMock
 
 from src.web.routes import dialogs as dialogs_mod
 
-
-# --- dialogs route helpers ---
-
-
-def test_dialogs_router_defined():
-    assert hasattr(dialogs_mod, "router")
+# --- panel_auth behavior tests ---
 
 
-def test_dialogs_module_imports():
-    from src.web.routes.dialogs import router
-
-    assert router is not None
-
-
-# --- settings routes helper tests ---
-
-
-def test_settings_router_defined():
-    from src.web.routes.settings import router
-
-    assert router is not None
-
-
-# --- collection queue tests ---
-
-
-async def test_collection_queue_import():
-    from src.collection_queue import CollectionQueue
-
-    assert CollectionQueue is not None
-
-
-# --- dialog_cache repository tests ---
-
-
-async def test_dialog_cache_repo_import():
-    from src.database.repositories.dialog_cache import DialogCacheRepository
-
-    assert DialogCacheRepository is not None
-
-
-# --- panel_auth tests ---
-
-
-def test_panel_auth_import():
-    from src.web.panel_auth import is_public_path, sanitize_next, login_redirect_url
+def test_panel_auth_is_public_path():
+    from src.web.panel_auth import is_public_path
 
     assert is_public_path("/health")
     assert is_public_path("/static/css/style.css")
+    assert is_public_path("/logout")
     assert not is_public_path("/dashboard")
+    assert not is_public_path("/admin")
+
+
+def test_panel_auth_sanitize_next():
+    from src.web.panel_auth import sanitize_next
+
     assert sanitize_next(None) == "/"
+    assert sanitize_next("") == "/"
     assert sanitize_next("//evil.com") == "/"
     assert sanitize_next("/dashboard") == "/dashboard"
-    assert "next=" in login_redirect_url("/settings")
+    assert sanitize_next("/settings?q=1") == "/settings?q=1"
 
 
-# --- web app tests ---
+def test_panel_auth_login_redirect_url():
+    from src.web.panel_auth import login_redirect_url
+
+    url = login_redirect_url("/settings")
+    assert "next=" in url
+    assert "settings" in url
 
 
-def test_web_app_import():
+# --- dialogs route module ---
+
+
+def test_dialogs_router_has_routes():
+    routes = [r.path for r in dialogs_mod.router.routes]
+    assert any("/leave" in r for r in routes)
+
+
+# --- web app behavior ---
+
+
+def test_web_app_create_app_returns_asgi():
     from src.web.app import create_app
 
-    assert callable(create_app)
+    app = create_app()
+    assert hasattr(app, "router")
 
 
-# --- scheduler service tests ---
+# --- collection queue behavior ---
 
 
-def test_scheduler_service_import():
-    from src.scheduler import service as svc_mod
+async def test_collection_queue_status_enum():
+    from src.collection_queue import CollectionTaskStatus
 
-    assert svc_mod is not None
-
-
-# --- database settings repository ---
+    assert CollectionTaskStatus.PENDING.value == "pending"
+    assert CollectionTaskStatus.COMPLETED.value == "completed"
 
 
-async def test_settings_repo_import():
-    from src.database.repositories.settings import SettingsRepository
-
-    assert SettingsRepository is not None
+# --- redirect_target_from_request ---
 
 
-# --- channel stats repository ---
+def test_redirect_target_get_request():
+    from src.web.panel_auth import redirect_target_from_request
+
+    request = MagicMock()
+    request.method = "GET"
+    request.url = MagicMock()
+    request.url.path = "/settings"
+    request.url.query = "tab=general"
+    result = redirect_target_from_request(request)
+    assert result == "/settings?tab=general"
 
 
-async def test_channel_stats_repo_import():
-    from src.database.repositories.channel_stats import ChannelStatsRepository
+def test_redirect_target_post_no_referer():
+    from src.web.panel_auth import redirect_target_from_request
 
-    assert ChannelStatsRepository is not None
-
-
-# --- generation_runs repository ---
-
-
-async def test_generation_runs_repo_import():
-    from src.database.repositories.generation_runs import GenerationRunsRepository
-
-    assert GenerationRunsRepository is not None
-
-
-# --- content_pipelines repository ---
-
-
-async def test_content_pipelines_repo_import():
-    from src.database.repositories.content_pipelines import ContentPipelinesRepository
-
-    assert ContentPipelinesRepository is not None
-
-
-# --- runtime_snapshots repository ---
-
-
-async def test_runtime_snapshots_repo_import():
-    from src.database.repositories.runtime_snapshots import RuntimeSnapshotsRepository
-
-    assert RuntimeSnapshotsRepository is not None
+    request = MagicMock()
+    request.method = "POST"
+    request.url = MagicMock()
+    request.headers = {}
+    result = redirect_target_from_request(request)
+    assert result == "/"

@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from src.models import TelegramCommand, TelegramCommandStatus
+from src.models import TelegramCommand
 from src.services.telegram_command_service import TelegramCommandService
 
 

@@ -247,8 +247,14 @@ async def run_migrations(db: aiosqlite.Connection) -> bool:
         """)
     await db.commit()
 
-    await db.execute("UPDATE channels SET channel_type='supergroup' WHERE channel_type='group'")
-    await db.execute("UPDATE channels SET channel_type='group' WHERE channel_type='chat'")
+    await db.execute("""
+        UPDATE channels SET channel_type = CASE
+            WHEN channel_type = 'chat' THEN 'group'
+            WHEN channel_type = 'group' THEN 'supergroup'
+            ELSE channel_type
+        END
+        WHERE channel_type IN ('chat', 'group')
+    """)
     await db.commit()
 
     await db.execute("""

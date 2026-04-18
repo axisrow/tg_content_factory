@@ -4,17 +4,14 @@ from __future__ import annotations
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
-
 from src.agent.tools._registry import (
     _text_response,
     normalize_phone,
     require_confirmation,
+    require_phone_permission,
     require_pool,
     resolve_phone,
-    require_phone_permission,
 )
-
 
 # --- normalize_phone ---
 

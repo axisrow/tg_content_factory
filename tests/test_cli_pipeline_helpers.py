@@ -1,13 +1,10 @@
 """Tests for CLI pipeline helper functions and other pure-logic CLI helpers."""
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
-
 import pytest
 
 from src.cli.commands.pipeline import _parse_target_refs, _preview_text
-from src.services.pipeline_service import PipelineTargetRef, PipelineValidationError
-
+from src.services.pipeline_service import PipelineValidationError
 
 # --- _parse_target_refs ---
 
@@ -82,12 +79,12 @@ def test_preview_text_whitespace_normalization():
 
 def test_cli_test_constants():
     from src.cli.commands.test import (
+        _TG_CHECKS_AFTER_POOL,
         PARALLEL_SAFE_PYTEST_COMMAND,
         SERIAL_PYTEST_COMMAND,
         TELEGRAM_DIALOG_TIMEOUT,
         TELEGRAM_SEARCH_TIMEOUT,
         TELEGRAM_TIMEOUT,
-        _TG_CHECKS_AFTER_POOL,
     )
 
     assert TELEGRAM_TIMEOUT == 30

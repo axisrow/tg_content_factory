@@ -8,7 +8,6 @@ import pytest
 from src.cli.graph_viz import _config_summary, render_ascii
 from src.models import PipelineEdge, PipelineGraph, PipelineNode, PipelineNodeType
 
-
 # --- graph_viz tests ---
 
 

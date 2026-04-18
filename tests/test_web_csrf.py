@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
 
-import pytest
-
 from src.web.csrf import (
     OriginCSRFMiddleware,
     _forwarded_values,
@@ -13,7 +11,6 @@ from src.web.csrf import (
     is_same_origin_url,
     is_secure_request,
 )
-
 
 # --- _normalize_port ---
 

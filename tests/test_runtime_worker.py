@@ -1,10 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
-
-import pytest
 
 from src.runtime.worker import _publish_snapshots
 from src.services.notification_target_service import NotificationTargetStatus
@@ -54,10 +51,10 @@ def _make_container(**overrides):
 
 async def test_publish_snapshots_writes_heartbeat():
     container = _make_container()
-    with patch("src.runtime.worker.NotificationService") as MockNotifSvc:
+    with patch("src.runtime.worker.NotificationService") as mock_notif_svc:
         mock_notif = MagicMock()
         mock_notif.get_status = AsyncMock(return_value=None)
-        MockNotifSvc.return_value = mock_notif
+        mock_notif_svc.return_value = mock_notif
         await _publish_snapshots(container)
 
     calls = container.db.repos.runtime_snapshots.upsert_snapshot.call_args_list
@@ -73,8 +70,8 @@ async def test_publish_snapshots_writes_heartbeat():
 
 async def test_publish_snapshots_accounts_status():
     container = _make_container(clients={"+111": MagicMock(), "+222": MagicMock()})
-    with patch("src.runtime.worker.NotificationService") as MockNotifSvc:
-        MockNotifSvc.return_value.get_status = AsyncMock(return_value=None)
+    with patch("src.runtime.worker.NotificationService") as mock_notif_svc:
+        mock_notif_svc.return_value.get_status = AsyncMock(return_value=None)
         await _publish_snapshots(container)
 
     calls = container.db.repos.runtime_snapshots.upsert_snapshot.call_args_list
@@ -86,8 +83,8 @@ async def test_publish_snapshots_accounts_status():
 
 async def test_publish_snapshots_collector_status():
     container = _make_container(collector_running=True, clients={"+1": MagicMock()})
-    with patch("src.runtime.worker.NotificationService") as MockNotifSvc:
-        MockNotifSvc.return_value.get_status = AsyncMock(return_value=None)
+    with patch("src.runtime.worker.NotificationService") as mock_notif_svc:
+        mock_notif_svc.return_value.get_status = AsyncMock(return_value=None)
         await _publish_snapshots(container)
 
     calls = container.db.repos.runtime_snapshots.upsert_snapshot.call_args_list
@@ -99,8 +96,8 @@ async def test_publish_snapshots_collector_status():
 
 async def test_publish_snapshots_collector_no_accounts():
     container = _make_container(clients={}, collector_running=False)
-    with patch("src.runtime.worker.NotificationService") as MockNotifSvc:
-        MockNotifSvc.return_value.get_status = AsyncMock(return_value=None)
+    with patch("src.runtime.worker.NotificationService") as mock_notif_svc:
+        mock_notif_svc.return_value.get_status = AsyncMock(return_value=None)
         await _publish_snapshots(container)
 
     calls = container.db.repos.runtime_snapshots.upsert_snapshot.call_args_list
@@ -111,8 +108,8 @@ async def test_publish_snapshots_collector_no_accounts():
 
 async def test_publish_snapshots_scheduler_status():
     container = _make_container(scheduler_running=True, scheduler_interval=30)
-    with patch("src.runtime.worker.NotificationService") as MockNotifSvc:
-        MockNotifSvc.return_value.get_status = AsyncMock(return_value=None)
+    with patch("src.runtime.worker.NotificationService") as mock_notif_svc:
+        mock_notif_svc.return_value.get_status = AsyncMock(return_value=None)
         await _publish_snapshots(container)
 
     calls = container.db.repos.runtime_snapshots.upsert_snapshot.call_args_list
@@ -125,8 +122,8 @@ async def test_publish_snapshots_scheduler_status():
 async def test_publish_snapshots_scheduler_jobs():
     container = _make_container()
     container.scheduler.get_potential_jobs = AsyncMock(return_value=[{"name": "collect_all"}])
-    with patch("src.runtime.worker.NotificationService") as MockNotifSvc:
-        MockNotifSvc.return_value.get_status = AsyncMock(return_value=None)
+    with patch("src.runtime.worker.NotificationService") as mock_notif_svc:
+        mock_notif_svc.return_value.get_status = AsyncMock(return_value=None)
         await _publish_snapshots(container)
 
     calls = container.db.repos.runtime_snapshots.upsert_snapshot.call_args_list
@@ -141,10 +138,10 @@ async def test_publish_snapshots_notification_bot():
     mock_bot.bot_id = 123
     mock_bot.created_at = datetime(2025, 1, 1, tzinfo=timezone.utc)
 
-    with patch("src.runtime.worker.NotificationService") as MockNotifSvc:
+    with patch("src.runtime.worker.NotificationService") as mock_notif_svc:
         mock_notif = MagicMock()
         mock_notif.get_status = AsyncMock(return_value=mock_bot)
-        MockNotifSvc.return_value = mock_notif
+        mock_notif_svc.return_value = mock_notif
         await _publish_snapshots(container)
 
     calls = container.db.repos.runtime_snapshots.upsert_snapshot.call_args_list
@@ -156,8 +153,8 @@ async def test_publish_snapshots_notification_bot():
 
 async def test_publish_snapshots_notification_target_unavailable():
     container = _make_container(target_state="not_configured")
-    with patch("src.runtime.worker.NotificationService") as MockNotifSvc:
-        MockNotifSvc.return_value.get_status = AsyncMock(return_value=None)
+    with patch("src.runtime.worker.NotificationService") as mock_notif_svc:
+        mock_notif_svc.return_value.get_status = AsyncMock(return_value=None)
         await _publish_snapshots(container)
 
     calls = container.db.repos.runtime_snapshots.upsert_snapshot.call_args_list
@@ -168,10 +165,10 @@ async def test_publish_snapshots_notification_target_unavailable():
 
 async def test_publish_snapshots_notification_bot_exception():
     container = _make_container(target_state="available")
-    with patch("src.runtime.worker.NotificationService") as MockNotifSvc:
+    with patch("src.runtime.worker.NotificationService") as mock_notif_svc:
         mock_notif = MagicMock()
         mock_notif.get_status = AsyncMock(side_effect=Exception("bot error"))
-        MockNotifSvc.return_value = mock_notif
+        mock_notif_svc.return_value = mock_notif
         await _publish_snapshots(container)
 
     calls = container.db.repos.runtime_snapshots.upsert_snapshot.call_args_list

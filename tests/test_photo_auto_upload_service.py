@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -154,7 +153,6 @@ async def test_run_due_no_jobs(service, bundle):
 
 
 async def test_run_due_skips_not_due(service, bundle):
-    now = datetime.now(timezone.utc)
     job = _make_job(is_active=False)
     bundle.list_auto_jobs.return_value = [job]
     result = await service.run_due()
