@@ -16,7 +16,7 @@
             errDiv.className = "alert alert-danger";
             errDiv.setAttribute("role", "alert");
             if (errors[errCode]) {
-                errDiv.innerHTML = errors[errCode];
+                errDiv.textContent = errors[errCode];
             } else {
                 errDiv.textContent = errCode;
             }
