@@ -170,24 +170,14 @@
 </form>
 
 <div class="d-flex flex-wrap gap-2 align-items-center mt-3">
-    {% if is_dag %}
-    <form method="post" action="/pipelines/{{ pipeline.id }}/run" class="d-inline">
-        <input type="hidden" name="since_value" value="24">
-        <input type="hidden" name="since_unit" value="h">
-        <button type="submit" class="btn btn-outline-primary btn-sm"><i class="bi bi-play-fill"></i> Запустить</button>
-    </form>
-    <button type="button" class="btn btn-outline-warning btn-sm"
-            onclick="editDryRunCount({{ pipeline.id }}, 24, 'h')"><i class="bi bi-lightning"></i> Тест</button>
-    {% else %}
-    <span class="d-inline-flex align-items-center gap-2">
-        <input type="number" id="edit-since-value" value="24" min="1"
-               class="form-control form-control-sm" style="width:64px">
-        <select id="edit-since-unit" class="form-select form-select-sm" style="width:72px">
-            <option value="m">мин</option>
-            <option value="h" selected>ч</option>
-            <option value="d">д</option>
-        </select>
-    </span>
+    <span class="text-muted small">Глубина выборки:</span>
+    <input type="number" id="edit-since-value" value="24" min="1"
+           class="form-control form-control-sm" style="width:72px">
+    <select id="edit-since-unit" class="form-select form-select-sm" style="width:80px">
+        <option value="m">мин</option>
+        <option value="h" selected>ч</option>
+        <option value="d">д</option>
+    </select>
     <form method="post" action="/pipelines/{{ pipeline.id }}/run" class="d-inline" id="edit-run-form">
         <input type="hidden" name="since_value" id="edit-run-since-value">
         <input type="hidden" name="since_unit" id="edit-run-since-unit">
@@ -195,28 +185,24 @@
                 onclick="syncEditRunParams()"><i class="bi bi-play-fill"></i> Запустить</button>
     </form>
     <button type="button" class="btn btn-outline-warning btn-sm"
-            onclick="editDryRunCountLegacy({{ pipeline.id }})"><i class="bi bi-lightning"></i> Тест</button>
-    {% endif %}
+            onclick="editDryRunCount({{ pipeline.id }})"><i class="bi bi-lightning"></i> Тест</button>
 </div>
 
 <script>
 function syncEditRunParams() {
-    var sv = document.getElementById("edit-since-value");
-    var su = document.getElementById("edit-since-unit");
-    if (sv) document.getElementById("edit-run-since-value").value = sv.value;
-    if (su) document.getElementById("edit-run-since-unit").value = su.value;
+    document.getElementById("edit-run-since-value").value =
+        document.getElementById("edit-since-value").value;
+    document.getElementById("edit-run-since-unit").value =
+        document.getElementById("edit-since-unit").value;
 }
-function editDryRunCount(id, sv, su) {
+function editDryRunCount(id) {
+    var sv = document.getElementById("edit-since-value").value;
+    var su = document.getElementById("edit-since-unit").value;
     fetch("/pipelines/" + id + "/dry-run-count?since_value=" + sv + "&since_unit=" + su)
         .then(function(r) { return r.json(); })
         .then(function(d) {
             showToast("Тест: " + d.total + " сообщений, " + d.after_filter + " пройдут обработку");
         }).catch(function() { showToast("Ошибка при подсчёте"); });
-}
-function editDryRunCountLegacy(id) {
-    var sv = document.getElementById("edit-since-value").value;
-    var su = document.getElementById("edit-since-unit").value;
-    editDryRunCount(id, sv, su);
 }
 </script>
 {% endblock %}
