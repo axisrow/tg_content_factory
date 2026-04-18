@@ -2,12 +2,14 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from src.models import (
     ContentPipeline,
+    Message,
     PipelineEdge,
     PipelineGenerationBackend,
     PipelineGraph,
@@ -684,6 +686,46 @@ async def test_dry_run_count_dag_pipeline(client, base_app):
     assert resp.status_code == 200
     data = resp.json()
     assert "total" in data
+
+
+@pytest.mark.asyncio
+async def test_dry_run_count_dag_pipeline_falls_back_to_sidecar_sources(client, base_app):
+    """Broken DAG source config should still use persisted pipeline_sources."""
+    app, db, _ = base_app
+    app.state.llm_provider_service = _make_provider_svc()
+
+    await db.insert_message(
+        Message(
+            channel_id=100,
+            message_id=1,
+            text="Recent message",
+            date=datetime.now(timezone.utc),
+        )
+    )
+
+    dag = PipelineGraph(
+        nodes=[
+            PipelineNode(
+                id="src",
+                type=PipelineNodeType.SOURCE,
+                name="src",
+                config={"channel_ids": []},
+            ),
+            PipelineNode(id="react", type=PipelineNodeType.REACT, name="react"),
+        ],
+        edges=[PipelineEdge(from_node="src", to_node="react")],
+    )
+    pipeline = ContentPipeline(
+        name="Broken DAG",
+        prompt_template=".",
+        generation_backend=PipelineGenerationBackend.CHAIN,
+        pipeline_json=dag,
+    )
+    pipeline_id = await db.repos.content_pipelines.add(pipeline, [100], [])
+
+    resp = await client.get(f"/pipelines/{pipeline_id}/dry-run-count")
+    assert resp.status_code == 200
+    assert resp.json() == {"total": 1, "after_filter": 1}
 
 
 # ── dry_run_count_new ───────────────────────────────────────────────

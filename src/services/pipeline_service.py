@@ -88,6 +88,28 @@ class PipelineService:
             bundle = PipelineBundle.from_database(bundle)
         self._bundle = bundle
 
+    @staticmethod
+    def _hydrate_runtime_refs(
+        pipeline: ContentPipeline,
+        sources: list[PipelineSource],
+        targets: list[PipelineTarget],
+    ) -> ContentPipeline:
+        """Backfill graph source/target refs from sidecar tables for runtime consistency."""
+        if pipeline.pipeline_json is None:
+            return pipeline
+
+        graph = pipeline.pipeline_json.model_copy(deep=True)
+        PipelineService._inject_runtime_refs(
+            graph,
+            [source.channel_id for source in sources],
+            [
+                PipelineTargetRef(phone=target.phone, dialog_id=target.dialog_id)
+                for target in targets
+                if target.phone
+            ],
+        )
+        return pipeline.model_copy(update={"pipeline_json": graph})
+
     async def add(
         self,
         *,
@@ -185,10 +207,41 @@ class PipelineService:
         return await self._bundle.update(pipeline_id, pipeline, sources, targets)
 
     async def list(self, active_only: bool = False) -> list[ContentPipeline]:
-        return await self._bundle.get_all(active_only)
+        pipelines = await self._bundle.get_all(active_only)
+        pipeline_ids = [
+            pipeline.id
+            for pipeline in pipelines
+            if pipeline.id is not None and pipeline.pipeline_json is not None
+        ]
+        if not pipeline_ids:
+            return pipelines
+
+        all_sources, all_targets = await asyncio.gather(
+            self._batch_sources(pipeline_ids),
+            self._batch_targets(pipeline_ids),
+        )
+        sources_by_pid = _group_by_pipeline(all_sources)
+        targets_by_pid = _group_by_pipeline(all_targets)
+        return [
+            self._hydrate_runtime_refs(
+                pipeline,
+                sources_by_pid.get(pipeline.id, []),
+                targets_by_pid.get(pipeline.id, []),
+            )
+            if pipeline.id is not None and pipeline.pipeline_json is not None else pipeline
+            for pipeline in pipelines
+        ]
 
     async def get(self, pipeline_id: int) -> ContentPipeline | None:
-        return await self._bundle.get_by_id(pipeline_id)
+        pipeline = await self._bundle.get_by_id(pipeline_id)
+        if pipeline is None or pipeline.pipeline_json is None or pipeline.id is None:
+            return pipeline
+
+        sources, targets = await asyncio.gather(
+            self._bundle.list_sources(pipeline_id),
+            self._bundle.list_targets(pipeline_id),
+        )
+        return self._hydrate_runtime_refs(pipeline, sources, targets)
 
     async def delete(self, pipeline_id: int) -> None:
         await self._bundle.delete(pipeline_id)
@@ -215,6 +268,7 @@ class PipelineService:
             self._bundle.list_targets(pipeline_id),
             self._bundle.list_channels(include_filtered=True),
         )
+        pipeline = self._hydrate_runtime_refs(pipeline, sources, targets)
         channels_by_id = {channel.channel_id: channel for channel in channels}
         return {
             "pipeline": pipeline,
@@ -247,7 +301,11 @@ class PipelineService:
         targets_by_pid = _group_by_pipeline(all_targets)
         return [
             {
-                "pipeline": p,
+                "pipeline": self._hydrate_runtime_refs(
+                    p,
+                    sources_by_pid.get(p.id, []),
+                    targets_by_pid.get(p.id, []),
+                ) if p.id is not None and p.pipeline_json is not None else p,
                 "sources": sources_by_pid.get(p.id, []),
                 "targets": targets_by_pid.get(p.id, []),
                 "source_ids": [s.channel_id for s in sources_by_pid.get(p.id, [])],
