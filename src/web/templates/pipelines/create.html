@@ -17,6 +17,12 @@
 
 <form id="wizard-form" method="post" action="/pipelines/create-wizard" data-busy>
 
+<div class="mb-4">
+    <label class="form-label fw-semibold">Название пайплайна</label>
+    <input class="form-control" type="text" name="name" placeholder="Мой пайплайн" id="wizard-name" required>
+    <div class="form-text">Обязательное поле — заполните до перехода на следующий шаг.</div>
+</div>
+
 {# === Step 1: Pipeline Type === #}
 <div class="wizard-step active" id="step-1">
     <h5 class="mb-3">Выберите тип пайплайна</h5>
@@ -440,10 +446,6 @@
 {# === Step 5: Review === #}
 <div class="wizard-step" id="step-5">
     <h5 class="mb-3">Проверка</h5>
-    <div class="mb-3">
-        <label class="form-label">Название пайплайна</label>
-        <input class="form-control" type="text" name="name" placeholder="Мой пайплайн" id="wizard-name">
-    </div>
     <div id="wizard-review" class="card">
         <div class="card-body">
             <div id="review-content"></div>
@@ -523,6 +525,12 @@
 
     function validateStep(step) {
         if (step === 1) {
+            var nameVal = document.getElementById("wizard-name").value.trim();
+            if (!nameVal) {
+                alert("Введите название пайплайна в шапке формы");
+                document.getElementById("wizard-name").focus();
+                return false;
+            }
             if (!pipelineType) { alert("Выберите тип пайплайна"); return false; }
         } else if (step === 2) {
             var src = document.querySelectorAll('[name="source_channel_ids"]');
