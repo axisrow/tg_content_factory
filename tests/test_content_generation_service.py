@@ -478,7 +478,7 @@ async def test_run_graph_copies_node_errors_from_executor(monkeypatch):
     """
     from unittest.mock import AsyncMock, MagicMock
 
-    from src.models import ContentPipeline, PipelineEdge, PipelineGraph, PipelineNode, PipelineNodeType
+    from src.models import ContentPipeline, PipelineGraph, PipelineNode, PipelineNodeType
     from src.services.content_generation_service import ContentGenerationService
 
     pipeline = ContentPipeline(
