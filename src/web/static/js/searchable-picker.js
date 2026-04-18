@@ -75,7 +75,7 @@
             // Badges for checked options
             options.forEach(function (opt) {
                 if (!getCheckbox(opt).checked) return;
-                addBadge(opt.dataset.searchText.split(" ")[0] || opt.dataset.value, opt);
+                addBadge(opt.dataset.title || opt.dataset.searchText.split(" ")[0] || opt.dataset.value, opt);
             });
             // Badges for pre-selected without visible option
             preselectedEls.forEach(function (el) {
@@ -182,6 +182,7 @@
                 label.setAttribute("data-value", item.value);
                 label.setAttribute("data-group", item.group || "");
                 label.setAttribute("data-search-text", (item.title + " " + (item.username || "")).toLowerCase());
+                label.setAttribute("data-title", item.title);
 
                 var cb = document.createElement("input");
                 cb.type = "checkbox";
