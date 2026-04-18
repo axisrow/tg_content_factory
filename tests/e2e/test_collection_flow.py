@@ -107,11 +107,11 @@ async def _serve_app(tmp_path, *, embed_worker: bool):
 
 async def _wait_for_messages(db_path: str, channel_id: int, n: int, timeout: float = 15.0) -> int:
     """Poll the DB until at least `n` messages for `channel_id` are present."""
-    deadline = asyncio.get_event_loop().time() + timeout
+    deadline = asyncio.get_running_loop().time() + timeout
     db = Database(db_path)
     await db.initialize()
     try:
-        while asyncio.get_event_loop().time() < deadline:
+        while asyncio.get_running_loop().time() < deadline:
             rows = await db.execute_fetchall(
                 "SELECT COUNT(*) AS c FROM messages WHERE channel_id = ?",
                 (channel_id,),
@@ -203,9 +203,9 @@ async def test_embedded_worker_publishes_heartbeat(tmp_path):
             db = Database(config.database.path)
             await db.initialize()
             try:
-                deadline = asyncio.get_event_loop().time() + 10.0
+                deadline = asyncio.get_running_loop().time() + 10.0
                 snapshot = None
-                while asyncio.get_event_loop().time() < deadline:
+                while asyncio.get_running_loop().time() < deadline:
                     snapshot = await db.repos.runtime_snapshots.get_snapshot(
                         "worker_heartbeat"
                     )
