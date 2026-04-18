@@ -56,6 +56,7 @@ dependencies = [
     "pytest-xdist==3.8.0",
     "httpx==0.28.1",
     "ruff==0.14.13",
+    "pytest-cov==7.0.0",
 ]
 
 [project.optional-dependencies]
@@ -109,4 +110,19 @@ markers = [
     "telegram_unit: pure unit test that does not verify backend transport wiring",
     "real_materializer: test uses real SessionMaterializer instead of the fake stub",
     "aiosqlite_serial: test must run without xdist parallelism because it exercises aiosqlite-backed database paths",
+]
+
+[tool.coverage.run]
+source = ["src"]
+parallel = true
+omit = ["tests/*"]
+
+[tool.coverage.report]
+show_missing = true
+fail_under = 90
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "pass",
 ]
