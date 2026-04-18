@@ -74,7 +74,11 @@
     {% if dag_source_channel_ids is not none %}
     <div class="mb-3">
         <label class="form-label"><i class="bi bi-box-arrow-in-right"></i> Канал-источник</label>
-        <div class="searchable-picker" data-picker-name="dag_source_channel_ids" data-picker-multi="true" data-picker-url="/pipelines/api/channels/search?q=">
+        <div class="searchable-picker"
+             data-picker-name="dag_source_channel_ids"
+             data-picker-multi="true"
+             data-picker-url="/pipelines/api/channels/search?q="
+             data-picker-no-initial="true">
             <div class="picker-selected"></div>
             <input type="search" class="form-control form-control-sm mb-1" placeholder="Введите название или ID канала (мин. 2 символа)..." data-picker-search>
             <div class="list-group picker-list"></div>
@@ -159,10 +163,23 @@
         <label class="form-check-label" for="edit-active">Pipeline активен</label>
     </div>
 
-    <button type="submit" class="btn btn-primary me-2"><i class="bi bi-check-lg"></i> Сохранить</button>
-    <a href="/pipelines" class="btn btn-secondary">Отмена</a>
+    <div class="d-flex flex-wrap gap-2 align-items-center mt-3">
+        <button type="submit" class="btn btn-primary"><i class="bi bi-check-lg"></i> Сохранить</button>
+        <a href="/pipelines" class="btn btn-secondary">Отмена</a>
+    </div>
+</form>
 
-    <span class="ms-3 d-inline-flex align-items-center gap-2">
+<div class="d-flex flex-wrap gap-2 align-items-center mt-3">
+    {% if is_dag %}
+    <form method="post" action="/pipelines/{{ pipeline.id }}/run" class="d-inline">
+        <input type="hidden" name="since_value" value="24">
+        <input type="hidden" name="since_unit" value="h">
+        <button type="submit" class="btn btn-outline-primary btn-sm"><i class="bi bi-play-fill"></i> Запустить</button>
+    </form>
+    <button type="button" class="btn btn-outline-warning btn-sm"
+            onclick="editDryRunCount({{ pipeline.id }}, 24, 'h')"><i class="bi bi-lightning"></i> Тест</button>
+    {% else %}
+    <span class="d-inline-flex align-items-center gap-2">
         <input type="number" id="edit-since-value" value="24" min="1"
                class="form-control form-control-sm" style="width:64px">
         <select id="edit-since-unit" class="form-select form-select-sm" style="width:72px">
@@ -175,73 +192,31 @@
         <input type="hidden" name="since_value" id="edit-run-since-value">
         <input type="hidden" name="since_unit" id="edit-run-since-unit">
         <button type="submit" class="btn btn-outline-primary btn-sm"
-                onclick="syncEditRunParams()">&#x25BA; Запустить</button>
+                onclick="syncEditRunParams()"><i class="bi bi-play-fill"></i> Запустить</button>
     </form>
     <button type="button" class="btn btn-outline-warning btn-sm"
-            onclick="editDryRunCount({{ pipeline.id }})">&#x1F9EA; Тест</button>
+            onclick="editDryRunCountLegacy({{ pipeline.id }})"><i class="bi bi-lightning"></i> Тест</button>
+    {% endif %}
+</div>
 
-    <script>
-    function syncEditRunParams() {
-        document.getElementById("edit-run-since-value").value =
-            document.getElementById("edit-since-value").value;
-        document.getElementById("edit-run-since-unit").value =
-            document.getElementById("edit-since-unit").value;
-    }
-    function editDryRunCount(id) {
-        var sv = document.getElementById("edit-since-value").value;
-        var su = document.getElementById("edit-since-unit").value;
-        fetch("/pipelines/" + id + "/dry-run-count?since_value=" + sv + "&since_unit=" + su)
-            .then(function(r) { return r.json(); })
-            .then(function(d) {
-                showToast("Тест: " + d.total + " сообщений, " + d.after_filter + " пройдут обработку");
-            }).catch(function() { showToast("Ошибка при подсчёте"); });
-    }
-    </script>
-</form>
-
-{% if is_dag %}
-{# DAG pipeline: simple run button without since parameters #}
-<form method="post" action="/pipelines/{{ pipeline.id }}/run" class="d-inline ms-3">
-    <input type="hidden" name="since_value" value="24">
-    <input type="hidden" name="since_unit" value="h">
-    <button type="submit" class="btn btn-outline-primary btn-sm"><i class="bi bi-play-fill"></i> Запустить</button>
-</form>
-{% else %}
-{# Legacy pipeline: run with since parameters #}
-<span class="ms-3 d-inline-flex align-items-center gap-2">
-    <input type="number" id="edit-since-value" value="24" min="1"
-           class="form-control form-control-sm" style="width:64px">
-    <select id="edit-since-unit" class="form-select form-select-sm" style="width:72px">
-        <option value="m">мин</option>
-        <option value="h" selected>ч</option>
-        <option value="d">д</option>
-    </select>
-</span>
-<form method="post" action="/pipelines/{{ pipeline.id }}/run" class="d-inline" id="edit-run-form">
-    <input type="hidden" name="since_value" id="edit-run-since-value">
-    <input type="hidden" name="since_unit" id="edit-run-since-unit">
-    <button type="submit" class="btn btn-outline-primary btn-sm"
-            onclick="syncEditRunParams()"><i class="bi bi-play-fill"></i> Запустить</button>
-</form>
 <script>
 function syncEditRunParams() {
-    document.getElementById("edit-run-since-value").value =
-        document.getElementById("edit-since-value").value;
-    document.getElementById("edit-run-since-unit").value =
-        document.getElementById("edit-since-unit").value;
+    var sv = document.getElementById("edit-since-value");
+    var su = document.getElementById("edit-since-unit");
+    if (sv) document.getElementById("edit-run-since-value").value = sv.value;
+    if (su) document.getElementById("edit-run-since-unit").value = su.value;
 }
-</script>
-{% endif %}
-<button type="button" class="btn btn-outline-warning btn-sm"
-        onclick="editDryRunCount({{ pipeline.id }})"><i class="bi bi-lightning"></i> Тест</button>
-
-<script>
-function editDryRunCount(id) {
-    fetch("/pipelines/" + id + "/dry-run-count?since_value=24&since_unit=h")
+function editDryRunCount(id, sv, su) {
+    fetch("/pipelines/" + id + "/dry-run-count?since_value=" + sv + "&since_unit=" + su)
         .then(function(r) { return r.json(); })
         .then(function(d) {
             showToast("Тест: " + d.total + " сообщений, " + d.after_filter + " пройдут обработку");
         }).catch(function() { showToast("Ошибка при подсчёте"); });
+}
+function editDryRunCountLegacy(id) {
+    var sv = document.getElementById("edit-since-value").value;
+    var su = document.getElementById("edit-since-unit").value;
+    editDryRunCount(id, sv, su);
 }
 </script>
 {% endblock %}
