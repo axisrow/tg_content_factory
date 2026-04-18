@@ -6,6 +6,7 @@ from typing import Any
 
 import aiosqlite
 
+from src.database.repositories._transactions import begin_immediate
 from src.models import TelegramCommand, TelegramCommandStatus
 
 
@@ -120,7 +121,7 @@ class TelegramCommandsRepository:
 
     async def claim_next_command(self) -> TelegramCommand | None:
         now = datetime.now(timezone.utc).isoformat()
-        await self._db.execute("BEGIN IMMEDIATE")
+        await begin_immediate(self._db)
         try:
             cur = await self._db.execute(
                 """

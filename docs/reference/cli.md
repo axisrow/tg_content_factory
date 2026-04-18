@@ -103,6 +103,9 @@ python -m src.main pipeline reject RUN_ID
 python -m src.main pipeline bulk-approve RUN_ID [RUN_ID ...]
 python -m src.main pipeline bulk-reject RUN_ID [RUN_ID ...]
 python -m src.main pipeline refinement-steps ID [--set JSON]
+python -m src.main pipeline filter set ID [--message-kind KIND ...] [--service-action ACTION ...] [--media-type TYPE ...] [--sender-kind KIND ...] [--keyword TEXT ...] [--regex PATTERN] [--forwarded true|false] [--has-text true|false]
+python -m src.main pipeline filter show ID
+python -m src.main pipeline filter clear ID
 ```
 
 ## image

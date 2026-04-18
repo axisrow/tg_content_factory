@@ -78,6 +78,21 @@ class AllCollectionClientsFloodedError(RuntimeError):
 
 
 class Collector:
+    _SERVICE_ACTION_SEMANTICS = {
+        "MessageActionChatAddUser": "join",
+        "MessageActionChatJoinedByLink": "join",
+        "MessageActionChatJoinedByRequest": "join",
+        "MessageActionChatDeleteUser": "leave",
+        "MessageActionPinMessage": "pin",
+        "MessageActionChatEditTitle": "title_changed",
+        "MessageActionChatEditPhoto": "photo_changed",
+        "MessageActionChatDeletePhoto": "photo_changed",
+        "MessageActionChatMigrateTo": "migrate",
+        "MessageActionChannelMigrateFrom": "migrate",
+        "MessageActionChatCreate": "created",
+        "MessageActionChannelCreate": "created",
+    }
+
     def __init__(
         self,
         pool: ClientPool,
@@ -763,8 +778,13 @@ class Collector:
                             sender_id=msg.sender_id,
                             sender_name=self._get_sender_name(msg),
                             text=msg.text,
+                            message_kind=self._get_message_kind(msg),
                             detected_lang=TranslationService.detect_language(msg.text),
                             media_type=self._get_media_type(msg),
+                            service_action_raw=self._get_service_action_raw(msg),
+                            service_action_semantic=self._get_service_action_semantic(msg),
+                            service_action_payload_json=self._get_service_action_payload(msg),
+                            sender_kind=self._get_sender_kind(msg),
                             topic_id=topic_id,
                             reactions_json=self._extract_reactions(msg),
                             views=getattr(msg, "views", None),
@@ -1289,3 +1309,35 @@ class Collector:
             if hasattr(msg.sender, "title"):
                 return msg.sender.title
         return None
+
+    @classmethod
+    def _get_message_kind(cls, msg) -> str:
+        return "service" if getattr(msg, "action", None) is not None else "regular"
+
+    @staticmethod
+    def _get_service_action_raw(msg) -> str | None:
+        action = getattr(msg, "action", None)
+        return type(action).__name__ if action is not None else None
+
+    @classmethod
+    def _get_service_action_semantic(cls, msg) -> str | None:
+        action_raw = cls._get_service_action_raw(msg)
+        if action_raw is None:
+            return None
+        return cls._SERVICE_ACTION_SEMANTICS.get(action_raw, "other")
+
+    @staticmethod
+    def _get_service_action_payload(msg) -> str | None:
+        action = getattr(msg, "action", None)
+        if action is None:
+            return None
+        payload = {key: value for key, value in action.to_dict().items() if key != "_"}
+        return json.dumps(payload, ensure_ascii=False, sort_keys=True) if payload else None
+
+    @staticmethod
+    def _get_sender_kind(msg) -> str:
+        if getattr(msg, "post", False):
+            return "channel"
+        if getattr(msg, "sender_id", None) is None:
+            return "anonymous_admin"
+        return "user"

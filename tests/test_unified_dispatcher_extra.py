@@ -352,3 +352,195 @@ async def test_build_image_service_db_exception():
     with patch("src.services.image_provider_service.ImageProviderService", side_effect=Exception("nope")):
         svc = await d._build_image_service()
         assert svc is not None
+
+
+# ── Issue #463: happy path with semantic assertions ──────────────────────────
+
+
+def _make_pipeline_for_dispatcher(pipeline_id: int):
+    from src.models import ContentPipeline, PipelinePublishMode
+
+    return ContentPipeline(
+        id=pipeline_id,
+        name="Test",
+        llm_model="gpt-4",
+        publish_mode=PipelinePublishMode.MODERATED,
+        is_active=True,
+    )
+
+
+def _dispatcher_for_pipeline_run(run, *, pipeline_id: int = 7):
+    """Build a dispatcher with just enough pipeline deps to reach ContentGenerationService.generate."""
+    db = MagicMock()
+    db.repos = MagicMock()
+    db.repos.generation_runs = MagicMock()
+    db.repos.generation_runs.set_status = AsyncMock()
+
+    d = _dispatcher(
+        pipeline_bundle=MagicMock(),
+        search_engine=MagicMock(),
+        db=db,
+        llm_provider_service=MagicMock(),
+    )
+    return d
+
+
+class TestPipelineRunHappyPathSemantics:
+    """Verify that messages_collected on the CollectionTask row reflects
+    GenerationRun.result_count exactly — for all three run shapes.
+    """
+
+    @pytest.mark.asyncio
+    async def test_generation_run_maps_citation_count_to_messages_collected(self, monkeypatch):
+        from tests.factories.pipeline_runs import make_generation_run
+
+        run = make_generation_run(run_id=42, pipeline_id=7, citations_count=3)
+        d = _dispatcher_for_pipeline_run(run, pipeline_id=7)
+
+        async def fake_get(self, pipeline_id):
+            return _make_pipeline_for_dispatcher(pipeline_id)
+
+        async def fake_generate(self, *, pipeline, model, dry_run, since_hours):
+            return run
+
+        monkeypatch.setattr(
+            "src.services.pipeline_service.PipelineService.get",
+            fake_get,
+        )
+        monkeypatch.setattr(
+            "src.services.content_generation_service.ContentGenerationService.generate",
+            fake_generate,
+        )
+        monkeypatch.setattr(
+            UnifiedDispatcher,
+            "_build_image_service",
+            AsyncMock(return_value=MagicMock()),
+        )
+
+        task = _task(
+            CollectionTaskType.PIPELINE_RUN,
+            task_id=100,
+            payload=PipelineRunTaskPayload(pipeline_id=7),
+        )
+        await d._handle_pipeline_run(task)
+
+        call = d._tasks.update_collection_task.call_args
+        assert call.args[0] == 100
+        assert call.args[1] == CollectionTaskStatus.COMPLETED
+        assert call.kwargs["messages_collected"] == 3
+        assert "id=42" in call.kwargs["note"]
+
+    @pytest.mark.asyncio
+    async def test_action_only_run_propagates_action_count(self, monkeypatch):
+        from tests.factories.pipeline_runs import make_action_only_run
+
+        run = make_action_only_run(run_id=43, pipeline_id=7, action_counts={"react": 5})
+        d = _dispatcher_for_pipeline_run(run, pipeline_id=7)
+
+        async def fake_get(self, pipeline_id):
+            return _make_pipeline_for_dispatcher(pipeline_id)
+
+        async def fake_generate(self, *, pipeline, model, dry_run, since_hours):
+            return run
+
+        monkeypatch.setattr("src.services.pipeline_service.PipelineService.get", fake_get)
+        monkeypatch.setattr(
+            "src.services.content_generation_service.ContentGenerationService.generate",
+            fake_generate,
+        )
+        monkeypatch.setattr(
+            UnifiedDispatcher,
+            "_build_image_service",
+            AsyncMock(return_value=MagicMock()),
+        )
+
+        task = _task(
+            CollectionTaskType.PIPELINE_RUN,
+            task_id=101,
+            payload=PipelineRunTaskPayload(pipeline_id=7),
+        )
+        await d._handle_pipeline_run(task)
+
+        call = d._tasks.update_collection_task.call_args
+        assert call.kwargs["messages_collected"] == 5
+        assert call.args[1] == CollectionTaskStatus.COMPLETED
+
+    @pytest.mark.asyncio
+    async def test_mixed_run_uses_generation_count(self, monkeypatch):
+        """Mixed run: dispatcher stores generation count (not action count),
+        consistent with summarize_result() precedence.
+        """
+        from tests.factories.pipeline_runs import make_mixed_run
+
+        run = make_mixed_run(run_id=44, pipeline_id=7, citations_count=2, action_counts={"react": 9})
+        d = _dispatcher_for_pipeline_run(run, pipeline_id=7)
+
+        async def fake_get(self, pipeline_id):
+            return _make_pipeline_for_dispatcher(pipeline_id)
+
+        async def fake_generate(self, *, pipeline, model, dry_run, since_hours):
+            return run
+
+        monkeypatch.setattr("src.services.pipeline_service.PipelineService.get", fake_get)
+        monkeypatch.setattr(
+            "src.services.content_generation_service.ContentGenerationService.generate",
+            fake_generate,
+        )
+        monkeypatch.setattr(
+            UnifiedDispatcher,
+            "_build_image_service",
+            AsyncMock(return_value=MagicMock()),
+        )
+
+        task = _task(
+            CollectionTaskType.PIPELINE_RUN,
+            task_id=102,
+            payload=PipelineRunTaskPayload(pipeline_id=7),
+        )
+        await d._handle_pipeline_run(task)
+
+        call = d._tasks.update_collection_task.call_args
+        assert call.kwargs["messages_collected"] == 2  # generation wins
+
+    @pytest.mark.asyncio
+    async def test_empty_text_positive_count_regression(self, monkeypatch):
+        """Issue #463 regression: run with empty text but positive result_count
+        must NOT be stored as messages_collected=0.
+        """
+        from tests.factories.pipeline_runs import make_action_only_run
+
+        run = make_action_only_run(run_id=45, pipeline_id=7, action_counts={"forward": 4})
+        assert (run.generated_text or "") == ""
+        assert run.result_count == 4
+
+        d = _dispatcher_for_pipeline_run(run, pipeline_id=7)
+
+        async def fake_get(self, pipeline_id):
+            return _make_pipeline_for_dispatcher(pipeline_id)
+
+        async def fake_generate(self, *, pipeline, model, dry_run, since_hours):
+            return run
+
+        monkeypatch.setattr("src.services.pipeline_service.PipelineService.get", fake_get)
+        monkeypatch.setattr(
+            "src.services.content_generation_service.ContentGenerationService.generate",
+            fake_generate,
+        )
+        monkeypatch.setattr(
+            UnifiedDispatcher,
+            "_build_image_service",
+            AsyncMock(return_value=MagicMock()),
+        )
+
+        task = _task(
+            CollectionTaskType.PIPELINE_RUN,
+            task_id=103,
+            payload=PipelineRunTaskPayload(pipeline_id=7),
+        )
+        await d._handle_pipeline_run(task)
+
+        call = d._tasks.update_collection_task.call_args
+        assert call.kwargs["messages_collected"] == 4, (
+            "Dispatcher must derive messages_collected from run.result_count, "
+            "NOT from len(generated_text) or similar heuristics."
+        )

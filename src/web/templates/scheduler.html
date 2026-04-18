@@ -299,7 +299,7 @@
                     <th>Тип</th>
                     <th>Канал / Описание</th>
                     <th>Статус</th>
-                    <th>Результат</th>
+                    <th>{{ result_column_title }}</th>
                     <th>Создана</th>
                     <th>Завершена</th>
                     <th>Действие</th>
@@ -319,8 +319,16 @@
                         {{ task_status_text(t) }}
                     </td>
                     <td>
+                        {% set pipeline_meta = pipeline_result_meta.get(t.id) if pipeline_result_meta else None %}
                         {% if t.task_type == 'stats_all' and t.payload and t.payload.channel_ids %}
                             {{ t.messages_collected }}/{{ t.payload.channel_ids|length }}
+                        {% elif t.task_type.value == 'pipeline_run' and pipeline_meta %}
+                            <small class="text-muted d-block">{{ pipeline_meta.label }}</small>
+                            {{ pipeline_meta.count }}
+                            {% if pipeline_meta.errors_count %}
+                                <span class="badge text-bg-warning pipe-run-warning ms-1"
+                                      title="{{ pipeline_meta.first_error_detail or '' }}">⚠ {{ pipeline_meta.errors_count }}</span>
+                            {% endif %}
                         {% else %}
                             {{ t.messages_collected }}
                         {% endif %}
@@ -359,8 +367,15 @@
                         </span>
                     </div>
                     <small class="text-muted">
+                        {% set pipeline_meta = pipeline_result_meta.get(t.id) if pipeline_result_meta else None %}
                         {% if t.task_type == 'stats_all' and t.payload and t.payload.channel_ids %}
                             {{ t.messages_collected }}/{{ t.payload.channel_ids|length }}
+                        {% elif t.task_type.value == 'pipeline_run' and pipeline_meta %}
+                            {{ pipeline_meta.label }}: {{ pipeline_meta.count }}
+                            {% if pipeline_meta.errors_count %}
+                                <span class="badge text-bg-warning pipe-run-warning ms-1"
+                                      title="{{ pipeline_meta.first_error_detail or '' }}">⚠ {{ pipeline_meta.errors_count }}</span>
+                            {% endif %}
                         {% else %}
                             {{ t.messages_collected }} сообщ.
                         {% endif %}

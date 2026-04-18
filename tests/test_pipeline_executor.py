@@ -319,3 +319,224 @@ class TestExecuteSeedsContext:
         assert captured_context.get_global("default_model") == "gpt-4o"
         # publish_mode falls back to pipeline's value
         assert result["publish_mode"] == PipelinePublishMode.MODERATED.value
+
+
+# ---------------------------------------------------------------------------
+# 12. Issue #463 — result semantics per pipeline shape
+# ---------------------------------------------------------------------------
+
+
+class TestExecutorResultSemantics:
+    """Verify executor.execute() returns correct result_kind/result_count for
+    each pipeline shape: generation-only, action-only, mixed, empty-success.
+    """
+
+    @pytest.mark.asyncio
+    async def test_generation_only_graph_returns_generated_items(self):
+        graph = PipelineGraph(
+            nodes=[
+                _node("src", PipelineNodeType.SOURCE),
+                _node("gen", PipelineNodeType.LLM_GENERATE),
+            ],
+            edges=[_edge("src", "gen")],
+        )
+        pipeline = _pipeline()
+
+        def fake_get_handler(node_type):
+            h = AsyncMock()
+
+            async def _execute(config, ctx, services):
+                if node_type == PipelineNodeType.LLM_GENERATE:
+                    ctx.set_global("generated_text", "draft text")
+                    ctx.set_global("citations", [{"id": 1}, {"id": 2}])
+
+            h.execute.side_effect = _execute
+            return h
+
+        with patch("src.services.pipeline_executor.get_handler", side_effect=fake_get_handler):
+            executor = PipelineExecutor()
+            result = await executor.execute(pipeline, graph, {})
+
+        assert result["result_kind"] == "generated_items"
+        assert result["result_count"] == 2
+        assert result["generated_text"] == "draft text"
+
+    @pytest.mark.asyncio
+    async def test_mixed_graph_generation_wins_but_action_counts_preserved(self):
+        from src.services.pipeline_result import increment_action_count
+
+        graph = PipelineGraph(
+            nodes=[
+                _node("src", PipelineNodeType.SOURCE),
+                _node("gen", PipelineNodeType.LLM_GENERATE),
+                _node("react", PipelineNodeType.REACT),
+            ],
+            edges=[_edge("src", "gen"), _edge("gen", "react")],
+        )
+        pipeline = _pipeline()
+
+        def fake_get_handler(node_type):
+            h = AsyncMock()
+
+            async def _execute(config, ctx, services):
+                if node_type == PipelineNodeType.LLM_GENERATE:
+                    ctx.set_global("generated_text", "mixed draft")
+                    ctx.set_global("citations", [{"id": 1}])
+                if node_type == PipelineNodeType.REACT:
+                    increment_action_count(ctx, "react", amount=3)
+
+            h.execute.side_effect = _execute
+            return h
+
+        with patch("src.services.pipeline_executor.get_handler", side_effect=fake_get_handler):
+            executor = PipelineExecutor()
+            result = await executor.execute(pipeline, graph, {})
+
+        # Generation wins result_kind/result_count per issue #463.
+        assert result["result_kind"] == "generated_items"
+        assert result["result_count"] == 1
+        # But action counts remain visible for UI/metadata consumers.
+        assert result["action_counts"] == {"react": 3}
+
+    @pytest.mark.asyncio
+    async def test_action_only_graph_with_empty_text_is_not_zero_result(self):
+        """Regression: empty generated_text MUST NOT collapse result_count to 0."""
+        from src.services.pipeline_result import increment_action_count
+
+        graph = PipelineGraph(
+            nodes=[
+                _node("src", PipelineNodeType.SOURCE),
+                _node("react", PipelineNodeType.REACT),
+            ],
+            edges=[_edge("src", "react")],
+        )
+        pipeline = _pipeline()
+
+        def fake_get_handler(node_type):
+            h = AsyncMock()
+
+            async def _execute(config, ctx, services):
+                if node_type == PipelineNodeType.REACT:
+                    increment_action_count(ctx, "react", amount=5)
+
+            h.execute.side_effect = _execute
+            return h
+
+        with patch("src.services.pipeline_executor.get_handler", side_effect=fake_get_handler):
+            executor = PipelineExecutor()
+            result = await executor.execute(pipeline, graph, {})
+
+        assert result["result_kind"] == "processed_messages"
+        assert result["result_count"] == 5
+        assert (result.get("generated_text") or "") == ""
+
+    @pytest.mark.asyncio
+    async def test_empty_successful_graph_returns_zero_processed(self):
+        graph = PipelineGraph(
+            nodes=[_node("src", PipelineNodeType.SOURCE)],
+            edges=[],
+        )
+        pipeline = _pipeline()
+
+        def fake_get_handler(node_type):
+            h = AsyncMock()
+            h.execute.return_value = None
+            return h
+
+        with patch("src.services.pipeline_executor.get_handler", side_effect=fake_get_handler):
+            executor = PipelineExecutor()
+            result = await executor.execute(pipeline, graph, {})
+
+        assert result["result_kind"] == "processed_messages"
+        assert result["result_count"] == 0
+
+    @pytest.mark.asyncio
+    async def test_executor_propagates_node_errors_from_context(self):
+        """Issue #463: errors recorded via ctx.record_error() must appear in result['node_errors']."""
+        graph = PipelineGraph(
+            nodes=[_node("react", PipelineNodeType.REACT)],
+            edges=[],
+        )
+        pipeline = _pipeline()
+
+        def fake_get_handler(node_type):
+            h = AsyncMock()
+
+            async def _execute(config, ctx, services):
+                ctx.record_error(
+                    node_id="react",
+                    code="no_available_client",
+                    detail="all accounts are flood-waited",
+                )
+
+            h.execute.side_effect = _execute
+            return h
+
+        with patch("src.services.pipeline_executor.get_handler", side_effect=fake_get_handler):
+            executor = PipelineExecutor()
+            result = await executor.execute(pipeline, graph, {})
+
+        assert result["node_errors"] == [
+            {
+                "node_id": "react",
+                "code": "no_available_client",
+                "detail": "all accounts are flood-waited",
+            }
+        ]
+
+    @pytest.mark.asyncio
+    async def test_executor_node_errors_default_empty(self):
+        graph = PipelineGraph(nodes=[_node("src", PipelineNodeType.SOURCE)], edges=[])
+        pipeline = _pipeline()
+
+        def fake_get_handler(node_type):
+            h = AsyncMock()
+            h.execute.return_value = None
+            return h
+
+        with patch("src.services.pipeline_executor.get_handler", side_effect=fake_get_handler):
+            result = await PipelineExecutor().execute(pipeline, graph, {})
+
+        assert result["node_errors"] == []
+
+    @pytest.mark.asyncio
+    async def test_mixed_action_types_all_preserved(self):
+        """Multiple action types (react + forward + delete) all surface in action_counts."""
+        from src.services.pipeline_result import increment_action_count
+
+        graph = PipelineGraph(
+            nodes=[
+                _node("src", PipelineNodeType.SOURCE),
+                _node("react", PipelineNodeType.REACT),
+                _node("fwd", PipelineNodeType.FORWARD),
+                _node("del", PipelineNodeType.DELETE_MESSAGE),
+            ],
+            edges=[
+                _edge("src", "react"),
+                _edge("src", "fwd"),
+                _edge("src", "del"),
+            ],
+        )
+        pipeline = _pipeline()
+
+        def fake_get_handler(node_type):
+            h = AsyncMock()
+
+            async def _execute(config, ctx, services):
+                if node_type == PipelineNodeType.REACT:
+                    increment_action_count(ctx, "react", amount=2)
+                elif node_type == PipelineNodeType.FORWARD:
+                    increment_action_count(ctx, "forward", amount=3)
+                elif node_type == PipelineNodeType.DELETE_MESSAGE:
+                    increment_action_count(ctx, "delete_message", amount=1)
+
+            h.execute.side_effect = _execute
+            return h
+
+        with patch("src.services.pipeline_executor.get_handler", side_effect=fake_get_handler):
+            executor = PipelineExecutor()
+            result = await executor.execute(pipeline, graph, {})
+
+        assert result["result_kind"] == "processed_messages"
+        assert result["result_count"] == 6  # 2+3+1
+        assert result["action_counts"] == {"react": 2, "forward": 3, "delete_message": 1}

@@ -72,6 +72,30 @@ async def test_claim_next_command_rolls_back_on_error(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_claim_next_command_recovers_from_stale_transaction(tmp_path):
+    db = Database(str(tmp_path / "test.db"))
+    await db.initialize()
+
+    try:
+        await db.repos.telegram_commands.create_command(
+            TelegramCommand(
+                command_type="dialogs.refresh",
+                payload={"phone": "+1"},
+                requested_by="test",
+            )
+        )
+
+        assert db.db is not None
+        await db.db.execute("BEGIN")
+
+        claimed = await db.repos.telegram_commands.claim_next_command()
+        assert claimed is not None
+        assert claimed.status == TelegramCommandStatus.RUNNING
+    finally:
+        await db.close()
+
+
+@pytest.mark.asyncio
 async def test_runtime_snapshots_repository_upsert_and_get(tmp_path):
     db = Database(str(tmp_path / "test.db"))
     await db.initialize()

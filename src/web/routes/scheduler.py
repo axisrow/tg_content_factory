@@ -7,10 +7,12 @@ from urllib.parse import urlencode
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
+from src.services.pipeline_result import result_kind_label
 from src.web import deps
 from src.web.routes.channel_collection import bulk_enqueue_msg
 
 logger = logging.getLogger(__name__)
+_PIPELINE_RUN_NOTE_RE = re.compile(r"Pipeline run id=(\d+)")
 
 router = APIRouter()
 
@@ -297,6 +299,42 @@ async def _notification_snapshot_payload(request: Request) -> dict[str, object]:
     return payload if isinstance(payload, dict) else {}
 
 
+async def _load_pipeline_run_result_meta(db, tasks) -> dict[int, dict[str, object]]:
+    run_ids_by_task_id: dict[int, int] = {}
+    for task in tasks:
+        if task.id is None or task.task_type.value != "pipeline_run" or not task.note:
+            continue
+        match = _PIPELINE_RUN_NOTE_RE.search(task.note)
+        if match is None:
+            continue
+        run_ids_by_task_id[task.id] = int(match.group(1))
+    if not run_ids_by_task_id:
+        return {}
+
+    runs = await asyncio.gather(*(db.repos.generation_runs.get(run_id) for run_id in run_ids_by_task_id.values()))
+    result: dict[int, dict[str, object]] = {}
+    for task_id, run in zip(run_ids_by_task_id.keys(), runs, strict=False):
+        if run is None:
+            continue
+        metadata = run.metadata if isinstance(run.metadata, dict) else {}
+        raw_errors = metadata.get("node_errors")
+        node_errors = raw_errors if isinstance(raw_errors, list) else []
+        errors_count = len(node_errors)
+        first_error_detail: str | None = None
+        if node_errors and isinstance(node_errors[0], dict):
+            detail = node_errors[0].get("detail")
+            if isinstance(detail, str):
+                first_error_detail = detail
+        result[task_id] = {
+            "kind": run.result_kind,
+            "count": run.result_count,
+            "label": result_kind_label(run.result_kind),
+            "errors_count": errors_count,
+            "first_error_detail": first_error_detail,
+        }
+    return result
+
+
 _PRESERVED_SCHEDULER_QUERY_KEYS = ("status", "page", "limit")
 
 
@@ -402,6 +440,15 @@ async def _scheduler_page_inner(
         _build_collector_health_context(request),
     )
     tasks, filtered_count = tasks_page
+    pipeline_result_meta = await _load_pipeline_run_result_meta(db, tasks)
+    result_column_title = "Результат"
+    visible_pipeline_labels = {
+        str(meta["label"])
+        for meta in pipeline_result_meta.values()
+        if isinstance(meta.get("label"), str)
+    }
+    if tasks and all(task.task_type.value == "pipeline_run" for task in tasks) and len(visible_pipeline_labels) == 1:
+        result_column_title = next(iter(visible_pipeline_labels))
 
     total_pages = max(1, (filtered_count + limit - 1) // limit)
     if page > total_pages:
@@ -433,6 +480,8 @@ async def _scheduler_page_inner(
         "pending_collect_count": pending_collect_count,
         "scheduler_jobs": scheduler_jobs,
         "collector_health": collector_health,
+        "pipeline_result_meta": pipeline_result_meta,
+        "result_column_title": result_column_title,
     }
 
     templates = deps.get_templates(request)

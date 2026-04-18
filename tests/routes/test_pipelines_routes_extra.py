@@ -2,12 +2,14 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from src.models import (
     ContentPipeline,
+    Message,
     PipelineEdge,
     PipelineGenerationBackend,
     PipelineGraph,
@@ -526,8 +528,12 @@ async def test_generate_stream_llm_not_configured(client_with_dialog, base_app):
 
 
 @pytest.mark.asyncio
-async def test_generate_pipeline_no_llm_nodes(client, base_app):
-    """POST /pipelines/<id>/generate for pipeline with no LLM nodes redirects."""
+async def test_generate_pipeline_no_llm_nodes_runs_graph(client, base_app):
+    """POST /pipelines/<id>/generate on a pipeline WITHOUT LLM nodes (pure
+    action/publish graph) must NOT be rejected — it's a legitimate use case.
+    The route must run the graph via ContentGenerationService/PipelineExecutor
+    and return a rendered page.
+    """
     app, db, _ = base_app
     app.state.llm_provider_service = _make_provider_svc(has=True)
 
@@ -539,15 +545,32 @@ async def test_generate_pipeline_no_llm_nodes(client, base_app):
         edges=[PipelineEdge(from_node="src", to_node="pub")],
     )
 
-    with patch("src.web.routes.pipelines.deps.pipeline_service") as mock_svc:
+    async def fake_run_generation(self, pipeline, model, max_tokens, temperature, since_hours=24.0):
+        return {
+            "generated_text": "",
+            "citations": [],
+            "publish_mode": None,
+            "action_counts": {},
+            "result_kind": "processed_messages",
+            "result_count": 0,
+        }
+
+    with (
+        patch("src.web.routes.pipelines.deps.pipeline_service") as mock_svc,
+        patch(
+            "src.services.content_generation_service.ContentGenerationService._run_generation",
+            fake_run_generation,
+        ),
+    ):
         mock_svc.return_value.get = AsyncMock(return_value=_make_pipeline(1, dag=dag))
         resp = await client.post(
             "/pipelines/1/generate",
             data={"model": "", "max_tokens": "256", "temperature": "0.0"},
             follow_redirects=False,
         )
-    assert resp.status_code == 303
-    assert "error=pipeline_no_llm_nodes" in resp.headers["location"]
+    # 200 for rendered template (not a redirect with error=pipeline_no_llm_nodes).
+    assert resp.status_code == 200, resp.text
+    assert "pipeline_no_llm_nodes" not in resp.text
 
 
 @pytest.mark.asyncio
@@ -684,6 +707,46 @@ async def test_dry_run_count_dag_pipeline(client, base_app):
     assert resp.status_code == 200
     data = resp.json()
     assert "total" in data
+
+
+@pytest.mark.asyncio
+async def test_dry_run_count_dag_pipeline_falls_back_to_sidecar_sources(client, base_app):
+    """Broken DAG source config should still use persisted pipeline_sources."""
+    app, db, _ = base_app
+    app.state.llm_provider_service = _make_provider_svc()
+
+    await db.insert_message(
+        Message(
+            channel_id=100,
+            message_id=1,
+            text="Recent message",
+            date=datetime.now(timezone.utc),
+        )
+    )
+
+    dag = PipelineGraph(
+        nodes=[
+            PipelineNode(
+                id="src",
+                type=PipelineNodeType.SOURCE,
+                name="src",
+                config={"channel_ids": []},
+            ),
+            PipelineNode(id="react", type=PipelineNodeType.REACT, name="react"),
+        ],
+        edges=[PipelineEdge(from_node="src", to_node="react")],
+    )
+    pipeline = ContentPipeline(
+        name="Broken DAG",
+        prompt_template=".",
+        generation_backend=PipelineGenerationBackend.CHAIN,
+        pipeline_json=dag,
+    )
+    pipeline_id = await db.repos.content_pipelines.add(pipeline, [100], [])
+
+    resp = await client.get(f"/pipelines/{pipeline_id}/dry-run-count")
+    assert resp.status_code == 200
+    assert resp.json() == {"total": 1, "after_filter": 1}
 
 
 # ── dry_run_count_new ───────────────────────────────────────────────
@@ -1340,3 +1403,28 @@ def test_apply_pipeline_filter_service_message():
         MagicMock(text="normal message"),
     ]
     assert _apply_pipeline_filter(pipeline, messages) == 2
+
+
+def test_apply_pipeline_filter_message_filter_semantic_service():
+    """Structured message_filter should use semantic service fields, not text."""
+    from src.web.routes.pipelines import _apply_pipeline_filter
+
+    pipeline = MagicMock()
+    pipeline.pipeline_json = PipelineGraph(
+        nodes=[
+            PipelineNode(
+                id="f",
+                type=PipelineNodeType.FILTER,
+                name="f",
+                config={"type": "message_filter", "message_kinds": ["service"], "service_actions": ["join"]},
+            ),
+        ],
+        edges=[],
+    )
+    join_msg = MagicMock(text="localized join text")
+    join_msg.message_kind = "service"
+    join_msg.service_action_semantic = "join"
+    leave_msg = MagicMock(text="localized leave text")
+    leave_msg.message_kind = "service"
+    leave_msg.service_action_semantic = "leave"
+    assert _apply_pipeline_filter(pipeline, [join_msg, leave_msg]) == 1

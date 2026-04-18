@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from src.models import Channel
+from src.models import Channel, CollectionTask, CollectionTaskStatus, CollectionTaskType
 from src.services.collection_service import CollectionService
 
 
@@ -183,6 +183,15 @@ async def test_cancel_task_with_live_queue_delegates():
     """With a live queue the service must delegate so RUNNING tasks get interrupted."""
     channels = MagicMock()
     channels.cancel_collection_task = AsyncMock(return_value=True)
+    channels.get_collection_task = AsyncMock(
+        return_value=CollectionTask(
+            id=77,
+            channel_id=100,
+            channel_title="Collect",
+            task_type=CollectionTaskType.CHANNEL_COLLECT,
+            status=CollectionTaskStatus.RUNNING,
+        )
+    )
     collector = MagicMock()
     queue = MagicMock()
     queue.cancel_task = AsyncMock(return_value=True)
@@ -199,12 +208,66 @@ async def test_cancel_task_without_queue_falls_back_to_db():
     """In web-mode (queue=None) the DB path must keep the route from 500'ing (#457)."""
     channels = MagicMock()
     channels.cancel_collection_task = AsyncMock(return_value=True)
+    channels.get_collection_task = AsyncMock(
+        return_value=CollectionTask(
+            id=77,
+            channel_id=100,
+            channel_title="Collect",
+            task_type=CollectionTaskType.CHANNEL_COLLECT,
+            status=CollectionTaskStatus.RUNNING,
+        )
+    )
     collector = MagicMock()
 
     svc = CollectionService(channels, collector, collection_queue=None)
     result = await svc.cancel_task(77)
     assert result is True
     channels.cancel_collection_task.assert_awaited_once_with(77, note=None)
+
+
+@pytest.mark.asyncio
+async def test_cancel_task_stats_all_bypasses_queue_and_cancels_collector():
+    channels = MagicMock()
+    channels.get_collection_task = AsyncMock(
+        return_value=CollectionTask(
+            id=88,
+            channel_title="Stats",
+            task_type=CollectionTaskType.STATS_ALL,
+            status=CollectionTaskStatus.RUNNING,
+        )
+    )
+    channels.cancel_collection_task = AsyncMock(return_value=True)
+    collector = MagicMock()
+    collector.cancel = AsyncMock()
+    queue = MagicMock()
+    queue.cancel_task = AsyncMock(return_value=True)
+
+    svc = CollectionService(channels, collector, collection_queue=queue)
+    result = await svc.cancel_task(88, note="stop stats")
+
+    assert result is True
+    channels.cancel_collection_task.assert_awaited_once_with(88, note="stop stats")
+    collector.cancel.assert_awaited_once()
+    queue.cancel_task.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_cancel_task_returns_false_when_task_missing():
+    channels = MagicMock()
+    channels.get_collection_task = AsyncMock(return_value=None)
+    channels.cancel_collection_task = AsyncMock(return_value=True)
+    collector = MagicMock()
+    collector.cancel = AsyncMock()
+    queue = MagicMock()
+    queue.cancel_task = AsyncMock(return_value=True)
+
+    svc = CollectionService(channels, collector, collection_queue=queue)
+    result = await svc.cancel_task(999)
+
+    assert result is False
+    channels.cancel_collection_task.assert_not_called()
+    collector.cancel.assert_not_called()
+    queue.cancel_task.assert_not_called()
 
 
 @pytest.mark.asyncio

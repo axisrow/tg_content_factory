@@ -17,6 +17,7 @@ from src.services.pipeline_nodes.handlers import (
     DelayHandler,
     FilterHandler,
     LlmGenerateHandler,
+    ReactHandler,
     SourceHandler,
 )
 
@@ -278,6 +279,64 @@ async def test_executor_condition_stops_on_false():
     # condition_result should be False, publish_targets not set
     assert result["context"].get_global("condition_result") is False
     assert result["context"].get_global("publish_targets") is None
+
+
+@pytest.mark.asyncio
+async def test_react_handler_tracks_successful_reactions():
+    class FakeSession:
+        def __init__(self):
+            self.calls = []
+
+        async def send_reaction(self, channel_id, message_id, emoji):
+            self.calls.append((channel_id, message_id, emoji))
+
+    class FakePool:
+        def __init__(self, session):
+            self._session = session
+
+        async def get_client_by_phone(self, phone):
+            return self._session, phone
+
+        async def release_client(self, phone):
+            return None
+
+    msg = type("Msg", (), {"channel_id": 1001, "message_id": 42})()
+    session = FakeSession()
+    handler = ReactHandler()
+    ctx = NodeContext()
+    ctx.set_global("context_messages", [msg])
+
+    await handler.execute(
+        {"emoji": "🔥"},
+        ctx,
+        {"client_pool": FakePool(session), "account_phone": "+100"},
+    )
+
+    assert session.calls == [(1001, 42, "🔥")]
+    assert ctx.get_global("action_counts") == {"react": 1}
+
+
+@pytest.mark.asyncio
+async def test_executor_returns_processed_message_result_for_action_only_pipeline(monkeypatch):
+    class FakeHandler:
+        async def execute(self, node_config, context, services):
+            context.set_global("action_counts", {"react": 3})
+
+    graph = PipelineGraph(
+        nodes=[_node("react", PipelineNodeType.REACT)],
+        edges=[],
+    )
+    pipeline = ContentPipeline(name="reaction", prompt_template=".", pipeline_json=graph)
+    executor = PipelineExecutor()
+
+    monkeypatch.setattr("src.services.pipeline_executor.get_handler", lambda _node_type: FakeHandler())
+
+    result = await executor.execute(pipeline, graph, {})
+
+    assert result["generated_text"] == ""
+    assert result["result_kind"] == "processed_messages"
+    assert result["result_count"] == 3
+    assert result["action_counts"] == {"react": 3}
 
 
 # ── Pipeline model with pipeline_json ────────────────────────────────────────

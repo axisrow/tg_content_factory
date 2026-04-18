@@ -4,6 +4,8 @@ from datetime import datetime, timezone
 
 import aiosqlite
 
+from src.database.repositories._transactions import begin_immediate
+
 
 def _dt(value: str | None) -> datetime | None:
     return datetime.fromisoformat(value) if value else None
@@ -59,7 +61,7 @@ class DialogCacheRepository:
         ]
 
     async def replace_dialogs(self, phone: str, dialogs: list[dict]) -> None:
-        await self._db.execute("BEGIN IMMEDIATE")
+        await begin_immediate(self._db)
         try:
             await self._db.execute("DELETE FROM dialog_cache WHERE phone = ?", (phone,))
             if dialogs:

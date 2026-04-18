@@ -57,7 +57,12 @@ class Message(BaseModel):
     sender_id: int | None = None
     sender_name: str | None = None
     text: str | None = None
+    message_kind: str | None = None
     media_type: str | None = None
+    service_action_raw: str | None = None
+    service_action_semantic: str | None = None
+    service_action_payload_json: str | None = None
+    sender_kind: str | None = None
     topic_id: int | None = None
     reactions_json: str | None = None
     views: int | None = None
@@ -283,6 +288,7 @@ class ContentPipeline(BaseModel):
     is_active: bool = True
     last_generated_id: int = 0
     generate_interval_minutes: int = Field(60, ge=1)
+    account_phone: str | None = None
     publish_times: str | None = None  # JSON array of "HH:MM" times, e.g. '["09:00", "18:00"]'
     refinement_steps: list[dict] = []  # list of {name, prompt} dicts; {text} in prompt is replaced
     pipeline_json: PipelineGraph | None = None  # node-based DAG config (issue #343)
@@ -386,6 +392,29 @@ class GenerationRun(BaseModel):
     published_at: datetime | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
+
+    @property
+    def result_kind(self) -> str:
+        metadata = self.metadata if isinstance(self.metadata, dict) else {}
+        value = metadata.get("result_kind")
+        if isinstance(value, str) and value:
+            return value
+        if self.generated_text:
+            return "generated_items"
+        return "processed_messages"
+
+    @property
+    def result_count(self) -> int:
+        metadata = self.metadata if isinstance(self.metadata, dict) else {}
+        value = metadata.get("result_count")
+        if isinstance(value, int):
+            return value
+        if isinstance(value, float):
+            return int(value)
+        citations = metadata.get("citations")
+        if isinstance(citations, list):
+            return len(citations)
+        return 1 if self.generated_text else 0
 
 
 class PhotoSendMode(StrEnum):

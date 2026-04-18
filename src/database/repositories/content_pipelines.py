@@ -5,6 +5,7 @@ from datetime import datetime
 
 import aiosqlite
 
+from src.database.repositories._transactions import begin_immediate
 from src.models import (
     ContentPipeline,
     PipelineGenerationBackend,
@@ -51,6 +52,7 @@ class ContentPipelinesRepository:
                 else []
             ),
             pipeline_json=pipeline_graph,
+            account_phone=row["account_phone"] if "account_phone" in keys else None,
             created_at=_dt(row["created_at"]),
         )
 
@@ -81,7 +83,7 @@ class ContentPipelinesRepository:
         source_channel_ids: list[int],
         targets: list[PipelineTarget],
     ) -> int:
-        await self._db.execute("BEGIN IMMEDIATE")
+        await begin_immediate(self._db)
         try:
             pipeline_json_str = pipeline.pipeline_json.to_json() if pipeline.pipeline_json else None
             cur = await self._db.execute(
@@ -89,8 +91,8 @@ class ContentPipelinesRepository:
                 INSERT INTO content_pipelines (
                     name, prompt_template, llm_model, image_model, publish_mode,
                     generation_backend, is_active, last_generated_id, generate_interval_minutes,
-                    publish_times, pipeline_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    publish_times, pipeline_json, account_phone
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     pipeline.name,
@@ -104,6 +106,7 @@ class ContentPipelinesRepository:
                     pipeline.generate_interval_minutes,
                     pipeline.publish_times,
                     pipeline_json_str,
+                    pipeline.account_phone,
                 ),
             )
             pipeline_id = cur.lastrowid or 0
@@ -146,7 +149,7 @@ class ContentPipelinesRepository:
         source_channel_ids: list[int],
         targets: list[PipelineTarget],
     ) -> bool:
-        await self._db.execute("BEGIN IMMEDIATE")
+        await begin_immediate(self._db)
         try:
             pipeline_json_str = pipeline.pipeline_json.to_json() if pipeline.pipeline_json else None
             cur = await self._db.execute(
@@ -154,7 +157,8 @@ class ContentPipelinesRepository:
                 UPDATE content_pipelines
                 SET name = ?, prompt_template = ?, llm_model = ?, image_model = ?,
                     publish_mode = ?, generation_backend = ?, is_active = ?,
-                    generate_interval_minutes = ?, publish_times = ?, pipeline_json = ?
+                    generate_interval_minutes = ?, publish_times = ?, pipeline_json = ?,
+                    account_phone = ?
                 WHERE id = ?
                 """,
                 (
@@ -168,6 +172,7 @@ class ContentPipelinesRepository:
                     pipeline.generate_interval_minutes,
                     pipeline.publish_times,
                     pipeline_json_str,
+                    pipeline.account_phone,
                     pipeline_id,
                 ),
             )

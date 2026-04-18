@@ -263,6 +263,54 @@ def run_with_dependencies(
                 except Exception as exc:
                     print(f"Error deleting messages: {exc}")
 
+            elif args.dialogs_action == "react":
+                accounts = sorted(pool.clients.keys())
+                if not accounts:
+                    print("No connected accounts.")
+                    return
+                phone = args.phone or accounts[0]
+                if phone not in pool.clients:
+                    print(f"Account {phone} not connected.")
+                    return
+                # Surface flood-wait state explicitly instead of silently failing
+                # lease acquisition (issue #463 observability).
+                acc = await pool._get_account_for_phone(phone)
+                if acc is not None and acc.flood_wait_until is not None:
+                    from datetime import datetime
+                    from datetime import timezone as _tz
+
+                    if acc.flood_wait_until > datetime.now(_tz.utc):
+                        print(
+                            f"Account {phone} is flood-waited until "
+                            f"{acc.flood_wait_until.isoformat()}."
+                        )
+                        return
+                native_result = await pool.get_native_client_by_phone(phone)
+                if native_result is None:
+                    print(f"Client for {phone} unavailable (no lease could be acquired).")
+                    return
+                client, acquired_phone = native_result
+                try:
+                    from telethon.tl.functions.messages import SendReactionRequest
+                    from telethon.tl.types import ReactionEmoji
+
+                    entity = await client.get_entity(args.chat_id)
+                    await client(
+                        SendReactionRequest(
+                            peer=entity,
+                            msg_id=args.message_id,
+                            reaction=[ReactionEmoji(emoticon=args.emoji)],
+                        )
+                    )
+                    print(
+                        f"Reaction {args.emoji!r} sent to message #{args.message_id} "
+                        f"in {args.chat_id} (account {acquired_phone})"
+                    )
+                except Exception as exc:
+                    print(f"Error sending reaction: {type(exc).__name__}: {exc}")
+                finally:
+                    await pool.release_client(acquired_phone)
+
             elif args.dialogs_action == "pin-message":
                 accounts = sorted(pool.clients.keys())
                 if not accounts:

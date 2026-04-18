@@ -34,7 +34,12 @@ CREATE TABLE IF NOT EXISTS messages (
     sender_id INTEGER,
     sender_name TEXT,
     text TEXT,
+    message_kind TEXT,
     media_type TEXT,
+    service_action_raw TEXT,
+    service_action_semantic TEXT,
+    service_action_payload_json TEXT,
+    sender_kind TEXT,
     topic_id INTEGER,
     reactions_json TEXT,
     views INTEGER,
@@ -265,6 +270,7 @@ CREATE TABLE IF NOT EXISTS content_pipelines (
     is_active INTEGER NOT NULL DEFAULT 1,
     last_generated_id INTEGER NOT NULL DEFAULT 0,
     generate_interval_minutes INTEGER NOT NULL DEFAULT 60,
+    account_phone TEXT,
     created_at TEXT DEFAULT (datetime('now'))
 );
 

@@ -420,6 +420,42 @@ async def test_filter_invalid_regex():
 
 
 @pytest.mark.asyncio
+async def test_filter_message_filter_service_join():
+    ctx = NodeContext()
+    m1 = _msg(text="joined")
+    m1.message_kind = "service"
+    m1.service_action_semantic = "join"
+    m1.sender_kind = "user"
+    m2 = _msg(text="left")
+    m2.message_kind = "service"
+    m2.service_action_semantic = "leave"
+    m2.sender_kind = "user"
+    ctx.set_global("context_messages", [m1, m2])
+    await FilterHandler().execute(
+        {"type": "message_filter", "message_kinds": ["service"], "service_actions": ["join"]},
+        ctx,
+        {},
+    )
+    assert ctx.get_global("context_messages") == [m1]
+
+
+@pytest.mark.asyncio
+async def test_filter_message_filter_sender_kind():
+    ctx = NodeContext()
+    m1 = _msg(text="anon")
+    m1.sender_kind = "anonymous_admin"
+    m2 = _msg(text="user")
+    m2.sender_kind = "user"
+    ctx.set_global("context_messages", [m1, m2])
+    await FilterHandler().execute(
+        {"type": "message_filter", "sender_kinds": ["anonymous_admin"]},
+        ctx,
+        {},
+    )
+    assert ctx.get_global("context_messages") == [m1]
+
+
+@pytest.mark.asyncio
 async def test_filter_unknown_type_returns_all():
     ctx = NodeContext()
     m1 = _msg(text="a")
@@ -508,6 +544,99 @@ async def test_react_random_emojis():
     session.send_reaction.assert_awaited_once_with(-100, 1, "🎉")
 
 
+# ── Issue #463: ReactHandler records structured node errors ───────────────────
+
+
+@pytest.mark.asyncio
+async def test_react_records_error_when_no_client_pool():
+    ctx = NodeContext()
+    ctx.set_global("context_messages", [_msg()])
+    await ReactHandler().execute(
+        {"emoji": "👍"}, ctx, {"client_pool": None, "_current_node_id": "react_1"}
+    )
+    errors = ctx.get_errors()
+    assert len(errors) == 1
+    assert errors[0]["code"] == "no_client_pool"
+    assert errors[0]["node_id"] == "react_1"
+
+
+@pytest.mark.asyncio
+async def test_react_records_no_available_client_when_pool_returns_none():
+    ctx = NodeContext()
+    ctx.set_global("context_messages", [_msg()])
+    pool = AsyncMock()
+    pool.get_available_client = AsyncMock(return_value=None)
+    await ReactHandler().execute(
+        {"emoji": "👍"}, ctx, {"client_pool": pool, "_current_node_id": "react_1"}
+    )
+    errors = ctx.get_errors()
+    assert len(errors) == 1
+    assert errors[0]["code"] == "no_available_client"
+    assert errors[0]["node_id"] == "react_1"
+
+
+@pytest.mark.asyncio
+async def test_react_records_flood_wait_error():
+    from telethon.errors import FloodWaitError
+
+    ctx = NodeContext()
+    ctx.set_global("context_messages", [_msg(channel_id=-100, message_id=42)])
+    session = AsyncMock()
+    session.send_reaction = AsyncMock(
+        side_effect=FloodWaitError(request=None, capture=120)
+    )
+    pool = AsyncMock()
+    pool.get_available_client = AsyncMock(return_value=(session, "+1"))
+    pool.release_client = AsyncMock()
+    await ReactHandler().execute(
+        {"emoji": "👍"}, ctx, {"client_pool": pool, "_current_node_id": "react_1"}
+    )
+    errors = ctx.get_errors()
+    assert len(errors) == 1
+    assert errors[0]["code"] == "flood_wait"
+    assert errors[0]["retry_after"] == 120
+    assert errors[0]["node_id"] == "react_1"
+
+
+@pytest.mark.asyncio
+async def test_react_records_chat_write_forbidden_error():
+    from telethon.errors import ChatWriteForbiddenError
+
+    ctx = NodeContext()
+    ctx.set_global("context_messages", [_msg(channel_id=-100, message_id=42)])
+    session = AsyncMock()
+    session.send_reaction = AsyncMock(
+        side_effect=ChatWriteForbiddenError(request=None)
+    )
+    pool = AsyncMock()
+    pool.get_available_client = AsyncMock(return_value=(session, "+1"))
+    pool.release_client = AsyncMock()
+    await ReactHandler().execute(
+        {"emoji": "👍"}, ctx, {"client_pool": pool, "_current_node_id": "react_1"}
+    )
+    errors = ctx.get_errors()
+    assert len(errors) == 1
+    assert errors[0]["code"] == "chat_write_forbidden"
+
+
+@pytest.mark.asyncio
+async def test_react_records_unexpected_error_for_generic_exception():
+    ctx = NodeContext()
+    ctx.set_global("context_messages", [_msg(channel_id=-100, message_id=42)])
+    session = AsyncMock()
+    session.send_reaction = AsyncMock(side_effect=ValueError("boom"))
+    pool = AsyncMock()
+    pool.get_available_client = AsyncMock(return_value=(session, "+1"))
+    pool.release_client = AsyncMock()
+    await ReactHandler().execute(
+        {"emoji": "👍"}, ctx, {"client_pool": pool, "_current_node_id": "react_1"}
+    )
+    errors = ctx.get_errors()
+    assert len(errors) == 1
+    assert errors[0]["code"] == "unexpected_error"
+    assert "ValueError" in errors[0]["detail"]
+
+
 # ── ForwardHandler ────────────────────────────────────────────────────────────
 
 
@@ -559,6 +688,61 @@ async def test_forward_get_client_returns_none_skips():
     pool.get_client_by_phone.assert_awaited_once_with("+123")
 
 
+# ── Issue #463: ForwardHandler records structured node errors ────────────────
+
+
+@pytest.mark.asyncio
+async def test_forward_records_error_when_no_client_pool():
+    ctx = NodeContext()
+    ctx.set_global("context_messages", [_msg()])
+    await ForwardHandler().execute(
+        {"targets": [{"phone": "+1", "dialog_id": -1}]},
+        ctx,
+        {"client_pool": None, "_current_node_id": "fwd_1"},
+    )
+    errors = ctx.get_errors()
+    assert errors and errors[0]["code"] == "no_client_pool"
+    assert errors[0]["node_id"] == "fwd_1"
+
+
+@pytest.mark.asyncio
+async def test_forward_records_no_available_client_when_pool_returns_none():
+    ctx = NodeContext()
+    ctx.set_global("context_messages", [_msg()])
+    pool = AsyncMock()
+    pool.get_client_by_phone = AsyncMock(return_value=None)
+    await ForwardHandler().execute(
+        {"targets": [{"phone": "+123", "dialog_id": -1}]},
+        ctx,
+        {"client_pool": pool, "_current_node_id": "fwd_1"},
+    )
+    errors = ctx.get_errors()
+    assert errors and errors[0]["code"] == "no_available_client"
+
+
+@pytest.mark.asyncio
+async def test_forward_records_flood_wait_error():
+    from telethon.errors import FloodWaitError
+
+    ctx = NodeContext()
+    ctx.set_global("context_messages", [_msg(channel_id=-100, message_id=7)])
+    session = AsyncMock()
+    session.forward_messages = AsyncMock(
+        side_effect=FloodWaitError(request=None, capture=60)
+    )
+    pool = AsyncMock()
+    pool.get_client_by_phone = AsyncMock(return_value=(session, "+1"))
+    pool.release_client = AsyncMock()
+    await ForwardHandler().execute(
+        {"targets": [{"phone": "+1", "dialog_id": -200}]},
+        ctx,
+        {"client_pool": pool, "_current_node_id": "fwd_1"},
+    )
+    errors = ctx.get_errors()
+    assert errors and errors[0]["code"] == "flood_wait"
+    assert errors[0]["retry_after"] == 60
+
+
 # ── DeleteMessageHandler ─────────────────────────────────────────────────────
 
 
@@ -593,6 +777,34 @@ async def test_delete_client_none_breaks():
     pool.get_available_client = AsyncMock(return_value=None)
     await DeleteMessageHandler().execute({}, ctx, {"client_pool": pool})
     pool.get_available_client.assert_awaited_once()
+
+
+# ── Issue #463: DeleteMessageHandler records structured node errors ──────────
+
+
+@pytest.mark.asyncio
+async def test_delete_records_error_when_no_client_pool():
+    ctx = NodeContext()
+    ctx.set_global("context_messages", [_msg()])
+    await DeleteMessageHandler().execute(
+        {}, ctx, {"client_pool": None, "_current_node_id": "del_1"}
+    )
+    errors = ctx.get_errors()
+    assert errors and errors[0]["code"] == "no_client_pool"
+    assert errors[0]["node_id"] == "del_1"
+
+
+@pytest.mark.asyncio
+async def test_delete_records_no_available_client_when_pool_returns_none():
+    ctx = NodeContext()
+    ctx.set_global("context_messages", [_msg()])
+    pool = AsyncMock()
+    pool.get_available_client = AsyncMock(return_value=None)
+    await DeleteMessageHandler().execute(
+        {}, ctx, {"client_pool": pool, "_current_node_id": "del_1"}
+    )
+    errors = ctx.get_errors()
+    assert errors and errors[0]["code"] == "no_available_client"
 
 
 # ── ConditionHandler ──────────────────────────────────────────────────────────

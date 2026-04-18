@@ -175,6 +175,41 @@ async def test_start_requeues_interrupted_tasks(mock_collector, mock_channel_bun
     mock_tasks_repo.requeue_running_generic_tasks_on_startup.assert_called_once()
 
 
+@pytest.mark.asyncio
+async def test_handle_stats_all_stops_after_cancelled_result(
+    mock_collector,
+    mock_channel_bundle,
+    mock_tasks_repo,
+):
+    task = CollectionTask(
+        id=55,
+        channel_title="Stats",
+        task_type=CollectionTaskType.STATS_ALL,
+        status=CollectionTaskStatus.RUNNING,
+        payload=StatsAllTaskPayload(channel_ids=[123]),
+    )
+    mock_collector.collect_channel_stats = AsyncMock(return_value=MagicMock(subscriber_count=100))
+    mock_tasks_repo.get_collection_task = AsyncMock(
+        side_effect=[
+            CollectionTask(id=55, status=CollectionTaskStatus.RUNNING),
+            CollectionTask(id=55, status=CollectionTaskStatus.CANCELLED),
+        ]
+    )
+
+    dispatcher = UnifiedDispatcher(
+        mock_collector,
+        mock_channel_bundle,
+        mock_tasks_repo,
+        poll_interval_sec=0.01,
+    )
+
+    await dispatcher._handle_stats_all(task)
+
+    mock_collector.collect_channel_stats.assert_awaited_once()
+    mock_tasks_repo.persist_stats_progress.assert_not_called()
+    mock_tasks_repo.update_collection_task.assert_not_called()
+
+
 # === _run_loop tests ===
 
 
@@ -758,6 +793,7 @@ async def test_handle_pipeline_run_success_with_mocked_services(
     mock_pipeline = MagicMock()
     mock_pipeline.id = 1
     mock_pipeline.llm_model = "gpt-4"
+    mock_pipeline.pipeline_json = None
     mock_pipeline_bundle.get_by_id = AsyncMock(return_value=mock_pipeline)
 
     mock_search_engine = MagicMock()
@@ -777,6 +813,7 @@ async def test_handle_pipeline_run_success_with_mocked_services(
 
     mock_run = MagicMock()
     mock_run.id = 42
+    mock_run.metadata = {}
 
     with patch(
         "src.services.content_generation_service.ContentGenerationService"
@@ -826,6 +863,7 @@ async def test_handle_pipeline_run_generation_exception(dispatcher, mock_tasks_r
     mock_pipeline = MagicMock()
     mock_pipeline.id = 1
     mock_pipeline.llm_model = "gpt-4"
+    mock_pipeline.pipeline_json = None
     mock_pipeline_bundle.get_by_id = AsyncMock(return_value=mock_pipeline)
 
     mock_db = MagicMock()
@@ -871,6 +909,7 @@ async def test_handle_content_generate_with_auto_publish(dispatcher, mock_tasks_
     mock_pipeline.id = 1
     mock_pipeline.llm_model = "gpt-4"
     mock_pipeline.publish_mode = PipelinePublishMode.AUTO
+    mock_pipeline.pipeline_json = None
 
     mock_pipeline_bundle = MagicMock()
     mock_pipeline_bundle.get_by_id = AsyncMock(return_value=mock_pipeline)
@@ -928,6 +967,7 @@ async def test_handle_content_generate_without_auto_publish(
     mock_pipeline.id = 1
     mock_pipeline.llm_model = "gpt-4"
     mock_pipeline.publish_mode = PipelinePublishMode.MODERATED
+    mock_pipeline.pipeline_json = None
 
     mock_pipeline_bundle = MagicMock()
     mock_pipeline_bundle.get_by_id = AsyncMock(return_value=mock_pipeline)

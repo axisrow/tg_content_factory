@@ -483,9 +483,15 @@ def register(db, client_pool, embedding_service, **kwargs):
             lines = [f"Генерации пайплайна id={pipeline_id} ({len(runs)} шт.):"]
             for r in runs:
                 preview = (r.generated_text or "")[:150]
+                result_kind = getattr(r, "result_kind", None)
+                result_count = getattr(r, "result_count", None)
+                if result_kind is not None and result_count is not None:
+                    result_part = f"result={result_kind}:{result_count}, "
+                else:
+                    result_part = ""
                 lines.append(
                     f"- run_id={r.id}, status={r.status}, moderation={r.moderation_status}, "
-                    f"created={r.created_at}: {preview}"
+                    f"{result_part}created={r.created_at}: {preview}"
                 )
             return _text_response("\n".join(lines))
         except Exception as e:
@@ -511,12 +517,25 @@ def register(db, client_pool, embedding_service, **kwargs):
                 f"  Статус: {run.status}",
                 f"  Модерация: {run.moderation_status}",
                 f"  Качество: {run.quality_score if hasattr(run, 'quality_score') and run.quality_score else 'n/a'}",
-                f"  Создан: {run.created_at}",
-                f"  Обновлён: {run.updated_at}",
-                "",
-                "Текст:",
-                run.generated_text or "(пусто)",
             ]
+            result_kind = getattr(run, "result_kind", None)
+            result_count = getattr(run, "result_count", None)
+            if result_kind is not None and result_count is not None:
+                from src.services.pipeline_result import result_kind_label
+
+                lines.append(
+                    f"  Результат: {result_kind_label(result_kind)} "
+                    f"({result_kind}:{result_count})"
+                )
+            lines.extend(
+                [
+                    f"  Создан: {run.created_at}",
+                    f"  Обновлён: {run.updated_at}",
+                    "",
+                    "Текст:",
+                    run.generated_text or "(пусто)",
+                ]
+            )
             return _text_response("\n".join(lines))
         except Exception as e:
             return _text_response(f"Ошибка получения run: {e}")

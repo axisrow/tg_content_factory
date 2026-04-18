@@ -278,6 +278,9 @@ class UnifiedDispatcher:
                 channels_err += 1
                 cursor += 1
             else:
+                fresh = await self._tasks.get_collection_task(task.id)
+                if fresh and fresh.status == CollectionTaskStatus.CANCELLED:
+                    return
                 if result is None:
                     availability = await self._collector.get_stats_availability()
                     if (
@@ -531,7 +534,7 @@ class UnifiedDispatcher:
                 await self._tasks.update_collection_task(
                     task.id,
                     CollectionTaskStatus.COMPLETED,
-                    messages_collected=1,
+                    messages_collected=run.result_count,
                     note=f"Pipeline run id={run_id}",
                 )
             except Exception as exc:

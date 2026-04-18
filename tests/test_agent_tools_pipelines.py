@@ -558,3 +558,65 @@ class TestEditPipelineTool:
         handlers = _get_tool_handlers(mock_db, config=MagicMock())
         result = await handlers["edit_pipeline"]({"confirm": True})
         assert "pipeline_id обязателен" in _text(result)
+
+
+# ── Issue #463: agent tools expose result semantics ──────────────────────────
+
+
+class TestPipelineRunsToolResultSemantics:
+    @pytest.mark.asyncio
+    async def test_list_runs_shows_result_kind_and_count(self, mock_db):
+        from tests.factories.pipeline_runs import make_action_only_run, make_generation_run
+
+        runs = [
+            make_generation_run(run_id=10, pipeline_id=1, citations_count=3, text="hello"),
+            make_action_only_run(run_id=11, pipeline_id=1, action_counts={"react": 5}),
+        ]
+        mock_db.repos = MagicMock()
+        mock_db.repos.generation_runs.list_by_pipeline = AsyncMock(return_value=runs)
+
+        handlers = _get_tool_handlers(mock_db)
+        result = await handlers["list_pipeline_runs"]({"pipeline_id": 1, "limit": 10})
+
+        text = _text(result)
+        # generation run
+        assert "run_id=10" in text
+        assert "generated_items:3" in text
+        # action-only run
+        assert "run_id=11" in text
+        assert "processed_messages:5" in text
+
+    @pytest.mark.asyncio
+    async def test_get_run_shows_semantic_fields_for_empty_text_run(self, mock_db):
+        """Regression #463: action-only run with empty text must still show
+        result_kind/result_count (not just «(пусто)»).
+        """
+        from tests.factories.pipeline_runs import make_action_only_run
+
+        run = make_action_only_run(run_id=12, pipeline_id=1, action_counts={"forward": 8})
+        mock_db.repos = MagicMock()
+        mock_db.repos.generation_runs.get = AsyncMock(return_value=run)
+
+        handlers = _get_tool_handlers(mock_db)
+        result = await handlers["get_pipeline_run"]({"run_id": 12})
+        text = _text(result)
+
+        assert "Обработано" in text
+        assert "processed_messages:8" in text
+        assert "Run id=12" in text
+
+    @pytest.mark.asyncio
+    async def test_get_run_generation_shows_text_and_label(self, mock_db):
+        from tests.factories.pipeline_runs import make_generation_run
+
+        run = make_generation_run(run_id=13, pipeline_id=1, citations_count=2, text="hello")
+        mock_db.repos = MagicMock()
+        mock_db.repos.generation_runs.get = AsyncMock(return_value=run)
+
+        handlers = _get_tool_handlers(mock_db)
+        result = await handlers["get_pipeline_run"]({"run_id": 13})
+        text = _text(result)
+
+        assert "Сгенерировано" in text
+        assert "generated_items:2" in text
+        assert "hello" in text

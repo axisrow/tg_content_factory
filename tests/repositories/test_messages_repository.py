@@ -81,6 +81,32 @@ async def test_insert_message_with_all_fields(messages_repo):
     assert messages[0].topic_id == 5
 
 
+async def test_insert_message_with_structured_facets(messages_repo):
+    """Structured message classification fields should round-trip through storage."""
+    msg = Message(
+        channel_id=1,
+        message_id=101,
+        text="Alice joined via invite link",
+        media_type="service",
+        message_kind="service",
+        service_action_raw="MessageActionChatJoinedByLink",
+        service_action_semantic="join",
+        service_action_payload_json='{"inviter_id": 42}',
+        sender_kind="user",
+        date=datetime(2026, 3, 16, 12, 5, 0),
+    )
+    result = await messages_repo.insert_message(msg)
+    assert result is True
+
+    messages, _ = await messages_repo.search_messages()
+    stored = next(m for m in messages if m.message_id == 101)
+    assert stored.message_kind == "service"
+    assert stored.service_action_raw == "MessageActionChatJoinedByLink"
+    assert stored.service_action_semantic == "join"
+    assert stored.service_action_payload_json == '{"inviter_id": 42}'
+    assert stored.sender_kind == "user"
+
+
 # insert_messages_batch tests
 
 

@@ -13,6 +13,15 @@
             <label class="form-label">Название</label>
             <input class="form-control" type="text" name="name" value="{{ pipeline.name }}" required>
         </div>
+        <div class="col-6 col-md-3 col-lg-2">
+            <label class="form-label">Аккаунт</label>
+            <select class="form-select" name="account_phone">
+                <option value="">Автовыбор</option>
+                {% for account in accounts %}
+                <option value="{{ account.phone }}" {{ "selected" if account.phone == pipeline.account_phone }}>{{ account.phone }}</option>
+                {% endfor %}
+            </select>
+        </div>
         {% if not is_dag %}
         <div class="col-6 col-md-3 col-lg-2">
             <label class="form-label">Бэкенд</label>
@@ -97,6 +106,63 @@
         <label class="form-label"><i class="bi bi-emoji-smile"></i> Реакция</label>
         <input class="form-control" type="text" name="react_emoji" value="{{ react_emoji }}" placeholder="Например: 👍 🔥 ❤️">
         <div class="form-text">Один или несколько emoji через запятую или пробел — на каждое сообщение будет выбрана случайная.</div>
+    </div>
+    {% endif %}
+
+    {% if filter_config is not none %}
+    <input type="hidden" name="filter_present" value="1">
+    <div class="card border-0 shadow-sm mb-3">
+        <div class="card-body">
+            <div class="d-flex align-items-center gap-2 mb-3">
+                <i class="bi bi-funnel"></i>
+                <strong>Semantic filter</strong>
+            </div>
+            <div class="row g-3">
+                <div class="col-12 col-lg-6">
+                    <label class="form-label">Message kind</label>
+                    <div class="d-flex flex-wrap gap-3">
+                        <label class="form-check"><input class="form-check-input" type="checkbox" name="filter_message_kinds" value="regular" {{ "checked" if "regular" in filter_config.message_kinds }}> <span class="form-check-label">regular</span></label>
+                        <label class="form-check"><input class="form-check-input" type="checkbox" name="filter_message_kinds" value="service" {{ "checked" if "service" in filter_config.message_kinds }}> <span class="form-check-label">service</span></label>
+                    </div>
+                </div>
+                <div class="col-12 col-lg-6">
+                    <label class="form-label">Sender kind</label>
+                    <div class="d-flex flex-wrap gap-3">
+                        {% for value in ["user", "anonymous_admin", "channel", "unknown"] %}
+                        <label class="form-check"><input class="form-check-input" type="checkbox" name="filter_sender_kinds" value="{{ value }}" {{ "checked" if value in filter_config.sender_kinds }}> <span class="form-check-label">{{ value }}</span></label>
+                        {% endfor %}
+                    </div>
+                </div>
+                <div class="col-12">
+                    <label class="form-label">Service actions</label>
+                    <div class="d-flex flex-wrap gap-3">
+                        {% for value in ["join", "leave", "pin", "title_changed", "photo_changed", "migrate", "created", "other"] %}
+                        <label class="form-check"><input class="form-check-input" type="checkbox" name="filter_service_actions" value="{{ value }}" {{ "checked" if value in filter_config.service_actions }}> <span class="form-check-label">{{ value }}</span></label>
+                        {% endfor %}
+                    </div>
+                </div>
+                <div class="col-12">
+                    <label class="form-label">Media types</label>
+                    <div class="d-flex flex-wrap gap-3">
+                        {% for value in ["service", "text", "photo", "video", "voice", "audio", "sticker", "document", "poll"] %}
+                        <label class="form-check"><input class="form-check-input" type="checkbox" name="filter_media_types" value="{{ value }}" {{ "checked" if value in filter_config.media_types }}> <span class="form-check-label">{{ value }}</span></label>
+                        {% endfor %}
+                    </div>
+                </div>
+                <div class="col-12 col-lg-6">
+                    <label class="form-label">Keywords</label>
+                    <textarea class="form-control" rows="3" name="filter_keywords">{{ filter_config.keywords | join('\n') }}</textarea>
+                </div>
+                <div class="col-12 col-lg-6">
+                    <label class="form-label">Regex</label>
+                    <input class="form-control" type="text" name="filter_regex" value="{{ filter_config.regex or '' }}">
+                    <div class="form-check mt-2">
+                        <input class="form-check-input" type="checkbox" name="filter_has_text" value="1" id="filter-has-text" {{ "checked" if filter_config.has_text }}>
+                        <label class="form-check-label" for="filter-has-text">Только сообщения с текстом</label>
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
     {% endif %}
 

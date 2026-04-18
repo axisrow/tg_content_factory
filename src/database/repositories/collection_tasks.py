@@ -6,6 +6,7 @@ from typing import Any
 
 import aiosqlite
 
+from src.database.repositories._transactions import begin_immediate
 from src.models import (
     CollectionTask,
     CollectionTaskStatus,
@@ -556,7 +557,7 @@ class CollectionTasksRepository:
 
         # Phase 2: acquire write lock only when there is work to claim
         try:
-            await self._db.execute("BEGIN IMMEDIATE")
+            await begin_immediate(self._db)
             selected_id = peek["id"]
             updated = await self._db.execute(
                 "UPDATE collection_tasks "
