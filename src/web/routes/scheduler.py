@@ -2,6 +2,7 @@ import asyncio
 import logging
 import re
 from datetime import datetime, timezone
+from urllib.parse import urlencode
 
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -19,6 +20,10 @@ JOB_LABELS = {
     "photo_auto": "Автозагрузка фото",
     "warm_all_dialogs": "Прогрев кэша диалогов",
 }
+
+# Worker publishes `worker_heartbeat` every ~5s (src/runtime/worker.py:_publish_snapshots).
+# 60s gives us 12 missed publishes before we conclude the worker is down.
+WORKER_HEARTBEAT_STALE_AFTER_SEC = 60
 
 
 def _job_label(job_id: str) -> str:
@@ -46,7 +51,7 @@ def _compute_load_level(
     available_accounts_now: int,
     state: str,
 ) -> str:
-    if state in {"all_flooded", "no_clients"}:
+    if state in {"worker_down", "all_flooded", "no_clients"}:
         return "overload"
     capacity_accounts = max(1, available_accounts_now)
     pressure = active_unfiltered_channels / capacity_accounts
@@ -68,6 +73,11 @@ def _collector_health_recommendations(
     available_accounts_now: int,
 ) -> list[str]:
     recommendations: list[str] = []
+    if state == "worker_down":
+        recommendations.append(
+            "Запустите Telegram-воркер во втором терминале: `python -m src.main worker`. "
+            "Без него задачи сбора и планировщика копятся в БД, но не исполняются."
+        )
     if state == "all_flooded":
         recommendations.append("Дождаться ближайшего окна после Flood Wait и не запускать ручной collect-all повторно.")
     if state == "no_clients":
@@ -85,6 +95,29 @@ def _collector_health_recommendations(
     return recommendations
 
 
+async def _is_worker_alive(db) -> bool:
+    """Return True when the worker-process heartbeat snapshot is fresh.
+
+    The worker publishes `worker_heartbeat` every ~5s
+    (`src/runtime/worker.py:_publish_snapshots`). We treat anything older than
+    `WORKER_HEARTBEAT_STALE_AFTER_SEC` as the worker being down — that turns the
+    silent failure from #444 (serve running alone, collection tasks piling up
+    with no executor) into an explicit banner.
+    """
+    try:
+        snapshot = await db.repos.runtime_snapshots.get_snapshot("worker_heartbeat")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Failed to read worker_heartbeat snapshot: %s", exc)
+        return True
+    if snapshot is None or snapshot.updated_at is None:
+        return False
+    updated_at = snapshot.updated_at
+    if updated_at.tzinfo is None:
+        updated_at = updated_at.replace(tzinfo=timezone.utc)
+    age = (datetime.now(timezone.utc) - updated_at).total_seconds()
+    return age <= WORKER_HEARTBEAT_STALE_AFTER_SEC
+
+
 async def _build_collector_health_context(request: Request) -> dict[str, object]:
     db = deps.get_db(request)
     pool = deps.get_pool(request)
@@ -94,6 +127,7 @@ async def _build_collector_health_context(request: Request) -> dict[str, object]
     active_accounts = [acc for acc in accounts if acc.is_active]
     connected_active_accounts = [acc for acc in active_accounts if acc.phone in connected_phones]
     now = datetime.now(timezone.utc)
+    worker_alive = await _is_worker_alive(db)
 
     flooded_accounts = []
     next_available_at = None
@@ -138,7 +172,11 @@ async def _build_collector_health_context(request: Request) -> dict[str, object]
     ][:5]
 
     state = "healthy"
-    if not connected_active_accounts:
+    if not worker_alive:
+        # Worker-process absent dominates: without it `no_clients` /
+        # `all_flooded` are symptoms, not the root cause.
+        state = "worker_down"
+    elif not connected_active_accounts:
         state = "no_clients"
     elif availability_state == "all_flooded" or available_accounts_now == 0:
         state = "all_flooded"
@@ -181,20 +219,22 @@ async def _build_collector_health_context(request: Request) -> dict[str, object]
 @router.post("/tasks/{task_id}/cancel")
 async def cancel_task(request: Request, task_id: int):
     if getattr(request.app.state, "shutting_down", False):
-        return RedirectResponse(url="/scheduler?error=shutting_down", status_code=303)
-    queue = deps.get_queue(request)
-    await queue.cancel_task(task_id)
-    return RedirectResponse(url="/scheduler?msg=task_cancelled", status_code=303)
+        return _scheduler_redirect(request, error="shutting_down")
+    # Go through CollectionService so web-mode (where collection_queue is None)
+    # falls back to a DB-only cancellation instead of raising AttributeError.
+    service = deps.collection_service(request)
+    await service.cancel_task(task_id)
+    return _scheduler_redirect(request, msg="task_cancelled")
 
 
 @router.post("/tasks/clear-pending-collect")
 async def clear_pending_collect_tasks(request: Request):
     if getattr(request.app.state, "shutting_down", False):
-        return RedirectResponse(url="/scheduler?error=shutting_down", status_code=303)
-    queue = deps.get_queue(request)
-    deleted = await queue.clear_pending_tasks()
+        return _scheduler_redirect(request, error="shutting_down")
+    service = deps.collection_service(request)
+    deleted = await service.clear_pending_collect_tasks()
     msg = "pending_collect_tasks_deleted" if deleted > 0 else "pending_collect_tasks_empty"
-    return RedirectResponse(url=f"/scheduler?msg={msg}", status_code=303)
+    return _scheduler_redirect(request, msg=msg)
 
 
 VALID_STATUS_FILTERS = {"all", "active", "completed"}
@@ -256,6 +296,44 @@ async def _notification_snapshot_payload(request: Request) -> dict[str, object]:
     return payload if isinstance(payload, dict) else {}
 
 
+_PRESERVED_SCHEDULER_QUERY_KEYS = ("status", "page", "limit")
+
+
+def _scheduler_redirect(
+    request: Request,
+    *,
+    msg: str | None = None,
+    error: str | None = None,
+    extra: dict[str, object] | None = None,
+) -> RedirectResponse:
+    """Redirect to /scheduler preserving the user's current filter/page.
+
+    Fix for #457 round 3: POST routes used to redirect to `/scheduler?msg=...`
+    and drop `?status=active&page=N&limit=M` — the user ended up back on the
+    default `status=all` view, which on a large DB could look like "the button
+    replaced the page with 143 pages of noise". Now every POST keeps the tab
+    the user was looking at when they clicked.
+
+    Only the whitelisted `status/page/limit` params travel — we deliberately
+    drop any inbound `msg=`, `error=`, `command_id=` so they don't stack.
+    """
+    qp: dict[str, str] = {}
+    for key in _PRESERVED_SCHEDULER_QUERY_KEYS:
+        value = request.query_params.get(key)
+        if value is not None and value != "":
+            qp[key] = value
+    if msg is not None:
+        qp["msg"] = msg
+    if error is not None:
+        qp["error"] = error
+    if extra:
+        for k, v in extra.items():
+            if v is not None:
+                qp[k] = str(v)
+    suffix = f"?{urlencode(qp)}" if qp else ""
+    return RedirectResponse(url=f"/scheduler{suffix}", status_code=303)
+
+
 async def _enqueue_scheduler_command(
     request: Request,
     command_type: str,
@@ -268,9 +346,8 @@ async def _enqueue_scheduler_command(
         payload=payload or {},
         requested_by=f"web:scheduler.{command_type}",
     )
-    return RedirectResponse(
-        url=f"/scheduler?msg={redirect_code}&command_id={command_id}",
-        status_code=303,
+    return _scheduler_redirect(
+        request, msg=redirect_code, extra={"command_id": command_id}
     )
 
 
@@ -366,9 +443,9 @@ async def _scheduler_page_inner(
 @router.post("/jobs/{job_id}/toggle")
 async def toggle_scheduler_job(request: Request, job_id: str):
     if getattr(request.app.state, "shutting_down", False):
-        return RedirectResponse(url="/scheduler?error=shutting_down", status_code=303)
+        return _scheduler_redirect(request, error="shutting_down")
     if not _VALID_JOB_ID_RE.match(job_id):
-        return RedirectResponse(url="/scheduler?error=invalid_job", status_code=303)
+        return _scheduler_redirect(request, error="invalid_job")
     db = deps.get_db(request)
     key = f"scheduler_job_disabled:{job_id}"
     current = await db.repos.settings.get_setting(key)
@@ -384,17 +461,17 @@ async def toggle_scheduler_job(request: Request, job_id: str):
 @router.post("/jobs/{job_id}/set-interval")
 async def set_job_interval(request: Request, job_id: str):
     if getattr(request.app.state, "shutting_down", False):
-        return RedirectResponse(url="/scheduler?error=shutting_down", status_code=303)
+        return _scheduler_redirect(request, error="shutting_down")
     if not _VALID_JOB_ID_RE.match(job_id):
-        return RedirectResponse(url="/scheduler?error=invalid_job", status_code=303)
+        return _scheduler_redirect(request, error="invalid_job")
     if job_id in ("photo_due", "photo_auto"):
-        return RedirectResponse(url="/scheduler?error=invalid_job", status_code=303)
+        return _scheduler_redirect(request, error="invalid_job")
     form = await request.form()
     try:
         minutes = int(form["interval_minutes"])
         minutes = max(1, min(minutes, 1440))
     except (KeyError, ValueError):
-        return RedirectResponse(url="/scheduler?error=invalid_interval", status_code=303)
+        return _scheduler_redirect(request, error="invalid_interval")
     db = deps.get_db(request)
     if job_id == "collect_all":
         await db.repos.settings.set_setting("collect_interval_minutes", str(minutes))
@@ -421,7 +498,7 @@ async def set_job_interval(request: Request, job_id: str):
 @router.post("/start")
 async def start_scheduler(request: Request):
     if getattr(request.app.state, "shutting_down", False):
-        return RedirectResponse(url="/scheduler?error=shutting_down", status_code=303)
+        return _scheduler_redirect(request, error="shutting_down")
     await deps.get_db(request).set_setting("scheduler_autostart", "1")
     return await _enqueue_scheduler_command(
         request,
@@ -443,17 +520,17 @@ async def stop_scheduler(request: Request):
 @router.post("/trigger")
 async def trigger_collection(request: Request):
     if getattr(request.app.state, "shutting_down", False):
-        return RedirectResponse(url="/scheduler?error=shutting_down", status_code=303)
+        return _scheduler_redirect(request, error="shutting_down")
     service = deps.collection_service(request)
     result = await service.enqueue_all_channels()
     msg = bulk_enqueue_msg(result)
-    return RedirectResponse(url=f"/scheduler?msg={msg}", status_code=303)
+    return _scheduler_redirect(request, msg=msg)
 
 
 @router.post("/trigger-warm")
 async def trigger_warm_dialogs(request: Request):
     if getattr(request.app.state, "shutting_down", False):
-        return RedirectResponse(url="/scheduler?error=shutting_down", status_code=303)
+        return _scheduler_redirect(request, error="shutting_down")
     return await _enqueue_scheduler_command(
         request,
         "scheduler.trigger_warm",
@@ -464,7 +541,7 @@ async def trigger_warm_dialogs(request: Request):
 @router.post("/test-notification")
 async def test_notification(request: Request):
     if getattr(request.app.state, "shutting_down", False):
-        return RedirectResponse(url="/scheduler?error=shutting_down", status_code=303)
+        return _scheduler_redirect(request, error="shutting_down")
     return await _enqueue_scheduler_command(
         request,
         "notifications.test",

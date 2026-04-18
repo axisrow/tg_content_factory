@@ -25,6 +25,7 @@ from src.web.assembly import (
 )
 from src.web.bootstrap import build_container_with_templates, start_container, stop_container
 from src.web.csrf import OriginCSRFMiddleware
+from src.web.embedded_worker import EmbeddedWorker
 from src.web.panel_auth import (
     get_cookie_user,
     is_public_path,
@@ -251,10 +252,28 @@ async def lifespan(app: FastAPI):
 
     await start_container(container)
 
+    # #457 round 4: `serve` CLI sets `app.state.embed_worker=True` so a user
+    # running `python -m src.main serve` gets the full functionality (UI +
+    # actual collection) in a single command. Tests and split production
+    # setups (Docker/k8s with `--no-worker` + a separate `worker` container)
+    # leave `embed_worker` unset → no background worker here.
+    embedded_worker: EmbeddedWorker | None = None
+    if getattr(app.state, "embed_worker", False):
+        embedded_worker = EmbeddedWorker(app.state.config)
+        await embedded_worker.start()
+        app.state.embedded_worker = embedded_worker
+    else:
+        logger.debug("Embedded worker not spawned (app.state.embed_worker is not True)")
+
     try:
         yield
     finally:
         logger.info("Shutting down...")
+        if embedded_worker is not None:
+            try:
+                await embedded_worker.stop()
+            except Exception:
+                logger.exception("Error stopping embedded worker")
         await stop_container(container)
         logger.info("Application shut down")
 

@@ -4,7 +4,7 @@
 Core code lives in `src/`. Use `src/cli/` for command-line entrypoints, `src/web/` for the FastAPI dashboard, `src/services/` for orchestration/business logic, `src/telegram/` for Telethon integrations, and `src/database/` plus `src/database/repositories/` for SQLite access. Tests live under `tests/`, with route coverage in `tests/routes/` and repository coverage in `tests/repositories/`. Documentation lives in `docs/`; static web assets are in `src/web/static/` and Jinja templates in `src/web/templates/`.
 
 ## Build, Test, and Development Commands
-Install locally with `pip install -e .` from the repo root. Run the app with `python -m src.main serve` and open `http://localhost:8080`. Start the Docker stack with `docker-compose up -d`.
+Install locally with `pip install -e .` from the repo root. Run `python -m src.main serve` — it spawns the embedded Telegram worker by default, so a single command gives you the web UI plus real collection, scheduler jobs, and `/agent` tools. Open `http://localhost:8080`. For Docker/k8s split deployments add `--no-worker` and run `python -m src.main worker` in a separate container. Start the Docker stack with `docker-compose up -d`.
 
 Use these validation commands during development:
 

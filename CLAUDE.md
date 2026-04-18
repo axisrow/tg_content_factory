@@ -8,8 +8,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 # Install dev dependencies
 pip install -e ".[dev]"
 
-# Run the web server
-python -m src.main serve [--web-pass PASS]
+# Run the web server — spawns the embedded Telegram worker by default so a
+# single command gives you UI + actual collection (#457 round 4). For split
+# deployments (Docker/k8s) pass --no-worker and run `worker` separately.
+python -m src.main serve [--web-pass PASS] [--no-worker]
+
+# Standalone Telegram worker — only needed alongside `serve --no-worker`.
+python -m src.main worker
 
 # Lint
 ruff check src/ tests/ conftest.py
@@ -34,6 +39,7 @@ Full CLI reference:
 
 ```bash
 python -m src.main [--config CONFIG] serve [--web-pass PASS]
+python -m src.main [--config CONFIG] worker
 python -m src.main [--config CONFIG] collect [--channel-id ID]
 python -m src.main [--config CONFIG] search "query" [--limit N] [--mode MODE]
 
@@ -65,6 +71,10 @@ Primary CLI name for Telegram dialogs is `dialogs`; legacy alias `my-telegram` i
 
 Three layers: **CLI/Web** → **Telegram + Search + Scheduler + Agent/Pipeline** → **SQLite**
 
+- **Runtime split (web ↔ worker)**: since #444 the runtime consists of two `AppContainer` flavours keyed on `runtime_mode` ("web" vs "worker") in `src/web/bootstrap.py`. Since #457 round 4 they normally run in the **same process**: `serve` spawns an `EmbeddedWorker` (`src/web/embedded_worker.py`) as an asyncio task next to the web container. Pass `--no-worker` to run only the web side and start `python -m src.main worker` separately (Docker/k8s split deployments).
+  - Web container (`runtime_mode="web"`) uses snapshot shims (`SnapshotClientPool`, `SnapshotCollector`, `SnapshotSchedulerManager` in `src/web/runtime_shims.py`). It does NOT open Telegram connections; UI actions enqueue work into `collection_tasks` / `telegram_commands` / task tables and read `runtime_snapshots` to render status.
+  - Worker container (`runtime_mode="worker"`, either embedded or standalone via `src/runtime/worker.py`) owns the live `ClientPool`, `CollectionQueue`, `UnifiedDispatcher`, `TelegramCommandDispatcher`, and `SchedulerManager`, and publishes `runtime_snapshots` (heartbeat, accounts_status, scheduler_status, …) that the web side reads.
+  - In web-mode `collection_queue = None` and `CollectionService` falls back to writing a PENDING row — the worker picks those up at startup via `CollectionQueue.requeue_startup_tasks()`.
 - CLI (`src/main.py` → `src/cli/commands/`) and Web (`src/web/`) are parallel entry points to the same logic
 - Telegram layer: `ClientPool` manages multi-account connections, `Collector` fetches messages, `Notifier` sends alerts
 - Search layer: `SearchEngine` (local DB), `AISearchEngine` (LLM-powered)
