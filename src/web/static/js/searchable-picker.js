@@ -238,8 +238,14 @@
 
         syncHiddenInputs();
         if (ajaxUrl) {
-            // AJAX mode: load initial batch immediately
-            fetchAjaxResults("");
+            // AJAX mode: load initial batch immediately unless opted out
+            // (e.g. pre-populated pickers where an empty-query batch is just
+            // visual noise — user already sees the badges above).
+            if (container.dataset.pickerNoInitial !== "true") {
+                fetchAjaxResults("");
+            } else if (emptyEl) {
+                emptyEl.classList.add("d-none");
+            }
         } else {
             applyFilters();
         }

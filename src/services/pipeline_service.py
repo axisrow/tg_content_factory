@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
@@ -163,7 +164,7 @@ class PipelineService:
                     if node.type == PipelineNodeType.SOURCE:
                         node.config["channel_ids"] = dag_source_channel_ids
             if react_emoji is not None:
-                emojis = [e.strip() for e in react_emoji.split(",") if e.strip()]
+                emojis = [e for e in re.split(r"[,\s]+", react_emoji.strip()) if e]
                 for node in updated_graph.nodes:
                     if node.type == PipelineNodeType.REACT:
                         if len(emojis) > 1:
@@ -327,6 +328,40 @@ class PipelineService:
             generate_interval_minutes=generate_interval_minutes,
         )
 
+    @staticmethod
+    def _inject_runtime_refs(
+        graph: PipelineGraph | None,
+        source_ids: list[int],
+        target_refs: list[PipelineTargetRef],
+    ) -> None:
+        """Backfill SOURCE.channel_ids / PUBLISH+FORWARD.targets from sidecar refs.
+
+        Only fills empty config fields — authors who hand-edited the graph to
+        set explicit channel_ids / targets on a node keep their override.
+        """
+        if graph is None:
+            return
+        if source_ids:
+            clean_ids = sorted(set(source_ids))
+            for node in graph.nodes:
+                if node.type == PipelineNodeType.SOURCE and not node.config.get("channel_ids"):
+                    node.config["channel_ids"] = clean_ids
+        if target_refs:
+            seen: set[tuple[str, int]] = set()
+            target_dicts: list[dict] = []
+            for ref in target_refs:
+                key = (ref.phone, ref.dialog_id)
+                if key in seen:
+                    continue
+                seen.add(key)
+                target_dicts.append({"phone": ref.phone, "dialog_id": ref.dialog_id})
+            for node in graph.nodes:
+                if (
+                    node.type in (PipelineNodeType.PUBLISH, PipelineNodeType.FORWARD)
+                    and not node.config.get("targets")
+                ):
+                    node.config["targets"] = target_dicts
+
     async def _normalize_sources(self, source_channel_ids: list[int]) -> list[int]:
         cleaned = sorted({int(channel_id) for channel_id in source_channel_ids})
         if not cleaned:
@@ -402,6 +437,7 @@ class PipelineService:
             generate_interval_minutes=int(data.get("generate_interval_minutes", 60)),
             is_active=False,
         )
+        self._inject_runtime_refs(pipeline_json, source_ids, target_refs)
         pipeline = pipeline.model_copy(update={"pipeline_json": pipeline_json})
 
         # Imported pipelines may not include runtime data (source/target IDs valid in
@@ -469,23 +505,7 @@ class PipelineService:
         )
         pipeline = pipeline.model_copy(update={"pipeline_json": graph})
 
-        # Inject source channel IDs into source nodes and target refs into publish/forward nodes
-        if source_ids:
-            clean_ids = sorted(set(source_ids))
-            for node in graph.nodes:
-                if node.type == PipelineNodeType.SOURCE and not node.config.get("channel_ids"):
-                    node.config["channel_ids"] = clean_ids
-        if target_refs:
-            seen: set[tuple[str, int]] = set()
-            target_dicts = []
-            for t in target_refs:
-                key = (t.phone, t.dialog_id)
-                if key not in seen:
-                    seen.add(key)
-                    target_dicts.append({"phone": t.phone, "dialog_id": t.dialog_id})
-            for node in graph.nodes:
-                if node.type in (PipelineNodeType.PUBLISH, PipelineNodeType.FORWARD) and not node.config.get("targets"):
-                    node.config["targets"] = target_dicts
+        self._inject_runtime_refs(graph, source_ids, target_refs)
 
         # Templates are created inactive; sources/targets are optional at creation time
         sources = await self._normalize_sources(source_ids) if source_ids else []

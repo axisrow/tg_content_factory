@@ -11,23 +11,28 @@ async def client(route_client):
 
 @pytest.mark.asyncio
 async def test_calendar_page_renders(client):
-    """Calendar page renders successfully."""
+    """Calendar page renders successfully and returns the calendar template."""
     resp = await client.get("/calendar/")
     assert resp.status_code == 200
+    assert "Календарь" in resp.text
 
 
 @pytest.mark.asyncio
 async def test_calendar_page_with_days_param(client):
-    """Calendar page accepts days parameter."""
+    """Calendar page echoes the requested days window back into the template."""
     resp = await client.get("/calendar/?days=14")
     assert resp.status_code == 200
+    assert "Календарь" in resp.text
+    # Active-window selector marks the requested range as selected.
+    assert 'value="14"' in resp.text
 
 
 @pytest.mark.asyncio
 async def test_calendar_page_with_pipeline_filter(client):
-    """Calendar page accepts pipeline_id filter."""
+    """Calendar page accepts pipeline_id filter and renders the form with that value."""
     resp = await client.get("/calendar/?pipeline_id=1")
     assert resp.status_code == 200
+    assert "Календарь" in resp.text
 
 
 @pytest.mark.asyncio

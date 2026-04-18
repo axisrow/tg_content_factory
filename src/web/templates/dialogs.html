@@ -98,207 +98,59 @@
     </li>
 </ul>
 
+{% macro dialog_pane(items, pane_id, empty_text, with_type=True, active=False) %}
+<div class="tab-pane fade{% if active %} show active{% endif %}" id="pane-{{ pane_id }}" role="tabpanel">
+    {% if items %}
+    <!-- Desktop -->
+    <div class="table-responsive d-none d-md-block">
+    <table class="tga-table-striped">
+        <thead><tr>
+            <th><input type="checkbox" class="form-check-input" id="select-all-{{ pane_id }}"
+                       onchange="selectAll('{{ pane_id }}', this.checked)"></th>
+            {% if with_type %}<th>Тип</th>{% endif %}<th>Название</th><th>Username</th>{% if with_type %}<th>В базе</th>{% endif %}
+        </tr></thead>
+        <tbody>
+        {% for d in items %}
+        <tr>
+            <td><input type="checkbox" class="form-check-input cb-{{ pane_id }}" name="channel_ids" value="{{ d.channel_id }}:{{ d.channel_type }}"
+                       onchange="updateLeaveBar()"></td>
+            {% if with_type %}<td><span class="badge-active">{{ d.channel_type }}</span></td>{% endif %}
+            <td>{{ d.title }}</td>
+            <td>{% if d.username %}<a href="https://t.me/{{ d.username }}" target="_blank" rel="noopener">@{{ d.username }}</a>{% else %}<span class="text-muted">—</span>{% endif %}</td>
+            {% if with_type %}<td>{% if d.already_added %}<span class="badge-active">{{ icon("success") }}</span>{% else %}<span class="text-muted">—</span>{% endif %}</td>{% endif %}
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    </div>
+    <!-- Mobile -->
+    <div class="d-md-none mobile-cards">
+        {% for d in items %}
+        <div class="card mb-2">
+            <div class="card-body py-2 d-flex align-items-center gap-2">
+                <input type="checkbox" class="form-check-input cb-{{ pane_id }}" name="channel_ids" value="{{ d.channel_id }}:{{ d.channel_type }}" onchange="updateLeaveBar()">
+                <div class="flex-fill min-w-0">
+                    <div class="text-truncate"><strong>{{ d.title }}</strong></div>
+                    {% if with_type %}
+                    <small class="text-muted">{{ d.channel_type }}{% if d.username %} &middot; @{{ d.username }}{% endif %}{% if d.already_added %} &middot; {{ icon("success") }}{% endif %}</small>
+                    {% elif d.username %}
+                    <small class="text-muted">@{{ d.username }}</small>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}<p>{{ empty_text }}</p>{% endif %}
+</div>
+{% endmacro %}
+
 <div class="tab-content">
-    <div class="tab-pane fade" id="pane-own" role="tabpanel">
-    {% if own %}
-    <!-- Desktop -->
-    <div class="table-responsive d-none d-md-block">
-    <table class="tga-table-striped">
-        <thead><tr>
-            <th><input type="checkbox" class="form-check-input" id="select-all-own"
-                       onchange="selectAll('own', this.checked)"></th>
-            <th>Тип</th><th>Название</th><th>Username</th><th>В базе</th>
-        </tr></thead>
-        <tbody>
-        {% for d in own %}
-        <tr>
-            <td><input type="checkbox" class="form-check-input cb-own" name="channel_ids" value="{{ d.channel_id }}:{{ d.channel_type }}"
-                       onchange="updateLeaveBar()"></td>
-            <td><span class="badge-active">{{ d.channel_type }}</span></td>
-            <td>{{ d.title }}</td>
-            <td>{% if d.username %}<a href="https://t.me/{{ d.username }}" target="_blank" rel="noopener">@{{ d.username }}</a>{% else %}<span class="text-muted">—</span>{% endif %}</td>
-            <td>{% if d.already_added %}<span class="badge-active">{{ icon("success") }}</span>{% else %}<span class="text-muted">—</span>{% endif %}</td>
-        </tr>
-        {% endfor %}
-        </tbody>
-    </table>
-    </div>
-    <!-- Mobile -->
-    <div class="d-md-none mobile-cards">
-        {% for d in own %}
-        <div class="card mb-2">
-            <div class="card-body py-2 d-flex align-items-center gap-2">
-                <input type="checkbox" class="form-check-input cb-own" name="channel_ids" value="{{ d.channel_id }}:{{ d.channel_type }}" onchange="updateLeaveBar()">
-                <div class="flex-fill min-w-0">
-                    <div class="text-truncate"><strong>{{ d.title }}</strong></div>
-                    <small class="text-muted">{{ d.channel_type }}{% if d.username %} &middot; @{{ d.username }}{% endif %}{% if d.already_added %} &middot; {{ icon("success") }}{% endif %}</small>
-                </div>
-            </div>
-        </div>
-        {% endfor %}
-    </div>
-    {% else %}<p>Нет своих каналов/групп.</p>{% endif %}
-    </div>
-
-    <div class="tab-pane fade show active" id="pane-channels" role="tabpanel">
-    {% if channels %}
-    <!-- Desktop -->
-    <div class="table-responsive d-none d-md-block">
-    <table class="tga-table-striped">
-        <thead><tr>
-            <th><input type="checkbox" class="form-check-input" id="select-all-channels"
-                       onchange="selectAll('channels', this.checked)"></th>
-            <th>Тип</th><th>Название</th><th>Username</th><th>В базе</th>
-        </tr></thead>
-        <tbody>
-        {% for d in channels %}
-        <tr>
-            <td><input type="checkbox" class="form-check-input cb-channels" name="channel_ids" value="{{ d.channel_id }}:{{ d.channel_type }}"
-                       onchange="updateLeaveBar()"></td>
-            <td><span class="badge-active">{{ d.channel_type }}</span></td>
-            <td>{{ d.title }}</td>
-            <td>{% if d.username %}<a href="https://t.me/{{ d.username }}" target="_blank" rel="noopener">@{{ d.username }}</a>{% else %}<span class="text-muted">—</span>{% endif %}</td>
-            <td>{% if d.already_added %}<span class="badge-active">{{ icon("success") }}</span>{% else %}<span class="text-muted">—</span>{% endif %}</td>
-        </tr>
-        {% endfor %}
-        </tbody>
-    </table>
-    </div>
-    <!-- Mobile -->
-    <div class="d-md-none mobile-cards">
-        {% for d in channels %}
-        <div class="card mb-2">
-            <div class="card-body py-2 d-flex align-items-center gap-2">
-                <input type="checkbox" class="form-check-input cb-channels" name="channel_ids" value="{{ d.channel_id }}:{{ d.channel_type }}" onchange="updateLeaveBar()">
-                <div class="flex-fill min-w-0">
-                    <div class="text-truncate"><strong>{{ d.title }}</strong></div>
-                    <small class="text-muted">{{ d.channel_type }}{% if d.username %} &middot; @{{ d.username }}{% endif %}{% if d.already_added %} &middot; {{ icon("success") }}{% endif %}</small>
-                </div>
-            </div>
-        </div>
-        {% endfor %}
-    </div>
-    {% else %}<p>Нет каналов.</p>{% endif %}
-    </div>
-
-    <div class="tab-pane fade" id="pane-groups" role="tabpanel">
-    {% if groups %}
-    <!-- Desktop -->
-    <div class="table-responsive d-none d-md-block">
-    <table class="tga-table-striped">
-        <thead><tr>
-            <th><input type="checkbox" class="form-check-input" id="select-all-groups"
-                       onchange="selectAll('groups', this.checked)"></th>
-            <th>Тип</th><th>Название</th><th>Username</th><th>В базе</th>
-        </tr></thead>
-        <tbody>
-        {% for d in groups %}
-        <tr>
-            <td><input type="checkbox" class="form-check-input cb-groups" name="channel_ids" value="{{ d.channel_id }}:{{ d.channel_type }}"
-                       onchange="updateLeaveBar()"></td>
-            <td><span class="badge-active">{{ d.channel_type }}</span></td>
-            <td>{{ d.title }}</td>
-            <td>{% if d.username %}<a href="https://t.me/{{ d.username }}" target="_blank" rel="noopener">@{{ d.username }}</a>{% else %}<span class="text-muted">—</span>{% endif %}</td>
-            <td>{% if d.already_added %}<span class="badge-active">{{ icon("success") }}</span>{% else %}<span class="text-muted">—</span>{% endif %}</td>
-        </tr>
-        {% endfor %}
-        </tbody>
-    </table>
-    </div>
-    <!-- Mobile -->
-    <div class="d-md-none mobile-cards">
-        {% for d in groups %}
-        <div class="card mb-2">
-            <div class="card-body py-2 d-flex align-items-center gap-2">
-                <input type="checkbox" class="form-check-input cb-groups" name="channel_ids" value="{{ d.channel_id }}:{{ d.channel_type }}" onchange="updateLeaveBar()">
-                <div class="flex-fill min-w-0">
-                    <div class="text-truncate"><strong>{{ d.title }}</strong></div>
-                    <small class="text-muted">{{ d.channel_type }}{% if d.username %} &middot; @{{ d.username }}{% endif %}{% if d.already_added %} &middot; {{ icon("success") }}{% endif %}</small>
-                </div>
-            </div>
-        </div>
-        {% endfor %}
-    </div>
-    {% else %}<p>Нет групп.</p>{% endif %}
-    </div>
-
-    <div class="tab-pane fade" id="pane-dms" role="tabpanel">
-    {% if dms %}
-    <!-- Desktop -->
-    <div class="table-responsive d-none d-md-block">
-    <table class="tga-table-striped">
-        <thead><tr>
-            <th><input type="checkbox" class="form-check-input" id="select-all-dms"
-                       onchange="selectAll('dms', this.checked)"></th>
-            <th>Название</th><th>Username</th>
-        </tr></thead>
-        <tbody>
-        {% for d in dms %}
-        <tr>
-            <td><input type="checkbox" class="form-check-input cb-dms" name="channel_ids" value="{{ d.channel_id }}:{{ d.channel_type }}"
-                       onchange="updateLeaveBar()"></td>
-            <td>{{ d.title }}</td>
-            <td>{% if d.username %}<a href="https://t.me/{{ d.username }}" target="_blank" rel="noopener">@{{ d.username }}</a>{% else %}<span class="text-muted">—</span>{% endif %}</td>
-        </tr>
-        {% endfor %}
-        </tbody>
-    </table>
-    </div>
-    <!-- Mobile -->
-    <div class="d-md-none mobile-cards">
-        {% for d in dms %}
-        <div class="card mb-2">
-            <div class="card-body py-2 d-flex align-items-center gap-2">
-                <input type="checkbox" class="form-check-input cb-dms" name="channel_ids" value="{{ d.channel_id }}:{{ d.channel_type }}" onchange="updateLeaveBar()">
-                <div class="flex-fill min-w-0">
-                    <div class="text-truncate"><strong>{{ d.title }}</strong></div>
-                    {% if d.username %}<small class="text-muted">@{{ d.username }}</small>{% endif %}
-                </div>
-            </div>
-        </div>
-        {% endfor %}
-    </div>
-    {% else %}<p>Нет личных диалогов.</p>{% endif %}
-    </div>
-
-    <div class="tab-pane fade" id="pane-bots" role="tabpanel">
-    {% if bots %}
-    <!-- Desktop -->
-    <div class="table-responsive d-none d-md-block">
-    <table class="tga-table-striped">
-        <thead><tr>
-            <th><input type="checkbox" class="form-check-input" id="select-all-bots"
-                       onchange="selectAll('bots', this.checked)"></th>
-            <th>Название</th><th>Username</th>
-        </tr></thead>
-        <tbody>
-        {% for d in bots %}
-        <tr>
-            <td><input type="checkbox" class="form-check-input cb-bots" name="channel_ids" value="{{ d.channel_id }}:{{ d.channel_type }}"
-                       onchange="updateLeaveBar()"></td>
-            <td>{{ d.title }}</td>
-            <td>{% if d.username %}<a href="https://t.me/{{ d.username }}" target="_blank" rel="noopener">@{{ d.username }}</a>{% else %}<span class="text-muted">—</span>{% endif %}</td>
-        </tr>
-        {% endfor %}
-        </tbody>
-    </table>
-    </div>
-    <!-- Mobile -->
-    <div class="d-md-none mobile-cards">
-        {% for d in bots %}
-        <div class="card mb-2">
-            <div class="card-body py-2 d-flex align-items-center gap-2">
-                <input type="checkbox" class="form-check-input cb-bots" name="channel_ids" value="{{ d.channel_id }}:{{ d.channel_type }}" onchange="updateLeaveBar()">
-                <div class="flex-fill min-w-0">
-                    <div class="text-truncate"><strong>{{ d.title }}</strong></div>
-                    {% if d.username %}<small class="text-muted">@{{ d.username }}</small>{% endif %}
-                </div>
-            </div>
-        </div>
-        {% endfor %}
-    </div>
-    {% else %}<p>Нет ботов.</p>{% endif %}
-    </div>
+    {{ dialog_pane(own, 'own', 'Нет своих каналов/групп.') }}
+    {{ dialog_pane(channels, 'channels', 'Нет каналов.', active=True) }}
+    {{ dialog_pane(groups, 'groups', 'Нет групп.') }}
+    {{ dialog_pane(dms, 'dms', 'Нет личных диалогов.', with_type=False) }}
+    {{ dialog_pane(bots, 'bots', 'Нет ботов.', with_type=False) }}
 </div>
 
 </form>
