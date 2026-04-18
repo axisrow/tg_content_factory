@@ -247,15 +247,19 @@ async def run_migrations(db: aiosqlite.Connection) -> bool:
         """)
     await db.commit()
 
-    await db.execute("""
-        UPDATE channels SET channel_type = CASE
-            WHEN channel_type = 'chat' THEN 'group'
-            WHEN channel_type = 'group' THEN 'supergroup'
-            ELSE channel_type
-        END
-        WHERE channel_type IN ('chat', 'group')
-    """)
-    await db.commit()
+    # Remap legacy channel_type values — only run if 'chat' values still exist
+    cur = await db.execute("SELECT COUNT(*) FROM channels WHERE channel_type = 'chat'")
+    row = await cur.fetchone()
+    if row[0] > 0:
+        await db.execute("""
+            UPDATE channels SET channel_type = CASE
+                WHEN channel_type = 'chat' THEN 'group'
+                WHEN channel_type = 'group' THEN 'supergroup'
+                ELSE channel_type
+            END
+            WHERE channel_type IN ('chat', 'group')
+        """)
+        await db.commit()
 
     await db.execute("""
         UPDATE channels SET last_collected_id = (
