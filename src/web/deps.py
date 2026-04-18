@@ -192,15 +192,20 @@ def get_collector(request: Request) -> Collector:
     return get_container(request).collector
 
 
-def get_queue(request: Request) -> CollectionQueue:
+def get_queue(request: Request) -> CollectionQueue | None:
+    # In web-mode this is always None (worker-mode only — see bootstrap.py).
+    # Route code must either check for None or go through CollectionService,
+    # which has built-in DB-only fallbacks for queue operations.
     return get_container(request).collection_queue
 
 
-def get_unified_dispatcher(request: Request) -> UnifiedDispatcher:
+def get_unified_dispatcher(request: Request) -> UnifiedDispatcher | None:
+    # worker-only; None in web-mode. See bootstrap.py.
     return get_container(request).unified_dispatcher
 
 
-def get_task_enqueuer(request: Request) -> TaskEnqueuer:
+def get_task_enqueuer(request: Request) -> TaskEnqueuer | None:
+    # worker-only; None in web-mode. See bootstrap.py.
     return get_container(request).task_enqueuer
 
 

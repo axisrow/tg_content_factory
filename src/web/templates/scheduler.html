@@ -15,6 +15,19 @@
     {% endif %}
 {% endmacro %}
 
+{#
+  Preserve user's filter/page/limit on every POST — the route handlers read
+  these via request.query_params and echo them in the redirect Location.
+  Fix for #457 round 3: clicking "Запустить" used to reset the page to the
+  default `status=all` (all 7000+ tasks, 143 pages) even if the user was on
+  `status=active`.
+#}
+{% set _q_parts = [] %}
+{% if status_filter and status_filter != 'all' %}{% set _ = _q_parts.append('status=' ~ status_filter) %}{% endif %}
+{% if page and page != 1 %}{% set _ = _q_parts.append('page=' ~ page) %}{% endif %}
+{% if limit and limit != 50 %}{% set _ = _q_parts.append('limit=' ~ limit) %}{% endif %}
+{% set filter_qs = ('?' ~ _q_parts|join('&')) if _q_parts else '' %}
+
 <div class="card mb-4">
     <div class="card-header fw-semibold">
         Планировщик
@@ -26,25 +39,25 @@
 
         <div class="d-flex flex-wrap gap-2">
             {% if not is_running %}
-            <form method="post" action="/scheduler/start" data-busy>
+            <form method="post" action="/scheduler/start{{ filter_qs }}" data-busy>
                 <button type="submit" class="btn btn-primary">{{ icon("run") }} Запустить</button>
             </form>
             {% else %}
-            <form method="post" action="/scheduler/stop" data-busy>
+            <form method="post" action="/scheduler/stop{{ filter_qs }}" data-busy>
                 <button type="submit" class="btn btn-secondary">&#9724; Остановить</button>
             </form>
             {% endif %}
-            <form method="post" action="/scheduler/trigger" data-busy>
+            <form method="post" action="/scheduler/trigger{{ filter_qs }}" data-busy>
                 <button type="submit" class="btn btn-outline-primary">{{ icon("run") }} Собрать все каналы</button>
             </form>
             {% if pending_collect_count > 0 %}
-            <form method="post" action="/scheduler/tasks/clear-pending-collect" data-busy>
+            <form method="post" action="/scheduler/tasks/clear-pending-collect{{ filter_qs }}" data-busy>
                 <button type="submit" class="btn btn-outline-danger">
                     Очистить очередь загрузки ({{ pending_collect_count }})
                 </button>
             </form>
             {% endif %}
-            <form method="post" action="/scheduler/test-notification" data-busy>
+            <form method="post" action="/scheduler/test-notification{{ filter_qs }}" data-busy>
                 <button type="submit" class="btn btn-outline-secondary"
                         {% if not bot_configured %}disabled title="Подключите бот в Настройках → Уведомления"{% endif %}>
                     Тест
@@ -60,10 +73,12 @@
 </div>
 
 {% if collector_health.state != 'healthy' or collector_health.load_level != 'ok' %}
-<div class="card mb-4 border-{% if collector_health.state in ['all_flooded', 'no_clients'] or collector_health.load_level == 'overload' %}danger{% else %}warning{% endif %}">
+<div class="card mb-4 border-{% if collector_health.state in ['worker_down', 'all_flooded', 'no_clients'] or collector_health.load_level == 'overload' %}danger{% else %}warning{% endif %}">
     <div class="card-header fw-semibold">
         Здоровье коллектора
-        {% if collector_health.state == 'all_flooded' %}
+        {% if collector_health.state == 'worker_down' %}
+        <span class="badge text-bg-danger ms-2">Telegram-воркер не запущен</span>
+        {% elif collector_health.state == 'all_flooded' %}
         <span class="badge text-bg-danger ms-2">Все аккаунты во Flood Wait</span>
         {% elif collector_health.state == 'no_clients' %}
         <span class="badge text-bg-danger ms-2">Нет доступных клиентов</span>
@@ -101,6 +116,12 @@
                 <div class="small">{% if collector_health.is_running %}Коллектор занят{% else %}Коллектор ждёт{% endif %}</div>
             </div>
         </div>
+
+        {% if collector_health.state == 'worker_down' %}
+        <p class="mb-2"><strong>Почему сейчас не собираем:</strong> веб-процесс принимает задачи и пишет их в БД, но Telegram-коннекты держит отдельный воркер-процесс — он сейчас не запущен (нет свежего heartbeat в <code>runtime_snapshots</code>). Задачи из <code>collection_tasks</code> копятся в статусе <em>pending</em>, но никто их не исполняет.</p>
+        <p class="mb-2"><strong>Как починить:</strong> запустите воркер во втором терминале — он подхватит все накопившиеся задачи автоматически:</p>
+        <pre class="mb-2"><code>python -m src.main worker</code></pre>
+        {% endif %}
 
         {% if collector_health.flooded_accounts %}
         <p class="mb-2"><strong>Почему сейчас не собираем:</strong> доступных аккаунтов нет или их недостаточно. Flood Wait активен для:
@@ -156,7 +177,7 @@
                 {% for j in scheduler_jobs %}
                 <tr>
                     <td>
-                        <form method="post" action="/scheduler/jobs/{{ j.job_id }}/toggle" class="mb-0">
+                        <form method="post" action="/scheduler/jobs/{{ j.job_id }}/toggle{{ filter_qs }}" class="mb-0">
                             <input type="checkbox" onchange="this.form.submit()"
                                    {% if j.enabled %}checked{% endif %}
                                    title="{{ 'Отключить' if j.enabled else 'Включить' }}">
@@ -165,7 +186,7 @@
                     <td class="{% if not j.enabled %}text-muted{% endif %}">{{ j.label }}</td>
                     <td>
                         {% if j.interval_editable and j.interval_minutes is not none %}
-                            <form method="post" action="/scheduler/jobs/{{ j.job_id }}/set-interval"
+                            <form method="post" action="/scheduler/jobs/{{ j.job_id }}/set-interval{{ filter_qs }}"
                                   class="d-flex gap-1 mb-0">
                                 <input type="number" name="interval_minutes" value="{{ j.interval_minutes }}"
                                        min="1" max="1440" class="form-control form-control-sm" style="width:75px">
@@ -308,11 +329,11 @@
                     <td>{{ t.completed_at|local_dt }}</td>
                     <td>
                         {% if t.status == 'running' %}
-                            <form method="post" action="/scheduler/tasks/{{ t.id }}/cancel" class="mb-0" data-busy>
+                            <form method="post" action="/scheduler/tasks/{{ t.id }}/cancel{{ filter_qs }}" class="mb-0" data-busy>
                                 <button type="submit" class="btn btn-outline-secondary btn-sm">Отменить</button>
                             </form>
                         {% elif t.status == 'pending' %}
-                            <form method="post" action="/scheduler/tasks/{{ t.id }}/cancel" class="mb-0" data-busy>
+                            <form method="post" action="/scheduler/tasks/{{ t.id }}/cancel{{ filter_qs }}" class="mb-0" data-busy>
                                 <button type="submit" class="btn btn-outline-secondary btn-sm">Удалить</button>
                             </form>
                         {% endif %}
@@ -347,7 +368,7 @@
                     </small>
                     {% if t.status == 'running' or t.status == 'pending' %}
                     <div class="mt-1">
-                        <form method="post" action="/scheduler/tasks/{{ t.id }}/cancel" class="mb-0" data-busy>
+                        <form method="post" action="/scheduler/tasks/{{ t.id }}/cancel{{ filter_qs }}" class="mb-0" data-busy>
                             <button type="submit" class="btn btn-outline-secondary btn-sm">{{ 'Отменить' if t.status == 'running' else 'Удалить' }}</button>
                         </form>
                     </div>

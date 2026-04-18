@@ -23,6 +23,11 @@ def run(args: argparse.Namespace) -> None:
         logging.error("WEB_PASS must be set for web panel authentication")
         sys.exit(1)
     app = create_app(config)
+    # The lifespan hook in src/web/app.py spawns an embedded Telegram worker
+    # unless this flag is set. See #457 round 4: by default `serve` owns the
+    # worker too; `--no-worker` is for production split deployments where
+    # `python -m src.main worker` runs in its own process/container.
+    app.state.embed_worker = not getattr(args, "no_worker", False)
     pid_path = pid_file_path(config)
     try:
         register_current_process(pid_path)
