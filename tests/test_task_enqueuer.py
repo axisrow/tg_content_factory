@@ -244,7 +244,7 @@ async def test_enqueue_pipeline_run_creates_task(task_enqueuer, mock_db):
     mock_db.repos.tasks.create_generic_task.assert_called_once()
     args, kwargs = mock_db.repos.tasks.create_generic_task.call_args
     assert args[0] == CollectionTaskType.PIPELINE_RUN
-    assert "Pipeline run #3" in kwargs.get("title", "")
+    assert "пайплайна #3" in kwargs.get("title", "")
     payload = kwargs.get("payload")
     assert isinstance(payload, PipelineRunTaskPayload)
     assert payload.pipeline_id == 3

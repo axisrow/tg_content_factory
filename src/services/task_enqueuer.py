@@ -87,7 +87,7 @@ class TaskEnqueuer:
             return None
         task_id = await self._db.repos.tasks.create_generic_task(
             CollectionTaskType.PIPELINE_RUN,
-            title=f"Pipeline run #{pipeline_id}",
+            title=f"Запуск пайплайна #{pipeline_id}",
             payload=PipelineRunTaskPayload(pipeline_id=pipeline_id, dry_run=dry_run, since_hours=since_hours),
         )
         logger.info("Enqueued PIPELINE_RUN task #%d for pipeline_id=%d", task_id, pipeline_id)

@@ -63,6 +63,21 @@ async def run_migrations(db: aiosqlite.Connection) -> bool:
     if "media_type" not in msg_columns:
         await db.execute("ALTER TABLE messages ADD COLUMN media_type TEXT")
         await db.commit()
+    if "message_kind" not in msg_columns:
+        await db.execute("ALTER TABLE messages ADD COLUMN message_kind TEXT")
+        await db.commit()
+    if "service_action_raw" not in msg_columns:
+        await db.execute("ALTER TABLE messages ADD COLUMN service_action_raw TEXT")
+        await db.commit()
+    if "service_action_semantic" not in msg_columns:
+        await db.execute("ALTER TABLE messages ADD COLUMN service_action_semantic TEXT")
+        await db.commit()
+    if "service_action_payload_json" not in msg_columns:
+        await db.execute("ALTER TABLE messages ADD COLUMN service_action_payload_json TEXT")
+        await db.commit()
+    if "sender_kind" not in msg_columns:
+        await db.execute("ALTER TABLE messages ADD COLUMN sender_kind TEXT")
+        await db.commit()
     if "topic_id" not in msg_columns:
         await db.execute("ALTER TABLE messages ADD COLUMN topic_id INTEGER")
         await db.commit()
@@ -692,6 +707,9 @@ async def run_migrations(db: aiosqlite.Connection) -> bool:
     # Node-based pipeline graph JSON (issue #343)
     if "pipeline_json" not in cp2_columns:
         await db.execute("ALTER TABLE content_pipelines ADD COLUMN pipeline_json TEXT")
+        await db.commit()
+    if "account_phone" not in cp2_columns:
+        await db.execute("ALTER TABLE content_pipelines ADD COLUMN account_phone TEXT")
         await db.commit()
 
     # Pipeline templates table (issue #343)

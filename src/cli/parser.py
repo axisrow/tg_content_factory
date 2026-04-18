@@ -499,6 +499,26 @@ def build_parser() -> argparse.ArgumentParser:
     pipeline_ai_edit.add_argument("instruction", help="Instruction for the LLM (e.g. 'Add an image generation node')")
     pipeline_ai_edit.add_argument("--show", action="store_true", help="Print updated JSON after edit")
 
+    pipeline_filter = pipeline_sub.add_parser("filter", help="Manage semantic filters on pipeline DAGs")
+    filter_sub = pipeline_filter.add_subparsers(dest="filter_action")
+
+    filter_set = filter_sub.add_parser("set", help="Create or replace the pipeline filter node")
+    filter_set.add_argument("id", type=int, help="Pipeline id")
+    filter_set.add_argument("--message-kind", action="append", default=None, dest="message_kinds")
+    filter_set.add_argument("--service-action", action="append", default=None, dest="service_actions")
+    filter_set.add_argument("--media-type", action="append", default=None, dest="media_types")
+    filter_set.add_argument("--sender-kind", action="append", default=None, dest="sender_kinds")
+    filter_set.add_argument("--keyword", action="append", default=None, dest="keywords")
+    filter_set.add_argument("--regex", default=None, dest="regex")
+    filter_set.add_argument("--forwarded", choices=["true", "false"], default=None)
+    filter_set.add_argument("--has-text", choices=["true", "false"], default=None, dest="has_text")
+
+    filter_show = filter_sub.add_parser("show", help="Show the resolved filter config")
+    filter_show.add_argument("id", type=int, help="Pipeline id")
+
+    filter_clear = filter_sub.add_parser("clear", help="Remove the pipeline filter node")
+    filter_clear.add_argument("id", type=int, help="Pipeline id")
+
     # Node CRUD
     pipeline_node = pipeline_sub.add_parser("node", help="Node CRUD operations on pipeline graph")
     node_sub = pipeline_node.add_subparsers(dest="node_action")
@@ -668,6 +688,12 @@ def build_parser() -> argparse.ArgumentParser:
     my_tg_pin.add_argument("--phone", default=None, help="Account phone (default: first connected)")
     my_tg_pin.add_argument("--notify", action="store_true", help="Notify members about pinned message")
     my_tg_pin.add_argument("--yes", "-y", action="store_true", help="Skip confirmation prompt")
+
+    my_tg_react = dialogs_sub.add_parser("react", help="Set a reaction on a message")
+    my_tg_react.add_argument("chat_id", help="Chat ID or @username")
+    my_tg_react.add_argument("message_id", type=int, help="Message ID to react on")
+    my_tg_react.add_argument("emoji", help="Reaction emoji (e.g. 👍)")
+    my_tg_react.add_argument("--phone", default=None, help="Account phone (default: first connected)")
 
     my_tg_unpin = dialogs_sub.add_parser("unpin-message", help="Unpin a message in a chat")
     my_tg_unpin.add_argument("chat_id", help="Chat ID or @username")

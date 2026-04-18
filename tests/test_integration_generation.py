@@ -136,3 +136,89 @@ async def test_pipeline_generate_and_publish(pipeline_client, monkeypatch):
     assert run_after is not None
     assert run_after.status == "published"
     assert run_after.metadata and run_after.metadata.get("published") is True
+
+
+@pytest.mark.asyncio
+async def test_pipeline_generate_action_only_runs_graph(pipeline_client, monkeypatch):
+    """Regression: POST /pipelines/{id}/generate on an action-only pipeline
+    (with pipeline_json graph) must exercise PipelineExecutor — not the legacy
+    GenerationService — so action_counts accumulate and result_count>0.
+    """
+    from unittest.mock import AsyncMock, MagicMock
+
+    from src.models import (
+        ContentPipeline,
+        PipelineEdge,
+        PipelineGraph,
+        PipelineNode,
+        PipelineNodeType,
+        PipelinePublishMode,
+        PipelineTarget,
+    )
+    from src.services.pipeline_result import increment_action_count
+
+    app = pipeline_client._transport.app  # type: ignore
+    db = app.state.db
+
+    graph = PipelineGraph(
+        nodes=[
+            PipelineNode(id="src", type=PipelineNodeType.SOURCE, name="src", config={}),
+            PipelineNode(id="react", type=PipelineNodeType.REACT, name="react", config={}),
+        ],
+        edges=[PipelineEdge(from_node="src", to_node="react")],
+    )
+    pipeline_id = await db.repos.content_pipelines.add(
+        pipeline=ContentPipeline(
+            name="ActionOnlyWeb",
+            prompt_template="",
+            publish_mode=PipelinePublishMode.MODERATED,
+            pipeline_json=graph,
+        ),
+        source_channel_ids=[1001],
+        targets=[
+            PipelineTarget(
+                pipeline_id=0,
+                phone="+100",
+                dialog_id=77,
+                title="Target A",
+                dialog_type="channel",
+            )
+        ],
+    )
+
+    # Ensure the web route's LLM gate lets this action-only pipeline through.
+    mock_llm_service = MagicMock()
+    mock_llm_service.has_providers = MagicMock(return_value=True)
+    mock_llm_service.get_provider_callable = MagicMock(return_value=None)
+    app.state.llm_provider_service = mock_llm_service
+
+    def fake_get_handler(node_type):
+        h = AsyncMock()
+
+        async def _execute(config, ctx, services):
+            if node_type == PipelineNodeType.REACT:
+                increment_action_count(ctx, "react", amount=4)
+
+        h.execute.side_effect = _execute
+        return h
+
+    monkeypatch.setattr(
+        "src.services.pipeline_executor.get_handler", fake_get_handler
+    )
+
+    resp = await pipeline_client.post(
+        f"/pipelines/{pipeline_id}/generate",
+        data={"model": "", "max_tokens": "256", "temperature": "0.0"},
+        follow_redirects=True,
+    )
+    assert resp.status_code == 200, resp.text
+
+    runs = await db.repos.generation_runs.list_by_pipeline(pipeline_id)
+    assert runs, "web generate must create a generation_run"
+    run = runs[0]
+    assert run.status == "completed", (
+        f"run status={run.status}, metadata={run.metadata}"
+    )
+    assert run.result_kind == "processed_messages"
+    assert run.result_count == 4
+    assert (run.metadata or {}).get("action_counts") == {"react": 4}

@@ -7,6 +7,7 @@ from typing import Any
 
 from src.models import ContentPipeline, PipelineGraph, PipelineNode, PipelineNodeType
 from src.services.pipeline_nodes import NodeContext, get_handler
+from src.services.pipeline_result import get_action_counts, summarize_result
 
 logger = logging.getLogger(__name__)
 
@@ -102,6 +103,8 @@ class PipelineExecutor:
                 continue
 
             handler = get_handler(node.type)
+            prev_current_node_id = services.get("_current_node_id")
+            services["_current_node_id"] = node.id
             try:
                 logger.debug("Executing node %s (%s)", node.id, node.type)
                 await handler.execute(node.config, context, services)
@@ -120,13 +123,32 @@ class PipelineExecutor:
             except Exception:
                 logger.exception("Node %s (%s) failed during pipeline execution", node.id, node.type)
                 raise
+            finally:
+                if prev_current_node_id is None:
+                    services.pop("_current_node_id", None)
+                else:
+                    services["_current_node_id"] = prev_current_node_id
+
+        generated_text = context.get_global("generated_text", "")
+        citations = context.get_global("citations", [])
+        action_counts = get_action_counts(context)
+        node_errors = context.get_errors()
+        result_kind, result_count = summarize_result(
+            generated_text=generated_text,
+            citations=citations,
+            action_counts=action_counts,
+        )
 
         return {
-            "generated_text": context.get_global("generated_text", ""),
+            "generated_text": generated_text,
             "image_url": context.get_global("image_url"),
-            "citations": context.get_global("citations", []),
+            "citations": citations,
             "publish_mode": context.get_global("publish_mode", pipeline.publish_mode.value),
             "publish_reply": context.get_global("publish_reply", False),
             "reply_to_message_id": context.get_global("reply_to_message_id"),
+            "action_counts": action_counts,
+            "result_kind": result_kind,
+            "result_count": result_count,
+            "node_errors": node_errors,
             "context": context,
         }

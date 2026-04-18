@@ -50,6 +50,7 @@ def configure_app(app: FastAPI, container: AppContainer | None) -> None:
         app.state.session_secret = container.session_secret
         app.state.llm_provider_service = container.llm_provider_service
         app.state.timing_buffer = container.timing_buffer
+        app.state.task_enqueuer = container.task_enqueuer
     elif not hasattr(app.state, "templates"):
         app.state.templates = configure_template_globals(
             Jinja2Templates(directory=str(TEMPLATES_DIR)),

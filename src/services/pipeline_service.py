@@ -22,6 +22,7 @@ from src.models import (
     PipelineTarget,
     PipelineTemplate,
 )
+from src.services.pipeline_filters import normalize_filter_config
 from src.services.pipeline_llm_requirements import pipeline_needs_llm
 
 logger = logging.getLogger(__name__)
@@ -153,7 +154,9 @@ class PipelineService:
         generate_interval_minutes: int = 60,
         is_active: bool = True,
         react_emoji: str | None = None,
+        filter_config: dict | None = None,
         dag_source_channel_ids: list[int] | None = None,
+        account_phone: str | None = None,
     ) -> bool:
         existing = await self.get(pipeline_id)
         existing_pipeline_json = existing.pipeline_json if existing else None
@@ -176,6 +179,7 @@ class PipelineService:
             generate_interval_minutes=generate_interval_minutes,
             is_active=is_active,
             skip_llm_validation=skip_llm_validation,
+            account_phone=account_phone,
         )
 
         # Preserve existing pipeline_json and apply node-level config updates
@@ -195,6 +199,11 @@ class PipelineService:
                         else:
                             node.config["emoji"] = emojis[0] if emojis else "👍"
                             node.config["random_emojis"] = []
+            if filter_config is not None:
+                normalized_filter = normalize_filter_config(filter_config)
+                for node in updated_graph.nodes:
+                    if node.type == PipelineNodeType.FILTER:
+                        node.config = normalized_filter
         pipeline = pipeline.model_copy(update={"pipeline_json": updated_graph})
 
         # For DAG pipelines, source/target are managed via pipeline_json nodes, not DB tables
@@ -355,6 +364,7 @@ class PipelineService:
         is_active: bool,
         last_generated_id: int = 0,
         skip_llm_validation: bool = False,
+        account_phone: str | None = None,
     ) -> ContentPipeline:
         cleaned_name = name.strip()
         if not cleaned_name:
@@ -384,6 +394,7 @@ class PipelineService:
             is_active=is_active,
             last_generated_id=last_generated_id,
             generate_interval_minutes=generate_interval_minutes,
+            account_phone=account_phone or None,
         )
 
     @staticmethod
@@ -494,6 +505,7 @@ class PipelineService:
             generation_backend=data.get("generation_backend", PipelineGenerationBackend.CHAIN),
             generate_interval_minutes=int(data.get("generate_interval_minutes", 60)),
             is_active=False,
+            account_phone=data.get("account_phone"),
         )
         self._inject_runtime_refs(pipeline_json, source_ids, target_refs)
         pipeline = pipeline.model_copy(update={"pipeline_json": pipeline_json})

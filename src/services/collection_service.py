@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Literal
 
 from src.database import Database
 from src.database.bundles import ChannelBundle
-from src.models import Channel
+from src.models import Channel, CollectionTaskType
 
 if TYPE_CHECKING:
     from src.collection_queue import CollectionQueue
@@ -91,17 +91,29 @@ class CollectionService:
         """Cancel a pending/running collection task.
 
         When the worker process is live (`self._queue is not None`) the call is
-        delegated to `CollectionQueue.cancel_task` so an in-flight collection
-        gets interrupted immediately. In web-mode (`self._queue is None`) we
-        fall back to a DB-only status flip — the worker will pick up the
-        cancellation on its next fetch of the task row.
+        routes `channel_collect` through `CollectionQueue.cancel_task` so an
+        in-flight message collection gets interrupted immediately. Generic
+        tasks like `stats_all` run under `UnifiedDispatcher`, so they need a
+        direct DB cancellation plus a collector stop signal instead.
+
+        In web-mode (`self._queue is None`) we fall back to a DB-only status
+        flip — the worker will pick up the cancellation on its next fetch of
+        the task row.
 
         Mirrors the `_enqueue_channel` fallback pattern so that /scheduler
         routes do not 500 when `collection_queue` is absent (#457).
         """
-        if self._queue is not None:
+        task = await self._channels.get_collection_task(task_id)
+        if task is None:
+            return False
+
+        if self._queue is not None and task.task_type == CollectionTaskType.CHANNEL_COLLECT:
             return await self._queue.cancel_task(task_id, note=note)
-        return await self._channels.cancel_collection_task(task_id, note=note)
+
+        cancelled = await self._channels.cancel_collection_task(task_id, note=note)
+        if cancelled and task.task_type == CollectionTaskType.STATS_ALL:
+            await self._collector.cancel()
+        return cancelled
 
     async def clear_pending_collect_tasks(self) -> int:
         """Delete every PENDING channel-collect task.

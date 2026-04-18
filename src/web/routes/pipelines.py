@@ -9,6 +9,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Resp
 
 from src.agent.prompt_template import ALLOWED_TEMPLATE_VARIABLES
 from src.models import PipelineGenerationBackend, PipelinePublishMode
+from src.services.pipeline_filters import filter_messages, normalize_filter_config
 from src.services.pipeline_llm_requirements import (
     get_dag_source_channel_ids,
     get_react_emoji_config,
@@ -53,6 +54,44 @@ def _target_refs(values: list[str]) -> list[PipelineTargetRef]:
             raise PipelineValidationError("Некорректный dialog id для pipeline target.") from exc
         refs.append(PipelineTargetRef(phone=phone, dialog_id=dialog_id))
     return refs
+
+
+def _get_filter_config(pipeline) -> dict | None:
+    graph = getattr(pipeline, "pipeline_json", None)
+    if graph is None:
+        return None
+    node = next((item for item in graph.nodes if item.type.value == "filter"), None)
+    if node is None:
+        return None
+    return normalize_filter_config(node.config)
+
+
+def _build_filter_config_from_form(
+    *,
+    filter_present: str,
+    filter_message_kinds: list[str],
+    filter_service_actions: list[str],
+    filter_media_types: list[str],
+    filter_sender_kinds: list[str],
+    filter_keywords: str,
+    filter_regex: str,
+    filter_has_text: str,
+) -> dict | None:
+    if not filter_present:
+        return None
+    keywords = [item.strip() for item in filter_keywords.splitlines() if item.strip()]
+    return normalize_filter_config(
+        {
+            "type": "message_filter",
+            "message_kinds": filter_message_kinds,
+            "service_actions": filter_service_actions,
+            "media_types": filter_media_types,
+            "sender_kinds": filter_sender_kinds,
+            "keywords": keywords,
+            "regex": filter_regex.strip(),
+            "has_text": True if filter_has_text else None,
+        }
+    )
 
 
 @router.get("/api/channels/search", response_class=JSONResponse)
@@ -191,6 +230,7 @@ async def create_wizard_submit(
     run_after: str = Form(""),
     since_value: int = Form(24),
     since_unit: str = Form("h"),
+    account_phone: str = Form(""),
 ):
     import json as _json
 
@@ -211,6 +251,7 @@ async def create_wizard_submit(
             "target_refs": target_refs,
             "generate_interval_minutes": generate_interval_minutes,
             "pipeline_json": graph_data,
+            "account_phone": account_phone or None,
         }
         pipeline_id = await svc.import_json(data)
     except PipelineValidationError as exc:
@@ -295,7 +336,16 @@ async def edit_pipeline(
     generate_interval_minutes: int = Form(60),
     is_active: bool = Form(False),
     react_emoji: str = Form(""),
+    filter_present: str = Form(""),
+    filter_message_kinds: list[str] = Form(default=[]),
+    filter_service_actions: list[str] = Form(default=[]),
+    filter_media_types: list[str] = Form(default=[]),
+    filter_sender_kinds: list[str] = Form(default=[]),
+    filter_keywords: str = Form(""),
+    filter_regex: str = Form(""),
+    filter_has_text: str = Form(""),
     dag_source_channel_ids: list[int] = Form(default=[]),
+    account_phone: str = Form(""),
 ):
     svc: PipelineService = deps.pipeline_service(request)
     phone = request.query_params.get("phone")
@@ -322,7 +372,18 @@ async def edit_pipeline(
             generate_interval_minutes=generate_interval_minutes,
             is_active=is_active,
             react_emoji=react_emoji,
+            filter_config=_build_filter_config_from_form(
+                filter_present=filter_present,
+                filter_message_kinds=filter_message_kinds,
+                filter_service_actions=filter_service_actions,
+                filter_media_types=filter_media_types,
+                filter_sender_kinds=filter_sender_kinds,
+                filter_keywords=filter_keywords,
+                filter_regex=filter_regex,
+                filter_has_text=filter_has_text,
+            ),
             dag_source_channel_ids=dag_source_channel_ids,
+            account_phone=account_phone,
         )
     except PipelineValidationError as exc:
         return _pipeline_redirect(str(exc), error=True, phone=phone)
@@ -435,6 +496,7 @@ async def edit_page(request: Request, pipeline_id: int):
             "needs_publish_mode": pipeline_needs_publish_mode(pipeline),
             "is_dag": pipeline_is_dag(pipeline),
             "react_emoji": get_react_emoji_config(pipeline),
+            "filter_config": _get_filter_config(pipeline),
             "dag_source_channel_ids": get_dag_source_channel_ids(pipeline),
         },
     )
@@ -543,43 +605,32 @@ async def generate_pipeline(
     provider_service = deps.get_llm_provider_service(request)
     if pipeline_needs_llm(pipeline) and not provider_service.has_providers():
         return _pipeline_redirect("llm_not_configured", error=True)
-    if not pipeline_needs_llm(pipeline):
-        return _pipeline_redirect("pipeline_no_llm_nodes", error=True)
-    provider_callable = provider_service.get_provider_callable(pipeline.llm_model)
 
-    from src.services.generation_service import GenerationService
+    from src.services.content_generation_service import ContentGenerationService
+    from src.services.quality_scoring_service import QualityScoringService
 
-    gen = GenerationService(engine, provider_callable=provider_callable)
-    scope = await svc.get_retrieval_scope(pipeline)
-    run_id = await db.repos.generation_runs.create_run(pipeline_id, pipeline.prompt_template)
+    gen = ContentGenerationService(
+        db,
+        engine,
+        config=request.app.state.config,
+        quality_service=QualityScoringService(db, provider_service=provider_service),
+        provider_service=provider_service,
+    )
     try:
-        await db.repos.generation_runs.set_status(run_id, "running")
-    except Exception:
-        await db.repos.generation_runs.set_status(run_id, "failed")
-        raise
-    try:
-        result = await gen.generate(
-            query=scope.query,
-            prompt_template=pipeline.prompt_template,
+        run = await gen.generate(
+            pipeline=pipeline,
             model=(model or pipeline.llm_model),
             max_tokens=max_tokens,
             temperature=temperature,
-            channel_id=scope.channel_id,
         )
-        await db.repos.generation_runs.save_result(
-            run_id, result.get("generated_text", ""), {"citations": result.get("citations", [])}
-        )
-        await db.repos.generation_runs.set_status(run_id, "completed")
     except Exception:
-        logger.exception("Generation failed for pipeline_id=%d run_id=%d", pipeline_id, run_id)
-        await db.repos.generation_runs.set_status(run_id, "failed")
+        logger.exception("Generation failed for pipeline_id=%d", pipeline_id)
         runs = await db.repos.generation_runs.list_by_pipeline(pipeline_id)
         return deps.get_templates(request).TemplateResponse(
             request,
             "pipelines/generate.html",
             {"pipeline": pipeline, "runs": runs, "error": "Generation failed", "request": request},
         )
-    run = await db.repos.generation_runs.get(run_id)
     return deps.get_templates(request).TemplateResponse(
         request,
         "pipelines/generate.html",
@@ -620,8 +671,6 @@ async def get_refinement_steps(request: Request, pipeline_id: int):
 
 def _apply_pipeline_filter(pipeline, messages: list) -> int:
     """Count messages that would pass the filter node, if any."""
-    import re as _re
-
     if pipeline.pipeline_json is None:
         return len(messages)
     graph = pipeline.pipeline_json
@@ -631,32 +680,7 @@ def _apply_pipeline_filter(pipeline, messages: list) -> int:
     )
     if filter_node is None:
         return len(messages)
-    cfg = filter_node.config
-    ft = cfg.get("type", "keywords")
-    count = 0
-    for m in messages:
-        text = (m.text or "").lower() if hasattr(m, "text") else ""
-        if ft == "keywords":
-            kws = [k.lower() for k in cfg.get("keywords", [])]
-            if any(k in text for k in kws):
-                count += 1
-        elif ft == "regex":
-            pat = cfg.get("pattern", "")
-            try:
-                if pat and _re.search(pat, text, _re.IGNORECASE):
-                    count += 1
-            except _re.error:
-                pass  # treat malformed pattern as non-matching
-        elif ft == "service_message":
-            stypes = cfg.get("service_types", [])
-            if any(s in text for s in stypes):
-                count += 1
-        elif ft == "anonymous_sender":
-            if not getattr(m, "sender_id", None):
-                count += 1
-        else:
-            count += 1
-    return count
+    return len(filter_messages(messages, filter_node.config))
 
 
 @router.get("/dry-run-count", response_class=JSONResponse)

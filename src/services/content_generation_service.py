@@ -48,6 +48,36 @@ class ContentGenerationService:
         self._client_pool = client_pool
         self._provider_service = provider_service
 
+    @staticmethod
+    def _build_metadata(result: dict, *, dry_run: bool) -> dict[str, Any]:
+        """Assemble the metadata dict stored on a generation run.
+
+        Encodes the invariants from issue #463:
+          - ``result_kind``/``result_count`` are always present.
+          - ``action_counts`` survives for mixed and action-only runs.
+          - Optional flags (dry_run, publish_reply, reply_to_message_id) are
+            included only when set — absence is treated as implicit False/None.
+        """
+        metadata: dict[str, Any] = {
+            "citations": result.get("citations", []),
+            "effective_publish_mode": result.get("publish_mode"),
+            "result_kind": result.get("result_kind", "generated_items"),
+            "result_count": int(result.get("result_count", 0) or 0),
+        }
+        action_counts = result.get("action_counts")
+        if isinstance(action_counts, dict) and action_counts:
+            metadata["action_counts"] = action_counts
+        node_errors = result.get("node_errors")
+        if isinstance(node_errors, list) and node_errors:
+            metadata["node_errors"] = node_errors
+        if dry_run:
+            metadata["dry_run"] = True
+        if result.get("publish_reply"):
+            metadata["publish_reply"] = True
+        if result.get("reply_to_message_id") is not None:
+            metadata["reply_to_message_id"] = result["reply_to_message_id"]
+        return metadata
+
     async def generate(
         self,
         pipeline: ContentPipeline,
@@ -91,16 +121,10 @@ class ContentGenerationService:
             )
             generated_text = result.get("generated_text", "")
             effective_publish_mode = result.get("publish_mode") or pipeline.publish_mode.value
-            metadata: dict[str, Any] = {
-                "citations": result.get("citations", []),
-                "effective_publish_mode": effective_publish_mode,
-            }
-            if dry_run:
-                metadata["dry_run"] = True
-            if result.get("publish_reply"):
-                metadata["publish_reply"] = True
-            if result.get("reply_to_message_id") is not None:
-                metadata["reply_to_message_id"] = result["reply_to_message_id"]
+            metadata = self._build_metadata(
+                {**result, "publish_mode": effective_publish_mode},
+                dry_run=dry_run,
+            )
 
             if pipeline.refinement_steps and generated_text and pipeline.pipeline_json is None:
                 # Refinement steps are only applied for legacy pipelines (graph-based ones encode them as nodes)
@@ -216,6 +240,7 @@ class ContentGenerationService:
             "since_hours": since_hours,
             "generation_query": scope.query,
             "channel_id": scope.channel_id,
+            "account_phone": pipeline.account_phone,
         }
 
         # Inject read-only agent tools for AgentLoopHandler
@@ -240,6 +265,10 @@ class ContentGenerationService:
             "publish_mode": result.get("publish_mode"),
             "publish_reply": result.get("publish_reply", False),
             "reply_to_message_id": result.get("reply_to_message_id"),
+            "action_counts": result.get("action_counts", {}),
+            "result_kind": result.get("result_kind", "generated_items"),
+            "result_count": result.get("result_count", 0),
+            "node_errors": result.get("node_errors", []),
         }
 
     async def _run_rag(

@@ -97,6 +97,8 @@ class DBConnection:
 
     async def execute(self, sql: str, params: tuple = ()) -> aiosqlite.Cursor:
         assert self.db is not None
+        if sql.strip().upper().startswith("BEGIN") and self.db.in_transaction:
+            await self.db.rollback()
         return await self.db.execute(sql, params)
 
     async def execute_fetchall(self, sql: str, params: tuple = ()) -> list:

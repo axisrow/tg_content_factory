@@ -496,6 +496,22 @@ async def test_extract_reactions_custom_emoji():
 
 
 @pytest.mark.asyncio
+async def test_classify_message_service_joined_by_link():
+    from telethon.tl.types import MessageActionChatJoinedByLink
+
+    msg = SimpleNamespace(
+        action=MessageActionChatJoinedByLink(inviter_id=42),
+        sender_id=100,
+        post=False,
+        from_id=None,
+    )
+    assert Collector._get_message_kind(msg) == "service"
+    assert Collector._get_service_action_raw(msg) == "MessageActionChatJoinedByLink"
+    assert Collector._get_service_action_semantic(msg) == "join"
+    assert Collector._get_sender_kind(msg) == "user"
+
+
+@pytest.mark.asyncio
 async def test_collect_channel_collects_media_without_text(db):
     """Collector should collect messages without text (media-only)."""
     ch = Channel(channel_id=-100123, title="Test", username="test", last_collected_id=5)
