@@ -588,7 +588,7 @@ async def test_handle_photo_due_success(dispatcher, mock_tasks_repo, mock_photo_
 
 @pytest.mark.asyncio
 async def test_handle_photo_due_no_service(dispatcher, mock_tasks_repo):
-    """_handle_photo_due completes with note when no service configured."""
+    """_handle_photo_due fails when no service configured (was COMPLETED silently)."""
     dispatcher._photo_task_service = None
 
     task = CollectionTask(
@@ -602,7 +602,7 @@ async def test_handle_photo_due_no_service(dispatcher, mock_tasks_repo):
 
     mock_tasks_repo.update_collection_task.assert_called()
     args, kwargs = mock_tasks_repo.update_collection_task.call_args
-    assert args[1] == CollectionTaskStatus.COMPLETED
+    assert args[1] == CollectionTaskStatus.FAILED
 
 
 @pytest.mark.asyncio
@@ -651,7 +651,7 @@ async def test_handle_photo_auto_success(dispatcher, mock_tasks_repo, mock_photo
 
 @pytest.mark.asyncio
 async def test_handle_photo_auto_no_service(dispatcher, mock_tasks_repo):
-    """_handle_photo_auto completes with note when no service configured."""
+    """_handle_photo_auto fails when no service configured (was COMPLETED silently)."""
     dispatcher._photo_auto_upload_service = None
 
     task = CollectionTask(
@@ -665,7 +665,7 @@ async def test_handle_photo_auto_no_service(dispatcher, mock_tasks_repo):
 
     mock_tasks_repo.update_collection_task.assert_called()
     args, kwargs = mock_tasks_repo.update_collection_task.call_args
-    assert args[1] == CollectionTaskStatus.COMPLETED
+    assert args[1] == CollectionTaskStatus.FAILED
 
 
 # === _handle_pipeline_run tests ===

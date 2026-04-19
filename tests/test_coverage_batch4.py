@@ -1836,7 +1836,7 @@ async def test_dispatcher_handle_photo_due_no_service():
     task = _make_task(CollectionTaskType.PHOTO_DUE)
     await dispatcher._handle_photo_due(task)
     tasks_repo.update_collection_task.assert_awaited_with(
-        1, CollectionTaskStatus.COMPLETED, note="No photo service"
+        1, CollectionTaskStatus.FAILED, error="PhotoTaskService not configured"
     )
 
 
@@ -1876,7 +1876,7 @@ async def test_dispatcher_handle_photo_auto_no_service():
     task = _make_task(CollectionTaskType.PHOTO_AUTO)
     await dispatcher._handle_photo_auto(task)
     tasks_repo.update_collection_task.assert_awaited_with(
-        1, CollectionTaskStatus.COMPLETED, note="No photo auto service"
+        1, CollectionTaskStatus.FAILED, error="PhotoAutoUploadService not configured"
     )
 
 
