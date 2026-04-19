@@ -4,7 +4,7 @@ import asyncio
 import json
 import logging
 from collections.abc import Awaitable, Callable
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from telethon.errors import FloodWaitError, UsernameInvalidError, UsernameNotOccupiedError
 from telethon.tl.types import (
@@ -1331,7 +1331,6 @@ class Collector:
         action = getattr(msg, "action", None)
         if action is None:
             return None
-        from datetime import datetime, date
         payload = {key: value for key, value in action.to_dict().items() if key != "_"}
 
         def _default(obj):
