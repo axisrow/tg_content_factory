@@ -325,7 +325,29 @@ async def test_refresh_dialogs_redirects(client):
 async def test_refresh_dialogs_missing_phone(client):
     """Test refresh without phone returns validation error."""
     resp = await client.post("/dialogs/refresh", follow_redirects=False)
-    assert resp.status_code == 422
+    assert resp.status_code == 303
+
+
+@pytest.mark.asyncio
+async def test_create_channel_missing_phone(client):
+    """POST /dialogs/create-channel without phone returns 422."""
+    resp = await client.post(
+        "/dialogs/create-channel",
+        data={"title": "Test Channel"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+
+
+@pytest.mark.asyncio
+async def test_create_channel_missing_title(client):
+    """POST /dialogs/create-channel without title returns 422."""
+    resp = await client.post(
+        "/dialogs/create-channel",
+        data={"phone": "+1234567890"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
 
 
 @pytest.mark.asyncio

@@ -175,3 +175,17 @@ async def test_delete_nonexistent_no_crash(client):
     """Test delete nonexistent query doesn't crash."""
     resp = await client.post("/search-queries/999999/delete", follow_redirects=False)
     assert resp.status_code == 303
+
+
+@pytest.mark.asyncio
+async def test_add_search_query_missing_query(client):
+    """POST /search-queries/add without query returns 422."""
+    resp = await client.post("/search-queries/add", data={}, follow_redirects=False)
+    assert resp.status_code == 303
+
+
+@pytest.mark.asyncio
+async def test_edit_search_query_missing_query(client):
+    """POST /search-queries/{id}/edit without query returns 422."""
+    resp = await client.post("/search-queries/1/edit", data={}, follow_redirects=False)
+    assert resp.status_code == 303

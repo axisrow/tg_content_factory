@@ -83,7 +83,9 @@ async def dialogs_page(
 
 
 @router.post("/refresh")
-async def refresh_dialogs(request: Request, phone: str = Form(...)):
+async def refresh_dialogs(request: Request, phone: str = Form("")):
+    if not phone:
+        return RedirectResponse(url="/dialogs/?error=missing_fields", status_code=303)
     return await _enqueue_dialog_command(
         request,
         "dialogs.refresh",
@@ -468,11 +470,13 @@ async def create_channel_page(request: Request):
 @router.post("/create-channel")
 async def create_channel(
     request: Request,
-    phone: str = Form(...),
-    title: str = Form(...),
+    phone: str = Form(""),
+    title: str = Form(""),
     about: str = Form(""),
     username: str = Form(""),
 ):
+    if not phone or not title:
+        return RedirectResponse(url="/dialogs/create-channel?error=missing_fields", status_code=303)
     command_id = await deps.telegram_command_service(request).enqueue(
         "dialogs.create_channel",
         payload={

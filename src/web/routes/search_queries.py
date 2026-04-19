@@ -19,7 +19,7 @@ async def search_queries_page(request: Request):
 @router.post("/add")
 async def add_search_query(
     request: Request,
-    query: str = Form(...),
+    query: str = Form(""),
     interval_minutes: int = Form(60),
     is_regex: bool = Form(False),
     is_fts: bool = Form(False),
@@ -28,6 +28,8 @@ async def add_search_query(
     exclude_patterns: str = Form(""),
     max_length: int | None = Form(None),
 ):
+    if not query.strip():
+        return RedirectResponse(url="/search-queries?error=invalid_value", status_code=303)
     svc = deps.search_query_service(request)
     try:
         await svc.add(
@@ -62,7 +64,7 @@ async def toggle_search_query(request: Request, sq_id: int):
 async def edit_search_query(
     request: Request,
     sq_id: int,
-    query: str = Form(...),
+    query: str = Form(""),
     interval_minutes: int = Form(60),
     is_regex: bool = Form(False),
     is_fts: bool = Form(False),
@@ -71,6 +73,8 @@ async def edit_search_query(
     exclude_patterns: str = Form(""),
     max_length: int | None = Form(None),
 ):
+    if not query.strip():
+        return RedirectResponse(url="/search-queries?error=invalid_value", status_code=303)
     svc = deps.search_query_service(request)
     try:
         await svc.update(

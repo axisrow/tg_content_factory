@@ -121,6 +121,7 @@ class TelegramAuth:
         )
         return {
             "phone_code_hash": result.phone_code_hash,
+            "session_str": client.session.save(),
             "code_type": _describe_code_type(result.type),
             "next_type": _describe_next_type(getattr(result, "next_type", None)),
             "timeout": getattr(result, "timeout", None),
@@ -186,6 +187,40 @@ class TelegramAuth:
                 except Exception:
                     logger.warning("Failed to disconnect temporary auth client for %s", phone)
 
+        logger.info("Successfully authenticated %s", phone)
+        return session_string
+
+    async def sign_in_fresh(
+        self,
+        phone: str,
+        code: str,
+        phone_code_hash: str,
+        session_str: str = "",
+        password_2fa: str | None = None,
+    ) -> str:
+        """Sign in using a phone_code_hash from a previous send_code call (possibly in a different process).
+
+        Pass session_str from the send_code result to reuse the same MTProto session —
+        required because Telegram binds phone_code_hash to the session that sent the request.
+        """
+        client = TelegramClient(StringSession(session_str), self._api_id, self._api_hash)
+        await client.connect()
+        needs_2fa = False
+        try:
+            try:
+                await client.sign_in(phone, code, phone_code_hash=phone_code_hash)
+            except SessionPasswordNeededError:
+                if not password_2fa:
+                    needs_2fa = True
+                    raise ValueError("2FA password required")
+                await client.sign_in(password=password_2fa)
+            session_string = client.session.save()
+        finally:
+            if not needs_2fa:
+                try:
+                    await client.disconnect()
+                except Exception:
+                    logger.warning("Failed to disconnect fresh auth client for %s", phone)
         logger.info("Successfully authenticated %s", phone)
         return session_string
 

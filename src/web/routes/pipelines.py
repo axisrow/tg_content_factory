@@ -221,8 +221,8 @@ async def create_wizard_page(request: Request):
 @router.post("/create-wizard")
 async def create_wizard_submit(
     request: Request,
-    name: str = Form(...),
-    pipeline_json: str = Form(...),
+    name: str = Form(""),
+    pipeline_json: str = Form(""),
     source_channel_ids: list[int] = Form(default=[]),
     target_refs: list[str] = Form(default=[]),
     generate_interval_minutes: int = Form(60),
@@ -232,6 +232,8 @@ async def create_wizard_submit(
     since_unit: str = Form("h"),
     account_phone: str = Form(""),
 ):
+    if not name or not pipeline_json:
+        return _pipeline_redirect("pipeline_invalid", error=True)
     import json as _json
 
     svc = deps.pipeline_service(request)
@@ -277,8 +279,8 @@ async def create_wizard_submit(
 @router.post("/add")
 async def add_pipeline(
     request: Request,
-    name: str = Form(...),
-    prompt_template: str = Form(...),
+    name: str = Form(""),
+    prompt_template: str = Form(""),
     source_channel_ids: list[int] = Form(default=[]),
     target_refs: list[str] = Form(default=[]),
     llm_model: str = Form(""),
@@ -288,6 +290,8 @@ async def add_pipeline(
     generate_interval_minutes: int = Form(60),
     is_active: bool = Form(False),
 ):
+    if not name or not prompt_template:
+        return _pipeline_redirect("pipeline_invalid", error=True)
     svc: PipelineService = deps.pipeline_service(request)
     try:
         new_pipeline_id = await svc.add(
@@ -325,7 +329,7 @@ async def add_pipeline(
 async def edit_pipeline(
     request: Request,
     pipeline_id: int,
-    name: str = Form(...),
+    name: str = Form(""),
     prompt_template: str = Form(""),
     source_channel_ids: list[int] = Form(default=[]),
     target_refs: list[str] = Form(default=[]),
@@ -347,6 +351,8 @@ async def edit_pipeline(
     dag_source_channel_ids: list[int] = Form(default=[]),
     account_phone: str = Form(""),
 ):
+    if not name:
+        return _pipeline_redirect("pipeline_invalid", error=True)
     svc: PipelineService = deps.pipeline_service(request)
     phone = request.query_params.get("phone")
     existing = await svc.get(pipeline_id)
@@ -639,7 +645,9 @@ async def generate_pipeline(
 
 
 @router.post("/{pipeline_id}/publish")
-async def publish_pipeline(request: Request, pipeline_id: int, run_id: int = Form(...)):
+async def publish_pipeline(request: Request, pipeline_id: int, run_id: int | None = Form(None)):
+    if run_id is None:
+        return _pipeline_redirect("pipeline_invalid", error=True)
     db = deps.get_db(request)
     run = await db.repos.generation_runs.get(run_id)
     if run is None or run.pipeline_id != pipeline_id:
@@ -758,14 +766,16 @@ async def templates_json(request: Request):
 @router.post("/from-template")
 async def create_from_template(
     request: Request,
-    template_id: int = Form(...),
-    name: str = Form(...),
+    template_id: int | None = Form(None),
+    name: str = Form(""),
     source_channel_ids: list[int] = Form(default=[]),
     target_refs: list[str] = Form(default=[]),
     llm_model: str = Form(""),
     image_model: str = Form(""),
     generate_interval_minutes: int = Form(60),
 ):
+    if template_id is None or not name:
+        return _pipeline_redirect("pipeline_invalid", error=True)
     svc: PipelineService = deps.pipeline_service(request)
     try:
         pipeline_id = await svc.create_from_template(
