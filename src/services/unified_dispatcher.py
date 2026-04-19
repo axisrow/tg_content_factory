@@ -674,6 +674,14 @@ class UnifiedDispatcher:
             )
             return
 
+        if self._client_pool is None:
+            await self._tasks.update_collection_task(
+                task.id,
+                CollectionTaskStatus.FAILED,
+                error="client_pool not configured",
+            )
+            return
+
         pipeline_id = payload.pipeline_id
         try:
             from src.services.pipeline_service import PipelineService

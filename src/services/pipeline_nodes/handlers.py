@@ -317,7 +317,7 @@ class ReactHandler(BaseNodeHandler):
                 detail="client_pool not available in services",
             )
             logger.warning("ReactHandler[%s]: no client_pool, skipping", node_id)
-            return
+            raise RuntimeError("ReactHandler: client_pool not available")
 
         messages = context.get_global("context_messages", [])
         emoji = node_config.get("emoji") or "👍"
@@ -397,7 +397,7 @@ class ForwardHandler(BaseNodeHandler):
                 detail="client_pool not available in services",
             )
             logger.warning("ForwardHandler[%s]: no client_pool, skipping", node_id)
-            return
+            raise RuntimeError("ForwardHandler: client_pool not available")
 
         messages = context.get_global("context_messages", [])
         targets = node_config.get("targets", [])
@@ -466,7 +466,7 @@ class DeleteMessageHandler(BaseNodeHandler):
                 detail="client_pool not available in services",
             )
             logger.warning("DeleteMessageHandler[%s]: no client_pool, skipping", node_id)
-            return
+            raise RuntimeError("DeleteMessageHandler: client_pool not available")
 
         messages = context.get_global("context_messages", [])
         resolved_phone = _resolve_account_phone(services.get("account_phone"), services, context)

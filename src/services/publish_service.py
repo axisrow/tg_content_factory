@@ -82,6 +82,8 @@ class PublishService:
     ) -> PublishResult:
         """Publish to a single target."""
         pool = self._client_pool
+        if pool is None:
+            return PublishResult(success=False, error="client_pool not configured")
         acquired_phone: str | None = None
         try:
             result = await pool.get_client_by_phone(target.phone)

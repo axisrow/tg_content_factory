@@ -77,6 +77,8 @@ async def test_retrieve_context_no_search_engine():
     ctx = NodeContext()
     await RetrieveContextHandler().execute({}, ctx, {})
     assert ctx.get_global("context_messages") == []
+    errors = ctx.get_errors()
+    assert any(e["code"] == "missing_dependency" for e in errors)
 
 
 @pytest.mark.asyncio
@@ -260,6 +262,8 @@ async def test_image_generate_no_service():
     ctx.set_global("generated_text", "a cat")
     await ImageGenerateHandler().execute({"model": "test"}, ctx, {})
     assert ctx.get_global("image_url") is None
+    errors = ctx.get_errors()
+    assert any(e["code"] == "missing_dependency" for e in errors)
 
 
 @pytest.mark.asyncio
@@ -330,7 +334,8 @@ async def test_notify_no_service():
     ctx = NodeContext()
     ctx.set_global("generated_text", "hello")
     await NotifyHandler().execute({}, ctx, {})
-    # No crash
+    errors = ctx.get_errors()
+    assert any(e["code"] == "missing_dependency" for e in errors)
 
 
 @pytest.mark.asyncio
@@ -500,8 +505,8 @@ async def test_delay_range(mock_sleep):
 async def test_react_no_client_pool():
     ctx = NodeContext()
     ctx.set_global("context_messages", [_msg()])
-    await ReactHandler().execute({"emoji": "👍"}, ctx, {})
-    # No crash
+    with pytest.raises(RuntimeError, match="client_pool not available"):
+        await ReactHandler().execute({"emoji": "👍"}, ctx, {})
 
 
 @pytest.mark.asyncio
@@ -551,9 +556,10 @@ async def test_react_random_emojis():
 async def test_react_records_error_when_no_client_pool():
     ctx = NodeContext()
     ctx.set_global("context_messages", [_msg()])
-    await ReactHandler().execute(
-        {"emoji": "👍"}, ctx, {"client_pool": None, "_current_node_id": "react_1"}
-    )
+    with pytest.raises(RuntimeError, match="client_pool not available"):
+        await ReactHandler().execute(
+            {"emoji": "👍"}, ctx, {"client_pool": None, "_current_node_id": "react_1"}
+        )
     errors = ctx.get_errors()
     assert len(errors) == 1
     assert errors[0]["code"] == "no_client_pool"
@@ -644,8 +650,8 @@ async def test_react_records_unexpected_error_for_generic_exception():
 async def test_forward_no_client_pool():
     ctx = NodeContext()
     ctx.set_global("context_messages", [_msg()])
-    await ForwardHandler().execute({"targets": []}, ctx, {})
-    # No crash
+    with pytest.raises(RuntimeError, match="client_pool not available"):
+        await ForwardHandler().execute({"targets": []}, ctx, {})
 
 
 @pytest.mark.asyncio
@@ -695,11 +701,12 @@ async def test_forward_get_client_returns_none_skips():
 async def test_forward_records_error_when_no_client_pool():
     ctx = NodeContext()
     ctx.set_global("context_messages", [_msg()])
-    await ForwardHandler().execute(
-        {"targets": [{"phone": "+1", "dialog_id": -1}]},
-        ctx,
-        {"client_pool": None, "_current_node_id": "fwd_1"},
-    )
+    with pytest.raises(RuntimeError, match="client_pool not available"):
+        await ForwardHandler().execute(
+            {"targets": [{"phone": "+1", "dialog_id": -1}]},
+            ctx,
+            {"client_pool": None, "_current_node_id": "fwd_1"},
+        )
     errors = ctx.get_errors()
     assert errors and errors[0]["code"] == "no_client_pool"
     assert errors[0]["node_id"] == "fwd_1"
@@ -750,8 +757,8 @@ async def test_forward_records_flood_wait_error():
 async def test_delete_no_client_pool():
     ctx = NodeContext()
     ctx.set_global("context_messages", [_msg()])
-    await DeleteMessageHandler().execute({}, ctx, {})
-    # No crash
+    with pytest.raises(RuntimeError, match="client_pool not available"):
+        await DeleteMessageHandler().execute({}, ctx, {})
 
 
 @pytest.mark.asyncio
@@ -786,9 +793,10 @@ async def test_delete_client_none_breaks():
 async def test_delete_records_error_when_no_client_pool():
     ctx = NodeContext()
     ctx.set_global("context_messages", [_msg()])
-    await DeleteMessageHandler().execute(
-        {}, ctx, {"client_pool": None, "_current_node_id": "del_1"}
-    )
+    with pytest.raises(RuntimeError, match="client_pool not available"):
+        await DeleteMessageHandler().execute(
+            {}, ctx, {"client_pool": None, "_current_node_id": "del_1"}
+        )
     errors = ctx.get_errors()
     assert errors and errors[0]["code"] == "no_client_pool"
     assert errors[0]["node_id"] == "del_1"
@@ -873,7 +881,8 @@ async def test_condition_gt_type_error():
 async def test_search_trigger_no_engine():
     ctx = NodeContext()
     await SearchQueryTriggerHandler().execute({"query": "test"}, ctx, {})
-    # No crash, no trigger_matched set
+    errors = ctx.get_errors()
+    assert any(e["code"] == "missing_dependency" for e in errors)
 
 
 @pytest.mark.asyncio
