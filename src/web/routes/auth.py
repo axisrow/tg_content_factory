@@ -126,7 +126,10 @@ async def save_credentials(
 @router.post("/send-code")
 async def send_code(request: Request, phone: str = Form("")):
     if not phone:
-        return _render(request, "login.html", {"step": "phone", "error": None, "api_configured": _is_api_configured(request)})
+        return _render(
+            request, "login.html",
+            {"step": "phone", "error": None, "api_configured": _is_api_configured(request)},
+        )
     if not _is_api_configured(request):
         return _render(
             request,
