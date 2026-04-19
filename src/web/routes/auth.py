@@ -152,6 +152,8 @@ async def resend_code(
     phone: str = Form(""),
     phone_code_hash: str = Form(""),
 ):
+    if not phone or not phone_code_hash:
+        return RedirectResponse(url="/auth/login", status_code=303)
     command_id = await deps.telegram_command_service(request).enqueue(
         "auth.resend_code",
         payload={"phone": phone, "phone_code_hash": phone_code_hash},
@@ -171,6 +173,8 @@ async def verify_code(
     next_type: str = Form(""),
     timeout: str = Form(""),
 ):
+    if not phone or not code or not phone_code_hash:
+        return RedirectResponse(url="/auth/login", status_code=303)
     command_id = await deps.telegram_command_service(request).enqueue(
         "auth.verify_code",
         payload={
