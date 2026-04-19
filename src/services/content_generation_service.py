@@ -180,13 +180,15 @@ class ContentGenerationService:
                 except Exception:
                     logger.warning("Failed to send draft notification", exc_info=True)
             return run
-        except Exception:
+        except Exception as exc:
             logger.exception(
                 "Content generation failed for pipeline_id=%s run_id=%s",
                 pipeline.id,
                 run_id,
             )
-            await self._db.repos.generation_runs.set_status(run_id, "failed")
+            node_errors = getattr(exc, "node_errors", None)
+            meta = {"node_errors": node_errors} if node_errors else None
+            await self._db.repos.generation_runs.set_status(run_id, "failed", metadata=meta)
             raise
 
     async def _run_generation(

@@ -67,7 +67,7 @@ class FakeGenerationRunsRepo:
         self._runs[run_id] = run
         return run_id
 
-    async def set_status(self, run_id, status):
+    async def set_status(self, run_id, status, metadata=None):
         if run_id in self._runs:
             self._runs[run_id].status = status
 

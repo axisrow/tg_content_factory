@@ -69,11 +69,18 @@ class GenerationRunsRepository:
         await self._db.commit()
         return cur.lastrowid or 0
 
-    async def set_status(self, run_id: int, status: str) -> None:
-        await self._db.execute(
-            "UPDATE generation_runs SET status = ?, updated_at = datetime('now') WHERE id = ?",
-            (status, run_id),
-        )
+    async def set_status(self, run_id: int, status: str, metadata: dict | None = None) -> None:
+        if metadata is not None:
+            await self._db.execute(
+                ("UPDATE generation_runs SET status = ?, metadata = ?, "
+                 "updated_at = datetime('now') WHERE id = ?"),
+                (status, json.dumps(metadata, ensure_ascii=False), run_id),
+            )
+        else:
+            await self._db.execute(
+                "UPDATE generation_runs SET status = ?, updated_at = datetime('now') WHERE id = ?",
+                (status, run_id),
+            )
         await self._db.commit()
 
     async def save_result(

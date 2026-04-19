@@ -87,7 +87,13 @@ class RetrieveContextHandler(BaseNodeHandler):
     async def execute(self, node_config: dict, context: NodeContext, services: dict) -> None:
         search_engine = services.get("search_engine")
         if search_engine is None:
-            logger.warning("RetrieveContextHandler: no search_engine in services, skipping")
+            node_id = _current_node_id(services, default="retrieve_context")
+            context.record_error(
+                node_id=node_id,
+                code="missing_dependency",
+                detail="search_engine not available in services",
+            )
+            logger.warning("RetrieveContextHandler[%s]: no search_engine, skipping", node_id)
             context.set_global("context_messages", [])
             return
 
@@ -205,7 +211,13 @@ class ImageGenerateHandler(BaseNodeHandler):
     async def execute(self, node_config: dict, context: NodeContext, services: dict) -> None:
         image_service = services.get("image_service")
         if image_service is None:
-            logger.info("ImageGenerateHandler: no image_service configured, skipping")
+            node_id = _current_node_id(services, default="image_generate")
+            context.record_error(
+                node_id=node_id,
+                code="missing_dependency",
+                detail="image_service not available in services",
+            )
+            logger.warning("ImageGenerateHandler[%s]: no image_service, skipping", node_id)
             return
 
         text = context.get_global("generated_text", "") or ""
@@ -248,7 +260,13 @@ class NotifyHandler(BaseNodeHandler):
     async def execute(self, node_config: dict, context: NodeContext, services: dict) -> None:
         notification_service = services.get("notification_service")
         if notification_service is None:
-            logger.info("NotifyHandler: no notification_service configured, skipping")
+            node_id = _current_node_id(services, default="notify")
+            context.record_error(
+                node_id=node_id,
+                code="missing_dependency",
+                detail="notification_service not available in services",
+            )
+            logger.warning("NotifyHandler[%s]: no notification_service, skipping", node_id)
             return
 
         text = context.get_global("generated_text", "") or context.get_global("trigger_text", "") or ""
@@ -299,7 +317,7 @@ class ReactHandler(BaseNodeHandler):
                 detail="client_pool not available in services",
             )
             logger.warning("ReactHandler[%s]: no client_pool, skipping", node_id)
-            return
+            raise RuntimeError("ReactHandler: client_pool not available")
 
         messages = context.get_global("context_messages", [])
         emoji = node_config.get("emoji") or "👍"
@@ -379,7 +397,7 @@ class ForwardHandler(BaseNodeHandler):
                 detail="client_pool not available in services",
             )
             logger.warning("ForwardHandler[%s]: no client_pool, skipping", node_id)
-            return
+            raise RuntimeError("ForwardHandler: client_pool not available")
 
         messages = context.get_global("context_messages", [])
         targets = node_config.get("targets", [])
@@ -448,7 +466,7 @@ class DeleteMessageHandler(BaseNodeHandler):
                 detail="client_pool not available in services",
             )
             logger.warning("DeleteMessageHandler[%s]: no client_pool, skipping", node_id)
-            return
+            raise RuntimeError("DeleteMessageHandler: client_pool not available")
 
         messages = context.get_global("context_messages", [])
         resolved_phone = _resolve_account_phone(services.get("account_phone"), services, context)
@@ -540,7 +558,13 @@ class SearchQueryTriggerHandler(BaseNodeHandler):
     async def execute(self, node_config: dict, context: NodeContext, services: dict) -> None:
         search_engine = services.get("search_engine")
         if search_engine is None:
-            logger.warning("SearchQueryTriggerHandler: no search_engine, skipping")
+            node_id = _current_node_id(services, default="search_query_trigger")
+            context.record_error(
+                node_id=node_id,
+                code="missing_dependency",
+                detail="search_engine not available in services",
+            )
+            logger.warning("SearchQueryTriggerHandler[%s]: no search_engine, skipping", node_id)
             return
 
         query = node_config.get("query", "")

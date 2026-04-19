@@ -413,8 +413,8 @@ class UnifiedDispatcher:
         if not self._photo_task_service:
             await self._tasks.update_collection_task(
                 task.id,
-                CollectionTaskStatus.COMPLETED,
-                note="No photo service",
+                CollectionTaskStatus.FAILED,
+                error="PhotoTaskService not configured",
             )
             return
         try:
@@ -440,8 +440,8 @@ class UnifiedDispatcher:
         if not self._photo_auto_upload_service:
             await self._tasks.update_collection_task(
                 task.id,
-                CollectionTaskStatus.COMPLETED,
-                note="No photo auto service",
+                CollectionTaskStatus.FAILED,
+                error="PhotoAutoUploadService not configured",
             )
             return
         try:
@@ -671,6 +671,14 @@ class UnifiedDispatcher:
                 task.id,
                 CollectionTaskStatus.FAILED,
                 error="Pipeline execution environment not configured",
+            )
+            return
+
+        if self._client_pool is None:
+            await self._tasks.update_collection_task(
+                task.id,
+                CollectionTaskStatus.FAILED,
+                error="client_pool not configured",
             )
             return
 
