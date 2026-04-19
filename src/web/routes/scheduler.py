@@ -193,6 +193,12 @@ async def _build_collector_health_context(request: Request) -> dict[str, object]
         available_accounts_now=available_accounts_now,
         state=state,
     )
+    # Compute retry_after_sec from next_available_at if available
+    computed_retry_after_sec = availability_retry_after
+    if computed_retry_after_sec is None and (next_available_at or availability_next):
+        effective_next = next_available_at or availability_next
+        delta = effective_next - now
+        computed_retry_after_sec = max(0, int(delta.total_seconds()))
     return {
         "state": state,
         "connected_accounts": len(connected_phones),
@@ -201,7 +207,7 @@ async def _build_collector_health_context(request: Request) -> dict[str, object]
         "flooded_accounts": flooded_accounts,
         "flooded_accounts_count": len(flooded_accounts),
         "next_available_at": next_available_at or availability_next,
-        "retry_after_sec": availability_retry_after,
+        "retry_after_sec": computed_retry_after_sec,
         "active_unfiltered_channels": active_unfiltered_channels,
         "collect_interval_minutes": interval_minutes,
         "load_level": load_level,

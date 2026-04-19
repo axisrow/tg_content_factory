@@ -842,3 +842,45 @@ async def test_scheduler_mixed_page_non_pipeline_tasks_unaffected(base_app, rout
     assert "Сгенерировано" not in plain_text
     assert "Обработано" not in plain_text
     assert "42" in plain_text
+
+
+@pytest.mark.asyncio
+async def test_scheduler_shows_flood_wait_countdown(client):
+    """Test that scheduler page shows flood wait countdown in hours and minutes."""
+    db = client._transport.app.state.db
+    pool = client._transport.app.state.pool
+    accounts = await db.get_accounts(active_only=False)
+
+    # Put account in pool so it appears in connected_active_accounts
+    pool.clients = {acc.phone: MagicMock() for acc in accounts}
+
+    # Set flood wait for 3 hours in future (round number avoids second-boundary races)
+    future = datetime.now(timezone.utc) + timedelta(hours=3)
+    for acc in accounts:
+        await db.update_account_flood(acc.phone, future)
+
+    resp = await client.get("/scheduler/")
+    assert resp.status_code == 200
+    # Check that countdown is displayed — "3 ч 0 мин" or similar
+    assert " ч " in resp.text or " мин)" in resp.text
+
+
+@pytest.mark.asyncio
+async def test_scheduler_hides_countdown_if_too_short(client):
+    """Test that countdown is hidden if less than 60 seconds remain."""
+    db = client._transport.app.state.db
+    pool = client._transport.app.state.pool
+    accounts = await db.get_accounts(active_only=False)
+
+    # Put account in pool so it appears in connected_active_accounts
+    pool.clients = {acc.phone: MagicMock() for acc in accounts}
+
+    # Set flood wait for only 30 seconds (below the 60s threshold, shouldn't show countdown)
+    future = datetime.now(timezone.utc) + timedelta(seconds=30)
+    for acc in accounts:
+        await db.update_account_flood(acc.phone, future)
+
+    resp = await client.get("/scheduler/")
+    assert resp.status_code == 200
+    # Countdown should not appear for very short waits
+    assert "(0 мин)" not in resp.text
