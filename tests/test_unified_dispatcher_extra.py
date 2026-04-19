@@ -177,7 +177,7 @@ async def test_photo_due_no_id():
 async def test_photo_due_no_service():
     d = _dispatcher(photo_task_service=None)
     await d._handle_photo_due(_task(CollectionTaskType.PHOTO_DUE))
-    assert d._tasks.update_collection_task.call_args[0][1] == CollectionTaskStatus.COMPLETED
+    assert d._tasks.update_collection_task.call_args[0][1] == CollectionTaskStatus.FAILED
 
 
 @pytest.mark.asyncio
@@ -209,7 +209,7 @@ async def test_photo_auto_no_id():
 async def test_photo_auto_no_service():
     d = _dispatcher(photo_auto_upload_service=None)
     await d._handle_photo_auto(_task(CollectionTaskType.PHOTO_AUTO))
-    assert d._tasks.update_collection_task.call_args[0][1] == CollectionTaskStatus.COMPLETED
+    assert d._tasks.update_collection_task.call_args[0][1] == CollectionTaskStatus.FAILED
 
 
 @pytest.mark.asyncio

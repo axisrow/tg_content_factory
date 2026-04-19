@@ -322,6 +322,7 @@ async def test_content_publish_with_approved_runs():
 
     d._db = mock_db
     d._pipeline_bundle = mock_pipeline_bundle
+    d._client_pool = MagicMock()
 
     payload = ContentPublishTaskPayload(pipeline_id=None)
 
@@ -385,6 +386,7 @@ async def test_content_publish_run_without_pipeline_id():
 
     d._db = mock_db
     d._pipeline_bundle = MagicMock()
+    d._client_pool = MagicMock()
 
     payload = ContentPublishTaskPayload(pipeline_id=None)
 
@@ -442,6 +444,7 @@ async def test_content_publish_pipeline_not_found():
 
     d._db = mock_db
     d._pipeline_bundle = mock_pipeline_bundle
+    d._client_pool = MagicMock()
 
     payload = ContentPublishTaskPayload(pipeline_id=None)
 
@@ -473,6 +476,7 @@ async def test_content_publish_exception():
 
     d._db = mock_db
     d._pipeline_bundle = MagicMock()
+    d._client_pool = MagicMock()
 
     payload = ContentPublishTaskPayload(pipeline_id=None)
 

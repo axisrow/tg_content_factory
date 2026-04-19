@@ -18,6 +18,7 @@ from src.models import (
     StatsAllTaskPayload,
     TranslateBatchTaskPayload,
 )
+from src.utils.json import safe_json_dumps
 
 _ALLOWED_PAYLOAD_FILTER_KEYS = frozenset({"sq_id", "pipeline_id"})
 
@@ -90,7 +91,7 @@ class CollectionTasksRepository:
             ),
         ):
             return payload.model_dump_json()
-        return json.dumps(payload)
+        return safe_json_dumps(payload)
 
     @staticmethod
     def _to_task(row: aiosqlite.Row) -> CollectionTask:

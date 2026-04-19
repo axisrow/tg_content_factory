@@ -25,6 +25,7 @@ from src.agent.provider_registry import (
 from src.config import AppConfig, resolve_session_encryption_secret
 from src.database import Database
 from src.security import SessionCipher
+from src.utils.json import safe_json_dumps
 
 logger = logging.getLogger(__name__)
 
@@ -165,7 +166,7 @@ class AgentProviderService:
                     "last_validation_error": cfg.last_validation_error,
                 }
             )
-        await self._db.set_setting(PROVIDER_SETTINGS_KEY, json.dumps(payload, ensure_ascii=False))
+        await self._db.set_setting(PROVIDER_SETTINGS_KEY, safe_json_dumps(payload, ensure_ascii=False))
 
     async def load_model_cache(self) -> dict[str, ProviderModelCacheEntry]:
         raw = await self._db.get_setting(MODEL_CACHE_SETTINGS_KEY)
@@ -234,7 +235,7 @@ class AgentProviderService:
             for provider, entry in cache.items()
         }
         await self._db.set_setting(
-            MODEL_CACHE_SETTINGS_KEY, json.dumps(payload, ensure_ascii=False)
+            MODEL_CACHE_SETTINGS_KEY, safe_json_dumps(payload, ensure_ascii=False)
         )
 
     async def refresh_models_for_provider(
@@ -460,7 +461,7 @@ class AgentProviderService:
         secret_hash = ""
         if secret_payload:
             secret_hash = hashlib.sha256(
-                json.dumps(secret_payload, sort_keys=True, ensure_ascii=False).encode("utf-8")
+                safe_json_dumps(secret_payload, sort_keys=True, ensure_ascii=False).encode("utf-8")
             ).hexdigest()[:16]
         payload = {
             "provider": cfg.provider,
@@ -470,7 +471,7 @@ class AgentProviderService:
             "secret_hash": secret_hash,
         }
         return hashlib.sha256(
-            json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")
+            safe_json_dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")
         ).hexdigest()
 
     def get_compatibility_record(
@@ -648,7 +649,7 @@ class AgentProviderService:
             "providers": providers_payload,
         }
         export_path.write_text(
-            json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+            safe_json_dumps(payload, ensure_ascii=False, indent=2) + "\n",
             encoding="utf-8",
         )
         return export_path

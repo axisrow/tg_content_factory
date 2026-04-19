@@ -47,6 +47,7 @@ from src.services.agent_provider_service import (
     ProviderModelCacheEntry,
     ProviderModelCompatibilityRecord,
 )
+from src.utils.json import safe_json_dumps
 
 logger = logging.getLogger(__name__)
 
@@ -133,7 +134,7 @@ class _ToolTracker:
     _tool_id_to_name: dict[str, str] = field(default_factory=dict, init=False)
 
     async def _put(self, payload: dict) -> None:
-        await self.queue.put(f"data: {json.dumps(payload, ensure_ascii=False)}\n\n")
+        await self.queue.put(f"data: {safe_json_dumps(payload, ensure_ascii=False)}\n\n")
         await asyncio.sleep(0)
 
     async def on_first_event(self) -> None:
@@ -268,7 +269,7 @@ async def _await_with_countdown(
                                 "Timeout extended +%.0fs (SDK activity, was %.0fs left, %d extensions left)",
                                 activity_extend, remaining, extensions_remaining,
                             )
-                            ext_payload = json.dumps(
+                            ext_payload = safe_json_dumps(
                                 {
                                     "type": "status",
                                     "text": f"Агент активен — продлён (+{int(activity_extend)}с)",
@@ -287,7 +288,7 @@ async def _await_with_countdown(
                     and (now - api_request_ts[0]) > thinking_delay
                 ):
                     _thinking_shown = True
-                    thinking_payload = json.dumps(
+                    thinking_payload = safe_json_dumps(
                         {"type": "thinking", "text": "Думает..."},
                         ensure_ascii=False,
                     )
@@ -298,7 +299,7 @@ async def _await_with_countdown(
                 # Show countdown
                 remaining_int = int(deadline - time.monotonic())
                 if remaining_int > 0:
-                    payload = json.dumps(
+                    payload = safe_json_dumps(
                         {"type": "countdown", "text": f"{label} ({remaining_int}с до таймаута)"},
                         ensure_ascii=False,
                     )
@@ -482,7 +483,7 @@ class ClaudeSdkBackend:
                 _api_request_count[0] += 1
                 _api_request_ts[0] = time.monotonic()
                 label = f"Жду ответ Claude API #{_api_request_count[0]}: «{_prompt_short}»"
-                payload = json.dumps({"type": "status", "text": label}, ensure_ascii=False)
+                payload = safe_json_dumps({"type": "status", "text": label}, ensure_ascii=False)
                 try:
                     queue.put_nowait(f"data: {payload}\n\n")
                 except Exception:
@@ -496,7 +497,7 @@ class ClaudeSdkBackend:
                     break
             if label and label != _last_emitted[0]:
                 _last_emitted[0] = label
-                payload = json.dumps({"type": "status", "text": label}, ensure_ascii=False)
+                payload = safe_json_dumps({"type": "status", "text": label}, ensure_ascii=False)
                 try:
                     queue.put_nowait(f"data: {payload}\n\n")
                 except Exception:
@@ -512,7 +513,7 @@ class ClaudeSdkBackend:
                 for tag in ("[WARN]", "[warn]", "[ERROR]", "[error]"):
                     display = display.replace(tag, "").strip()
                 if display:
-                    warn_payload = json.dumps(
+                    warn_payload = safe_json_dumps(
                         {"type": "warning", "text": display},
                         ensure_ascii=False,
                     )
@@ -660,7 +661,7 @@ class ClaudeSdkBackend:
                             _last_rate_limit[0] = rl_summary
                             if rl_status == "rejected":
                                 # Hard reject — surface as warning, not just status
-                                warn_payload = json.dumps(
+                                warn_payload = safe_json_dumps(
                                     {"type": "warning", "text": f"⛔ {rl_text}. API отклоняет запросы."},
                                     ensure_ascii=False,
                                 )
@@ -697,7 +698,7 @@ class ClaudeSdkBackend:
                                         _last_activity[0] = time.monotonic()
                                         full_text += text_chunk
                                         streamed = True
-                                        chunk_payload = json.dumps(
+                                        chunk_payload = safe_json_dumps(
                                             {"text": text_chunk}, ensure_ascii=False
                                         )
                                         await queue.put(f"data: {chunk_payload}\n\n")
@@ -727,7 +728,7 @@ class ClaudeSdkBackend:
                             for _idx, block in enumerate(msg.content):
                                 if isinstance(block, TextBlock) and not streamed:
                                     full_text += block.text
-                                    chunk_payload = json.dumps(
+                                    chunk_payload = safe_json_dumps(
                                         {"text": block.text}, ensure_ascii=False
                                     )
                                     await queue.put(f"data: {chunk_payload}\n\n")
@@ -739,7 +740,7 @@ class ClaudeSdkBackend:
                                         block.name, _idx, tool_use_id=block.id
                                     )
                                     tracker.accumulate_input(
-                                        json.dumps(block.input or {}, ensure_ascii=False)
+                                        safe_json_dumps(block.input or {}, ensure_ascii=False)
                                     )
                                     await tracker.on_block_stop(_idx)
                                 elif isinstance(block, ToolResultBlock):
@@ -771,7 +772,7 @@ class ClaudeSdkBackend:
                             _sid = getattr(msg, "session_id", None)
                             if isinstance(_sid, str) and _sid:
                                 done_data["session_id"] = _sid
-                            done_payload = json.dumps(done_data, ensure_ascii=False)
+                            done_payload = safe_json_dumps(done_data, ensure_ascii=False)
                             await queue.put(f"data: {done_payload}\n\n")
                         else:
                             logger.warning(
@@ -791,7 +792,7 @@ class ClaudeSdkBackend:
                     "Agent timeout after %.1fs (thread %d): %s", elapsed, thread_id, exc,
                 )
                 stderr_summary = "\n".join(stderr_lines[-10:]) if stderr_lines else None
-                err_payload = json.dumps(
+                err_payload = safe_json_dumps(
                     {"error": str(exc), "details": stderr_summary},
                     ensure_ascii=False,
                 )
@@ -806,7 +807,7 @@ class ClaudeSdkBackend:
                     "Установите: npm install -g @anthropic-ai/claude-code"
                 )
                 await queue.put(
-                    f"data: {json.dumps({'error': err_msg}, ensure_ascii=False)}\n\n"
+                    f"data: {safe_json_dumps({'error': err_msg}, ensure_ascii=False)}\n\n"
                 )
                 await queue.put(None)
                 return
@@ -822,7 +823,7 @@ class ClaudeSdkBackend:
                 # Truncate long stderr for UI
                 if len(details) > 500:
                     details = details[:500] + "..."
-                err_payload = json.dumps(
+                err_payload = safe_json_dumps(
                     {"error": "Ошибка процесса Claude CLI", "details": details},
                     ensure_ascii=False,
                 )
@@ -845,7 +846,7 @@ class ClaudeSdkBackend:
                     if "overloaded" in str(exc).lower()
                     else "Не удалось подключиться к Claude CLI"
                 )
-                err_payload = json.dumps(
+                err_payload = safe_json_dumps(
                     {"error": conn_msg, "details": stderr_summary},
                     ensure_ascii=False,
                 )
@@ -859,7 +860,7 @@ class ClaudeSdkBackend:
                     "Claude SDK error after %.1fs (thread %d): %s", elapsed, thread_id, exc,
                 )
                 stderr_summary = "\n".join(stderr_lines[-10:]) if stderr_lines else ""
-                err_payload = json.dumps(
+                err_payload = safe_json_dumps(
                     {
                         "error": f"Ошибка Claude SDK: {exc}",
                         "details": stderr_summary or None,
@@ -937,7 +938,7 @@ class ClaudeSdkBackend:
                 )
             # Send error details to user via SSE
             stderr_summary = "\n".join(stderr_lines[-10:]) if stderr_lines else ""
-            err_payload = json.dumps(
+            err_payload = safe_json_dumps(
                 {
                     "error": f"Ошибка агента: {last_err}",
                     "details": stderr_summary or None,
@@ -1628,9 +1629,9 @@ class DeepagentsBackend:
                 if not full_text:
                     logger.debug("Deepagents returned empty response for provider=%s", cfg.provider)
                 if full_text:
-                    chunk_payload = json.dumps({"text": full_text}, ensure_ascii=False)
+                    chunk_payload = safe_json_dumps({"text": full_text}, ensure_ascii=False)
                     await queue.put(f"data: {chunk_payload}\n\n")
-                done_payload = json.dumps(
+                done_payload = safe_json_dumps(
                     {
                         "done": True,
                         "full_text": full_text,
@@ -1970,7 +1971,7 @@ class AgentManager:
         status = await self.get_runtime_status()
         backend_name = status.selected_backend
         if status.error and (backend_name is None or status.using_override):
-            err_payload = json.dumps(
+            err_payload = safe_json_dumps(
                 {"error": f"Ошибка агента: {status.error}"}, ensure_ascii=False
             )
             yield f"data: {err_payload}\n\n"
@@ -1983,7 +1984,7 @@ class AgentManager:
             backend = self._deepagents_backend
             model = None
         else:
-            err_payload = json.dumps(
+            err_payload = safe_json_dumps(
                 {"error": "Ошибка агента: не удалось выбрать backend."},
                 ensure_ascii=False,
             )
@@ -2057,7 +2058,7 @@ class AgentManager:
                 ):
                     error_text = "Не удалось подключиться к Ollama. Проверьте, что сервис запущен."
 
-                err_payload = json.dumps(
+                err_payload = safe_json_dumps(
                     {"error": failure_prefix(error_text)},
                     ensure_ascii=False,
                 )
@@ -2084,7 +2085,7 @@ class AgentManager:
         task.add_done_callback(_cleanup)
 
         # Immediate feedback before backend connects (can take 10-30s)
-        init_payload = json.dumps(
+        init_payload = safe_json_dumps(
             {"type": "status", "text": f"Подключение к {backend_name}..."},
             ensure_ascii=False,
         )

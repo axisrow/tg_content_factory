@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import logging
 from urllib.parse import quote
 
@@ -25,6 +24,7 @@ from src.services.pipeline_service import (
 from src.services.pipeline_service import (
     to_since_hours as _to_since_hours,
 )
+from src.utils.json import safe_json_dumps
 from src.web import deps
 
 logger = logging.getLogger(__name__)
@@ -574,18 +574,18 @@ async def generate_stream(
                     "text": update.get("generated_text"),
                     "citations": update.get("citations"),
                 }
-                yield f"data: {json.dumps(data)}\n\n"
+                yield f"data: {safe_json_dumps(data)}\n\n"
 
             # finished successfully
             final_text = last.get("generated_text") if last else ""
             metadata = {"citations": last.get("citations", []) if last else []}
             await db.repos.generation_runs.save_result(run_id, final_text, metadata)
             await db.repos.generation_runs.set_status(run_id, "completed")
-            yield f"event: done\ndata: {json.dumps({'run_id': run_id})}\n\n"
+            yield f"event: done\ndata: {safe_json_dumps({'run_id': run_id})}\n\n"
         except Exception:
             logger.exception("Generation stream failed for pipeline_id=%d run_id=%d", pipeline_id, run_id)
             await db.repos.generation_runs.set_status(run_id, "failed")
-            yield f"event: error\ndata: {json.dumps({'error': 'Generation failed'})}\n\n"
+            yield f"event: error\ndata: {safe_json_dumps({'error': 'Generation failed'})}\n\n"
         except BaseException:
             await db.repos.generation_runs.set_status(run_id, "failed")
             raise
@@ -810,9 +810,8 @@ async def export_pipeline(request: Request, pipeline_id: int):
     data = await svc.export_json(pipeline_id)
     if data is None:
         return _pipeline_redirect("pipeline_invalid", error=True)
-    import json as _json
     filename = f"pipeline_{pipeline_id}.json"
-    content = _json.dumps(data, ensure_ascii=False, indent=2)
+    content = safe_json_dumps(data, ensure_ascii=False, indent=2)
     return Response(
         content=content,
         media_type="application/json",

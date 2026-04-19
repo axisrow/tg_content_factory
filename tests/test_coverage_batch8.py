@@ -1381,7 +1381,7 @@ class TestUnifiedDispatcherDispatch:
         await dispatcher._handle_photo_due(task)
         tasks_repo.update_collection_task.assert_awaited()
         call_args = tasks_repo.update_collection_task.call_args
-        assert call_args[0][1] == CollectionTaskStatus.COMPLETED
+        assert call_args[0][1] == CollectionTaskStatus.FAILED
 
     @pytest.mark.asyncio
     async def test_photo_auto_no_service(self):
