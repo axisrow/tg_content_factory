@@ -108,9 +108,11 @@ async def login_page(request: Request):
 @router.post("/save-credentials")
 async def save_credentials(
     request: Request,
-    api_id: int = Form(...),
-    api_hash: str = Form(...),
+    api_id: int | None = Form(None),
+    api_hash: str = Form(""),
 ):
+    if api_id is None or not api_hash:
+        return RedirectResponse(url="/auth/login", status_code=303)
     db = request.app.state.db
     auth = request.app.state.auth
 
@@ -122,7 +124,12 @@ async def save_credentials(
 
 
 @router.post("/send-code")
-async def send_code(request: Request, phone: str = Form(...)):
+async def send_code(request: Request, phone: str = Form("")):
+    if not phone:
+        return _render(
+            request, "login.html",
+            {"step": "phone", "error": None, "api_configured": _is_api_configured(request)},
+        )
     if not _is_api_configured(request):
         return _render(
             request,
@@ -145,9 +152,11 @@ async def send_code(request: Request, phone: str = Form(...)):
 @router.post("/resend-code")
 async def resend_code(
     request: Request,
-    phone: str = Form(...),
-    phone_code_hash: str = Form(...),
+    phone: str = Form(""),
+    phone_code_hash: str = Form(""),
 ):
+    if not phone or not phone_code_hash:
+        return RedirectResponse(url="/auth/login", status_code=303)
     command_id = await deps.telegram_command_service(request).enqueue(
         "auth.resend_code",
         payload={"phone": phone, "phone_code_hash": phone_code_hash},
@@ -159,14 +168,16 @@ async def resend_code(
 @router.post("/verify-code")
 async def verify_code(
     request: Request,
-    phone: str = Form(...),
-    code: str = Form(...),
-    phone_code_hash: str = Form(...),
+    phone: str = Form(""),
+    code: str = Form(""),
+    phone_code_hash: str = Form(""),
     password_2fa: str = Form(""),
     code_type: str = Form(""),
     next_type: str = Form(""),
     timeout: str = Form(""),
 ):
+    if not phone or not code or not phone_code_hash:
+        return RedirectResponse(url="/auth/login", status_code=303)
     command_id = await deps.telegram_command_service(request).enqueue(
         "auth.verify_code",
         payload={

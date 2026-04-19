@@ -301,6 +301,19 @@ async def test_create_wizard_page_renders(client, base_app):
     assert resp.status_code == 200
 
 
+@pytest.mark.asyncio
+async def test_create_wizard_missing_pipeline_json(client, base_app):
+    """POST /pipelines/create-wizard without pipeline_json returns 422."""
+    app, _, _ = base_app
+    app.state.llm_provider_service = _make_provider_svc(has=True)
+    resp = await client.post(
+        "/pipelines/create-wizard",
+        data={"name": "Test"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+
+
 # ── add_pipeline validation error ───────────────────────────────────
 
 
@@ -319,6 +332,32 @@ async def test_add_pipeline_validation_error(client, base_app):
         )
     assert resp.status_code == 303
     assert "error=pipeline_invalid" in resp.headers["location"]
+
+
+@pytest.mark.asyncio
+async def test_add_pipeline_missing_name(client, base_app):
+    """POST /pipelines/add without name returns 422."""
+    app, _, _ = base_app
+    app.state.llm_provider_service = _make_provider_svc(has=True)
+    resp = await client.post(
+        "/pipelines/add",
+        data={"prompt_template": "test prompt"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+
+
+@pytest.mark.asyncio
+async def test_add_pipeline_missing_prompt_template(client, base_app):
+    """POST /pipelines/add without prompt_template returns 422."""
+    app, _, _ = base_app
+    app.state.llm_provider_service = _make_provider_svc(has=True)
+    resp = await client.post(
+        "/pipelines/add",
+        data={"name": "Test Pipeline"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
 
 
 # ── edit_pipeline DAG preservation ──────────────────────────────────
@@ -395,6 +434,32 @@ async def test_edit_pipeline_dag_preserves_prompt(client_with_dialog, base_app):
         )
     assert resp.status_code == 303
     assert "msg=pipeline_edited" in resp.headers["location"]
+
+
+@pytest.mark.asyncio
+async def test_edit_pipeline_missing_name(client, base_app):
+    """POST /pipelines/<id>/edit without name returns 422."""
+    app, _, _ = base_app
+    app.state.llm_provider_service = _make_provider_svc(has=True)
+    resp = await client.post(
+        "/pipelines/1/edit",
+        data={"prompt_template": "test"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+
+
+@pytest.mark.asyncio
+async def test_publish_pipeline_missing_run_id(client, base_app):
+    """POST /pipelines/<id>/publish without run_id returns 422."""
+    app, _, _ = base_app
+    app.state.llm_provider_service = _make_provider_svc(has=True)
+    resp = await client.post(
+        "/pipelines/1/publish",
+        data={},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
 
 
 @pytest.mark.asyncio
@@ -1085,6 +1150,19 @@ async def test_create_from_template_validation_error(client, base_app):
         )
     assert resp.status_code == 303
     assert "error=" in resp.headers["location"]
+
+
+@pytest.mark.asyncio
+async def test_create_from_template_missing_template_id(client, base_app):
+    """POST /pipelines/from-template without template_id returns 422."""
+    app, _, _ = base_app
+    app.state.llm_provider_service = _make_provider_svc(has=True)
+    resp = await client.post(
+        "/pipelines/from-template",
+        data={"name": "Test"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
 
 
 # ── templates_json ──────────────────────────────────────────────────

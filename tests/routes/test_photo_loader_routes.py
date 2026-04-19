@@ -280,3 +280,91 @@ async def test_photo_auto_missing_target(client):
     )
     assert resp.status_code == 303
     assert "error=photo_target_required" in resp.headers["location"]
+
+
+@pytest.mark.asyncio
+async def test_photos_refresh_missing_phone(client):
+    """POST /dialogs/photos/refresh without phone returns 422."""
+    resp = await client.post("/dialogs/photos/refresh", data={}, follow_redirects=False)
+    assert resp.status_code == 303
+
+
+@pytest.mark.asyncio
+async def test_photos_send_missing_phone(client):
+    """POST /dialogs/photos/send without phone returns redirect with error."""
+    from io import BytesIO
+    resp = await client.post(
+        "/dialogs/photos/send",
+        files={"photos": ("x.jpg", BytesIO(b"x"), "image/jpeg")},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    assert "error=" in resp.headers["location"]
+
+
+@pytest.mark.asyncio
+async def test_photos_schedule_missing_phone(client):
+    """POST /dialogs/photos/schedule without phone returns redirect with error."""
+    from io import BytesIO
+    resp = await client.post(
+        "/dialogs/photos/schedule",
+        data={"schedule_at": "2026-01-01T10:00"},
+        files={"photos": ("x.jpg", BytesIO(b"x"), "image/jpeg")},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    assert "error=" in resp.headers["location"]
+
+
+@pytest.mark.asyncio
+async def test_photos_schedule_missing_schedule_at(client):
+    """POST /dialogs/photos/schedule without schedule_at returns redirect with error."""
+    from io import BytesIO
+    resp = await client.post(
+        "/dialogs/photos/schedule",
+        data={"phone": "+1234567890"},
+        files={"photos": ("x.jpg", BytesIO(b"x"), "image/jpeg")},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    assert "error=" in resp.headers["location"]
+
+
+@pytest.mark.asyncio
+async def test_photos_batch_missing_phone(client):
+    """POST /dialogs/photos/batch without phone returns 422."""
+    resp = await client.post("/dialogs/photos/batch", data={}, follow_redirects=False)
+    assert resp.status_code == 303
+
+
+@pytest.mark.asyncio
+async def test_photos_auto_missing_phone(client):
+    """POST /dialogs/photos/auto without phone returns 422."""
+    resp = await client.post(
+        "/dialogs/photos/auto",
+        data={"folder_path": "/tmp/photos", "interval_minutes": "60"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+
+
+@pytest.mark.asyncio
+async def test_photos_auto_missing_folder_path(client):
+    """POST /dialogs/photos/auto without folder_path returns 422."""
+    resp = await client.post(
+        "/dialogs/photos/auto",
+        data={"phone": "+1234567890", "interval_minutes": "60"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+
+
+@pytest.mark.asyncio
+async def test_photos_auto_missing_interval_minutes(client):
+    """POST /dialogs/photos/auto without interval_minutes returns 422."""
+    resp = await client.post(
+        "/dialogs/photos/auto",
+        data={"phone": "+1234567890", "folder_path": "/tmp/photos"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303

@@ -46,7 +46,7 @@ python -m src.main [--config CONFIG] search "query" [--limit N] [--mode MODE]
 python -m src.main messages read <identifier> [--limit N] [--live] [--phone PHONE] [--query TEXT] [--date-from DATE] [--date-to DATE] [--topic-id ID] [--offset-id ID] [--format text|json|csv]
 python -m src.main channel list|add|delete|toggle|collect|stats|refresh-types|refresh-meta|import|add-bulk|tag
 python -m src.main filter analyze|apply|reset|precheck|toggle|purge|purge-messages|hard-delete
-python -m src.main account list|info|toggle|delete|add|flood-status|flood-clear
+python -m src.main account list|info|toggle|delete|send-code|verify-code|flood-status|flood-clear
 python -m src.main scheduler start|trigger|status|stop|job-toggle|set-interval|task-cancel|clear-pending
 python -m src.main notification setup|status|delete|set-account
 python -m src.main test all|read|write|telegram|benchmark

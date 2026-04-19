@@ -787,7 +787,7 @@
         } else if (pipelineType === "content_gen") {
             var llmModelG = (document.querySelector('[name="llm_model_gen"]') || {}).value || "";
             var genPrompt = (document.querySelector('[name="gen_prompt"]') || {}).value || "Напиши пост на основе контекста";
-            var safePrompt = genPrompt.replace(/\{/g, "{{").replace(/\}/g, "}}");
+            {% raw %}var safePrompt = genPrompt.replace(/\{/g, "{{").replace(/\}/g, "}}");{% endraw %}
             nodes.push({ id: "context_1", type: "retrieve_context", name: "Контекст", config: {}, position: { x: 220, y: 0 } });
             edges.push({ from: lastSourceId, to: "context_1" });
             nodes.push({ id: "llm_1", type: "llm_generate", name: "Генерация", config: { prompt_template: safePrompt + "\n\n{source_messages}", model: llmModelG }, position: { x: 330, y: 0 } });

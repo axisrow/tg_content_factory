@@ -282,7 +282,9 @@ async def photo_loader_page(request: Request, phone: str | None = None):
 
 
 @router.post("/refresh")
-async def photo_loader_refresh(request: Request, phone: str = Form(...)):
+async def photo_loader_refresh(request: Request, phone: str = Form("")):
+    if not phone:
+        return _redirect("", "missing_fields", error=True)
     command_id = await deps.telegram_command_service(request).enqueue(
         "dialogs.refresh",
         payload={"phone": phone},
@@ -294,7 +296,7 @@ async def photo_loader_refresh(request: Request, phone: str = Form(...)):
 @router.post("/send")
 async def photo_send(
     request: Request,
-    phone: str = Form(...),
+    phone: str = Form(""),
     target_dialog_id: str = Form(""),
     target_title: str = Form(""),
     target_type: str = Form(""),
@@ -302,6 +304,8 @@ async def photo_send(
     caption: str = Form(""),
     photos: list[UploadFile] = File(...),
 ):
+    if not phone:
+        return _redirect("", "missing_fields", error=True)
     target = None
     saved: list[str] = []
     try:
@@ -346,15 +350,17 @@ async def photo_send(
 @router.post("/schedule")
 async def photo_schedule(
     request: Request,
-    phone: str = Form(...),
+    phone: str = Form(""),
     target_dialog_id: str = Form(""),
     target_title: str = Form(""),
     target_type: str = Form(""),
     send_mode: str = Form(PhotoSendMode.SEPARATE.value),
     caption: str = Form(""),
-    schedule_at: str = Form(...),
+    schedule_at: str = Form(""),
     photos: list[UploadFile] = File(...),
 ):
+    if not phone or not schedule_at:
+        return _redirect(phone, "missing_fields", error=True)
     target = None
     saved: list[str] = []
     try:
@@ -402,13 +408,15 @@ async def photo_schedule(
 @router.post("/batch")
 async def photo_batch(
     request: Request,
-    phone: str = Form(...),
+    phone: str = Form(""),
     target_dialog_id: str = Form(""),
     target_title: str = Form(""),
     target_type: str = Form(""),
     caption: str = Form(""),
     manifest_text: str = Form(""),
 ):
+    if not phone:
+        return _redirect("", "missing_fields", error=True)
     target = None
     try:
         target, target_error = await _validate_target(
@@ -445,15 +453,17 @@ async def photo_batch(
 @router.post("/auto")
 async def photo_auto_create(
     request: Request,
-    phone: str = Form(...),
+    phone: str = Form(""),
     target_dialog_id: str = Form(""),
     target_title: str = Form(""),
     target_type: str = Form(""),
-    folder_path: str = Form(...),
+    folder_path: str = Form(""),
     send_mode: str = Form(PhotoSendMode.SEPARATE.value),
     caption: str = Form(""),
-    interval_minutes: int = Form(...),
+    interval_minutes: int | None = Form(None),
 ):
+    if not phone or not folder_path or interval_minutes is None:
+        return _redirect(phone, "missing_fields", error=True)
     target = None
     try:
         target, target_error = await _validate_target(

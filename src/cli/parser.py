@@ -581,12 +581,21 @@ def build_parser() -> argparse.ArgumentParser:
     acc_del = acc_sub.add_parser("delete", help="Delete account")
     acc_del.add_argument("id", type=int, help="Account id")
 
-    acc_add = acc_sub.add_parser("add", help="Add Telegram account (interactive auth)")
-    acc_add.add_argument("--api-id", type=int, default=None, dest="api_id",
-                         help="Telegram API ID (uses stored if omitted)")
-    acc_add.add_argument("--api-hash", default=None, dest="api_hash",
-                         help="Telegram API hash (uses stored if omitted)")
-    acc_add.add_argument("--phone", required=True, help="Phone number with country code")
+    acc_send = acc_sub.add_parser("send-code", help="Send Telegram auth code to phone")
+    acc_send.add_argument("--phone", required=True, help="Phone number with country code")
+    acc_send.add_argument("--api-id", type=int, default=None, dest="api_id",
+                          help="Telegram API ID (uses stored if omitted)")
+    acc_send.add_argument("--api-hash", default=None, dest="api_hash",
+                          help="Telegram API hash (uses stored if omitted)")
+
+    acc_verify = acc_sub.add_parser("verify-code", help="Verify Telegram auth code and add account")
+    acc_verify.add_argument("--phone", required=True, help="Phone number with country code")
+    acc_verify.add_argument("--code", required=True, help="Auth code received in Telegram")
+    acc_verify.add_argument("--password", default=None, help="2FA password (if required)")
+    acc_verify.add_argument("--api-id", type=int, default=None, dest="api_id",
+                            help="Telegram API ID (uses stored if omitted)")
+    acc_verify.add_argument("--api-hash", default=None, dest="api_hash",
+                            help="Telegram API hash (uses stored if omitted)")
 
     acc_sub.add_parser("flood-status", help="Show flood wait timers for all accounts")
 

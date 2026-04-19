@@ -424,6 +424,28 @@ async def test_save_credentials_validates_input(client_unconfigured):
 
 
 @pytest.mark.asyncio
+async def test_verify_code_missing_phone_code_hash(client):
+    """POST /auth/verify-code without phone_code_hash enqueues with empty hash → 303."""
+    resp = await client.post(
+        "/auth/verify-code",
+        data={"phone": "+1234567890", "code": "12345"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+
+
+@pytest.mark.asyncio
+async def test_resend_code_missing_phone_code_hash(client):
+    """POST /auth/resend-code without phone_code_hash enqueues with empty hash → 303."""
+    resp = await client.post(
+        "/auth/resend-code",
+        data={"phone": "+1234567890"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+
+
+@pytest.mark.asyncio
 async def test_verify_code_empty_password(client):
     """Test empty 2FA password is preserved as empty string in queued payload."""
     db = client._transport.app.state.db
@@ -452,6 +474,35 @@ async def test_verify_code_get_me_error(client):
             "phone_code_hash": "hash",
             "password_2fa": "",
         },
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+
+
+@pytest.mark.asyncio
+async def test_send_code_missing_phone(client):
+    """POST /auth/send-code without phone renders login page (200)."""
+    resp = await client.post("/auth/send-code", data={}, follow_redirects=False)
+    assert resp.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_save_credentials_missing_api_id(client_unconfigured):
+    """POST /auth/save-credentials without api_id returns 422."""
+    resp = await client_unconfigured.post(
+        "/auth/save-credentials",
+        data={"api_hash": "abc123"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+
+
+@pytest.mark.asyncio
+async def test_save_credentials_missing_api_hash(client_unconfigured):
+    """POST /auth/save-credentials without api_hash returns 422."""
+    resp = await client_unconfigured.post(
+        "/auth/save-credentials",
+        data={"api_id": "12345"},
         follow_redirects=False,
     )
     assert resp.status_code == 303

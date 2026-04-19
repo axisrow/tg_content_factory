@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import logging
 from datetime import datetime, timezone
 
@@ -11,24 +12,33 @@ from src.settings_utils import parse_int_setting
 from src.telegram.auth import TelegramAuth
 
 
+def _pending_key(phone: str) -> str:
+    return f"auth_pending:{phone}"
+
+
+async def _resolve_credentials(args: argparse.Namespace, config, db) -> tuple[int, str]:
+    api_id = getattr(args, "api_id", None) or config.telegram.api_id
+    api_hash = getattr(args, "api_hash", None) or config.telegram.api_hash
+    if api_id == 0 or not api_hash:
+        stored_id = await db.get_setting("tg_api_id")
+        stored_hash = await db.get_setting("tg_api_hash")
+        if stored_id and stored_hash:
+            api_id = parse_int_setting(
+                stored_id, setting_name="tg_api_id", default=0,
+                logger=logging.getLogger(__name__),
+            )
+            api_hash = stored_hash
+    return api_id, api_hash
+
+
 def run(args: argparse.Namespace) -> None:
     async def _run() -> None:
         config, db = await runtime.init_db(args.config)
         pool = None
         try:
-            if args.account_action == "add":
+            if args.account_action == "send-code":
                 phone = args.phone
-                api_id = args.api_id or config.telegram.api_id
-                api_hash = args.api_hash or config.telegram.api_hash
-                if api_id == 0 or not api_hash:
-                    stored_id = await db.get_setting("tg_api_id")
-                    stored_hash = await db.get_setting("tg_api_hash")
-                    if stored_id and stored_hash:
-                        api_id = parse_int_setting(
-                            stored_id, setting_name="tg_api_id", default=0,
-                            logger=logging.getLogger(__name__),
-                        )
-                        api_hash = stored_hash
+                api_id, api_hash = await _resolve_credentials(args, config, db)
                 if api_id == 0 or not api_hash:
                     print("ERROR: API credentials not configured.")
                     print("Provide --api-id and --api-hash, or set them in config/DB.")
@@ -38,36 +48,55 @@ def run(args: argparse.Namespace) -> None:
                 try:
                     info = await auth.send_code(phone)
                 except Exception as exc:
+                    await auth.cleanup()
                     print(f"Error sending auth code: {exc}")
                     return
 
-                phone_code_hash = info.phone_code_hash
-                code = input("Enter the code from Telegram: ").strip()
-                if not code:
-                    print("Aborted.")
+                await db.set_setting(_pending_key(phone), json.dumps(info))
+                await auth.cleanup()
+                code_type = info.get("code_type", "Telegram")
+                print(f"Code sent to {phone} via {code_type}.")
+                print(f"Run: account verify-code --phone {phone} --code CODE")
+                return
+
+            elif args.account_action == "verify-code":
+                phone = args.phone
+                code = args.code
+                password_2fa = getattr(args, "password", None) or None
+
+                pending_raw = await db.get_setting(_pending_key(phone))
+                if not pending_raw:
+                    print(f"ERROR: No pending auth for {phone}. Run 'account send-code' first.")
+                    return
+                pending = json.loads(pending_raw)
+                phone_code_hash = pending["phone_code_hash"]
+
+                api_id, api_hash = await _resolve_credentials(args, config, db)
+                if api_id == 0 or not api_hash:
+                    print("ERROR: API credentials not configured.")
                     return
 
+                auth = TelegramAuth(api_id, api_hash)
                 try:
-                    session_string = await auth.verify_code(phone, code, phone_code_hash)
+                    session_string = await auth.sign_in_fresh(
+                    phone, code, phone_code_hash,
+                    session_str=pending.get("session_str", ""),
+                    password_2fa=password_2fa,
+                    code_consumed=pending.get("code_consumed", False),
+                )
                 except ValueError as exc:
                     if "2FA" in str(exc) or "password" in str(exc).lower():
-                        password = input("Enter 2FA password: ").strip()
-                        if not password:
-                            print("Aborted.")
-                            return
-                        try:
-                            session_string = await auth.verify_code(
-                                phone, code, phone_code_hash, password
-                            )
-                        except Exception as exc2:
-                            print(f"Auth failed: {exc2}")
-                            return
+                        pending["code_consumed"] = True
+                        await db.set_setting(_pending_key(phone), json.dumps(pending))
+                        print(f"2FA required. Re-run with --code {code} --password YOUR_2FA_PASSWORD")
                     else:
                         print(f"Auth failed: {exc}")
-                        return
+                    return
                 except Exception as exc:
                     print(f"Auth failed: {exc}")
                     return
+
+                await db.set_setting(_pending_key(phone), "")
 
                 existing = await db.get_accounts()
                 is_primary = len(existing) == 0

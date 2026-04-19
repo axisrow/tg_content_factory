@@ -44,7 +44,7 @@ async def channels_list(request: Request):
 
 
 @router.post("/add")
-async def add_channel(request: Request, identifier: str = Form(...)):
+async def add_channel(request: Request, identifier: str = Form("")):
     if not identifier.strip():
         return RedirectResponse(url="/channels?error=resolve", status_code=303)
     return await _enqueue_channel_command(
@@ -104,7 +104,9 @@ async def list_tags(request: Request):
 
 
 @router.post("/tags")
-async def create_tag(request: Request, name: str = Form(...)):
+async def create_tag(request: Request, name: str = Form("")):
+    if not name.strip():
+        return RedirectResponse(url="/channels?error=missing_fields", status_code=303)
     db = deps.get_db(request)
     await db.repos.channels.create_tag(name.strip())
     return RedirectResponse(url="/channels?msg=tag_created", status_code=303)
