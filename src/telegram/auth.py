@@ -197,6 +197,7 @@ class TelegramAuth:
         phone_code_hash: str,
         session_str: str = "",
         password_2fa: str | None = None,
+        code_consumed: bool = False,
     ) -> str:
         """Sign in using a phone_code_hash from a previous send_code call (possibly in a different process).
 
@@ -206,12 +207,17 @@ class TelegramAuth:
         client = TelegramClient(StringSession(session_str), self._api_id, self._api_hash)
         await client.connect()
         try:
-            try:
-                await client.sign_in(phone, code, phone_code_hash=phone_code_hash)
-            except SessionPasswordNeededError:
+            if code_consumed:
                 if not password_2fa:
                     raise ValueError("2FA password required")
                 await client.sign_in(password=password_2fa)
+            else:
+                try:
+                    await client.sign_in(phone, code, phone_code_hash=phone_code_hash)
+                except SessionPasswordNeededError:
+                    if not password_2fa:
+                        raise ValueError("2FA password required")
+                    await client.sign_in(password=password_2fa)
             session_string = client.session.save()
         finally:
             try:

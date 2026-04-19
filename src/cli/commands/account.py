@@ -82,9 +82,12 @@ def run(args: argparse.Namespace) -> None:
                     phone, code, phone_code_hash,
                     session_str=pending.get("session_str", ""),
                     password_2fa=password_2fa,
+                    code_consumed=pending.get("code_consumed", False),
                 )
                 except ValueError as exc:
                     if "2FA" in str(exc) or "password" in str(exc).lower():
+                        pending["code_consumed"] = True
+                        await db.set_setting(_pending_key(phone), json.dumps(pending))
                         print("2FA required. Re-run with --password YOUR_2FA_PASSWORD")
                     else:
                         print(f"Auth failed: {exc}")
