@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any
 from src.config import AppConfig, resolve_session_encryption_secret
 from src.database import Database
 from src.security import SessionCipher
+from src.utils.json import safe_json_dumps
 
 if TYPE_CHECKING:
     from src.services.provider_adapters import ImageAdapter
@@ -119,7 +120,7 @@ class ImageProviderService:
             elif cfg._api_key_enc_preserved:
                 entry["api_key_enc"] = cfg._api_key_enc_preserved
             payload.append(entry)
-        await self._db.set_setting(SETTINGS_KEY, json.dumps(payload, ensure_ascii=False))
+        await self._db.set_setting(SETTINGS_KEY, safe_json_dumps(payload, ensure_ascii=False))
 
     # ── UI helpers ──
 

@@ -8,6 +8,7 @@ import aiosqlite
 
 from src.database.repositories._transactions import begin_immediate
 from src.models import TelegramCommand, TelegramCommandStatus
+from src.utils.json import safe_json_dumps
 
 
 def _parse_json(raw: str | None) -> dict[str, Any] | None:
@@ -48,10 +49,10 @@ class TelegramCommandsRepository:
             """,
             (
                 command.command_type,
-                json.dumps(command.payload),
+                safe_json_dumps(command.payload),
                 command.status.value,
                 command.requested_by,
-                json.dumps(command.result_payload) if command.result_payload is not None else None,
+                safe_json_dumps(command.result_payload) if command.result_payload is not None else None,
             ),
         )
         await self._db.commit()
@@ -174,7 +175,7 @@ class TelegramCommandsRepository:
             TelegramCommandStatus.CANCELLED,
         }:
             finished_at = datetime.now(timezone.utc).isoformat()
-        payload_json = json.dumps(payload) if payload is not None else None
+        payload_json = safe_json_dumps(payload) if payload is not None else None
         if status == TelegramCommandStatus.PENDING:
             # Reset started_at when re-queueing so a retried command shows
             # a fresh run timestamp rather than the interrupted attempt's.
@@ -182,7 +183,7 @@ class TelegramCommandsRepository:
             params: list[Any] = [
                 status.value,
                 error,
-                json.dumps(result_payload) if result_payload is not None else None,
+                safe_json_dumps(result_payload) if result_payload is not None else None,
             ]
             if payload_json is not None:
                 sets.append("payload = ?")
@@ -197,7 +198,7 @@ class TelegramCommandsRepository:
             params = [
                 status.value,
                 error,
-                json.dumps(result_payload) if result_payload is not None else None,
+                safe_json_dumps(result_payload) if result_payload is not None else None,
                 finished_at,
             ]
             if payload_json is not None:
