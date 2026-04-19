@@ -102,7 +102,14 @@
                 <div class="small text-muted">Flood Wait</div>
                 <div><strong>{{ collector_health.flooded_accounts_count }}</strong> заблокировано</div>
                 {% if collector_health.next_available_label %}
-                <div class="small">Раньше всего: {{ collector_health.next_available_label }}</div>
+                {% set _secs = collector_health.retry_after_sec %}
+                <div class="small">Раньше всего: {{ collector_health.next_available_label }}
+                  {%- if _secs and _secs >= 60 %}
+                    {% set _h = (_secs // 3600) | int %}
+                    {% set _m = ((_secs % 3600) // 60) | int %}
+                    ({% if _h > 0 %}{{ _h }} ч {% endif %}{{ _m }} мин)
+                  {%- endif %}
+                </div>
                 {% endif %}
             </div>
             <div class="col-6 col-md-3">
