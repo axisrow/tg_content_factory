@@ -244,3 +244,17 @@ async def test_collect_stats(client):
 
         resp = await client.post("/channels/stats/all", follow_redirects=False)
         assert resp.status_code == 303
+
+
+@pytest.mark.asyncio
+async def test_add_channel_missing_identifier(client):
+    """POST /channels/add without identifier returns 422."""
+    resp = await client.post("/channels/add", data={}, follow_redirects=False)
+    assert resp.status_code == 303
+
+
+@pytest.mark.asyncio
+async def test_add_tag_missing_name(client):
+    """POST /channels/tags without name returns 422."""
+    resp = await client.post("/channels/tags", data={}, follow_redirects=False)
+    assert resp.status_code == 303
