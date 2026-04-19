@@ -4,7 +4,7 @@ import asyncio
 import json
 import logging
 from collections.abc import Awaitable, Callable
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from telethon.errors import FloodWaitError, UsernameInvalidError, UsernameNotOccupiedError
 from telethon.tl.types import (
@@ -1332,7 +1332,15 @@ class Collector:
         if action is None:
             return None
         payload = {key: value for key, value in action.to_dict().items() if key != "_"}
-        return json.dumps(payload, ensure_ascii=False, sort_keys=True) if payload else None
+
+        def _default(obj):
+            if isinstance(obj, (datetime, date)):
+                return obj.isoformat()
+            if isinstance(obj, bytes):
+                return obj.hex()
+            return repr(obj)
+
+        return json.dumps(payload, ensure_ascii=False, sort_keys=True, default=_default) if payload else None
 
     @staticmethod
     def _get_sender_kind(msg) -> str:
