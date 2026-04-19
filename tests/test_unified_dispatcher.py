@@ -1081,6 +1081,7 @@ async def test_handle_content_publish_no_approved_runs(dispatcher, mock_tasks_re
 
     dispatcher._db = mock_db
     dispatcher._pipeline_bundle = MagicMock()
+    dispatcher._client_pool = MagicMock()
 
     task = CollectionTask(
         id=1,
@@ -1132,6 +1133,7 @@ async def test_handle_content_publish_success(dispatcher, mock_tasks_repo):
 
     dispatcher._db = mock_db
     dispatcher._pipeline_bundle = mock_pipeline_bundle
+    dispatcher._client_pool = MagicMock()
 
     task = CollectionTask(
         id=1,
