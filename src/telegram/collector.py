@@ -1331,8 +1331,17 @@ class Collector:
         action = getattr(msg, "action", None)
         if action is None:
             return None
+        from datetime import datetime, date
         payload = {key: value for key, value in action.to_dict().items() if key != "_"}
-        return json.dumps(payload, ensure_ascii=False, sort_keys=True) if payload else None
+
+        def _default(obj):
+            if isinstance(obj, (datetime, date)):
+                return obj.isoformat()
+            if isinstance(obj, bytes):
+                return obj.hex()
+            return repr(obj)
+
+        return json.dumps(payload, ensure_ascii=False, sort_keys=True, default=_default) if payload else None
 
     @staticmethod
     def _get_sender_kind(msg) -> str:
