@@ -96,43 +96,46 @@ class PipelineExecutor:
 
         ordered = _topological_sort(graph)
         skipped: set[str] = set()
+        node_errors: list[dict[str, Any]] = []
 
-        for node in ordered:
-            if node.id in skipped:
-                logger.debug("Skipping node %s (downstream of failed condition/trigger)", node.id)
-                continue
+        try:
+            for node in ordered:
+                if node.id in skipped:
+                    logger.debug("Skipping node %s (downstream of failed condition/trigger)", node.id)
+                    continue
 
-            handler = get_handler(node.type)
-            prev_current_node_id = services.get("_current_node_id")
-            services["_current_node_id"] = node.id
-            try:
-                logger.debug("Executing node %s (%s)", node.id, node.type)
-                await handler.execute(node.config, context, services)
+                handler = get_handler(node.type)
+                prev_current_node_id = services.get("_current_node_id")
+                services["_current_node_id"] = node.id
+                try:
+                    logger.debug("Executing node %s (%s)", node.id, node.type)
+                    await handler.execute(node.config, context, services)
 
-                # Short-circuit condition nodes: skip only downstream subtree if False
-                if node.type == PipelineNodeType.CONDITION:
-                    if not context.get_global("condition_result", True):
-                        logger.debug("Condition node %s is False; skipping downstream nodes", node.id)
-                        skipped.update(self._downstream_nodes(graph, node.id))
+                    # Short-circuit condition nodes: skip only downstream subtree if False
+                    if node.type == PipelineNodeType.CONDITION:
+                        if not context.get_global("condition_result", True):
+                            logger.debug("Condition node %s is False; skipping downstream nodes", node.id)
+                            skipped.update(self._downstream_nodes(graph, node.id))
 
-                # Short-circuit trigger nodes: skip downstream if not matched
-                if node.type == PipelineNodeType.SEARCH_QUERY_TRIGGER:
-                    if not context.get_global("trigger_matched", False):
-                        logger.debug("Trigger node %s did not match; skipping downstream nodes", node.id)
-                        skipped.update(self._downstream_nodes(graph, node.id))
-            except Exception:
-                logger.exception("Node %s (%s) failed during pipeline execution", node.id, node.type)
-                raise
-            finally:
-                if prev_current_node_id is None:
-                    services.pop("_current_node_id", None)
-                else:
-                    services["_current_node_id"] = prev_current_node_id
+                    # Short-circuit trigger nodes: skip downstream if not matched
+                    if node.type == PipelineNodeType.SEARCH_QUERY_TRIGGER:
+                        if not context.get_global("trigger_matched", False):
+                            logger.debug("Trigger node %s did not match; skipping downstream nodes", node.id)
+                            skipped.update(self._downstream_nodes(graph, node.id))
+                except Exception:
+                    logger.exception("Node %s (%s) failed during pipeline execution", node.id, node.type)
+                    raise
+                finally:
+                    if prev_current_node_id is None:
+                        services.pop("_current_node_id", None)
+                    else:
+                        services["_current_node_id"] = prev_current_node_id
+        finally:
+            node_errors = context.get_errors()
 
         generated_text = context.get_global("generated_text", "")
         citations = context.get_global("citations", [])
         action_counts = get_action_counts(context)
-        node_errors = context.get_errors()
         result_kind, result_count = summarize_result(
             generated_text=generated_text,
             citations=citations,

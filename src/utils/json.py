@@ -12,7 +12,7 @@ def safe_json_dumps(obj, **kwargs) -> str:
     - datetime, date → .isoformat()
     - bytes → .hex()
     - Pydantic v2 models → .model_dump()
-    - Unknown → repr()
+    - Unknown → raises TypeError (fail-fast)
 
     Use for serializing external/untyped data (Telegram objects, DB payloads, etc.).
     """
@@ -24,6 +24,6 @@ def safe_json_dumps(obj, **kwargs) -> str:
         # Pydantic v2
         if hasattr(o, "model_dump"):
             return o.model_dump()
-        return repr(o)
+        raise TypeError(f"Object of type {type(o).__name__} is not JSON serializable")
 
     return json.dumps(obj, default=_default, **kwargs)
