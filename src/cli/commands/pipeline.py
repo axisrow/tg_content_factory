@@ -403,7 +403,8 @@ def run(args: argparse.Namespace) -> None:
                     )
                     return
 
-                _, client_pool = await runtime.init_pool(config, db)
+                _, pool = await runtime.init_pool(config, db)
+                client_pool = pool
                 gen_svc = ContentGenerationService(
                     db,
                     engine,
@@ -458,7 +459,8 @@ def run(args: argparse.Namespace) -> None:
                         "env var (e.g. OPENAI_API_KEY). Non-LLM pipelines run without a provider."
                     )
                     return
-                _, client_pool = await runtime.init_pool(config, db)
+                _, pool = await runtime.init_pool(config, db)
+                client_pool = pool
                 gen_svc = ContentGenerationService(
                     db,
                     engine,
