@@ -10,7 +10,7 @@ from tests.helpers import cli_ns
 
 ISSUE_303_PARSE_CASES = {
     "messages read": ["messages", "read", "demo"],
-    "account add": ["account", "add", "--phone", "+10000000000"],
+    "account send-code": ["account", "send-code", "--phone", "+10000000000"],
     "provider list": ["provider", "list"],
     "provider add": ["provider", "add", "openai", "--api-key", "secret"],
     "provider delete": ["provider", "delete", "openai"],

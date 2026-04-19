@@ -48,10 +48,12 @@ def run(args: argparse.Namespace) -> None:
                 try:
                     info = await auth.send_code(phone)
                 except Exception as exc:
+                    await auth.cleanup()
                     print(f"Error sending auth code: {exc}")
                     return
 
                 await db.set_setting(_pending_key(phone), json.dumps(info))
+                await auth.cleanup()
                 code_type = info.get("code_type", "Telegram")
                 print(f"Code sent to {phone} via {code_type}.")
                 print(f"Run: account verify-code --phone {phone} --code CODE")
@@ -83,7 +85,7 @@ def run(args: argparse.Namespace) -> None:
                 )
                 except ValueError as exc:
                     if "2FA" in str(exc) or "password" in str(exc).lower():
-                        print(f"2FA required. Re-run with --password YOUR_2FA_PASSWORD")
+                        print("2FA required. Re-run with --password YOUR_2FA_PASSWORD")
                     else:
                         print(f"Auth failed: {exc}")
                     return
