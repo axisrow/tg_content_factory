@@ -98,8 +98,7 @@ class PipelineExecutor:
         skipped: set[str] = set()
         node_errors: list[dict[str, Any]] = []
 
-        try:
-            for node in ordered:
+        for node in ordered:
                 if node.id in skipped:
                     logger.debug("Skipping node %s (downstream of failed condition/trigger)", node.id)
                     continue
@@ -122,17 +121,19 @@ class PipelineExecutor:
                         if not context.get_global("trigger_matched", False):
                             logger.debug("Trigger node %s did not match; skipping downstream nodes", node.id)
                             skipped.update(self._downstream_nodes(graph, node.id))
-                except Exception:
+                except Exception as exc:
                     logger.exception("Node %s (%s) failed during pipeline execution", node.id, node.type)
+                    errors = context.get_errors()
+                    if errors:
+                        exc.node_errors = errors  # type: ignore[attr-defined]
                     raise
                 finally:
                     if prev_current_node_id is None:
                         services.pop("_current_node_id", None)
                     else:
                         services["_current_node_id"] = prev_current_node_id
-        finally:
-            node_errors = context.get_errors()
 
+        node_errors = context.get_errors()
         generated_text = context.get_global("generated_text", "")
         citations = context.get_global("citations", [])
         action_counts = get_action_counts(context)
