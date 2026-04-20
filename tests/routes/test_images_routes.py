@@ -143,3 +143,51 @@ async def test_generate_with_model(client, monkeypatch):
     body = resp.json()
     assert body["ok"] is True
     assert body["model"] == "test:model"
+
+
+@pytest.mark.asyncio
+async def test_get_provider_api_key_from_db_config(monkeypatch):
+    """API key returned from DB provider config."""
+    mock_config = MagicMock(provider="together", api_key="db-key-123")
+    mock_svc = MagicMock()
+    mock_svc.load_provider_configs = AsyncMock(return_value=[mock_config])
+
+    from src.web.routes.images import _get_provider_api_key
+
+    with patch("src.services.image_provider_service.ImageProviderService", return_value=mock_svc):
+        result = await _get_provider_api_key(MagicMock(), "together")
+    assert result == "db-key-123"
+
+
+@pytest.mark.asyncio
+async def test_get_provider_api_key_env_fallback(monkeypatch):
+    """Falls back to env var when DB config has no matching key."""
+    mock_config = MagicMock(provider="other", api_key="other-key")
+    mock_svc = MagicMock()
+    mock_svc.load_provider_configs = AsyncMock(return_value=[mock_config])
+
+    from src.services.image_provider_service import IMAGE_PROVIDER_SPECS
+
+    first_provider = next(iter(IMAGE_PROVIDER_SPECS), None)
+    if not first_provider:
+        pytest.skip("No IMAGE_PROVIDER_SPECS")
+
+    spec = IMAGE_PROVIDER_SPECS[first_provider]
+    for var in spec.env_vars:
+        monkeypatch.setenv(var, "env-key-456")
+
+    from src.web.routes.images import _get_provider_api_key
+
+    with patch("src.services.image_provider_service.ImageProviderService", return_value=mock_svc):
+        result = await _get_provider_api_key(MagicMock(), first_provider)
+    assert result == "env-key-456"
+
+
+@pytest.mark.asyncio
+async def test_get_provider_api_key_exception_returns_empty():
+    """Returns empty string on any exception."""
+    from src.web.routes.images import _get_provider_api_key
+
+    with patch("src.services.image_provider_service.ImageProviderService", side_effect=Exception("boom")):
+        result = await _get_provider_api_key(MagicMock(), "anything")
+    assert result == ""
