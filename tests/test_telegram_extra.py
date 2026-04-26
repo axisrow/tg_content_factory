@@ -310,7 +310,8 @@ async def test_resolve_any_entity_channel(mock_auth, mock_db):
     acc = Account(phone="+7001", is_active=True, session_string="s1")
     mock_db.get_accounts.return_value = [acc]
 
-    client = AsyncMock()
+    client = MagicMock()
+    client.is_connected = MagicMock(return_value=True)
     entity = SimpleNamespace(id=123, title="Ch", broadcast=True, megagroup=False, gigagroup=False,
                              forum=False, monoforum=False, scam=False, fake=False, restricted=False)
     client.get_entity = AsyncMock(return_value=entity)
@@ -328,7 +329,8 @@ async def test_resolve_any_entity_user(mock_auth, mock_db):
     acc = Account(phone="+7001", is_active=True, session_string="s1")
     mock_db.get_accounts.return_value = [acc]
 
-    client = AsyncMock()
+    client = MagicMock()
+    client.is_connected = MagicMock(return_value=True)
     entity = SimpleNamespace(id=456, first_name="Ivan", last_name="Petrov", username="ivan",
                              bot=False)
     client.get_entity = AsyncMock(return_value=entity)
@@ -347,7 +349,8 @@ async def test_resolve_any_entity_bot(mock_auth, mock_db):
     acc = Account(phone="+7001", is_active=True, session_string="s1")
     mock_db.get_accounts.return_value = [acc]
 
-    client = AsyncMock()
+    client = MagicMock()
+    client.is_connected = MagicMock(return_value=True)
     entity = SimpleNamespace(id=789, first_name="Bot", last_name="", bot=True)
     client.get_entity = AsyncMock(return_value=entity)
 
@@ -364,7 +367,8 @@ async def test_resolve_any_entity_negative_id_as_channel(mock_auth, mock_db):
     acc = Account(phone="+7001", is_active=True, session_string="s1")
     mock_db.get_accounts.return_value = [acc]
 
-    client = AsyncMock()
+    client = MagicMock()
+    client.is_connected = MagicMock(return_value=True)
     entity = SimpleNamespace(id=123, title="Ch", broadcast=True, megagroup=False, gigagroup=False,
                              forum=False, monoforum=False, scam=False, fake=False, restricted=False)
     client.get_entity = AsyncMock(return_value=entity)
@@ -382,7 +386,8 @@ async def test_resolve_any_entity_positive_id_as_user(mock_auth, mock_db):
     acc = Account(phone="+7001", is_active=True, session_string="s1")
     mock_db.get_accounts.return_value = [acc]
 
-    client = AsyncMock()
+    client = MagicMock()
+    client.is_connected = MagicMock(return_value=True)
     entity = SimpleNamespace(id=12345, first_name="User", last_name="", bot=False)
     client.get_entity = AsyncMock(return_value=entity)
 
@@ -407,7 +412,8 @@ async def test_resolve_any_entity_timeout(mock_auth, mock_db):
     acc = Account(phone="+7001", is_active=True, session_string="s1")
     mock_db.get_accounts.return_value = [acc]
 
-    client = AsyncMock()
+    client = MagicMock()
+    client.is_connected = MagicMock(return_value=True)
     client.get_entity = AsyncMock(side_effect=asyncio.TimeoutError())
 
     pool = ClientPool(mock_auth, mock_db)
@@ -422,7 +428,8 @@ async def test_resolve_any_entity_username_not_found(mock_auth, mock_db):
     acc = Account(phone="+7001", is_active=True, session_string="s1")
     mock_db.get_accounts.return_value = [acc]
 
-    client = AsyncMock()
+    client = MagicMock()
+    client.is_connected = MagicMock(return_value=True)
     client.get_entity = AsyncMock(side_effect=UsernameNotOccupiedError("nope"))
 
     pool = ClientPool(mock_auth, mock_db)
@@ -437,7 +444,8 @@ async def test_resolve_any_entity_flood_raises_after_exhaustion(mock_auth, mock_
     acc = Account(phone="+7001", is_active=True, session_string="s1")
     mock_db.get_accounts.return_value = [acc]
 
-    client = AsyncMock()
+    client = MagicMock()
+    client.is_connected = MagicMock(return_value=True)
     flood_err = FloodWaitError(request=None, capture=0)
     flood_err.seconds = 60
     client.get_entity = AsyncMock(side_effect=flood_err)
@@ -454,7 +462,8 @@ async def test_resolve_any_entity_channel_forbidden(mock_auth, mock_db):
     acc = Account(phone="+7001", is_active=True, session_string="s1")
     mock_db.get_accounts.return_value = [acc]
 
-    client = AsyncMock()
+    client = MagicMock()
+    client.is_connected = MagicMock(return_value=True)
     cf = ChannelForbidden(id=1, access_hash=1, title="Forbidden", broadcast=False)
     client.get_entity = AsyncMock(return_value=cf)
 
@@ -470,7 +479,8 @@ async def test_resolve_any_entity_generic_error(mock_auth, mock_db):
     acc = Account(phone="+7001", is_active=True, session_string="s1")
     mock_db.get_accounts.return_value = [acc]
 
-    client = AsyncMock()
+    client = MagicMock()
+    client.is_connected = MagicMock(return_value=True)
     client.get_entity = AsyncMock(side_effect=RuntimeError("generic"))
 
     pool = ClientPool(mock_auth, mock_db)
@@ -485,7 +495,8 @@ async def test_resolve_any_entity_with_preferred_phone(mock_auth, mock_db):
     acc = Account(phone="+7001", is_active=True, session_string="s1")
     mock_db.get_accounts.return_value = [acc]
 
-    client = AsyncMock()
+    client = MagicMock()
+    client.is_connected = MagicMock(return_value=True)
     entity = SimpleNamespace(id=1, title="Ch", broadcast=True, megagroup=False, gigagroup=False,
                              forum=False, monoforum=False, scam=False, fake=False, restricted=False)
     client.get_entity = AsyncMock(return_value=entity)
@@ -1692,7 +1703,8 @@ async def test_discover_phone_for_channel_success():
 async def test_discover_phone_for_channel_flood():
     pool = make_mock_pool()
 
-    client = AsyncMock()
+    client = MagicMock()
+    client.is_connected = MagicMock(return_value=True)
     flood_err = FloodWaitError(request=None, capture=0)
     flood_err.seconds = 30
     client.get_entity = AsyncMock(side_effect=flood_err)
@@ -1703,7 +1715,7 @@ async def test_discover_phone_for_channel_flood():
     pool.get_client_by_phone = AsyncMock(return_value=(transport_session, "+7002"))
     pool.connected_phones = MagicMock(return_value={"+7002"})
     pool.is_dialogs_fetched = MagicMock(return_value=True)
-    pool.report_flood = AsyncMock()
+    pool.report_flood = MagicMock()
     pool.release_client = AsyncMock()
 
     collector = Collector(pool, MagicMock(), SchedulerConfig())
