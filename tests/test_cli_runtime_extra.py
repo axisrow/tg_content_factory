@@ -146,14 +146,18 @@ class TestInitPool:
         mock_pool = MagicMock()
         mock_pool.initialize = AsyncMock()
 
-        with patch("src.cli.runtime.ClientPool", return_value=mock_pool) as mock_pool_cls:
-            auth, pool = asyncio.run(init_pool(config, db))
+        loop = asyncio.new_event_loop()
+        try:
+            with patch("src.cli.runtime.ClientPool", return_value=mock_pool) as mock_pool_cls:
+                auth, pool = loop.run_until_complete(init_pool(config, db))
 
-            mock_pool_cls.assert_called_once()
-            call_kwargs = mock_pool_cls.call_args
-            auth_arg = call_kwargs[0][0]
-            assert auth_arg._api_id == 12345
-            assert auth_arg._api_hash == "test_hash_123"
+                mock_pool_cls.assert_called_once()
+                call_kwargs = mock_pool_cls.call_args
+                auth_arg = call_kwargs[0][0]
+                assert auth_arg._api_id == 12345
+                assert auth_arg._api_hash == "test_hash_123"
+        finally:
+            loop.close()
 
     def test_init_pool_fallback_to_db_settings(self, tmp_path):
         """init_pool reads api_id/api_hash from DB when config has defaults."""
@@ -174,12 +178,16 @@ class TestInitPool:
         mock_pool = MagicMock()
         mock_pool.initialize = AsyncMock()
 
-        with patch("src.cli.runtime.ClientPool", return_value=mock_pool) as mock_pool_cls:
-            auth, pool = asyncio.run(init_pool(config, db))
+        loop = asyncio.new_event_loop()
+        try:
+            with patch("src.cli.runtime.ClientPool", return_value=mock_pool) as mock_pool_cls:
+                auth, pool = loop.run_until_complete(init_pool(config, db))
 
-            auth_arg = mock_pool_cls.call_args[0][0]
-            assert auth_arg._api_id == 98765
-            assert auth_arg._api_hash == "db_hash_value"
+                auth_arg = mock_pool_cls.call_args[0][0]
+                assert auth_arg._api_id == 98765
+                assert auth_arg._api_hash == "db_hash_value"
+        finally:
+            loop.close()
 
     def test_init_pool_no_db_settings_fallback(self, tmp_path):
         """init_pool handles missing DB settings gracefully."""
@@ -197,9 +205,13 @@ class TestInitPool:
         mock_pool = MagicMock()
         mock_pool.initialize = AsyncMock()
 
-        with patch("src.cli.runtime.ClientPool", return_value=mock_pool) as mock_pool_cls:
-            auth, pool = asyncio.run(init_pool(config, db))
+        loop = asyncio.new_event_loop()
+        try:
+            with patch("src.cli.runtime.ClientPool", return_value=mock_pool) as mock_pool_cls:
+                auth, pool = loop.run_until_complete(init_pool(config, db))
 
-            auth_arg = mock_pool_cls.call_args[0][0]
-            # Should still create an auth object with 0/empty
-            assert auth_arg._api_id == 0
+                auth_arg = mock_pool_cls.call_args[0][0]
+                # Should still create an auth object with 0/empty
+                assert auth_arg._api_id == 0
+        finally:
+            loop.close()
