@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -48,7 +48,7 @@ class ContentCalendarService:
     ) -> list[CalendarDay]:
         """Get calendar events for the past N days."""
         results: list[CalendarDay] = []
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
 
         pipelines = await self._db.repos.content_pipelines.get_all()
         pipelines_by_id = {p.id: p for p in pipelines if p.id is not None}
@@ -136,7 +136,7 @@ class ContentCalendarService:
                     status=run.status,
                     moderation_status=run.moderation_status,
                     scheduled_time=run.published_at,
-                    created_at=run.created_at or datetime.utcnow(),
+                    created_at=run.created_at or datetime.now(timezone.utc).replace(tzinfo=None),
                     preview=preview,
                 ))
 

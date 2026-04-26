@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -52,7 +52,7 @@ async def test_get_calendar_empty_db(service, mock_db):
 @pytest.mark.asyncio
 async def test_get_calendar_with_events_filters_by_date(service, mock_db):
     """get_calendar filters events by date range."""
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
 
     # Create mock pipeline
     mock_pipeline = MagicMock()
@@ -138,7 +138,7 @@ async def test_get_upcoming_filters_by_status(service, mock_db):
     mock_run.status = "completed"
     mock_run.moderation_status = "pending"
     mock_run.generated_text = "Test content"
-    mock_run.created_at = datetime.utcnow()
+    mock_run.created_at = datetime.now(timezone.utc).replace(tzinfo=None)
     mock_run.published_at = None
 
     mock_db.repos.generation_runs.list_pending_moderation = AsyncMock(
@@ -168,7 +168,7 @@ async def test_get_upcoming_respects_limit(service, mock_db):
         run.status = "completed"
         run.moderation_status = "pending"
         run.generated_text = f"Content {i}"
-        run.created_at = datetime.utcnow() + timedelta(minutes=i)
+        run.created_at = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(minutes=i)
         run.published_at = None
         runs.append(run)
 
@@ -220,7 +220,7 @@ async def test_get_stats_empty(service, mock_db):
 
 def test_calendar_event_dataclass():
     """CalendarEvent dataclass stores all fields correctly."""
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
     event = CalendarEvent(
         run_id=1,
         pipeline_id=1,
@@ -242,7 +242,7 @@ def test_calendar_event_dataclass():
 
 def test_calendar_day_dataclass():
     """CalendarDay dataclass stores all fields correctly."""
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
     event = CalendarEvent(
         run_id=1,
         pipeline_id=1,
