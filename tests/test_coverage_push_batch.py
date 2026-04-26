@@ -676,10 +676,22 @@ async def test_generate_image_url_result(mock_db, tmp_path):
         mock_svc.return_value.adapter_names = ["test"]
 
         # Patch DATA_IMAGE_DIR to use tmp_path
-        with patch("src.agent.tools.images.DATA_IMAGE_DIR", tmp_path):
-            with patch("httpx.AsyncClient", lambda **kw: httpx.AsyncClient(transport=mock_httpx_transport, **kw)):
-                handlers = _get_tool_handlers(mock_db)
-                result = await handlers["generate_image"]({"prompt": "a cat", "model": "test:model"})
+        _created_clients = []
+
+        class _TrackingAsyncClient:
+            def __new__(cls, **kw):
+                c = httpx.AsyncClient(transport=mock_httpx_transport, **kw)
+                _created_clients.append(c)
+                return c
+
+        try:
+            with patch("src.agent.tools.images.DATA_IMAGE_DIR", tmp_path):
+                with patch("httpx.AsyncClient", _TrackingAsyncClient):
+                    handlers = _get_tool_handlers(mock_db)
+                    result = await handlers["generate_image"]({"prompt": "a cat", "model": "test:model"})
+        finally:
+            for _c in _created_clients:
+                await _c.aclose()
 
     text = _text(result)
     assert "image" in text.lower() or "created" in text.lower() or "создано" in text.lower()
