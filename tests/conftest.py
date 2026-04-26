@@ -52,9 +52,15 @@ def cli_db(tmp_path):
     """Sync fixture: real SQLite for CLI tests."""
     db_path = str(tmp_path / "cli_test.db")
     database = Database(db_path)
-    asyncio.run(database.initialize())
-    yield database
-    asyncio.run(database.close())
+    loop = asyncio.new_event_loop()
+    try:
+        loop.run_until_complete(database.initialize())
+        yield database
+    finally:
+        try:
+            loop.run_until_complete(database.close())
+        finally:
+            loop.close()
 
 
 @pytest.fixture
