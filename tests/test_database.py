@@ -182,14 +182,13 @@ async def test_migrate_sessions_rollback_on_bad_row(tmp_path):
         await encrypted_db.close()
 
     # Verify rollback: both rows should be unchanged
-    conn = await aiosqlite.connect(db_path)
-    conn.row_factory = aiosqlite.Row
-    cur = await conn.execute("SELECT phone, session_string FROM accounts ORDER BY phone")
-    rows = await cur.fetchall()
-    assert len(rows) == 2
-    assert rows[0]["session_string"] == "good_session"
-    assert rows[1]["session_string"] == "enc:v99:garbage"
-    await conn.close()
+    async with aiosqlite.connect(db_path) as conn:
+        conn.row_factory = aiosqlite.Row
+        cur = await conn.execute("SELECT phone, session_string FROM accounts ORDER BY phone")
+        rows = await cur.fetchall()
+        assert len(rows) == 2
+        assert rows[0]["session_string"] == "good_session"
+        assert rows[1]["session_string"] == "enc:v99:garbage"
 
 
 @pytest.mark.asyncio
@@ -543,50 +542,49 @@ async def test_migrate_adds_media_type_column(tmp_path):
     db_path = str(tmp_path / "migrate_test.db")
 
     # Create DB with old schema (no media_type)
-    conn = await aiosqlite.connect(db_path)
-    await conn.executescript("""
-        CREATE TABLE IF NOT EXISTS messages (
-            id INTEGER PRIMARY KEY,
-            channel_id INTEGER NOT NULL,
-            message_id INTEGER NOT NULL,
-            sender_id INTEGER,
-            sender_name TEXT,
-            text TEXT,
-            date TEXT NOT NULL,
-            collected_at TEXT DEFAULT (datetime('now')),
-            UNIQUE(channel_id, message_id)
-        );
-        CREATE TABLE IF NOT EXISTS accounts (
-            id INTEGER PRIMARY KEY,
-            phone TEXT UNIQUE NOT NULL,
-            session_string TEXT NOT NULL,
-            is_primary INTEGER DEFAULT 0,
-            is_active INTEGER DEFAULT 1,
-            flood_wait_until TEXT,
-            created_at TEXT DEFAULT (datetime('now'))
-        );
-        CREATE TABLE IF NOT EXISTS channels (
-            id INTEGER PRIMARY KEY,
-            channel_id INTEGER UNIQUE NOT NULL,
-            title TEXT,
-            username TEXT,
-            is_active INTEGER DEFAULT 1,
-            last_collected_id INTEGER DEFAULT 0,
-            added_at TEXT DEFAULT (datetime('now'))
-        );
-        CREATE TABLE IF NOT EXISTS keywords (
-            id INTEGER PRIMARY KEY,
-            pattern TEXT NOT NULL,
-            is_regex INTEGER DEFAULT 0,
-            is_active INTEGER DEFAULT 1
-        );
-        CREATE TABLE IF NOT EXISTS settings (
-            key TEXT PRIMARY KEY,
-            value TEXT NOT NULL
-        );
-    """)
-    await conn.commit()
-    await conn.close()
+    async with aiosqlite.connect(db_path) as conn:
+        await conn.executescript("""
+            CREATE TABLE IF NOT EXISTS messages (
+                id INTEGER PRIMARY KEY,
+                channel_id INTEGER NOT NULL,
+                message_id INTEGER NOT NULL,
+                sender_id INTEGER,
+                sender_name TEXT,
+                text TEXT,
+                date TEXT NOT NULL,
+                collected_at TEXT DEFAULT (datetime('now')),
+                UNIQUE(channel_id, message_id)
+            );
+            CREATE TABLE IF NOT EXISTS accounts (
+                id INTEGER PRIMARY KEY,
+                phone TEXT UNIQUE NOT NULL,
+                session_string TEXT NOT NULL,
+                is_primary INTEGER DEFAULT 0,
+                is_active INTEGER DEFAULT 1,
+                flood_wait_until TEXT,
+                created_at TEXT DEFAULT (datetime('now'))
+            );
+            CREATE TABLE IF NOT EXISTS channels (
+                id INTEGER PRIMARY KEY,
+                channel_id INTEGER UNIQUE NOT NULL,
+                title TEXT,
+                username TEXT,
+                is_active INTEGER DEFAULT 1,
+                last_collected_id INTEGER DEFAULT 0,
+                added_at TEXT DEFAULT (datetime('now'))
+            );
+            CREATE TABLE IF NOT EXISTS keywords (
+                id INTEGER PRIMARY KEY,
+                pattern TEXT NOT NULL,
+                is_regex INTEGER DEFAULT 0,
+                is_active INTEGER DEFAULT 1
+            );
+            CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
+        """)
+        await conn.commit()
 
     # Now initialize with Database — should run migration
     database = Database(db_path)
@@ -657,56 +655,55 @@ async def test_migrate_adds_channel_type_column(tmp_path):
     """Migration adds channel_type column to existing channels table."""
     db_path = str(tmp_path / "migrate_channel_type_test.db")
 
-    conn = await aiosqlite.connect(db_path)
-    await conn.executescript("""
-        CREATE TABLE IF NOT EXISTS accounts (
-            id INTEGER PRIMARY KEY,
-            phone TEXT UNIQUE NOT NULL,
-            session_string TEXT NOT NULL,
-            is_primary INTEGER DEFAULT 0,
-            is_active INTEGER DEFAULT 1,
-            is_premium INTEGER DEFAULT 0,
-            flood_wait_until TEXT,
-            created_at TEXT DEFAULT (datetime('now'))
-        );
-        CREATE TABLE IF NOT EXISTS channels (
-            id INTEGER PRIMARY KEY,
-            channel_id INTEGER UNIQUE NOT NULL,
-            title TEXT,
-            username TEXT,
-            is_active INTEGER DEFAULT 1,
-            last_collected_id INTEGER DEFAULT 0,
-            added_at TEXT DEFAULT (datetime('now'))
-        );
-        CREATE TABLE IF NOT EXISTS messages (
-            id INTEGER PRIMARY KEY,
-            channel_id INTEGER NOT NULL,
-            message_id INTEGER NOT NULL,
-            sender_id INTEGER,
-            sender_name TEXT,
-            text TEXT,
-            media_type TEXT,
-            date TEXT NOT NULL,
-            collected_at TEXT DEFAULT (datetime('now')),
-            UNIQUE(channel_id, message_id)
-        );
-        CREATE TABLE IF NOT EXISTS keywords (
-            id INTEGER PRIMARY KEY,
-            pattern TEXT NOT NULL,
-            is_regex INTEGER DEFAULT 0,
-            is_active INTEGER DEFAULT 1
-        );
-        CREATE TABLE IF NOT EXISTS settings (
-            key TEXT PRIMARY KEY,
-            value TEXT NOT NULL
-        );
-    """)
-    await conn.execute(
-        "INSERT INTO channels (channel_id, title) VALUES (?, ?)",
-        (-100123, "Old Channel"),
-    )
-    await conn.commit()
-    await conn.close()
+    async with aiosqlite.connect(db_path) as conn:
+        await conn.executescript("""
+            CREATE TABLE IF NOT EXISTS accounts (
+                id INTEGER PRIMARY KEY,
+                phone TEXT UNIQUE NOT NULL,
+                session_string TEXT NOT NULL,
+                is_primary INTEGER DEFAULT 0,
+                is_active INTEGER DEFAULT 1,
+                is_premium INTEGER DEFAULT 0,
+                flood_wait_until TEXT,
+                created_at TEXT DEFAULT (datetime('now'))
+            );
+            CREATE TABLE IF NOT EXISTS channels (
+                id INTEGER PRIMARY KEY,
+                channel_id INTEGER UNIQUE NOT NULL,
+                title TEXT,
+                username TEXT,
+                is_active INTEGER DEFAULT 1,
+                last_collected_id INTEGER DEFAULT 0,
+                added_at TEXT DEFAULT (datetime('now'))
+            );
+            CREATE TABLE IF NOT EXISTS messages (
+                id INTEGER PRIMARY KEY,
+                channel_id INTEGER NOT NULL,
+                message_id INTEGER NOT NULL,
+                sender_id INTEGER,
+                sender_name TEXT,
+                text TEXT,
+                media_type TEXT,
+                date TEXT NOT NULL,
+                collected_at TEXT DEFAULT (datetime('now')),
+                UNIQUE(channel_id, message_id)
+            );
+            CREATE TABLE IF NOT EXISTS keywords (
+                id INTEGER PRIMARY KEY,
+                pattern TEXT NOT NULL,
+                is_regex INTEGER DEFAULT 0,
+                is_active INTEGER DEFAULT 1
+            );
+            CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
+        """)
+        await conn.execute(
+            "INSERT INTO channels (channel_id, title) VALUES (?, ?)",
+            (-100123, "Old Channel"),
+        )
+        await conn.commit()
 
     database = Database(db_path)
     await database.initialize()
@@ -735,51 +732,50 @@ async def test_migrate_adds_channel_type_column(tmp_path):
 async def test_migrate_filter_columns_idempotent(tmp_path):
     db_path = str(tmp_path / "migrate_filter_columns_idempotent.db")
 
-    conn = await aiosqlite.connect(db_path)
-    await conn.executescript("""
-        CREATE TABLE IF NOT EXISTS accounts (
-            id INTEGER PRIMARY KEY,
-            phone TEXT UNIQUE NOT NULL,
-            session_string TEXT NOT NULL,
-            is_primary INTEGER DEFAULT 0,
-            is_active INTEGER DEFAULT 1,
-            flood_wait_until TEXT,
-            created_at TEXT DEFAULT (datetime('now'))
-        );
-        CREATE TABLE IF NOT EXISTS channels (
-            id INTEGER PRIMARY KEY,
-            channel_id INTEGER UNIQUE NOT NULL,
-            title TEXT,
-            username TEXT,
-            is_active INTEGER DEFAULT 1,
-            last_collected_id INTEGER DEFAULT 0,
-            added_at TEXT DEFAULT (datetime('now'))
-        );
-        CREATE TABLE IF NOT EXISTS messages (
-            id INTEGER PRIMARY KEY,
-            channel_id INTEGER NOT NULL,
-            message_id INTEGER NOT NULL,
-            sender_id INTEGER,
-            sender_name TEXT,
-            text TEXT,
-            media_type TEXT,
-            date TEXT NOT NULL,
-            collected_at TEXT DEFAULT (datetime('now')),
-            UNIQUE(channel_id, message_id)
-        );
-        CREATE TABLE IF NOT EXISTS keywords (
-            id INTEGER PRIMARY KEY,
-            pattern TEXT NOT NULL,
-            is_regex INTEGER DEFAULT 0,
-            is_active INTEGER DEFAULT 1
-        );
-        CREATE TABLE IF NOT EXISTS settings (
-            key TEXT PRIMARY KEY,
-            value TEXT NOT NULL
-        );
-    """)
-    await conn.commit()
-    await conn.close()
+    async with aiosqlite.connect(db_path) as conn:
+        await conn.executescript("""
+            CREATE TABLE IF NOT EXISTS accounts (
+                id INTEGER PRIMARY KEY,
+                phone TEXT UNIQUE NOT NULL,
+                session_string TEXT NOT NULL,
+                is_primary INTEGER DEFAULT 0,
+                is_active INTEGER DEFAULT 1,
+                flood_wait_until TEXT,
+                created_at TEXT DEFAULT (datetime('now'))
+            );
+            CREATE TABLE IF NOT EXISTS channels (
+                id INTEGER PRIMARY KEY,
+                channel_id INTEGER UNIQUE NOT NULL,
+                title TEXT,
+                username TEXT,
+                is_active INTEGER DEFAULT 1,
+                last_collected_id INTEGER DEFAULT 0,
+                added_at TEXT DEFAULT (datetime('now'))
+            );
+            CREATE TABLE IF NOT EXISTS messages (
+                id INTEGER PRIMARY KEY,
+                channel_id INTEGER NOT NULL,
+                message_id INTEGER NOT NULL,
+                sender_id INTEGER,
+                sender_name TEXT,
+                text TEXT,
+                media_type TEXT,
+                date TEXT NOT NULL,
+                collected_at TEXT DEFAULT (datetime('now')),
+                UNIQUE(channel_id, message_id)
+            );
+            CREATE TABLE IF NOT EXISTS keywords (
+                id INTEGER PRIMARY KEY,
+                pattern TEXT NOT NULL,
+                is_regex INTEGER DEFAULT 0,
+                is_active INTEGER DEFAULT 1
+            );
+            CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
+        """)
+        await conn.commit()
 
     database = Database(db_path)
     await database.initialize()
@@ -801,56 +797,55 @@ async def test_migrate_adds_is_premium_column(tmp_path):
     """Migration adds is_premium column to existing accounts table without it."""
     db_path = str(tmp_path / "migrate_premium_test.db")
 
-    conn = await aiosqlite.connect(db_path)
-    await conn.executescript("""
-        CREATE TABLE IF NOT EXISTS accounts (
-            id INTEGER PRIMARY KEY,
-            phone TEXT UNIQUE NOT NULL,
-            session_string TEXT NOT NULL,
-            is_primary INTEGER DEFAULT 0,
-            is_active INTEGER DEFAULT 1,
-            flood_wait_until TEXT,
-            created_at TEXT DEFAULT (datetime('now'))
-        );
-        CREATE TABLE IF NOT EXISTS channels (
-            id INTEGER PRIMARY KEY,
-            channel_id INTEGER UNIQUE NOT NULL,
-            title TEXT,
-            username TEXT,
-            is_active INTEGER DEFAULT 1,
-            last_collected_id INTEGER DEFAULT 0,
-            added_at TEXT DEFAULT (datetime('now'))
-        );
-        CREATE TABLE IF NOT EXISTS messages (
-            id INTEGER PRIMARY KEY,
-            channel_id INTEGER NOT NULL,
-            message_id INTEGER NOT NULL,
-            sender_id INTEGER,
-            sender_name TEXT,
-            text TEXT,
-            media_type TEXT,
-            date TEXT NOT NULL,
-            collected_at TEXT DEFAULT (datetime('now')),
-            UNIQUE(channel_id, message_id)
-        );
-        CREATE TABLE IF NOT EXISTS keywords (
-            id INTEGER PRIMARY KEY,
-            pattern TEXT NOT NULL,
-            is_regex INTEGER DEFAULT 0,
-            is_active INTEGER DEFAULT 1
-        );
-        CREATE TABLE IF NOT EXISTS settings (
-            key TEXT PRIMARY KEY,
-            value TEXT NOT NULL
-        );
-    """)
-    # Insert an account without is_premium column
-    await conn.execute(
-        "INSERT INTO accounts (phone, session_string) VALUES (?, ?)",
-        ("+71111111111", "session_old"),
-    )
-    await conn.commit()
-    await conn.close()
+    async with aiosqlite.connect(db_path) as conn:
+        await conn.executescript("""
+            CREATE TABLE IF NOT EXISTS accounts (
+                id INTEGER PRIMARY KEY,
+                phone TEXT UNIQUE NOT NULL,
+                session_string TEXT NOT NULL,
+                is_primary INTEGER DEFAULT 0,
+                is_active INTEGER DEFAULT 1,
+                flood_wait_until TEXT,
+                created_at TEXT DEFAULT (datetime('now'))
+            );
+            CREATE TABLE IF NOT EXISTS channels (
+                id INTEGER PRIMARY KEY,
+                channel_id INTEGER UNIQUE NOT NULL,
+                title TEXT,
+                username TEXT,
+                is_active INTEGER DEFAULT 1,
+                last_collected_id INTEGER DEFAULT 0,
+                added_at TEXT DEFAULT (datetime('now'))
+            );
+            CREATE TABLE IF NOT EXISTS messages (
+                id INTEGER PRIMARY KEY,
+                channel_id INTEGER NOT NULL,
+                message_id INTEGER NOT NULL,
+                sender_id INTEGER,
+                sender_name TEXT,
+                text TEXT,
+                media_type TEXT,
+                date TEXT NOT NULL,
+                collected_at TEXT DEFAULT (datetime('now')),
+                UNIQUE(channel_id, message_id)
+            );
+            CREATE TABLE IF NOT EXISTS keywords (
+                id INTEGER PRIMARY KEY,
+                pattern TEXT NOT NULL,
+                is_regex INTEGER DEFAULT 0,
+                is_active INTEGER DEFAULT 1
+            );
+            CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
+        """)
+        # Insert an account without is_premium column
+        await conn.execute(
+            "INSERT INTO accounts (phone, session_string) VALUES (?, ?)",
+            ("+71111111111", "session_old"),
+        )
+        await conn.commit()
 
     database = Database(db_path)
     await database.initialize()
