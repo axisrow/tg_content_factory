@@ -958,7 +958,7 @@ class Collector:
                 await session.resolve_entity(PeerChannel(channel_id))
                 return p
             except FloodWaitError as fwe:
-                self._pool.report_flood(p, fwe.seconds)
+                await self._pool.report_flood(p, fwe.seconds)
                 continue
             except Exception:
                 continue

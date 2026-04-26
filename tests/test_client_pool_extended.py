@@ -62,7 +62,10 @@ async def test_get_available_client_rotation(mock_db, mock_auth):
     mock_db.get_accounts.return_value = [acc1, acc2]
 
     pool = ClientPool(mock_auth, mock_db)
-    pool.clients = {"+7001": MagicMock(), "+7002": MagicMock()}
+    pool.clients = {
+        "+7001": TelegramTransportSession(MagicMock(), disconnect_on_close=False),
+        "+7002": TelegramTransportSession(MagicMock(), disconnect_on_close=False),
+    }
 
     # First client
     res1 = await pool.get_available_client()
@@ -188,7 +191,9 @@ async def test_resolve_channel_flood_rotation(mock_db, mock_auth):
 async def test_resolve_channel_errors(mock_db, mock_auth):
     acc = Account(phone="+7001", is_active=True, session_string="s1")
     mock_db.get_accounts.return_value = [acc]
-    client = AsyncMock()
+    client = MagicMock()
+    client.is_connected = MagicMock(return_value=True)
+    client.get_entity = AsyncMock()
     pool = ClientPool(mock_auth, mock_db)
     pool.clients = {"+7001": TelegramTransportSession(client, disconnect_on_close=False)}
 
@@ -210,9 +215,10 @@ async def test_resolve_channel_errors(mock_db, mock_auth):
 async def test_get_users_info_with_avatar(mock_db, mock_auth):
     acc = Account(phone="+7001", is_active=True, is_primary=True, session_string="s1")
     mock_db.get_accounts.return_value = [acc]
-    client = AsyncMock()
-    client.get_me.return_value = MagicMock(first_name="F", last_name="L", username="u")
-    client.download_profile_photo.return_value = True
+    client = MagicMock()
+    client.is_connected = MagicMock(return_value=True)
+    client.get_me = AsyncMock(return_value=MagicMock(first_name="F", last_name="L", username="u"))
+    client.download_profile_photo = AsyncMock(return_value=True)
 
     pool = ClientPool(mock_auth, mock_db)
     pool.clients = {"+7001": TelegramTransportSession(client, disconnect_on_close=False)}
@@ -228,11 +234,12 @@ async def test_get_users_info_with_avatar(mock_db, mock_auth):
 async def test_get_users_info_avatar_flood_does_not_mark_generic_account(mock_db, mock_auth):
     acc = Account(phone="+7001", is_active=True, is_primary=True, session_string="s1")
     mock_db.get_accounts.return_value = [acc]
-    client = AsyncMock()
-    client.get_me.return_value = MagicMock(first_name="F", last_name="L", username="u")
+    client = MagicMock()
+    client.is_connected = MagicMock(return_value=True)
+    client.get_me = AsyncMock(return_value=MagicMock(first_name="F", last_name="L", username="u"))
     flood = FloodWaitError(request=None, capture=0)
     flood.seconds = 33
-    client.download_profile_photo.side_effect = flood
+    client.download_profile_photo = AsyncMock(side_effect=flood)
 
     pool = ClientPool(mock_auth, mock_db)
     pool.clients = {"+7001": TelegramTransportSession(client, disconnect_on_close=False)}
@@ -249,8 +256,10 @@ async def test_get_users_info_avatar_flood_does_not_mark_generic_account(mock_db
 async def test_leave_channels_flood(mock_db, mock_auth):
     acc = Account(phone="+7001", is_active=True, session_string="s1")
     mock_db.get_accounts.return_value = [acc]
-    client = AsyncMock()
-    client.delete_dialog.side_effect = FloodWaitError(5)
+    client = MagicMock()
+    client.is_connected = MagicMock(return_value=True)
+    client.get_entity = AsyncMock(return_value=MagicMock())
+    client.delete_dialog = AsyncMock(side_effect=FloodWaitError(5))
 
     pool = ClientPool(mock_auth, mock_db)
     pool.clients = {"+7001": TelegramTransportSession(client, disconnect_on_close=False)}
@@ -266,12 +275,14 @@ async def test_get_forum_topics_cache_hit_and_miss(mock_db, mock_auth):
     acc = Account(phone="+7001", is_active=True, session_string="s1")
     mock_db.get_accounts.return_value = [acc]
     client = AsyncMock()
+    client.is_connected = MagicMock(return_value=True)
+    client.get_entity = AsyncMock()
+    client.return_value = MagicMock(topics=[MagicMock(id=10, title="T1")])
     pool = ClientPool(mock_auth, mock_db)
     pool.clients = {"+7001": TelegramTransportSession(client, disconnect_on_close=False)}
 
     # Cache hit
     client.get_entity.return_value = MagicMock(id=1)
-    client.return_value = MagicMock(topics=[MagicMock(id=10, title="T1")])
     topics = await pool.get_forum_topics(1)
     assert topics[0]["title"] == "T1"
 
@@ -286,7 +297,8 @@ async def test_get_forum_topics_cache_hit_and_miss(mock_db, mock_auth):
 async def test_get_dialogs_timeout(mock_db, mock_auth):
     acc = Account(phone="+7001", is_active=True, session_string="s1")
     mock_db.get_accounts.return_value = [acc]
-    client = AsyncMock()
+    client = MagicMock()
+    client.is_connected = MagicMock(return_value=True)
 
     async def slow_iter():
         await asyncio.sleep(0.1)
@@ -294,7 +306,7 @@ async def test_get_dialogs_timeout(mock_db, mock_auth):
 
     client.iter_dialogs = slow_iter
     pool = ClientPool(mock_auth, mock_db)
-    pool.clients = {"+7001": client}
+    pool.clients = {"+7001": TelegramTransportSession(client, disconnect_on_close=False)}
 
     with patch("asyncio.wait_for", side_effect=asyncio.TimeoutError):
         res = await pool.get_dialogs()

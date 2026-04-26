@@ -53,6 +53,9 @@ pytest-of-*/
 # Generated reports
 reports/
 coverage.json
+.coverage
+.coverage.*
+htmlcov/
 
 # Tasks
 tasks/

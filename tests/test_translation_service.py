@@ -135,7 +135,6 @@ def test_get_source_filter():
 
 @pytest.mark.asyncio
 async def test_language_stats(db):
-    await db.initialize()
     # Insert messages with detected_lang
     await db.repos.messages._db.execute(
         "INSERT INTO messages (channel_id, message_id, text, date, detected_lang) VALUES (?, ?, ?, ?, ?)",
@@ -159,7 +158,6 @@ async def test_language_stats(db):
 
 @pytest.mark.asyncio
 async def test_update_translation(db):
-    await db.initialize()
     await db.repos.messages._db.execute(
         "INSERT INTO messages (channel_id, message_id, text, date, detected_lang) VALUES (?, ?, ?, ?, ?)",
         (1, 1, "Привет", "2024-01-01T00:00:00", "ru"),
@@ -168,8 +166,11 @@ async def test_update_translation(db):
 
     # Get the id
     cur = await db.repos.messages._db.execute("SELECT id FROM messages WHERE message_id = 1")
-    row = await cur.fetchone()
-    msg_id = row["id"]
+    try:
+        row = await cur.fetchone()
+        msg_id = row["id"]
+    finally:
+        await cur.close()
 
     await db.repos.messages.update_translation(msg_id, "en", "Hello")
     msg = await db.repos.messages.get_message_by_id(msg_id)
@@ -184,7 +185,6 @@ async def test_update_translation(db):
 
 @pytest.mark.asyncio
 async def test_get_untranslated_messages(db):
-    await db.initialize()
     # Insert channels first for JOIN
     await db.repos.messages._db.execute(
         "INSERT OR IGNORE INTO channels (channel_id, title, username) VALUES (?, ?, ?)",
@@ -208,7 +208,6 @@ async def test_get_untranslated_messages(db):
 
 @pytest.mark.asyncio
 async def test_get_untranslated_with_source_filter(db):
-    await db.initialize()
     await db.repos.messages._db.execute(
         "INSERT OR IGNORE INTO channels (channel_id, title, username) VALUES (?, ?, ?)",
         (1, "Test Channel", "test"),
@@ -231,7 +230,6 @@ async def test_get_untranslated_with_source_filter(db):
 
 @pytest.mark.asyncio
 async def test_backfill_language_detection(db):
-    await db.initialize()
     await db.repos.messages._db.execute(
         "INSERT INTO messages (channel_id, message_id, text, date) VALUES (?, ?, ?, ?)",
         (1, 1, "Hello, this is a test message in English.", "2024-01-01T00:00:00"),
@@ -242,8 +240,11 @@ async def test_backfill_language_detection(db):
     assert updated == 1
 
     cur = await db.repos.messages._db.execute("SELECT detected_lang FROM messages WHERE message_id = 1")
-    row = await cur.fetchone()
-    assert row["detected_lang"] == "en"
+    try:
+        row = await cur.fetchone()
+        assert row["detected_lang"] == "en"
+    finally:
+        await cur.close()
 
 
 # ── detect_language exception fallback ──────────────────────────────
