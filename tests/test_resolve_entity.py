@@ -48,6 +48,7 @@ def _make_pool():
     from src.telegram.client_pool import ClientPool
     pool = ClientPool.__new__(ClientPool)
     pool.release_client = AsyncMock()
+    pool.get_available_client = AsyncMock()
     return pool
 
 
@@ -235,6 +236,7 @@ class TestResolveAnyEntityClientPool:
         pool.get_available_client = AsyncMock(return_value=(mock_session, "+1"))
 
         async def raise_not_found(coro, **kw):
+            coro.close()
             raise UsernameNotOccupiedError(request=None)
 
         with patch("src.telegram.client_pool.adapt_transport_session", return_value=mock_session), \
@@ -251,6 +253,7 @@ class TestResolveAnyEntityClientPool:
         pool.get_available_client = AsyncMock(return_value=(mock_session, "+1"))
 
         async def raise_invalid(coro, **kw):
+            coro.close()
             raise UsernameInvalidError(request=None)
 
         with patch("src.telegram.client_pool.adapt_transport_session", return_value=mock_session), \
@@ -265,8 +268,12 @@ class TestResolveAnyEntityClientPool:
         mock_session = AsyncMock()
         pool.get_available_client = AsyncMock(return_value=(mock_session, "+1"))
 
+        async def raise_timeout(coro, **kw):
+            coro.close()
+            raise asyncio.TimeoutError()
+
         with patch("src.telegram.client_pool.adapt_transport_session", return_value=mock_session), \
-             patch("src.telegram.client_pool.run_with_flood_wait", side_effect=asyncio.TimeoutError):
+             patch("src.telegram.client_pool.run_with_flood_wait", side_effect=raise_timeout):
             result = await pool.resolve_any_entity("@alxz500")
 
         assert result is None
@@ -352,6 +359,7 @@ class TestResolveAnyEntityClientPool:
         pool.get_available_client = AsyncMock(return_value=(mock_session, "+1"))
 
         async def raise_generic(coro, **kw):
+            coro.close()
             raise ValueError("unexpected")
 
         with patch("src.telegram.client_pool.adapt_transport_session", return_value=mock_session), \
@@ -369,6 +377,7 @@ class TestResolveAnyEntityClientPool:
         pool.get_available_client = AsyncMock(return_value=(mock_session, "+1"))
 
         async def raise_invalid(coro, **kw):
+            coro.close()
             raise UsernameInvalidError(request=None)
 
         with patch("src.telegram.client_pool.adapt_transport_session", return_value=mock_session), \

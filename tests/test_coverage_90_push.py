@@ -834,13 +834,16 @@ class TestClientPoolResolveChannel:
 
         pool = ClientPool.__new__(ClientPool)
         entity = MagicMock(spec=[])  # no 'title' attr
-        mock_session = AsyncMock()
-        mock_session.resolve_entity = AsyncMock(return_value=entity)
+        mock_session = MagicMock()
+        mock_session.resolve_entity = MagicMock(return_value=entity)
         pool.get_available_client = AsyncMock(return_value=(mock_session, "+1"))
         pool.release_client = AsyncMock()
 
+        async def fake_run_with_flood_wait(coro, **kw):
+            return coro
+
         with patch("src.telegram.client_pool.adapt_transport_session", return_value=mock_session), \
-             patch("src.telegram.client_pool.run_with_flood_wait", side_effect=lambda coro, **kw: coro):
+             patch("src.telegram.client_pool.run_with_flood_wait", side_effect=fake_run_with_flood_wait):
             result = await pool.resolve_channel("@some_user")
 
         assert result is None
@@ -850,7 +853,8 @@ class TestClientPoolResolveChannel:
         from src.telegram.client_pool import ClientPool
 
         pool = ClientPool.__new__(ClientPool)
-        mock_session = AsyncMock()
+        mock_session = MagicMock()
+        mock_session.resolve_entity = MagicMock(return_value=object())
         pool.get_available_client = AsyncMock(return_value=(mock_session, "+1"))
         pool.release_client = AsyncMock()
 

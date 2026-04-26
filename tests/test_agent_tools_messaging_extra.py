@@ -849,7 +849,11 @@ class TestReadMessagesTool:
     async def test_exception_returns_error(self, mock_db, mock_pool):
         client = _make_client()
         _setup_resolve_entity(mock_pool, client)
-        client.iter_messages = AsyncMock(side_effect=Exception("flood"))
+
+        def _raise(*args, **kwargs):
+            raise Exception("flood")
+
+        client.iter_messages = _raise
 
         handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
         result = await handlers["read_messages"]({

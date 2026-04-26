@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -67,7 +67,10 @@ class TestSendCode:
             next_type=fake_next,
             timeout=60,
         )
-        mock_client = AsyncMock()
+        mock_client = MagicMock()
+        mock_client.connect = AsyncMock()
+        mock_client.disconnect = AsyncMock()
+        mock_client.session = SimpleNamespace(save=lambda: "session_str_123")
         mock_client.send_code_request = AsyncMock(return_value=fake_result)
 
         with (
@@ -87,7 +90,8 @@ class TestSendCode:
     @pytest.mark.asyncio
     async def test_send_code_disconnects_previous_pending_client(self):
         auth = TelegramAuth(api_id=123, api_hash="abc")
-        old_client = AsyncMock()
+        old_client = MagicMock()
+        old_client.disconnect = AsyncMock()
         auth._pending["+1234567890"] = (old_client, "old_hash")
 
         fake_result = SimpleNamespace(
@@ -96,7 +100,10 @@ class TestSendCode:
             next_type=None,
             timeout=60,
         )
-        new_client = AsyncMock()
+        new_client = MagicMock()
+        new_client.connect = AsyncMock()
+        new_client.disconnect = AsyncMock()
+        new_client.session = SimpleNamespace(save=lambda: "session_str_456")
         new_client.send_code_request = AsyncMock(return_value=fake_result)
 
         with (
