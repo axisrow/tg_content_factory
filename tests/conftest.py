@@ -53,12 +53,14 @@ def cli_db(tmp_path):
     db_path = str(tmp_path / "cli_test.db")
     database = Database(db_path)
     loop = asyncio.new_event_loop()
-    loop.run_until_complete(database.initialize())
-    yield database
     try:
-        loop.run_until_complete(database.close())
+        loop.run_until_complete(database.initialize())
+        yield database
     finally:
-        loop.close()
+        try:
+            loop.run_until_complete(database.close())
+        finally:
+            loop.close()
 
 
 @pytest.fixture
