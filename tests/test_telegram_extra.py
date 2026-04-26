@@ -1715,14 +1715,14 @@ async def test_discover_phone_for_channel_flood():
     pool.get_client_by_phone = AsyncMock(return_value=(transport_session, "+7002"))
     pool.connected_phones = MagicMock(return_value={"+7002"})
     pool.is_dialogs_fetched = MagicMock(return_value=True)
-    pool.report_flood = MagicMock()
+    pool.report_flood = AsyncMock()
     pool.release_client = AsyncMock()
 
     collector = Collector(pool, MagicMock(), SchedulerConfig())
     result = await collector._discover_phone_for_channel(123, "+7001")
 
     assert result is None
-    pool.report_flood.assert_called_once()
+    pool.report_flood.assert_awaited_once()
 
 
 @pytest.mark.asyncio
