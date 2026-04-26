@@ -27,6 +27,9 @@ class TestSetupLogging:
             assert root.level == logging.INFO
             assert len(root.handlers) >= 1
         finally:
+            for h in root.handlers[:]:
+                if h not in original_handlers:
+                    h.close()
             root.handlers = original_handlers
             root.setLevel(original_level)
 
