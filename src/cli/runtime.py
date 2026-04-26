@@ -18,7 +18,8 @@ _TUI_LOG_PATH = _DATA_ROOT / "agent_tui.log"
 APP_LOG_PATH = _DATA_ROOT / "app.log"
 
 
-def setup_logging() -> None:
+def setup_logging(log_path: Path | None = None) -> None:
+    log_path = log_path or APP_LOG_PATH
     logging.basicConfig(
         level=logging.INFO,
         format=_LOG_FORMAT,
@@ -26,11 +27,11 @@ def setup_logging() -> None:
     )
     root = logging.getLogger()
     for h in root.handlers:
-        if isinstance(h, RotatingFileHandler) and getattr(h, "baseFilename", None) == str(APP_LOG_PATH):
+        if isinstance(h, RotatingFileHandler) and getattr(h, "baseFilename", None) == str(log_path):
             return
-    _DATA_ROOT.mkdir(parents=True, exist_ok=True)
+    log_path.parent.mkdir(parents=True, exist_ok=True)
     rfh = RotatingFileHandler(
-        str(APP_LOG_PATH),
+        str(log_path),
         maxBytes=10 * 1024 * 1024,
         backupCount=3,
         encoding="utf-8",
