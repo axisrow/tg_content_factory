@@ -6,6 +6,7 @@ import time
 
 from src.cli import runtime
 from src.services.channel_service import ChannelService
+from src.telegram.flood_wait import HandledFloodWaitError, run_with_flood_wait
 
 
 def run_with_dependencies(
@@ -383,13 +384,38 @@ def run_with_dependencies(
                 try:
                     entity = await client.get_entity(args.chat_id)
                     message = None
-                    async for current_message in client.iter_messages(entity, ids=args.message_id):
-                        message = current_message
-                        break
+
+                    async def _lookup_message() -> None:
+                        nonlocal message
+                        async for current_message in client.iter_messages(
+                            entity, ids=args.message_id
+                        ):
+                            message = current_message
+                            break
+
+                    try:
+                        await run_with_flood_wait(
+                            _lookup_message(),
+                            operation="cli_dialogs_download_media_lookup",
+                            phone=phone,
+                            pool=pool,
+                        )
+                    except HandledFloodWaitError as exc:
+                        print(f"Flood wait: {exc.info.detail}")
+                        return
                     if message is None:
                         print(f"Message #{args.message_id} not found.")
                         return
-                    path = await client.download_media(message, file=args.output_dir)
+                    try:
+                        path = await run_with_flood_wait(
+                            client.download_media(message, file=args.output_dir),
+                            operation="cli_dialogs_download_media",
+                            phone=phone,
+                            pool=pool,
+                        )
+                    except HandledFloodWaitError as exc:
+                        print(f"Flood wait: {exc.info.detail}")
+                        return
                     if path:
                         print(f"Downloaded: {path}")
                     else:

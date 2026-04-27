@@ -3,11 +3,16 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from src.telegram.backends import TelegramTransportSession
+from src.models import Account
+from src.telegram.backends import (
+    NativeTelethonBackend,
+    TelegramTransportSession,
+    TelethonCliBackend,
+)
 from tests.helpers import AsyncIterMessages, FakeCliTelethonClient
 
 
@@ -395,3 +400,48 @@ async def test_get_broadcast_stats():
     result = await session.get_broadcast_stats("channel")
     assert result is stats
     session.raw_client.invoke.assert_awaited_once()
+
+
+# --- flood_sleep_threshold (#495) ---
+
+
+@pytest.mark.asyncio
+async def test_native_backend_disables_flood_auto_sleep():
+    """NativeTelethonBackend.acquire_client must set flood_sleep_threshold=0
+    so Telethon raises FloodWaitError instead of sleeping silently (#495)."""
+    fake_client = SimpleNamespace(flood_sleep_threshold=60)
+    auth = SimpleNamespace(create_client_from_session=AsyncMock(return_value=fake_client))
+    backend = NativeTelethonBackend(auth)
+
+    lease = await backend.acquire_client(
+        Account(phone="+70001112233", session_string="session-xyz")
+    )
+
+    assert fake_client.flood_sleep_threshold == 0
+    assert lease.phone == "+70001112233"
+    assert lease.backend_name == "native"
+
+
+@pytest.mark.asyncio
+async def test_telethon_cli_backend_disables_flood_auto_sleep(monkeypatch, tmp_path):
+    """TelethonCliBackend.acquire_client must also set flood_sleep_threshold=0 (#495)."""
+    fake_client = FakeCliTelethonClient()
+    monkeypatch.setattr(
+        "src.telegram.backends.telethon_cli_runtime.create_client",
+        lambda namespace: fake_client,
+    )
+
+    materializer = SimpleNamespace(
+        materialize=lambda phone, session_string: str(tmp_path / "session"),
+        ensure_empty_env_file=lambda: str(tmp_path / ".env"),
+    )
+    auth = SimpleNamespace(api_id=1, api_hash="hash")
+    backend = TelethonCliBackend(auth, materializer, transport="hybrid")
+
+    lease = await backend.acquire_client(
+        Account(phone="+70001112233", session_string="session-xyz")
+    )
+
+    assert fake_client.flood_sleep_threshold == 0
+    assert lease.phone == "+70001112233"
+    assert lease.backend_name == "telethon_cli"

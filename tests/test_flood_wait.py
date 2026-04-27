@@ -150,6 +150,29 @@ async def test_handle_flood_wait_without_pool():
 
 
 @pytest.mark.asyncio
+async def test_run_with_flood_wait_reports_short_floods():
+    """Short FloodWait (≤60s) must still trigger pool.report_flood. Regression
+    guard for #495: previously Telethon's flood_sleep_threshold=60 swallowed
+    these silently and the pool never learned about the flooded account."""
+    err = FloodWaitError(request=None, capture=0)
+    err.seconds = 5  # the kind of value Telethon would have swallowed
+    pool = AsyncMock()
+
+    async def _short_flood():
+        raise err
+
+    with pytest.raises(HandledFloodWaitError):
+        await run_with_flood_wait(
+            _short_flood(),
+            operation="op",
+            phone="+7000",
+            pool=pool,
+        )
+
+    pool.report_flood.assert_awaited_once_with("+7000", 5)
+
+
+@pytest.mark.asyncio
 async def test_run_with_flood_wait_with_timeout(monkeypatch):
     """Timeout parameter is forwarded to asyncio.wait_for."""
     captured: dict[str, float] = {}
