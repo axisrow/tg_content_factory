@@ -343,7 +343,10 @@ class NativeTelethonBackend(TelegramBackend):
 
     async def acquire_client(self, account: Account) -> BackendClientLease:
         client = await self._auth.create_client_from_session(account.session_string)
-        client.flood_sleep_threshold = 60
+        # Surface every FloodWaitError so run_with_flood_wait can call
+        # pool.report_flood and rotate accounts (#495). Telethon's default
+        # silently sleeps on waits ≤ threshold and hides the flood from us.
+        client.flood_sleep_threshold = 0
         return BackendClientLease(
             phone=account.phone,
             session=TelegramTransportSession(client),
@@ -383,7 +386,7 @@ class TelethonCliBackend(TelegramBackend):
             client: TelegramClient = telethon_cli_runtime.create_client(namespace)
             client._connection_retries = None
             client._retry_delay = 2
-            client.flood_sleep_threshold = 60
+            client.flood_sleep_threshold = 0
             await client.connect()
             if not await client.is_user_authorized():
                 await client.disconnect()

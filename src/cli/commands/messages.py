@@ -9,6 +9,7 @@ import json
 from src.cli import runtime
 from src.cli.commands.common import resolve_channel
 from src.models import Message
+from src.telegram.flood_wait import HandledFloodWaitError, run_with_flood_wait
 
 
 def _print_messages(messages: list[Message], fmt: str, total: int) -> None:
@@ -104,9 +105,22 @@ def run(args: argparse.Namespace) -> None:
                             kwargs["offset_id"] = args.offset_id
                         if args.topic_id:
                             kwargs["reply_to"] = args.topic_id
-                        collected = []
-                        async for msg in client.iter_messages(entity, **kwargs):
-                            collected.append(msg)
+                        collected: list = []
+
+                        async def _read_messages() -> None:
+                            async for msg in client.iter_messages(entity, **kwargs):
+                                collected.append(msg)
+
+                        try:
+                            await run_with_flood_wait(
+                                _read_messages(),
+                                operation="cli_messages_read",
+                                phone=phone,
+                                pool=pool,
+                            )
+                        except HandledFloodWaitError as exc:
+                            print(f"Flood wait: {exc.info.detail}")
+                            return
                         if not collected:
                             print("No messages found.")
                             return

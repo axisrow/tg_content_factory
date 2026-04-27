@@ -16,6 +16,7 @@ from src.services.photo_task_service import PhotoTarget, PhotoTaskService
 from src.telegram.auth import TelegramAuth
 from src.telegram.client_pool import ClientPool
 from src.telegram.collector import Collector
+from src.telegram.flood_wait import HandledFloodWaitError, run_with_flood_wait
 from src.telegram.notifier import Notifier
 
 logger = logging.getLogger(__name__)
@@ -578,15 +579,38 @@ class TelegramCommandDispatcher:
         try:
             entity = await client.get_entity(payload["chat_id"])
             msg = None
-            async for item in client.iter_messages(entity, ids=int(payload["message_id"])):
-                msg = item
-                break
+
+            async def _lookup_message() -> None:
+                nonlocal msg
+                async for item in client.iter_messages(
+                    entity, ids=int(payload["message_id"])
+                ):
+                    msg = item
+                    break
+
+            try:
+                await run_with_flood_wait(
+                    _lookup_message(),
+                    operation="dispatcher_dialogs_download_media_lookup",
+                    phone=phone,
+                    pool=self._pool,
+                )
+            except HandledFloodWaitError as exc:
+                raise RuntimeError(f"flood_wait:{exc.info.wait_seconds}") from exc
             if msg is None:
                 raise RuntimeError("message_not_found")
             output_dir = Path(__file__).resolve().parents[2] / "data" / "downloads"
             output_dir.mkdir(parents=True, exist_ok=True)
             output_dir_resolved = output_dir.resolve()
-            path = await client.download_media(msg, file=str(output_dir_resolved))
+            try:
+                path = await run_with_flood_wait(
+                    client.download_media(msg, file=str(output_dir_resolved)),
+                    operation="dispatcher_dialogs_download_media",
+                    phone=phone,
+                    pool=self._pool,
+                )
+            except HandledFloodWaitError as exc:
+                raise RuntimeError(f"flood_wait:{exc.info.wait_seconds}") from exc
             if not path:
                 raise RuntimeError("no_media")
             resolved = Path(path).resolve()

@@ -15,6 +15,7 @@ from src.agent.tools._registry import (
     resolve_entity,
     resolve_phone,
 )
+from src.telegram.flood_wait import HandledFloodWaitError, run_with_flood_wait
 
 
 def register(db, client_pool, embedding_service, **kwargs):
@@ -313,13 +314,34 @@ def register(db, client_pool, embedding_service, **kwargs):
             if err:
                 return err
             msg = None
-            async for m in client.iter_messages(entity, ids=int(message_id)):
-                msg = m
-                break
+
+            async def _lookup_message() -> None:
+                nonlocal msg
+                async for m in client.iter_messages(entity, ids=int(message_id)):
+                    msg = m
+                    break
+
+            try:
+                await run_with_flood_wait(
+                    _lookup_message(),
+                    operation="agent_download_media_lookup",
+                    phone=phone,
+                    pool=client_pool,
+                )
+            except HandledFloodWaitError as exc:
+                return _text_response(f"Flood wait: {exc.info.detail}")
             if msg is None:
                 return _text_response(f"Сообщение #{message_id} не найдено.")
             output_dir = pathlib.Path(__file__).resolve().parents[3] / "data" / "downloads"
-            path = await client.download_media(msg, file=str(output_dir))
+            try:
+                path = await run_with_flood_wait(
+                    client.download_media(msg, file=str(output_dir)),
+                    operation="agent_download_media",
+                    phone=phone,
+                    pool=client_pool,
+                )
+            except HandledFloodWaitError as exc:
+                return _text_response(f"Flood wait: {exc.info.detail}")
             if not path:
                 return _text_response("В сообщении нет медиа.")
             resolved = pathlib.Path(path).resolve()
@@ -736,19 +758,34 @@ def register(db, client_pool, embedding_service, **kwargs):
             count = 0
             total_chars = 0
             budget = 50_000
-            async for msg in client.iter_messages(entity, limit=limit):
-                if not msg.text:
-                    continue
-                sender = f" [id:{msg.sender_id}]" if msg.sender_id else ""
-                date_str = msg.date.strftime("%Y-%m-%d %H:%M") if msg.date else ""
-                preview = msg.text[:500]
-                line = f"#{msg.id} {date_str}{sender}: {preview}"
-                lines.append(line)
-                total_chars += len(line)
-                count += 1
-                if total_chars >= budget:
-                    lines.append(f"\n[Вывод обрезан после {count} сообщений, достигнут лимит символов]")
-                    break
+
+            async def _read_recent() -> None:
+                nonlocal count, total_chars
+                async for msg in client.iter_messages(entity, limit=limit):
+                    if not msg.text:
+                        continue
+                    sender = f" [id:{msg.sender_id}]" if msg.sender_id else ""
+                    date_str = msg.date.strftime("%Y-%m-%d %H:%M") if msg.date else ""
+                    preview = msg.text[:500]
+                    line = f"#{msg.id} {date_str}{sender}: {preview}"
+                    lines.append(line)
+                    total_chars += len(line)
+                    count += 1
+                    if total_chars >= budget:
+                        lines.append(
+                            f"\n[Вывод обрезан после {count} сообщений, достигнут лимит символов]"
+                        )
+                        break
+
+            try:
+                await run_with_flood_wait(
+                    _read_recent(),
+                    operation="agent_read_recent_messages",
+                    phone=phone,
+                    pool=client_pool,
+                )
+            except HandledFloodWaitError as exc:
+                return _text_response(f"Flood wait: {exc.info.detail}")
             if count == 0:
                 return _text_response("Сообщений с текстом не найдено.")
             lines.append(f"\nИтого: {count} сообщений.")
