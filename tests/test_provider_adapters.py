@@ -435,7 +435,7 @@ async def test_anthropic_adapter_malformed_response(monkeypatch):
     assert "unexpected" in out or "data" in out
 
 
-# === _parse_json_for_text edge cases (uncovered lines) ===
+# === _parse_json_for_text edge cases (edge-case lines) ===
 
 
 @pytest.mark.asyncio

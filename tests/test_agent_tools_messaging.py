@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from src.models import Account
-from tests.agent_tools_helpers import _get_tool_handlers, _text
+from tests.agent_tools_helpers import _get_tool_handlers, _text, assert_tool_text
 
 
 def _make_account(phone="+79001234567", is_active=True, is_primary=True):
@@ -48,16 +48,22 @@ class TestSendMessage:
     @pytest.mark.asyncio
     async def test_no_pool_returns_gate(self, mock_db):
         handlers = _get_tool_handlers(mock_db, client_pool=None)
-        result = await handlers["send_message"]({"phone": "+79001234567", "recipient": "@user", "text": "hi"})
-        assert "CLI-режиме" in _text(result)
+        await assert_tool_text(
+            handlers["send_message"],
+            {"phone": "+79001234567", "recipient": "@user", "text": "hi"},
+            "CLI-режиме",
+        )
 
     @pytest.mark.asyncio
     async def test_no_confirm_returns_gate(self, mock_db):
         mock_pool, _ = _make_mock_pool()
         mock_db.get_accounts = AsyncMock(return_value=[_make_account()])
         handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
-        result = await handlers["send_message"]({"phone": "+79001234567", "recipient": "@user", "text": "hello"})
-        assert "confirm=true" in _text(result)
+        await assert_tool_text(
+            handlers["send_message"],
+            {"phone": "+79001234567", "recipient": "@user", "text": "hello"},
+            "confirm=true",
+        )
 
     @pytest.mark.asyncio
     async def test_with_confirm_success(self, mock_db):
@@ -75,9 +81,7 @@ class TestSendMessage:
         mock_pool, _ = _make_mock_pool()
         mock_db.get_accounts = AsyncMock(return_value=[_make_account()])
         handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
-        result = await handlers["send_message"]({"phone": "+79001234567"})
-        text = _text(result)
-        assert "обязательны" in text
+        await assert_tool_text(handlers["send_message"], {"phone": "+79001234567"}, "обязательны")
 
 
 class TestEditMessage:

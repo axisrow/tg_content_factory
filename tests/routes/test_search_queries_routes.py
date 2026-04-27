@@ -8,12 +8,6 @@ import pytest
 
 
 @pytest.fixture
-async def client(route_client):
-    """Use shared route_client fixture."""
-    return route_client
-
-
-@pytest.fixture
 async def db(base_app):
     """Get db from base_app."""
     _, db, _ = base_app
@@ -21,28 +15,28 @@ async def db(base_app):
 
 
 @pytest.mark.asyncio
-async def test_search_queries_page_renders_empty(client):
+async def test_search_queries_page_renders_empty(route_client):
     """Test search queries page renders empty."""
-    resp = await client.get("/search-queries/")
+    resp = await route_client.get("/search-queries/")
     assert resp.status_code == 200
 
 
 @pytest.mark.asyncio
-async def test_search_queries_page_lists_items(client):
+async def test_search_queries_page_lists_items(route_client):
     """Test search queries page lists items after add."""
-    await client.post(
+    await route_client.post(
         "/search-queries/add",
         data={"query": "test query", "interval_minutes": "60"},
     )
-    resp = await client.get("/search-queries/")
+    resp = await route_client.get("/search-queries/")
     assert resp.status_code == 200
     assert "test query" in resp.text
 
 
 @pytest.mark.asyncio
-async def test_add_search_query_redirects(client):
+async def test_add_search_query_redirects(route_client):
     """Test add search query redirects."""
-    resp = await client.post(
+    resp = await route_client.post(
         "/search-queries/add",
         data={"query": "new query", "interval_minutes": "30"},
         follow_redirects=False,
@@ -52,9 +46,9 @@ async def test_add_search_query_redirects(client):
 
 
 @pytest.mark.asyncio
-async def test_add_search_query_with_all_fields(client):
+async def test_add_search_query_with_all_fields(route_client):
     """Test add search query with all fields."""
-    resp = await client.post(
+    resp = await route_client.post(
         "/search-queries/add",
         data={
             "query": "complex query",
@@ -73,25 +67,25 @@ async def test_add_search_query_with_all_fields(client):
 
 
 @pytest.mark.asyncio
-async def test_toggle_search_query(client):
+async def test_toggle_search_query(route_client):
     """Test toggle search query."""
-    await client.post(
+    await route_client.post(
         "/search-queries/add",
         data={"query": "toggle test", "interval_minutes": "60"},
     )
-    resp = await client.post("/search-queries/1/toggle", follow_redirects=False)
+    resp = await route_client.post("/search-queries/1/toggle", follow_redirects=False)
     assert resp.status_code == 303
     assert "msg=sq_toggled" in resp.headers["location"]
 
 
 @pytest.mark.asyncio
-async def test_edit_search_query(client):
+async def test_edit_search_query(route_client):
     """Test edit search query."""
-    await client.post(
+    await route_client.post(
         "/search-queries/add",
         data={"query": "original", "interval_minutes": "60"},
     )
-    resp = await client.post(
+    resp = await route_client.post(
         "/search-queries/1/edit",
         data={"query": "edited query", "interval_minutes": "90"},
         follow_redirects=False,
@@ -101,36 +95,36 @@ async def test_edit_search_query(client):
 
 
 @pytest.mark.asyncio
-async def test_delete_search_query(client, db):
+async def test_delete_search_query(route_client, db):
     """Test delete search query."""
-    await client.post(
+    await route_client.post(
         "/search-queries/add",
         data={"query": "to delete", "interval_minutes": "60"},
     )
-    resp = await client.post("/search-queries/1/delete", follow_redirects=False)
+    resp = await route_client.post("/search-queries/1/delete", follow_redirects=False)
     assert resp.status_code == 303
     assert "msg=sq_deleted" in resp.headers["location"]
 
 
 @pytest.mark.asyncio
-async def test_run_search_query(client):
+async def test_run_search_query(route_client):
     """Test run search query."""
-    await client.post(
+    await route_client.post(
         "/search-queries/add",
         data={"query": "run test", "interval_minutes": "60"},
     )
 
     with patch("src.web.routes.search_queries.deps.search_query_service") as mock_svc:
         mock_svc.return_value.run_once = AsyncMock()
-        resp = await client.post("/search-queries/1/run", follow_redirects=False)
+        resp = await route_client.post("/search-queries/1/run", follow_redirects=False)
         assert resp.status_code == 303
         assert "msg=sq_run" in resp.headers["location"]
 
 
 @pytest.mark.asyncio
-async def test_scheduler_synced_after_add(client):
+async def test_scheduler_synced_after_add(route_client):
     """Test scheduler syncs after add when running."""
-    client._transport_app.state.scheduler._running = True
+    route_client._transport_app.state.scheduler._running = True
 
     with patch(
         "src.web.routes.search_queries.deps.get_scheduler"
@@ -140,7 +134,7 @@ async def test_scheduler_synced_after_add(client):
         mock_scheduler.sync_search_query_jobs = AsyncMock()
         mock_get_scheduler.return_value = mock_scheduler
 
-        resp = await client.post(
+        resp = await route_client.post(
             "/search-queries/add",
             data={"query": "sync test", "interval_minutes": "60"},
             follow_redirects=False,
@@ -150,9 +144,9 @@ async def test_scheduler_synced_after_add(client):
 
 
 @pytest.mark.asyncio
-async def test_scheduler_synced_after_toggle(client):
+async def test_scheduler_synced_after_toggle(route_client):
     """Test scheduler syncs after toggle when running."""
-    await client.post(
+    await route_client.post(
         "/search-queries/add",
         data={"query": "sync toggle", "interval_minutes": "60"},
     )
@@ -165,27 +159,27 @@ async def test_scheduler_synced_after_toggle(client):
         mock_scheduler.sync_search_query_jobs = AsyncMock()
         mock_get_scheduler.return_value = mock_scheduler
 
-        resp = await client.post("/search-queries/1/toggle", follow_redirects=False)
+        resp = await route_client.post("/search-queries/1/toggle", follow_redirects=False)
         assert resp.status_code == 303
         mock_scheduler.sync_search_query_jobs.assert_called_once()
 
 
 @pytest.mark.asyncio
-async def test_delete_nonexistent_no_crash(client):
+async def test_delete_nonexistent_no_crash(route_client):
     """Test delete nonexistent query doesn't crash."""
-    resp = await client.post("/search-queries/999999/delete", follow_redirects=False)
+    resp = await route_client.post("/search-queries/999999/delete", follow_redirects=False)
     assert resp.status_code == 303
 
 
 @pytest.mark.asyncio
-async def test_add_search_query_missing_query(client):
+async def test_add_search_query_missing_query(route_client):
     """POST /search-queries/add without query returns 422."""
-    resp = await client.post("/search-queries/add", data={}, follow_redirects=False)
+    resp = await route_client.post("/search-queries/add", data={}, follow_redirects=False)
     assert resp.status_code == 303
 
 
 @pytest.mark.asyncio
-async def test_edit_search_query_missing_query(client):
+async def test_edit_search_query_missing_query(route_client):
     """POST /search-queries/{id}/edit without query returns 422."""
-    resp = await client.post("/search-queries/1/edit", data={}, follow_redirects=False)
+    resp = await route_client.post("/search-queries/1/edit", data={}, follow_redirects=False)
     assert resp.status_code == 303

@@ -896,7 +896,7 @@ async def test_run_loop_cancelled():
 
 
 # ============================================================
-# Additional tests for uncovered handler paths
+# Additional tests for handler edge paths
 # ============================================================
 
 

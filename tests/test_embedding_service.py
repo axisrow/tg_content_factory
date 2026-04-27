@@ -122,7 +122,7 @@ async def test_hybrid_search_fuses_keyword_and_semantic_candidates(db):
     assert "bitcoin outlook without keyword" in texts
 
 
-# === Additional coverage tests ===
+# === Additional tests ===
 
 
 def test_embedding_runtime_config_model_ref_with_colon():

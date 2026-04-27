@@ -37,6 +37,53 @@ def cli_ns(**kwargs) -> argparse.Namespace:
     return argparse.Namespace(**defaults)
 
 
+def fake_asyncio_run(coro):
+    """Run a coroutine in a fresh loop for CLI tests that patch asyncio.run."""
+    loop = asyncio.new_event_loop()
+    try:
+        return loop.run_until_complete(coro)
+    finally:
+        loop.close()
+
+
+def make_cli_config(**overrides) -> MagicMock:
+    """Build a config mock for CLI command tests."""
+    config = MagicMock()
+    for key, value in overrides.items():
+        setattr(config, key, value)
+    return config
+
+
+def make_cli_db(**overrides) -> MagicMock:
+    """Build a broad database mock for CLI command tests."""
+    db = MagicMock()
+    db.close = AsyncMock()
+    db.get_setting = AsyncMock(return_value=None)
+    db.set_setting = AsyncMock()
+    db.get_stats = AsyncMock(return_value={"channels": 5})
+    db.get_notification_queries = AsyncMock(return_value=[])
+    db.get_top_messages = AsyncMock(return_value=[])
+    db.get_engagement_by_media_type = AsyncMock(return_value=[])
+    db.get_hourly_activity = AsyncMock(return_value=[])
+    db.search_messages = AsyncMock(return_value=([], 0))
+    db.get_agent_threads = AsyncMock(return_value=[])
+    db.create_agent_thread = AsyncMock(return_value=1)
+    db.delete_agent_thread = AsyncMock()
+    db.rename_agent_thread = AsyncMock()
+    db.get_agent_messages = AsyncMock(return_value=[])
+    db.get_agent_thread = AsyncMock(return_value=None)
+    db.get_channel_by_channel_id = AsyncMock(return_value=None)
+    db.get_forum_topics = AsyncMock(return_value=[])
+    db.save_agent_message = AsyncMock()
+    db.delete_last_agent_exchange = AsyncMock()
+    db.repos.messages.reset_embeddings_index = AsyncMock()
+    db.repos.settings.get_setting = AsyncMock(return_value=None)
+    db.repos.settings.list_all = AsyncMock(return_value=[])
+    for key, value in overrides.items():
+        setattr(db, key, value)
+    return db
+
+
 def cli_add_channel(db: Database, channel_id: int = 100, title: str = "TestCh") -> int:
     """Synchronously insert a channel row and return its PK."""
     return asyncio.run(db.add_channel(Channel(channel_id=channel_id, title=title)))

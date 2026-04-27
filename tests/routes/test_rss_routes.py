@@ -11,11 +11,6 @@ from src.models import Message
 NOW = datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
 
 
-@pytest.fixture
-async def client(route_client):
-    return route_client
-
-
 # --- _rfc822 / _iso8601 unit tests ---
 
 
@@ -59,8 +54,8 @@ async def test_iso8601_none():
 
 
 @pytest.mark.asyncio
-async def test_rss_feed_empty(client):
-    resp = await client.get("/rss.xml")
+async def test_rss_feed_empty(route_client):
+    resp = await route_client.get("/rss.xml")
     assert resp.status_code == 200
     assert "application/rss+xml" in resp.headers["content-type"]
     assert "<rss" in resp.text
@@ -70,7 +65,7 @@ async def test_rss_feed_empty(client):
 
 
 @pytest.mark.asyncio
-async def test_rss_feed_with_messages(client, base_app):
+async def test_rss_feed_with_messages(route_client, base_app):
     _, db, _ = base_app
 
     msg = Message(channel_id=100, message_id=1, text="Hello world", date=NOW)
@@ -83,7 +78,7 @@ async def test_rss_feed_with_messages(client, base_app):
 
     db.get_messages = _get_messages
 
-    resp = await client.get("/rss.xml")
+    resp = await route_client.get("/rss.xml")
     assert resp.status_code == 200
     assert "Hello world" in resp.text
     assert "<item>" in resp.text
@@ -93,8 +88,8 @@ async def test_rss_feed_with_messages(client, base_app):
 
 
 @pytest.mark.asyncio
-async def test_atom_feed_empty(client):
-    resp = await client.get("/atom.xml")
+async def test_atom_feed_empty(route_client):
+    resp = await route_client.get("/atom.xml")
     assert resp.status_code == 200
     assert "application/atom+xml" in resp.headers["content-type"]
     assert "<feed" in resp.text
@@ -103,7 +98,7 @@ async def test_atom_feed_empty(client):
 
 
 @pytest.mark.asyncio
-async def test_atom_feed_with_messages(client, base_app):
+async def test_atom_feed_with_messages(route_client, base_app):
     _, db, _ = base_app
 
     msg = Message(channel_id=100, message_id=1, text="Atom test message", date=NOW)
@@ -115,7 +110,7 @@ async def test_atom_feed_with_messages(client, base_app):
 
     db.get_messages = _get_messages
 
-    resp = await client.get("/atom.xml")
+    resp = await route_client.get("/atom.xml")
     assert resp.status_code == 200
     assert "Atom test message" in resp.text
     assert "<entry>" in resp.text

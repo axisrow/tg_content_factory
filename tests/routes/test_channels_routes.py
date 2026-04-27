@@ -8,12 +8,6 @@ import pytest
 
 
 @pytest.fixture
-async def client(route_client):
-    """Use shared route_client fixture."""
-    return route_client
-
-
-@pytest.fixture
 async def db(base_app):
     """Get db from base_app."""
     _, db, _ = base_app
@@ -21,28 +15,28 @@ async def db(base_app):
 
 
 @pytest.mark.asyncio
-async def test_channels_page_renders(client):
+async def test_channels_page_renders(route_client):
     """Test channels page renders."""
-    resp = await client.get("/channels/")
+    resp = await route_client.get("/channels/")
     assert resp.status_code == 200
 
 
 @pytest.mark.asyncio
-async def test_channels_page_with_message(client):
+async def test_channels_page_with_message(route_client):
     """Test channels page with message param."""
-    resp = await client.get("/channels/?msg=channel_added")
+    resp = await route_client.get("/channels/?msg=channel_added")
     assert resp.status_code == 200
 
 
 @pytest.mark.asyncio
-async def test_channels_page_with_error(client):
+async def test_channels_page_with_error(route_client):
     """Test channels page with error param."""
-    resp = await client.get("/channels/?error=resolve")
+    resp = await route_client.get("/channels/?error=resolve")
     assert resp.status_code == 200
 
 
 @pytest.mark.asyncio
-async def test_add_channel_success(client, pool_mock):
+async def test_add_channel_success(route_client, pool_mock):
     """Test add channel success."""
     pool_mock.resolve_channel = AsyncMock(
         return_value={
@@ -53,7 +47,7 @@ async def test_add_channel_success(client, pool_mock):
         }
     )
 
-    resp = await client.post(
+    resp = await route_client.post(
         "/channels/add",
         data={"identifier": "newchannel"},
         follow_redirects=False,
@@ -63,9 +57,9 @@ async def test_add_channel_success(client, pool_mock):
 
 
 @pytest.mark.asyncio
-async def test_add_channel_no_client(client):
-    """Test add channel with no client available."""
-    resp = await client.post(
+async def test_add_channel_no_client(route_client):
+    """Test add channel with no route_client available."""
+    resp = await route_client.post(
         "/channels/add",
         data={"identifier": "testchannel"},
         follow_redirects=False,
@@ -75,9 +69,9 @@ async def test_add_channel_no_client(client):
 
 
 @pytest.mark.asyncio
-async def test_add_channel_resolve_fail(client):
+async def test_add_channel_resolve_fail(route_client):
     """Test add channel when resolve fails."""
-    resp = await client.post(
+    resp = await route_client.post(
         "/channels/add",
         data={"identifier": "badchannel"},
         follow_redirects=False,
@@ -87,7 +81,7 @@ async def test_add_channel_resolve_fail(client):
 
 
 @pytest.mark.asyncio
-async def test_get_dialogs_json(client, db):
+async def test_get_dialogs_json(route_client, db):
     """Test get dialogs returns JSON."""
     await db.repos.dialog_cache.replace_dialogs(
         "+1234567890",
@@ -98,7 +92,7 @@ async def test_get_dialogs_json(client, db):
         mock_svc.return_value.get_dialogs_with_added_flags = AsyncMock(
             return_value=[{"channel_id": 200, "title": "Test Dialog"}]
         )
-        resp = await client.get("/channels/dialogs")
+        resp = await route_client.get("/channels/dialogs")
         assert resp.status_code == 200
         import json
         data = json.loads(resp.text)
@@ -106,11 +100,11 @@ async def test_get_dialogs_json(client, db):
 
 
 @pytest.mark.asyncio
-async def test_add_bulk_channels(client):
+async def test_add_bulk_channels(route_client):
     """Test add bulk channels."""
     with patch("src.web.routes.channels.deps.channel_service") as mock_svc:
         mock_svc.return_value.add_bulk_by_dialog_ids = AsyncMock()
-        resp = await client.post(
+        resp = await route_client.post(
             "/channels/add-bulk",
             data={"channel_ids": ["200", "300"]},
             follow_redirects=False,
@@ -120,27 +114,27 @@ async def test_add_bulk_channels(client):
 
 
 @pytest.mark.asyncio
-async def test_toggle_channel(client):
+async def test_toggle_channel(route_client):
     """Test toggle channel."""
     with patch("src.web.routes.channels.deps.channel_service") as mock_svc:
         mock_svc.return_value.toggle = AsyncMock()
-        resp = await client.post("/channels/1/toggle", follow_redirects=False)
+        resp = await route_client.post("/channels/1/toggle", follow_redirects=False)
         assert resp.status_code == 303
         assert "msg=channel_toggled" in resp.headers["location"]
 
 
 @pytest.mark.asyncio
-async def test_delete_channel(client):
+async def test_delete_channel(route_client):
     """Test delete channel."""
     with patch("src.web.routes.channels.deps.channel_service") as mock_svc:
         mock_svc.return_value.delete = AsyncMock()
-        resp = await client.post("/channels/1/delete", follow_redirects=False)
+        resp = await route_client.post("/channels/1/delete", follow_redirects=False)
         assert resp.status_code == 303
         assert "msg=channel_deleted" in resp.headers["location"]
 
 
 @pytest.mark.asyncio
-async def test_delete_channel_in_pipeline(client):
+async def test_delete_channel_in_pipeline(route_client):
     """Test delete channel that is in pipeline."""
     with patch("src.web.routes.channels.deps.channel_service") as mock_svc:
         import sqlite3
@@ -148,13 +142,13 @@ async def test_delete_channel_in_pipeline(client):
         mock_svc.return_value.delete = AsyncMock(
             side_effect=sqlite3.IntegrityError("FOREIGN KEY constraint failed")
         )
-        resp = await client.post("/channels/1/delete", follow_redirects=False)
+        resp = await route_client.post("/channels/1/delete", follow_redirects=False)
         assert resp.status_code == 303
         assert "error=channel_in_pipeline" in resp.headers["location"]
 
 
 @pytest.mark.asyncio
-async def test_collect_all_redirect(client):
+async def test_collect_all_redirect(route_client):
     """Test collect all redirects."""
     with patch("src.web.routes.channel_collection.deps.collection_service") as mock_svc:
         from src.services.collection_service import BulkEnqueueResult
@@ -165,12 +159,12 @@ async def test_collect_all_redirect(client):
                 total_candidates=1,
             )
         )
-        resp = await client.post("/channels/collect-all", follow_redirects=False)
+        resp = await route_client.post("/channels/collect-all", follow_redirects=False)
         assert resp.status_code == 303
 
 
 @pytest.mark.asyncio
-async def test_collect_all_htmx(client):
+async def test_collect_all_htmx(route_client):
     """Test collect all with HTMX header."""
     with patch("src.web.routes.channel_collection.deps.collection_service") as mock_svc:
         from src.services.collection_service import BulkEnqueueResult
@@ -181,7 +175,7 @@ async def test_collect_all_htmx(client):
                 total_candidates=1,
             )
         )
-        resp = await client.post(
+        resp = await route_client.post(
             "/channels/collect-all",
             headers={"HX-Request": "true"},
         )
@@ -190,43 +184,43 @@ async def test_collect_all_htmx(client):
 
 
 @pytest.mark.asyncio
-async def test_collect_all_shutting_down(client):
+async def test_collect_all_shutting_down(route_client):
     """Test collect all when shutting down."""
-    client._transport_app.state.shutting_down = True
-    resp = await client.post("/channels/collect-all", follow_redirects=False)
+    route_client._transport_app.state.shutting_down = True
+    resp = await route_client.post("/channels/collect-all", follow_redirects=False)
     assert resp.status_code == 303
     assert "error=shutting_down" in resp.headers["location"]
-    client._transport_app.state.shutting_down = False
+    route_client._transport_app.state.shutting_down = False
 
 
 @pytest.mark.asyncio
-async def test_collect_all_shutting_down_htmx(client):
+async def test_collect_all_shutting_down_htmx(route_client):
     """Test collect all when shutting down with HTMX."""
-    client._transport_app.state.shutting_down = True
-    resp = await client.post(
+    route_client._transport_app.state.shutting_down = True
+    resp = await route_client.post(
         "/channels/collect-all",
         headers={"HX-Request": "true"},
     )
     assert resp.status_code == 200
     assert "collect-all-btn" in resp.text
-    client._transport_app.state.shutting_down = False
+    route_client._transport_app.state.shutting_down = False
 
 
 @pytest.mark.asyncio
-async def test_collect_channel(client, db):
+async def test_collect_channel(route_client, db):
     """Test collect single channel."""
     with patch("src.web.routes.channel_collection.deps.collection_service") as mock_svc:
         mock_svc.return_value.enqueue_channel_by_pk = AsyncMock(return_value="queued")
-        resp = await client.post("/channels/1/collect", follow_redirects=False)
+        resp = await route_client.post("/channels/1/collect", follow_redirects=False)
         assert resp.status_code == 303
 
 
 @pytest.mark.asyncio
-async def test_collect_channel_htmx(client, db):
+async def test_collect_channel_htmx(route_client, db):
     """Test collect single channel with HTMX."""
     with patch("src.web.routes.channel_collection.deps.collection_service") as mock_svc:
         mock_svc.return_value.enqueue_channel_by_pk = AsyncMock(return_value="queued")
-        resp = await client.post(
+        resp = await route_client.post(
             "/channels/1/collect",
             headers={"HX-Request": "true"},
         )
@@ -235,26 +229,26 @@ async def test_collect_channel_htmx(client, db):
 
 
 @pytest.mark.asyncio
-async def test_collect_stats(client):
+async def test_collect_stats(route_client):
     """Test collect stats for all channels."""
     with patch("src.web.routes.channel_collection.deps.get_collector") as mock_col:
         mock_collector = MagicMock()
         mock_collector.is_stats_running = False
         mock_col.return_value = mock_collector
 
-        resp = await client.post("/channels/stats/all", follow_redirects=False)
+        resp = await route_client.post("/channels/stats/all", follow_redirects=False)
         assert resp.status_code == 303
 
 
 @pytest.mark.asyncio
-async def test_add_channel_missing_identifier(client):
+async def test_add_channel_missing_identifier(route_client):
     """POST /channels/add without identifier returns 422."""
-    resp = await client.post("/channels/add", data={}, follow_redirects=False)
+    resp = await route_client.post("/channels/add", data={}, follow_redirects=False)
     assert resp.status_code == 303
 
 
 @pytest.mark.asyncio
-async def test_add_tag_missing_name(client):
+async def test_add_tag_missing_name(route_client):
     """POST /channels/tags without name returns 422."""
-    resp = await client.post("/channels/tags", data={}, follow_redirects=False)
+    resp = await route_client.post("/channels/tags", data={}, follow_redirects=False)
     assert resp.status_code == 303
