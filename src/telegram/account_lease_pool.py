@@ -22,6 +22,7 @@ class AccountLeasePool:
         self._db = db
         self._in_use = in_use
         self._lock = asyncio.Lock()
+        self._last_phone: str | None = None
 
     async def acquire_available(self, connected_phones: set[str]) -> AccountLease | None:
         async with self._lock:
@@ -35,7 +36,19 @@ class AccountLeasePool:
                     await self._db.update_account_flood(account.phone, None)
                     account.flood_wait_until = None
 
-            for account in accounts:
+            n = len(accounts)
+            if n == 0:
+                return None
+
+            start = 0
+            if self._last_phone is not None:
+                for i, acc in enumerate(accounts):
+                    if acc.phone == self._last_phone:
+                        start = (i + 1) % n
+                        break
+
+            for offset in range(n):
+                account = accounts[(start + offset) % n]
                 if account.phone not in connected_phones:
                     continue
                 if account.phone in self._in_use:
@@ -43,6 +56,7 @@ class AccountLeasePool:
                 if self._is_flood_waited(account, now):
                     continue
                 self._in_use.add(account.phone)
+                self._last_phone = account.phone
                 return AccountLease(account=account, shared=False)
 
             for account in accounts:
