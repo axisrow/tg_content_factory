@@ -14,16 +14,15 @@ from src.cli.runtime import (
 
 
 class TestSetupLogging:
-    def test_setup_logging_configures_root_logger(self):
+    def test_setup_logging_configures_root_logger(self, tmp_path):
         """setup_logging sets basicConfig on the root logger."""
         root = logging.getLogger()
-        # Clear any existing handlers to ensure clean test
         original_handlers = root.handlers[:]
         original_level = root.level
         root.handlers.clear()
 
         try:
-            setup_logging()
+            setup_logging(log_path=tmp_path / "app.log")
             assert root.level == logging.INFO
             assert len(root.handlers) >= 1
         finally:
