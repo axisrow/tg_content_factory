@@ -1,49 +1,25 @@
 """Tests for src/cli/commands/agent.py — CLI agent subcommands."""
 from __future__ import annotations
 
-import argparse
-import asyncio
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from src.cli.commands.agent import _test_escaping, _test_tools, run
+from tests.helpers import cli_ns, fake_asyncio_run, make_cli_config, make_cli_db
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _args(**overrides) -> argparse.Namespace:
+def _args(**overrides):
     defaults = {
         "config": "config.yaml",
         "agent_action": "threads",
     }
     defaults.update(overrides)
-    return argparse.Namespace(**defaults)
-
-
-def _make_db(**overrides) -> MagicMock:
-    db = MagicMock()
-    db.get_agent_threads = AsyncMock(return_value=[])
-    db.create_agent_thread = AsyncMock(return_value=1)
-    db.delete_agent_thread = AsyncMock()
-    db.rename_agent_thread = AsyncMock()
-    db.get_agent_messages = AsyncMock(return_value=[])
-    db.get_agent_thread = AsyncMock(return_value=None)
-    db.search_messages = AsyncMock(return_value=([], 0))
-    db.get_channel_by_channel_id = AsyncMock(return_value=None)
-    db.get_forum_topics = AsyncMock(return_value=[])
-    db.save_agent_message = AsyncMock()
-    db.delete_last_agent_exchange = AsyncMock()
-    db.close = AsyncMock()
-    for k, v in overrides.items():
-        setattr(db, k, v)
-    return db
-
-
-def _make_config() -> MagicMock:
-    return MagicMock()
+    return cli_ns(**defaults)
 
 
 def _make_mgr(**overrides) -> MagicMock:
@@ -58,15 +34,6 @@ def _make_mgr(**overrides) -> MagicMock:
     return mgr
 
 
-def _fake_asyncio_run(coro):
-    """Run coroutine synchronously — replaces asyncio.run in tests."""
-    loop = asyncio.new_event_loop()
-    try:
-        return loop.run_until_complete(coro)
-    finally:
-        loop.close()
-
-
 # ---------------------------------------------------------------------------
 # _test_escaping
 # ---------------------------------------------------------------------------
@@ -75,8 +42,8 @@ def _fake_asyncio_run(coro):
 @pytest.mark.asyncio
 async def test_escaping_agent_not_available(capsys):
     """When agent is not available, prints skip message and returns."""
-    db = _make_db()
-    config = _make_config()
+    db = make_cli_db()
+    config = make_cli_config()
 
     with patch("src.agent.manager.AgentManager", return_value=_make_mgr(available=False)):
         await _test_escaping(db, config)
@@ -88,8 +55,8 @@ async def test_escaping_agent_not_available(capsys):
 @pytest.mark.asyncio
 async def test_escaping_stream_ok(capsys):
     """Successful escaping test streams responses and counts passed."""
-    db = _make_db()
-    config = _make_config()
+    db = make_cli_db()
+    config = make_cli_config()
     mgr = _make_mgr(available=True)
 
     # Build fake SSE stream
@@ -115,8 +82,8 @@ async def test_escaping_stream_ok(capsys):
 @pytest.mark.asyncio
 async def test_tools_agent_not_available(capsys):
     """When agent is not available, prints skip message."""
-    db = _make_db()
-    config = _make_config()
+    db = make_cli_db()
+    config = make_cli_config()
 
     with patch("src.agent.manager.AgentManager", return_value=_make_mgr(available=False)):
         await _test_tools(db, config)
@@ -128,8 +95,8 @@ async def test_tools_agent_not_available(capsys):
 @pytest.mark.asyncio
 async def test_tools_stream_with_tool_events(capsys):
     """Successful tools test receives tool_start/tool_end events."""
-    db = _make_db()
-    config = _make_config()
+    db = make_cli_db()
+    config = make_cli_config()
     mgr = _make_mgr(available=True)
 
     async def _fake_stream(*a, **kw):
@@ -152,10 +119,10 @@ async def test_tools_stream_with_tool_events(capsys):
 
 
 def test_run_threads_empty(capsys):
-    db = _make_db(get_agent_threads=AsyncMock(return_value=[]))
-    config = _make_config()
+    db = make_cli_db(get_agent_threads=AsyncMock(return_value=[]))
+    config = make_cli_config()
     with patch("src.cli.commands.agent.runtime.init_db", AsyncMock(return_value=(config, db))), \
-         patch("asyncio.run", _fake_asyncio_run):
+         patch("asyncio.run", fake_asyncio_run):
         run(_args(agent_action="threads"))
     assert "Нет тредов" in capsys.readouterr().out
 
@@ -165,10 +132,10 @@ def test_run_threads_list(capsys):
         {"id": 1, "title": "Test Thread", "created_at": "2024-01-01"},
         {"id": 2, "title": "Another", "created_at": "2024-01-02"},
     ]
-    db = _make_db(get_agent_threads=AsyncMock(return_value=threads))
-    config = _make_config()
+    db = make_cli_db(get_agent_threads=AsyncMock(return_value=threads))
+    config = make_cli_config()
     with patch("src.cli.commands.agent.runtime.init_db", AsyncMock(return_value=(config, db))), \
-         patch("asyncio.run", _fake_asyncio_run):
+         patch("asyncio.run", fake_asyncio_run):
         run(_args(agent_action="threads"))
     out = capsys.readouterr().out
     assert "Test Thread" in out
@@ -181,20 +148,20 @@ def test_run_threads_list(capsys):
 
 
 def test_run_thread_create_default_title(capsys):
-    db = _make_db(create_agent_thread=AsyncMock(return_value=42))
-    config = _make_config()
+    db = make_cli_db(create_agent_thread=AsyncMock(return_value=42))
+    config = make_cli_config()
     with patch("src.cli.commands.agent.runtime.init_db", AsyncMock(return_value=(config, db))), \
-         patch("asyncio.run", _fake_asyncio_run):
+         patch("asyncio.run", fake_asyncio_run):
         run(_args(agent_action="thread-create"))
     out = capsys.readouterr().out
     assert "#42" in out
 
 
 def test_run_thread_create_custom_title(capsys):
-    db = _make_db(create_agent_thread=AsyncMock(return_value=5))
-    config = _make_config()
+    db = make_cli_db(create_agent_thread=AsyncMock(return_value=5))
+    config = make_cli_config()
     with patch("src.cli.commands.agent.runtime.init_db", AsyncMock(return_value=(config, db))), \
-         patch("asyncio.run", _fake_asyncio_run):
+         patch("asyncio.run", fake_asyncio_run):
         run(_args(agent_action="thread-create", title="Custom Title"))
     out = capsys.readouterr().out
     assert "Custom Title" in out
@@ -207,10 +174,10 @@ def test_run_thread_create_custom_title(capsys):
 
 
 def test_run_thread_delete(capsys):
-    db = _make_db()
-    config = _make_config()
+    db = make_cli_db()
+    config = make_cli_config()
     with patch("src.cli.commands.agent.runtime.init_db", AsyncMock(return_value=(config, db))), \
-         patch("asyncio.run", _fake_asyncio_run):
+         patch("asyncio.run", fake_asyncio_run):
         run(_args(agent_action="thread-delete", thread_id=7))
     out = capsys.readouterr().out
     assert "#7" in out
@@ -223,11 +190,11 @@ def test_run_thread_delete(capsys):
 
 
 def test_run_thread_rename(capsys):
-    db = _make_db()
-    config = _make_config()
+    db = make_cli_db()
+    config = make_cli_config()
     long_title = "A" * 200
     with patch("src.cli.commands.agent.runtime.init_db", AsyncMock(return_value=(config, db))), \
-         patch("asyncio.run", _fake_asyncio_run):
+         patch("asyncio.run", fake_asyncio_run):
         run(_args(agent_action="thread-rename", thread_id=3, title=long_title))
     db.rename_agent_thread.assert_called_once_with(3, long_title[:100])
     out = capsys.readouterr().out
@@ -240,10 +207,10 @@ def test_run_thread_rename(capsys):
 
 
 def test_run_messages_empty(capsys):
-    db = _make_db(get_agent_messages=AsyncMock(return_value=[]))
-    config = _make_config()
+    db = make_cli_db(get_agent_messages=AsyncMock(return_value=[]))
+    config = make_cli_config()
     with patch("src.cli.commands.agent.runtime.init_db", AsyncMock(return_value=(config, db))), \
-         patch("asyncio.run", _fake_asyncio_run):
+         patch("asyncio.run", fake_asyncio_run):
         run(_args(agent_action="messages", thread_id=1, limit=None))
     assert "Нет сообщений" in capsys.readouterr().out
 
@@ -254,10 +221,10 @@ def test_run_messages_with_limit(capsys):
         {"role": "assistant", "content": "Hi there!", "created_at": "2024-01-01"},
         {"role": "user", "content": "Third msg", "created_at": "2024-01-01"},
     ]
-    db = _make_db(get_agent_messages=AsyncMock(return_value=msgs))
-    config = _make_config()
+    db = make_cli_db(get_agent_messages=AsyncMock(return_value=msgs))
+    config = make_cli_config()
     with patch("src.cli.commands.agent.runtime.init_db", AsyncMock(return_value=(config, db))), \
-         patch("asyncio.run", _fake_asyncio_run):
+         patch("asyncio.run", fake_asyncio_run):
         run(_args(agent_action="messages", thread_id=1, limit=2))
     out = capsys.readouterr().out
     # Should only show last 2 messages
@@ -269,10 +236,10 @@ def test_run_messages_all(capsys):
     msgs = [
         {"role": "user", "content": "Hello", "created_at": "2024-01-01"},
     ]
-    db = _make_db(get_agent_messages=AsyncMock(return_value=msgs))
-    config = _make_config()
+    db = make_cli_db(get_agent_messages=AsyncMock(return_value=msgs))
+    config = make_cli_config()
     with patch("src.cli.commands.agent.runtime.init_db", AsyncMock(return_value=(config, db))), \
-         patch("asyncio.run", _fake_asyncio_run):
+         patch("asyncio.run", fake_asyncio_run):
         run(_args(agent_action="messages", thread_id=1, limit=None))
     out = capsys.readouterr().out
     assert "Hello" in out
@@ -284,10 +251,10 @@ def test_run_messages_all(capsys):
 
 
 def test_run_context_thread_not_found(capsys):
-    db = _make_db(get_agent_thread=AsyncMock(return_value=None))
-    config = _make_config()
+    db = make_cli_db(get_agent_thread=AsyncMock(return_value=None))
+    config = make_cli_config()
     with patch("src.cli.commands.agent.runtime.init_db", AsyncMock(return_value=(config, db))), \
-         patch("asyncio.run", _fake_asyncio_run):
+         patch("asyncio.run", fake_asyncio_run):
         run(_args(agent_action="context", thread_id=99, channel_id=100, limit=10, topic_id=None))
     out = capsys.readouterr().out
     assert "не найден" in out
@@ -298,16 +265,16 @@ def test_run_context_happy_path(capsys):
     ch.title = "Test Channel"
     msgs = [MagicMock(text="hello")]
     thread = {"id": 1, "title": "t"}
-    db = _make_db(
+    db = make_cli_db(
         get_agent_thread=AsyncMock(return_value=thread),
         search_messages=AsyncMock(return_value=(msgs, 1)),
         get_channel_by_channel_id=AsyncMock(return_value=ch),
         get_forum_topics=AsyncMock(return_value=[{"id": 10, "title": "Topic A"}]),
     )
-    config = _make_config()
+    config = make_cli_config()
     with patch("src.cli.commands.agent.runtime.init_db", AsyncMock(return_value=(config, db))), \
          patch("src.agent.context.format_context", return_value="formatted context"):
-        with patch("asyncio.run", _fake_asyncio_run):
+        with patch("asyncio.run", fake_asyncio_run):
             run(_args(agent_action="context", thread_id=1, channel_id=100, limit=10, topic_id=None))
     db.save_agent_message.assert_called_once_with(
         thread_id=1, role="user", content="formatted context"
@@ -320,8 +287,8 @@ def test_run_context_happy_path(capsys):
 
 
 def test_run_chat_prompt_new_thread(capsys):
-    db = _make_db(create_agent_thread=AsyncMock(return_value=10))
-    config = _make_config()
+    db = make_cli_db(create_agent_thread=AsyncMock(return_value=10))
+    config = make_cli_config()
     mgr = _make_mgr(available=True)
     auth = MagicMock(cleanup=AsyncMock())
     pool = MagicMock(disconnect_all=AsyncMock())
@@ -337,7 +304,7 @@ def test_run_chat_prompt_new_thread(capsys):
          patch("src.cli.commands.agent.runtime.redirect_logging_to_file", return_value=None), \
          patch("src.cli.commands.agent.runtime.restore_logging"), \
          patch("src.agent.manager.AgentManager", return_value=mgr), \
-         patch("asyncio.run", _fake_asyncio_run):
+         patch("asyncio.run", fake_asyncio_run):
         run(_args(agent_action="chat", prompt="test", thread_id=None, model=None))
 
     db.create_agent_thread.assert_called_once_with("Новый тред")
@@ -345,8 +312,8 @@ def test_run_chat_prompt_new_thread(capsys):
 
 
 def test_run_chat_prompt_existing_thread(capsys):
-    db = _make_db()
-    config = _make_config()
+    db = make_cli_db()
+    config = make_cli_config()
     mgr = _make_mgr(available=True)
     auth = MagicMock(cleanup=AsyncMock())
     pool = MagicMock(disconnect_all=AsyncMock())
@@ -362,7 +329,7 @@ def test_run_chat_prompt_existing_thread(capsys):
          patch("src.cli.commands.agent.runtime.redirect_logging_to_file", return_value=None), \
          patch("src.cli.commands.agent.runtime.restore_logging"), \
          patch("src.agent.manager.AgentManager", return_value=mgr), \
-         patch("asyncio.run", _fake_asyncio_run):
+         patch("asyncio.run", fake_asyncio_run):
         run(_args(agent_action="chat", prompt="test", thread_id=5, model=None))
 
     # Should NOT create a new thread
@@ -370,8 +337,8 @@ def test_run_chat_prompt_existing_thread(capsys):
 
 
 def test_run_chat_error_in_stream(capsys):
-    db = _make_db()
-    config = _make_config()
+    db = make_cli_db()
+    config = make_cli_config()
     mgr = _make_mgr(available=True)
     auth = MagicMock(cleanup=AsyncMock())
     pool = MagicMock(disconnect_all=AsyncMock())
@@ -386,7 +353,7 @@ def test_run_chat_error_in_stream(capsys):
          patch("src.cli.commands.agent.runtime.redirect_logging_to_file", return_value=None), \
          patch("src.cli.commands.agent.runtime.restore_logging"), \
          patch("src.agent.manager.AgentManager", return_value=mgr), \
-         patch("asyncio.run", _fake_asyncio_run):
+         patch("asyncio.run", fake_asyncio_run):
         run(_args(agent_action="chat", prompt="test", thread_id=5, model=None))
 
     db.delete_last_agent_exchange.assert_called_once_with(5)
@@ -398,8 +365,8 @@ def test_run_chat_error_in_stream(capsys):
 
 
 def test_run_chat_tool_events(capsys):
-    db = _make_db()
-    config = _make_config()
+    db = make_cli_db()
+    config = make_cli_config()
     mgr = _make_mgr(available=True)
     auth = MagicMock(cleanup=AsyncMock())
     pool = MagicMock(disconnect_all=AsyncMock())
@@ -417,13 +384,13 @@ def test_run_chat_tool_events(capsys):
          patch("src.cli.commands.agent.runtime.redirect_logging_to_file", return_value=None), \
          patch("src.cli.commands.agent.runtime.restore_logging"), \
          patch("src.agent.manager.AgentManager", return_value=mgr), \
-         patch("asyncio.run", _fake_asyncio_run):
+         patch("asyncio.run", fake_asyncio_run):
         run(_args(agent_action="chat", prompt="search for x", thread_id=1, model=None))
 
 
 def test_run_chat_tool_end_with_error(capsys):
-    db = _make_db()
-    config = _make_config()
+    db = make_cli_db()
+    config = make_cli_config()
     mgr = _make_mgr(available=True)
     auth = MagicMock(cleanup=AsyncMock())
     pool = MagicMock(disconnect_all=AsyncMock())
@@ -441,7 +408,7 @@ def test_run_chat_tool_end_with_error(capsys):
          patch("src.cli.commands.agent.runtime.redirect_logging_to_file", return_value=None), \
          patch("src.cli.commands.agent.runtime.restore_logging"), \
          patch("src.agent.manager.AgentManager", return_value=mgr), \
-         patch("asyncio.run", _fake_asyncio_run):
+         patch("asyncio.run", fake_asyncio_run):
         run(_args(agent_action="chat", prompt="list channels", thread_id=1, model=None))
 
 
@@ -451,8 +418,8 @@ def test_run_chat_tool_end_with_error(capsys):
 
 
 def test_run_chat_status_events(capsys):
-    db = _make_db()
-    config = _make_config()
+    db = make_cli_db()
+    config = make_cli_config()
     mgr = _make_mgr(available=True)
     auth = MagicMock(cleanup=AsyncMock())
     pool = MagicMock(disconnect_all=AsyncMock())
@@ -470,7 +437,7 @@ def test_run_chat_status_events(capsys):
          patch("src.cli.commands.agent.runtime.redirect_logging_to_file", return_value=None), \
          patch("src.cli.commands.agent.runtime.restore_logging"), \
          patch("src.agent.manager.AgentManager", return_value=mgr), \
-         patch("asyncio.run", _fake_asyncio_run):
+         patch("asyncio.run", fake_asyncio_run):
         run(_args(agent_action="chat", prompt="test", thread_id=1, model=None))
 
 
@@ -480,8 +447,8 @@ def test_run_chat_status_events(capsys):
 
 
 def test_run_chat_interactive_tui():
-    db = _make_db()
-    config = _make_config()
+    db = make_cli_db()
+    config = make_cli_config()
     mgr = _make_mgr(available=True)
     auth = MagicMock(cleanup=AsyncMock())
     pool = MagicMock(disconnect_all=AsyncMock())
@@ -494,7 +461,7 @@ def test_run_chat_interactive_tui():
          patch("src.cli.commands.agent.runtime.restore_logging"), \
          patch("src.agent.manager.AgentManager", return_value=mgr), \
          patch("src.cli.commands.agent_tui.AgentTuiApp", return_value=tui_app), \
-         patch("asyncio.run", _fake_asyncio_run):
+         patch("asyncio.run", fake_asyncio_run):
         run(_args(agent_action="chat", prompt=None, thread_id=None, model=None))
 
     tui_app.run_async.assert_called_once()
@@ -506,8 +473,8 @@ def test_run_chat_interactive_tui():
 
 
 def test_run_cleanup_mgr_close_error():
-    db = _make_db()
-    config = _make_config()
+    db = make_cli_db()
+    config = make_cli_config()
     mgr = _make_mgr(available=True, close_all=AsyncMock(side_effect=RuntimeError("boom")))
     auth = MagicMock(cleanup=AsyncMock())
     pool = MagicMock(disconnect_all=AsyncMock())
@@ -523,14 +490,14 @@ def test_run_cleanup_mgr_close_error():
          patch("src.cli.commands.agent.runtime.redirect_logging_to_file", return_value=None), \
          patch("src.cli.commands.agent.runtime.restore_logging"), \
          patch("src.agent.manager.AgentManager", return_value=mgr), \
-         patch("asyncio.run", _fake_asyncio_run):
+         patch("asyncio.run", fake_asyncio_run):
         # Should not raise despite mgr.close_all error
         run(_args(agent_action="chat", prompt="test", thread_id=1, model=None))
 
 
 def test_run_cleanup_pool_disconnect_error():
-    db = _make_db()
-    config = _make_config()
+    db = make_cli_db()
+    config = make_cli_config()
     mgr = _make_mgr(available=True)
     auth = MagicMock(cleanup=AsyncMock())
     pool = MagicMock(disconnect_all=AsyncMock(side_effect=RuntimeError("pool err")))
@@ -546,7 +513,7 @@ def test_run_cleanup_pool_disconnect_error():
          patch("src.cli.commands.agent.runtime.redirect_logging_to_file", return_value=None), \
          patch("src.cli.commands.agent.runtime.restore_logging"), \
          patch("src.agent.manager.AgentManager", return_value=mgr), \
-         patch("asyncio.run", _fake_asyncio_run):
+         patch("asyncio.run", fake_asyncio_run):
         run(_args(agent_action="chat", prompt="test", thread_id=1, model=None))
 
 
@@ -556,28 +523,28 @@ def test_run_cleanup_pool_disconnect_error():
 
 
 def test_run_test_escaping_action():
-    db = _make_db()
-    config = _make_config()
+    db = make_cli_db()
+    config = make_cli_config()
 
     async def _fake_escaping(d, c):
         pass
 
     with patch("src.cli.commands.agent.runtime.init_db", AsyncMock(return_value=(config, db))), \
          patch("src.cli.commands.agent._test_escaping", _fake_escaping), \
-         patch("asyncio.run", _fake_asyncio_run):
+         patch("asyncio.run", fake_asyncio_run):
         run(_args(agent_action="test-escaping"))
 
 
 def test_run_test_tools_action():
-    db = _make_db()
-    config = _make_config()
+    db = make_cli_db()
+    config = make_cli_config()
 
     async def _fake_tools(d, c):
         pass
 
     with patch("src.cli.commands.agent.runtime.init_db", AsyncMock(return_value=(config, db))), \
          patch("src.cli.commands.agent._test_tools", _fake_tools), \
-         patch("asyncio.run", _fake_asyncio_run):
+         patch("asyncio.run", fake_asyncio_run):
         run(_args(agent_action="test-tools"))
 
 
@@ -587,11 +554,11 @@ def test_run_test_tools_action():
 
 
 def test_run_threads_no_log_redirect():
-    db = _make_db()
-    config = _make_config()
+    db = make_cli_db()
+    config = make_cli_config()
     with patch("src.cli.commands.agent.runtime.init_db", AsyncMock(return_value=(config, db))), \
          patch("src.cli.commands.agent.runtime.redirect_logging_to_file") as mock_redirect, \
-         patch("asyncio.run", _fake_asyncio_run):
+         patch("asyncio.run", fake_asyncio_run):
         run(_args(agent_action="threads"))
     mock_redirect.assert_not_called()
 
@@ -602,8 +569,8 @@ def test_run_threads_no_log_redirect():
 
 
 def test_run_chat_thinking_event_ignored(capsys):
-    db = _make_db()
-    config = _make_config()
+    db = make_cli_db()
+    config = make_cli_config()
     mgr = _make_mgr(available=True)
     auth = MagicMock(cleanup=AsyncMock())
     pool = MagicMock(disconnect_all=AsyncMock())
@@ -621,7 +588,7 @@ def test_run_chat_thinking_event_ignored(capsys):
          patch("src.cli.commands.agent.runtime.redirect_logging_to_file", return_value=None), \
          patch("src.cli.commands.agent.runtime.restore_logging"), \
          patch("src.agent.manager.AgentManager", return_value=mgr), \
-         patch("asyncio.run", _fake_asyncio_run):
+         patch("asyncio.run", fake_asyncio_run):
         run(_args(agent_action="chat", prompt="test", thread_id=1, model=None))
 
     out = capsys.readouterr().out
@@ -634,8 +601,8 @@ def test_run_chat_thinking_event_ignored(capsys):
 
 
 def test_run_chat_non_json_chunk_skipped(capsys):
-    db = _make_db()
-    config = _make_config()
+    db = make_cli_db()
+    config = make_cli_config()
     mgr = _make_mgr(available=True)
     auth = MagicMock(cleanup=AsyncMock())
     pool = MagicMock(disconnect_all=AsyncMock())
@@ -652,7 +619,7 @@ def test_run_chat_non_json_chunk_skipped(capsys):
          patch("src.cli.commands.agent.runtime.redirect_logging_to_file", return_value=None), \
          patch("src.cli.commands.agent.runtime.restore_logging"), \
          patch("src.agent.manager.AgentManager", return_value=mgr), \
-         patch("asyncio.run", _fake_asyncio_run):
+         patch("asyncio.run", fake_asyncio_run):
         run(_args(agent_action="chat", prompt="test", thread_id=1, model=None))
 
     out = capsys.readouterr().out
@@ -665,8 +632,8 @@ def test_run_chat_non_json_chunk_skipped(capsys):
 
 
 def test_run_chat_with_model(capsys):
-    db = _make_db()
-    config = _make_config()
+    db = make_cli_db()
+    config = make_cli_config()
     mgr = _make_mgr(available=True)
     auth = MagicMock(cleanup=AsyncMock())
     pool = MagicMock(disconnect_all=AsyncMock())
@@ -682,7 +649,7 @@ def test_run_chat_with_model(capsys):
          patch("src.cli.commands.agent.runtime.redirect_logging_to_file", return_value=None), \
          patch("src.cli.commands.agent.runtime.restore_logging"), \
          patch("src.agent.manager.AgentManager", return_value=mgr), \
-         patch("asyncio.run", _fake_asyncio_run):
+         patch("asyncio.run", fake_asyncio_run):
         run(_args(agent_action="chat", prompt="hi", thread_id=1, model="gpt-4o"))
 
 
@@ -693,8 +660,8 @@ def test_run_chat_with_model(capsys):
 
 @pytest.mark.asyncio
 async def test_tools_exits_on_failure():
-    db = _make_db()
-    config = _make_config()
+    db = make_cli_db()
+    config = make_cli_config()
     mgr = _make_mgr(available=True)
 
     async def _fake_stream(*a, **kw):
@@ -718,16 +685,16 @@ def test_run_context_large_content(capsys):
     msgs = [MagicMock(text="x" * 1000)]
     thread = {"id": 1, "title": "t"}
     large_content = "C" * 300_000
-    db = _make_db(
+    db = make_cli_db(
         get_agent_thread=AsyncMock(return_value=thread),
         search_messages=AsyncMock(return_value=(msgs, 1)),
         get_channel_by_channel_id=AsyncMock(return_value=ch),
         get_forum_topics=AsyncMock(return_value=[]),
     )
-    config = _make_config()
+    config = make_cli_config()
     with patch("src.cli.commands.agent.runtime.init_db", AsyncMock(return_value=(config, db))), \
          patch("src.agent.context.format_context", return_value=large_content), \
-         patch("asyncio.run", _fake_asyncio_run):
+         patch("asyncio.run", fake_asyncio_run):
         run(_args(agent_action="context", thread_id=1, channel_id=100, limit=10, topic_id=None))
 
     out = capsys.readouterr().out

@@ -32,3 +32,10 @@ def _get_tool_handlers(mock_db, client_pool=None, config=None, **kwargs):
 def _text(result: dict) -> str:
     """Extract text from MCP tool result payload."""
     return result["content"][0]["text"]
+
+
+async def assert_tool_text(handler, payload: dict, expected: str) -> dict:
+    """Run an agent tool handler and assert that its text payload contains expected text."""
+    result = await handler(payload)
+    assert expected in _text(result)
+    return result

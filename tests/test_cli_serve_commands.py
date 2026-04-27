@@ -1,21 +1,21 @@
 """Tests for src/cli/commands/serve.py and server_control.py — CLI serve/stop/restart."""
 from __future__ import annotations
 
-import argparse
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from src.cli.commands.server_control import run_restart, run_stop
+from tests.helpers import cli_ns
 
 
 def _args(**overrides):
     defaults = {"config": "config.yaml"}
     defaults.update(overrides)
-    return argparse.Namespace(**defaults)
+    return cli_ns(**defaults)
 
 
-def _make_config():
+def make_app_config():
     cfg = MagicMock()
     cfg.web.password = "testpass"
     cfg.web.host = "0.0.0.0"
@@ -31,7 +31,7 @@ def _make_config():
 
 def test_serve_no_password():
     from src.cli.commands.serve import run
-    cfg = _make_config()
+    cfg = make_app_config()
     cfg.web.password = ""
     with patch("src.cli.commands.serve.load_config", return_value=cfg):
         with pytest.raises(SystemExit):
@@ -40,7 +40,7 @@ def test_serve_no_password():
 
 def test_serve_register_fails():
     from src.cli.commands.serve import run
-    cfg = _make_config()
+    cfg = make_app_config()
     with patch("src.cli.commands.serve.load_config", return_value=cfg), \
          patch("src.cli.commands.serve.create_app", return_value=MagicMock()), \
          patch("src.cli.commands.serve.register_current_process", side_effect=RuntimeError("already running")):
@@ -50,7 +50,7 @@ def test_serve_register_fails():
 
 def test_serve_starts_server():
     from src.cli.commands.serve import run
-    cfg = _make_config()
+    cfg = make_app_config()
     with patch("src.cli.commands.serve.load_config", return_value=cfg), \
          patch("src.cli.commands.serve.create_app", return_value=MagicMock()), \
          patch("src.cli.commands.serve.register_current_process"), \
@@ -63,7 +63,7 @@ def test_serve_starts_server():
 
 def test_serve_with_web_pass_override():
     from src.cli.commands.serve import run
-    cfg = _make_config()
+    cfg = make_app_config()
     with patch("src.cli.commands.serve.load_config", return_value=cfg), \
          patch("src.cli.commands.serve.create_app", return_value=MagicMock()), \
          patch("src.cli.commands.serve.register_current_process"), \
@@ -77,7 +77,7 @@ def test_serve_with_web_pass_override():
 def test_worker_starts_runtime():
     from src.cli.commands.worker import run
 
-    cfg = _make_config()
+    cfg = make_app_config()
     with patch("src.cli.commands.worker.load_config", return_value=cfg), \
          patch("src.cli.commands.worker.run_worker") as mock_run_worker:
         run(_args())
@@ -91,7 +91,7 @@ def test_worker_starts_runtime():
 
 
 def test_stop_success(capsys):
-    cfg = _make_config()
+    cfg = make_app_config()
     outcome = MagicMock()
     outcome.message = "Server stopped."
     from src.cli.commands.server_control import StopResult
@@ -104,7 +104,7 @@ def test_stop_success(capsys):
 
 
 def test_stop_process_control_error():
-    cfg = _make_config()
+    cfg = make_app_config()
     from src.cli.commands.server_control import ProcessControlError
     with patch("src.cli.commands.server_control.load_config", return_value=cfg), \
          patch("src.cli.commands.server_control.stop_server", side_effect=ProcessControlError("no pid")), \
@@ -114,7 +114,7 @@ def test_stop_process_control_error():
 
 
 def test_stop_timeout():
-    cfg = _make_config()
+    cfg = make_app_config()
     outcome = MagicMock()
     outcome.message = "Timeout"
     from src.cli.commands.server_control import StopResult
@@ -132,7 +132,7 @@ def test_stop_timeout():
 
 
 def test_restart_success(capsys):
-    cfg = _make_config()
+    cfg = make_app_config()
     outcome = MagicMock()
     outcome.message = "Stopped."
     from src.cli.commands.server_control import StopResult

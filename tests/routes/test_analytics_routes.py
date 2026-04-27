@@ -5,61 +5,55 @@ from __future__ import annotations
 import pytest
 
 
-@pytest.fixture
-async def client(route_client):
-    """Use shared route_client fixture."""
-    return route_client
-
-
 @pytest.mark.asyncio
-async def test_analytics_page_renders(client):
+async def test_analytics_page_renders(route_client):
     """Test analytics page renders without errors."""
-    resp = await client.get("/analytics")
+    resp = await route_client.get("/analytics")
     assert resp.status_code == 200
 
 
 @pytest.mark.asyncio
-async def test_analytics_page_with_dates(client):
+async def test_analytics_page_with_dates(route_client):
     """Test analytics page with date filters."""
-    resp = await client.get(
+    resp = await route_client.get(
         "/analytics?date_from=2024-01-01&date_to=2024-12-31"
     )
     assert resp.status_code == 200
 
 
 @pytest.mark.asyncio
-async def test_analytics_page_limit_param(client):
+async def test_analytics_page_limit_param(route_client):
     """Test analytics page with limit parameter."""
-    resp = await client.get("/analytics?limit=20")
+    resp = await route_client.get("/analytics?limit=20")
     assert resp.status_code == 200
 
 
 @pytest.mark.asyncio
-async def test_analytics_page_invalid_limit(client):
+async def test_analytics_page_invalid_limit(route_client):
     """Test analytics page with invalid limit returns 422."""
-    resp = await client.get("/analytics?limit=abc")
+    resp = await route_client.get("/analytics?limit=abc")
     # FastAPI returns 422 for validation error
     assert resp.status_code == 422
 
 
 @pytest.mark.asyncio
-async def test_analytics_page_empty_db(client):
+async def test_analytics_page_empty_db(route_client):
     """Test analytics page with empty database."""
-    resp = await client.get("/analytics")
+    resp = await route_client.get("/analytics")
     assert resp.status_code == 200
 
 
 @pytest.mark.asyncio
-async def test_content_analytics_page_renders(client):
+async def test_content_analytics_page_renders(route_client):
     """Test content analytics page renders."""
-    resp = await client.get("/analytics/content")
+    resp = await route_client.get("/analytics/content")
     assert resp.status_code == 200
 
 
 @pytest.mark.asyncio
-async def test_api_content_summary_returns_json(client):
+async def test_api_content_summary_returns_json(route_client):
     """Test content summary API returns JSON."""
-    resp = await client.get("/analytics/content/api/summary")
+    resp = await route_client.get("/analytics/content/api/summary")
     assert resp.status_code == 200
     import json
     data = json.loads(resp.text)
@@ -67,9 +61,9 @@ async def test_api_content_summary_returns_json(client):
 
 
 @pytest.mark.asyncio
-async def test_api_pipelines_returns_json(client):
+async def test_api_pipelines_returns_json(route_client):
     """Test pipeline stats API returns JSON."""
-    resp = await client.get("/analytics/content/api/pipelines")
+    resp = await route_client.get("/analytics/content/api/pipelines")
     assert resp.status_code == 200
     import json
     data = json.loads(resp.text)
@@ -77,9 +71,9 @@ async def test_api_pipelines_returns_json(client):
 
 
 @pytest.mark.asyncio
-async def test_api_pipelines_with_data(client):
+async def test_api_pipelines_with_data(route_client):
     """Test pipeline stats API with created pipeline."""
-    db = client._transport_app.state.db
+    db = route_client._transport_app.state.db
     from src.models import (
         ContentPipeline,
         PipelineGenerationBackend,
@@ -107,7 +101,7 @@ async def test_api_pipelines_with_data(client):
         ],
     )
 
-    resp = await client.get("/analytics/content/api/pipelines")
+    resp = await route_client.get("/analytics/content/api/pipelines")
     assert resp.status_code == 200
     import json
     data = json.loads(resp.text)
@@ -117,9 +111,9 @@ async def test_api_pipelines_with_data(client):
 
 
 @pytest.mark.asyncio
-async def test_api_pipelines_filter_by_id(client):
+async def test_api_pipelines_filter_by_id(route_client):
     """Test pipeline stats API filtered by pipeline_id."""
-    db = client._transport_app.state.db
+    db = route_client._transport_app.state.db
     from src.models import (
         ContentPipeline,
         PipelineGenerationBackend,
@@ -147,7 +141,7 @@ async def test_api_pipelines_filter_by_id(client):
         ],
     )
 
-    resp = await client.get(f"/analytics/content/api/pipelines?pipeline_id={pipeline_id}")
+    resp = await route_client.get(f"/analytics/content/api/pipelines?pipeline_id={pipeline_id}")
     assert resp.status_code == 200
     import json
     data = json.loads(resp.text)

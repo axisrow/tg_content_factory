@@ -1,47 +1,23 @@
 """Tests for src/cli/commands/analytics.py — CLI analytics subcommands."""
 from __future__ import annotations
 
-import argparse
-import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from src.cli.commands.analytics import run
-
-
-def _fake_asyncio_run(coro):
-    loop = asyncio.new_event_loop()
-    try:
-        return loop.run_until_complete(coro)
-    finally:
-        loop.close()
+from tests.helpers import cli_ns, fake_asyncio_run, make_cli_config, make_cli_db
 
 
 def _args(**overrides):
     defaults = {"config": "config.yaml"}
     defaults.update(overrides)
-    return argparse.Namespace(**defaults)
+    return cli_ns(**defaults)
 
 
-def _make_db(**overrides):
-    db = MagicMock()
-    db.close = AsyncMock()
-    db.get_top_messages = AsyncMock(return_value=[])
-    db.get_engagement_by_media_type = AsyncMock(return_value=[])
-    db.get_hourly_activity = AsyncMock(return_value=[])
-    db.search_messages = AsyncMock(return_value=([], 0))
-    for k, v in overrides.items():
-        setattr(db, k, v)
-    return db
-
-
-def _make_config():
-    return MagicMock()
-
-
-def _init_patches(db, config=_make_config()):
+def _init_patches(db, config=None):
+    config = config or make_cli_config()
     return (
         patch("src.cli.commands.analytics.runtime.init_db", AsyncMock(return_value=(config, db))),
-        patch("asyncio.run", _fake_asyncio_run),
+        patch("asyncio.run", fake_asyncio_run),
     )
 
 
@@ -51,7 +27,7 @@ def _init_patches(db, config=_make_config()):
 
 
 def test_top_empty(capsys):
-    db = _make_db()
+    db = make_cli_db()
     with _init_patches(db)[0], _init_patches(db)[1]:
         run(_args(analytics_action="top", limit=10, date_from=None, date_to=None))
     assert "No messages" in capsys.readouterr().out
@@ -60,7 +36,7 @@ def test_top_empty(capsys):
 def test_top_with_data(capsys):
     rows = [{"channel_title": "Test", "channel_username": None, "channel_id": 100,
              "text": "Hello world", "date": "2024-01-01 12:00", "total_reactions": 5}]
-    db = _make_db(get_top_messages=AsyncMock(return_value=rows))
+    db = make_cli_db(get_top_messages=AsyncMock(return_value=rows))
     with _init_patches(db)[0], _init_patches(db)[1]:
         run(_args(analytics_action="top", limit=10, date_from=None, date_to=None))
     out = capsys.readouterr().out
@@ -74,7 +50,7 @@ def test_top_with_data(capsys):
 
 
 def test_content_types_empty(capsys):
-    db = _make_db()
+    db = make_cli_db()
     with _init_patches(db)[0], _init_patches(db)[1]:
         run(_args(analytics_action="content-types", date_from=None, date_to=None))
     assert "No data" in capsys.readouterr().out
@@ -82,7 +58,7 @@ def test_content_types_empty(capsys):
 
 def test_content_types_with_data(capsys):
     rows = [{"content_type": "text", "message_count": 50, "avg_reactions": 2.5}]
-    db = _make_db(get_engagement_by_media_type=AsyncMock(return_value=rows))
+    db = make_cli_db(get_engagement_by_media_type=AsyncMock(return_value=rows))
     with _init_patches(db)[0], _init_patches(db)[1]:
         run(_args(analytics_action="content-types", date_from=None, date_to=None))
     assert "text" in capsys.readouterr().out
@@ -94,7 +70,7 @@ def test_content_types_with_data(capsys):
 
 
 def test_hourly_empty(capsys):
-    db = _make_db()
+    db = make_cli_db()
     with _init_patches(db)[0], _init_patches(db)[1]:
         run(_args(analytics_action="hourly", date_from=None, date_to=None))
     assert "No data" in capsys.readouterr().out
@@ -102,7 +78,7 @@ def test_hourly_empty(capsys):
 
 def test_hourly_with_data(capsys):
     rows = [{"hour": 14, "message_count": 100, "avg_reactions": 3.0}]
-    db = _make_db(get_hourly_activity=AsyncMock(return_value=rows))
+    db = make_cli_db(get_hourly_activity=AsyncMock(return_value=rows))
     with _init_patches(db)[0], _init_patches(db)[1]:
         run(_args(analytics_action="hourly", date_from=None, date_to=None))
     assert "14:00" in capsys.readouterr().out
@@ -114,7 +90,7 @@ def test_hourly_with_data(capsys):
 
 
 def test_summary(capsys):
-    db = _make_db()
+    db = make_cli_db()
     mock_svc = MagicMock()
     mock_svc.get_summary = AsyncMock(return_value={
         "total_generations": 100, "total_published": 80,
@@ -134,7 +110,7 @@ def test_summary(capsys):
 
 
 def test_pipeline_stats_empty(capsys):
-    db = _make_db()
+    db = make_cli_db()
     mock_svc = MagicMock()
     mock_svc.get_pipeline_stats = AsyncMock(return_value=[])
     with _init_patches(db)[0], _init_patches(db)[1], \
@@ -144,7 +120,7 @@ def test_pipeline_stats_empty(capsys):
 
 
 def test_pipeline_stats_with_data(capsys):
-    db = _make_db()
+    db = make_cli_db()
     s = MagicMock(pipeline_name="TestPipe", total_generations=10, total_published=8,
                   total_rejected=1, pending_moderation=1, success_rate=0.8)
     mock_svc = MagicMock()
@@ -161,7 +137,7 @@ def test_pipeline_stats_with_data(capsys):
 
 
 def test_daily_empty(capsys):
-    db = _make_db()
+    db = make_cli_db()
     mock_svc = MagicMock()
     mock_svc.get_daily_stats = AsyncMock(return_value=[])
     with _init_patches(db)[0], _init_patches(db)[1], \
@@ -171,7 +147,7 @@ def test_daily_empty(capsys):
 
 
 def test_daily_with_data(capsys):
-    db = _make_db()
+    db = make_cli_db()
     rows = [{"date": "2024-01-01", "count": 5, "published": 3}]
     mock_svc = MagicMock()
     mock_svc.get_daily_stats = AsyncMock(return_value=rows)
@@ -187,7 +163,7 @@ def test_daily_with_data(capsys):
 
 
 def test_trending_topics_empty(capsys):
-    db = _make_db()
+    db = make_cli_db()
     mock_svc = MagicMock()
     mock_svc.get_trending_topics = AsyncMock(return_value=[])
     with _init_patches(db)[0], _init_patches(db)[1], \
@@ -197,7 +173,7 @@ def test_trending_topics_empty(capsys):
 
 
 def test_trending_topics_with_data(capsys):
-    db = _make_db()
+    db = make_cli_db()
     t = MagicMock(keyword="python", count=42)
     mock_svc = MagicMock()
     mock_svc.get_trending_topics = AsyncMock(return_value=[t])
@@ -213,7 +189,7 @@ def test_trending_topics_with_data(capsys):
 
 
 def test_trending_channels_with_data(capsys):
-    db = _make_db()
+    db = make_cli_db()
     ch = MagicMock(title="NewsCh", count=100)
     mock_svc = MagicMock()
     mock_svc.get_trending_channels = AsyncMock(return_value=[ch])
@@ -229,7 +205,7 @@ def test_trending_channels_with_data(capsys):
 
 
 def test_velocity_with_data(capsys):
-    db = _make_db()
+    db = make_cli_db()
     v = MagicMock(date="2024-01-01", count=50)
     mock_svc = MagicMock()
     mock_svc.get_message_velocity = AsyncMock(return_value=[v])
@@ -240,7 +216,7 @@ def test_velocity_with_data(capsys):
 
 
 def test_velocity_empty(capsys):
-    db = _make_db()
+    db = make_cli_db()
     mock_svc = MagicMock()
     mock_svc.get_message_velocity = AsyncMock(return_value=[])
     with _init_patches(db)[0], _init_patches(db)[1], \
@@ -255,7 +231,7 @@ def test_velocity_empty(capsys):
 
 
 def test_peak_hours_with_data(capsys):
-    db = _make_db()
+    db = make_cli_db()
     h = MagicMock(hour=14, count=200)
     mock_svc = MagicMock()
     mock_svc.get_peak_hours = AsyncMock(return_value=[h])
@@ -267,7 +243,7 @@ def test_peak_hours_with_data(capsys):
 
 
 def test_peak_hours_empty(capsys):
-    db = _make_db()
+    db = make_cli_db()
     mock_svc = MagicMock()
     mock_svc.get_peak_hours = AsyncMock(return_value=[])
     with _init_patches(db)[0], _init_patches(db)[1], \
@@ -282,7 +258,7 @@ def test_peak_hours_empty(capsys):
 
 
 def test_calendar_empty(capsys):
-    db = _make_db()
+    db = make_cli_db()
     mock_svc = MagicMock()
     mock_svc.get_upcoming = AsyncMock(return_value=[])
     with _init_patches(db)[0], _init_patches(db)[1], \
@@ -292,7 +268,7 @@ def test_calendar_empty(capsys):
 
 
 def test_calendar_with_data(capsys):
-    db = _make_db()
+    db = make_cli_db()
     e = MagicMock(run_id=1, pipeline_name="Pipe", moderation_status="pending",
                   scheduled_time="2024-01-01 12:00", created_at="2024-01-01", preview="Hello")
     mock_svc = MagicMock()
@@ -310,7 +286,7 @@ def test_calendar_with_data(capsys):
 
 
 def test_trending_emojis_no_messages(capsys):
-    db = _make_db(search_messages=AsyncMock(return_value=([], 0)))
+    db = make_cli_db(search_messages=AsyncMock(return_value=([], 0)))
     with _init_patches(db)[0], _init_patches(db)[1]:
         run(_args(analytics_action="trending-emojis", days=7, limit=20))
     assert "No emojis" in capsys.readouterr().out
@@ -318,7 +294,7 @@ def test_trending_emojis_no_messages(capsys):
 
 def test_trending_emojis_with_emojis(capsys):
     msg = MagicMock(text="Hello 🎉 world 🌍 test 🎉")
-    db = _make_db(search_messages=AsyncMock(return_value=([msg], 1)))
+    db = make_cli_db(search_messages=AsyncMock(return_value=([msg], 1)))
     with _init_patches(db)[0], _init_patches(db)[1]:
         run(_args(analytics_action="trending-emojis", days=7, limit=20))
     out = capsys.readouterr().out
@@ -331,7 +307,7 @@ def test_trending_emojis_with_emojis(capsys):
 
 
 def test_channel_not_found(capsys):
-    db = _make_db()
+    db = make_cli_db()
     ov = MagicMock(title=None, username=None)
     mock_svc = MagicMock()
     mock_svc.get_channel_overview = AsyncMock(return_value=ov)
@@ -342,7 +318,7 @@ def test_channel_not_found(capsys):
 
 
 def test_channel_found(capsys):
-    db = _make_db()
+    db = make_cli_db()
     ov = MagicMock(
         title="TestCh", username="testch", subscriber_count=1000,
         subscriber_delta_week=50, subscriber_delta_month=200,

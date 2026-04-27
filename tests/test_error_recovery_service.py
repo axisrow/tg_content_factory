@@ -67,7 +67,7 @@ def test_error_classifier_detects_rate_limit():
     assert ErrorClassifier.classify(err) == ErrorCategory.RATE_LIMIT
 
 
-# === Additional coverage tests ===
+# === Additional tests ===
 
 
 @pytest.mark.asyncio

@@ -276,7 +276,7 @@ async def test_agent_page_without_agent_manager(client, db):
     assert resp.status_code == 200
 
 
-# === Additional coverage tests ===
+# === Additional tests ===
 
 
 @pytest.mark.asyncio

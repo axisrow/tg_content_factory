@@ -8,20 +8,15 @@ import pytest
 from src.models import Account
 
 
-@pytest.fixture
-async def client(route_client):
-    return route_client
-
-
 @pytest.mark.asyncio
-async def test_toggle_account_enqueues_command(client, base_app):
+async def test_toggle_account_enqueues_command(route_client, base_app):
     """Web toggle only enqueues `accounts.toggle`; worker reconciles the pool."""
     app, db, pool = base_app
     accounts = await db.get_accounts(active_only=False)
     assert len(accounts) > 0
     acc = accounts[0]
 
-    resp = await client.post(f"/settings/{acc.id}/toggle", follow_redirects=False)
+    resp = await route_client.post(f"/settings/{acc.id}/toggle", follow_redirects=False)
     assert resp.status_code in (303, 302)
     location = resp.headers.get("location", "")
     assert "/settings" in location
@@ -37,14 +32,14 @@ async def test_toggle_account_enqueues_command(client, base_app):
 
 
 @pytest.mark.asyncio
-async def test_delete_account_enqueues_command(client, base_app):
+async def test_delete_account_enqueues_command(route_client, base_app):
     """Web delete only enqueues `accounts.delete`; the DB row survives until the worker runs."""
     app, db, pool = base_app
     await db.add_account(Account(phone="+9999999999", session_string="session_del"))
     accounts = await db.get_accounts(active_only=False)
     to_delete = next(a for a in accounts if a.phone == "+9999999999")
 
-    resp = await client.post(f"/settings/{to_delete.id}/delete", follow_redirects=False)
+    resp = await route_client.post(f"/settings/{to_delete.id}/delete", follow_redirects=False)
     assert resp.status_code in (303, 302)
     location = resp.headers.get("location", "")
     assert "/settings" in location
@@ -63,10 +58,10 @@ async def test_delete_account_enqueues_command(client, base_app):
 
 
 @pytest.mark.asyncio
-async def test_flood_status_empty(client, base_app):
+async def test_flood_status_empty(route_client, base_app):
     """Flood status returns JSON with no active floods."""
     app, db, pool = base_app
-    resp = await client.get("/settings/flood-status")
+    resp = await route_client.get("/settings/flood-status")
     assert resp.status_code == 200
     data = resp.json()
     assert isinstance(data, list)
@@ -77,7 +72,7 @@ async def test_flood_status_empty(client, base_app):
 
 
 @pytest.mark.asyncio
-async def test_flood_status_active_flood(client, base_app):
+async def test_flood_status_active_flood(route_client, base_app):
     """Flood status shows active flood wait."""
     app, db, pool = base_app
     accounts = await db.get_accounts(active_only=False)
@@ -85,7 +80,7 @@ async def test_flood_status_active_flood(client, base_app):
     future = datetime.now(timezone.utc) + timedelta(hours=1)
     await db.update_account_flood(acc.phone, future)
 
-    resp = await client.get("/settings/flood-status")
+    resp = await route_client.get("/settings/flood-status")
     assert resp.status_code == 200
     data = resp.json()
     flooded = [item for item in data if item["phone"] == acc.phone]
@@ -95,7 +90,7 @@ async def test_flood_status_active_flood(client, base_app):
 
 
 @pytest.mark.asyncio
-async def test_flood_status_expired_flood(client, base_app):
+async def test_flood_status_expired_flood(route_client, base_app):
     """Flood status shows ok for expired flood wait."""
     app, db, pool = base_app
     accounts = await db.get_accounts(active_only=False)
@@ -103,7 +98,7 @@ async def test_flood_status_expired_flood(client, base_app):
     past = datetime.now(timezone.utc) - timedelta(hours=1)
     await db.update_account_flood(acc.phone, past)
 
-    resp = await client.get("/settings/flood-status")
+    resp = await route_client.get("/settings/flood-status")
     assert resp.status_code == 200
     data = resp.json()
     entry = [item for item in data if item["phone"] == acc.phone]
@@ -113,7 +108,7 @@ async def test_flood_status_expired_flood(client, base_app):
 
 
 @pytest.mark.asyncio
-async def test_flood_clear_success(client, base_app):
+async def test_flood_clear_success(route_client, base_app):
     """Flood clear resets flood wait."""
     app, db, pool = base_app
     accounts = await db.get_accounts(active_only=False)
@@ -121,14 +116,14 @@ async def test_flood_clear_success(client, base_app):
     future = datetime.now(timezone.utc) + timedelta(hours=1)
     await db.update_account_flood(acc.phone, future)
 
-    resp = await client.post(f"/settings/{acc.id}/flood-clear", follow_redirects=False)
+    resp = await route_client.post(f"/settings/{acc.id}/flood-clear", follow_redirects=False)
     assert resp.status_code in (303, 302)
     assert "/settings" in resp.headers.get("location", "")
 
 
 @pytest.mark.asyncio
-async def test_flood_clear_not_found(client, base_app):
+async def test_flood_clear_not_found(route_client, base_app):
     """Flood clear for non-existent account redirects."""
-    resp = await client.post("/settings/99999/flood-clear", follow_redirects=False)
+    resp = await route_client.post("/settings/99999/flood-clear", follow_redirects=False)
     assert resp.status_code in (303, 302)
     assert "error=account_not_found" in resp.headers.get("location", "")

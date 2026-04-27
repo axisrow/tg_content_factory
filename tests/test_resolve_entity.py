@@ -10,7 +10,7 @@ import pytest
 from src.database import Database
 
 # ---------------------------------------------------------------------------
-# Helpers (same pattern as test_coverage_batch4.py)
+# Helpers (same pattern as test_agent_threads_moderation_runtime_paths.py)
 # ---------------------------------------------------------------------------
 
 

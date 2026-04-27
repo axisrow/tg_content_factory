@@ -7,27 +7,22 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 
-@pytest.fixture
-async def client(route_client):
-    return route_client
-
-
 @pytest.mark.asyncio
-async def test_images_page(client, monkeypatch):
+async def test_images_page(route_client, monkeypatch):
     mock_svc = MagicMock()
     mock_svc.adapter_names = ["test_provider"]
     monkeypatch.setattr(
         "src.web.routes.images._get_image_service",
         AsyncMock(return_value=mock_svc),
     )
-    resp = await client.get("/images/")
+    resp = await route_client.get("/images/")
     assert resp.status_code == 200
     assert "text/html" in resp.headers["content-type"]
 
 
 @pytest.mark.asyncio
-async def test_generate_no_prompt(client, monkeypatch):
-    resp = await client.post("/images/generate", data={})
+async def test_generate_no_prompt(route_client, monkeypatch):
+    resp = await route_client.post("/images/generate", data={})
     assert resp.status_code == 400
     body = resp.json()
     assert body["ok"] is False
@@ -35,21 +30,21 @@ async def test_generate_no_prompt(client, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_generate_no_providers(client, monkeypatch):
+async def test_generate_no_providers(route_client, monkeypatch):
     mock_svc = MagicMock()
     mock_svc.is_available = AsyncMock(return_value=False)
     monkeypatch.setattr(
         "src.web.routes.images._get_image_service",
         AsyncMock(return_value=mock_svc),
     )
-    resp = await client.post("/images/generate", data={"prompt": "a cat"})
+    resp = await route_client.post("/images/generate", data={"prompt": "a cat"})
     assert resp.status_code == 409
     body = resp.json()
     assert "No image providers" in body["error"]
 
 
 @pytest.mark.asyncio
-async def test_generate_success(client, monkeypatch):
+async def test_generate_success(route_client, monkeypatch):
     mock_svc = MagicMock()
     mock_svc.is_available = AsyncMock(return_value=True)
     mock_svc.generate = AsyncMock(return_value="https://img.example.com/1.png")
@@ -57,7 +52,7 @@ async def test_generate_success(client, monkeypatch):
         "src.web.routes.images._get_image_service",
         AsyncMock(return_value=mock_svc),
     )
-    resp = await client.post("/images/generate", data={"prompt": "a cat", "model": "test:model"})
+    resp = await route_client.post("/images/generate", data={"prompt": "a cat", "model": "test:model"})
     assert resp.status_code == 200
     body = resp.json()
     assert body["ok"] is True
@@ -65,7 +60,7 @@ async def test_generate_success(client, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_generate_failure(client, monkeypatch):
+async def test_generate_failure(route_client, monkeypatch):
     mock_svc = MagicMock()
     mock_svc.is_available = AsyncMock(return_value=True)
     mock_svc.generate = AsyncMock(return_value=None)
@@ -73,7 +68,7 @@ async def test_generate_failure(client, monkeypatch):
         "src.web.routes.images._get_image_service",
         AsyncMock(return_value=mock_svc),
     )
-    resp = await client.post("/images/generate", data={"prompt": "a cat"})
+    resp = await route_client.post("/images/generate", data={"prompt": "a cat"})
     assert resp.status_code == 500
     body = resp.json()
     assert body["ok"] is False
@@ -81,15 +76,15 @@ async def test_generate_failure(client, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_search_models_no_provider(client, monkeypatch):
-    resp = await client.get("/images/models/search?provider=")
+async def test_search_models_no_provider(route_client, monkeypatch):
+    resp = await route_client.get("/images/models/search?provider=")
     assert resp.status_code == 400
     body = resp.json()
     assert "provider" in body["error"]
 
 
 @pytest.mark.asyncio
-async def test_search_models_success(client, monkeypatch):
+async def test_search_models_success(route_client, monkeypatch):
     monkeypatch.setattr(
         "src.web.routes.images._get_provider_api_key",
         AsyncMock(return_value="fake-key"),
@@ -100,7 +95,7 @@ async def test_search_models_success(client, monkeypatch):
         instance.search_models = AsyncMock(return_value=mock_models)
         mock_cls.return_value = instance
 
-        resp = await client.get("/images/models/search?provider=together&q=flux")
+        resp = await route_client.get("/images/models/search?provider=together&q=flux")
         assert resp.status_code == 200
         body = resp.json()
         assert body["ok"] is True
@@ -108,28 +103,28 @@ async def test_search_models_success(client, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_search_models_no_api_key(client, monkeypatch):
+async def test_search_models_no_api_key(route_client, monkeypatch):
     """Test search models when no API key is found."""
     monkeypatch.setattr(
         "src.web.routes.images._get_provider_api_key",
         AsyncMock(return_value=""),
     )
-    resp = await client.get("/images/models/search?provider=unknown&q=test")
+    resp = await route_client.get("/images/models/search?provider=unknown&q=test")
     assert resp.status_code == 200
     body = resp.json()
     assert body["ok"] is True
 
 
 @pytest.mark.asyncio
-async def test_images_page_with_db_error(client, monkeypatch):
+async def test_images_page_with_db_error(route_client, monkeypatch):
     """Test images page when DB provider loading fails."""
     with patch("src.services.image_provider_service.ImageProviderService", side_effect=Exception("DB error")):
-        resp = await client.get("/images/")
+        resp = await route_client.get("/images/")
     assert resp.status_code == 200
 
 
 @pytest.mark.asyncio
-async def test_generate_with_model(client, monkeypatch):
+async def test_generate_with_model(route_client, monkeypatch):
     """Test generate with specific model selection."""
     mock_svc = MagicMock()
     mock_svc.is_available = AsyncMock(return_value=True)
@@ -138,7 +133,7 @@ async def test_generate_with_model(client, monkeypatch):
         "src.web.routes.images._get_image_service",
         AsyncMock(return_value=mock_svc),
     )
-    resp = await client.post("/images/generate", data={"prompt": "a dog", "model": "test:model"})
+    resp = await route_client.post("/images/generate", data={"prompt": "a dog", "model": "test:model"})
     assert resp.status_code == 200
     body = resp.json()
     assert body["ok"] is True
