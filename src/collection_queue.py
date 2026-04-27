@@ -18,6 +18,10 @@ logger = logging.getLogger(__name__)
 
 
 class CollectionQueue:
+    # How often the worker re-checks the DB for new PENDING channel-collect tasks
+    # written by the web container in split / embedded-worker setups (#491 follow-up).
+    DB_PULL_INTERVAL_SEC = 3.0
+
     def __init__(self, collector: Collector, channels: ChannelBundle | Database):
         self._collector = collector
         if isinstance(channels, Database):
@@ -28,6 +32,12 @@ class CollectionQueue:
         self._current_task_id: int | None = None
         self._retried_tasks: set[int] = set()
         self._delayed_requeues: set[asyncio.Task] = set()
+        # Task IDs already pushed into the in-memory queue or scheduled via
+        # delayed-requeue. Prevents double-ingestion when the periodic DB pull
+        # sees a task that's still waiting in `self._queue`.
+        self._known_task_ids: set[int] = set()
+        self._pull_task: asyncio.Task | None = None
+        self._pull_stop = asyncio.Event()
 
     async def enqueue(self, channel: Channel, force: bool = False, full: bool = True) -> int | None:
         """Enqueue a channel for collection, atomically skipping duplicates.
@@ -49,6 +59,7 @@ class CollectionQueue:
             return None
         try:
             self._queue.put_nowait((task_id, channel, force, full))
+            self._known_task_ids.add(task_id)
         except asyncio.QueueFull:
             logger.warning(
                 "Collection queue full (maxsize=%d); task %d stays PENDING in DB "
@@ -109,6 +120,7 @@ class CollectionQueue:
                 await asyncio.sleep(remaining)
             try:
                 self._queue.put_nowait((task_id, channel, force, full))
+                self._known_task_ids.add(task_id)
             except asyncio.QueueFull:
                 logger.warning(
                     "Collection queue full on delayed requeue; task %d stays PENDING "
@@ -116,6 +128,10 @@ class CollectionQueue:
                     task_id,
                 )
             self._ensure_worker()
+
+        # Reserve the slot up front so the periodic DB pull does not double-ingest
+        # a task whose delayed requeue is still sleeping.
+        self._known_task_ids.add(task_id)
 
         task = asyncio.create_task(_requeue_later())
         self._delayed_requeues.add(task)
@@ -279,6 +295,7 @@ class CollectionQueue:
                 self._retried_tasks.discard(task_id)
             finally:
                 self._current_task_id = None
+                self._known_task_ids.discard(task_id)
                 self._queue.task_done()
 
     async def _try_reconnect_and_requeue(
@@ -300,6 +317,7 @@ class CollectionQueue:
         await self._channels.update_collection_task(task_id, CollectionTaskStatus.PENDING, note="Reconnect retry")
         try:
             self._queue.put_nowait((task_id, channel, force, full))
+            self._known_task_ids.add(task_id)
         except asyncio.QueueFull:
             logger.warning(
                 "Collection queue full on reconnect requeue; task %d stays PENDING "
@@ -313,19 +331,18 @@ class CollectionQueue:
         )
         return True
 
-    async def requeue_startup_tasks(self) -> int:
-        """Re-enqueue pending collection tasks that survived a server restart.
-
-        Also resets orphaned RUNNING tasks (left from ungraceful shutdown) to PENDING.
+    async def _ingest_pending_tasks(self) -> int:
+        """Pull all currently-PENDING channel-collect tasks from the DB into the
+        in-memory queue. Used both at startup (after resetting orphaned RUNNING
+        rows) and from the periodic DB-pull loop. De-duplicates against
+        `_known_task_ids` so tasks already sitting in the queue or scheduled
+        for delayed requeue are not pushed twice.
         """
-        # Reset orphaned RUNNING tasks from previous ungraceful shutdown
-        reset_count = await self._channels.reset_orphaned_running_tasks()
-        if reset_count:
-            logger.info("Reset %d orphaned RUNNING tasks to PENDING", reset_count)
-
         pending = await self._channels.get_pending_channel_tasks()
         count = 0
         for task in pending:
+            if task.id is None or task.id in self._known_task_ids:
+                continue
             if task.channel_id is None:
                 logger.warning("Skipping task %d: channel_id is None", task.id)
                 continue
@@ -351,9 +368,10 @@ class CollectionQueue:
             else:
                 try:
                     self._queue.put_nowait((task.id, channel, force, full))
+                    self._known_task_ids.add(task.id)
                 except asyncio.QueueFull:
                     logger.warning(
-                        "Collection queue full during startup requeue; task %d stays PENDING "
+                        "Collection queue full during pending-task ingest; task %d stays PENDING "
                         "in DB and will be picked up after the queue drains",
                         task.id,
                     )
@@ -361,10 +379,66 @@ class CollectionQueue:
             count += 1
         if count:
             self._ensure_worker()
+        return count
+
+    async def requeue_startup_tasks(self) -> int:
+        """Re-enqueue pending collection tasks that survived a server restart.
+
+        Also resets orphaned RUNNING tasks (left from ungraceful shutdown) to PENDING.
+        """
+        reset_count = await self._channels.reset_orphaned_running_tasks()
+        if reset_count:
+            logger.info("Reset %d orphaned RUNNING tasks to PENDING", reset_count)
+
+        count = await self._ingest_pending_tasks()
+        if count:
             logger.info("Re-enqueued %d pending collection tasks on startup", count)
         return count
 
+    def start_db_pull(self, *, interval: float | None = None) -> None:
+        """Start the background loop that periodically ingests new PENDING
+        channel-collect tasks from the DB.
+
+        Without this, tasks created via `CollectionService._enqueue_channel`
+        (the web-mode fallback that writes a PENDING row when no in-memory
+        queue is available) sit in the DB forever — only `requeue_startup_tasks`
+        picks them up, and that runs only at worker startup.
+        """
+        if self._pull_task is not None and not self._pull_task.done():
+            return
+        self._pull_stop.clear()
+        self._pull_task = asyncio.create_task(
+            self._db_pull_loop(interval or self.DB_PULL_INTERVAL_SEC),
+            name="collection-queue-db-pull",
+        )
+
+    async def stop_db_pull(self, timeout: float = 5.0) -> None:
+        if self._pull_task is None:
+            return
+        self._pull_stop.set()
+        try:
+            await asyncio.wait_for(self._pull_task, timeout=timeout)
+        except asyncio.TimeoutError:
+            self._pull_task.cancel()
+            try:
+                await self._pull_task
+            except (asyncio.CancelledError, Exception):
+                pass
+        self._pull_task = None
+
+    async def _db_pull_loop(self, interval: float) -> None:
+        while not self._pull_stop.is_set():
+            try:
+                await self._ingest_pending_tasks()
+            except Exception:
+                logger.exception("[collection-queue] DB pull failed")
+            try:
+                await asyncio.wait_for(self._pull_stop.wait(), timeout=interval)
+            except asyncio.TimeoutError:
+                continue
+
     async def shutdown(self) -> None:
+        await self.stop_db_pull()
         if self._worker and not self._worker.done():
             self._worker.cancel()
             try:
