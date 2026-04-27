@@ -602,7 +602,15 @@ class TelegramCommandDispatcher:
             output_dir = Path(__file__).resolve().parents[2] / "data" / "downloads"
             output_dir.mkdir(parents=True, exist_ok=True)
             output_dir_resolved = output_dir.resolve()
-            path = await client.download_media(msg, file=str(output_dir_resolved))
+            try:
+                path = await run_with_flood_wait(
+                    client.download_media(msg, file=str(output_dir_resolved)),
+                    operation="dispatcher_dialogs_download_media",
+                    phone=phone,
+                    pool=self._pool,
+                )
+            except HandledFloodWaitError as exc:
+                raise RuntimeError(f"flood_wait:{exc.info.wait_seconds}") from exc
             if not path:
                 raise RuntimeError("no_media")
             resolved = Path(path).resolve()

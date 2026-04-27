@@ -406,7 +406,16 @@ def run_with_dependencies(
                     if message is None:
                         print(f"Message #{args.message_id} not found.")
                         return
-                    path = await client.download_media(message, file=args.output_dir)
+                    try:
+                        path = await run_with_flood_wait(
+                            client.download_media(message, file=args.output_dir),
+                            operation="cli_dialogs_download_media",
+                            phone=phone,
+                            pool=pool,
+                        )
+                    except HandledFloodWaitError as exc:
+                        print(f"Flood wait: {exc.info.detail}")
+                        return
                     if path:
                         print(f"Downloaded: {path}")
                     else:
