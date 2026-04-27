@@ -16,6 +16,7 @@ from src.services.photo_task_service import PhotoTarget, PhotoTaskService
 from src.telegram.auth import TelegramAuth
 from src.telegram.client_pool import ClientPool
 from src.telegram.collector import Collector
+from src.telegram.flood_wait import run_with_flood_wait
 from src.telegram.notifier import Notifier
 
 logger = logging.getLogger(__name__)
@@ -578,9 +579,21 @@ class TelegramCommandDispatcher:
         try:
             entity = await client.get_entity(payload["chat_id"])
             msg = None
-            async for item in client.iter_messages(entity, ids=int(payload["message_id"])):
-                msg = item
-                break
+
+            async def _lookup_message() -> None:
+                nonlocal msg
+                async for item in client.iter_messages(
+                    entity, ids=int(payload["message_id"])
+                ):
+                    msg = item
+                    break
+
+            await run_with_flood_wait(
+                _lookup_message(),
+                operation="dispatcher_dialogs_download_media_lookup",
+                phone=phone,
+                pool=self._pool,
+            )
             if msg is None:
                 raise RuntimeError("message_not_found")
             output_dir = Path(__file__).resolve().parents[2] / "data" / "downloads"
