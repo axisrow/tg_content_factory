@@ -1,44 +1,23 @@
 """Tests for src/cli/commands/translate.py — CLI translate subcommands."""
 from __future__ import annotations
 
-import argparse
-import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from src.cli.commands.translate import run
-
-
-def _fake_asyncio_run(coro):
-    loop = asyncio.new_event_loop()
-    try:
-        return loop.run_until_complete(coro)
-    finally:
-        loop.close()
+from tests.helpers import cli_ns, fake_asyncio_run, make_cli_config, make_cli_db
 
 
 def _args(**overrides):
     defaults = {"config": "config.yaml"}
     defaults.update(overrides)
-    return argparse.Namespace(**defaults)
+    return cli_ns(**defaults)
 
 
-def _make_db(**overrides):
-    db = MagicMock()
-    db.close = AsyncMock()
-    db.get_setting = AsyncMock(return_value=None)
-    for k, v in overrides.items():
-        setattr(db, k, v)
-    return db
-
-
-def _make_config():
-    return MagicMock()
-
-
-def _patches(db, config=_make_config()):
+def _patches(db, config=None):
+    config = config or make_cli_config()
     return (
         patch("src.cli.commands.translate.runtime.init_db", AsyncMock(return_value=(config, db))),
-        patch("asyncio.run", _fake_asyncio_run),
+        patch("asyncio.run", fake_asyncio_run),
     )
 
 
@@ -48,7 +27,7 @@ def _patches(db, config=_make_config()):
 
 
 def test_stats_empty(capsys):
-    db = _make_db()
+    db = make_cli_db()
     db.repos.messages.get_language_stats = AsyncMock(return_value=[])
     with _patches(db)[0], _patches(db)[1]:
         run(_args(translate_action="stats"))
@@ -56,7 +35,7 @@ def test_stats_empty(capsys):
 
 
 def test_stats_with_data(capsys):
-    db = _make_db()
+    db = make_cli_db()
     db.repos.messages.get_language_stats = AsyncMock(return_value=[("ru", 100), ("en", 50)])
     with _patches(db)[0], _patches(db)[1]:
         run(_args(translate_action="stats"))
@@ -72,7 +51,7 @@ def test_stats_with_data(capsys):
 
 
 def test_detect_single_batch(capsys):
-    db = _make_db()
+    db = make_cli_db()
     db.repos.messages.backfill_language_detection = AsyncMock(return_value=50)
     with _patches(db)[0], _patches(db)[1]:
         run(_args(translate_action="detect", batch_size=5000))
@@ -82,7 +61,7 @@ def test_detect_single_batch(capsys):
 
 
 def test_detect_multiple_batches(capsys):
-    db = _make_db()
+    db = make_cli_db()
     db.repos.messages.backfill_language_detection = AsyncMock(side_effect=[5000, 5000, 100])
     with _patches(db)[0], _patches(db)[1]:
         run(_args(translate_action="detect", batch_size=5000))
@@ -96,7 +75,7 @@ def test_detect_multiple_batches(capsys):
 
 
 def test_run_no_messages(capsys):
-    db = _make_db()
+    db = make_cli_db()
     db.repos.messages.get_untranslated_messages = AsyncMock(return_value=[])
     mock_ps = MagicMock()
     mock_ps.load_db_providers = AsyncMock(return_value=0)
@@ -110,7 +89,7 @@ def test_run_no_messages(capsys):
 
 
 def test_run_with_messages(capsys):
-    db = _make_db()
+    db = make_cli_db()
     msgs = [MagicMock()]
     db.repos.messages.get_untranslated_messages = AsyncMock(return_value=msgs)
     db.repos.messages.update_translation = AsyncMock()
@@ -133,7 +112,7 @@ def test_run_with_messages(capsys):
 
 
 def test_message_not_found(capsys):
-    db = _make_db()
+    db = make_cli_db()
     db.repos.messages.get_by_id = AsyncMock(return_value=None)
     with _patches(db)[0], _patches(db)[1]:
         run(_args(translate_action="message", message_id=999, target="en"))
@@ -141,7 +120,7 @@ def test_message_not_found(capsys):
 
 
 def test_message_no_text(capsys):
-    db = _make_db()
+    db = make_cli_db()
     msg = MagicMock(text="   ")
     db.repos.messages.get_by_id = AsyncMock(return_value=msg)
     with _patches(db)[0], _patches(db)[1]:
@@ -150,7 +129,7 @@ def test_message_no_text(capsys):
 
 
 def test_message_with_text(capsys):
-    db = _make_db()
+    db = make_cli_db()
     msg = MagicMock(text="Привет мир")
     db.repos.messages.get_by_id = AsyncMock(return_value=msg)
     db.repos.messages.update_translation = AsyncMock()
@@ -168,7 +147,7 @@ def test_message_with_text(capsys):
 
 
 def test_message_translation_failed(capsys):
-    db = _make_db()
+    db = make_cli_db()
     msg = MagicMock(text="Привет")
     db.repos.messages.get_by_id = AsyncMock(return_value=msg)
     mock_ps = MagicMock()

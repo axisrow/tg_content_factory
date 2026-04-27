@@ -9,51 +9,45 @@ import pytest
 from src.models import SearchResult
 
 
-@pytest.fixture
-async def client(route_client):
-    """Use shared route_client fixture."""
-    return route_client
-
-
 @pytest.mark.asyncio
-async def test_root_redirects_to_search_when_no_agent(client):
+async def test_root_redirects_to_search_when_no_agent(route_client):
     """Test root redirects to /search when agent unavailable."""
-    resp = await client.get("/", follow_redirects=False)
+    resp = await route_client.get("/", follow_redirects=False)
     assert resp.status_code == 303
     assert "/search" in resp.headers.get("location", "")
 
 
 @pytest.mark.asyncio
-async def test_root_redirects_to_agent_when_available(client):
+async def test_root_redirects_to_agent_when_available(route_client):
     """Test root redirects to /agent when agent manager available."""
     from src.agent.manager import AgentManager
 
     agent_manager_mock = MagicMock(spec=AgentManager)
     agent_manager_mock.available = True
 
-    client._transport_app.state.agent_manager = agent_manager_mock
+    route_client._transport_app.state.agent_manager = agent_manager_mock
 
-    resp = await client.get("/", follow_redirects=False)
+    resp = await route_client.get("/", follow_redirects=False)
     assert resp.status_code == 303
     assert "/agent" in resp.headers.get("location", "")
 
 
 @pytest.mark.asyncio
-async def test_search_page_renders(client):
+async def test_search_page_renders(route_client):
     """Test search page renders with account."""
-    resp = await client.get("/search")
+    resp = await route_client.get("/search")
     assert resp.status_code == 200
 
 
 @pytest.mark.asyncio
-async def test_search_page_with_message(client):
+async def test_search_page_with_message(route_client):
     """Test search page with message param."""
-    resp = await client.get("/search?msg=test_message")
+    resp = await route_client.get("/search?msg=test_message")
     assert resp.status_code == 200
 
 
 @pytest.mark.asyncio
-async def test_search_with_query(client, monkeypatch):
+async def test_search_with_query(route_client, monkeypatch):
     """Test search with query executes search."""
     mock_result = SearchResult(messages=[], total=0, query="test")
     mock_svc = MagicMock()
@@ -64,13 +58,13 @@ async def test_search_with_query(client, monkeypatch):
         lambda r: mock_svc,
     )
 
-    resp = await client.get("/search?q=test")
+    resp = await route_client.get("/search?q=test")
     assert resp.status_code == 200
     mock_svc.search.assert_called_once()
 
 
 @pytest.mark.asyncio
-async def test_search_invalid_channel_id(client, monkeypatch):
+async def test_search_invalid_channel_id(route_client, monkeypatch):
     """Test search with invalid channel_id shows error."""
     mock_svc = MagicMock()
     mock_svc.search = AsyncMock(
@@ -82,13 +76,13 @@ async def test_search_invalid_channel_id(client, monkeypatch):
         lambda r: mock_svc,
     )
 
-    resp = await client.get("/search?q=test&channel_id=bad")
+    resp = await route_client.get("/search?q=test&channel_id=bad")
     assert resp.status_code == 200
     assert "Некорректный ID" in resp.text or "invalid" in resp.text.lower()
 
 
 @pytest.mark.asyncio
-async def test_search_pagination(client, monkeypatch):
+async def test_search_pagination(route_client, monkeypatch):
     """Test search with pagination parameter."""
     mock_result = SearchResult(messages=[], total=0, query="")
     mock_svc = MagicMock()
@@ -99,12 +93,12 @@ async def test_search_pagination(client, monkeypatch):
         lambda r: mock_svc,
     )
 
-    resp = await client.get("/search?q=test&page=2")
+    resp = await route_client.get("/search?q=test&page=2")
     assert resp.status_code == 200
 
 
 @pytest.mark.asyncio
-async def test_search_fts_mode(client, monkeypatch):
+async def test_search_fts_mode(route_client, monkeypatch):
     """Test search with FTS mode."""
     mock_result = SearchResult(messages=[], total=0, query="")
     mock_svc = MagicMock()
@@ -115,12 +109,12 @@ async def test_search_fts_mode(client, monkeypatch):
         lambda r: mock_svc,
     )
 
-    resp = await client.get("/search?q=test&is_fts=true")
+    resp = await route_client.get("/search?q=test&is_fts=true")
     assert resp.status_code == 200
 
 
 @pytest.mark.asyncio
-async def test_search_hybrid_mode(client, monkeypatch):
+async def test_search_hybrid_mode(route_client, monkeypatch):
     """Test search with hybrid mode."""
     mock_result = SearchResult(messages=[], total=0, query="")
     mock_svc = MagicMock()
@@ -131,12 +125,12 @@ async def test_search_hybrid_mode(client, monkeypatch):
         lambda r: mock_svc,
     )
 
-    resp = await client.get("/search?q=test&mode=hybrid")
+    resp = await route_client.get("/search?q=test&mode=hybrid")
     assert resp.status_code == 200
 
 
 @pytest.mark.asyncio
-async def test_search_error_rendered(client, monkeypatch):
+async def test_search_error_rendered(route_client, monkeypatch):
     """Test search error is rendered in page."""
     mock_svc = MagicMock()
     mock_svc.search = AsyncMock(side_effect=Exception("Search failed"))
@@ -146,13 +140,13 @@ async def test_search_error_rendered(client, monkeypatch):
         lambda r: mock_svc,
     )
 
-    resp = await client.get("/search?q=test")
+    resp = await route_client.get("/search?q=test")
     assert resp.status_code == 200
     assert "ошибка" in resp.text.lower() or "error" in resp.text.lower()
 
 
 @pytest.mark.asyncio
-async def test_search_date_filters(client, monkeypatch):
+async def test_search_date_filters(route_client, monkeypatch):
     """Test search with date filters."""
     mock_result = SearchResult(messages=[], total=0, query="")
     mock_svc = MagicMock()
@@ -163,14 +157,14 @@ async def test_search_date_filters(client, monkeypatch):
         lambda r: mock_svc,
     )
 
-    resp = await client.get(
+    resp = await route_client.get(
         "/search?q=test&date_from=2024-01-01&date_to=2024-12-31"
     )
     assert resp.status_code == 200
 
 
 @pytest.mark.asyncio
-async def test_search_length_filter(client, monkeypatch):
+async def test_search_length_filter(route_client, monkeypatch):
     """Test search with length filter syntax."""
     mock_result = SearchResult(messages=[], total=0, query="test")
     mock_svc = MagicMock()
@@ -181,7 +175,7 @@ async def test_search_length_filter(client, monkeypatch):
         lambda r: mock_svc,
     )
 
-    resp = await client.get("/search?q=test%20len%3C500&mode=local")
+    resp = await route_client.get("/search?q=test%20len%3C500&mode=local")
     assert resp.status_code == 200
 
 
@@ -189,7 +183,7 @@ async def test_search_length_filter(client, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_browse_mode_with_channel_id(client, monkeypatch, base_app):
+async def test_browse_mode_with_channel_id(route_client, monkeypatch, base_app):
     """Browse mode: channel_id without query shows latest messages from that channel."""
     app, db, pool = base_app
     # Add a channel to the DB
@@ -206,7 +200,7 @@ async def test_browse_mode_with_channel_id(client, monkeypatch, base_app):
         lambda r: mock_svc,
     )
 
-    resp = await client.get("/search?channel_id=200&mode=local")
+    resp = await route_client.get("/search?channel_id=200&mode=local")
     assert resp.status_code == 200
     # Should call search with mode="local" (browse forces local mode)
     mock_svc.search.assert_called_once()
@@ -215,7 +209,7 @@ async def test_browse_mode_with_channel_id(client, monkeypatch, base_app):
 
 
 @pytest.mark.asyncio
-async def test_browse_mode_no_channel_id(client, monkeypatch):
+async def test_browse_mode_no_channel_id(route_client, monkeypatch):
     """Browse mode without channel_id just shows empty search page."""
     mock_result = SearchResult(messages=[], total=0, query="")
     mock_svc = MagicMock()
@@ -226,14 +220,14 @@ async def test_browse_mode_no_channel_id(client, monkeypatch):
         lambda r: mock_svc,
     )
 
-    resp = await client.get("/search?mode=local")
+    resp = await route_client.get("/search?mode=local")
     assert resp.status_code == 200
     # No search should be called (no query, no channel_id)
     mock_svc.search.assert_not_called()
 
 
 @pytest.mark.asyncio
-async def test_browse_mode_with_query(client, monkeypatch, base_app):
+async def test_browse_mode_with_query(route_client, monkeypatch, base_app):
     """Browse mode is NOT active when query is present - normal search instead."""
     mock_result = SearchResult(messages=[], total=0, query="test")
     mock_svc = MagicMock()
@@ -244,14 +238,14 @@ async def test_browse_mode_with_query(client, monkeypatch, base_app):
         lambda r: mock_svc,
     )
 
-    resp = await client.get("/search?q=test&channel_id=200&mode=local")
+    resp = await route_client.get("/search?q=test&channel_id=200&mode=local")
     assert resp.status_code == 200
     # Should call search normally (not browse mode)
     mock_svc.search.assert_called_once()
 
 
 @pytest.mark.asyncio
-async def test_browse_mode_error_handling(client, monkeypatch, base_app):
+async def test_browse_mode_error_handling(route_client, monkeypatch, base_app):
     """Browse mode error is handled gracefully."""
     app, db, pool = base_app
     from src.models import Channel
@@ -266,7 +260,7 @@ async def test_browse_mode_error_handling(client, monkeypatch, base_app):
         lambda r: mock_svc,
     )
 
-    resp = await client.get("/search?channel_id=300&mode=local")
+    resp = await route_client.get("/search?channel_id=300&mode=local")
     assert resp.status_code == 200
     # Error should be rendered on page
     assert "error" in resp.text.lower() or "ошибка" in resp.text.lower()
@@ -354,7 +348,7 @@ async def test_search_redirects_when_no_accounts(base_app):
 
 
 @pytest.mark.asyncio
-async def test_search_quota_failure(client, monkeypatch):
+async def test_search_quota_failure(route_client, monkeypatch):
     """Test search page handles check_quota failure gracefully."""
     mock_result = SearchResult(messages=[], total=0, query="")
     mock_svc = MagicMock()
@@ -365,7 +359,7 @@ async def test_search_quota_failure(client, monkeypatch):
         lambda r: mock_svc,
     )
 
-    resp = await client.get("/search?q=test")
+    resp = await route_client.get("/search?q=test")
     assert resp.status_code == 200
 
 
@@ -395,9 +389,9 @@ async def _insert_message_get_id(db, channel_id, message_id, text, date=None):
 
 
 @pytest.mark.asyncio
-async def test_translate_message_not_found(client, base_app):
+async def test_translate_message_not_found(route_client, base_app):
     """Test translate endpoint with non-existent message."""
-    resp = await client.post(
+    resp = await route_client.post(
         "/search/translate/99999",
         json={"target_lang": "en"},
         headers={"Content-Type": "application/json"},
@@ -409,13 +403,13 @@ async def test_translate_message_not_found(client, base_app):
 
 
 @pytest.mark.asyncio
-async def test_translate_message_no_text(client, base_app):
+async def test_translate_message_no_text(route_client, base_app):
     """Test translate endpoint with message that has no text."""
     app, db, _ = base_app
 
     msg_id = await _insert_message_get_id(db, 999, 1, None)
 
-    resp = await client.post(
+    resp = await route_client.post(
         f"/search/translate/{msg_id}",
         json={"target_lang": "en"},
         headers={"Content-Type": "application/json"},
@@ -426,7 +420,7 @@ async def test_translate_message_no_text(client, base_app):
 
 
 @pytest.mark.asyncio
-async def test_translate_message_cached(client, base_app):
+async def test_translate_message_cached(route_client, base_app):
     """Test translate endpoint returns cached translation."""
     app, db, _ = base_app
 
@@ -435,7 +429,7 @@ async def test_translate_message_cached(client, base_app):
     await db.repos.messages.update_translation(msg_id, "en", "Hello world")
     await db.repos.messages.update_detected_lang(msg_id, "ru")
 
-    resp = await client.post(
+    resp = await route_client.post(
         f"/search/translate/{msg_id}",
         json={"target_lang": "en"},
         headers={"Content-Type": "application/json"},
@@ -448,14 +442,14 @@ async def test_translate_message_cached(client, base_app):
 
 
 @pytest.mark.asyncio
-async def test_translate_message_same_language(client, base_app):
+async def test_translate_message_same_language(route_client, base_app):
     """Test translate endpoint when detected lang matches target."""
     app, db, _ = base_app
 
     msg_id = await _insert_message_get_id(db, 997, 1, "Hello world")
     await db.repos.messages.update_detected_lang(msg_id, "en")
 
-    resp = await client.post(
+    resp = await route_client.post(
         f"/search/translate/{msg_id}",
         json={"target_lang": "en"},
         headers={"Content-Type": "application/json"},
@@ -467,7 +461,7 @@ async def test_translate_message_same_language(client, base_app):
 
 
 @pytest.mark.asyncio
-async def test_translate_message_service_not_configured(client, base_app, monkeypatch):
+async def test_translate_message_service_not_configured(route_client, base_app, monkeypatch):
     """Test translate endpoint when translation service is not available."""
     app, db, _ = base_app
 
@@ -476,7 +470,7 @@ async def test_translate_message_service_not_configured(client, base_app, monkey
     # Ensure no container with translation_service
     app.state.container = None
 
-    resp = await client.post(
+    resp = await route_client.post(
         f"/search/translate/{msg_id}",
         json={"target_lang": "en"},
         headers={"Content-Type": "application/json"},
@@ -487,7 +481,7 @@ async def test_translate_message_service_not_configured(client, base_app, monkey
 
 
 @pytest.mark.asyncio
-async def test_translate_message_with_service(client, base_app, monkeypatch):
+async def test_translate_message_with_service(route_client, base_app, monkeypatch):
     """Test translate endpoint with a working translation service."""
     app, db, _ = base_app
 
@@ -504,7 +498,7 @@ async def test_translate_message_with_service(client, base_app, monkeypatch):
     mock_container.db = db
     app.state.container = mock_container
 
-    resp = await client.post(
+    resp = await route_client.post(
         f"/search/translate/{msg_id}",
         json={"target_lang": "en"},
         headers={"Content-Type": "application/json"},
@@ -520,7 +514,7 @@ async def test_translate_message_with_service(client, base_app, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_translate_message_non_en_target(client, base_app):
+async def test_translate_message_non_en_target(route_client, base_app):
     """Test translate endpoint with non-en target language and cached translation."""
     app, db, _ = base_app
 
@@ -528,7 +522,7 @@ async def test_translate_message_non_en_target(client, base_app):
     await db.repos.messages.update_translation(msg_id, "custom", "Bonjour monde")
     await db.repos.messages.update_detected_lang(msg_id, "en")
 
-    resp = await client.post(
+    resp = await route_client.post(
         f"/search/translate/{msg_id}",
         json={"target_lang": "fr"},
         headers={"Content-Type": "application/json"},

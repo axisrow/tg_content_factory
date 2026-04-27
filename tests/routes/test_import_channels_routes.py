@@ -73,82 +73,41 @@ async def test_import_page_shows_form(client):
     assert "import" in resp.text.lower() or "загруз" in resp.text.lower()
 
 
+@pytest.mark.parametrize(
+    "text_input",
+    [
+        "@testchannel",
+        "@channel1\n@channel2\n@channel3",
+        "@channel1, @channel2, @channel3",
+        "@channel1; @channel2",
+        "",
+        "   \n\n   ",
+        "-1001234567890",
+        "https://t.me/testchannel",
+        "@тестовый",
+        "testchannel",
+        "\n".join([f"@channel{i}" for i in range(50)]),
+    ],
+    ids=[
+        "single",
+        "multiline",
+        "comma",
+        "semicolon",
+        "empty",
+        "whitespace",
+        "channel-id",
+        "tme-link",
+        "unicode",
+        "without-at",
+        "large-list",
+    ],
+)
 @pytest.mark.asyncio
-async def test_import_text_single_channel(client):
-    """Test importing single channel via text."""
+async def test_import_text_variants(client, text_input):
+    """Test supported text import variants."""
     resp = await client.post(
         "/channels/import",
-        data={"text_input": "@testchannel"},
-    )
-    assert resp.status_code == 200
-
-
-@pytest.mark.asyncio
-async def test_import_text_multiple_channels(client):
-    """Test importing multiple channels via text."""
-    resp = await client.post(
-        "/channels/import",
-        data={"text_input": "@channel1\n@channel2\n@channel3"},
-    )
-    assert resp.status_code == 200
-
-
-@pytest.mark.asyncio
-async def test_import_text_comma_separated(client):
-    """Test importing comma-separated channels."""
-    resp = await client.post(
-        "/channels/import",
-        data={"text_input": "@channel1, @channel2, @channel3"},
-    )
-    assert resp.status_code == 200
-
-
-@pytest.mark.asyncio
-async def test_import_text_semicolon_separated(client):
-    """Test importing semicolon-separated channels."""
-    resp = await client.post(
-        "/channels/import",
-        data={"text_input": "@channel1; @channel2"},
-    )
-    assert resp.status_code == 200
-
-
-@pytest.mark.asyncio
-async def test_import_text_empty(client):
-    """Test importing empty text."""
-    resp = await client.post(
-        "/channels/import",
-        data={"text_input": ""},
-    )
-    assert resp.status_code == 200
-
-
-@pytest.mark.asyncio
-async def test_import_text_whitespace_only(client):
-    """Test importing whitespace only."""
-    resp = await client.post(
-        "/channels/import",
-        data={"text_input": "   \n\n   "},
-    )
-    assert resp.status_code == 200
-
-
-@pytest.mark.asyncio
-async def test_import_text_channel_id(client):
-    """Test importing by channel ID."""
-    resp = await client.post(
-        "/channels/import",
-        data={"text_input": "-1001234567890"},
-    )
-    assert resp.status_code == 200
-
-
-@pytest.mark.asyncio
-async def test_import_text_tme_link(client):
-    """Test importing t.me link."""
-    resp = await client.post(
-        "/channels/import",
-        data={"text_input": "https://t.me/testchannel"},
+        data={"text_input": text_input},
     )
     assert resp.status_code == 200
 
@@ -327,29 +286,6 @@ async def test_import_results_total_count(client):
 
 
 @pytest.mark.asyncio
-async def test_import_unicode_channel_name(client):
-    """Test import handles unicode in channel names."""
-    resp = await client.post(
-        "/channels/import",
-        data={"text_input": "@тестовый"},
-    )
-    assert resp.status_code == 200
-
-
-@pytest.mark.asyncio
-async def test_import_large_list(client):
-    """Test import handles large list."""
-    # Create list of 50 channels
-    channels = "\n".join([f"@channel{i}" for i in range(50)])
-
-    resp = await client.post(
-        "/channels/import",
-        data={"text_input": channels},
-    )
-    assert resp.status_code == 200
-
-
-@pytest.mark.asyncio
 async def test_import_file_csv(client):
     """Test importing from CSV file."""
     content = b"channel\n@channel1\n@channel2"
@@ -358,16 +294,6 @@ async def test_import_file_csv(client):
     resp = await client.post(
         "/channels/import",
         files={"file": file},
-    )
-    assert resp.status_code == 200
-
-
-@pytest.mark.asyncio
-async def test_import_channel_without_at(client):
-    """Test import channel without @ prefix."""
-    resp = await client.post(
-        "/channels/import",
-        data={"text_input": "testchannel"},
     )
     assert resp.status_code == 200
 
