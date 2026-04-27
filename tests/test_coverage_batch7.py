@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
 from src.collection_queue import CollectionQueue
@@ -59,7 +60,7 @@ def _make_pipeline_db(tmp_path, db_name="pipeline7.db"):
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture
+@pytest_asyncio.fixture(loop_scope="function")
 async def base_app(tmp_path):
     """Minimal app fixture for web route tests."""
     config = AppConfig()
@@ -120,7 +121,7 @@ async def base_app(tmp_path):
     await db.close()
 
 
-@pytest.fixture
+@pytest_asyncio.fixture(loop_scope="function")
 async def route_client(base_app):
     """AsyncClient with Basic auth for web route tests."""
     app, db, pool_mock = base_app

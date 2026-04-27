@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
 from src.agent.manager import AgentManager
@@ -25,7 +26,7 @@ from src.web.bootstrap import build_container_with_templates
 from src.web.log_handler import LogBuffer
 
 
-@pytest.fixture
+@pytest_asyncio.fixture(loop_scope="function")
 async def base_app(tmp_path):
     """Create configured app + db with account and channel."""
     config = AppConfig()
@@ -98,7 +99,7 @@ async def base_app(tmp_path):
     await db.close()
 
 
-@pytest.fixture
+@pytest_asyncio.fixture(loop_scope="function")
 async def route_client(base_app):
     """AsyncClient with Basic auth."""
     app, db, pool_mock = base_app
