@@ -13,6 +13,7 @@ from telethon_cli.errors import CLIError
 
 from src.models import Account
 from src.telegram.auth import TelegramAuth
+from src.telegram.flood_wait import HandledFloodWaitError, handle_flood_wait
 from src.telegram.session_materializer import SessionMaterializer
 
 logger = logging.getLogger(__name__)
@@ -29,38 +30,133 @@ class UnsupportedBackendOperationError(RuntimeError):
 class TelegramTransportSession:
     """Thin operation adapter that keeps raw Telethon calls inside backend code."""
 
-    def __init__(self, client: Any, *, disconnect_on_close: bool = True):
+    def __init__(
+        self,
+        client: Any,
+        *,
+        disconnect_on_close: bool = True,
+        phone: str | None = None,
+        pool: Any | None = None,
+        logger_: logging.Logger | None = None,
+        report_flood_wait: bool = True,
+    ):
         self._client = client
         self._disconnect_on_close = disconnect_on_close
+        self._phone = phone
+        self._pool = pool
+        self._logger = logger_ or logger
+        self._report_flood_wait = report_flood_wait
 
     @property
     def raw_client(self) -> Any:
         return self._client
+
+    def with_flood_context(
+        self,
+        *,
+        phone: str | None = None,
+        pool: Any | None = None,
+        logger_: logging.Logger | None = None,
+        report_flood_wait: bool = True,
+    ) -> TelegramTransportSession:
+        self._phone = phone
+        self._pool = pool
+        self._report_flood_wait = report_flood_wait
+        if logger_ is not None:
+            self._logger = logger_
+        return self
+
+    async def _run(self, operation: str, awaitable: Any) -> Any:
+        try:
+            return await awaitable
+        except HandledFloodWaitError:
+            raise
+        except Exception as exc:
+            from telethon.errors import FloodWaitError
+
+            if not isinstance(exc, FloodWaitError):
+                raise
+            if self._phone is None:
+                raise
+            info = await handle_flood_wait(
+                exc,
+                operation=operation,
+                phone=self._phone,
+                pool=self._pool if self._report_flood_wait else None,
+                logger_=self._logger,
+            )
+            raise HandledFloodWaitError(info) from exc
+
+    async def _stream(self, operation: str, iterator: AsyncIterator[Any]) -> AsyncIterator[Any]:
+        try:
+            async for item in iterator:
+                yield item
+        except HandledFloodWaitError:
+            raise
+        except Exception as exc:
+            from telethon.errors import FloodWaitError
+
+            if not isinstance(exc, FloodWaitError):
+                raise
+            if self._phone is None:
+                raise
+            info = await handle_flood_wait(
+                exc,
+                operation=operation,
+                phone=self._phone,
+                pool=self._pool if self._report_flood_wait else None,
+                logger_=self._logger,
+            )
+            raise HandledFloodWaitError(info) from exc
 
     async def close(self) -> None:
         if self._disconnect_on_close:
             await self._client.disconnect()
 
     async def fetch_me(self) -> Any:
-        return await self._client.get_me()
+        return await self._run("telegram_fetch_me", self._client.get_me())
 
     async def fetch_profile_photo(self, entity: Any, *, file: Any) -> Any:
-        return await self._client.download_profile_photo(entity, file=file)
+        return await self._run(
+            "telegram_fetch_profile_photo",
+            self._client.download_profile_photo(entity, file=file),
+        )
 
     async def resolve_entity(self, peer: Any) -> Any:
-        return await self._client.get_entity(peer)
+        return await self._run("telegram_resolve_entity", self._client.get_entity(peer))
+
+    async def get_entity(self, peer: Any) -> Any:
+        return await self.resolve_entity(peer)
 
     async def resolve_input_entity(self, peer: Any) -> Any:
-        return await self._client.get_input_entity(peer)
+        return await self._run(
+            "telegram_resolve_input_entity",
+            self._client.get_input_entity(peer),
+        )
+
+    async def get_input_entity(self, peer: Any) -> Any:
+        return await self.resolve_input_entity(peer)
 
     async def warm_dialog_cache(self) -> Any:
-        return await self._client.get_dialogs()
+        return await self._run("telegram_warm_dialog_cache", self._client.get_dialogs())
+
+    async def get_dialogs(self) -> Any:
+        return await self.warm_dialog_cache()
 
     def stream_dialogs(self) -> AsyncIterator[Any]:
-        return self._client.iter_dialogs()
+        return self._stream("telegram_stream_dialogs", self._client.iter_dialogs())
+
+    def iter_dialogs(self) -> AsyncIterator[Any]:
+        return self.stream_dialogs()
 
     def stream_messages(self, entity: Any, **kwargs: Any) -> AsyncIterator[Any]:
-        return self._client.iter_messages(entity, **kwargs)
+        return self._stream(
+            "telegram_stream_messages",
+            self._client.iter_messages(entity, **kwargs),
+        )
+
+    def iter_messages(self, entity: Any, **kwargs: Any) -> AsyncIterator[Any]:
+        return self.stream_messages(entity, **kwargs)
 
     async def publish_files(
         self,
@@ -70,25 +166,46 @@ class TelegramTransportSession:
         caption: str | None = None,
         schedule: Any = None,
     ) -> Any:
-        return await self._client.send_file(entity, files, caption=caption, schedule=schedule)
+        return await self._run(
+            "telegram_publish_files",
+            self._client.send_file(entity, files, caption=caption, schedule=schedule),
+        )
 
     async def send_message(self, entity: Any, message: Any, **kwargs: Any) -> Any:
-        return await self._client.send_message(entity, message, **kwargs)
+        return await self._run(
+            "telegram_send_message",
+            self._client.send_message(entity, message, **kwargs),
+        )
 
     async def forward_messages(self, entity: Any, messages: Any, from_peer: Any) -> Any:
-        return await self._client.forward_messages(entity, messages, from_peer)
+        return await self._run(
+            "telegram_forward_messages",
+            self._client.forward_messages(entity, messages, from_peer),
+        )
 
     async def edit_message(self, entity: Any, message: int, text: str, **kwargs: Any) -> Any:
-        return await self._client.edit_message(entity, message, text, **kwargs)
+        return await self._run(
+            "telegram_edit_message",
+            self._client.edit_message(entity, message, text, **kwargs),
+        )
 
     async def pin_message(self, entity: Any, message: Any, *, notify: bool = False) -> Any:
-        return await self._client.pin_message(entity, message, notify=notify)
+        return await self._run(
+            "telegram_pin_message",
+            self._client.pin_message(entity, message, notify=notify),
+        )
 
     async def unpin_message(self, entity: Any, message: Any = None) -> Any:
-        return await self._client.unpin_message(entity, message)
+        return await self._run(
+            "telegram_unpin_message",
+            self._client.unpin_message(entity, message),
+        )
 
     async def delete_messages(self, entity: Any, message_ids: list[int]) -> Any:
-        return await self._client.delete_messages(entity, message_ids)
+        return await self._run(
+            "telegram_delete_messages",
+            self._client.delete_messages(entity, message_ids),
+        )
 
     async def send_reaction(self, entity: Any, message_id: int, emoji: str) -> Any:
         """Send a reaction to a message using the Telethon raw API."""
@@ -96,19 +213,25 @@ class TelegramTransportSession:
             from telethon.tl.functions.messages import SendReactionRequest
             from telethon.tl.types import ReactionEmoji
 
-            return await self._client(
-                SendReactionRequest(
-                    peer=entity,
-                    msg_id=message_id,
-                    reaction=[ReactionEmoji(emoticon=emoji)],
-                )
+            return await self._run(
+                "telegram_send_reaction",
+                self._client(
+                    SendReactionRequest(
+                        peer=entity,
+                        msg_id=message_id,
+                        reaction=[ReactionEmoji(emoticon=emoji)],
+                    )
+                ),
             )
         except ImportError:
             # Telethon not available (e.g. test env with stub backend)
             return None
 
     async def download_media(self, message: Any, *, file: Any = None) -> Any:
-        return await self._client.download_media(message, file=file)
+        return await self._run(
+            "telegram_download_media",
+            self._client.download_media(message, file=file),
+        )
 
     async def get_participants(self, entity: Any, *, limit: int | None = None, search: str = "") -> Any:
         kwargs: dict[str, Any] = {}
@@ -116,30 +239,54 @@ class TelegramTransportSession:
             kwargs["limit"] = limit
         if search:
             kwargs["search"] = search
-        return await self._client.get_participants(entity, **kwargs)
+        return await self._run(
+            "telegram_get_participants",
+            self._client.get_participants(entity, **kwargs),
+        )
 
     def stream_participants(self, entity: Any, **kwargs: Any) -> AsyncIterator[Any]:
-        return self._client.iter_participants(entity, **kwargs)
+        return self._stream(
+            "telegram_stream_participants",
+            self._client.iter_participants(entity, **kwargs),
+        )
+
+    def iter_participants(self, entity: Any, **kwargs: Any) -> AsyncIterator[Any]:
+        return self.stream_participants(entity, **kwargs)
 
     async def edit_admin(self, entity: Any, user: Any, **kwargs: Any) -> Any:
-        return await self._client.edit_admin(entity, user, **kwargs)
+        return await self._run(
+            "telegram_edit_admin",
+            self._client.edit_admin(entity, user, **kwargs),
+        )
 
     async def edit_permissions(self, entity: Any, user: Any, until_date: Any = None, **kwargs: Any) -> Any:
         if until_date is not None:
             kwargs["until_date"] = until_date
-        return await self._client.edit_permissions(entity, user, **kwargs)
+        return await self._run(
+            "telegram_edit_permissions",
+            self._client.edit_permissions(entity, user, **kwargs),
+        )
 
     async def kick_participant(self, entity: Any, user: Any) -> Any:
-        return await self._client.kick_participant(entity, user)
+        return await self._run(
+            "telegram_kick_participant",
+            self._client.kick_participant(entity, user),
+        )
 
     async def edit_folder(self, entity: Any, folder: int) -> Any:
-        return await self._client.edit_folder(entity, folder)
+        return await self._run(
+            "telegram_edit_folder",
+            self._client.edit_folder(entity, folder),
+        )
 
     async def send_read_acknowledge(self, entity: Any, *, max_id: int | None = None) -> Any:
         kwargs: dict[str, Any] = {}
         if max_id is not None:
             kwargs["max_id"] = max_id
-        return await self._client.send_read_acknowledge(entity, **kwargs)
+        return await self._run(
+            "telegram_send_read_acknowledge",
+            self._client.send_read_acknowledge(entity, **kwargs),
+        )
 
     # --- base ---
 
@@ -149,23 +296,29 @@ class TelegramTransportSession:
     # --- uploads ---
 
     async def upload_file(self, file: Any, **kwargs: Any) -> Any:
-        return await self._client.upload_file(file, **kwargs)
+        return await self._run("telegram_upload_file", self._client.upload_file(file, **kwargs))
 
     # --- downloads ---
 
     async def download_file(self, input_location: Any, file: Any = None, **kwargs: Any) -> Any:
-        return await self._client.download_file(input_location, file, **kwargs)
+        return await self._run(
+            "telegram_download_file",
+            self._client.download_file(input_location, file, **kwargs),
+        )
 
     def stream_download(self, file: Any, **kwargs: Any) -> AsyncIterator[Any]:
-        return self._client.iter_download(file, **kwargs)
+        return self._stream(
+            "telegram_stream_download",
+            self._client.iter_download(file, **kwargs),
+        )
 
     # --- dialogs ---
 
     def stream_drafts(self) -> AsyncIterator[Any]:
-        return self._client.iter_drafts()
+        return self._stream("telegram_stream_drafts", self._client.iter_drafts())
 
     async def get_drafts(self) -> Any:
-        return await self._client.get_drafts()
+        return await self._run("telegram_get_drafts", self._client.get_drafts())
 
     def conversation(self, entity: Any, **kwargs: Any) -> Any:
         return self._client.conversation(entity, **kwargs)
@@ -173,41 +326,62 @@ class TelegramTransportSession:
     # --- users ---
 
     async def is_bot(self) -> bool:
-        return await self._client.is_bot()
+        return await self._run("telegram_is_bot", self._client.is_bot())
 
     async def is_user_authorized(self) -> bool:
-        return await self._client.is_user_authorized()
+        return await self._run(
+            "telegram_is_user_authorized",
+            self._client.is_user_authorized(),
+        )
+
+    async def get_me(self) -> Any:
+        return await self.fetch_me()
 
     async def get_peer_id(self, peer: Any) -> int:
-        return await self._client.get_peer_id(peer)
+        return await self._run("telegram_get_peer_id", self._client.get_peer_id(peer))
 
     # --- chats ---
 
     def stream_admin_log(self, entity: Any, **kwargs: Any) -> AsyncIterator[Any]:
-        return self._client.iter_admin_log(entity, **kwargs)
+        return self._stream(
+            "telegram_stream_admin_log",
+            self._client.iter_admin_log(entity, **kwargs),
+        )
 
     async def get_admin_log(self, entity: Any, **kwargs: Any) -> Any:
-        return await self._client.get_admin_log(entity, **kwargs)
+        return await self._run(
+            "telegram_get_admin_log",
+            self._client.get_admin_log(entity, **kwargs),
+        )
 
     def stream_profile_photos(self, entity: Any, **kwargs: Any) -> AsyncIterator[Any]:
-        return self._client.iter_profile_photos(entity, **kwargs)
+        return self._stream(
+            "telegram_stream_profile_photos",
+            self._client.iter_profile_photos(entity, **kwargs),
+        )
 
     async def get_profile_photos(self, entity: Any, **kwargs: Any) -> Any:
-        return await self._client.get_profile_photos(entity, **kwargs)
+        return await self._run(
+            "telegram_get_profile_photos",
+            self._client.get_profile_photos(entity, **kwargs),
+        )
 
     def action(self, entity: Any, action: str, **kwargs: Any) -> Any:
         return self._client.action(entity, action, **kwargs)
 
     async def get_permissions(self, entity: Any, user: Any = None) -> Any:
-        return await self._client.get_permissions(entity, user)
+        return await self._run(
+            "telegram_get_permissions",
+            self._client.get_permissions(entity, user),
+        )
 
     # --- updates ---
 
     async def set_receive_updates(self, enabled: bool) -> None:
-        await self._client.set_receive_updates(enabled)
+        await self._run("telegram_set_receive_updates", self._client.set_receive_updates(enabled))
 
     async def run_until_disconnected(self) -> None:
-        await self._client.run_until_disconnected()
+        await self._run("telegram_run_until_disconnected", self._client.run_until_disconnected())
 
     def on(self, event: Any) -> Any:
         return self._client.on(event)
@@ -222,12 +396,15 @@ class TelegramTransportSession:
         return self._client.list_event_handlers()
 
     async def catch_up(self) -> None:
-        await self._client.catch_up()
+        await self._run("telegram_catch_up", self._client.catch_up())
 
     # --- bots ---
 
     async def inline_query(self, bot: Any, query: str, **kwargs: Any) -> Any:
-        return await self._client.inline_query(bot, query, **kwargs)
+        return await self._run(
+            "telegram_inline_query",
+            self._client.inline_query(bot, query, **kwargs),
+        )
 
     # --- buttons ---
 
@@ -240,15 +417,18 @@ class TelegramTransportSession:
         return self._client.takeout(**kwargs)
 
     async def end_takeout(self, success: bool) -> None:
-        await self._client.end_takeout(success)
+        await self._run("telegram_end_takeout", self._client.end_takeout(success))
 
     # --- existing ---
 
     async def remove_dialog(self, entity: Any) -> None:
-        await self._client.delete_dialog(entity)
+        await self._run("telegram_remove_dialog", self._client.delete_dialog(entity))
 
     async def invoke_request(self, request: Any) -> Any:
-        return await self._client(request)
+        return await self._run("telegram_invoke_request", self._client(request))
+
+    async def __call__(self, request: Any) -> Any:
+        return await self.invoke_request(request)
 
     async def lookup_search_posts_flood(self, query: str = "") -> Any:
         from telethon.tl.functions.channels import CheckSearchPostsFloodRequest

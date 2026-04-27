@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from telethon.errors import FloodWaitError
 
 from src.models import Account
 from src.telegram.backends import (
@@ -13,6 +14,7 @@ from src.telegram.backends import (
     TelegramTransportSession,
     TelethonCliBackend,
 )
+from src.telegram.flood_wait import HandledFloodWaitError
 from tests.helpers import AsyncIterMessages, FakeCliTelethonClient
 
 
@@ -79,6 +81,69 @@ async def test_download_media():
     result = await session.download_media(SimpleNamespace(id=1), file="/tmp/photo.jpg")
     assert result == "/tmp/photo.jpg"
     session.raw_client.download_media.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_transport_session_reports_flood_from_awaitable():
+    err = FloodWaitError(request=None, capture=0)
+    err.seconds = 5
+    pool = AsyncMock()
+    session = TelegramTransportSession(
+        FakeCliTelethonClient(entity_resolver=lambda _arg: err),
+        phone="+7000",
+        pool=pool,
+    )
+
+    with pytest.raises(HandledFloodWaitError) as exc_info:
+        await session.get_entity("@channel")
+
+    assert exc_info.value.info.wait_seconds == 5
+    pool.report_flood.assert_awaited_once_with("+7000", 5)
+
+
+@pytest.mark.asyncio
+async def test_transport_session_reports_flood_from_stream():
+    err = FloodWaitError(request=None, capture=0)
+    err.seconds = 7
+
+    class FloodingIterator:
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            raise err
+
+    pool = AsyncMock()
+    session = TelegramTransportSession(
+        FakeCliTelethonClient(iter_messages_factory=lambda *a, **kw: FloodingIterator()),
+        phone="+7001",
+        pool=pool,
+    )
+
+    with pytest.raises(HandledFloodWaitError) as exc_info:
+        async for _msg in session.iter_messages("entity"):
+            pass
+
+    assert exc_info.value.info.wait_seconds == 7
+    pool.report_flood.assert_awaited_once_with("+7001", 7)
+
+
+@pytest.mark.asyncio
+async def test_transport_session_reports_flood_from_raw_request():
+    err = FloodWaitError(request=None, capture=0)
+    err.seconds = 9
+    pool = AsyncMock()
+    session = TelegramTransportSession(
+        FakeCliTelethonClient(invoke_side_effect=err),
+        phone="+7002",
+        pool=pool,
+    )
+
+    with pytest.raises(HandledFloodWaitError) as exc_info:
+        await session(object())
+
+    assert exc_info.value.info.wait_seconds == 9
+    pool.report_flood.assert_awaited_once_with("+7002", 9)
 
 
 # --- Batch 3: Participants (#188, #189) ---

@@ -3,9 +3,12 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from telethon.errors import FloodWaitError
 from telethon_cli.errors import CLIError
 
 from src.services.notification_target_service import NotificationTargetService
+from src.telegram.backends import TelegramTransportSession
+from src.telegram.flood_wait import HandledFloodWaitError
 from tests.helpers import FakeCliTelethonClient
 
 
@@ -91,6 +94,39 @@ async def test_shared_lease_keeps_phone_busy_until_last_release(
 
 @pytest.mark.asyncio
 @pytest.mark.native_backend_allowed
+async def test_native_client_by_phone_returns_flood_aware_session(
+    real_pool_harness_factory,
+):
+    err = FloodWaitError(request=None, capture=0)
+    err.seconds = 11
+    harness = real_pool_harness_factory()
+    harness.queue_cli_client(phone="+70000000001", client=FakeCliTelethonClient())
+    harness.queue_native_client(
+        session_string="session-native",
+        client=FakeCliTelethonClient(entity_resolver=lambda _arg: err),
+    )
+    await harness.add_account(
+        "+70000000001",
+        session_string="session-native",
+        is_primary=True,
+    )
+    await harness.initialize_connected_accounts()
+
+    result = await harness.pool.get_native_client_by_phone("+70000000001")
+    assert result is not None
+    session, phone = result
+
+    assert phone == "+70000000001"
+    assert isinstance(session, TelegramTransportSession)
+    with pytest.raises(HandledFloodWaitError):
+        await session.get_entity("@flooded")
+
+    accounts = await harness.db.get_accounts()
+    assert accounts[0].flood_wait_until is not None
+
+
+@pytest.mark.asyncio
+@pytest.mark.native_backend_allowed
 async def test_auto_mode_falls_back_to_native_when_cli_acquire_fails(
     real_pool_harness_factory,
 ):
@@ -159,7 +195,11 @@ async def test_get_native_client_by_phone_uses_native_backend_and_disconnects(
 
     acquired = await harness.pool.get_native_client_by_phone("+70000000001")
 
-    assert acquired == (native_client, "+70000000001")
+    assert acquired is not None
+    session, phone = acquired
+    assert isinstance(session, TelegramTransportSession)
+    assert session.raw_client is native_client
+    assert phone == "+70000000001"
 
     await harness.pool.release_client("+70000000001")
     native_client.disconnect.assert_awaited_once()
@@ -187,7 +227,8 @@ async def test_notification_target_uses_real_pool_native_getter(
     service = NotificationTargetService(harness.db, harness.pool)
 
     async with service.use_client() as (acquired_client, phone):
-        assert acquired_client is native_client
+        assert isinstance(acquired_client, TelegramTransportSession)
+        assert acquired_client.raw_client is native_client
         assert phone == "+70000000001"
 
     native_client.disconnect.assert_awaited_once()
