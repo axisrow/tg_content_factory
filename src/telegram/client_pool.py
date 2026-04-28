@@ -398,16 +398,15 @@ class ClientPool:
     async def get_native_client_by_phone(
         self,
         phone: str,
-    ) -> tuple[object, str] | None:
-        """Get a specific client through the native backend for stateful flows."""
+    ) -> tuple[TelegramTransportSession, str] | None:
+        """Get a specific flood-aware client through the native backend for stateful flows."""
         lease = await self._acquire_phone_lease(phone)
         if lease is None:
             return None
         result = await self._acquire_from_lease(lease, force_native=True)
         if result is None:
             return None
-        session, acquired_phone = result
-        return session.raw_client, acquired_phone
+        return result
 
     async def get_premium_client(self) -> tuple[TelegramTransportSession, str] | None:
         """Get first available premium client.
@@ -422,7 +421,10 @@ class ClientPool:
             )
             if lease is None:
                 return None
-            result = await self._acquire_from_lease(lease)
+            result = await self._acquire_from_lease(
+                lease,
+                report_generic_flood=False,
+            )
             if result is not None:
                 return result
         return None
@@ -668,6 +670,7 @@ class ClientPool:
         account_lease: AccountLease,
         *,
         force_native: bool = False,
+        report_generic_flood: bool = True,
     ) -> tuple[TelegramTransportSession, str] | None:
         phone = account_lease.account.phone
         # force_native bypasses the persistent pool session — callers need a raw native client
@@ -687,9 +690,15 @@ class ClientPool:
         lease: BackendClientLease | None = None
         try:
             if direct_session is not None:
+                context_session = direct_session.with_flood_context(
+                    phone=phone,
+                    pool=self,
+                    logger_=logger,
+                    report_flood_wait=report_generic_flood,
+                )
                 lease = BackendClientLease(
                     phone=phone,
-                    session=direct_session,
+                    session=context_session,
                     backend_name="direct",
                     disconnect_on_release=False,
                 )
@@ -698,11 +707,21 @@ class ClientPool:
                     account_lease.account,
                     force_native=force_native,
                 )
+                lease.session = lease.session.with_flood_context(
+                    phone=phone,
+                    pool=self,
+                    logger_=logger,
+                    report_flood_wait=report_generic_flood,
+                )
                 if not force_native:
                     # Store persistent session for future direct reuse.
                     # force_native sessions are short-lived and must not replace the pool session.
                     self.clients[phone] = TelegramTransportSession(
-                        lease.session.raw_client, disconnect_on_close=False
+                        lease.session.raw_client,
+                        disconnect_on_close=False,
+                        phone=phone,
+                        pool=self,
+                        logger_=logger,
                     )
                     lease.disconnect_on_release = False
 
@@ -724,9 +743,18 @@ class ClientPool:
 
     async def _connect_account(self, account: Account) -> BackendClientLease:
         lease = await self._backend_router.acquire_client(account)
+        lease.session = lease.session.with_flood_context(
+            phone=account.phone,
+            pool=self,
+            logger_=logger,
+        )
         # Store persistent transport session so _direct_session() can reuse the connection
         self.clients[account.phone] = TelegramTransportSession(
-            lease.session.raw_client, disconnect_on_close=False
+            lease.session.raw_client,
+            disconnect_on_close=False,
+            phone=account.phone,
+            pool=self,
+            logger_=logger,
         )
         lease.disconnect_on_release = False
         return lease
