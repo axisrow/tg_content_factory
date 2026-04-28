@@ -486,7 +486,7 @@
     <h5 class="mb-3">Расписание</h5>
     <div class="row g-3">
         <div class="col-6 col-md-3">
-            <label class="form-label">Интервал (мин)</label>
+            <label class="form-label">Интервал запуска, мин</label>
             <input class="form-control" type="number" name="generate_interval_minutes" min="1" value="60">
         </div>
     </div>
@@ -516,7 +516,7 @@
             Далее <i class="bi bi-arrow-right"></i>
         </button>
         <div class="d-none align-items-center gap-2" id="run-controls">
-            <span class="text-muted small">Глубина:</span>
+            <span class="text-muted small">Собирать за последние:</span>
             <input type="number" name="since_value" id="since_value" value="24" min="1"
                    class="form-control form-control-sm" style="width:64px">
             <select name="since_unit" id="since_unit" class="form-select form-select-sm" style="width:72px">
