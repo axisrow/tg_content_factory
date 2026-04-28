@@ -82,6 +82,8 @@ include = ["src*"]
 src = [
     "web/templates/*.html",
     "web/static/*.css",
+    "web/static/*.js",
+    "web/static/js/*.js",
     "cli/commands/*.tcss",
 ]
 

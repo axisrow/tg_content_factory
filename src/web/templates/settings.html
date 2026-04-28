@@ -173,35 +173,4 @@
 {% endblock %}
 {% block head_scripts %}
 <script src="/static/settings.js?v={{ app_version }}" defer></script>
-<script>
-(function() {
-    // Handle hash-based tab activation for /settings/#pane-name URLs
-    function activateTabFromHash() {
-        var hash = window.location.hash;
-        if (hash) {
-            var paneId = hash.replace('#', '');
-            // Find the corresponding tab button
-            var tab = document.querySelector('[data-bs-target="#' + paneId + '"]');
-            if (tab) {
-                // Remove active from all tabs and panes
-                document.querySelectorAll('#settings-tabs .nav-link').forEach(function(el) {
-                    el.classList.remove('active');
-                });
-                document.querySelectorAll('#settings-tab-content .tab-pane').forEach(function(el) {
-                    el.classList.remove('show', 'active');
-                });
-                // Activate selected tab and pane
-                tab.classList.add('active');
-                var pane = document.getElementById(paneId);
-                if (pane) {
-                    pane.classList.add('show', 'active');
-                }
-            }
-        }
-    }
-    // Activate on page load and hash change
-    window.addEventListener('hashchange', activateTabFromHash);
-    activateTabFromHash();
-})();
-</script>
 {% endblock %}

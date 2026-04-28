@@ -363,13 +363,17 @@ function activateSettingsTab(tabId) {
     }
 }
 
+function settingsTabIdFromHash(hash) {
+    return (hash || '').replace('#', '').replace(/^pane-/, '');
+}
+
 function initSettingsTabs() {
     /* Determine which tab to show.
        base.html IIFE saves flash codes to window globals before clearing the URL,
        so we read from globals (reliable) with URL params as fallback. */
     var msg = window.__flashMsg || new URLSearchParams(window.location.search).get('msg');
     var err = window.__flashError || new URLSearchParams(window.location.search).get('error');
-    var hash = window.location.hash.replace('#', '');
+    var hash = settingsTabIdFromHash(window.location.hash);
 
     /* Priority: flash message tab > URL hash > default (accounts) */
     var targetTab = '';
@@ -391,6 +395,13 @@ function initSettingsTabs() {
             var id = btn.getAttribute('data-bs-target').replace('#pane-', '');
             history.replaceState(null, '', '#' + id);
         });
+    });
+
+    window.addEventListener('hashchange', function() {
+        var tabId = settingsTabIdFromHash(window.location.hash);
+        if (tabId) {
+            activateSettingsTab(tabId);
+        }
     });
 }
 
