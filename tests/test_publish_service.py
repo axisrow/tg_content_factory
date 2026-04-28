@@ -118,7 +118,7 @@ def make_pipeline(**overrides):
     return ContentPipeline(**defaults)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_publish_service_no_text():
     db = FakeDB()
     pool = FakeClientPool()
@@ -133,7 +133,7 @@ async def test_publish_service_no_text():
     assert "No generated text" in results[0].error
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_publish_service_blocks_unapproved_run_for_moderated_pipeline():
     db = FakeDB()
     pool = FakeClientPool()
@@ -148,7 +148,7 @@ async def test_publish_service_blocks_unapproved_run_for_moderated_pipeline():
     assert "not approved" in results[0].error
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_publish_service_no_targets():
     db = FakeDB()
     pool = FakeClientPool()
@@ -163,7 +163,7 @@ async def test_publish_service_no_targets():
     assert "No targets" in results[0].error
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_publish_service_success():
     db = FakeDB()
     db.repos.content_pipelines.set_targets(
@@ -188,7 +188,7 @@ async def test_publish_service_success():
     assert pool.released == ["+1234567890"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_publish_service_allows_auto_pipeline_without_approval():
     db = FakeDB()
     db.repos.content_pipelines.set_targets(
@@ -214,7 +214,7 @@ async def test_publish_service_allows_auto_pipeline_without_approval():
     assert pool.released == ["+1234567890"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_publish_service_client_unavailable():
     db = FakeDB()
     db.repos.content_pipelines.set_targets(
@@ -236,7 +236,7 @@ async def test_publish_service_client_unavailable():
 # === Additional tests for image, timeout, edge cases ===
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_publish_service_with_image_url():
     """Publishes via send_file when run has image_url."""
     db = FakeDB()
@@ -272,7 +272,7 @@ async def test_publish_service_with_image_url():
     assert client.sent_messages == []
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_publish_service_whitespace_text():
     """Empty/whitespace generated_text is skipped."""
     db = FakeDB()
@@ -296,7 +296,7 @@ async def test_publish_service_whitespace_text():
     assert "No generated text" in results[0].error
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_publish_service_entity_resolution_fail():
     """Entity resolution failure produces error result."""
     db = FakeDB()
@@ -325,7 +325,7 @@ async def test_publish_service_entity_resolution_fail():
     assert "Could not resolve" in results[0].error
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_publish_service_timeout():
     """asyncio.TimeoutError produces 'Timeout' error."""
     db = FakeDB()
@@ -356,7 +356,7 @@ async def test_publish_service_timeout():
     assert "Timeout" in results[0].error
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_publish_service_missing_run_id():
     """Missing run id returns early error."""
     db = FakeDB()
@@ -371,7 +371,7 @@ async def test_publish_service_missing_run_id():
     assert "Missing" in results[0].error
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_publish_service_missing_pipeline_id():
     """Missing pipeline id returns early error."""
     db = FakeDB()
@@ -386,7 +386,7 @@ async def test_publish_service_missing_pipeline_id():
     assert "Missing" in results[0].error
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_publish_service_with_reply_to():
     """Sends message with reply_to when metadata has publish_reply."""
     db = FakeDB()
@@ -410,7 +410,7 @@ async def test_publish_service_with_reply_to():
     assert results[0].success is True
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_publish_service_general_exception():
     """General exception during publishing produces error result."""
     db = FakeDB()
@@ -439,7 +439,7 @@ async def test_publish_service_general_exception():
     assert "unexpected error" in results[0].error
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_publish_service_preview_targets():
     """preview_targets returns target info dicts."""
     db = FakeDB()
@@ -462,7 +462,7 @@ async def test_publish_service_preview_targets():
     assert preview[0]["type"] == "channel"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_publish_service_resolve_entity_fallback():
     """_resolve_entity falls back to resolve_input_entity when pool has no resolver."""
     db = FakeDB()

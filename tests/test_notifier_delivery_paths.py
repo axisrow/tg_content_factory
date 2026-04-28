@@ -32,7 +32,7 @@ def mock_notification_bundle():
 class TestNotifierFastPath:
     """Tests for Notifier fast path with cached me.id and bot."""
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_notify_with_cached_me_id_and_bot(
         self,
         mock_target_service,
@@ -68,7 +68,7 @@ class TestNotifierFastPath:
         # Should not use client since fast path succeeded
         mock_target_service.use_client.assert_not_called()
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_notify_with_cached_me_id_but_no_bot_falls_back(
         self, mock_target_service, mock_notification_bundle
     ):
@@ -100,7 +100,7 @@ class TestNotifierFastPath:
 class TestNotifierSlowPath:
     """Tests for Notifier slow path that requires client connection."""
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_notify_without_cached_me_id_fetches_it(
         self, mock_target_service, mock_notification_bundle
     ):
@@ -143,7 +143,7 @@ class TestNotifierSlowPath:
         assert notifier._cached_me_id == 123
         mock_client.get_me.assert_awaited_once()
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_notify_fallback_to_client_when_no_bot(
         self, mock_target_service, mock_notification_bundle
     ):
@@ -170,7 +170,7 @@ class TestNotifierSlowPath:
         assert result is True
         mock_client.send_message.assert_awaited_once_with(789, "Test message")
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_notify_admin_chat_id_me(self, mock_target_service, mock_notification_bundle):
         """Test sending to 'me' when admin_chat_id is None."""
         mock_notification_bundle.get_bot = AsyncMock(return_value=None)
@@ -199,7 +199,7 @@ class TestNotifierSlowPath:
 class TestNotifierWithoutBundle:
     """Tests for Notifier when notification_bundle is None."""
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_notify_without_bundle_uses_client_directly(self, mock_target_service):
         """Test that without bundle, notifier uses client.send_message directly."""
         mock_client = MagicMock()
@@ -225,7 +225,7 @@ class TestNotifierWithoutBundle:
 class TestNotifierErrorHandling:
     """Tests for Notifier error handling."""
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_notify_cancelled_error_propagates(
         self,
         mock_target_service,
@@ -249,7 +249,7 @@ class TestNotifierErrorHandling:
         with pytest.raises(asyncio.CancelledError):
             await notifier.notify("Test message")
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_notify_general_exception_returns_false(
         self,
         mock_target_service,
@@ -305,7 +305,7 @@ class TestNotifierInvalidateCache:
 class TestSendViaBotApi:
     """Tests for _send_via_bot_api helper function."""
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_send_via_bot_api_success(self):
         """Test successful bot API call."""
         mock_response = AsyncMock()
@@ -326,7 +326,7 @@ class TestSendViaBotApi:
 
         assert result is True
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_send_via_bot_api_error_response(self):
         """Test bot API call when response has ok=false."""
         mock_response = AsyncMock()
@@ -349,7 +349,7 @@ class TestSendViaBotApi:
 
         assert result is False
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_send_via_bot_api_network_error(self):
         """Test bot API call when network error occurs during ClientSession creation."""
         # The error happens inside the async with ClientSession() block
@@ -363,7 +363,7 @@ class TestSendViaBotApi:
 
         assert result is False
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_send_via_bot_api_cancelled_error_propagates(self):
         """Test that CancelledError in bot API call is re-raised."""
         mock_session = MagicMock()
@@ -374,7 +374,7 @@ class TestSendViaBotApi:
             with pytest.raises(asyncio.CancelledError):
                 await _send_via_bot_api("123456:ABC-DEF", 789, "Test message")
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_send_via_bot_api_timeout_error(self):
         """Test bot API call when timeout occurs during session creation."""
         mock_session = MagicMock()

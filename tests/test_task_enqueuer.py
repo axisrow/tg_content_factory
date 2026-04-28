@@ -18,7 +18,7 @@ from src.services.task_enqueuer import TaskEnqueuer
 # === enqueue_content_generate tests ===
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_enqueue_content_generate_creates_task(task_enqueuer, mock_db):
     """Creates CONTENT_GENERATE task when no active task exists."""
     mock_db.repos.tasks.has_active_task = AsyncMock(return_value=False)
@@ -41,7 +41,7 @@ async def test_enqueue_content_generate_creates_task(task_enqueuer, mock_db):
     assert result == 101
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_enqueue_content_generate_skips_if_active(task_enqueuer, mock_db):
     """Skips creation if active task for same pipeline exists."""
     mock_db.repos.tasks.has_active_task = AsyncMock(return_value=True)
@@ -55,7 +55,7 @@ async def test_enqueue_content_generate_skips_if_active(task_enqueuer, mock_db):
 # === enqueue_content_publish tests ===
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_enqueue_content_publish_creates_task(task_enqueuer, mock_db):
     """Creates CONTENT_PUBLISH task when no active task exists."""
     mock_db.repos.tasks.has_active_task = AsyncMock(return_value=False)
@@ -75,7 +75,7 @@ async def test_enqueue_content_publish_creates_task(task_enqueuer, mock_db):
     assert result == 202
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_enqueue_content_publish_with_pipeline_id(task_enqueuer, mock_db):
     """Creates CONTENT_PUBLISH task with pipeline_id in payload."""
     mock_db.repos.tasks.has_active_task = AsyncMock(return_value=False)
@@ -116,7 +116,7 @@ def task_enqueuer(mock_db, mock_collection_service):
 # === enqueue_all_channels tests ===
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_enqueue_all_channels_delegates(task_enqueuer, mock_collection_service):
     """Delegates to collection service."""
     mock_result = MagicMock(queued_count=3)
@@ -131,7 +131,7 @@ async def test_enqueue_all_channels_delegates(task_enqueuer, mock_collection_ser
 # === enqueue_sq_stats tests ===
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_enqueue_sq_stats_creates_task(task_enqueuer, mock_db):
     """Creates SQ_STATS task when no active task exists."""
     mock_db.repos.tasks.has_active_task = AsyncMock(return_value=False)
@@ -154,7 +154,7 @@ async def test_enqueue_sq_stats_creates_task(task_enqueuer, mock_db):
     assert result == 42
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_enqueue_sq_stats_skips_if_active(task_enqueuer, mock_db):
     """Skips creation if active task already exists."""
     mock_db.repos.tasks.has_active_task = AsyncMock(return_value=True)
@@ -168,7 +168,7 @@ async def test_enqueue_sq_stats_skips_if_active(task_enqueuer, mock_db):
 # === enqueue_photo_due tests ===
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_enqueue_photo_due_creates_task(task_enqueuer, mock_db):
     """Creates PHOTO_DUE task when no active task exists."""
     mock_db.repos.tasks.has_active_task = AsyncMock(return_value=False)
@@ -184,7 +184,7 @@ async def test_enqueue_photo_due_creates_task(task_enqueuer, mock_db):
     assert result == 15
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_enqueue_photo_due_skips_if_active(task_enqueuer, mock_db):
     """Skips creation if active task exists."""
     mock_db.repos.tasks.has_active_task = AsyncMock(return_value=True)
@@ -198,7 +198,7 @@ async def test_enqueue_photo_due_skips_if_active(task_enqueuer, mock_db):
 # === enqueue_photo_auto tests ===
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_enqueue_photo_auto_creates_task(task_enqueuer, mock_db):
     """Creates PHOTO_AUTO task when no active task exists."""
     mock_db.repos.tasks.has_active_task = AsyncMock(return_value=False)
@@ -214,7 +214,7 @@ async def test_enqueue_photo_auto_creates_task(task_enqueuer, mock_db):
     assert result == 16
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_enqueue_photo_auto_skips_if_active(task_enqueuer, mock_db):
     """Skips creation if active task exists."""
     mock_db.repos.tasks.has_active_task = AsyncMock(return_value=True)
@@ -228,7 +228,7 @@ async def test_enqueue_photo_auto_skips_if_active(task_enqueuer, mock_db):
 # === enqueue_pipeline_run tests ===
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_enqueue_pipeline_run_creates_task(task_enqueuer, mock_db):
     """Creates PIPELINE_RUN task when no active task exists."""
     mock_db.repos.tasks.has_active_task = AsyncMock(return_value=False)
@@ -251,7 +251,7 @@ async def test_enqueue_pipeline_run_creates_task(task_enqueuer, mock_db):
     assert result == 99
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_enqueue_pipeline_run_skips_if_active(task_enqueuer, mock_db):
     """Skips creation if active task for same pipeline exists."""
     mock_db.repos.tasks.has_active_task = AsyncMock(return_value=True)

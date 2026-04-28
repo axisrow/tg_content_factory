@@ -13,7 +13,7 @@ from src.telegram.flood_wait import (
 )
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_run_with_flood_wait_returns_success_value():
     result = await run_with_flood_wait(
         AsyncMock(return_value="ok")(),
@@ -23,7 +23,7 @@ async def test_run_with_flood_wait_returns_success_value():
     assert result == "ok"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_handle_flood_wait_reports_pool_and_builds_info():
     err = FloodWaitError(request=None, capture=0)
     err.seconds = 33
@@ -43,7 +43,7 @@ async def test_handle_flood_wait_reports_pool_and_builds_info():
     pool.report_flood.assert_awaited_once_with("+7000", 33)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_run_with_flood_wait_raises_handled_error_with_info():
     err = FloodWaitError(request=None, capture=0)
     err.seconds = 17
@@ -105,7 +105,7 @@ def test_format_flood_wait_detail_with_phone():
 # === handle_flood_wait edge cases ===
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_handle_flood_wait_zero_seconds_clamped_to_one():
     """Zero seconds is clamped to 1."""
     err = FloodWaitError(request=None, capture=0)
@@ -119,7 +119,7 @@ async def test_handle_flood_wait_zero_seconds_clamped_to_one():
     assert info.wait_seconds == 1  # Clamped
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_handle_flood_wait_none_seconds_clamped_to_one():
     """None seconds is clamped to 1."""
     err = FloodWaitError(request=None, capture=0)
@@ -133,7 +133,7 @@ async def test_handle_flood_wait_none_seconds_clamped_to_one():
     assert info.wait_seconds == 1  # Clamped
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_handle_flood_wait_without_pool():
     """No pool means no report_flood call."""
     err = FloodWaitError(request=None, capture=0)
@@ -149,7 +149,7 @@ async def test_handle_flood_wait_without_pool():
     assert info.wait_seconds == 10
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_run_with_flood_wait_reports_short_floods():
     """Short FloodWait (≤60s) must still trigger pool.report_flood. Regression
     guard for #495: previously Telethon's flood_sleep_threshold=60 swallowed
@@ -172,7 +172,7 @@ async def test_run_with_flood_wait_reports_short_floods():
     pool.report_flood.assert_awaited_once_with("+7000", 5)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_run_with_flood_wait_with_timeout(monkeypatch):
     """Timeout parameter is forwarded to asyncio.wait_for."""
     captured: dict[str, float] = {}

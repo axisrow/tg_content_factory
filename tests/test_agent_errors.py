@@ -7,7 +7,7 @@ from claude_agent_sdk import CLIConnectionError, CLINotFoundError, ProcessError
 from src.agent.manager import AgentManager, ClaudeSdkBackend, DeepagentsBackend
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_agent_manager_handles_ollama_500_error(db, monkeypatch):
     """Test that Ollama 500 errors are translated to friendly messages."""
 
@@ -46,7 +46,7 @@ async def test_agent_manager_handles_ollama_500_error(db, monkeypatch):
         assert "Возможно, модель не загрузилась" in error_msg
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_agent_manager_handles_ollama_connection_error(db, monkeypatch):
     """Test that Ollama connection errors are translated to friendly messages."""
 
@@ -81,7 +81,7 @@ async def test_agent_manager_handles_ollama_connection_error(db, monkeypatch):
         assert "Проверьте, что сервис запущен" in error_msg
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_agent_manager_handles_generic_error(db, monkeypatch):
     """Test that generic errors are passed through (with prefix)."""
 
@@ -147,7 +147,7 @@ async def _collect_claude_error(db, monkeypatch, exc):
     raise AssertionError(f"No error payload in chunks: {chunks}")
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_claude_backend_process_error(db, monkeypatch):
     """ProcessError from claude-agent-sdk should surface with details."""
     exc = ProcessError("CLI crashed", exit_code=1, stderr="segfault in libfoo")
@@ -158,7 +158,7 @@ async def test_claude_backend_process_error(db, monkeypatch):
     assert "segfault" in payload["error"] or "CLI crashed" in payload["error"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_claude_backend_cli_not_found(db, monkeypatch):
     """CLINotFoundError should tell the user to install Claude Code."""
     exc = CLINotFoundError("Claude Code not found", cli_path="/usr/bin/claude")
@@ -168,7 +168,7 @@ async def test_claude_backend_cli_not_found(db, monkeypatch):
     assert "claude" in payload["error"].lower()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_claude_backend_cli_connection_error(db, monkeypatch):
     """CLIConnectionError should report connection failure."""
     exc = CLIConnectionError("Connection refused")

@@ -20,7 +20,7 @@ from tests.helpers import AsyncIterMessages as _AsyncIterMessages
 from tests.helpers import FakeTelethonClient, make_mock_message, make_mock_pool, make_mock_reactions
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_collect_no_channels(db):
     pool = make_mock_pool()
     config = SchedulerConfig()
@@ -30,7 +30,7 @@ async def test_collect_no_channels(db):
     assert stats["messages"] == 0
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_collect_no_clients(db):
     ch = Channel(channel_id=-100123, title="Test")
     await db.add_channel(ch)
@@ -45,7 +45,7 @@ async def test_collect_no_clients(db):
     assert stats["errors"] == 1
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_collect_all_skips_filtered_channels(db):
     await db.add_channel(Channel(channel_id=-100124, title="Filtered"))
     await db.add_channel(Channel(channel_id=-100125, title="Normal"))
@@ -60,7 +60,7 @@ async def test_collect_all_skips_filtered_channels(db):
     assert stats["errors"] == 1
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_collect_all_invalid_min_subscribers_setting_falls_back_to_zero(db):
     await db.set_setting("min_subscribers_filter", "broken")
     ch = Channel(channel_id=-100124, title="Normal")
@@ -74,7 +74,7 @@ async def test_collect_all_invalid_min_subscribers_setting_falls_back_to_zero(db
     assert stats["errors"] == 1
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_collect_single_channel_raises_all_clients_flooded(db):
     ch = Channel(channel_id=-100124, title="Flooded")
     await db.add_channel(ch)
@@ -100,7 +100,7 @@ async def test_collect_single_channel_raises_all_clients_flooded(db):
     assert exc.value.next_available_at == next_available_at
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_collect_single_channel_raises_no_active_clients(db):
     ch = Channel(channel_id=-100125, title="No Clients")
     await db.add_channel(ch)
@@ -122,7 +122,7 @@ async def test_collect_single_channel_raises_no_active_clients(db):
         await collector.collect_single_channel(ch)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_collect_single_channel_skips_filtered(db):
     """collect_single_channel returns 0 immediately for filtered channels."""
     ch = Channel(
@@ -140,7 +140,7 @@ async def test_collect_single_channel_skips_filtered(db):
     pool.get_available_client.assert_not_awaited()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_collect_channel_uses_peer_channel_without_username(db):
     """_collect_channel falls back to PeerChannel when no username."""
     ch = Channel(channel_id=1970788983, title="Test Channel")
@@ -160,7 +160,7 @@ async def test_collect_channel_uses_peer_channel_without_username(db):
     assert call_arg.channel_id == 1970788983
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_collect_channel_uses_username_when_available(db):
     """_collect_channel resolves by username when it is stored."""
     ch = Channel(channel_id=1970788983, title="Test Channel", username="test_chan")
@@ -179,7 +179,7 @@ async def test_collect_channel_uses_username_when_available(db):
     assert call_arg == "test_chan"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_collect_positive_id_end_to_end(db):
     """End-to-end: collect_all_channels with username resolves by username."""
     ch = Channel(channel_id=1970788983, title="Positive ID Channel", username="my_chan")
@@ -199,7 +199,7 @@ async def test_collect_positive_id_end_to_end(db):
     assert call_arg == "my_chan"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_collect_channel_long_username_resolve_flood_sets_backoff_without_rotation(db):
     ch = Channel(
         channel_id=1970788984,
@@ -249,7 +249,7 @@ async def test_collect_channel_long_username_resolve_flood_sets_backoff_without_
     assert 3500 < remaining <= 3600
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_collect_channel_short_username_resolve_flood_still_rotates(db):
     ch = Channel(
         channel_id=1970788985,
@@ -298,7 +298,7 @@ async def test_collect_channel_short_username_resolve_flood_still_rotates(db):
     assert collector._get_resolve_username_backoff_remaining_sec() == 0
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_collect_channel_skips_username_resolve_when_backoff_active(db):
     ch = Channel(
         channel_id=1970788986,
@@ -320,7 +320,7 @@ async def test_collect_channel_skips_username_resolve_when_backoff_active(db):
     pool.get_available_client.assert_not_awaited()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_collect_no_username_channel_fetches_dialogs_once(db):
     """For no-username channels get_dialogs() is called once per process to warm entity cache."""
     ch = Channel(channel_id=123, title="No Username")
@@ -344,7 +344,7 @@ async def test_collect_no_username_channel_fetches_dialogs_once(db):
     mock_client.get_dialogs.assert_not_awaited()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_collect_channel_falls_back_to_username_on_cache_miss(db):
     """When PeerChannel fails (entity not cached), fall back to username."""
     ch = Channel(channel_id=1970788983, title="Test", username="agipdoom")
@@ -370,7 +370,7 @@ async def test_collect_channel_falls_back_to_username_on_cache_miss(db):
     mock_client.get_entity.assert_awaited_once_with("agipdoom")
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_collect_channel_marks_username_changed_when_numeric_fallback_succeeds(db):
     ch = Channel(channel_id=1970788983, title="Old Title", username="old_name")
     channel_id = await db.add_channel(ch)
@@ -398,7 +398,7 @@ async def test_collect_channel_marks_username_changed_when_numeric_fallback_succ
     assert "username_changed" in updated.filter_flags
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_collect_channel_no_username_no_cache_reports_error(db):
     """Channel with no username and empty cache -> error logged, 0 messages."""
     ch = Channel(channel_id=1970788983, title="Private Group")
@@ -416,7 +416,7 @@ async def test_collect_channel_no_username_no_cache_reports_error(db):
     assert stats["messages"] == 0
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_collect_private_group_uses_map_phone(db):
     """When channel→phone map has an entry, get_client_by_phone is used directly."""
     ch = Channel(channel_id=1877929309, title="Private Group")
@@ -440,7 +440,7 @@ async def test_collect_private_group_uses_map_phone(db):
     pool.get_client_by_phone.assert_awaited_once_with("+7001")
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_collect_private_group_discovers_access_phone(db):
     """When channel not in map, _discover_phone_for_channel finds the right phone
     and registers it so the next iteration uses it directly."""
@@ -479,7 +479,7 @@ async def test_collect_private_group_discovers_access_phone(db):
     assert pool._channel_phone_map.get(1877929309) == "+7001"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_collect_all_dialogs_timeout(db):
     """Hanging get_dialogs() must not block collection (30s timeout)."""
     ch = Channel(channel_id=123, title="Test", username="test")
@@ -505,7 +505,7 @@ def _make_mock_message(msg_id, text=None, media=None, sender_id=None):
     return make_mock_message(msg_id, text=text, media=media, sender_id=sender_id)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_media_type_photo():
     from telethon.tl.types import MessageMediaPhoto
 
@@ -513,13 +513,13 @@ async def test_get_media_type_photo():
     assert Collector._get_media_type(msg) == "photo"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_media_type_none():
     msg = SimpleNamespace(media=None)
     assert Collector._get_media_type(msg) is None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_media_type_document_video():
     from telethon.tl.types import DocumentAttributeVideo, MessageMediaDocument
 
@@ -531,7 +531,7 @@ async def test_get_media_type_document_video():
     assert Collector._get_media_type(msg) == "video"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_media_type_sticker():
     from telethon.tl.types import (
         DocumentAttributeSticker,
@@ -547,7 +547,7 @@ async def test_get_media_type_sticker():
     assert Collector._get_media_type(msg) == "sticker"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_media_type_voice():
     from telethon.tl.types import DocumentAttributeAudio, MessageMediaDocument
 
@@ -559,7 +559,7 @@ async def test_get_media_type_voice():
     assert Collector._get_media_type(msg) == "voice"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_media_type_poll():
     from telethon.tl.types import MessageMediaPoll
 
@@ -570,21 +570,21 @@ async def test_get_media_type_poll():
 # --- _extract_reactions tests ---
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_extract_reactions_none():
     """No reactions attr → None."""
     msg = SimpleNamespace(reactions=None)
     assert Collector._extract_reactions(msg) is None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_extract_reactions_empty_results():
     """reactions exists but results is empty → None."""
     msg = SimpleNamespace(reactions=SimpleNamespace(results=[]))
     assert Collector._extract_reactions(msg) is None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_extract_reactions_single_emoji():
     import json
 
@@ -595,7 +595,7 @@ async def test_extract_reactions_single_emoji():
     assert parsed == [{"emoji": "👍", "count": 5}]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_extract_reactions_multiple():
     import json
 
@@ -607,7 +607,7 @@ async def test_extract_reactions_multiple():
     assert parsed[1] == {"emoji": "❤️", "count": 3}
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_extract_reactions_custom_emoji():
     import json
 
@@ -617,7 +617,7 @@ async def test_extract_reactions_custom_emoji():
     assert parsed == [{"emoji": "custom:12345678", "count": 2}]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_classify_message_service_joined_by_link():
     from telethon.tl.types import MessageActionChatJoinedByLink
 
@@ -633,7 +633,7 @@ async def test_classify_message_service_joined_by_link():
     assert Collector._get_sender_kind(msg) == "user"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_collect_channel_collects_media_without_text(db):
     """Collector should collect messages without text (media-only)."""
     ch = Channel(channel_id=-100123, title="Test", username="test", last_collected_id=5)
@@ -657,7 +657,7 @@ async def test_collect_channel_collects_media_without_text(db):
     assert count == 2  # Both messages collected
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_backfill_uses_no_limit(db):
     """First run (last_collected_id==0) should use limit=None."""
     ch = Channel(channel_id=-100123, title="Test", username="test", last_collected_id=0)
@@ -678,7 +678,7 @@ async def test_backfill_uses_no_limit(db):
     assert call_kwargs[1].get("limit") is None or call_kwargs.kwargs.get("limit") is None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_incremental_uses_no_limit(db):
     """Subsequent runs (last_collected_id>0) should use limit=None (all new messages)."""
     ch = Channel(channel_id=-100123, title="Test", username="test", last_collected_id=50)
@@ -698,7 +698,7 @@ async def test_incremental_uses_no_limit(db):
     assert call_kwargs[1].get("limit") is None or call_kwargs.kwargs.get("limit") is None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_backfill_batch_flush(db):
     """During backfill, messages should be flushed in batches of 500."""
     ch = Channel(channel_id=-100123, title="Test", username="test", last_collected_id=0)
@@ -727,7 +727,7 @@ async def test_backfill_batch_flush(db):
     assert total == 600
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_progress_callback_invoked_on_batch_flush(db):
     """progress_callback is called after each batch flush and final flush."""
     ch = Channel(channel_id=-100123, title="Test", username="test", last_collected_id=0)
@@ -757,7 +757,7 @@ async def test_progress_callback_invoked_on_batch_flush(db):
     progress_cb.assert_any_await(600)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_collect_channel_does_not_advance_last_id_when_flush_fails(db):
     ch = Channel(channel_id=-100126, title="Test", username="test", last_collected_id=5)
     await db.add_channel(ch)
@@ -782,7 +782,7 @@ async def test_collect_channel_does_not_advance_last_id_when_flush_fails(db):
     assert updated.last_collected_id == 5
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_backfill_does_not_send_notification_queries(db):
     from src.models import SearchQuery
 
@@ -809,7 +809,7 @@ async def test_backfill_does_not_send_notification_queries(db):
     notifier.notify.assert_not_awaited()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_incremental_collection_sends_notification_queries(db):
     from src.models import SearchQuery
 
@@ -834,7 +834,7 @@ async def test_incremental_collection_sends_notification_queries(db):
     notifier.notify.assert_awaited_once()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_collect_channel_retries_after_short_flood_wait(db):
     ch = Channel(channel_id=-100171, title="Retry", username="retry", last_collected_id=5)
     ch_id = await db.add_channel(ch)
@@ -875,7 +875,7 @@ async def test_collect_channel_retries_after_short_flood_wait(db):
     pool.report_flood.assert_awaited_once()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_collect_channel_rotates_on_long_flood_wait(db):
     """FloodWait > max_flood_wait_sec still rotates to the next available account."""
     ch = Channel(channel_id=-100172, title="LongFlood", username="longflood", last_collected_id=5)
@@ -931,7 +931,7 @@ async def test_collect_channel_rotates_on_long_flood_wait(db):
     assert "rotating" in notifier.notify.call_args[0][0]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_collect_channel_long_flood_all_accounts_flooded_returns(db):
     """FloodWait > max_flood_wait_sec with no other account available surfaces unavailability."""
     ch = Channel(channel_id=-100173, title="AllFlood", username="allflood", last_collected_id=5)
@@ -987,7 +987,7 @@ async def test_collect_channel_long_flood_all_accounts_flooded_returns(db):
     pool.report_flood.assert_awaited_once()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_collection_queue_skips_filtered_channel(db):
     """CollectionQueue worker skips channels that become filtered after enqueue."""
     from src.collection_queue import CollectionQueue
@@ -1018,7 +1018,7 @@ async def test_collection_queue_skips_filtered_channel(db):
     await queue.shutdown()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_connection_error_triggers_reconnect_and_requeue(db):
     """ConnectionError during collection triggers reconnect and re-enqueues the task."""
     from src.collection_queue import CollectionQueue
@@ -1056,7 +1056,7 @@ async def test_connection_error_triggers_reconnect_and_requeue(db):
     await queue.shutdown()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_connection_error_no_retry_after_max(db):
     """Second ConnectionError after retry marks task as FAILED."""
     from src.collection_queue import CollectionQueue
@@ -1085,7 +1085,7 @@ async def test_connection_error_no_retry_after_max(db):
     await queue.shutdown()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_connection_error_reconnect_fails(db):
     """When reconnect fails, task is marked as FAILED immediately."""
     from src.collection_queue import CollectionQueue
@@ -1114,7 +1114,7 @@ async def test_connection_error_reconnect_fails(db):
     await queue.shutdown()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_enqueue_all_channels_uses_incremental_queue_tasks(db):
     from src.collection_queue import CollectionQueue
     from src.services.collection_service import CollectionService
@@ -1153,7 +1153,7 @@ async def test_enqueue_all_channels_uses_incremental_queue_tasks(db):
     await queue.shutdown()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_collection_queue_force_tasks_keep_full_collection(db):
     from src.collection_queue import CollectionQueue
 
@@ -1182,7 +1182,7 @@ async def test_collection_queue_force_tasks_keep_full_collection(db):
     await queue.shutdown()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_collection_queue_reschedules_when_all_clients_flooded(db):
     from src.collection_queue import CollectionQueue
 
@@ -1214,7 +1214,7 @@ async def test_collection_queue_reschedules_when_all_clients_flooded(db):
     await queue.shutdown()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_collection_queue_fails_when_no_active_clients(db):
     from src.collection_queue import CollectionQueue
 
@@ -1241,7 +1241,7 @@ async def test_collection_queue_fails_when_no_active_clients(db):
     await queue.shutdown()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_requeue_startup_tasks(db):
     """requeue_startup_tasks re-enqueues pending tasks that survived a restart."""
     from src.collection_queue import CollectionQueue
@@ -1271,7 +1271,7 @@ async def test_requeue_startup_tasks(db):
     await queue.shutdown()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_requeue_startup_tasks_preserves_incremental_flag(db):
     from src.collection_queue import CollectionQueue
 
@@ -1314,7 +1314,7 @@ async def test_requeue_startup_tasks_preserves_incremental_flag(db):
     await queue.shutdown()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_requeue_startup_tasks_cancels_orphaned(db):
     """requeue_startup_tasks cancels tasks whose channel was deleted."""
     from src.collection_queue import CollectionQueue
@@ -1333,7 +1333,7 @@ async def test_requeue_startup_tasks_cancels_orphaned(db):
     assert task.status == "cancelled"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_requeue_startup_tasks_defers_future_run_after(db):
     """Startup tasks with run_after in the future go to _delayed_requeues, not the main queue."""
     from datetime import datetime, timedelta, timezone
@@ -1361,7 +1361,7 @@ async def test_requeue_startup_tasks_defers_future_run_after(db):
     await queue.shutdown()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_collection_queue_cancels_deleted_channel(db):
     from src.collection_queue import CollectionQueue
 
@@ -1389,7 +1389,7 @@ async def test_collection_queue_cancels_deleted_channel(db):
     await queue.shutdown()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_collection_queue_clear_pending_tasks_removes_db_rows_and_queue_items(db):
     from src.collection_queue import CollectionQueue
 
@@ -1422,7 +1422,7 @@ async def test_collection_queue_clear_pending_tasks_removes_db_rows_and_queue_it
     await queue.shutdown()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_collection_queue_skips_task_deleted_after_dequeue(db):
     from src.collection_queue import CollectionQueue
 
@@ -1448,7 +1448,7 @@ async def test_collection_queue_skips_task_deleted_after_dequeue(db):
     await queue.shutdown()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_collect_all_stats_skips_filtered(db):
     """collect_all_stats should skip filtered channels."""
     await db.add_channel(Channel(channel_id=-100150, title="Filtered"))
@@ -1469,7 +1469,7 @@ async def test_collect_all_stats_skips_filtered(db):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_prefilter_broadcast_low_ratio(db):
     """Broadcast channel with ratio < 1.0 is filtered before iter_messages."""
     ch = Channel(
@@ -1514,7 +1514,7 @@ async def test_prefilter_broadcast_low_ratio(db):
     assert "low_subscriber_ratio" in stored.filter_flags
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_prefilter_supergroup_low_ratio(db):
     """Supergroup with ratio < 0.02 is filtered before iter_messages."""
     ch = Channel(
@@ -1555,7 +1555,7 @@ async def test_prefilter_supergroup_low_ratio(db):
     assert stored.is_filtered is True
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_prefilter_supergroup_pass_ratio(db):
     """Supergroup with ratio >= 0.02 continues collection."""
     ch = Channel(
@@ -1597,7 +1597,7 @@ async def test_prefilter_supergroup_pass_ratio(db):
     assert stored.is_filtered is False
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_prefilter_no_stats_skips_check(db):
     """No stats (subscriber_count=None) → collection continues without filtering."""
     ch = Channel(
@@ -1627,7 +1627,7 @@ async def test_prefilter_no_stats_skips_check(db):
     assert stored.is_filtered is False
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_prefilter_uses_message_count(db):
     """Pre-filter uses real COUNT(*) from DB, not last_collected_id."""
     ch = Channel(
@@ -1665,7 +1665,7 @@ async def test_prefilter_uses_message_count(db):
     mock_client.iter_messages.assert_not_called()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_prefilter_skips_when_no_messages(db):
     """First run (message_count=0) → pre-filter skipped, collection proceeds."""
     ch = Channel(
@@ -1692,7 +1692,7 @@ async def test_prefilter_skips_when_no_messages(db):
     assert mock_client.iter_messages.call_count == 2
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_prefilter_skipped_when_force(db):
     """force=True → pre-filter skipped; channel filter state not changed."""
     ch = Channel(
@@ -1734,7 +1734,7 @@ async def test_prefilter_skipped_when_force(db):
     assert stored.is_filtered is False
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_precheck_skipped_when_force_and_first_run(db):
     """force=True + first_run (last_collected_id=0) → precheck пропускается."""
     ch = Channel(
@@ -1758,7 +1758,7 @@ async def test_precheck_skipped_when_force_and_first_run(db):
     assert mock_client.iter_messages.call_count == 1
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_entity_timeout_returns_zero(db):
     """get_entity hanging → TimeoutError → _collect_channel returns 0."""
     ch = Channel(channel_id=-100400, title="Hanging Channel", username="hang_chan")
@@ -1774,7 +1774,7 @@ async def test_get_entity_timeout_returns_zero(db):
     assert count == 0
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_precheck_timeout_skips_check(db):
     """Precheck hanging → TimeoutError → collection continues with 0 precheck sample."""
     ch = Channel(
@@ -1800,7 +1800,7 @@ async def test_precheck_timeout_skips_check(db):
     mock_client.iter_messages.assert_called_once()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_post_collection_low_uniqueness_marks_filtered(db):
     """First run with 100 identical messages → channel marked is_filtered=True, messages kept."""
     ch = Channel(channel_id=-100300, title="Spam Channel", username="spam", last_collected_id=0)
@@ -1841,7 +1841,7 @@ async def test_post_collection_low_uniqueness_marks_filtered(db):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_precheck_detects_cross_channel_spam(db):
     """Precheck marks a first-run channel as cross_channel_spam on 80%+ sample overlap."""
     # Existing channel with known messages in DB
@@ -1893,7 +1893,7 @@ async def test_precheck_detects_cross_channel_spam(db):
     assert "cross_channel_spam" in stored.filter_flags
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_username_changed_marks_filtered(db):
     """Username lookup fails, PeerChannel fallback succeeds → filtered with username_changed."""
     ch = Channel(channel_id=3645212410, title="Old Title", username="raketa_nanobanana4")
@@ -1924,7 +1924,7 @@ async def test_username_changed_marks_filtered(db):
     assert "username_changed" in stored.filter_flags
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_username_not_found_deactivates(db):
     """Both username and PeerChannel lookups fail → channel deactivated, returns 0."""
     ch = Channel(channel_id=3645212410, title="Old Title", username="gone_username")

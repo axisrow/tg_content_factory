@@ -14,7 +14,7 @@ def _make_search_result(query="test"):
     return SearchResult(messages=[], total=0, query=query)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_search_ai_mode():
     """Test search with AI mode."""
     engine = MagicMock()
@@ -28,7 +28,7 @@ async def test_search_ai_mode():
     assert result.total == 0
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_search_ai_mode_without_ai_search():
     """Test search with AI mode but no AI search engine."""
     engine = MagicMock()
@@ -41,7 +41,7 @@ async def test_search_ai_mode_without_ai_search():
     engine.search_local.assert_called_once()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_search_telegram_mode():
     """Test search with telegram mode."""
     engine = MagicMock()
@@ -53,7 +53,7 @@ async def test_search_telegram_mode():
     engine.search_telegram.assert_called_once_with("test", limit=10)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_search_my_chats_mode():
     """Test search with my_chats mode."""
     engine = MagicMock()
@@ -65,7 +65,7 @@ async def test_search_my_chats_mode():
     engine.search_my_chats.assert_called_once_with("test", limit=10)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_search_channel_mode():
     """Test search with channel mode."""
     engine = MagicMock()
@@ -77,7 +77,7 @@ async def test_search_channel_mode():
     engine.search_in_channel.assert_called_once_with(100, "test", limit=10)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_search_semantic_mode():
     """Test search with semantic mode."""
     engine = MagicMock()
@@ -99,7 +99,7 @@ async def test_search_semantic_mode():
     engine.search_semantic.assert_called_once()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_search_hybrid_mode():
     """Test search with hybrid mode."""
     engine = MagicMock()
@@ -122,7 +122,7 @@ async def test_search_hybrid_mode():
     engine.search_hybrid.assert_called_once()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_search_local_mode_default():
     """Test search falls back to local for unknown mode."""
     engine = MagicMock()
@@ -134,7 +134,7 @@ async def test_search_local_mode_default():
     engine.search_local.assert_called_once()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_check_quota():
     """Test check_quota delegates to engine."""
     engine = MagicMock()

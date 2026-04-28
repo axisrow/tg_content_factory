@@ -102,7 +102,7 @@ async def client(tmp_path, real_pool_harness_factory):
     await db.close()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_health_endpoint(client):
     resp = await client.get("/health")
     assert resp.status_code == 200
@@ -112,7 +112,7 @@ async def test_health_endpoint(client):
     assert "accounts_connected" in data
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_health_endpoint_logs_db_probe_failure(client, monkeypatch, caplog):
     async def _broken_execute(query):
         raise RuntimeError("db unavailable")
@@ -127,7 +127,7 @@ async def test_health_endpoint_logs_db_probe_failure(client, monkeypatch, caplog
     assert "Health check DB probe failed" in caplog.text
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_dashboard(client):
     resp = await client.get("/dashboard/")
     assert resp.status_code == 200
@@ -172,7 +172,7 @@ def test_agent_available_ignores_invalid_fallback_model(monkeypatch):
     assert _agent_available_for_request(request) is False
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_footer_renders_actual_version(client):
     expected_version = tomllib.loads(
         PYPROJECT_PATH.read_text(encoding="utf-8"),
@@ -184,14 +184,14 @@ async def test_footer_renders_actual_version(client):
     assert f"TG Agent v{expected_version}" in resp.text
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_login_page(client):
     resp = await client.get("/auth/login")
     assert resp.status_code == 200
     assert "/settings" in resp.text
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_web_login_page_without_auth(unauth_client):
     resp = await unauth_client.get("/login", follow_redirects=False)
     assert resp.status_code == 200
@@ -199,7 +199,7 @@ async def test_web_login_page_without_auth(unauth_client):
     assert 'action="/login"' in resp.text
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_web_login_rejects_unsafe_next_without_auth(unauth_client):
     resp = await unauth_client.get(
         "/login?next=https://evil.example",
@@ -209,7 +209,7 @@ async def test_web_login_rejects_unsafe_next_without_auth(unauth_client):
     assert 'name="next" value="/"' in resp.text
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_settings_page(client):
     resp = await client.get("/settings/")
     assert resp.status_code == 200
@@ -222,7 +222,7 @@ async def test_settings_page(client):
     assert "activateTabFromHash" not in resp.text
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_settings_static_js_handles_pane_hashes(client):
     resp = await client.get("/static/settings.js")
     assert resp.status_code == 200
@@ -231,7 +231,7 @@ async def test_settings_static_js_handles_pane_hashes(client):
     assert "hashchange" in resp.text
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_settings_page_image_providers_tab(client):
     resp = await client.get("/settings/")
     assert resp.status_code == 200
@@ -239,7 +239,7 @@ async def test_settings_page_image_providers_tab(client):
     assert "Изображения" in resp.text  # tab label
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_add_image_provider(client):
     resp = await client.post(
         "/settings/image-providers/add",
@@ -251,7 +251,7 @@ async def test_add_image_provider(client):
     assert "Together AI" in resp2.text
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_add_image_provider_invalid(client):
     resp = await client.post(
         "/settings/image-providers/add",
@@ -261,7 +261,7 @@ async def test_add_image_provider_invalid(client):
     assert "error=image_provider_invalid" in str(resp.url)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_save_image_providers(client):
     # First add a provider
     await client.post("/settings/image-providers/add", data={"provider": "openai"})
@@ -277,14 +277,14 @@ async def test_save_image_providers(client):
     assert resp.status_code == 200
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_delete_image_provider(client):
     await client.post("/settings/image-providers/add", data={"provider": "replicate"})
     resp = await client.post("/settings/image-providers/replicate/delete")
     assert resp.status_code == 200
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_images_page_shows_db_configured_provider(client):
     """Provider added via Settings should appear on /images page."""
     # Add provider with API key via settings
@@ -303,7 +303,7 @@ async def test_images_page_shows_db_configured_provider(client):
     assert "replicate" in resp.text
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_startup_continues_after_pool_initialize_timeout(tmp_path, db, caplog, monkeypatch):
     """start_container proceeds when pool.initialize() hangs past the timeout."""
     import asyncio
@@ -350,7 +350,7 @@ async def test_startup_continues_after_pool_initialize_timeout(tmp_path, db, cap
     assert "telegram pool timed out" in caplog.text
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_settings_page_hides_credentials_form_when_env_credentials_configured(
     client, monkeypatch
 ):
@@ -371,7 +371,7 @@ async def test_settings_page_hides_credentials_form_when_env_credentials_configu
     assert template_text.index("_accounts.html") < template_text.index("_scheduler.html")
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_settings_page_keeps_credentials_form_for_invalid_env_api_id(client, monkeypatch):
     monkeypatch.setenv("TG_API_ID", "not-a-number")
     monkeypatch.setenv("TG_API_HASH", "env-hash")
@@ -383,7 +383,7 @@ async def test_settings_page_keeps_credentials_form_for_invalid_env_api_id(clien
     assert 'action="/settings/save-credentials"' in resp.text
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_settings_page_ignores_invalid_persisted_numeric_settings(client):
     db = client._transport.app.state.db
     await db.set_setting("min_subscribers_filter", "broken")
@@ -398,7 +398,7 @@ async def test_settings_page_ignores_invalid_persisted_numeric_settings(client):
     assert 'value="60"' in resp.text
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_settings_save_semantic_persists_values_and_resets_index(client):
     db = client._transport.app.state.db
     await db.insert_messages_batch(
@@ -437,7 +437,7 @@ async def test_settings_save_semantic_persists_values_and_resets_index(client):
     assert await db.get_setting("semantic_last_embedded_id") is None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_settings_semantic_index_runs_embedding_service(client, monkeypatch):
     monkeypatch.setattr(
         EmbeddingService,
@@ -452,7 +452,7 @@ async def test_settings_semantic_index_runs_embedding_service(client, monkeypatc
     assert "indexed=7" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_settings_save_agent_persists_dev_mode_and_override(client):
     db = client._transport.app.state.db
     # Need a valid provider config for deepagents override to be accepted
@@ -483,7 +483,7 @@ async def test_settings_save_agent_persists_dev_mode_and_override(client):
     assert await db.get_setting("agent_backend_override") == "deepagents"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_settings_page_shows_ai_agent_block_only_in_dev_mode(client):
     db = client._transport.app.state.db
     await db.set_setting("agent_dev_mode_enabled", "1")
@@ -505,7 +505,7 @@ async def test_settings_page_shows_ai_agent_block_only_in_dev_mode(client):
     assert 'name="agent_form_scope" value="prompt_template"' in resp.text
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_settings_save_agent_preserves_override_when_toggling_dev_mode_only(client):
     db = client._transport.app.state.db
     await db.set_setting("agent_backend_override", "deepagents")
@@ -535,7 +535,7 @@ async def test_settings_save_agent_preserves_override_when_toggling_dev_mode_onl
     assert await db.get_setting("agent_backend_override") == "deepagents"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_settings_save_agent_requires_disclaimer_to_enable_dev_mode(client):
     db = client._transport.app.state.db
 
@@ -549,7 +549,7 @@ async def test_settings_save_agent_requires_disclaimer_to_enable_dev_mode(client
     assert await db.get_setting("agent_dev_mode_enabled") == "0"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_settings_save_agent_backend_override_keeps_dev_mode_enabled(client):
     db = client._transport.app.state.db
     await db.set_setting("agent_dev_mode_enabled", "1")
@@ -580,7 +580,7 @@ async def test_settings_save_agent_backend_override_keeps_dev_mode_enabled(clien
     assert await db.get_setting("agent_backend_override") == "deepagents"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_settings_save_agent_can_disable_dev_mode_without_disclaimer(client):
     db = client._transport.app.state.db
     await db.set_setting("agent_dev_mode_enabled", "1")
@@ -598,7 +598,7 @@ async def test_settings_save_agent_can_disable_dev_mode_without_disclaimer(clien
     assert await db.get_setting("agent_backend_override") == "auto"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_settings_save_agent_persists_prompt_template(client):
     db = client._transport.app.state.db
     template = "Канал: {channel_title}\nТема: {topic}\nДата: {date}\n{source_messages}"
@@ -616,7 +616,7 @@ async def test_settings_save_agent_persists_prompt_template(client):
     assert await db.get_setting(AGENT_PROMPT_TEMPLATE_SETTING) == template
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_settings_save_agent_rejects_invalid_prompt_template(client):
     db = client._transport.app.state.db
     await db.set_setting(AGENT_PROMPT_TEMPLATE_SETTING, "Канал: {channel_title}")
@@ -635,7 +635,7 @@ async def test_settings_save_agent_rejects_invalid_prompt_template(client):
     assert await db.get_setting(AGENT_PROMPT_TEMPLATE_SETTING) == "Канал: {channel_title}"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_settings_save_agent_blank_prompt_template_resets_to_default(client):
     db = client._transport.app.state.db
     await db.set_setting(AGENT_PROMPT_TEMPLATE_SETTING, "Канал: {channel_title}")
@@ -653,7 +653,7 @@ async def test_settings_save_agent_blank_prompt_template_resets_to_default(clien
     assert await db.get_setting(AGENT_PROMPT_TEMPLATE_SETTING) == DEFAULT_AGENT_PROMPT_TEMPLATE
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_settings_backend_override_submit_keeps_ai_agent_block_visible(client):
     db = client._transport.app.state.db
     await db.set_setting("agent_dev_mode_enabled", "1")
@@ -675,7 +675,7 @@ async def test_settings_backend_override_submit_keeps_ai_agent_block_visible(cli
     assert "Backend override" in page.text
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_settings_add_agent_provider_requires_dev_mode(client):
     db = client._transport.app.state.db
 
@@ -690,7 +690,7 @@ async def test_settings_add_agent_provider_requires_dev_mode(client):
     assert await db.get_setting("agent_deepagents_providers_v1") is None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_settings_add_agent_provider_persists_provider_in_db(client):
     db = client._transport.app.state.db
     await db.set_setting("agent_dev_mode_enabled", "1")
@@ -707,7 +707,7 @@ async def test_settings_add_agent_provider_persists_provider_in_db(client):
     assert "openai" in raw
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_settings_save_agent_providers_preserves_priority_order(client, monkeypatch):
     db = client._transport.app.state.db
     await db.set_setting("agent_dev_mode_enabled", "1")
@@ -750,7 +750,7 @@ async def test_settings_save_agent_providers_preserves_priority_order(client, mo
     assert raw.index('"provider": "anthropic"') < raw.index('"provider": "openai"')
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_settings_save_agent_providers_skips_probe_for_disabled_provider(client, monkeypatch):
     db = client._transport.app.state.db
     await db.set_setting("agent_dev_mode_enabled", "1")
@@ -786,7 +786,7 @@ async def test_settings_save_agent_providers_skips_probe_for_disabled_provider(c
     assert configs[0].last_validation_error == ""
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_settings_refresh_agent_provider_models_returns_json(client, monkeypatch):
     db = client._transport.app.state.db
     await db.set_setting("agent_dev_mode_enabled", "1")
@@ -812,7 +812,7 @@ async def test_settings_refresh_agent_provider_models_returns_json(client, monke
     assert "compatibility" in payload
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_settings_refresh_agent_provider_models_uses_unsaved_form_values(client, monkeypatch):
     db = client._transport.app.state.db
     await db.set_setting("agent_dev_mode_enabled", "1")
@@ -850,7 +850,7 @@ async def test_settings_refresh_agent_provider_models_uses_unsaved_form_values(c
     assert seen_cfg.secret_fields["api_key"] == "unsaved-openai-key"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_settings_page_refresh_provider_posts_unsaved_form_data(client):
     db = client._transport.app.state.db
     await db.set_setting("agent_dev_mode_enabled", "1")
@@ -866,7 +866,7 @@ async def test_settings_page_refresh_provider_posts_unsaved_form_data(client):
     assert 'data-provider-refresh-btn="openai"' in resp.text
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_settings_refresh_agent_provider_models_preserves_saved_values_when_form_empty(
     client, monkeypatch
 ):
@@ -909,7 +909,7 @@ async def test_settings_refresh_agent_provider_models_preserves_saved_values_whe
     assert seen_cfg.secret_fields["api_key"] == "saved-openai-key"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_settings_refresh_all_agent_provider_models_requires_dev_mode(client):
     resp = await client.post("/settings/agent-providers/refresh-all")
 
@@ -918,7 +918,7 @@ async def test_settings_refresh_all_agent_provider_models_requires_dev_mode(clie
     assert resp.json()["error"] == "Developer mode is required."
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_settings_refresh_all_agent_provider_models_uses_unsaved_form_values(
     client, monkeypatch
 ):
@@ -971,7 +971,7 @@ async def test_settings_refresh_all_agent_provider_models_uses_unsaved_form_valu
     assert seen_cfg.secret_fields["api_key"] == "unsaved-openai-key"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_settings_page_renders_selected_model_compatibility(client):
     db = client._transport.app.state.db
     await db.set_setting("agent_dev_mode_enabled", "1")
@@ -1011,7 +1011,7 @@ async def test_settings_page_renders_selected_model_compatibility(client):
     assert "gpt-4.1-mini [supported]" in resp.text
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_settings_probe_agent_provider_model_returns_cached_json(client, monkeypatch):
     db = client._transport.app.state.db
     await db.set_setting("agent_dev_mode_enabled", "1")
@@ -1055,7 +1055,7 @@ async def test_settings_probe_agent_provider_model_returns_cached_json(client, m
     assert any(record.status == "supported" for record in cache["openai"].compatibility.values())
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_settings_save_agent_providers_keeps_unsupported_probe_in_cache_only(
     client, monkeypatch
 ):
@@ -1103,7 +1103,7 @@ async def test_settings_save_agent_providers_keeps_unsupported_probe_in_cache_on
     assert any(record.status == "unsupported" for record in cache["openai"].compatibility.values())
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_settings_bulk_test_requires_dev_mode(client):
     resp = await client.post("/settings/agent-providers/test-all")
 
@@ -1111,7 +1111,7 @@ async def test_settings_bulk_test_requires_dev_mode(client):
     assert resp.json()["ok"] is False
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_settings_bulk_test_uses_unsaved_form_values(client, monkeypatch):
     db = client._transport.app.state.db
     await db.set_setting("agent_dev_mode_enabled", "1")
@@ -1160,7 +1160,7 @@ async def test_settings_bulk_test_uses_unsaved_form_values(client, monkeypatch):
     assert captured_configs[0].secret_fields["api_key"] == "unsaved-openai-key"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_settings_bulk_test_clears_running_status_when_startup_raises(client, monkeypatch):
     db = client._transport.app.state.db
     await db.set_setting("agent_dev_mode_enabled", "1")
@@ -1180,7 +1180,7 @@ async def test_settings_bulk_test_clears_running_status_when_startup_raises(clie
     assert status["error"] == "log sink unavailable"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_settings_bulk_test_refreshes_each_provider_once(client, monkeypatch, tmp_path):
     db = client._transport.app.state.db
     await db.set_setting("agent_dev_mode_enabled", "1")
@@ -1249,7 +1249,7 @@ async def test_settings_bulk_test_refreshes_each_provider_once(client, monkeypat
     probe_mock.assert_awaited_once()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_settings_bulk_test_exports_catalog(client, monkeypatch, tmp_path):
     db = client._transport.app.state.db
     await db.set_setting("agent_dev_mode_enabled", "1")
@@ -1329,7 +1329,7 @@ async def test_settings_bulk_test_exports_catalog(client, monkeypatch, tmp_path)
     assert export_path.exists()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_settings_page_blocks_agent_provider_writes_without_encryption_secret(tmp_path):
     config = AppConfig()
     config.database.path = str(tmp_path / "test_no_secret.db")
@@ -1387,26 +1387,26 @@ async def test_settings_page_blocks_agent_provider_writes_without_encryption_sec
     await db.close()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_channels_page(client):
     resp = await client.get("/channels/")
     assert resp.status_code == 200
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_search_page(client):
     resp = await client.get("/search")
     assert resp.status_code == 200
     assert "Поиск" in resp.text
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_scheduler_page(client):
     resp = await client.get("/scheduler/")
     assert resp.status_code == 200
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_scheduler_filter_active(client):
     db = client._transport.app.state.db
     await db.create_collection_task(-100901, "Active Task")
@@ -1424,13 +1424,13 @@ async def test_scheduler_filter_active(client):
     assert "Active Task" not in resp.text
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_scheduler_filter_invalid_status(client):
     resp = await client.get("/scheduler/?status=bogus")
     assert resp.status_code == 200
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_scheduler_pagination_out_of_range(client):
     db = client._transport.app.state.db
     await db.create_collection_task(-100950, "Some Task")
@@ -1440,7 +1440,7 @@ async def test_scheduler_pagination_out_of_range(client):
     assert "Some Task" in resp.text
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_scheduler_limit_preserved_in_links(client):
     db = client._transport.app.state.db
     for i in range(15):
@@ -1451,21 +1451,21 @@ async def test_scheduler_limit_preserved_in_links(client):
     assert "limit=10" in resp.text
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_search_with_query(client):
     resp = await client.get("/search?q=test&mode=local")
     assert resp.status_code == 200
     assert "test" in resp.text
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_search_with_invalid_channel_id_returns_error(client):
     resp = await client.get("/search?q=test&mode=channel&channel_id=abc")
     assert resp.status_code == 200
     assert "Некорректный ID канала: abc" in resp.text
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_search_with_semantic_mode(client, monkeypatch):
     from src.models import Message
     from src.services.embedding_service import EmbeddingService
@@ -1504,7 +1504,7 @@ async def test_search_with_semantic_mode(client, monkeypatch):
     assert "Семантический" in resp.text
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_search_runtime_error_is_rendered(client, monkeypatch):
     from src.web import deps
 
@@ -1531,7 +1531,7 @@ async def unauth_client(client):
         yield c
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_no_auth_browser_redirects_to_web_login(unauth_client):
     resp = await unauth_client.get(
         "/",
@@ -1542,7 +1542,7 @@ async def test_no_auth_browser_redirects_to_web_login(unauth_client):
     assert resp.headers["location"] == "/login?next=%2F"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_no_auth_htmx_returns_hx_redirect(unauth_client):
     resp = await unauth_client.get(
         "/",
@@ -1553,7 +1553,7 @@ async def test_no_auth_htmx_returns_hx_redirect(unauth_client):
     assert resp.headers["HX-Redirect"] == "/login?next=%2F"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_no_auth_api_returns_401(unauth_client):
     resp = await unauth_client.get(
         "/",
@@ -1564,20 +1564,20 @@ async def test_no_auth_api_returns_401(unauth_client):
     assert "WWW-Authenticate" in resp.headers
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_health_no_auth(unauth_client):
     resp = await unauth_client.get("/health")
     assert resp.status_code == 200
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_basic_auth_sets_cookie(client):
     resp = await client.get("/dashboard/", follow_redirects=False)
     assert resp.status_code == 200
     assert COOKIE_NAME in resp.cookies
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_cookie_auth_without_basic(client):
     token = create_session_token("admin", "test_secret_key")
     transport = client._transport
@@ -1590,7 +1590,7 @@ async def test_cookie_auth_without_basic(client):
         assert resp.status_code == 200
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_root_redirects_to_search_when_agent_unavailable(client):
     """Without LLM keys the root page should redirect to /search, not /agent."""
     resp = await client.get("/", follow_redirects=False)
@@ -1598,7 +1598,7 @@ async def test_root_redirects_to_search_when_agent_unavailable(client):
     assert resp.headers["location"] == "/search"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_web_login_post_sets_cookie_and_redirects_to_next(unauth_client):
     resp = await unauth_client.post(
         "/login",
@@ -1613,7 +1613,7 @@ async def test_web_login_post_sets_cookie_and_redirects_to_next(unauth_client):
     assert page.status_code == 200
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_web_login_post_rejects_invalid_password(unauth_client):
     resp = await unauth_client.post(
         "/login",
@@ -1625,7 +1625,7 @@ async def test_web_login_post_rejects_invalid_password(unauth_client):
     assert COOKIE_NAME not in resp.headers.get("set-cookie", "")
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_web_login_post_blocks_open_redirect(unauth_client):
     resp = await unauth_client.post(
         "/login",
@@ -1636,7 +1636,7 @@ async def test_web_login_post_blocks_open_redirect(unauth_client):
     assert resp.headers["location"] == "/"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_web_login_post_blocks_backslash_redirect(unauth_client):
     resp = await unauth_client.post(
         "/login",
@@ -1647,7 +1647,7 @@ async def test_web_login_post_blocks_backslash_redirect(unauth_client):
     assert resp.headers["location"] == "/"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_web_login_post_blocks_percent_encoded_backslash_redirect(unauth_client):
     resp = await unauth_client.post(
         "/login",
@@ -1658,25 +1658,28 @@ async def test_web_login_post_blocks_percent_encoded_backslash_redirect(unauth_c
     assert resp.headers["location"] == "/"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_web_login_post_non_ascii_password_accepted(tmp_path, real_pool_harness_factory):
     """Non-ASCII passwords (e.g. Cyrillic) must not raise TypeError in secrets.compare_digest."""
     non_ascii_pw = "пароль123"
     config = make_test_config(tmp_path, password=non_ascii_pw)
     harness = real_pool_harness_factory()
-    app, _ = await build_web_app(config, harness)
+    app, db = await build_web_app(config, harness)
+    try:
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test", follow_redirects=False) as c:
+            resp = await c.post("/login", data={"password": non_ascii_pw, "next": "/"})
+        assert resp.status_code == 303
 
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test", follow_redirects=False) as c:
-        resp = await c.post("/login", data={"password": non_ascii_pw, "next": "/"})
-    assert resp.status_code == 303
-
-    async with AsyncClient(transport=transport, base_url="http://test", follow_redirects=False) as c:
-        resp = await c.post("/login", data={"password": "wrong", "next": "/"})
-    assert resp.status_code == 401
+        async with AsyncClient(transport=transport, base_url="http://test", follow_redirects=False) as c:
+            resp = await c.post("/login", data={"password": "wrong", "next": "/"})
+        assert resp.status_code == 401
+    finally:
+        await app.state.collection_queue.shutdown()
+        await db.close()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_web_login_redirects_authenticated_user_to_next(client):
     token = create_session_token("admin", "test_secret_key")
     transport = client._transport
@@ -1690,7 +1693,7 @@ async def test_web_login_redirects_authenticated_user_to_next(client):
         assert resp.headers["location"] == "/channels/"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_logout_clears_cookie_and_redirects_to_login(client):
     resp = await client.get("/logout", follow_redirects=False)
     assert resp.status_code == 303
@@ -1700,14 +1703,14 @@ async def test_logout_clears_cookie_and_redirects_to_login(client):
     assert "Max-Age=0" in cookie_header or "max-age=0" in cookie_header
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_cookie_not_secure_on_http(client):
     resp = await client.get("/dashboard/", follow_redirects=False)
     cookie_header = resp.headers.get("set-cookie", "")
     assert "Secure" not in cookie_header
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_cookie_secure_on_https(client):
     transport = client._transport
     auth_header = base64.b64encode(b":testpass").decode()
@@ -1722,7 +1725,7 @@ async def test_cookie_secure_on_https(client):
         assert "Secure" in cookie_header
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_invalid_cookie_falls_back(unauth_client):
     unauth_client.cookies.set(COOKIE_NAME, "fake.token")
     resp = await unauth_client.get(
@@ -1734,14 +1737,14 @@ async def test_invalid_cookie_falls_back(unauth_client):
     assert resp.headers["location"] == "/login?next=%2F"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_logout_no_auth_required(unauth_client):
     resp = await unauth_client.get("/logout", follow_redirects=False)
     assert resp.status_code == 303
     assert resp.headers["location"] == "/login"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_settings_shows_accounts(tmp_path):
     """Settings page displays accounts from DB."""
     config = AppConfig()
@@ -1786,7 +1789,7 @@ async def test_settings_shows_accounts(tmp_path):
     await db.close()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_settings_no_accounts(client):
     """Settings page shows 'no accounts' message when DB has no accounts."""
     db = client._transport.app.state.db
@@ -1798,7 +1801,7 @@ async def test_settings_no_accounts(client):
     assert "/auth/login" in resp.text
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_settings_rejects_invalid_api_id(client):
     db = client._transport.app.state.db
 
@@ -1812,7 +1815,7 @@ async def test_settings_rejects_invalid_api_id(client):
     assert await db.get_setting("tg_api_id") is None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_resolve_channel_success(client):
     """Adding a channel via identifier queues a worker command."""
     db = client._transport.app.state.db
@@ -1822,7 +1825,7 @@ async def test_resolve_channel_success(client):
     assert commands[0].command_type == "channels.add_identifier"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_channels_add_logs_unexpected_error(client, monkeypatch, caplog):
     db = client._transport.app.state.db
     with caplog.at_level(logging.ERROR, logger="src.web.routes.channels"):
@@ -1839,7 +1842,7 @@ async def test_channels_add_logs_unexpected_error(client, monkeypatch, caplog):
     assert "Channel add runtime failure" not in caplog.text
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_auth_send_code_logs_exception(client, monkeypatch, caplog):
     db = client._transport.app.state.db
     monkeypatch.setattr(
@@ -1859,7 +1862,7 @@ async def test_auth_send_code_logs_exception(client, monkeypatch, caplog):
     assert "Failed to send auth code for phone=+7000" not in caplog.text
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_notification_setup_logs_exception(client, monkeypatch, caplog):
     with caplog.at_level(logging.ERROR, logger="src.web.routes.settings"):
         resp = await client.post("/settings/notifications/setup", follow_redirects=False)
@@ -1869,7 +1872,7 @@ async def test_notification_setup_logs_exception(client, monkeypatch, caplog):
     assert "Notification setup failed" not in caplog.text
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_error_redirects_are_logged_globally(client, caplog):
     with caplog.at_level(logging.WARNING, logger="src.web.app"):
         resp = await client.post(
@@ -1884,7 +1887,7 @@ async def test_error_redirects_are_logged_globally(client, caplog):
     assert "error=invalid_value" in caplog.text
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_csrf_blocks_cross_origin_post(client):
     resp = await client.post(
         "/channels/add",
@@ -1896,7 +1899,7 @@ async def test_csrf_blocks_cross_origin_post(client):
     assert "CSRF validation failed" in resp.text
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_csrf_blocks_null_origin(client):
     resp = await client.post(
         "/channels/add",
@@ -1908,7 +1911,7 @@ async def test_csrf_blocks_null_origin(client):
     assert "CSRF validation failed" in resp.text
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_csrf_blocks_post_without_origin_or_referer(client):
     """POST without Origin/Referer headers remains allowed for Basic-auth clients."""
     transport = client._transport
@@ -1926,7 +1929,7 @@ async def test_csrf_blocks_post_without_origin_or_referer(client):
         assert resp.status_code == 303
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_csrf_blocks_cookie_auth_post_without_origin_or_referer(client):
     token = create_session_token("admin", "test_secret_key")
     transport = client._transport
@@ -1944,7 +1947,7 @@ async def test_csrf_blocks_cookie_auth_post_without_origin_or_referer(client):
         assert "CSRF" in resp.text
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_csrf_allows_same_origin_post(client):
     resp = await client.post(
         "/channels/add",
@@ -1955,7 +1958,7 @@ async def test_csrf_allows_same_origin_post(client):
     assert resp.status_code == 303
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_csrf_allows_same_origin_post_behind_proxy(client):
     resp = await client.post(
         "/channels/add",
@@ -1970,7 +1973,7 @@ async def test_csrf_allows_same_origin_post_behind_proxy(client):
     assert resp.status_code == 303
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_resolve_channel_fail(tmp_path):
     """Failed resolve redirects with error query param."""
     config = AppConfig()
@@ -2029,7 +2032,7 @@ async def test_resolve_channel_fail(tmp_path):
     await db.close()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_dialogs_endpoint(client):
     """GET /channels/dialogs returns JSON list of channels."""
     db = client._transport.app.state.db
@@ -2049,7 +2052,7 @@ async def test_dialogs_endpoint(client):
     assert "already_added" in data[0]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_add_bulk(client):
     """POST /channels/add-bulk adds selected channels from dialogs."""
     db = client._transport.app.state.db
@@ -2071,7 +2074,7 @@ async def test_add_bulk(client):
     assert "Dialog Chan 2" in resp.text
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_add_channel_redirect_has_msg(client):
     """Adding a channel redirects with queued command id."""
     resp = await client.post(
@@ -2081,7 +2084,7 @@ async def test_add_channel_redirect_has_msg(client):
     assert "command_id=" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_save_notification_account_round_trip(client):
     from src.models import Account
 
@@ -2101,7 +2104,7 @@ async def test_save_notification_account_round_trip(client):
     assert "+79990000001" in resp.text
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_settings_page_shows_stale_notification_account_warning(client):
     db = client._transport.app.state.db
     await db.set_setting("notification_account_phone", "+79990000009")
@@ -2111,7 +2114,7 @@ async def test_settings_page_shows_stale_notification_account_warning(client):
     assert "Выбранный аккаунт уведомлений удалён." in resp.text
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_notification_status_returns_error_for_unavailable_selected_account(client):
     from src.models import Account
 
@@ -2144,7 +2147,7 @@ async def test_notification_status_returns_error_for_unavailable_selected_accoun
     assert "не подключён" in data["error"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_channel_type_displayed(client):
     """Channel type column is shown on channels page after adding a channel."""
     from src.models import Channel
@@ -2158,7 +2161,7 @@ async def test_channel_type_displayed(client):
     assert "Тип" in resp.text
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_add_scam_channel_is_inactive(tmp_path):
     """Adding a scam channel via /channels/add queues a worker command."""
     config = AppConfig()
@@ -2229,7 +2232,7 @@ async def test_add_scam_channel_is_inactive(tmp_path):
     await db.close()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_bulk_add_scam_dialog_is_inactive(tmp_path):
     """Adding a scam dialog via /channels/add-bulk creates it with is_active=False."""
     config = AppConfig()
@@ -2311,7 +2314,7 @@ async def test_bulk_add_scam_dialog_is_inactive(tmp_path):
     await db.close()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_filter_analyze_applies_filters(client):
     from datetime import datetime, timezone
 
@@ -2342,7 +2345,7 @@ async def test_filter_analyze_applies_filters(client):
     assert channel.is_filtered is True
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_filter_apply_with_snapshot_skips_reanalyze(client, monkeypatch):
     from src.models import Channel
 
@@ -2373,7 +2376,7 @@ async def test_filter_apply_with_snapshot_skips_reanalyze(client, monkeypatch):
     assert row["filter_flags"] == "low_uniqueness"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_filter_apply_without_snapshot_returns_error(client, monkeypatch):
     from src.models import Channel
 
@@ -2400,14 +2403,14 @@ async def test_filter_apply_without_snapshot_returns_error(client, monkeypatch):
     assert row["filter_flags"] == ""
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_filter_toggle_missing_channel_returns_not_found_msg(client):
     resp = await client.post("/channels/999999/filter-toggle", follow_redirects=False)
     assert resp.status_code == 303
     assert "msg=channel_not_found" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_filter_toggle_sets_manual_flag(client):
     from src.models import Channel
 
@@ -2430,7 +2433,7 @@ async def test_filter_toggle_sets_manual_flag(client):
     assert row["filter_flags"] == "manual"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_collect_filtered_channel_is_allowed(client):
     """Manual collect (web UI) must proceed even when channel is filtered."""
     from src.models import Channel
@@ -2457,7 +2460,7 @@ async def test_collect_filtered_channel_is_allowed(client):
     await client._transport.app.state.collection_queue.shutdown()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_delete_channel_cancels_pending_collection_tasks(client):
     from src.models import Channel
 
@@ -2478,7 +2481,7 @@ async def test_delete_channel_cancels_pending_collection_tasks(client):
     assert task.note == "Канал удалён пользователем."
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_stats_all_creates_pending_task(client):
     db = client._transport.app.state.db
 
@@ -2495,7 +2498,7 @@ async def test_stats_all_creates_pending_task(client):
     assert tasks[0].payload.task_kind == CollectionTaskType.STATS_ALL.value
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_stats_all_queued_when_collector_running(client):
     app = client._transport.app.state
     db = app.db
@@ -2513,7 +2516,7 @@ async def test_stats_all_queued_when_collector_running(client):
     assert tasks[0].status == CollectionTaskStatus.PENDING
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_stats_all_blocks_duplicate_active_task(client):
     db = client._transport.app.state.db
     await db.create_stats_task(StatsAllTaskPayload(channel_ids=[]))
@@ -2523,7 +2526,7 @@ async def test_stats_all_blocks_duplicate_active_task(client):
     assert "error=stats_running" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_stats_all_prioritizes_channels_without_stats(client):
     from src.models import Channel, ChannelStats
 
@@ -2546,7 +2549,7 @@ async def test_stats_all_prioritizes_channels_without_stats(client):
     assert channel_ids.index(-100901) > channel_ids.index(-100903)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_search_results_have_tg_links(client):
     """Search results contain links to original Telegram messages."""
     from datetime import datetime, timezone
@@ -2570,7 +2573,7 @@ async def test_search_results_have_tg_links(client):
     assert "bi-link-45deg" in resp.text
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_search_results_private_channel_link(client):
     """Private channel messages get t.me/c/ links."""
     from datetime import datetime, timezone
@@ -2593,7 +2596,7 @@ async def test_search_results_private_channel_link(client):
     assert "t.me/c/-100999/7" in resp.text
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_collect_all_htmx_returns_scheduler_link_and_creates_tasks(client, monkeypatch):
     """POST /channels/collect-all with HTMX header returns explicit status and queues tasks."""
     from src.models import Channel
@@ -2623,7 +2626,7 @@ async def test_collect_all_htmx_returns_scheduler_link_and_creates_tasks(client,
     assert all(task.status == "pending" for task in tasks)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_collect_all_htmx_noop_when_tasks_already_exist(client):
     from src.models import Channel
 
@@ -2657,7 +2660,7 @@ async def test_collect_all_htmx_noop_when_tasks_already_exist(client):
     assert {task.channel_id for task in tasks} == {-100703, -100704}
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_collect_all_non_htmx_redirects_with_new_message_and_creates_tasks(
     client, monkeypatch
 ):
@@ -2687,7 +2690,7 @@ async def test_collect_all_non_htmx_redirects_with_new_message_and_creates_tasks
     assert tasks[0].status == "pending"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_collect_all_non_htmx_redirects_with_empty_message_when_no_channels(client):
     resp = await client.post("/channels/collect-all", follow_redirects=False)
     assert resp.status_code == 303
@@ -2703,7 +2706,7 @@ async def test_collect_all_non_htmx_redirects_with_empty_message_when_no_channel
     assert 'href="/scheduler"' not in resp.text
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_enqueue_all_channels_skips_inactive_filtered_and_duplicate_tasks(
     client, monkeypatch
 ):
@@ -2746,7 +2749,7 @@ async def test_enqueue_all_channels_skips_inactive_filtered_and_duplicate_tasks(
     assert {task.channel_id for task in tasks} == {-100708, -100709}
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_channel_ids_with_active_tasks_returns_distinct_non_stats_ids(client):
     db = client._transport.app.state.db
     await db.create_collection_task(-100801, "One")
@@ -2760,7 +2763,7 @@ async def test_get_channel_ids_with_active_tasks_returns_distinct_non_stats_ids(
     assert active_ids == {-100801, -100802}
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_channels_page_collect_all_button_matches_htmx_fragment(client):
     template_path = Path("src/web/templates/channels.html")
     template_text = template_path.read_text(encoding="utf-8")
@@ -2783,7 +2786,7 @@ async def test_channels_page_collect_all_button_matches_htmx_fragment(client):
     assert _COLLECT_ALL_BTN == f'<span id="collect-all-btn">{_COLLECT_ALL_FORM}</span>'
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_save_scheduler_valid(client):
     """POST /settings/save-scheduler with valid interval persists and redirects."""
     resp = await client.post(
@@ -2797,7 +2800,7 @@ async def test_save_scheduler_valid(client):
     assert await db.get_setting("collect_interval_minutes") == "30"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_save_scheduler_invalid_value(client):
     """POST /settings/save-scheduler with non-numeric value redirects to error."""
     resp = await client.post(
@@ -2809,7 +2812,7 @@ async def test_save_scheduler_invalid_value(client):
     assert "error=invalid_value" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_save_scheduler_clamps_to_min(client):
     """POST /settings/save-scheduler clamps value below 1 to 1."""
     resp = await client.post(
@@ -2823,7 +2826,7 @@ async def test_save_scheduler_clamps_to_min(client):
     assert await db.get_setting("collect_interval_minutes") == "1"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_save_scheduler_clamps_to_max(client):
     """POST /settings/save-scheduler clamps value above 1440 to 1440."""
     resp = await client.post(
@@ -2837,7 +2840,7 @@ async def test_save_scheduler_clamps_to_max(client):
     assert await db.get_setting("collect_interval_minutes") == "1440"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_save_filters_valid(client):
     from src.models import Channel, ChannelStats
 
@@ -2859,7 +2862,7 @@ async def test_save_filters_valid(client):
     assert channel.is_filtered is True
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_save_filters_invalid_value(client):
     resp = await client.post(
         "/settings/save-filters",
@@ -2870,7 +2873,7 @@ async def test_save_filters_invalid_value(client):
     assert "error=invalid_value" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_save_credentials_valid_and_masked_path(client):
     db = client._transport.app.state.db
     auth = client._transport.app.state.auth
@@ -2900,7 +2903,7 @@ async def test_save_credentials_valid_and_masked_path(client):
     assert auth._api_hash == "hash-2"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_notification_setup_and_delete_json(client, monkeypatch):
 
     from src.models import Account
@@ -2945,7 +2948,7 @@ async def test_notification_setup_and_delete_json(client, monkeypatch):
     assert delete_resp.json()["status"] == "queued"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_notification_setup_returns_conflict_when_account_unavailable(client):
     from src.models import Account
 
@@ -2961,7 +2964,7 @@ async def test_notification_setup_returns_conflict_when_account_unavailable(clie
     assert resp.json()["status"] == "queued"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_collect_stats_route_enqueues_command(client):
     """Web route only enqueues a telegram command; worker executes the collection."""
     from src.models import Channel
@@ -2986,7 +2989,7 @@ async def test_collect_stats_route_enqueues_command(client):
     assert commands[0].payload == {"channel_pk": channel.id}
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_collect_stats_route_missing_channel(client):
     """If the channel does not exist, the route redirects to /channels without enqueueing."""
     db = client._transport.app.state.db
@@ -2998,7 +3001,7 @@ async def test_collect_stats_route_missing_channel(client):
     assert not any(c.command_type == "channels.collect_stats" for c in commands)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_edit_search_query_route(client):
     # Add a search query first
     resp = await client.post(
@@ -3036,7 +3039,7 @@ async def test_edit_search_query_route(client):
 
 
 class TestWebAgent:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_agent_page_auto_creates_thread(self, client):
         client._transport.app.state.agent_manager = AsyncMock()
         client._transport.app.state.agent_manager.get_runtime_status = AsyncMock(
@@ -3058,7 +3061,7 @@ class TestWebAgent:
         assert resp.url.path == "/agent"
         assert "thread_id=" in str(resp.url.query)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_agent_page_redirects_to_first_thread(self, client):
         db = client._transport.app.state.db
         client._transport.app.state.agent_manager = AsyncMock()
@@ -3082,7 +3085,7 @@ class TestWebAgent:
         assert resp.status_code == 200
         assert str(resp.url).endswith("?thread_id=1")
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_agent_page_shows_deepagents_status_and_hides_claude_model_select(self, client):
         db = client._transport.app.state.db
         await db.create_agent_thread("First")
@@ -3109,7 +3112,7 @@ class TestWebAgent:
         assert "openai:gpt-4.1-mini" in resp.text
         assert 'id="model-select"' not in resp.text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_agent_thread_creation_and_deletion(self, client):
         # Create
         resp_create = await client.post("/agent/threads", follow_redirects=False)
@@ -3133,7 +3136,7 @@ class TestWebAgent:
         thread_after = await db.get_agent_thread(int(thread_id))
         assert thread_after is None
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_get_channels_and_topics(self, client):
         from src.models import Channel
 
@@ -3151,7 +3154,7 @@ class TestWebAgent:
         assert resp_topics.status_code == 202
         assert resp_topics.json()["status"] == "queued"
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_inject_context_success(self, client):
         from datetime import datetime
 
@@ -3168,7 +3171,7 @@ class TestWebAgent:
         assert resp.status_code == 200
         assert "Context Channel" in resp.json()["content"]
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_chat_stream_and_stop(self, client):
         db = client._transport.app.state.db
         thread_id = await db.create_agent_thread("Новый тред")
@@ -3215,7 +3218,7 @@ class TestWebAgent:
         agent_manager.cancel_stream.assert_called_once_with(thread_id)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_test_notification_no_bot(client):
     """Route now queues worker-side notification test command."""
     db = client._transport.app.state.db
@@ -3226,7 +3229,7 @@ async def test_test_notification_no_bot(client):
     assert commands[0].command_type == "notifications.test"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_test_notification_no_queries(client, monkeypatch):
     """Notification route queues command even without matching queries."""
     db = client._transport.app.state.db
@@ -3237,7 +3240,7 @@ async def test_test_notification_no_queries(client, monkeypatch):
     assert commands[0].command_type == "notifications.test"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_test_notification_no_messages(client, monkeypatch):
     """Active query exists but web still only queues notification command."""
     from src.models import SearchQuery
@@ -3254,7 +3257,7 @@ async def test_test_notification_no_messages(client, monkeypatch):
     assert commands[0].command_type == "notifications.test"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_test_notification_with_public_channel_message(client, monkeypatch):
     """Message preview generation moved to worker; web only queues command."""
     from datetime import datetime, timezone
@@ -3282,7 +3285,7 @@ async def test_test_notification_with_public_channel_message(client, monkeypatch
     assert commands[0].command_type == "notifications.test"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_test_notification_with_private_channel_message(client, monkeypatch):
     """Private channel preview generation moved to worker; web only queues command."""
     from datetime import datetime, timezone
@@ -3310,7 +3313,7 @@ async def test_test_notification_with_private_channel_message(client, monkeypatc
     assert commands[0].command_type == "notifications.test"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_test_notification_notify_fails(client, monkeypatch):
     """Route now queues command and leaves success/failure to worker result."""
     db = client._transport.app.state.db
@@ -3343,7 +3346,7 @@ async def error_client(client):
         yield c
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_unhandled_exception_returns_error_page(error_client):
     """Unhandled exception in a route returns 500 with error template."""
     resp = await error_client.get("/test-500")
@@ -3353,7 +3356,7 @@ async def test_unhandled_exception_returns_error_page(error_client):
     assert "/debug/" in resp.text
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_unhandled_exception_htmx_returns_fragment(error_client):
     """HTMX request to a broken route returns an alert fragment, not full page."""
     resp = await error_client.get("/test-500", headers={"HX-Request": "true"})
@@ -3362,7 +3365,7 @@ async def test_unhandled_exception_htmx_returns_fragment(error_client):
     assert "/debug/" in resp.text
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_unhandled_exception_logged_to_logbuffer(error_client):
     """Exception traceback is captured by logger (and thus by LogBuffer)."""
     app = error_client._transport.app
@@ -3375,7 +3378,7 @@ async def test_unhandled_exception_logged_to_logbuffer(error_client):
     assert any("kaboom" in r["message"] for r in new_records)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_scheduler_job_toggle_invalid_id(client):
     """POST /scheduler/jobs/{job_id}/toggle with invalid job_id redirects to error."""
     resp = await client.post("/scheduler/jobs/bogus_job/toggle", follow_redirects=False)
@@ -3383,7 +3386,7 @@ async def test_scheduler_job_toggle_invalid_id(client):
     assert "error=invalid_job" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_scheduler_job_toggle_enables_and_disables(client):
     """Toggling collect_all job persists disabled flag to settings."""
     db = client._transport.app.state.db
@@ -3399,7 +3402,7 @@ async def test_scheduler_job_toggle_enables_and_disables(client):
     assert await db.repos.settings.get_setting("scheduler_job_disabled:collect_all") == "0"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_scheduler_job_set_interval_invalid_id(client):
     """POST /scheduler/jobs/{job_id}/set-interval with invalid job_id redirects to error."""
     resp = await client.post(
@@ -3411,7 +3414,7 @@ async def test_scheduler_job_set_interval_invalid_id(client):
     assert "error=invalid_job" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_scheduler_job_set_interval_collect_all(client):
     """Setting interval for collect_all persists to settings."""
     db = client._transport.app.state.db
@@ -3425,7 +3428,7 @@ async def test_scheduler_job_set_interval_collect_all(client):
     assert await db.repos.settings.get_setting("collect_interval_minutes") == "45"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_scheduler_job_set_interval_clamps_values(client):
     """Interval is clamped to 1–1440 range."""
     db = client._transport.app.state.db
@@ -3444,7 +3447,7 @@ async def test_scheduler_job_set_interval_clamps_values(client):
     assert await db.repos.settings.get_setting("collect_interval_minutes") == "1440"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_scheduler_page_shows_disabled_job(client):
     """Disabled job shows unchecked checkbox on scheduler page."""
     db = client._transport.app.state.db
@@ -3456,7 +3459,7 @@ async def test_scheduler_page_shows_disabled_job(client):
     assert "collect_all" in resp.text
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_analytics_page_empty(client):
     """Analytics page renders without error when no messages exist."""
     resp = await client.get("/analytics")
@@ -3464,7 +3467,7 @@ async def test_analytics_page_empty(client):
     assert "Аналитика" in resp.text
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_analytics_page_with_date_filter(client):
     """Analytics page accepts date_from/date_to query params."""
     resp = await client.get("/analytics?date_from=2025-01-01&date_to=2025-12-31&limit=20")
@@ -3477,7 +3480,7 @@ async def test_analytics_page_with_date_filter(client):
 # ── Backend override validation tests ──────────────────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_save_agent_rejects_deepagents_override_without_providers(client):
     """Deepagents override is rejected when no valid providers are configured."""
     db = client._transport.app.state.db
@@ -3498,7 +3501,7 @@ async def test_save_agent_rejects_deepagents_override_without_providers(client):
     assert await db.get_setting("agent_backend_override") != "deepagents"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_save_agent_rejects_claude_override_without_api_key(client, monkeypatch):
     """Claude override is rejected when no API key is available."""
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
@@ -3521,7 +3524,7 @@ async def test_save_agent_rejects_claude_override_without_api_key(client, monkey
     assert await db.get_setting("agent_backend_override") != "claude"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_save_agent_accepts_auto_override_always(client):
     """Auto override is always accepted regardless of provider/key state."""
     db = client._transport.app.state.db
@@ -3542,7 +3545,7 @@ async def test_save_agent_accepts_auto_override_always(client):
     assert await db.get_setting("agent_backend_override") == "auto"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_flood_status_returns_ok_for_expired(tmp_path, real_pool_harness_factory):
     """GET /settings/flood-status returns ok/0 when flood_wait_until is in the past."""
     from datetime import timedelta
@@ -3550,22 +3553,25 @@ async def test_flood_status_returns_ok_for_expired(tmp_path, real_pool_harness_f
     config = make_test_config(tmp_path)
     harness = real_pool_harness_factory()
     app, db = await build_web_app(config, harness)
+    try:
+        past = datetime.now(timezone.utc) - timedelta(hours=1)
+        await db.add_account(Account(phone="+70010", session_string="s10", is_active=True))
+        await db.update_account_flood("+70010", past)
 
-    past = datetime.now(timezone.utc) - timedelta(hours=1)
-    await db.add_account(Account(phone="+70010", session_string="s10", is_active=True))
-    await db.update_account_flood("+70010", past)
+        async with make_auth_client(app) as c:
+            resp = await c.get("/settings/flood-status")
 
-    async with make_auth_client(app) as c:
-        resp = await c.get("/settings/flood-status")
+        assert resp.status_code == 200
+        data = resp.json()
+        entry = next(d for d in data if d["phone"] == "+70010")
+        assert entry["flood_wait_until"] == "ok"
+        assert entry["remaining_seconds"] == 0
+    finally:
+        await app.state.collection_queue.shutdown()
+        await db.close()
 
-    assert resp.status_code == 200
-    data = resp.json()
-    entry = next(d for d in data if d["phone"] == "+70010")
-    assert entry["flood_wait_until"] == "ok"
-    assert entry["remaining_seconds"] == 0
 
-
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_settings_clears_stale_flood_on_load(tmp_path, real_pool_harness_factory, monkeypatch):
     """GET /settings clears flood_wait_until from DB when the timestamp is expired."""
     from datetime import timedelta
@@ -3575,23 +3581,26 @@ async def test_settings_clears_stale_flood_on_load(tmp_path, real_pool_harness_f
     config = make_test_config(tmp_path)
     harness = real_pool_harness_factory()
     app, db = await build_web_app(config, harness)
+    try:
+        past = datetime.now(timezone.utc) - timedelta(hours=1)
+        await db.add_account(Account(phone="+70011", session_string="s11", is_active=True))
+        await db.update_account_flood("+70011", past)
 
-    past = datetime.now(timezone.utc) - timedelta(hours=1)
-    await db.add_account(Account(phone="+70011", session_string="s11", is_active=True))
-    await db.update_account_flood("+70011", past)
+        probe_mock = AsyncMock(return_value=("ok", None))
+        monkeypatch.setattr(settings_routes, "_probe_provider_config", probe_mock)
+        fake_manager = SimpleNamespace(available=False)
+        monkeypatch.setattr(
+            settings_routes, "_settings_agent_manager", lambda request: (fake_manager, False)
+        )
 
-    probe_mock = AsyncMock(return_value=("ok", None))
-    monkeypatch.setattr(settings_routes, "_probe_provider_config", probe_mock)
-    fake_manager = SimpleNamespace(available=False)
-    monkeypatch.setattr(
-        settings_routes, "_settings_agent_manager", lambda request: (fake_manager, False)
-    )
+        async with make_auth_client(app) as c:
+            resp = await c.get("/settings")
 
-    async with make_auth_client(app) as c:
-        resp = await c.get("/settings")
+        assert resp.status_code == 200
 
-    assert resp.status_code == 200
-
-    accounts = await db.get_accounts()
-    acc = next(a for a in accounts if a.phone == "+70011")
-    assert acc.flood_wait_until is None
+        accounts = await db.get_accounts()
+        acc = next(a for a in accounts if a.phone == "+70011")
+        assert acc.flood_wait_until is None
+    finally:
+        await app.state.collection_queue.shutdown()
+        await db.close()

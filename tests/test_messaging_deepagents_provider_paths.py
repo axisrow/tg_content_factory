@@ -70,7 +70,7 @@ def _build_sync_tools(mock_db, config=None, client_pool=None):
 
 
 class TestEditAdminTool:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_no_pool_returns_gate(self, mock_db):
         mock_db.get_accounts = AsyncMock(return_value=[_make_account()])
         mock_db.get_setting = AsyncMock(return_value=None)
@@ -81,7 +81,7 @@ class TestEditAdminTool:
         text = _text(result).lower()
         assert "pool" in text or "недоступен" in text or "изменение прав" in text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_no_confirm_returns_gate(self, mock_db):
         mock_pool, mock_client = _make_pool_with_client()
         mock_db.get_accounts = AsyncMock(return_value=[_make_account()])
@@ -90,7 +90,7 @@ class TestEditAdminTool:
         result = await handlers["edit_admin"]({"phone": "+79001234567", "chat_id": "chan", "user_id": "user1"})
         assert "confirm" in _text(result).lower()
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_missing_chat_id_returns_error(self, mock_db):
         mock_pool, mock_client = _make_pool_with_client()
         mock_db.get_accounts = AsyncMock(return_value=[_make_account()])
@@ -99,7 +99,7 @@ class TestEditAdminTool:
         result = await handlers["edit_admin"]({"phone": "+79001234567", "user_id": "user1", "confirm": True})
         assert "обязательн" in _text(result).lower()
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_promote_success(self, mock_db):
         mock_pool, mock_client = _make_pool_with_client()
         mock_client.get_entity = AsyncMock(return_value=MagicMock())
@@ -112,7 +112,7 @@ class TestEditAdminTool:
         )
         assert "обновлены" in _text(result).lower() or "администратора" in _text(result).lower()
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_with_title(self, mock_db):
         mock_pool, mock_client = _make_pool_with_client()
         mock_client.get_entity = AsyncMock(return_value=MagicMock())
@@ -128,7 +128,7 @@ class TestEditAdminTool:
         )
         assert "обновлены" in _text(result).lower() or "администратора" in _text(result).lower()
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_error_propagates(self, mock_db):
         mock_pool, mock_client = _make_pool_with_client()
         mock_client.get_entity = AsyncMock(side_effect=Exception("permission denied"))
@@ -140,7 +140,7 @@ class TestEditAdminTool:
         )
         assert "Ошибка" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_client_not_found(self, mock_db):
         mock_pool = MagicMock()
         mock_pool.get_native_client_by_phone = AsyncMock(return_value=None)
@@ -159,7 +159,7 @@ class TestEditAdminTool:
 
 
 class TestEditPermissionsTool:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_no_pool_returns_gate(self, mock_db):
         mock_db.get_accounts = AsyncMock(return_value=[_make_account()])
         mock_db.get_setting = AsyncMock(return_value=None)
@@ -169,7 +169,7 @@ class TestEditPermissionsTool:
         )
         assert "недоступен" in _text(result).lower() or "pool" in _text(result).lower() or "Изменение" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_no_confirm_returns_gate(self, mock_db):
         mock_pool, _ = _make_pool_with_client()
         mock_db.get_accounts = AsyncMock(return_value=[_make_account()])
@@ -180,7 +180,7 @@ class TestEditPermissionsTool:
         )
         assert "confirm" in _text(result).lower()
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_missing_flags_returns_error(self, mock_db):
         mock_pool, _ = _make_pool_with_client()
         mock_db.get_accounts = AsyncMock(return_value=[_make_account()])
@@ -191,7 +191,7 @@ class TestEditPermissionsTool:
         )
         assert "флаг" in _text(result).lower() or "ограничени" in _text(result).lower()
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_success_path(self, mock_db):
         mock_pool, mock_client = _make_pool_with_client()
         mock_client.get_entity = AsyncMock(return_value=MagicMock())
@@ -204,7 +204,7 @@ class TestEditPermissionsTool:
         )
         assert "обновлены" in _text(result).lower() or "ограничени" in _text(result).lower()
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_with_until_date(self, mock_db):
         mock_pool, mock_client = _make_pool_with_client()
         mock_client.get_entity = AsyncMock(return_value=MagicMock())
@@ -220,7 +220,7 @@ class TestEditPermissionsTool:
         )
         assert "обновлены" in _text(result).lower() or "ограничени" in _text(result).lower()
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_error_propagates(self, mock_db):
         mock_pool, mock_client = _make_pool_with_client()
         mock_client.get_entity = AsyncMock(side_effect=Exception("forbidden"))
@@ -239,7 +239,7 @@ class TestEditPermissionsTool:
 
 
 class TestGetBroadcastStatsTool:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_no_pool_returns_gate(self, mock_db):
         mock_db.get_accounts = AsyncMock(return_value=[_make_account()])
         mock_db.get_setting = AsyncMock(return_value=None)
@@ -248,7 +248,7 @@ class TestGetBroadcastStatsTool:
         text = _text(result).lower()
         assert "недоступен" in text or "pool" in text or "статистик" in text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_missing_chat_id(self, mock_db):
         mock_pool, _ = _make_pool_with_client()
         mock_db.get_accounts = AsyncMock(return_value=[_make_account()])
@@ -257,7 +257,7 @@ class TestGetBroadcastStatsTool:
         result = await handlers["get_broadcast_stats"]({"phone": "+79001234567"})
         assert "обязателен" in _text(result).lower()
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_success_with_stats_fields(self, mock_db):
         mock_pool, mock_client = _make_pool_with_client()
         stats_mock = MagicMock()
@@ -284,7 +284,7 @@ class TestGetBroadcastStatsTool:
         assert "Статистика" in text
         assert "followers" in text or "1000" in text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_stats_without_current_field(self, mock_db):
         """Branch: val.current is None → use str(val)."""
         mock_pool, mock_client = _make_pool_with_client()
@@ -306,7 +306,7 @@ class TestGetBroadcastStatsTool:
         result = await handlers["get_broadcast_stats"]({"phone": "+79001234567", "chat_id": "chan"})
         assert "Статистика" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_empty_stats_falls_back_to_raw(self, mock_db):
         """Branch: no fields parsed → fields['raw'] = str(stats)."""
         mock_pool, mock_client = _make_pool_with_client()
@@ -326,7 +326,7 @@ class TestGetBroadcastStatsTool:
         result = await handlers["get_broadcast_stats"]({"phone": "+79001234567", "chat_id": "chan"})
         assert "raw" in _text(result) or "Статистика" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_error_propagates(self, mock_db):
         mock_pool, mock_client = _make_pool_with_client()
         mock_client.get_entity = AsyncMock(side_effect=Exception("chan error"))
@@ -336,7 +336,7 @@ class TestGetBroadcastStatsTool:
         result = await handlers["get_broadcast_stats"]({"phone": "+79001234567", "chat_id": "chan"})
         assert "Ошибка" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_client_not_found(self, mock_db):
         mock_pool = MagicMock()
         mock_pool.get_native_client_by_phone = AsyncMock(return_value=None)
@@ -353,7 +353,7 @@ class TestGetBroadcastStatsTool:
 
 
 class TestUnarchiveChatTool:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_no_pool_returns_gate(self, mock_db):
         mock_db.get_accounts = AsyncMock(return_value=[_make_account()])
         mock_db.get_setting = AsyncMock(return_value=None)
@@ -362,7 +362,7 @@ class TestUnarchiveChatTool:
         text = _text(result).lower()
         assert "недоступен" in text or "pool" in text or "разархивирование" in text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_no_confirm_returns_gate(self, mock_db):
         mock_pool, _ = _make_pool_with_client()
         mock_db.get_accounts = AsyncMock(return_value=[_make_account()])
@@ -371,7 +371,7 @@ class TestUnarchiveChatTool:
         result = await handlers["unarchive_chat"]({"phone": "+79001234567", "chat_id": "chan"})
         assert "confirm" in _text(result).lower()
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_missing_chat_id(self, mock_db):
         mock_pool, _ = _make_pool_with_client()
         mock_db.get_accounts = AsyncMock(return_value=[_make_account()])
@@ -380,7 +380,7 @@ class TestUnarchiveChatTool:
         result = await handlers["unarchive_chat"]({"phone": "+79001234567", "confirm": True})
         assert "обязателен" in _text(result).lower()
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_success(self, mock_db):
         mock_pool, mock_client = _make_pool_with_client()
         mock_client.get_entity = AsyncMock(return_value=MagicMock())
@@ -392,7 +392,7 @@ class TestUnarchiveChatTool:
         assert "разархивирован" in _text(result).lower()
         mock_client.edit_folder.assert_awaited_once_with(mock_client.get_entity.return_value, 0)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_error_propagates(self, mock_db):
         mock_pool, mock_client = _make_pool_with_client()
         mock_client.get_entity = AsyncMock(side_effect=Exception("fail"))
@@ -409,7 +409,7 @@ class TestUnarchiveChatTool:
 
 
 class TestDownloadMediaTool:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_no_pool_returns_gate(self, mock_db):
         mock_db.get_accounts = AsyncMock(return_value=[_make_account()])
         mock_db.get_setting = AsyncMock(return_value=None)
@@ -417,7 +417,7 @@ class TestDownloadMediaTool:
         result = await handlers["download_media"]({"phone": "+79001234567", "chat_id": "me", "message_id": 1})
         assert "недоступен" in _text(result).lower() or "pool" in _text(result).lower() or "Загрузка" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_missing_chat_id(self, mock_db):
         mock_pool, _ = _make_pool_with_client()
         mock_db.get_accounts = AsyncMock(return_value=[_make_account()])
@@ -426,7 +426,7 @@ class TestDownloadMediaTool:
         result = await handlers["download_media"]({"phone": "+79001234567", "message_id": 1})
         assert "обязательн" in _text(result).lower()
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_message_not_found(self, mock_db):
         mock_pool, mock_client = _make_pool_with_client()
         mock_client.get_entity = AsyncMock(return_value=MagicMock())
@@ -442,7 +442,7 @@ class TestDownloadMediaTool:
         result = await handlers["download_media"]({"phone": "+79001234567", "chat_id": "me", "message_id": 42})
         assert "не найдено" in _text(result).lower()
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_no_media_in_message(self, mock_db):
         mock_pool, mock_client = _make_pool_with_client()
         mock_client.get_entity = AsyncMock(return_value=MagicMock())
@@ -459,7 +459,7 @@ class TestDownloadMediaTool:
         result = await handlers["download_media"]({"phone": "+79001234567", "chat_id": "me", "message_id": 42})
         assert "нет медиа" in _text(result).lower()
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_error_propagates(self, mock_db):
         mock_pool, mock_client = _make_pool_with_client()
         mock_client.get_entity = AsyncMock(side_effect=Exception("network error"))
@@ -469,7 +469,7 @@ class TestDownloadMediaTool:
         result = await handlers["download_media"]({"phone": "+79001234567", "chat_id": "me", "message_id": 1})
         assert "Ошибка" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_client_not_found(self, mock_db):
         mock_pool = MagicMock()
         mock_pool.get_native_client_by_phone = AsyncMock(return_value=None)
@@ -486,7 +486,7 @@ class TestDownloadMediaTool:
 
 
 class TestMarkReadTool:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_no_pool_returns_gate(self, mock_db):
         mock_db.get_accounts = AsyncMock(return_value=[_make_account()])
         mock_db.get_setting = AsyncMock(return_value=None)
@@ -495,7 +495,7 @@ class TestMarkReadTool:
         text = _text(result).lower()
         assert "недоступен" in text or "pool" in text or "прочитанн" in text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_missing_chat_id(self, mock_db):
         mock_pool, _ = _make_pool_with_client()
         mock_db.get_accounts = AsyncMock(return_value=[_make_account()])
@@ -504,7 +504,7 @@ class TestMarkReadTool:
         result = await handlers["mark_read"]({"phone": "+79001234567"})
         assert "обязателен" in _text(result).lower()
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_success(self, mock_db):
         mock_pool, mock_client = _make_pool_with_client()
         mock_client.get_entity = AsyncMock(return_value=MagicMock())
@@ -515,7 +515,7 @@ class TestMarkReadTool:
         result = await handlers["mark_read"]({"phone": "+79001234567", "chat_id": "chan", "max_id": 100})
         assert "прочитанны" in _text(result).lower()
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_error_propagates(self, mock_db):
         mock_pool, mock_client = _make_pool_with_client()
         mock_client.get_entity = AsyncMock(side_effect=Exception("flood"))
@@ -948,33 +948,33 @@ class TestAgentProviderService:
             **kwargs,
         )
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_load_provider_configs_empty(self):
         svc, db = self._make_service()
         configs = await svc.load_provider_configs()
         assert configs == []
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_load_provider_configs_invalid_json(self):
         svc, db = self._make_service()
         db.get_setting = AsyncMock(return_value="not-json{{{")
         configs = await svc.load_provider_configs()
         assert configs == []
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_load_provider_configs_not_list(self):
         svc, db = self._make_service()
         db.get_setting = AsyncMock(return_value=json.dumps({"key": "value"}))
         configs = await svc.load_provider_configs()
         assert configs == []
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_load_model_cache_empty(self):
         svc, db = self._make_service()
         cache = await svc.load_model_cache()
         assert cache == {}
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_load_model_cache_invalid_json(self):
         svc, db = self._make_service()
         db.get_setting = AsyncMock(return_value="{{broken")
@@ -1201,7 +1201,7 @@ class TestAgentProviderService:
         # No encryption key → cipher is None
         assert svc.writes_enabled is False
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_save_provider_configs_raises_without_encryption(self):
         svc, _ = self._make_service()
         cfg = self._make_cfg()
@@ -1243,7 +1243,7 @@ class TestAgentProviderService:
         views = svc.build_provider_views([cfg], cache)
         assert "gpt-custom-model" in views[0]["models"]
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_save_and_load_model_cache(self):
         from src.services.agent_provider_service import ProviderModelCacheEntry
 

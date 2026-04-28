@@ -90,36 +90,36 @@ def pool(mock_auth, mock_db):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_connected_phones_returns_set(pool):
     pool.clients = {"+7001": MagicMock()}
     assert pool.connected_phones() == {"+7001"}
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_phone_for_channel_returns_none_when_unknown(pool):
     assert pool.get_phone_for_channel(999) is None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_register_and_get_phone_for_channel(pool):
     pool.register_channel_phone(42, "+7001")
     assert pool.get_phone_for_channel(42) == "+7001"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_clear_channel_phone(pool):
     pool.register_channel_phone(42, "+7001")
     pool.clear_channel_phone(42)
     assert pool.get_phone_for_channel(42) is None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_is_warming_false_initially(pool):
     assert pool.is_warming() is False
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_is_warming_true_when_task_running(pool):
     async def _long_task():
         await asyncio.sleep(10)
@@ -135,19 +135,19 @@ async def test_is_warming_true_when_task_running(pool):
             pass
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_wait_for_warm_no_task(pool):
     await pool.wait_for_warm()  # Should not raise
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_wait_for_warm_completed_task(pool):
     pool._warming_task = asyncio.create_task(asyncio.sleep(0))
     await asyncio.sleep(0.05)
     await pool.wait_for_warm(timeout=1.0)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_wait_for_warm_timeout(pool):
     async def _long():
         await asyncio.sleep(999)
@@ -163,7 +163,7 @@ async def test_wait_for_warm_timeout(pool):
             pass
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_warm_all_dialogs_registers_channel_phones(mock_auth, mock_db):
     pool = ClientPool(mock_auth, mock_db)
 
@@ -185,7 +185,7 @@ async def test_warm_all_dialogs_registers_channel_phones(mock_auth, mock_db):
     mock_db.repos.channels.update_channel_preferred_phone.assert_called_once_with(12345, "+7001")
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_warm_all_dialogs_skips_non_channel_entities(mock_auth, mock_db):
     pool = ClientPool(mock_auth, mock_db)
 
@@ -205,7 +205,7 @@ async def test_warm_all_dialogs_skips_non_channel_entities(mock_auth, mock_db):
     assert pool.get_phone_for_channel(999) is None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_warm_all_dialogs_handles_failure(mock_auth, mock_db):
     pool = ClientPool(mock_auth, mock_db)
 
@@ -220,7 +220,7 @@ async def test_warm_all_dialogs_handles_failure(mock_auth, mock_db):
         await pool.warm_all_dialogs()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_warm_all_dialogs_skips_get_client_by_phone_none(mock_auth, mock_db):
     pool = ClientPool(mock_auth, mock_db)
     pool.clients["+7001"] = MagicMock()
@@ -235,7 +235,7 @@ async def test_warm_all_dialogs_skips_get_client_by_phone_none(mock_auth, mock_d
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_invalidate_dialogs_cache_specific_phone(pool):
     pool._store_cached_dialogs("+7001", "full", [{"channel_id": 1}])
     pool._store_cached_dialogs("+7002", "full", [{"channel_id": 2}])
@@ -245,14 +245,14 @@ async def test_invalidate_dialogs_cache_specific_phone(pool):
     assert pool._get_cached_dialogs("+7002", "full") is not None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_invalidate_dialogs_cache_all(pool):
     pool._store_cached_dialogs("+7001", "full", [{"channel_id": 1}])
     pool.invalidate_dialogs_cache()
     assert pool._get_cached_dialogs("+7001", "full") is None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_cached_dialogs_expired(pool):
     pool._dialogs_cache_ttl_sec = 0.0
     pool._store_cached_dialogs("+7001", "full", [{"channel_id": 1}])
@@ -260,7 +260,7 @@ async def test_cached_dialogs_expired(pool):
     assert pool._get_cached_dialogs("+7001", "full") is None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_cached_dialogs_channels_only_falls_back_to_full(pool):
     full_data = [{"channel_id": 1, "channel_type": "channel"}, {"channel_id": 2, "channel_type": "dm"}]
     pool._store_cached_dialogs("+7001", "full", full_data)
@@ -270,12 +270,12 @@ async def test_cached_dialogs_channels_only_falls_back_to_full(pool):
     assert len(result) == 1  # Only non-dm/bot/saved
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_cached_dialogs_channels_only_no_full_cache(pool):
     assert pool._get_cached_dialogs("+7001", "channels_only") is None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_db_cached_dialogs_stale(mock_auth, mock_db):
     pool = ClientPool(mock_auth, mock_db)
     pool._dialogs_db_cache_ttl_sec = 0.0
@@ -287,7 +287,7 @@ async def test_get_db_cached_dialogs_stale(mock_auth, mock_db):
     assert result is None  # stale, should return None to trigger fresh fetch
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_db_cached_dialogs_returns_full(mock_auth, mock_db):
     pool = ClientPool(mock_auth, mock_db)
 
@@ -305,7 +305,7 @@ async def test_get_db_cached_dialogs_returns_full(mock_auth, mock_db):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_resolve_any_entity_channel(mock_auth, mock_db):
     acc = Account(phone="+7001", is_active=True, session_string="s1")
     mock_db.get_accounts.return_value = [acc]
@@ -324,7 +324,7 @@ async def test_resolve_any_entity_channel(mock_auth, mock_db):
     assert result["channel_type"] == "channel"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_resolve_any_entity_user(mock_auth, mock_db):
     acc = Account(phone="+7001", is_active=True, session_string="s1")
     mock_db.get_accounts.return_value = [acc]
@@ -344,7 +344,7 @@ async def test_resolve_any_entity_user(mock_auth, mock_db):
     assert result["title"] == "Ivan Petrov"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_resolve_any_entity_bot(mock_auth, mock_db):
     acc = Account(phone="+7001", is_active=True, session_string="s1")
     mock_db.get_accounts.return_value = [acc]
@@ -362,7 +362,7 @@ async def test_resolve_any_entity_bot(mock_auth, mock_db):
     assert result["channel_type"] == "bot"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_resolve_any_entity_negative_id_as_channel(mock_auth, mock_db):
     acc = Account(phone="+7001", is_active=True, session_string="s1")
     mock_db.get_accounts.return_value = [acc]
@@ -381,7 +381,7 @@ async def test_resolve_any_entity_negative_id_as_channel(mock_auth, mock_db):
     assert result is not None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_resolve_any_entity_positive_id_as_user(mock_auth, mock_db):
     acc = Account(phone="+7001", is_active=True, session_string="s1")
     mock_db.get_accounts.return_value = [acc]
@@ -399,7 +399,7 @@ async def test_resolve_any_entity_positive_id_as_user(mock_auth, mock_db):
     assert result["channel_type"] == "dm"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_resolve_any_entity_no_client_raises(mock_auth, mock_db):
     pool = ClientPool(mock_auth, mock_db)
 
@@ -407,7 +407,7 @@ async def test_resolve_any_entity_no_client_raises(mock_auth, mock_db):
         await pool.resolve_any_entity("@test")
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_resolve_any_entity_timeout(mock_auth, mock_db):
     acc = Account(phone="+7001", is_active=True, session_string="s1")
     mock_db.get_accounts.return_value = [acc]
@@ -423,7 +423,7 @@ async def test_resolve_any_entity_timeout(mock_auth, mock_db):
     assert result is None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_resolve_any_entity_username_not_found(mock_auth, mock_db):
     acc = Account(phone="+7001", is_active=True, session_string="s1")
     mock_db.get_accounts.return_value = [acc]
@@ -439,7 +439,7 @@ async def test_resolve_any_entity_username_not_found(mock_auth, mock_db):
     assert result is None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_resolve_any_entity_flood_raises_after_exhaustion(mock_auth, mock_db):
     acc = Account(phone="+7001", is_active=True, session_string="s1")
     mock_db.get_accounts.return_value = [acc]
@@ -457,7 +457,7 @@ async def test_resolve_any_entity_flood_raises_after_exhaustion(mock_auth, mock_
         await pool.resolve_any_entity("@test")
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_resolve_any_entity_channel_forbidden(mock_auth, mock_db):
     acc = Account(phone="+7001", is_active=True, session_string="s1")
     mock_db.get_accounts.return_value = [acc]
@@ -474,7 +474,7 @@ async def test_resolve_any_entity_channel_forbidden(mock_auth, mock_db):
     assert result is None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_resolve_any_entity_generic_error(mock_auth, mock_db):
     acc = Account(phone="+7001", is_active=True, session_string="s1")
     mock_db.get_accounts.return_value = [acc]
@@ -490,7 +490,7 @@ async def test_resolve_any_entity_generic_error(mock_auth, mock_db):
     assert result is None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_resolve_any_entity_with_preferred_phone(mock_auth, mock_db):
     acc = Account(phone="+7001", is_active=True, session_string="s1")
     mock_db.get_accounts.return_value = [acc]
@@ -514,19 +514,19 @@ async def test_resolve_any_entity_with_preferred_phone(mock_auth, mock_db):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_fetch_channel_meta_group_returns_none(pool):
     result = await pool.fetch_channel_meta(1, "group")
     assert result is None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_fetch_channel_meta_no_client(pool):
     result = await pool.fetch_channel_meta(1, "channel")
     assert result is None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_fetch_channel_meta_success(pool):
     client = AsyncMock()
     entity = SimpleNamespace()
@@ -555,7 +555,7 @@ async def test_fetch_channel_meta_success(pool):
     assert result["has_comments"] is True
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_fetch_channel_meta_timeout(pool):
     client = AsyncMock()
     client.get_entity = AsyncMock(side_effect=asyncio.TimeoutError())
@@ -569,7 +569,7 @@ async def test_fetch_channel_meta_timeout(pool):
     assert result is None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_fetch_channel_meta_generic_error(pool):
     client = AsyncMock()
     entity = SimpleNamespace()
@@ -590,7 +590,7 @@ async def test_fetch_channel_meta_generic_error(pool):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_classify_entity_scam():
     entity = SimpleNamespace(scam=True, fake=False, restricted=False, monoforum=False,
                              forum=False, gigagroup=False, megagroup=False, broadcast=False)
@@ -599,7 +599,7 @@ async def test_classify_entity_scam():
     assert deactivate is True
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_classify_entity_fake():
     entity = SimpleNamespace(scam=False, fake=True, restricted=False, monoforum=False,
                              forum=False, gigagroup=False, megagroup=False, broadcast=False)
@@ -608,7 +608,7 @@ async def test_classify_entity_fake():
     assert deactivate is True
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_classify_entity_restricted():
     entity = SimpleNamespace(scam=False, fake=False, restricted=True, monoforum=False,
                              forum=False, gigagroup=False, megagroup=False, broadcast=False)
@@ -617,7 +617,7 @@ async def test_classify_entity_restricted():
     assert deactivate is True
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_classify_entity_monoforum():
     entity = SimpleNamespace(scam=False, fake=False, restricted=False, monoforum=True,
                              forum=False, gigagroup=False, megagroup=False, broadcast=False)
@@ -626,7 +626,7 @@ async def test_classify_entity_monoforum():
     assert deactivate is False
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_classify_entity_forum():
     entity = SimpleNamespace(scam=False, fake=False, restricted=False, monoforum=False,
                              forum=True, gigagroup=False, megagroup=False, broadcast=False)
@@ -635,7 +635,7 @@ async def test_classify_entity_forum():
     assert deactivate is False
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_classify_entity_gigagroup():
     entity = SimpleNamespace(scam=False, fake=False, restricted=False, monoforum=False,
                              forum=False, gigagroup=True, megagroup=False, broadcast=False)
@@ -644,7 +644,7 @@ async def test_classify_entity_gigagroup():
     assert deactivate is False
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_classify_entity_plain_group():
     entity = SimpleNamespace(scam=False, fake=False, restricted=False, monoforum=False,
                              forum=False, gigagroup=False, megagroup=False, broadcast=False)
@@ -659,7 +659,7 @@ async def test_classify_entity_plain_group():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_resolve_channel_channel_forbidden(pool):
     client = AsyncMock()
     cf = ChannelForbidden(id=1, access_hash=1, title="Forbidden", broadcast=False)
@@ -674,7 +674,7 @@ async def test_resolve_channel_channel_forbidden(pool):
     assert result is None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_resolve_channel_numeric_id(pool):
     client = AsyncMock()
     entity = SimpleNamespace(id=123, title="Ch", broadcast=True, megagroup=False, gigagroup=False,
@@ -691,7 +691,7 @@ async def test_resolve_channel_numeric_id(pool):
     assert result["channel_id"] == 123
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_resolve_channel_generic_error(pool):
     client = AsyncMock()
     client.get_entity = AsyncMock(side_effect=RuntimeError("unknown"))
@@ -705,7 +705,7 @@ async def test_resolve_channel_generic_error(pool):
     assert result is None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_resolve_channel_username_invalid(pool):
     client = AsyncMock()
     client.get_entity = AsyncMock(side_effect=UsernameInvalidError("inv"))
@@ -725,7 +725,7 @@ async def test_resolve_channel_username_invalid(pool):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_dialogs_no_non_flooded_accounts(pool, mock_db):
     future = datetime.now(timezone.utc) + timedelta(minutes=10)
     mock_db.get_accounts.return_value = [
@@ -743,7 +743,7 @@ async def test_get_dialogs_no_non_flooded_accounts(pool, mock_db):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_remove_client_cleans_up_all_state(pool, mock_auth, mock_db):
     client = AsyncMock()
     pool.clients["+7001"] = TelegramTransportSession(client, disconnect_on_close=False)
@@ -761,7 +761,7 @@ async def test_remove_client_cleans_up_all_state(pool, mock_auth, mock_db):
     assert "+7001" not in pool._premium_flood_wait_until
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_remove_client_with_active_leases(pool, mock_auth, mock_db):
     client = AsyncMock()
     pool.clients["+7001"] = TelegramTransportSession(client, disconnect_on_close=False)
@@ -786,13 +786,13 @@ async def test_remove_client_with_active_leases(pool, mock_auth, mock_db):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_reconnect_phone_not_connected(pool):
     result = await pool.reconnect_phone("+7001")
     assert result is False
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_reconnect_phone_already_connected(pool):
     client = AsyncMock()
     client.is_connected = MagicMock(return_value=True)
@@ -802,7 +802,7 @@ async def test_reconnect_phone_already_connected(pool):
     assert result is True
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_reconnect_phone_reconnect_succeeds(pool):
     client = AsyncMock()
     client.is_connected = MagicMock(side_effect=[False, True])
@@ -814,7 +814,7 @@ async def test_reconnect_phone_reconnect_succeeds(pool):
     client.connect.assert_awaited_once()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_reconnect_phone_reconnect_fails(pool):
     client = AsyncMock()
     client.is_connected = MagicMock(return_value=False)
@@ -831,7 +831,7 @@ async def test_reconnect_phone_reconnect_fails(pool):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_disconnect_all_timeout_forces_cleanup(pool):
     client = AsyncMock()
     client.disconnect = AsyncMock(side_effect=asyncio.TimeoutError())
@@ -846,7 +846,7 @@ async def test_disconnect_all_timeout_forces_cleanup(pool):
     assert "+7001" not in pool.clients
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_disconnect_all_general_error(pool):
     async def _error_remove(phone):
         raise RuntimeError("unexpected")
@@ -863,7 +863,7 @@ async def test_disconnect_all_general_error(pool):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_users_info_no_direct_session(mock_auth, mock_db):
     acc = Account(phone="+7001", is_active=True, is_primary=True, session_string="s1")
     mock_db.get_accounts.return_value = [acc]
@@ -890,7 +890,7 @@ async def test_get_users_info_no_direct_session(mock_auth, mock_db):
     pool._backend_router.release.assert_called_once_with(lease)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_users_info_error_skips_account(pool, mock_db):
     acc = Account(phone="+7001", is_active=True, is_primary=True, session_string="s1")
     mock_db.get_accounts.return_value = [acc]
@@ -903,7 +903,7 @@ async def test_get_users_info_error_skips_account(pool, mock_db):
     assert len(info) == 0
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_users_info_no_account_for_phone(pool, mock_db):
     acc = Account(phone="+7001", is_active=True, is_primary=True, session_string="s1")
     mock_db.get_accounts.return_value = [acc]
@@ -926,21 +926,21 @@ async def test_get_users_info_no_account_for_phone(pool, mock_db):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_normalize_runtime_config_none():
     config = ClientPool._normalize_runtime_config(None)
     assert config.backend_mode == "auto"
     assert config.cli_transport == "hybrid"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_normalize_runtime_config_invalid_backend():
     rc = TelegramRuntimeConfig(backend_mode="invalid_mode", cli_transport="in_process")
     config = ClientPool._normalize_runtime_config(rc)
     assert config.backend_mode == "auto"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_normalize_runtime_config_invalid_transport():
     rc = TelegramRuntimeConfig(backend_mode="auto", cli_transport="invalid_transport")
     config = ClientPool._normalize_runtime_config(rc)
@@ -953,7 +953,7 @@ async def test_normalize_runtime_config_invalid_transport():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_premium_unavailability_not_connected(mock_auth, mock_db):
     acc = Account(phone="+7001", is_active=True, is_premium=True, session_string="s1")
     mock_db.get_accounts.return_value = [acc]
@@ -964,7 +964,7 @@ async def test_premium_unavailability_not_connected(mock_auth, mock_db):
     assert "не подключён" in reason
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_premium_unavailability_some_blocked(mock_auth, mock_db):
     acc = Account(phone="+7001", is_active=True, is_premium=True, session_string="s1")
     mock_db.get_accounts.return_value = [acc]
@@ -982,13 +982,13 @@ async def test_premium_unavailability_some_blocked(mock_auth, mock_db):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_leave_channels_no_client(pool):
     result = await pool.leave_channels("+7001", [(123, "channel")])
     assert result == {123: False}
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_leave_channels_dm_type(pool):
     client = AsyncMock()
     entity = SimpleNamespace()
@@ -1005,7 +1005,7 @@ async def test_leave_channels_dm_type(pool):
     assert result[123] is True
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_leave_channels_generic_error(pool):
     client = AsyncMock()
     entity = SimpleNamespace()
@@ -1028,13 +1028,13 @@ async def test_leave_channels_generic_error(pool):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_forum_topics_no_client(pool):
     result = await pool.get_forum_topics(1)
     assert result == []
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_forum_topics_dialogs_fetched_but_still_fails(pool, mock_db):
     client = AsyncMock()
     client.get_entity = AsyncMock(side_effect=ValueError("not found"))
@@ -1052,7 +1052,7 @@ async def test_get_forum_topics_dialogs_fetched_but_still_fails(pool, mock_db):
     assert result == []
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_forum_topics_resolves_by_username(pool, mock_db):
     client = AsyncMock()
     entity = SimpleNamespace()
@@ -1090,14 +1090,14 @@ async def test_get_forum_topics_resolves_by_username(pool, mock_db):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_media_type_document_no_attributes():
     media = MessageMediaDocument(document=None)
     msg = SimpleNamespace(media=media)
     assert Collector._get_media_type(msg) == "document"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_media_type_video_note():
     attr = DocumentAttributeVideo(duration=10, w=100, h=100, round_message=True)
     doc = SimpleNamespace(attributes=[attr])
@@ -1106,7 +1106,7 @@ async def test_get_media_type_video_note():
     assert Collector._get_media_type(msg) == "video_note"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_media_type_audio():
     attr = DocumentAttributeAudio(duration=10, voice=False)
     doc = SimpleNamespace(attributes=[attr])
@@ -1115,7 +1115,7 @@ async def test_get_media_type_audio():
     assert Collector._get_media_type(msg) == "audio"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_media_type_gif():
     attr = DocumentAttributeAnimated()
     doc = SimpleNamespace(attributes=[attr])
@@ -1124,25 +1124,25 @@ async def test_get_media_type_gif():
     assert Collector._get_media_type(msg) == "gif"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_media_type_web_page():
     msg = SimpleNamespace(media=MessageMediaWebPage(webpage=SimpleNamespace()))
     assert Collector._get_media_type(msg) == "web_page"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_media_type_location():
     msg = SimpleNamespace(media=MessageMediaGeo(geo=SimpleNamespace()))
     assert Collector._get_media_type(msg) == "location"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_media_type_geo_live():
     msg = SimpleNamespace(media=MessageMediaGeoLive(geo=SimpleNamespace(), period=60))
     assert Collector._get_media_type(msg) == "geo_live"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_media_type_contact():
     msg = SimpleNamespace(media=MessageMediaContact(
         phone_number="", first_name="", last_name="", vcard="", user_id=0
@@ -1150,20 +1150,20 @@ async def test_get_media_type_contact():
     assert Collector._get_media_type(msg) == "contact"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_media_type_dice():
     msg = SimpleNamespace(media=MessageMediaDice(emoticon="🎲", value=6))
     assert Collector._get_media_type(msg) == "dice"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_media_type_game():
     game = SimpleNamespace(id=0, access_hash=0, short_name="", title="", description="")
     msg = SimpleNamespace(media=MessageMediaGame(game=game))
     assert Collector._get_media_type(msg) == "game"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_media_type_unknown():
     msg = SimpleNamespace(media=SimpleNamespace())
     assert Collector._get_media_type(msg) == "unknown"
@@ -1175,7 +1175,7 @@ async def test_get_media_type_unknown():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_extract_reactions_no_emoticon_no_document_id():
     """Reaction with no emoticon and no document_id should be skipped."""
     reaction_obj = SimpleNamespace(emoticon=None, document_id=None)
@@ -1184,7 +1184,7 @@ async def test_extract_reactions_no_emoticon_no_document_id():
     assert Collector._extract_reactions(msg) is None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_extract_reactions_no_reaction_attr():
     """Reaction item with reaction=None should be skipped."""
     result_item = SimpleNamespace(reaction=None, count=1)
@@ -1192,7 +1192,7 @@ async def test_extract_reactions_no_reaction_attr():
     assert Collector._extract_reactions(msg) is None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_extract_reactions_mixed_valid_and_invalid():
     """Only valid reactions should be included."""
     valid_reaction = SimpleNamespace(emoticon="👍")
@@ -1216,34 +1216,34 @@ async def test_extract_reactions_mixed_valid_and_invalid():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_sender_name_no_sender():
     msg = SimpleNamespace(sender=None)
     assert Collector._get_sender_name(msg) is None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_sender_name_with_title():
     sender = SimpleNamespace(title="My Channel")
     msg = SimpleNamespace(sender=sender)
     assert Collector._get_sender_name(msg) == "My Channel"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_sender_name_with_first_and_last():
     sender = SimpleNamespace(first_name="Ivan", last_name="Petrov")
     msg = SimpleNamespace(sender=sender)
     assert Collector._get_sender_name(msg) == "Ivan Petrov"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_sender_name_with_first_only():
     sender = SimpleNamespace(first_name="Ivan", last_name="")
     msg = SimpleNamespace(sender=sender)
     assert Collector._get_sender_name(msg) == "Ivan"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_sender_name_empty_names():
     sender = SimpleNamespace(first_name="", last_name="")
     msg = SimpleNamespace(sender=sender)
@@ -1256,7 +1256,7 @@ async def test_get_sender_name_empty_names():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_precheck_sample_breaks_on_cancel():
     pool = make_mock_pool()
     db = MagicMock()
@@ -1282,7 +1282,7 @@ async def test_precheck_sample_breaks_on_cancel():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_collect_all_channels_cancellation():
     pool = make_mock_pool(get_available_client=AsyncMock(return_value=None))
     db = MagicMock()
@@ -1308,7 +1308,7 @@ async def test_collect_all_channels_cancellation():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_fallback_availability_with_clients():
     pool = make_mock_pool(clients={"+7001": object()})
     collector = Collector(pool, MagicMock(), SchedulerConfig())
@@ -1318,7 +1318,7 @@ async def test_fallback_availability_with_clients():
     assert result.state == "available"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_fallback_availability_no_clients():
     pool = make_mock_pool(clients={})
     collector = Collector(pool, MagicMock(), SchedulerConfig())
@@ -1332,7 +1332,7 @@ async def test_fallback_availability_no_clients():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_is_running_initially_false():
     pool = make_mock_pool()
     collector = Collector(pool, MagicMock(), SchedulerConfig())
@@ -1340,7 +1340,7 @@ async def test_is_running_initially_false():
     assert collector.is_stats_running is False
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_delay_between_channels_sec():
     pool = make_mock_pool()
     config = SchedulerConfig(delay_between_channels_sec=5)
@@ -1354,7 +1354,7 @@ async def test_delay_between_channels_sec():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_log_unavailability_deduplication():
     pool = make_mock_pool()
     collector = Collector(pool, MagicMock(), SchedulerConfig())
@@ -1373,7 +1373,7 @@ async def test_log_unavailability_deduplication():
     assert collector._last_unavailability_log[0] == "no_connected_active"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_reset_unavailability_log():
     pool = make_mock_pool()
     collector = Collector(pool, MagicMock(), SchedulerConfig())
@@ -1388,7 +1388,7 @@ async def test_reset_unavailability_log():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_maybe_auto_delete_disabled():
     pool = make_mock_pool()
     db = MagicMock()
@@ -1399,7 +1399,7 @@ async def test_maybe_auto_delete_disabled():
     assert result is False
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_maybe_auto_delete_enabled():
     pool = make_mock_pool()
     db = MagicMock()
@@ -1412,7 +1412,7 @@ async def test_maybe_auto_delete_enabled():
     db.delete_messages_for_channel.assert_called_once_with(123)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_maybe_auto_delete_error():
     pool = make_mock_pool()
     db = MagicMock()
@@ -1430,7 +1430,7 @@ async def test_maybe_auto_delete_error():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_sample_channel_no_client():
     pool = make_mock_pool(get_available_client=AsyncMock(return_value=None))
     collector = Collector(pool, MagicMock(), SchedulerConfig())
@@ -1438,7 +1438,7 @@ async def test_sample_channel_no_client():
     assert result == []
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_sample_channel_resolve_entity_fails():
     client = AsyncMock()
     client.get_entity = AsyncMock(side_effect=ValueError("not found"))
@@ -1449,7 +1449,7 @@ async def test_sample_channel_resolve_entity_fails():
     assert result == []
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_sample_channel_flood_wait():
     client = AsyncMock()
     flood_err = FloodWaitError(request=None, capture=0)
@@ -1462,7 +1462,7 @@ async def test_sample_channel_flood_wait():
     assert result == []
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_sample_channel_with_messages():
     entity = SimpleNamespace()
     client = AsyncMock()
@@ -1482,7 +1482,7 @@ async def test_sample_channel_with_messages():
     assert result[0]["message_id"] == 1
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_sample_channel_cancelled_mid_stream():
     entity = SimpleNamespace()
     client = AsyncMock()
@@ -1510,7 +1510,7 @@ async def test_sample_channel_cancelled_mid_stream():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_collect_stats_username_fallback_fails():
     channel = Channel(channel_id=123, username="gone")
     client = AsyncMock()
@@ -1533,7 +1533,7 @@ async def test_collect_stats_username_fallback_fails():
     assert result is None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_collect_stats_no_username_resolves_numeric():
     channel = Channel(channel_id=123)
     entity = SimpleNamespace(id=123, date=None)
@@ -1564,7 +1564,7 @@ async def test_collect_stats_no_username_resolves_numeric():
     assert result.subscriber_count == 100
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_collect_stats_timeout_during_messages():
     channel = Channel(channel_id=123, username="test")
     entity = SimpleNamespace(id=123, date=None)
@@ -1595,7 +1595,7 @@ async def test_collect_stats_timeout_during_messages():
     assert result.subscriber_count == 50
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_collect_stats_updates_channel_type():
     channel = Channel(channel_id=123, username="test", channel_type=None)
     entity = SimpleNamespace(id=123, date=None, broadcast=True, megagroup=False,
@@ -1634,7 +1634,7 @@ async def test_collect_stats_updates_channel_type():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_collect_all_stats_waits_on_flood():
     pool = make_mock_pool()
     db = MagicMock()
@@ -1660,7 +1660,7 @@ async def test_collect_all_stats_waits_on_flood():
     assert stats["errors"] == 0
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_collect_all_stats_generic_error():
     pool = make_mock_pool()
     db = MagicMock()
@@ -1680,7 +1680,7 @@ async def test_collect_all_stats_generic_error():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_discover_phone_for_channel_success():
     pool = make_mock_pool()
 
@@ -1699,7 +1699,7 @@ async def test_discover_phone_for_channel_success():
     assert result == "+7002"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_discover_phone_for_channel_flood():
     pool = make_mock_pool()
 
@@ -1725,7 +1725,7 @@ async def test_discover_phone_for_channel_flood():
     pool.report_flood.assert_awaited_once()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_discover_phone_for_channel_no_access():
     pool = make_mock_pool()
 
@@ -1743,7 +1743,7 @@ async def test_discover_phone_for_channel_no_access():
     assert result is None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_discover_phone_for_channel_client_none():
     pool = make_mock_pool()
     pool.get_client_by_phone = AsyncMock(return_value=None)
@@ -1759,7 +1759,7 @@ async def test_discover_phone_for_channel_client_none():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_channel_still_exists_true():
     pool = make_mock_pool()
     db = MagicMock()
@@ -1769,7 +1769,7 @@ async def test_channel_still_exists_true():
     assert await collector._channel_still_exists(1) is True
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_channel_still_exists_false():
     pool = make_mock_pool()
     db = MagicMock()
@@ -1784,7 +1784,7 @@ async def test_channel_still_exists_false():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_cancel_and_is_cancelled():
     pool = make_mock_pool()
     collector = Collector(pool, MagicMock(), SchedulerConfig())
@@ -1799,7 +1799,7 @@ async def test_cancel_and_is_cancelled():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_raise_collection_unavailability_all_flooded():
     pool = make_mock_pool()
     next_at = datetime.now(timezone.utc) + timedelta(seconds=120)
@@ -1817,7 +1817,7 @@ async def test_raise_collection_unavailability_all_flooded():
     assert exc.value.retry_after_sec == 120
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_raise_collection_unavailability_no_active():
     pool = make_mock_pool()
     pool.get_collection_availability = AsyncMock(
@@ -1838,7 +1838,7 @@ async def test_raise_collection_unavailability_no_active():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_collect_channel_numeric_timeout():
     """Timeout resolving numeric PeerChannel -> returns 0."""
     channel = Channel(channel_id=123, title="Test")
@@ -1852,7 +1852,7 @@ async def test_collect_channel_numeric_timeout():
     assert result == 0
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_collect_channel_numeric_flood_wait():
     """FloodWaitError on numeric resolve -> HandledFloodWaitError -> flood_wait_sec set."""
     channel = Channel(channel_id=123, title="Test")
@@ -1870,7 +1870,7 @@ async def test_collect_channel_numeric_flood_wait():
     assert result == 0
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_collect_channel_private_group_invalidates_bad_phone():
     """When private group's phone can't resolve entity, clear and discover."""
     channel = Channel(channel_id=123, title="Test", preferred_phone="+7001")
@@ -1903,7 +1903,7 @@ async def test_collect_channel_private_group_invalidates_bad_phone():
     db.repos.channels.update_channel_preferred_phone.assert_called_once_with(123, None)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_collect_channel_cancelled_during_batch():
     """Cancel event set during message streaming breaks the loop."""
     ch = Channel(channel_id=-100999, title="Test", username="test", last_collected_id=0)
@@ -1942,7 +1942,7 @@ async def test_collect_channel_cancelled_during_batch():
     assert count == 0  # all messages dropped because channel deleted
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_collect_channel_username_not_occupied_deactivates():
     """UsernameNotOccupiedError from run_with_flood_wait(_collect_messages()) deactivates channel."""
     ch = Channel(id=5, channel_id=123, title="Test", username="gone")
@@ -1980,7 +1980,7 @@ async def test_collect_channel_username_not_occupied_deactivates():
     db.set_channel_active.assert_called_once_with(5, False)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_collect_channel_flush_error_in_finally():
     """Error flushing batch in finally block sets stop_due_to_persistence_error."""
     ch = Channel(channel_id=123, title="Test", username="test")
@@ -2008,7 +2008,7 @@ async def test_collect_channel_flush_error_in_finally():
     assert result == 0
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_collect_channel_update_last_id_error():
     """Error updating last_collected_id in finally is caught."""
     ch = Channel(channel_id=123, title="Test", username="test")
@@ -2048,7 +2048,7 @@ async def test_collect_channel_update_last_id_error():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_auto_delete_caching():
     pool = make_mock_pool()
     db = MagicMock()
@@ -2073,7 +2073,7 @@ async def test_auto_delete_caching():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_collect_stats_no_availability_fn():
     pool = make_mock_pool(get_available_client=AsyncMock(return_value=None))
     del pool.get_stats_availability  # No availability function
@@ -2085,7 +2085,7 @@ async def test_collect_stats_no_availability_fn():
         await collector._collect_channel_stats(channel)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_collect_stats_availability_not_async():
     pool = make_mock_pool(get_available_client=AsyncMock(return_value=None))
     pool.get_stats_availability = MagicMock(return_value="not_async")  # not awaitable
@@ -2103,7 +2103,7 @@ async def test_collect_stats_availability_not_async():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_collect_stats_flood_wait_retries():
     channel = Channel(channel_id=123, username="test")
 
@@ -2138,7 +2138,7 @@ async def test_collect_stats_flood_wait_retries():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_stats_availability_delegates():
     pool = make_mock_pool()
     pool.get_stats_availability = AsyncMock(

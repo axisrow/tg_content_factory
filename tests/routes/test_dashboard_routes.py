@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_dashboard_renders_with_data(route_client, base_app):
     """Dashboard renders with stats cards when auth configured and accounts exist."""
     app, db, pool = base_app
@@ -19,7 +19,7 @@ async def test_dashboard_renders_with_data(route_client, base_app):
     assert "Каналы" in resp.text
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_dashboard_redirect_no_accounts(base_app):
     """Dashboard redirects to settings when no accounts exist."""
     from httpx import ASGITransport, AsyncClient
@@ -52,7 +52,7 @@ async def test_dashboard_redirect_no_accounts(base_app):
         assert "/settings" in resp.headers.get("location", "")
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_dashboard_contains_stats(route_client, base_app):
     """Dashboard page renders the stats numbers from db.get_stats()."""
     app, db, pool = base_app
@@ -72,14 +72,14 @@ async def test_dashboard_contains_stats(route_client, base_app):
 # ── _time_ago helper tests ──────────────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_time_ago_none():
     """Test _time_ago returns None for None input."""
     from src.web.routes.dashboard import _time_ago
     assert _time_ago(None) is None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_time_ago_just_now():
     """Test _time_ago returns 'только что' for very recent."""
     from src.web.routes.dashboard import _time_ago
@@ -87,7 +87,7 @@ async def test_time_ago_just_now():
     assert _time_ago(now) == "только что"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_time_ago_minutes():
     """Test _time_ago returns minutes ago."""
     from src.web.routes.dashboard import _time_ago
@@ -97,7 +97,7 @@ async def test_time_ago_minutes():
     assert "мин" in result
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_time_ago_hours():
     """Test _time_ago returns hours ago."""
     from src.web.routes.dashboard import _time_ago
@@ -107,7 +107,7 @@ async def test_time_ago_hours():
     assert "ч" in result
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_time_ago_days():
     """Test _time_ago returns days ago."""
     from src.web.routes.dashboard import _time_ago
@@ -117,7 +117,7 @@ async def test_time_ago_days():
     assert "д" in result
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_time_ago_naive_datetime():
     """Test _time_ago handles naive datetime (no tzinfo)."""
     from src.web.routes.dashboard import _time_ago
@@ -130,7 +130,7 @@ async def test_time_ago_naive_datetime():
 # ── Dashboard redirect when auth not configured ──────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_dashboard_redirect_auth_not_configured(base_app):
     """Dashboard redirects to /settings when auth is not configured."""
     import base64
@@ -160,7 +160,7 @@ async def test_dashboard_redirect_auth_not_configured(base_app):
 # ── Flood wait logic ────────────────────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_dashboard_with_active_flood_wait(route_client, base_app):
     """Dashboard surfaces flood-wait count on accounts card when accounts are flooded."""
     app, db, pool = base_app
@@ -176,7 +176,7 @@ async def test_dashboard_with_active_flood_wait(route_client, base_app):
     assert "flood-wait" in resp.text
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_dashboard_with_expired_flood_wait(route_client, base_app):
     """Dashboard does NOT warn about flood-wait after it expires."""
     app, db, pool = base_app
@@ -191,7 +191,7 @@ async def test_dashboard_with_expired_flood_wait(route_client, base_app):
     assert "flood-wait" not in resp.text
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_dashboard_all_connected_flooded(route_client, base_app):
     """Dashboard shows collector_attention link when all connected accounts are flooded."""
     app, db, pool = base_app
@@ -206,7 +206,7 @@ async def test_dashboard_all_connected_flooded(route_client, base_app):
     assert "Коллектор ограничен" in resp.text
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_dashboard_flood_wait_naive_datetime(route_client, base_app):
     """Dashboard handles flood_wait_until with naive datetime (no tzinfo)."""
     app, db, pool = base_app
@@ -220,7 +220,7 @@ async def test_dashboard_flood_wait_naive_datetime(route_client, base_app):
     assert resp.status_code == 200
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_dashboard_no_connected_clients(route_client, base_app):
     """Dashboard renders when no clients are connected (pool empty)."""
     app, db, pool = base_app
@@ -230,7 +230,7 @@ async def test_dashboard_no_connected_clients(route_client, base_app):
     assert resp.status_code == 200
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_dashboard_with_pipeline_data(route_client, base_app):
     """Dashboard renders with pipeline statistics."""
     app, db, pool = base_app

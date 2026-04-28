@@ -25,7 +25,7 @@ def _encrypt_v1(secret: str, plaintext: str) -> str:
     return f"enc:v1:{token}"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_add_and_get_accounts(db):
     acc = Account(phone="+71234567890", session_string="session1", is_primary=True)
     await db.add_account(acc)
@@ -36,7 +36,7 @@ async def test_add_and_get_accounts(db):
     assert accounts[0].is_primary is True
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_account_upsert(db):
     acc = Account(phone="+71234567890", session_string="session1")
     await db.add_account(acc)
@@ -48,7 +48,7 @@ async def test_account_upsert(db):
     assert accounts[0].session_string == "session2"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_account_upsert_reactivates_without_overwriting_primary(db):
     await db.add_account(
         Account(
@@ -75,7 +75,7 @@ async def test_account_upsert_reactivates_without_overwriting_primary(db):
     assert accounts[0].is_primary is True
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_account_session_encrypted_at_rest(tmp_path):
     db_path = str(tmp_path / "encrypted.db")
     database = Database(db_path, session_encryption_secret="test-encryption-secret")
@@ -97,7 +97,7 @@ async def test_account_session_encrypted_at_rest(tmp_path):
     await database.close()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_plaintext_sessions_migrate_on_init(tmp_path):
     """Plaintext sessions are encrypted during initialize(), not get_accounts()."""
     db_path = str(tmp_path / "plaintext_migration.db")
@@ -126,7 +126,7 @@ async def test_plaintext_sessions_migrate_on_init(tmp_path):
     await encrypted_db.close()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_legacy_v1_sessions_migrate_to_v2_on_init(tmp_path):
     db_path = str(tmp_path / "v1_migration.db")
     legacy_secret = "legacy-key"
@@ -158,7 +158,7 @@ async def test_legacy_v1_sessions_migrate_to_v2_on_init(tmp_path):
     await encrypted_db.close()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_migrate_sessions_rollback_on_bad_row(tmp_path):
     """Migration rolls back when a row has an unsupported encryption version."""
     db_path = str(tmp_path / "rollback_migration.db")
@@ -191,7 +191,7 @@ async def test_migrate_sessions_rollback_on_bad_row(tmp_path):
         assert rows[1]["session_string"] == "enc:v99:garbage"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_initialize_fails_without_key_when_encrypted_sessions_exist(tmp_path):
     db_path = str(tmp_path / "no_key_fail_fast.db")
 
@@ -208,7 +208,7 @@ async def test_initialize_fails_without_key_when_encrypted_sessions_exist(tmp_pa
         await db_without_key.close()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_add_and_get_channels(db):
     ch = Channel(channel_id=-1001234567890, title="Test Channel", username="@test")
     await db.add_channel(ch)
@@ -218,7 +218,7 @@ async def test_add_and_get_channels(db):
     assert channels[0].channel_id == -1001234567890
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_channel_by_pk(db):
     ch = Channel(channel_id=-1002233445566, title="Lookup Channel", username="@lookup")
     await db.add_channel(ch)
@@ -230,13 +230,13 @@ async def test_get_channel_by_pk(db):
     assert found.title == "Lookup Channel"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_channel_by_pk_returns_none_for_unknown_id(db):
     found = await db.get_channel_by_pk(999999)
     assert found is None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_set_channels_filtered_bulk_and_reset(db):
     await db.add_channel(Channel(channel_id=-1007001, title="One", username="one"))
     await db.add_channel(Channel(channel_id=-1007002, title="Two", username="two"))
@@ -264,7 +264,7 @@ async def test_set_channels_filtered_bulk_and_reset(db):
     assert by_channel_id[-1007002].filter_flags == ""
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_insert_message_deduplication(db):
     msg = Message(
         channel_id=-1001234567890,
@@ -281,7 +281,7 @@ async def test_insert_message_deduplication(db):
     assert total == 1
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_batch_insert(db):
     messages = [
         Message(
@@ -299,7 +299,7 @@ async def test_batch_insert(db):
     assert total == 10
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_search_messages(db):
     messages = [
         Message(
@@ -328,7 +328,7 @@ async def test_search_messages(db):
     assert all("Bitcoin" in (m.text or "") for m in results)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_search_messages_date_to_includes_entire_day(db):
     await db.insert_messages_batch(
         [
@@ -359,7 +359,7 @@ async def test_search_messages_date_to_includes_entire_day(db):
     assert {message.message_id for message in results} == {1, 2}
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_search_messages_full_iso_date_to_remains_precise(db):
     await db.insert_messages_batch(
         [
@@ -384,7 +384,7 @@ async def test_search_messages_full_iso_date_to_remains_precise(db):
     assert results[0].message_id == 1
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_notification_queries_crud(db):
     sq = SearchQuery(query="bitcoin", is_regex=False, notify_on_collect=True)
     repo = db.repos.search_queries
@@ -400,7 +400,7 @@ async def test_notification_queries_crud(db):
     assert len(queries) == 0
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_stats(db):
     stats = await db.get_stats()
     assert stats["accounts"] == 0
@@ -409,7 +409,7 @@ async def test_stats(db):
     assert stats["search_queries"] == 0
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_set_setting(db):
     assert await db.get_setting("nonexistent") is None
     await db.set_setting("tg_api_id", "12345")
@@ -418,7 +418,7 @@ async def test_get_set_setting(db):
     assert await db.get_setting("tg_api_id") == "99999"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_stats_with_data(db):
     acc = Account(phone="+71234567890", session_string="s1", is_primary=True)
     await db.add_account(acc)
@@ -444,7 +444,7 @@ async def test_stats_with_data(db):
     assert stats["search_queries"] == 1
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_account_premium_field(db):
     acc = Account(phone="+71234567890", session_string="s1", is_premium=True)
     await db.add_account(acc)
@@ -454,7 +454,7 @@ async def test_account_premium_field(db):
     assert accounts[0].is_premium is True
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_update_account_premium(db):
     acc = Account(phone="+71234567890", session_string="s1", is_premium=False)
     await db.add_account(acc)
@@ -468,7 +468,7 @@ async def test_update_account_premium(db):
     assert accounts[0].is_premium is False
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_account_upsert_updates_premium(db):
     acc = Account(phone="+71234567890", session_string="s1", is_premium=False)
     await db.add_account(acc)
@@ -482,7 +482,7 @@ async def test_account_upsert_updates_premium(db):
     assert accounts[0].session_string == "s2"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_insert_message_with_media_type(db):
     msg = Message(
         channel_id=-100123,
@@ -500,7 +500,7 @@ async def test_insert_message_with_media_type(db):
     assert messages[0].text is None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_batch_insert_with_media_type(db):
     messages = [
         Message(
@@ -536,7 +536,7 @@ async def test_batch_insert_with_media_type(db):
     assert media_types[3] == "photo"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_migrate_adds_media_type_column(tmp_path):
     """Migration adds media_type column to existing DB without it."""
     db_path = str(tmp_path / "migrate_test.db")
@@ -611,7 +611,7 @@ async def test_migrate_adds_media_type_column(tmp_path):
     await database.close()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_add_channel_with_channel_type(db):
     ch = Channel(channel_id=-100123, title="Test", username="test", channel_type="channel")
     await db.add_channel(ch)
@@ -621,7 +621,7 @@ async def test_add_channel_with_channel_type(db):
     assert channels[0].channel_type == "channel"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_channel_type_upsert(db):
     ch = Channel(channel_id=-100123, title="Test", username="test", channel_type=None)
     await db.add_channel(ch)
@@ -635,7 +635,7 @@ async def test_channel_type_upsert(db):
     assert channels[0].title == "Test Updated"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_channel_upsert_reactivates_existing_channel(db):
     await db.add_channel(
         Channel(channel_id=-100124, title="Test", username="test", is_active=False)
@@ -650,7 +650,7 @@ async def test_channel_upsert_reactivates_existing_channel(db):
     assert channels[0].is_active is True
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_migrate_adds_channel_type_column(tmp_path):
     """Migration adds channel_type column to existing channels table."""
     db_path = str(tmp_path / "migrate_channel_type_test.db")
@@ -728,7 +728,7 @@ async def test_migrate_adds_channel_type_column(tmp_path):
     await database.close()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_migrate_filter_columns_idempotent(tmp_path):
     db_path = str(tmp_path / "migrate_filter_columns_idempotent.db")
 
@@ -792,7 +792,7 @@ async def test_migrate_filter_columns_idempotent(tmp_path):
     await database.close()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_migrate_adds_is_premium_column(tmp_path):
     """Migration adds is_premium column to existing accounts table without it."""
     db_path = str(tmp_path / "migrate_premium_test.db")
@@ -861,7 +861,7 @@ async def test_migrate_adds_is_premium_column(tmp_path):
     await database.close()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_stats_task_claim_and_continuation(db):
     now = datetime.now(timezone.utc)
     payload = StatsAllTaskPayload(channel_ids=[-1001, -1002])
@@ -896,7 +896,7 @@ async def test_stats_task_claim_and_continuation(db):
     assert rescheduled.payload.next_index == 1
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_requeue_running_stats_tasks_on_startup(db):
     tid = await db.create_stats_task(StatsAllTaskPayload(channel_ids=[]))
     await db.update_collection_task(tid, CollectionTaskStatus.RUNNING)
@@ -912,7 +912,7 @@ async def test_requeue_running_stats_tasks_on_startup(db):
     assert task.run_after is not None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_stats_payload_round_trip_serialization(db):
     payload = StatsAllTaskPayload(channel_ids=[-1001], next_index=3, channels_ok=2, channels_err=1)
     task_id = await db.create_stats_task(payload)
@@ -924,7 +924,7 @@ async def test_stats_payload_round_trip_serialization(db):
     assert task.payload.model_dump() == payload.model_dump()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_cancel_collection_task_preserves_typed_status(db):
     task_id = await db.create_collection_task(-100123, "Channel")
     cancelled = await db.cancel_collection_task(task_id, note="cancelled in test")
@@ -937,7 +937,7 @@ async def test_cancel_collection_task_preserves_typed_status(db):
     assert task.note == "cancelled in test"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_migration_backfills_collection_task_type(tmp_path):
     db_path = tmp_path / "legacy_tasks.db"
     stats_payload = (
@@ -994,7 +994,7 @@ async def test_migration_backfills_collection_task_type(tmp_path):
     await database.close()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_delete_messages_for_channel(db):
     ch1 = Channel(channel_id=-100301, title="Channel 1")
     ch2 = Channel(channel_id=-100302, title="Channel 2")
@@ -1027,7 +1027,7 @@ async def test_delete_messages_for_channel(db):
     assert all(m.channel_id == -100302 for m in results)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_search_excludes_filtered_channels(db):
     ch_ok = Channel(channel_id=-100311, title="Good Channel")
     ch_bad = Channel(channel_id=-100312, title="Filtered Channel")
@@ -1065,7 +1065,7 @@ async def test_search_excludes_filtered_channels(db):
     assert results_fts[0].channel_id == -100311
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_update_channel_meta(db):
     """update_channel_meta updates username and title, leaving other fields intact."""
     ch = Channel(channel_id=9999001, title="Original Title", username="original_user")
@@ -1083,7 +1083,7 @@ async def test_update_channel_meta(db):
 
 
 @pytest.mark.aiosqlite_serial
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_migrate_adds_reactions_json_column(tmp_path):
     """Migration adds reactions_json column to existing DB without it."""
     db_path = str(tmp_path / "migrate_reactions.db")
@@ -1153,7 +1153,7 @@ async def test_migrate_adds_reactions_json_column(tmp_path):
     await database.close()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_reactions_json_roundtrip(db):
     """reactions_json is persisted and retrieved via search_messages."""
     await db.add_channel(Channel(channel_id=-100999, title="ReactTest"))
@@ -1171,7 +1171,7 @@ async def test_reactions_json_roundtrip(db):
     assert messages[0].reactions_json == '[{"emoji": "❤️", "count": 3}]'
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_reactions_json_null_when_absent(db):
     """reactions_json is None when message has no reactions."""
     await db.add_channel(Channel(channel_id=-100998, title="NoReact"))
@@ -1192,7 +1192,7 @@ async def test_reactions_json_null_when_absent(db):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_message_reactions_populated_on_insert(db):
     """insert_message populates message_reactions from reactions_json."""
     await db.add_channel(Channel(channel_id=-100111, title="ReactNorm"))
@@ -1214,7 +1214,7 @@ async def test_message_reactions_populated_on_insert(db):
     assert result == {"👍": 5, "❤️": 2}
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_message_reactions_not_populated_when_no_reactions(db):
     """insert_message does not create message_reactions rows when reactions_json is None."""
     await db.add_channel(Channel(channel_id=-100112, title="NoReactNorm"))
@@ -1233,7 +1233,7 @@ async def test_message_reactions_not_populated_when_no_reactions(db):
     assert row["cnt"] == 0
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_message_reactions_batch_insert(db):
     """insert_messages_batch populates message_reactions for all messages with reactions."""
     await db.add_channel(Channel(channel_id=-100113, title="BatchReact"))
@@ -1257,7 +1257,7 @@ async def test_message_reactions_batch_insert(db):
     assert row["total"] == 10 + 20 + 30
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_trending_emojis(db):
     """get_trending_emojis returns emojis sorted by total count."""
     await db.add_channel(Channel(channel_id=-100114, title="Trending"))
@@ -1289,7 +1289,7 @@ async def test_get_trending_emojis(db):
     assert trending[1]["count"] == 15
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_top_reacted_messages(db):
     """get_top_reacted_messages returns messages ordered by total reactions."""
     await db.add_channel(Channel(channel_id=-100115, title="TopReact"))
@@ -1325,14 +1325,14 @@ async def test_get_top_reacted_messages(db):
     assert top[1].message_id == 3
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_top_messages_empty(db):
     """get_top_messages returns empty list when no messages with reactions exist."""
     result = await db.get_top_messages(limit=10)
     assert result == []
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_top_messages_sorted_by_reactions(db):
     """get_top_messages returns messages sorted by total reaction count descending."""
     await db.add_channel(Channel(channel_id=-100500, title="TopTest"))
@@ -1369,7 +1369,7 @@ async def test_get_top_messages_sorted_by_reactions(db):
     assert result[1]["total_reactions"] == 2
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_top_messages_date_filter(db):
     """get_top_messages respects date_from/date_to filters."""
     await db.add_channel(Channel(channel_id=-100501, title="DateFilter"))
@@ -1397,7 +1397,7 @@ async def test_get_top_messages_date_filter(db):
     assert result[0]["message_id"] == 2
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_engagement_by_media_type(db):
     """get_engagement_by_media_type groups messages by media type with counts."""
     await db.add_channel(Channel(channel_id=-100502, title="MediaTypes"))
@@ -1437,7 +1437,7 @@ async def test_get_engagement_by_media_type(db):
     assert content_types["photo"]["message_count"] == 1
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_hourly_activity(db):
     """get_hourly_activity groups messages by hour with correct counts."""
     await db.add_channel(Channel(channel_id=-100503, title="Hourly"))
@@ -1473,7 +1473,7 @@ async def test_get_hourly_activity(db):
 
 
 @pytest.mark.aiosqlite_serial
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_migration_backfills_message_reactions(tmp_path):
     """Migration backfills message_reactions from existing reactions_json data."""
     db_path = str(tmp_path / "migrate_reactions_norm.db")
@@ -1543,7 +1543,7 @@ async def test_migration_backfills_message_reactions(tmp_path):
 
 
 @pytest.mark.aiosqlite_serial
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_migrate_adds_engagement_columns(tmp_path):
     """Migration adds views, forwards, reply_count columns to existing DB without them."""
     db_path = str(tmp_path / "migrate_engagement.db")
@@ -1604,7 +1604,7 @@ async def test_migrate_adds_engagement_columns(tmp_path):
     await database.close()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_engagement_stats_roundtrip(db):
     """views, forwards, reply_count are persisted and retrieved via search_messages."""
     await db.add_channel(Channel(channel_id=-100777, title="EngageTest"))
@@ -1626,7 +1626,7 @@ async def test_engagement_stats_roundtrip(db):
     assert messages[0].reply_count == 7
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_engagement_stats_null_when_absent(db):
     """views, forwards, reply_count are None when not provided."""
     await db.add_channel(Channel(channel_id=-100776, title="NoEngageTest"))

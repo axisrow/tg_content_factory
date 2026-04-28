@@ -40,28 +40,28 @@ def _make_service(accounts=None, clients=None, configured_phone=None):
     return svc, notifications
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_configured_phone_set():
     svc, notifications = _make_service(configured_phone="+70001112233")
     result = await svc.get_configured_phone()
     assert result == "+70001112233"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_configured_phone_empty():
     svc, _ = _make_service(configured_phone="")
     result = await svc.get_configured_phone()
     assert result is None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_set_configured_phone():
     svc, notifications = _make_service()
     await svc.set_configured_phone("+70001112233")
     notifications.set_setting.assert_called_once()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_describe_target_selected_account_available():
     acc = _make_account(phone="+70001112233", is_primary=False)
     svc, _ = _make_service(
@@ -75,7 +75,7 @@ async def test_describe_target_selected_account_available():
     assert status.effective_phone == "+70001112233"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_describe_target_selected_account_missing():
     svc, _ = _make_service(
         accounts=[],
@@ -86,7 +86,7 @@ async def test_describe_target_selected_account_missing():
     assert status.state == "missing"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_describe_target_selected_account_inactive():
     acc = _make_account(phone="+70001112233", is_active=False)
     svc, _ = _make_service(
@@ -97,7 +97,7 @@ async def test_describe_target_selected_account_inactive():
     assert status.state == "inactive"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_describe_target_selected_account_flood_wait():
     until = datetime.now(timezone.utc) + timedelta(seconds=300)
     acc = _make_account(phone="+70001112233", flood_wait_until=until)
@@ -109,7 +109,7 @@ async def test_describe_target_selected_account_flood_wait():
     assert status.state == "flood_wait"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_describe_target_selected_account_disconnected():
     acc = _make_account(phone="+70001112233")
     svc, _ = _make_service(
@@ -121,7 +121,7 @@ async def test_describe_target_selected_account_disconnected():
     assert status.state == "disconnected"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_describe_target_primary_fallback():
     acc = _make_account(phone="+70001112233", is_primary=True)
     svc, _ = _make_service(
@@ -133,7 +133,7 @@ async def test_describe_target_primary_fallback():
     assert status.state == "available"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_describe_target_primary_missing():
     svc, _ = _make_service(accounts=[], clients={})
     status = await svc.describe_target()
@@ -141,7 +141,7 @@ async def test_describe_target_primary_missing():
     assert status.state == "missing"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_use_client_success():
     acc = _make_account(phone="+70001112233")
     svc, _ = _make_service(
@@ -160,7 +160,7 @@ async def test_use_client_success():
     svc._pool.release_client.assert_called_once_with("+70001112233")
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_use_client_not_available():
     svc, _ = _make_service(accounts=[], clients={})
     with pytest.raises(RuntimeError):

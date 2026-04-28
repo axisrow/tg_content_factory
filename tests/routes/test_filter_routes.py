@@ -18,7 +18,7 @@ async def db(base_app):
     return db
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_filter_manage_renders_empty(route_client):
     """Test filter manage page renders empty."""
     resp = await route_client.get("/channels/filter/manage")
@@ -28,7 +28,7 @@ async def test_filter_manage_renders_empty(route_client):
     assert "Сейчас запустится только сбор статистики." in resp.text
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_filter_manage_shows_filtered(route_client, db):
     """Test filter manage shows filtered channels."""
     await _add_filtered_channel(db, channel_id=300, title="Filtered Channel")
@@ -38,7 +38,7 @@ async def test_filter_manage_shows_filtered(route_client, db):
     assert "Filtered Channel" in resp.text
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_purge_selected_no_pks(route_client):
     """Test purge selected with no PKs returns error."""
     resp = await route_client.post("/channels/filter/purge-selected", follow_redirects=False)
@@ -46,7 +46,7 @@ async def test_purge_selected_no_pks(route_client):
     assert "error=no_filtered_channels" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_purge_selected_success(route_client, db):
     """Test purge selected channels."""
     pk = await _add_filtered_channel(db, channel_id=400, title="To Purge")
@@ -62,7 +62,7 @@ async def test_purge_selected_success(route_client, db):
         assert "msg=purged_selected" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_purge_selected_removes_messages(route_client, db):
     """Test purge selected removes messages from DB."""
     pk = await _add_filtered_channel(db, channel_id=500, title="Purge Messages")
@@ -75,7 +75,7 @@ async def test_purge_selected_removes_messages(route_client, db):
         )
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_purge_all_no_filtered(route_client):
     """Test purge all with no filtered channels."""
     with patch("src.web.routes.filter.deps.filter_deletion_service") as mock_svc:
@@ -88,7 +88,7 @@ async def test_purge_all_no_filtered(route_client):
         assert "error=no_filtered_channels" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_purge_all_success(route_client, db):
     """Test purge all filtered channels."""
     await _add_filtered_channel(db, channel_id=600, title="Purge All")
@@ -103,7 +103,7 @@ async def test_purge_all_success(route_client, db):
         assert "msg=purged_all_filtered" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_hard_delete_blocked_without_dev_mode(route_client, db):
     """Test hard delete blocked without dev mode."""
     pk = await _add_filtered_channel(db, channel_id=700, title="Hard Delete")
@@ -116,7 +116,7 @@ async def test_hard_delete_blocked_without_dev_mode(route_client, db):
     assert "error=dev_mode_required_for_hard_delete" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_hard_delete_no_pks(route_client, db):
     """Test hard delete with no PKs."""
     await _enable_dev_mode(db)
@@ -125,7 +125,7 @@ async def test_hard_delete_no_pks(route_client, db):
     assert "error=no_filtered_channels" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_hard_delete_success(route_client, db):
     """Test hard delete channels."""
     pk = await _add_filtered_channel(db, channel_id=800, title="Hard Delete OK")
@@ -145,7 +145,7 @@ async def test_hard_delete_success(route_client, db):
         assert "msg=deleted_filtered" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_analyze_redirects(route_client):
     """Test analyze channels redirects."""
     with patch("src.web.routes.filter.ChannelAnalyzer") as mock_analyzer:
@@ -160,7 +160,7 @@ async def test_analyze_redirects(route_client):
         assert "/channels/filter/manage" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_analyze_ignores_with_stats_query(route_client):
     """Test analyze route no longer runs stats collection inline."""
     with patch("src.web.routes.filter.ChannelAnalyzer") as mock_analyzer:
@@ -177,7 +177,7 @@ async def test_analyze_ignores_with_stats_query(route_client):
         mock_collection.assert_not_called()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_has_stats_true_when_no_active_channels(route_client, db):
     """Test has-stats returns true when there are no active channels to inspect."""
     channel = await db.get_channel_by_channel_id(100)
@@ -190,7 +190,7 @@ async def test_has_stats_true_when_no_active_channels(route_client, db):
     assert resp.json() == {"has_stats": True}
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_has_stats_false_when_active_channel_lacks_stats(route_client):
     """Test has-stats returns false when any active channel has no stats yet."""
     resp = await route_client.get("/channels/filter/has-stats")
@@ -199,7 +199,7 @@ async def test_has_stats_false_when_active_channel_lacks_stats(route_client):
     assert resp.json() == {"has_stats": False}
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_has_stats_true_when_all_active_channels_have_stats(route_client, db):
     """Test has-stats returns true when every active channel already has stats."""
     await db.save_channel_stats(ChannelStats(channel_id=100, subscriber_count=1))
@@ -213,7 +213,7 @@ async def test_has_stats_true_when_all_active_channels_have_stats(route_client, 
     assert resp.json() == {"has_stats": True}
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_apply_missing_snapshot(route_client):
     """Test apply filters without snapshot."""
     resp = await route_client.post("/channels/filter/apply", follow_redirects=False)
@@ -221,7 +221,7 @@ async def test_apply_missing_snapshot(route_client):
     assert "error=filter_snapshot_required" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_apply_with_snapshot(route_client):
     """Test apply filters with snapshot."""
     with patch("src.web.routes.filter.ChannelAnalyzer") as mock_analyzer:
@@ -236,7 +236,7 @@ async def test_apply_with_snapshot(route_client):
         assert "msg=filter_applied" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_precheck_redirects(route_client):
     """Test precheck subscriber ratio redirects."""
     with patch("src.web.routes.filter.ChannelAnalyzer") as mock_analyzer:
@@ -247,7 +247,7 @@ async def test_precheck_redirects(route_client):
         assert "msg=precheck_done" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_reset_redirects(route_client):
     """Test reset filters redirects."""
     with patch("src.web.routes.filter.ChannelAnalyzer") as mock_analyzer:
@@ -258,7 +258,7 @@ async def test_reset_redirects(route_client):
         assert "msg=filter_reset" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_purge_messages_not_filtered(route_client):
     """Test purge messages for non-filtered channel."""
     resp = await route_client.post("/channels/900/purge-messages", follow_redirects=False)
@@ -266,7 +266,7 @@ async def test_purge_messages_not_filtered(route_client):
     assert "error=not_filtered" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_purge_messages_success(route_client, db):
     """Test purge messages for filtered channel."""
     pk = await _add_filtered_channel(db, channel_id=950, title="Purge Msgs")
@@ -281,7 +281,7 @@ async def test_purge_messages_success(route_client, db):
         assert "msg=purged" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_filter_toggle_not_found(route_client):
     """Test filter toggle with non-existent channel."""
     resp = await route_client.post("/channels/999999/filter-toggle", follow_redirects=False)
@@ -289,7 +289,7 @@ async def test_filter_toggle_not_found(route_client):
     assert "msg=channel_not_found" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_filter_toggle_success(route_client, db):
     """Test filter toggle success."""
     pk = await _add_channel(db, channel_id=960, title="Toggle Filter")
@@ -301,7 +301,7 @@ async def test_filter_toggle_success(route_client, db):
 # === Additional tests ===
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_parse_snapshot_valid(route_client, db):
     """Test apply filters with valid snapshot parsing."""
     with patch("src.web.routes.filter.ChannelAnalyzer") as mock_analyzer:
@@ -319,7 +319,7 @@ async def test_parse_snapshot_valid(route_client, db):
         assert "msg=filter_applied" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_parse_snapshot_dedupes_by_channel_id(route_client, db):
     """Test snapshot parsing dedupes by channel_id."""
     with patch("src.web.routes.filter.ChannelAnalyzer") as mock_analyzer:
@@ -336,7 +336,7 @@ async def test_parse_snapshot_dedupes_by_channel_id(route_client, db):
         assert resp.status_code == 303
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_parse_snapshot_invalid_channel_id(route_client, db):
     """Test snapshot parsing with invalid channel_id."""
     with patch("src.web.routes.filter.ChannelAnalyzer") as mock_analyzer:
@@ -353,7 +353,7 @@ async def test_parse_snapshot_invalid_channel_id(route_client, db):
         assert resp.status_code == 303
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_parse_snapshot_no_separator(route_client, db):
     """Test snapshot parsing without separator."""
     with patch("src.web.routes.filter.ChannelAnalyzer") as mock_analyzer:
@@ -370,7 +370,7 @@ async def test_parse_snapshot_no_separator(route_client, db):
         assert resp.status_code == 303
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_parse_snapshot_invalid_flag(route_client, db):
     """Test snapshot parsing with invalid flag."""
     with patch("src.web.routes.filter.ChannelAnalyzer") as mock_analyzer:
@@ -387,7 +387,7 @@ async def test_parse_snapshot_invalid_flag(route_client, db):
         assert resp.status_code == 303
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_analyze_with_auto_delete(route_client, db):
     """Test analyze channels with auto_delete enabled."""
     await _add_filtered_channel(db, channel_id=3100, title="Auto Delete")
@@ -420,7 +420,7 @@ async def test_analyze_with_auto_delete(route_client, db):
         assert "msg=purged_all_filtered" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_purge_selected_with_multiple_pks(route_client, db):
     """Test purge selected with multiple PKs."""
     pk1 = await _add_filtered_channel(db, channel_id=3200, title="Purge 1")

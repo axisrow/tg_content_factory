@@ -50,14 +50,14 @@ def _msg(
 # ── SourceHandler extras ─────────────────────────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_source_handler_empty_channel_ids():
     ctx = NodeContext()
     await SourceHandler().execute({"channel_ids": []}, ctx, {})
     assert ctx.get_global("source_channel_ids") == []
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_source_handler_missing_channel_ids_key():
     ctx = NodeContext()
     await SourceHandler().execute({}, ctx, {})
@@ -67,7 +67,7 @@ async def test_source_handler_missing_channel_ids_key():
 # ── FetchMessagesHandler extras ───────────────────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_fetch_messages_no_db_service():
     """When db is None in services, sets empty context_messages and records the error."""
     ctx = NodeContext()
@@ -80,7 +80,7 @@ async def test_fetch_messages_no_db_service():
     assert "db" in errors[0]["detail"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_fetch_messages_no_channel_ids():
     """When no source_channel_ids set, passes empty list to DB query."""
     ctx = NodeContext()
@@ -90,7 +90,7 @@ async def test_fetch_messages_no_channel_ids():
     mock_db.repos.messages.get_recent_for_channels.assert_awaited_once_with([], 24.0)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_fetch_messages_limit_zero_returns_empty():
     """limit=0 should produce 0 messages (slice [:0])."""
     ctx = NodeContext()
@@ -106,7 +106,7 @@ async def test_fetch_messages_limit_zero_returns_empty():
 # ── LlmGenerateHandler extras ─────────────────────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_llm_generate_empty_prompt_template():
     """Empty prompt_template should still work (renders with empty source_messages)."""
     ctx = NodeContext()
@@ -120,7 +120,7 @@ async def test_llm_generate_empty_prompt_template():
     assert ctx.get_global("generated_text") == "generated"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_llm_generate_messages_with_empty_text_skipped():
     """Messages with empty/None text are not included in source_parts."""
     ctx = NodeContext()
@@ -142,7 +142,7 @@ async def test_llm_generate_messages_with_empty_text_skipped():
     assert "[None]" not in captured["prompt"] or "id:" not in captured["prompt"].split("actual content")[0]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_llm_generate_provider_returns_dict_with_generated_text_key():
     """Provider returns dict with 'generated_text' key instead of 'text'."""
     ctx = NodeContext()
@@ -156,7 +156,7 @@ async def test_llm_generate_provider_returns_dict_with_generated_text_key():
     assert ctx.get_global("generated_text") == "from gen key"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_llm_generate_default_model_from_services():
     """Model falls back to services['default_model'] when not in config."""
     ctx = NodeContext()
@@ -176,7 +176,7 @@ async def test_llm_generate_default_model_from_services():
 # ── LlmRefineHandler extras ──────────────────────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_llm_refine_no_generated_text_uses_context_messages():
     """When generated_text is empty and context_messages exist, uses first 3 messages."""
     ctx = NodeContext()
@@ -199,7 +199,7 @@ async def test_llm_refine_no_generated_text_uses_context_messages():
     assert "msg3" not in captured["prompt"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_llm_refine_no_text_no_messages():
     """When both generated_text and context_messages are empty, prompt has empty {text}."""
     ctx = NodeContext()
@@ -222,7 +222,7 @@ async def test_llm_refine_no_text_no_messages():
 # ── ImageGenerateHandler extras ───────────────────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_image_generate_no_generated_text():
     """When generated_text is empty, still attempts generation with empty prompt."""
     ctx = NodeContext()
@@ -232,7 +232,7 @@ async def test_image_generate_no_generated_text():
     svc.generate.assert_awaited_once_with("test", "")
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_image_generate_service_returns_none_url():
     """When image service returns None URL, image_url stays None."""
     ctx = NodeContext()
@@ -243,7 +243,7 @@ async def test_image_generate_service_returns_none_url():
     assert ctx.get_global("image_url") is None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_image_generate_default_model_from_services():
     """Model falls back to services['default_image_model'] when not in config."""
     ctx = NodeContext()
@@ -259,14 +259,14 @@ async def test_image_generate_default_model_from_services():
 # ── PublishHandler extras ─────────────────────────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_publish_default_mode_is_moderated():
     ctx = NodeContext()
     await PublishHandler().execute({"targets": []}, ctx, {})
     assert ctx.get_global("publish_mode") == "moderated"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_publish_empty_targets():
     ctx = NodeContext()
     await PublishHandler().execute({}, ctx, {})
@@ -277,7 +277,7 @@ async def test_publish_empty_targets():
 # ── NotifyHandler extras ──────────────────────────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_notify_no_text_uses_trigger_text():
     """When generated_text is empty but trigger_text exists, uses trigger_text."""
     ctx = NodeContext()
@@ -287,7 +287,7 @@ async def test_notify_no_text_uses_trigger_text():
     svc.send_text.assert_awaited_once_with("triggered content")
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_notify_no_text_no_trigger():
     """When both generated_text and trigger_text are empty, sends empty string."""
     ctx = NodeContext()
@@ -296,7 +296,7 @@ async def test_notify_no_text_no_trigger():
     svc.send_text.assert_awaited_once_with("")
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_notify_template_with_channel_title():
     ctx = NodeContext()
     ctx.set_global("generated_text", "news")
@@ -311,7 +311,7 @@ async def test_notify_template_with_channel_title():
 # ── FilterHandler extras ──────────────────────────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_filter_empty_keywords_list():
     """Empty keywords list and no match_links → all messages filtered out."""
     ctx = NodeContext()
@@ -323,7 +323,7 @@ async def test_filter_empty_keywords_list():
     assert ctx.get_global("context_messages") == []
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_filter_empty_context_messages():
     """No context messages → result is empty."""
     ctx = NodeContext()
@@ -332,7 +332,7 @@ async def test_filter_empty_context_messages():
     assert ctx.get_global("context_messages") == []
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_filter_keywords_strips_empty_entries():
     """Keywords list with empty strings should be filtered out."""
     ctx = NodeContext()
@@ -344,7 +344,7 @@ async def test_filter_keywords_strips_empty_entries():
     assert len(ctx.get_global("context_messages")) == 1
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_filter_keywords_case_insensitive():
     ctx = NodeContext()
     m1 = _msg(text="Crypto is great")
@@ -355,7 +355,7 @@ async def test_filter_keywords_case_insensitive():
     assert len(ctx.get_global("context_messages")) == 1
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_filter_service_message_default_types():
     ctx = NodeContext()
     m1 = _msg(text="user_joined the chat")
@@ -365,7 +365,7 @@ async def test_filter_service_message_default_types():
     assert len(ctx.get_global("context_messages")) == 2
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_filter_regex_empty_pattern():
     """Empty regex pattern string → no matches, result empty."""
     ctx = NodeContext()
@@ -375,7 +375,7 @@ async def test_filter_regex_empty_pattern():
     assert ctx.get_global("context_messages") == []
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_filter_sets_filtered_messages_also():
     """FilterHandler sets both filtered_messages and context_messages."""
     ctx = NodeContext()
@@ -390,7 +390,7 @@ async def test_filter_sets_filtered_messages_also():
 # ── DelayHandler extras ───────────────────────────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 @patch("asyncio.sleep", new_callable=AsyncMock)
 async def test_delay_negative_min_seconds(mock_sleep):
     """Negative min_seconds → treated as negative float, no sleep."""
@@ -400,7 +400,7 @@ async def test_delay_negative_min_seconds(mock_sleep):
     mock_sleep.assert_not_awaited()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 @patch("asyncio.sleep", new_callable=AsyncMock)
 async def test_delay_max_less_than_min(mock_sleep):
     """max_seconds < min_seconds → uses min_seconds as delay."""
@@ -412,7 +412,7 @@ async def test_delay_max_less_than_min(mock_sleep):
 # ── ReactHandler extras ──────────────────────────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_react_empty_messages():
     ctx = NodeContext()
     ctx.set_global("context_messages", [])
@@ -421,7 +421,7 @@ async def test_react_empty_messages():
     pool.get_available_client.assert_not_awaited()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_react_exception_continues():
     """React exception on one message should not crash the loop."""
     ctx = NodeContext()
@@ -443,7 +443,7 @@ async def test_react_exception_continues():
 # ── ForwardHandler extras ─────────────────────────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_forward_empty_messages():
     ctx = NodeContext()
     ctx.set_global("context_messages", [])
@@ -458,7 +458,7 @@ async def test_forward_empty_messages():
     pool.release_client.assert_awaited_once_with("+123")
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_forward_exception_continues():
     """Forward exception for one target should not prevent others."""
     ctx = NodeContext()
@@ -480,7 +480,7 @@ async def test_forward_exception_continues():
     assert pool.get_client_by_phone.await_count == 2
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_forward_empty_targets():
     ctx = NodeContext()
     ctx.set_global("context_messages", [_msg()])
@@ -492,7 +492,7 @@ async def test_forward_empty_targets():
 # ── ConditionHandler extras ───────────────────────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_condition_missing_field_in_context():
     """Field not in context → get_global returns '' → not_empty is False."""
     ctx = NodeContext()
@@ -502,7 +502,7 @@ async def test_condition_missing_field_in_context():
     assert ctx.get_global("condition_result") is False
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_condition_eq_mismatch():
     ctx = NodeContext()
     ctx.set_global("status", "active")
@@ -512,7 +512,7 @@ async def test_condition_eq_mismatch():
     assert ctx.get_global("condition_result") is False
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_condition_gt_equal_values():
     ctx = NodeContext()
     ctx.set_global("count", "5")
@@ -522,7 +522,7 @@ async def test_condition_gt_equal_values():
     assert ctx.get_global("condition_result") is False
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_condition_lt_not_supported():
     """Unsupported operator → result stays False."""
     ctx = NodeContext()
@@ -533,7 +533,7 @@ async def test_condition_lt_not_supported():
     assert ctx.get_global("condition_result") is False
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_condition_contains_case_insensitive():
     ctx = NodeContext()
     ctx.set_global("text", "Hello WORLD")
@@ -546,7 +546,7 @@ async def test_condition_contains_case_insensitive():
 # ── AgentLoopHandler extras ──────────────────────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_agent_loop_default_system_prompt():
     """When no system_prompt in config, uses default."""
     ctx = NodeContext()
@@ -562,7 +562,7 @@ async def test_agent_loop_default_system_prompt():
     assert "полезный ассистент" in captured["prompt"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_agent_loop_provider_returns_dict():
     """Provider returns dict with 'text' key."""
     ctx = NodeContext()
@@ -577,7 +577,7 @@ async def test_agent_loop_provider_returns_dict():
     assert ctx.get_global("generated_text") == "dict response"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_agent_loop_provider_returns_dict_generated_text_key():
     """Provider returns dict with 'generated_text' key."""
     ctx = NodeContext()
@@ -592,7 +592,7 @@ async def test_agent_loop_provider_returns_dict_generated_text_key():
     assert ctx.get_global("generated_text") == "from gen_text key"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_agent_loop_tool_description_in_prompt():
     """When agent_tools provided, tool descriptions appear in prompt."""
     ctx = NodeContext()
@@ -617,7 +617,7 @@ async def test_agent_loop_tool_description_in_prompt():
     assert "Search for messages" in captured["prompt"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_agent_loop_invalid_json_tool_call():
     """Agent returns malformed JSON in tool call block → loop breaks, text preserved."""
     ctx = NodeContext()
@@ -640,7 +640,7 @@ async def test_agent_loop_invalid_json_tool_call():
     # The text is the raw tool call output which gets discarded
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_agent_loop_messages_with_empty_text_excluded():
     """Messages with empty/None text are excluded from the prompt."""
     ctx = NodeContext()
@@ -666,7 +666,7 @@ async def test_agent_loop_messages_with_empty_text_excluded():
 # ── BaseNodeHandler ──────────────────────────────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_base_handler_execute_is_abstract():
     """BaseNodeHandler cannot be instantiated directly (abstract method)."""
 

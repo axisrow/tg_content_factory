@@ -18,7 +18,7 @@ async def db(base_app):
     return db
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_settings_page_renders(route_client):
     """Test settings page renders."""
     with patch(
@@ -32,7 +32,7 @@ async def test_settings_page_renders(route_client):
         assert resp.status_code == 200
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_settings_shows_accounts(route_client):
     """Test settings page shows accounts."""
     with patch(
@@ -47,7 +47,7 @@ async def test_settings_shows_accounts(route_client):
         assert "+1234567890" in resp.text
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_settings_shows_flood_banner_and_account_availability(route_client, db):
     accounts = await db.get_accounts(active_only=False)
     future = datetime.now(timezone.utc) + timedelta(hours=1)
@@ -68,7 +68,7 @@ async def test_settings_shows_flood_banner_and_account_availability(route_client
         assert "Flood" in resp.text
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_settings_msg_param(route_client):
     """Test settings page with message param."""
     with patch(
@@ -82,7 +82,7 @@ async def test_settings_msg_param(route_client):
         assert resp.status_code == 200
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_save_scheduler(route_client, db):
     """Test save scheduler settings."""
     resp = await route_client.post(
@@ -94,7 +94,7 @@ async def test_save_scheduler(route_client, db):
     assert "msg=scheduler_saved" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_save_scheduler_invalid(route_client):
     """Test save scheduler with invalid value."""
     resp = await route_client.post(
@@ -106,7 +106,7 @@ async def test_save_scheduler_invalid(route_client):
     assert "error=invalid_value" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_save_credentials_valid(route_client, db):
     """Test save credentials with valid values."""
     resp = await route_client.post(
@@ -118,7 +118,7 @@ async def test_save_credentials_valid(route_client, db):
     assert "msg=credentials_saved" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_save_credentials_invalid_id(route_client):
     """Test save credentials with invalid api_id."""
     resp = await route_client.post(
@@ -130,7 +130,7 @@ async def test_save_credentials_invalid_id(route_client):
     assert "error=invalid_api_id" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_toggle_account_enqueues_command(route_client):
     """Web route only enqueues a telegram command; worker flips is_active and reconciles the pool."""
     resp = await route_client.post("/settings/1/toggle", follow_redirects=False)
@@ -144,7 +144,7 @@ async def test_toggle_account_enqueues_command(route_client):
     assert commands[0].payload == {"account_id": 1}
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_delete_account_enqueues_command(route_client):
     """Web route only enqueues a telegram command; worker removes the route_client and deletes the row."""
     resp = await route_client.post("/settings/1/delete", follow_redirects=False)
@@ -158,7 +158,7 @@ async def test_delete_account_enqueues_command(route_client):
     assert commands[0].payload == {"account_id": 1}
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_save_filters(route_client, db):
     """Test save filter settings."""
     resp = await route_client.post(
@@ -174,7 +174,7 @@ async def test_save_filters(route_client, db):
     assert "msg=filters_saved" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_save_filters_invalid(route_client):
     """Test save filters with invalid value."""
     resp = await route_client.post(
@@ -186,7 +186,7 @@ async def test_save_filters_invalid(route_client):
     assert "error=invalid_value" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_save_semantic_search(route_client, db):
     """Test save semantic search settings."""
     resp = await route_client.post(
@@ -202,7 +202,7 @@ async def test_save_semantic_search(route_client, db):
     assert "msg=semantic_saved" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_save_agent_backend(route_client, db):
     """Test save agent backend settings."""
     resp = await route_client.post(
@@ -217,7 +217,7 @@ async def test_save_agent_backend(route_client, db):
     assert "msg=agent_saved" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_save_notification_account(route_client, db):
     """Test save notification account."""
     with patch(
@@ -236,7 +236,7 @@ async def test_save_notification_account(route_client, db):
         assert "msg=notification_account_saved" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_save_notification_account_invalid(route_client, db):
     """Test save notification account with invalid phone."""
     resp = await route_client.post(
@@ -251,7 +251,7 @@ async def test_save_notification_account_invalid(route_client, db):
 # === Semantic Search Settings tests ===
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_save_semantic_search_invalid_batch_size(route_client, db):
     """Test save semantic search with invalid batch size."""
     resp = await route_client.post(
@@ -267,7 +267,7 @@ async def test_save_semantic_search_invalid_batch_size(route_client, db):
     assert "error=semantic_invalid_value" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_save_semantic_search_empty_provider(route_client, db):
     """Test save semantic search with empty provider."""
     resp = await route_client.post(
@@ -283,7 +283,7 @@ async def test_save_semantic_search_empty_provider(route_client, db):
     assert "error=semantic_invalid_value" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_save_semantic_search_empty_model(route_client, db):
     """Test save semantic search with empty model."""
     resp = await route_client.post(
@@ -299,7 +299,7 @@ async def test_save_semantic_search_empty_model(route_client, db):
     assert "error=semantic_invalid_value" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_save_semantic_search_reset_index(route_client, db):
     """Test save semantic search with reset index flag."""
     # First set some initial values
@@ -320,7 +320,7 @@ async def test_save_semantic_search_reset_index(route_client, db):
     assert "msg=semantic_saved" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_run_semantic_index(route_client, db):
     """Test running semantic index."""
     with patch(
@@ -337,7 +337,7 @@ async def test_run_semantic_index(route_client, db):
         assert "indexed=5" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_run_semantic_index_with_reset(route_client, db):
     """Test running semantic index with reset."""
     with patch(
@@ -356,7 +356,7 @@ async def test_run_semantic_index_with_reset(route_client, db):
 # === Agent Settings tests ===
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_save_agent_prompt_template_invalid(route_client, db):
     """Test save agent with invalid prompt template."""
     await db.set_setting("agent_dev_mode_enabled", "1")
@@ -373,7 +373,7 @@ async def test_save_agent_prompt_template_invalid(route_client, db):
     assert "error=agent_prompt_template_invalid" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_save_agent_prompt_template_valid(route_client, db):
     """Test save agent with valid prompt template."""
     await db.set_setting("agent_dev_mode_enabled", "1")
@@ -390,7 +390,7 @@ async def test_save_agent_prompt_template_valid(route_client, db):
     assert "msg=agent_saved" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_save_agent_dev_mode_with_disclaimer(route_client, db):
     """Test enabling dev mode with disclaimer."""
     resp = await route_client.post(
@@ -410,7 +410,7 @@ async def test_save_agent_dev_mode_with_disclaimer(route_client, db):
     assert enabled == "1"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_save_agent_dev_mode_without_disclaimer(route_client, db):
     """Test enabling dev mode without disclaimer (should not enable)."""
     await db.set_setting("agent_dev_mode_enabled", "0")
@@ -432,7 +432,7 @@ async def test_save_agent_dev_mode_without_disclaimer(route_client, db):
     assert enabled == "0"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_save_agent_logs_rejected_deepagents_override(route_client, db, caplog):
     """Rejected deepagents override should be written to logs."""
     await db.set_setting("agent_dev_mode_enabled", "1")
@@ -455,7 +455,7 @@ async def test_save_agent_logs_rejected_deepagents_override(route_client, db, ca
 # === Agent Provider tests ===
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_add_agent_provider_writes_disabled(route_client, db):
     """Test add agent provider when writes are disabled."""
     await db.set_setting("agent_dev_mode_enabled", "1")
@@ -475,7 +475,7 @@ async def test_add_agent_provider_writes_disabled(route_client, db):
         assert "error=agent_provider_secret_required" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_add_agent_provider_dev_mode_required(route_client, db):
     """Test add agent provider requires dev mode."""
     await db.set_setting("agent_dev_mode_enabled", "0")
@@ -496,7 +496,7 @@ async def test_add_agent_provider_dev_mode_required(route_client, db):
         assert "error=agent_dev_mode_required" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_save_agent_providers_writes_disabled(route_client, db):
     """Test save agent providers when writes are disabled."""
     await db.set_setting("agent_dev_mode_enabled", "1")
@@ -516,7 +516,7 @@ async def test_save_agent_providers_writes_disabled(route_client, db):
         assert "error=agent_provider_secret_required" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_delete_agent_provider_writes_disabled(route_client, db):
     """Test delete agent provider when writes are disabled."""
     await db.set_setting("agent_dev_mode_enabled", "1")
@@ -535,7 +535,7 @@ async def test_delete_agent_provider_writes_disabled(route_client, db):
         assert "error=agent_provider_secret_required" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_refresh_agent_provider_models_writes_disabled(route_client, db):
     """Test refresh agent provider models when writes are disabled."""
     await db.set_setting("agent_dev_mode_enabled", "1")
@@ -548,7 +548,7 @@ async def test_refresh_agent_provider_models_writes_disabled(route_client, db):
     assert resp.status_code == 409
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_refresh_all_agent_provider_models_writes_disabled(route_client, db):
     """Test refresh all provider models when writes are disabled."""
     await db.set_setting("agent_dev_mode_enabled", "1")
@@ -560,7 +560,7 @@ async def test_refresh_all_agent_provider_models_writes_disabled(route_client, d
     assert resp.status_code == 409
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_probe_agent_provider_model_writes_disabled(route_client, db):
     """Test probe agent provider model when writes are disabled."""
     await db.set_setting("agent_dev_mode_enabled", "1")
@@ -575,7 +575,7 @@ async def test_probe_agent_provider_model_writes_disabled(route_client, db):
 # === Test All Agent Provider Models ===
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_test_all_agent_provider_models_writes_disabled(route_client, db):
     """Test test all agent provider models when writes are disabled."""
     await db.set_setting("agent_dev_mode_enabled", "1")
@@ -587,7 +587,7 @@ async def test_test_all_agent_provider_models_writes_disabled(route_client, db):
     assert resp.status_code == 409
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_test_all_agent_provider_models_dev_mode_required(route_client, db):
     """Test test all requires dev mode."""
     await db.set_setting("agent_dev_mode_enabled", "0")
@@ -604,7 +604,7 @@ async def test_test_all_agent_provider_models_dev_mode_required(route_client, db
         assert resp.status_code == 403
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_test_all_status_writes_disabled(route_client, db):
     """Test test all status when writes are disabled."""
     await db.set_setting("agent_dev_mode_enabled", "1")
@@ -613,7 +613,7 @@ async def test_test_all_status_writes_disabled(route_client, db):
     assert resp.status_code == 409
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_test_all_status_dev_mode_required(route_client, db):
     """Test test all status requires dev mode."""
     await db.set_setting("agent_dev_mode_enabled", "0")
@@ -630,7 +630,7 @@ async def test_test_all_status_dev_mode_required(route_client, db):
 # === Notification tests ===
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_notification_setup_json_response(route_client, db):
     """Test notification setup with JSON accept header."""
     resp = await route_client.post(
@@ -646,7 +646,7 @@ async def test_notification_setup_json_response(route_client, db):
     assert command.command_type == "notifications.setup_bot"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_notification_setup_runtime_error(route_client, db):
     """Test notification setup is queued instead of running inline."""
     resp = await route_client.post(
@@ -657,7 +657,7 @@ async def test_notification_setup_runtime_error(route_client, db):
     assert "command_id=" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_notification_setup_runtime_error_json(route_client, db):
     """Test notification setup JSON response returns queued command."""
     resp = await route_client.post(
@@ -670,7 +670,7 @@ async def test_notification_setup_runtime_error_json(route_client, db):
     assert data["status"] == "queued"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_notification_bot_status(route_client, db):
     """Test notification bot status endpoint."""
     await db.repos.runtime_snapshots.upsert_snapshot(
@@ -685,7 +685,7 @@ async def test_notification_bot_status(route_client, db):
     assert data["configured"] is False
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_notification_delete(route_client, db):
     """Test notification bot deletion."""
     resp = await route_client.post(
@@ -698,7 +698,7 @@ async def test_notification_delete(route_client, db):
     assert commands[0].command_type == "notifications.delete_bot"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_notification_delete_json(route_client, db):
     """Test notification bot deletion JSON response returns queued command."""
     resp = await route_client.post(
@@ -714,7 +714,7 @@ async def test_notification_delete_json(route_client, db):
 # === Test notification ===
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_test_notification_success(route_client, db):
     """Test test notification success."""
     resp = await route_client.post(

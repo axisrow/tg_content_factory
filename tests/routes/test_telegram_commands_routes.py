@@ -24,7 +24,7 @@ async def client(base_app):
         yield c
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_command_status_redacts_sensitive_payload(client, base_app):
     app, db, _ = base_app
     cmd = TelegramCommand(
@@ -45,7 +45,7 @@ async def test_get_command_status_redacts_sensitive_payload(client, base_app):
     assert body["result_payload"]["is_premium"] is True
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_command_status_404(client):
     resp = await client.get("/telegram-commands/999999")
     assert resp.status_code == 404

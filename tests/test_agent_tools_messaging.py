@@ -45,7 +45,7 @@ def _make_mock_pool():
 
 
 class TestSendMessage:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_no_pool_returns_gate(self, mock_db):
         handlers = _get_tool_handlers(mock_db, client_pool=None)
         await assert_tool_text(
@@ -54,7 +54,7 @@ class TestSendMessage:
             "CLI-режиме",
         )
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_no_confirm_returns_gate(self, mock_db):
         mock_pool, _ = _make_mock_pool()
         mock_db.get_accounts = AsyncMock(return_value=[_make_account()])
@@ -65,7 +65,7 @@ class TestSendMessage:
             "confirm=true",
         )
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_with_confirm_success(self, mock_db):
         mock_pool, mock_client = _make_mock_pool()
         mock_db.get_accounts = AsyncMock(return_value=[_make_account()])
@@ -76,7 +76,7 @@ class TestSendMessage:
         text = _text(result)
         assert "отправлено" in text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_missing_recipient_or_text_returns_error(self, mock_db):
         mock_pool, _ = _make_mock_pool()
         mock_db.get_accounts = AsyncMock(return_value=[_make_account()])
@@ -85,7 +85,7 @@ class TestSendMessage:
 
 
 class TestEditMessage:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_no_pool_returns_gate(self, mock_db):
         handlers = _get_tool_handlers(mock_db, client_pool=None)
         result = await handlers["edit_message"](
@@ -93,7 +93,7 @@ class TestEditMessage:
         )
         assert "CLI-режиме" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_no_confirm_returns_gate(self, mock_db):
         mock_pool, _ = _make_mock_pool()
         mock_db.get_accounts = AsyncMock(return_value=[_make_account()])
@@ -103,7 +103,7 @@ class TestEditMessage:
         )
         assert "confirm=true" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_with_confirm_success(self, mock_db):
         mock_pool, mock_client = _make_mock_pool()
         mock_db.get_accounts = AsyncMock(return_value=[_make_account()])
@@ -114,7 +114,7 @@ class TestEditMessage:
         text = _text(result)
         assert "отредактировано" in text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_missing_message_id_returns_error(self, mock_db):
         mock_pool, _ = _make_mock_pool()
         mock_db.get_accounts = AsyncMock(return_value=[_make_account()])
@@ -125,13 +125,13 @@ class TestEditMessage:
 
 
 class TestDeleteMessage:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_no_pool_returns_gate(self, mock_db):
         handlers = _get_tool_handlers(mock_db, client_pool=None)
         result = await handlers["delete_message"]({"phone": "+79001234567", "chat_id": "123", "message_ids": "1,2"})
         assert "CLI-режиме" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_invalid_message_ids_returns_error(self, mock_db):
         mock_pool, _ = _make_mock_pool()
         mock_db.get_accounts = AsyncMock(return_value=[_make_account()])
@@ -141,7 +141,7 @@ class TestDeleteMessage:
         )
         assert "валидные message_ids" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_no_confirm_returns_gate(self, mock_db):
         mock_pool, _ = _make_mock_pool()
         mock_db.get_accounts = AsyncMock(return_value=[_make_account()])
@@ -151,7 +151,7 @@ class TestDeleteMessage:
         )
         assert "confirm=true" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_with_confirm_success(self, mock_db):
         mock_pool, mock_client = _make_mock_pool()
         mock_db.get_accounts = AsyncMock(return_value=[_make_account()])
@@ -164,7 +164,7 @@ class TestDeleteMessage:
 
 
 class TestForwardMessages:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_no_pool_returns_gate(self, mock_db):
         handlers = _get_tool_handlers(mock_db, client_pool=None)
         result = await handlers["forward_messages"](
@@ -172,7 +172,7 @@ class TestForwardMessages:
         )
         assert "CLI-режиме" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_invalid_ids_returns_error(self, mock_db):
         mock_pool, _ = _make_mock_pool()
         mock_db.get_accounts = AsyncMock(return_value=[_make_account()])
@@ -182,7 +182,7 @@ class TestForwardMessages:
         )
         assert "валидные message_ids" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_no_confirm_returns_gate(self, mock_db):
         mock_pool, _ = _make_mock_pool()
         mock_db.get_accounts = AsyncMock(return_value=[_make_account()])
@@ -192,7 +192,7 @@ class TestForwardMessages:
         )
         assert "confirm=true" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_with_confirm_success(self, mock_db):
         mock_pool, mock_client = _make_mock_pool()
         mock_db.get_accounts = AsyncMock(return_value=[_make_account()])
@@ -210,13 +210,13 @@ class TestForwardMessages:
 
 
 class TestPinMessage:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_no_pool_returns_gate(self, mock_db):
         handlers = _get_tool_handlers(mock_db, client_pool=None)
         result = await handlers["pin_message"]({"phone": "+79001234567", "chat_id": "chat", "message_id": 1})
         assert "CLI-режиме" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_no_confirm_returns_gate(self, mock_db):
         mock_pool, _ = _make_mock_pool()
         mock_db.get_accounts = AsyncMock(return_value=[_make_account()])
@@ -224,7 +224,7 @@ class TestPinMessage:
         result = await handlers["pin_message"]({"phone": "+79001234567", "chat_id": "chat", "message_id": 10})
         assert "confirm=true" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_with_confirm_success(self, mock_db):
         mock_pool, mock_client = _make_mock_pool()
         mock_db.get_accounts = AsyncMock(return_value=[_make_account()])
@@ -236,13 +236,13 @@ class TestPinMessage:
 
 
 class TestUnpinMessage:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_no_pool_returns_gate(self, mock_db):
         handlers = _get_tool_handlers(mock_db, client_pool=None)
         result = await handlers["unpin_message"]({"phone": "+79001234567", "chat_id": "chat"})
         assert "CLI-режиме" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_no_confirm_returns_gate(self, mock_db):
         mock_pool, _ = _make_mock_pool()
         mock_db.get_accounts = AsyncMock(return_value=[_make_account()])
@@ -250,7 +250,7 @@ class TestUnpinMessage:
         result = await handlers["unpin_message"]({"phone": "+79001234567", "chat_id": "chat"})
         assert "confirm=true" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_with_confirm_success(self, mock_db):
         mock_pool, mock_client = _make_mock_pool()
         mock_db.get_accounts = AsyncMock(return_value=[_make_account()])
@@ -260,13 +260,13 @@ class TestUnpinMessage:
 
 
 class TestGetParticipants:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_no_pool_returns_gate(self, mock_db):
         handlers = _get_tool_handlers(mock_db, client_pool=None)
         result = await handlers["get_participants"]({"phone": "+79001234567", "chat_id": "chat"})
         assert "CLI-режиме" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_empty_participants(self, mock_db):
         mock_pool, mock_client = _make_mock_pool()
         mock_db.get_accounts = AsyncMock(return_value=[_make_account()])
@@ -275,7 +275,7 @@ class TestGetParticipants:
         result = await handlers["get_participants"]({"phone": "+79001234567", "chat_id": "chat"})
         assert "не найдены" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_with_participants(self, mock_db):
         mock_pool, mock_client = _make_mock_pool()
         mock_db.get_accounts = AsyncMock(return_value=[_make_account()])
@@ -291,7 +291,7 @@ class TestGetParticipants:
         assert "111" in text
         assert "John" in text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_missing_chat_id_returns_error(self, mock_db):
         mock_pool, _ = _make_mock_pool()
         mock_db.get_accounts = AsyncMock(return_value=[_make_account()])
@@ -301,13 +301,13 @@ class TestGetParticipants:
 
 
 class TestKickParticipant:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_no_pool_returns_gate(self, mock_db):
         handlers = _get_tool_handlers(mock_db, client_pool=None)
         result = await handlers["kick_participant"]({"phone": "+79001234567", "chat_id": "chat", "user_id": "111"})
         assert "CLI-режиме" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_no_confirm_returns_gate(self, mock_db):
         mock_pool, _ = _make_mock_pool()
         mock_db.get_accounts = AsyncMock(return_value=[_make_account()])
@@ -315,7 +315,7 @@ class TestKickParticipant:
         result = await handlers["kick_participant"]({"phone": "+79001234567", "chat_id": "chat", "user_id": "111"})
         assert "confirm=true" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_with_confirm_success(self, mock_db):
         mock_pool, mock_client = _make_mock_pool()
         mock_db.get_accounts = AsyncMock(return_value=[_make_account()])
@@ -327,13 +327,13 @@ class TestKickParticipant:
 
 
 class TestArchiveChat:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_no_pool_returns_gate(self, mock_db):
         handlers = _get_tool_handlers(mock_db, client_pool=None)
         result = await handlers["archive_chat"]({"phone": "+79001234567", "chat_id": "chat"})
         assert "CLI-режиме" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_no_confirm_returns_gate(self, mock_db):
         mock_pool, _ = _make_mock_pool()
         mock_db.get_accounts = AsyncMock(return_value=[_make_account()])
@@ -341,7 +341,7 @@ class TestArchiveChat:
         result = await handlers["archive_chat"]({"phone": "+79001234567", "chat_id": "chat"})
         assert "confirm=true" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_with_confirm_success(self, mock_db):
         mock_pool, mock_client = _make_mock_pool()
         mock_db.get_accounts = AsyncMock(return_value=[_make_account()])
@@ -351,13 +351,13 @@ class TestArchiveChat:
 
 
 class TestMarkRead:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_no_pool_returns_gate(self, mock_db):
         handlers = _get_tool_handlers(mock_db, client_pool=None)
         result = await handlers["mark_read"]({"phone": "+79001234567", "chat_id": "chat"})
         assert "CLI-режиме" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_missing_chat_id_returns_error(self, mock_db):
         mock_pool, _ = _make_mock_pool()
         mock_db.get_accounts = AsyncMock(return_value=[_make_account()])
@@ -365,7 +365,7 @@ class TestMarkRead:
         result = await handlers["mark_read"]({"phone": "+79001234567"})
         assert "chat_id обязателен" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_with_pool_success(self, mock_db):
         mock_pool, mock_client = _make_mock_pool()
         mock_db.get_accounts = AsyncMock(return_value=[_make_account()])
@@ -375,13 +375,13 @@ class TestMarkRead:
 
 
 class TestEditAdmin:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_no_pool_returns_gate(self, mock_db):
         handlers = _get_tool_handlers(mock_db, client_pool=None)
         result = await handlers["edit_admin"]({"phone": "+79001234567", "chat_id": "chat", "user_id": "111"})
         assert "CLI-режиме" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_no_confirm_returns_gate(self, mock_db):
         mock_pool, _ = _make_mock_pool()
         mock_db.get_accounts = AsyncMock(return_value=[_make_account()])
@@ -389,7 +389,7 @@ class TestEditAdmin:
         result = await handlers["edit_admin"]({"phone": "+79001234567", "chat_id": "chat", "user_id": "111"})
         assert "confirm=true" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_with_confirm_promote_success(self, mock_db):
         mock_pool, mock_client = _make_mock_pool()
         mock_db.get_accounts = AsyncMock(return_value=[_make_account()])
@@ -401,7 +401,7 @@ class TestEditAdmin:
 
 
 class TestEditPermissions:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_no_pool_returns_gate(self, mock_db):
         handlers = _get_tool_handlers(mock_db, client_pool=None)
         result = await handlers["edit_permissions"](
@@ -409,7 +409,7 @@ class TestEditPermissions:
         )
         assert "CLI-режиме" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_no_flags_returns_error(self, mock_db):
         mock_pool, _ = _make_mock_pool()
         mock_db.get_accounts = AsyncMock(return_value=[_make_account()])
@@ -418,7 +418,7 @@ class TestEditPermissions:
         text = _text(result)
         assert "флаг" in text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_with_confirm_success(self, mock_db):
         mock_pool, mock_client = _make_mock_pool()
         mock_db.get_accounts = AsyncMock(return_value=[_make_account()])

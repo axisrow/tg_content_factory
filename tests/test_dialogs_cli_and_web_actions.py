@@ -908,20 +908,20 @@ async def web_client(db, real_pool_harness_factory):
 class TestWebPage:
     """GET /dialogs/."""
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_page_renders(self, web_client):
         c, app = web_client
         resp = await c.get("/dialogs/")
         assert resp.status_code == 200
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_page_with_phone(self, web_client):
         c, app = web_client
         phone_encoded = "%2B79001234567"
         resp = await c.get(f"/dialogs/?phone={phone_encoded}")
         assert resp.status_code == 200
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_page_invalid_phone_shows_no_dialogs(self, web_client):
         c, app = web_client
         resp = await c.get("/dialogs/?phone=%2B00000")
@@ -931,7 +931,7 @@ class TestWebPage:
 class TestWebRefresh:
     """POST /dialogs/refresh."""
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_refresh_ok(self, web_client):
         c, app = web_client
         resp = await c.post("/dialogs/refresh", data={"phone": _PHONE})
@@ -941,7 +941,7 @@ class TestWebRefresh:
 class TestWebCacheStatus:
     """GET /dialogs/cache-status."""
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_cache_status_empty(self, web_client):
         c, app = web_client
         resp = await c.get("/dialogs/cache-status")
@@ -953,13 +953,13 @@ class TestWebCacheStatus:
 class TestWebCacheClear:
     """POST /dialogs/cache-clear."""
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_cache_clear_all(self, web_client):
         c, app = web_client
         resp = await c.post("/dialogs/cache-clear", data={"phone": ""})
         assert resp.status_code == 200
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_cache_clear_single(self, web_client):
         c, app = web_client
         resp = await c.post("/dialogs/cache-clear", data={"phone": _PHONE})
@@ -985,14 +985,14 @@ async def _assert_enqueued(app, expected_type: str, expected_payload_subset: dic
 class TestWebSend:
     """POST /dialogs/send — queued-command model."""
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_send_missing_fields(self, web_client):
         c, app = web_client
         resp = await c.post("/dialogs/send", data={"phone": _PHONE, "recipient": "", "text": ""})
         assert resp.status_code == 200
         assert "error=missing_fields" in str(resp.url)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_send_enqueues(self, web_client):
         c, app = web_client
         resp = await c.post(
@@ -1008,7 +1008,7 @@ class TestWebSend:
 class TestWebEditMessage:
     """POST /dialogs/edit-message — queued-command model."""
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_edit_missing_fields(self, web_client):
         c, app = web_client
         resp = await c.post("/dialogs/edit-message", data={
@@ -1016,7 +1016,7 @@ class TestWebEditMessage:
         })
         assert "error=missing_fields" in str(resp.url)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_edit_enqueues(self, web_client):
         c, app = web_client
         resp = await c.post(
@@ -1032,7 +1032,7 @@ class TestWebEditMessage:
 class TestWebDeleteMessage:
     """POST /dialogs/delete-message — queued-command model."""
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_delete_missing_fields(self, web_client):
         c, app = web_client
         resp = await c.post("/dialogs/delete-message", data={
@@ -1040,7 +1040,7 @@ class TestWebDeleteMessage:
         })
         assert "error=missing_fields" in str(resp.url)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_delete_invalid_ids(self, web_client):
         c, app = web_client
         resp = await c.post("/dialogs/delete-message", data={
@@ -1048,7 +1048,7 @@ class TestWebDeleteMessage:
         })
         assert "error=invalid_ids" in str(resp.url)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_delete_enqueues(self, web_client):
         c, app = web_client
         resp = await c.post(
@@ -1064,7 +1064,7 @@ class TestWebDeleteMessage:
 class TestWebForwardMessages:
     """POST /dialogs/forward-messages — queued-command model."""
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_forward_missing_fields(self, web_client):
         c, app = web_client
         resp = await c.post("/dialogs/forward-messages", data={
@@ -1072,7 +1072,7 @@ class TestWebForwardMessages:
         })
         assert "error=missing_fields" in str(resp.url)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_forward_invalid_ids(self, web_client):
         c, app = web_client
         resp = await c.post("/dialogs/forward-messages", data={
@@ -1080,7 +1080,7 @@ class TestWebForwardMessages:
         })
         assert "error=invalid_ids" in str(resp.url)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_forward_enqueues(self, web_client):
         c, app = web_client
         resp = await c.post(
@@ -1096,7 +1096,7 @@ class TestWebForwardMessages:
 class TestWebPinMessage:
     """POST /dialogs/pin-message — queued-command model."""
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_pin_missing_fields(self, web_client):
         c, app = web_client
         resp = await c.post("/dialogs/pin-message", data={
@@ -1104,7 +1104,7 @@ class TestWebPinMessage:
         })
         assert "error=missing_fields" in str(resp.url)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_pin_enqueues(self, web_client):
         c, app = web_client
         resp = await c.post(
@@ -1120,7 +1120,7 @@ class TestWebPinMessage:
 class TestWebUnpinMessage:
     """POST /dialogs/unpin-message — queued-command model."""
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_unpin_missing_fields(self, web_client):
         c, app = web_client
         resp = await c.post("/dialogs/unpin-message", data={
@@ -1128,7 +1128,7 @@ class TestWebUnpinMessage:
         })
         assert "error=missing_fields" in str(resp.url)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_unpin_enqueues(self, web_client):
         c, app = web_client
         resp = await c.post(
@@ -1140,7 +1140,7 @@ class TestWebUnpinMessage:
         assert "command_id=" in resp.headers["location"]
         await _assert_enqueued(app, "dialogs.unpin_message", {"phone": _PHONE, "chat_id": "@ch"})
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_unpin_all_enqueues(self, web_client):
         c, app = web_client
         resp = await c.post(
@@ -1159,13 +1159,13 @@ class TestWebParticipants:
     responds 202.
     """
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_participants_missing_params(self, web_client):
         c, app = web_client
         resp = await c.get("/dialogs/participants")
         assert resp.status_code == 400
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_participants_enqueues_when_no_snapshot(self, web_client):
         c, app = web_client
         phone_enc = _PHONE.replace("+", "%2B")
@@ -1181,13 +1181,13 @@ class TestWebParticipants:
 class TestWebArchive:
     """POST /dialogs/archive and /unarchive — queued-command model."""
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_archive_missing_fields(self, web_client):
         c, app = web_client
         resp = await c.post("/dialogs/archive", data={"phone": "", "chat_id": ""})
         assert "error=missing_fields" in str(resp.url)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_archive_enqueues(self, web_client):
         c, app = web_client
         resp = await c.post(
@@ -1199,7 +1199,7 @@ class TestWebArchive:
         assert "command_id=" in resp.headers["location"]
         await _assert_enqueued(app, "dialogs.archive", {"phone": _PHONE, "chat_id": "@ch"})
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_unarchive_enqueues(self, web_client):
         c, app = web_client
         resp = await c.post(
@@ -1211,7 +1211,7 @@ class TestWebArchive:
         assert "command_id=" in resp.headers["location"]
         await _assert_enqueued(app, "dialogs.unarchive", {"phone": _PHONE, "chat_id": "@ch"})
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_unarchive_missing_fields(self, web_client):
         c, app = web_client
         resp = await c.post("/dialogs/unarchive", data={"phone": "", "chat_id": ""})
@@ -1221,13 +1221,13 @@ class TestWebArchive:
 class TestWebMarkRead:
     """POST /dialogs/mark-read — queued-command model."""
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_mark_read_missing_fields(self, web_client):
         c, app = web_client
         resp = await c.post("/dialogs/mark-read", data={"phone": "", "chat_id": ""})
         assert "error=missing_fields" in str(resp.url)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_mark_read_enqueues(self, web_client):
         c, app = web_client
         resp = await c.post(
@@ -1239,7 +1239,7 @@ class TestWebMarkRead:
         assert "command_id=" in resp.headers["location"]
         await _assert_enqueued(app, "dialogs.mark_read", {"phone": _PHONE, "chat_id": "@ch"})
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_mark_read_with_max_id_enqueues(self, web_client):
         c, app = web_client
         resp = await c.post(
@@ -1254,7 +1254,7 @@ class TestWebMarkRead:
 class TestWebEditAdmin:
     """POST /dialogs/edit-admin — queued-command model."""
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_edit_admin_missing_fields(self, web_client):
         c, app = web_client
         resp = await c.post("/dialogs/edit-admin", data={
@@ -1262,7 +1262,7 @@ class TestWebEditAdmin:
         })
         assert "error=missing_fields" in str(resp.url)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_edit_admin_enqueues(self, web_client):
         c, app = web_client
         resp = await c.post(
@@ -1281,7 +1281,7 @@ class TestWebEditAdmin:
 class TestWebEditPermissions:
     """POST /dialogs/edit-permissions — queued-command model."""
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_edit_permissions_no_flags(self, web_client):
         c, app = web_client
         resp = await c.post("/dialogs/edit-permissions", data={
@@ -1289,7 +1289,7 @@ class TestWebEditPermissions:
         })
         assert "error=no_permission_flags" in str(resp.url)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_edit_permissions_missing_fields(self, web_client):
         c, app = web_client
         resp = await c.post("/dialogs/edit-permissions", data={
@@ -1297,7 +1297,7 @@ class TestWebEditPermissions:
         })
         assert "error=missing_fields" in str(resp.url)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_edit_permissions_enqueues(self, web_client):
         c, app = web_client
         resp = await c.post(
@@ -1316,7 +1316,7 @@ class TestWebEditPermissions:
 class TestWebKick:
     """POST /dialogs/kick — queued-command model."""
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_kick_missing_fields(self, web_client):
         c, app = web_client
         resp = await c.post("/dialogs/kick", data={
@@ -1324,7 +1324,7 @@ class TestWebKick:
         })
         assert "error=missing_fields" in str(resp.url)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_kick_enqueues(self, web_client):
         c, app = web_client
         resp = await c.post(
@@ -1340,13 +1340,13 @@ class TestWebKick:
 class TestWebBroadcastStats:
     """GET /dialogs/broadcast-stats — queued-command model."""
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_broadcast_stats_missing_params(self, web_client):
         c, app = web_client
         resp = await c.get("/dialogs/broadcast-stats")
         assert resp.status_code == 400
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_broadcast_stats_enqueues_when_no_snapshot(self, web_client):
         c, app = web_client
         phone_enc = _PHONE.replace("+", "%2B")
@@ -1362,7 +1362,7 @@ class TestWebBroadcastStats:
 class TestWebLeave:
     """POST /dialogs/leave — queued-command model."""
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_leave_enqueues(self, web_client):
         c, app = web_client
         resp = await c.post(
@@ -1378,7 +1378,7 @@ class TestWebLeave:
 class TestWebDownloadMedia:
     """POST /dialogs/download-media — queued-command model."""
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_download_missing_fields(self, web_client):
         c, app = web_client
         resp = await c.post("/dialogs/download-media", data={
@@ -1386,7 +1386,7 @@ class TestWebDownloadMedia:
         })
         assert "error=missing_fields" in str(resp.url)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_download_enqueues(self, web_client):
         c, app = web_client
         resp = await c.post(
@@ -1402,13 +1402,13 @@ class TestWebDownloadMedia:
 class TestWebCreateChannel:
     """GET and POST /dialogs/create-channel — queued-command model."""
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_create_channel_page(self, web_client):
         c, app = web_client
         resp = await c.get("/dialogs/create-channel")
         assert resp.status_code == 200
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_create_channel_enqueues(self, web_client):
         c, app = web_client
         resp = await c.post(

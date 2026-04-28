@@ -16,7 +16,7 @@ def _make_purge_result(purged=2, deleted=50):
 
 
 class TestAnalyzeFiltersTool:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_empty_report(self, mock_db):
         """Empty report returns appropriate message."""
         report = MagicMock()
@@ -27,7 +27,7 @@ class TestAnalyzeFiltersTool:
             result = await handlers["analyze_filters"]({})
         assert "Нет каналов для анализа" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_report_with_flagged_channels(self, mock_db):
         """Flagged channels are listed with their flags."""
         r = MagicMock()
@@ -47,7 +47,7 @@ class TestAnalyzeFiltersTool:
         assert "spam" in text
         assert "1 рекомендовано" in text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_report_shows_all_beyond_30(self, mock_db):
         """More than 30 flagged channels are all shown without truncation."""
 
@@ -69,7 +69,7 @@ class TestAnalyzeFiltersTool:
         assert "35 рекомендовано" in text
         assert "и ещё" not in text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_report_non_flagged_not_listed(self, mock_db):
         """Non-flagged channels don't appear in the flagged list."""
         ok = MagicMock()
@@ -87,7 +87,7 @@ class TestAnalyzeFiltersTool:
         assert "GoodChan" not in text
         assert "0 рекомендовано" in text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_error_returns_text(self, mock_db):
         with patch("src.filters.analyzer.ChannelAnalyzer") as mock_analyzer:
             mock_analyzer.return_value.analyze_all = AsyncMock(side_effect=RuntimeError("DB fail"))
@@ -98,13 +98,13 @@ class TestAnalyzeFiltersTool:
 
 
 class TestApplyFiltersTool:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_no_confirm_returns_gate(self, mock_db):
         handlers = _get_tool_handlers(mock_db)
         result = await handlers["apply_filters"]({})
         assert "confirm=true" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_with_confirm_applies_and_returns_count(self, mock_db):
         report = MagicMock()
         with patch("src.filters.analyzer.ChannelAnalyzer") as mock_analyzer:
@@ -117,7 +117,7 @@ class TestApplyFiltersTool:
         assert "3 каналов" in text
         assert "Фильтры применены" in text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_error_returns_text(self, mock_db):
         with patch("src.filters.analyzer.ChannelAnalyzer") as mock_analyzer:
             mock_analyzer.return_value.analyze_all = AsyncMock(side_effect=Exception("oops"))
@@ -127,13 +127,13 @@ class TestApplyFiltersTool:
 
 
 class TestResetFiltersTool:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_no_confirm_returns_gate(self, mock_db):
         handlers = _get_tool_handlers(mock_db)
         result = await handlers["reset_filters"]({})
         assert "confirm=true" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_with_confirm_resets_and_returns_count(self, mock_db):
         with patch("src.filters.analyzer.ChannelAnalyzer") as mock_analyzer:
             mock_analyzer.return_value.reset_filters = AsyncMock(return_value=7)
@@ -143,7 +143,7 @@ class TestResetFiltersTool:
         assert "7 каналов" in text
         assert "разблокированы" in text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_error_returns_text(self, mock_db):
         with patch("src.filters.analyzer.ChannelAnalyzer") as mock_analyzer:
             mock_analyzer.return_value.reset_filters = AsyncMock(side_effect=Exception("nope"))
@@ -153,13 +153,13 @@ class TestResetFiltersTool:
 
 
 class TestToggleChannelFilterTool:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_missing_pk_returns_error(self, mock_db):
         handlers = _get_tool_handlers(mock_db)
         result = await handlers["toggle_channel_filter"]({})
         assert "pk обязателен" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_channel_not_found(self, mock_db):
         mock_db.get_channel_by_pk = AsyncMock(return_value=None)
         handlers = _get_tool_handlers(mock_db)
@@ -167,7 +167,7 @@ class TestToggleChannelFilterTool:
         assert "не найден" in _text(result)
         assert "999" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_filtered_false_becomes_filtered(self, mock_db):
         ch = MagicMock()
         ch.is_filtered = False
@@ -181,7 +181,7 @@ class TestToggleChannelFilterTool:
         assert "отфильтрован" in text
         mock_db.set_channel_filtered.assert_awaited_once_with(1, True)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_filtered_true_becomes_unblocked(self, mock_db):
         ch = MagicMock()
         ch.is_filtered = True
@@ -195,7 +195,7 @@ class TestToggleChannelFilterTool:
         assert "разблокирован" in text
         mock_db.set_channel_filtered.assert_awaited_once_with(2, False)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_error_returns_text(self, mock_db):
         mock_db.get_channel_by_pk = AsyncMock(side_effect=Exception("db error"))
         handlers = _get_tool_handlers(mock_db)
@@ -204,13 +204,13 @@ class TestToggleChannelFilterTool:
 
 
 class TestPurgeFilteredChannelsTool:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_no_confirm_returns_gate(self, mock_db):
         handlers = _get_tool_handlers(mock_db)
         result = await handlers["purge_filtered_channels"]({})
         assert "confirm=true" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_with_pks_and_confirm_purges_by_pks(self, mock_db):
         purge_result = _make_purge_result(purged=2, deleted=40)
         with patch("src.services.filter_deletion_service.FilterDeletionService") as mock_svc:
@@ -222,7 +222,7 @@ class TestPurgeFilteredChannelsTool:
         assert "40 сообщений" in text
         mock_svc.return_value.purge_channels_by_pks.assert_awaited_once_with([1, 2])
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_empty_pks_and_confirm_purges_all(self, mock_db):
         purge_result = _make_purge_result(purged=5, deleted=200)
         with patch("src.services.filter_deletion_service.FilterDeletionService") as mock_svc:
@@ -234,7 +234,7 @@ class TestPurgeFilteredChannelsTool:
         assert "200 сообщений" in text
         mock_svc.return_value.purge_all_filtered.assert_awaited_once()
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_error_returns_text(self, mock_db):
         with patch("src.services.filter_deletion_service.FilterDeletionService") as mock_svc:
             mock_svc.return_value.purge_all_filtered = AsyncMock(side_effect=Exception("disk full"))
@@ -244,19 +244,19 @@ class TestPurgeFilteredChannelsTool:
 
 
 class TestHardDeleteChannelsTool:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_empty_pks_returns_error(self, mock_db):
         handlers = _get_tool_handlers(mock_db)
         result = await handlers["hard_delete_channels"]({})
         assert "pks обязателен" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_no_confirm_returns_gate(self, mock_db):
         handlers = _get_tool_handlers(mock_db)
         result = await handlers["hard_delete_channels"]({"pks": "1,2"})
         assert "confirm=true" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_with_pks_and_confirm_deletes(self, mock_db):
         del_result = _make_purge_result(purged=2, deleted=0)
         with patch("src.services.filter_deletion_service.FilterDeletionService") as mock_svc:
@@ -268,7 +268,7 @@ class TestHardDeleteChannelsTool:
         assert "безвозвратно" in text
         mock_svc.return_value.hard_delete_channels_by_pks.assert_awaited_once_with([3, 4])
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_error_returns_text(self, mock_db):
         with patch("src.services.filter_deletion_service.FilterDeletionService") as mock_svc:
             mock_svc.return_value.hard_delete_channels_by_pks = AsyncMock(side_effect=Exception("err"))

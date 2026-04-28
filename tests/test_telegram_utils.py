@@ -9,13 +9,13 @@ import pytest
 from src.telegram.utils import normalize_utc
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_normalize_utc_none_returns_none():
     """None input returns None."""
     assert normalize_utc(None) is None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_normalize_utc_naive_treated_as_utc():
     """Naive datetime gets UTC tzinfo."""
     naive = datetime(2024, 3, 15, 10, 30, 45)
@@ -31,7 +31,7 @@ async def test_normalize_utc_naive_treated_as_utc():
     assert result.second == 45
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_normalize_utc_aware_converted():
     """Non-UTC timezone converted to UTC."""
     # Create datetime in UTC+5
@@ -46,7 +46,7 @@ async def test_normalize_utc_aware_converted():
     assert result.minute == 30
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_normalize_utc_already_utc():
     """Already-UTC datetime returned as-is."""
     utc_dt = datetime(2024, 3, 15, 10, 30, 45, tzinfo=timezone.utc)
@@ -55,7 +55,7 @@ async def test_normalize_utc_already_utc():
     assert result == utc_dt
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_normalize_utc_preserves_values():
     """Time components unchanged after conversion from naive."""
     naive = datetime(2024, 12, 31, 23, 59, 59, 999999)

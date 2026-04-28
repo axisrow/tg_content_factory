@@ -43,14 +43,14 @@ async def client(base_app):
 
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_pipelines_page_renders(client):
     resp = await client.get("/pipelines/")
     assert resp.status_code == 200
     assert "Пайплайны" in resp.text
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_add_pipeline_warns_when_no_llm_provider(client):
     """LLM-requiring pipeline + no provider ⇒ pipeline_added_no_llm warning."""
     resp = await client.post(
@@ -62,7 +62,7 @@ async def test_add_pipeline_warns_when_no_llm_provider(client):
     assert "msg=pipeline_added_no_llm" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_add_pipeline_with_provider(client):
     """With provider registered, redirect shows plain pipeline_added."""
     mock_provider_instance = MagicMock()
@@ -80,7 +80,7 @@ async def test_add_pipeline_with_provider(client):
     assert "pipeline_added_no_llm" not in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_pipelines_page_lists_pipeline(client):
     await client.post(
         "/pipelines/add",
@@ -91,7 +91,7 @@ async def test_pipelines_page_lists_pipeline(client):
     assert "Listed Pipeline" in resp.text
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_pipelines_page_shows_pipeline_id(client):
     await client.post(
         "/pipelines/add",
@@ -102,7 +102,7 @@ async def test_pipelines_page_shows_pipeline_id(client):
     assert "ID: 1" in resp.text
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_toggle_pipeline(client):
     await client.post("/pipelines/add", data=_ADD_DATA)
     resp = await client.post("/pipelines/1/toggle", follow_redirects=False)
@@ -110,7 +110,7 @@ async def test_toggle_pipeline(client):
     assert "msg=pipeline_toggled" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_delete_pipeline(client):
     await client.post("/pipelines/add", data=_ADD_DATA)
     resp = await client.post("/pipelines/1/delete", follow_redirects=False)
@@ -118,7 +118,7 @@ async def test_delete_pipeline(client):
     assert "msg=pipeline_deleted" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_edit_pipeline(client):
     await client.post("/pipelines/add", data=_ADD_DATA)
     resp = await client.post(
@@ -130,7 +130,7 @@ async def test_edit_pipeline(client):
     assert "msg=pipeline_edited" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_pipeline_edit_page_loads(client):
     """GET /pipelines/<id>/edit returns 200 with edit form."""
     await client.post("/pipelines/add", data=_ADD_DATA)
@@ -139,7 +139,7 @@ async def test_pipeline_edit_page_loads(client):
     assert "Редактировать" in resp.text
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_pipeline_edit_page_not_found(client):
     """GET /pipelines/<id>/edit redirects for invalid ID."""
     resp = await client.get("/pipelines/999999/edit", follow_redirects=False)
@@ -150,7 +150,7 @@ async def test_pipeline_edit_page_not_found(client):
 # === New tests ===
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_run_pipeline_not_found(client):
     """Test run pipeline with invalid ID."""
     from unittest.mock import patch
@@ -161,7 +161,7 @@ async def test_run_pipeline_not_found(client):
     assert "error=pipeline_invalid" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_run_pipeline_enqueues(client):
     """Test run pipeline enqueues generation."""
     from unittest.mock import patch
@@ -180,7 +180,7 @@ async def test_run_pipeline_enqueues(client):
                 assert "msg=pipeline_run_enqueued" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_run_pipeline_blocked_when_needs_llm_and_no_provider(client):
     """Default chain pipeline needs LLM: without provider, run is blocked."""
     await client.post("/pipelines/add", data=_ADD_DATA)
@@ -190,7 +190,7 @@ async def test_run_pipeline_blocked_when_needs_llm_and_no_provider(client):
     assert "error=llm_not_configured" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_run_pipeline_allowed_for_non_llm_dag_without_provider(client):
     """A DAG with only SOURCE→PUBLISH nodes runs without an LLM provider."""
     from unittest.mock import patch
@@ -231,7 +231,7 @@ async def test_run_pipeline_allowed_for_non_llm_dag_without_provider(client):
             assert "msg=pipeline_run_enqueued" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_run_pipeline_failure(client):
     """Test run pipeline handles failure."""
     from unittest.mock import patch
@@ -252,7 +252,7 @@ async def test_run_pipeline_failure(client):
                 assert "error=pipeline_run_failed" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_generate_page_renders(client):
     """Test generate page renders."""
     await client.post("/pipelines/add", data=_ADD_DATA)
@@ -261,7 +261,7 @@ async def test_generate_page_renders(client):
     assert resp.status_code == 200
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_generate_page_not_found(client):
     """Test generate page with invalid pipeline."""
     resp = await client.get("/pipelines/999999/generate", follow_redirects=False)
@@ -272,7 +272,7 @@ async def test_generate_page_not_found(client):
 # === SSE Streaming tests ===
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_generate_stream_success(client):
     """Test SSE streaming generation."""
     from unittest.mock import patch
@@ -300,7 +300,7 @@ async def test_generate_stream_success(client):
         assert "text/event-stream" in resp.headers["content-type"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_generate_stream_pipeline_not_found(client):
     """Test SSE streaming with invalid pipeline."""
     resp = await client.get("/pipelines/999999/generate-stream", follow_redirects=False)
@@ -308,7 +308,7 @@ async def test_generate_stream_pipeline_not_found(client):
     assert "error=pipeline_invalid" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_generate_pipeline_success(client):
     """Test non-streaming generation success."""
     from unittest.mock import patch
@@ -336,7 +336,7 @@ async def test_generate_pipeline_success(client):
         assert resp.status_code == 200
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_generate_pipeline_failure(client):
     """Test non-streaming generation failure."""
     from unittest.mock import patch
@@ -363,7 +363,7 @@ async def test_generate_pipeline_failure(client):
         assert "Generation failed" in resp.text
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_generate_pipeline_not_found(client):
     """Test non-streaming generation with invalid pipeline."""
     resp = await client.post(
@@ -375,7 +375,7 @@ async def test_generate_pipeline_not_found(client):
     assert "error=pipeline_invalid" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_publish_pipeline_success(client):
     """Test publishing a generation run."""
     await client.post("/pipelines/add", data=_ADD_DATA)
@@ -397,7 +397,7 @@ async def test_publish_pipeline_success(client):
     assert "msg=pipeline_published" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_publish_pipeline_invalid_run(client):
     """Test publishing with wrong pipeline_id."""
     await client.post("/pipelines/add", data=_ADD_DATA)
@@ -420,7 +420,7 @@ async def test_publish_pipeline_invalid_run(client):
     assert "error=pipeline_invalid" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_publish_pipeline_run_not_found(client):
     """Test publishing a non-existent run."""
     await client.post("/pipelines/add", data=_ADD_DATA)
@@ -434,7 +434,7 @@ async def test_publish_pipeline_run_not_found(client):
     assert "error=pipeline_invalid" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_edit_pipeline_not_found(client):
     """Test edit with invalid pipeline_id."""
     resp = await client.post(
@@ -446,7 +446,7 @@ async def test_edit_pipeline_not_found(client):
     assert "error=pipeline_invalid" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_toggle_pipeline_not_found(client):
     """Test toggle with invalid pipeline_id."""
     resp = await client.post("/pipelines/999999/toggle", follow_redirects=False)

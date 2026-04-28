@@ -101,7 +101,7 @@ async def _init_schema(db):
     await db.commit()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_run_migrations_adds_missing_columns(fresh_db):
     await _init_schema(fresh_db)
     result = await run_migrations(fresh_db)
@@ -113,7 +113,7 @@ async def test_run_migrations_adds_missing_columns(fresh_db):
         assert expected in cols
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_run_migrations_idempotent(fresh_db):
     await _init_schema(fresh_db)
     await run_migrations(fresh_db)
@@ -123,7 +123,7 @@ async def test_run_migrations_idempotent(fresh_db):
     assert cols.count("media_type") == 1
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_run_migrations_creates_search_queries_table(fresh_db):
     await _init_schema(fresh_db)
     await run_migrations(fresh_db)
@@ -131,7 +131,7 @@ async def test_run_migrations_creates_search_queries_table(fresh_db):
     assert await cur.fetchone() is not None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_run_migrations_creates_photo_tables(fresh_db):
     await _init_schema(fresh_db)
     await run_migrations(fresh_db)
@@ -140,7 +140,7 @@ async def test_run_migrations_creates_photo_tables(fresh_db):
         assert await cur.fetchone() is not None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_run_migrations_creates_generation_runs(fresh_db):
     await _init_schema(fresh_db)
     await run_migrations(fresh_db)
@@ -148,7 +148,7 @@ async def test_run_migrations_creates_generation_runs(fresh_db):
     assert await cur.fetchone() is not None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_run_migrations_creates_agent_tables(fresh_db):
     await _init_schema(fresh_db)
     await run_migrations(fresh_db)
@@ -157,7 +157,7 @@ async def test_run_migrations_creates_agent_tables(fresh_db):
         assert await cur.fetchone() is not None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_run_migrations_creates_pipeline_templates(fresh_db):
     await _init_schema(fresh_db)
     await run_migrations(fresh_db)
@@ -165,7 +165,7 @@ async def test_run_migrations_creates_pipeline_templates(fresh_db):
     assert await cur.fetchone() is not None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_run_migrations_creates_generated_images(fresh_db):
     await _init_schema(fresh_db)
     await run_migrations(fresh_db)
@@ -173,7 +173,7 @@ async def test_run_migrations_creates_generated_images(fresh_db):
     assert await cur.fetchone() is not None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_migrate_tool_permission_flat(fresh_db):
     await _init_schema(fresh_db)
     perms = {"list_dialogs": True, "other_tool": False}
@@ -191,7 +191,7 @@ async def test_migrate_tool_permission_flat(fresh_db):
     assert data["search_dialogs"] is True
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_migrate_tool_permission_per_phone(fresh_db):
     await _init_schema(fresh_db)
     perms = {"+123456": {"list_dialogs": True}, "+789": {"list_dialogs": False}}
@@ -208,7 +208,7 @@ async def test_migrate_tool_permission_per_phone(fresh_db):
     assert "list_dialogs" not in data["+123456"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_migrate_tool_permission_no_existing_setting(fresh_db):
     await _init_schema(fresh_db)
     await _migrate_tool_permission_key(fresh_db, "list_dialogs", "search_dialogs")
@@ -216,7 +216,7 @@ async def test_migrate_tool_permission_no_existing_setting(fresh_db):
     assert await cur.fetchone() is None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_migrate_tool_permission_invalid_json(fresh_db):
     await _init_schema(fresh_db)
     await fresh_db.execute(
@@ -229,13 +229,13 @@ async def test_migrate_tool_permission_invalid_json(fresh_db):
     assert row["value"] == "not-json"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_migrate_vec_to_portable_no_table(fresh_db):
     await _init_schema(fresh_db)
     await _migrate_vec_to_portable(fresh_db)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_run_migrations_creates_message_reactions(fresh_db):
     await _init_schema(fresh_db)
     await run_migrations(fresh_db)
@@ -243,7 +243,7 @@ async def test_run_migrations_creates_message_reactions(fresh_db):
     assert await cur.fetchone() is not None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_run_migrations_creates_tags_tables(fresh_db):
     await _init_schema(fresh_db)
     await run_migrations(fresh_db)
@@ -255,7 +255,7 @@ async def test_run_migrations_creates_tags_tables(fresh_db):
 # === Additional tests for edge-case paths ===
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_migrate_vec_to_portable_with_data(fresh_db):
     """Test actual vec_messages migration with embedding data."""
     import struct
@@ -298,7 +298,7 @@ async def test_migrate_vec_to_portable_with_data(fresh_db):
     assert row["message_id"] == 42
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_migrate_vec_to_portable_json_vector(fresh_db):
     """Test vec migration with JSON-encoded vector."""
     await _init_schema(fresh_db)
@@ -330,7 +330,7 @@ async def test_migrate_vec_to_portable_json_vector(fresh_db):
     assert row["cnt"] == 1
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_migrate_vec_to_portable_no_dimension_setting(fresh_db):
     """Test vec migration skips when no dimension setting."""
     await _init_schema(fresh_db)
@@ -347,7 +347,7 @@ async def test_migrate_vec_to_portable_no_dimension_setting(fresh_db):
     # No crash, nothing migrated
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_migrate_vec_to_portable_invalid_dimension(fresh_db):
     """Test vec migration skips when dimension is invalid."""
     await _init_schema(fresh_db)
@@ -365,7 +365,7 @@ async def test_migrate_vec_to_portable_invalid_dimension(fresh_db):
     await _migrate_vec_to_portable(fresh_db)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_run_migrations_adds_missing_message_columns(fresh_db):
     """Test that migrations add missing message columns."""
     # Create messages table WITHOUT the extra columns
@@ -437,7 +437,7 @@ async def test_run_migrations_adds_missing_message_columns(fresh_db):
     assert "translation_en" in cols
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_run_migrations_keywords_to_search_queries(fresh_db):
     """Test migration of keywords table to search_queries."""
     await _init_schema(fresh_db)
@@ -470,7 +470,7 @@ async def test_run_migrations_keywords_to_search_queries(fresh_db):
     assert row["name"] == "test"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_run_migrations_notification_bots_drop_notnull(fresh_db):
     """Test notification_bots migration drops NOT NULL from bot_id."""
     await _init_schema(fresh_db)
@@ -499,7 +499,7 @@ async def test_run_migrations_notification_bots_drop_notnull(fresh_db):
     assert row["bot_id"] == 456
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_run_migrations_collection_tasks_rebuild(fresh_db):
     """Test collection_tasks migration rebuilds table with proper schema."""
     await _init_schema(fresh_db)
@@ -536,7 +536,7 @@ async def test_run_migrations_collection_tasks_rebuild(fresh_db):
     assert row["channel_title"] == "Test"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_migrate_tool_permission_no_matching_key(fresh_db):
     """Test tool permission migration when old key doesn't exist."""
     await _init_schema(fresh_db)
@@ -556,7 +556,7 @@ async def test_migrate_tool_permission_no_matching_key(fresh_db):
     assert "new_name" not in data
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_run_migrations_resets_agent_prompt(fresh_db):
     """Test one-time agent prompt reset migration."""
     await _init_schema(fresh_db)

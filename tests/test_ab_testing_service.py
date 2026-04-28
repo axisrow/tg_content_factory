@@ -27,7 +27,7 @@ class FakeQualityScoringService:
         return payload, score >= 0.7
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_ab_testing_service_save_and_get_variants(db):
     repo = db.repos.generation_runs
     service = ABTestingService(db)
@@ -45,7 +45,7 @@ async def test_ab_testing_service_save_and_get_variants(db):
     assert run.variants == ["base", "variant 2", "variant 3"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_ab_testing_service_select_variant_updates_generated_text(db):
     repo = db.repos.generation_runs
     service = ABTestingService(db)
@@ -61,7 +61,7 @@ async def test_ab_testing_service_select_variant_updates_generated_text(db):
     assert run.selected_variant == 1
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_ab_testing_service_auto_select_best_uses_scoring_service(db):
     repo = db.repos.generation_runs
     service = ABTestingService(db)
@@ -81,7 +81,7 @@ async def test_ab_testing_service_auto_select_best_uses_scoring_service(db):
     assert run.selected_variant == 1
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_ab_testing_service_generate_variants_includes_base_text(db, monkeypatch):
     pipeline = ContentPipeline(
         id=1,
@@ -110,7 +110,7 @@ async def test_ab_testing_service_generate_variants_includes_base_text(db, monke
     assert len(variants) == 3
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_ab_testing_service_select_variant_invalid_index(db):
     """Invalid index raises ValueError."""
     repo = db.repos.generation_runs
@@ -123,7 +123,7 @@ async def test_ab_testing_service_select_variant_invalid_index(db):
         await service.select_variant(run_id, 5)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_ab_testing_service_select_variant_missing_run(db):
     """Missing run raises ValueError."""
     service = ABTestingService(db)
@@ -132,7 +132,7 @@ async def test_ab_testing_service_select_variant_missing_run(db):
         await service.select_variant(999, 0)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_ab_testing_service_get_variants_missing_run(db):
     """get_variants returns None for missing run."""
     service = ABTestingService(db)
@@ -142,7 +142,7 @@ async def test_ab_testing_service_get_variants_missing_run(db):
     assert result is None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_ab_testing_service_get_variants_no_variants_returns_base(db):
     """get_variants returns generated_text when no variants stored."""
     repo = db.repos.generation_runs
@@ -157,7 +157,7 @@ async def test_ab_testing_service_get_variants_no_variants_returns_base(db):
     assert result.variants[0].text == "base text only"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_ab_testing_service_auto_select_single_variant_returns_zero(db):
     """Auto-select with single variant returns 0."""
     repo = db.repos.generation_runs
@@ -171,7 +171,7 @@ async def test_ab_testing_service_auto_select_single_variant_returns_zero(db):
     assert best_index == 0
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_ab_testing_service_auto_select_without_scoring_picks_longest(db):
     """Auto-select without scoring picks longest text."""
     repo = db.repos.generation_runs

@@ -1,7 +1,7 @@
 import pytest
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_generation_runs_repo(db):
     repo = db.repos.generation_runs
     run_id = await repo.create_run(42, "prompt-template")
@@ -24,7 +24,7 @@ async def test_generation_runs_repo(db):
     assert any(r.id == run_id for r in rows)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_generation_runs_repo_hydrates_moderation_fields(db):
     repo = db.repos.generation_runs
     run_id = await repo.create_run(42, "prompt-template")
@@ -43,7 +43,7 @@ async def test_generation_runs_repo_hydrates_moderation_fields(db):
     assert rows[0].published_at is not None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_list_pending_moderation_returns_runs(db):
     repo = db.repos.generation_runs
     pending_id = await repo.create_run(42, "pending-prompt")
@@ -61,7 +61,7 @@ async def test_list_pending_moderation_returns_runs(db):
     assert statuses[approved_id] == "approved"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_generation_runs_repo_hydrates_quality_fields(db):
     repo = db.repos.generation_runs
     run_id = await repo.create_run(42, "quality-prompt")
@@ -78,7 +78,7 @@ async def test_generation_runs_repo_hydrates_quality_fields(db):
     assert rows[0].quality_issues == ["too long", "weak ending"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_generation_runs_repo_hydrates_variant_fields(db):
     repo = db.repos.generation_runs
     run_id = await repo.create_run(42, "variant-prompt")

@@ -14,7 +14,7 @@ def sample_template():
     )
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_add_and_get_by_id(db, sample_template):
     repo = db.repos.pipeline_templates
     tpl_id = await repo.add(sample_template)
@@ -27,13 +27,13 @@ async def test_add_and_get_by_id(db, sample_template):
     assert tpl.is_builtin is False
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_by_id_not_found(db):
     repo = db.repos.pipeline_templates
     assert await repo.get_by_id(99999) is None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_by_name(db, sample_template):
     repo = db.repos.pipeline_templates
     await repo.add(sample_template)
@@ -42,13 +42,13 @@ async def test_get_by_name(db, sample_template):
     assert tpl.name == "Basic Pipeline"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_by_name_not_found(db):
     repo = db.repos.pipeline_templates
     assert await repo.get_by_name("nonexistent") is None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_list_all(db, sample_template):
     repo = db.repos.pipeline_templates
     await repo.add(sample_template)
@@ -66,7 +66,7 @@ async def test_list_all(db, sample_template):
     assert "Other" in names
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_list_all_with_category_filter(db, sample_template):
     repo = db.repos.pipeline_templates
     await repo.add(sample_template)
@@ -82,7 +82,7 @@ async def test_list_all_with_category_filter(db, sample_template):
     assert filtered[0].name == "Basic Pipeline"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_delete(db, sample_template):
     repo = db.repos.pipeline_templates
     tpl_id = await repo.add(sample_template)
@@ -90,7 +90,7 @@ async def test_delete(db, sample_template):
     assert await repo.get_by_id(tpl_id) is None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_ensure_builtins_inserts_missing(db):
     repo = db.repos.pipeline_templates
     builtins = [
@@ -116,7 +116,7 @@ async def test_ensure_builtins_inserts_missing(db):
     assert "Builtin2" in names
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_ensure_builtins_idempotent(db):
     repo = db.repos.pipeline_templates
     builtins = [

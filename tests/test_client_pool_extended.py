@@ -32,7 +32,7 @@ def mock_auth():
     return auth
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_client_pool_initialize_success(mock_db, mock_auth, telethon_cli_spy):
     acc = Account(
         phone="+7999",
@@ -55,7 +55,7 @@ async def test_client_pool_initialize_success(mock_db, mock_auth, telethon_cli_s
     mock_db.update_account_premium.assert_called_once_with("+7999", True)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_available_client_rotation(mock_db, mock_auth):
     acc1 = Account(phone="+7001", is_active=True, session_string="s1")
     acc2 = Account(phone="+7002", is_active=True, session_string="s2")
@@ -81,7 +81,7 @@ async def test_get_available_client_rotation(mock_db, mock_auth):
     assert res3 is not None  # Should return one of them even if in use
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_available_client_flood_waited(mock_db, mock_auth):
     future = datetime.now(timezone.utc) + timedelta(minutes=10)
     acc1 = Account(phone="+7001", is_active=True, session_string="s1", flood_wait_until=future)
@@ -95,7 +95,7 @@ async def test_get_available_client_flood_waited(mock_db, mock_auth):
     assert res[1] == "+7002"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_premium_client_unavailable(mock_db, mock_auth):
     acc = Account(phone="+7001", is_active=True, is_premium=False, session_string="s1")
     mock_db.get_accounts.return_value = [acc]
@@ -108,7 +108,7 @@ async def test_get_premium_client_unavailable(mock_db, mock_auth):
     assert "Нет аккаунтов с Telegram Premium" in reason
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_premium_client_skips_premium_flood_waited(mock_db, mock_auth):
     acc1 = Account(phone="+7001", is_active=True, is_premium=True, session_string="s1")
     acc2 = Account(phone="+7002", is_active=True, is_premium=True, session_string="s2")
@@ -124,7 +124,7 @@ async def test_get_premium_client_skips_premium_flood_waited(mock_db, mock_auth)
     mock_db.update_account_flood.assert_not_called()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_premium_unavailability_reason_reports_premium_flood(mock_db, mock_auth):
     acc = Account(phone="+7001", is_active=True, is_premium=True, session_string="s1")
     mock_db.get_accounts.return_value = [acc]
@@ -137,7 +137,7 @@ async def test_get_premium_unavailability_reason_reports_premium_flood(mock_db, 
     assert "Flood Wait" in reason
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_stats_availability_all_flooded(mock_db, mock_auth):
     future = datetime.now(timezone.utc) + timedelta(seconds=100)
     acc = Account(phone="+7001", is_active=True, session_string="s1", flood_wait_until=future)
@@ -151,7 +151,7 @@ async def test_get_stats_availability_all_flooded(mock_db, mock_auth):
     assert stats.retry_after_sec >= 99
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_premium_stats_availability_all_flooded(mock_db, mock_auth):
     premium = Account(phone="+7001", is_active=True, is_premium=True, session_string="s1")
     regular = Account(phone="+7002", is_active=True, is_premium=False, session_string="s2")
@@ -166,7 +166,7 @@ async def test_get_premium_stats_availability_all_flooded(mock_db, mock_auth):
     assert stats.retry_after_sec >= 24
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_resolve_channel_flood_rotation(mock_db, mock_auth):
     acc1 = Account(phone="+7001", is_active=True, session_string="s1")
     acc2 = Account(phone="+7002", is_active=True, session_string="s2")
@@ -187,7 +187,7 @@ async def test_resolve_channel_flood_rotation(mock_db, mock_auth):
         mock_db.update_account_flood.assert_called_once()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_resolve_channel_errors(mock_db, mock_auth):
     acc = Account(phone="+7001", is_active=True, session_string="s1")
     mock_db.get_accounts.return_value = [acc]
@@ -211,7 +211,7 @@ async def test_resolve_channel_errors(mock_db, mock_auth):
         await pool.resolve_channel("@t")
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_users_info_with_avatar(mock_db, mock_auth):
     acc = Account(phone="+7001", is_active=True, is_primary=True, session_string="s1")
     mock_db.get_accounts.return_value = [acc]
@@ -230,7 +230,7 @@ async def test_get_users_info_with_avatar(mock_db, mock_auth):
         assert "data:image/jpeg;base64" in info[0].avatar_base64
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_users_info_avatar_flood_does_not_mark_generic_account(mock_db, mock_auth):
     acc = Account(phone="+7001", is_active=True, is_primary=True, session_string="s1")
     mock_db.get_accounts.return_value = [acc]
@@ -252,7 +252,7 @@ async def test_get_users_info_avatar_flood_does_not_mark_generic_account(mock_db
     mock_db.update_account_flood.assert_called_once()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_leave_channels_flood(mock_db, mock_auth):
     acc = Account(phone="+7001", is_active=True, session_string="s1")
     mock_db.get_accounts.return_value = [acc]
@@ -270,7 +270,7 @@ async def test_leave_channels_flood(mock_db, mock_auth):
     mock_db.update_account_flood.assert_called_once()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_forum_topics_cache_hit_and_miss(mock_db, mock_auth):
     acc = Account(phone="+7001", is_active=True, session_string="s1")
     mock_db.get_accounts.return_value = [acc]
@@ -293,7 +293,7 @@ async def test_get_forum_topics_cache_hit_and_miss(mock_db, mock_auth):
     assert len(topics) == 1
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_dialogs_timeout(mock_db, mock_auth):
     acc = Account(phone="+7001", is_active=True, session_string="s1")
     mock_db.get_accounts.return_value = [acc]
@@ -313,7 +313,7 @@ async def test_get_dialogs_timeout(mock_db, mock_auth):
         assert res == []
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_dialogs_for_phone_sets_is_own(mock_db, mock_auth):
     acc = Account(phone="+7001", is_active=True, session_string="s1")
     mock_db.get_accounts.return_value = [acc]

@@ -13,7 +13,7 @@ def _make_channel(pk=1, channel_id=100, title="Test", is_filtered=False):
     return Channel(id=pk, channel_id=channel_id, title=title, is_filtered=is_filtered)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_enqueue_channel_by_pk_not_found():
     channels = MagicMock()
     channels.get_by_pk = AsyncMock(return_value=None)
@@ -24,7 +24,7 @@ async def test_enqueue_channel_by_pk_not_found():
     assert result == "not_found"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_enqueue_channel_by_pk_filtered():
     ch = _make_channel(is_filtered=True)
     channels = MagicMock()
@@ -36,7 +36,7 @@ async def test_enqueue_channel_by_pk_filtered():
     assert result == "filtered"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_enqueue_channel_by_pk_force_filtered():
     ch = _make_channel(is_filtered=True)
     channels = MagicMock()
@@ -49,7 +49,7 @@ async def test_enqueue_channel_by_pk_force_filtered():
     assert result == "queued"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_enqueue_channel_by_pk_success():
     ch = _make_channel()
     channels = MagicMock()
@@ -62,7 +62,7 @@ async def test_enqueue_channel_by_pk_success():
     assert result == "queued"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_enqueue_channel_by_pk_already_active():
     ch = _make_channel()
     channels = MagicMock()
@@ -75,7 +75,7 @@ async def test_enqueue_channel_by_pk_already_active():
     assert result == "already_active"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_enqueue_all_channels_empty():
     channels = MagicMock()
     channels.list_channels = AsyncMock(return_value=[])
@@ -87,7 +87,7 @@ async def test_enqueue_all_channels_empty():
     assert result.queued_count == 0
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_enqueue_all_channels_success():
     ch1 = _make_channel(pk=1, channel_id=100)
     ch2 = _make_channel(pk=2, channel_id=200)
@@ -103,7 +103,7 @@ async def test_enqueue_all_channels_success():
     assert result.skipped_existing_count == 0
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_enqueue_all_channels_mixed():
     ch1 = _make_channel(pk=1, channel_id=100)
     ch2 = _make_channel(pk=2, channel_id=200)
@@ -119,7 +119,7 @@ async def test_enqueue_all_channels_mixed():
     assert result.skipped_existing_count == 1
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_enqueue_with_queue():
     ch = _make_channel()
     queue = MagicMock()
@@ -135,7 +135,7 @@ async def test_enqueue_with_queue():
     queue.enqueue.assert_called_once()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_enqueue_with_queue_already_active():
     ch = _make_channel()
     queue = MagicMock()
@@ -150,7 +150,7 @@ async def test_enqueue_with_queue_already_active():
     assert result == "already_active"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_collect_channel_stats():
     ch = _make_channel()
     collector = MagicMock()
@@ -162,7 +162,7 @@ async def test_collect_channel_stats():
     collector.collect_channel_stats.assert_called_once_with(ch)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_collect_single_channel_full():
     ch = _make_channel()
     collector = MagicMock()
@@ -178,7 +178,7 @@ async def test_collect_single_channel_full():
 # ── cancel_task / clear_pending_collect_tasks fallback (fix for #457) ─────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_cancel_task_with_live_queue_delegates():
     """With a live queue the service must delegate so RUNNING tasks get interrupted."""
     channels = MagicMock()
@@ -203,7 +203,7 @@ async def test_cancel_task_with_live_queue_delegates():
     channels.cancel_collection_task.assert_not_called()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_cancel_task_without_queue_falls_back_to_db():
     """In web-mode (queue=None) the DB path must keep the route from 500'ing (#457)."""
     channels = MagicMock()
@@ -225,7 +225,7 @@ async def test_cancel_task_without_queue_falls_back_to_db():
     channels.cancel_collection_task.assert_awaited_once_with(77, note=None)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_cancel_task_stats_all_bypasses_queue_and_cancels_collector():
     channels = MagicMock()
     channels.get_collection_task = AsyncMock(
@@ -251,7 +251,7 @@ async def test_cancel_task_stats_all_bypasses_queue_and_cancels_collector():
     queue.cancel_task.assert_not_called()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_cancel_task_returns_false_when_task_missing():
     channels = MagicMock()
     channels.get_collection_task = AsyncMock(return_value=None)
@@ -270,7 +270,7 @@ async def test_cancel_task_returns_false_when_task_missing():
     queue.cancel_task.assert_not_called()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_clear_pending_collect_tasks_with_live_queue_delegates():
     """With a queue the service must delegate to drain memory + cancel requeue timers."""
     channels = MagicMock()
@@ -284,7 +284,7 @@ async def test_clear_pending_collect_tasks_with_live_queue_delegates():
     queue.clear_pending_tasks.assert_awaited_once()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_clear_pending_collect_tasks_without_queue_falls_back_to_db():
     """Without a queue the service just deletes PENDING rows — memory lives in the worker."""
     channels = MagicMock()

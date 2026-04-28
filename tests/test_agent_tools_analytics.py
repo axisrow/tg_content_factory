@@ -10,7 +10,7 @@ from tests.agent_tools_helpers import _get_tool_handlers, _text
 
 
 class TestAnalyticsToolGetAnalyticsSummary:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_returns_summary(self, mock_db):
         summary = {
             "total_generations": 100,
@@ -29,7 +29,7 @@ class TestAnalyticsToolGetAnalyticsSummary:
         assert "Аналитика контента" in text
         assert "Пайплайнов: 5" in text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_error(self, mock_db):
         with patch("src.services.content_analytics_service.ContentAnalyticsService") as mock_svc:
             mock_svc.return_value.get_summary = AsyncMock(side_effect=Exception("analytics down"))
@@ -39,7 +39,7 @@ class TestAnalyticsToolGetAnalyticsSummary:
 
 
 class TestAnalyticsToolGetPipelineStats:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_empty(self, mock_db):
         with patch("src.services.content_analytics_service.ContentAnalyticsService") as mock_svc:
             mock_svc.return_value.get_pipeline_stats = AsyncMock(return_value=[])
@@ -47,7 +47,7 @@ class TestAnalyticsToolGetPipelineStats:
             result = await handlers["get_pipeline_stats"]({})
         assert "не найдена" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_with_stats(self, mock_db):
         stat = SimpleNamespace(
             pipeline_id=1,
@@ -67,7 +67,7 @@ class TestAnalyticsToolGetPipelineStats:
         assert "генераций=50" in text
         assert "80%" in text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_error(self, mock_db):
         with patch("src.services.content_analytics_service.ContentAnalyticsService") as mock_svc:
             mock_svc.return_value.get_pipeline_stats = AsyncMock(side_effect=Exception("err"))
@@ -77,7 +77,7 @@ class TestAnalyticsToolGetPipelineStats:
 
 
 class TestAnalyticsToolGetTrendingTopics:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_empty(self, mock_db):
         with patch("src.services.trend_service.TrendService") as mock_svc:
             mock_svc.return_value.get_trending_topics = AsyncMock(return_value=[])
@@ -85,7 +85,7 @@ class TestAnalyticsToolGetTrendingTopics:
             result = await handlers["get_trending_topics"]({"days": 7, "limit": 10})
         assert "не найдены" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_with_topics(self, mock_db):
         topics = [
             SimpleNamespace(keyword="Python", count=500),
@@ -100,7 +100,7 @@ class TestAnalyticsToolGetTrendingTopics:
         assert "500 упоминаний" in text
         assert "AI" in text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_error(self, mock_db):
         with patch("src.services.trend_service.TrendService") as mock_svc:
             mock_svc.return_value.get_trending_topics = AsyncMock(side_effect=Exception("trend err"))
@@ -110,7 +110,7 @@ class TestAnalyticsToolGetTrendingTopics:
 
 
 class TestAnalyticsToolGetTrendingChannels:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_empty(self, mock_db):
         with patch("src.services.trend_service.TrendService") as mock_svc:
             mock_svc.return_value.get_trending_channels = AsyncMock(return_value=[])
@@ -118,7 +118,7 @@ class TestAnalyticsToolGetTrendingChannels:
             result = await handlers["get_trending_channels"]({})
         assert "не найдены" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_with_channels(self, mock_db):
         channels = [
             SimpleNamespace(title="TechChannel", channel_id=100, count=200),
@@ -135,7 +135,7 @@ class TestAnalyticsToolGetTrendingChannels:
 
 
 class TestAnalyticsToolGetMessageVelocity:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_empty(self, mock_db):
         with patch("src.services.trend_service.TrendService") as mock_svc:
             mock_svc.return_value.get_message_velocity = AsyncMock(return_value=[])
@@ -143,7 +143,7 @@ class TestAnalyticsToolGetMessageVelocity:
             result = await handlers["get_message_velocity"]({"days": 30})
         assert "не найдены" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_with_velocity(self, mock_db):
         velocity = [
             SimpleNamespace(date="2026-01-01", count=1000),
@@ -157,7 +157,7 @@ class TestAnalyticsToolGetMessageVelocity:
         assert "2026-01-01" in text
         assert "1000 сообщений" in text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_error(self, mock_db):
         with patch("src.services.trend_service.TrendService") as mock_svc:
             mock_svc.return_value.get_message_velocity = AsyncMock(side_effect=Exception("err"))
@@ -167,7 +167,7 @@ class TestAnalyticsToolGetMessageVelocity:
 
 
 class TestAnalyticsToolGetPeakHours:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_empty(self, mock_db):
         with patch("src.services.trend_service.TrendService") as mock_svc:
             mock_svc.return_value.get_peak_hours = AsyncMock(return_value=[])
@@ -175,7 +175,7 @@ class TestAnalyticsToolGetPeakHours:
             result = await handlers["get_peak_hours"]({})
         assert "не найдены" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_with_hours(self, mock_db):
         hours = [
             SimpleNamespace(hour=9, count=500),
@@ -190,7 +190,7 @@ class TestAnalyticsToolGetPeakHours:
         assert "500 сообщений" in text
         assert "18:00" in text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_error(self, mock_db):
         with patch("src.services.trend_service.TrendService") as mock_svc:
             mock_svc.return_value.get_peak_hours = AsyncMock(side_effect=Exception("err"))
@@ -200,7 +200,7 @@ class TestAnalyticsToolGetPeakHours:
 
 
 class TestAnalyticsToolGetCalendar:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_empty(self, mock_db):
         with patch("src.services.content_calendar_service.ContentCalendarService") as mock_svc:
             mock_svc.return_value.get_upcoming = AsyncMock(return_value=[])
@@ -208,7 +208,7 @@ class TestAnalyticsToolGetCalendar:
             result = await handlers["get_calendar"]({"limit": 10})
         assert "Нет запланированных" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_with_events(self, mock_db):
         event = SimpleNamespace(
             run_id=7,
@@ -228,7 +228,7 @@ class TestAnalyticsToolGetCalendar:
         assert "Content Pipe" in text
         assert "Preview of upcoming post" in text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_error(self, mock_db):
         with patch("src.services.content_calendar_service.ContentCalendarService") as mock_svc:
             mock_svc.return_value.get_upcoming = AsyncMock(side_effect=Exception("cal err"))
@@ -238,7 +238,7 @@ class TestAnalyticsToolGetCalendar:
 
 
 class TestAnalyticsToolGetDailyStats:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_empty(self, mock_db):
         with patch("src.services.content_analytics_service.ContentAnalyticsService") as mock_svc:
             mock_svc.return_value.get_daily_stats = AsyncMock(return_value=[])
@@ -246,7 +246,7 @@ class TestAnalyticsToolGetDailyStats:
             result = await handlers["get_daily_stats"]({"days": 7})
         assert "Нет данных" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_with_data(self, mock_db):
         rows = [
             {"date": "2026-01-01", "count": 10, "published": 8},
@@ -261,7 +261,7 @@ class TestAnalyticsToolGetDailyStats:
         assert "генераций=10" in text
         assert "опубл.=8" in text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_default_days(self, mock_db):
         with patch("src.services.content_analytics_service.ContentAnalyticsService") as mock_svc:
             mock_svc.return_value.get_daily_stats = AsyncMock(return_value=[])
@@ -270,7 +270,7 @@ class TestAnalyticsToolGetDailyStats:
             # Should call with days=30 by default
             mock_svc.return_value.get_daily_stats.assert_awaited_once_with(days=30, pipeline_id=None)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_error(self, mock_db):
         with patch("src.services.content_analytics_service.ContentAnalyticsService") as mock_svc:
             mock_svc.return_value.get_daily_stats = AsyncMock(side_effect=Exception("stats err"))
@@ -280,14 +280,14 @@ class TestAnalyticsToolGetDailyStats:
 
 
 class TestAnalyticsToolGetTopMessages:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_empty(self, mock_db):
         mock_db.get_top_messages = AsyncMock(return_value=[])
         handlers = _get_tool_handlers(mock_db)
         result = await handlers["get_top_messages"]({})
         assert "не найдены" in _text(result) or "Нет" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_with_messages(self, mock_db):
         msgs = [
             {
@@ -302,7 +302,7 @@ class TestAnalyticsToolGetTopMessages:
         assert "TestChannel" in text
         assert "50" in text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_with_date_range(self, mock_db):
         mock_db.get_top_messages = AsyncMock(return_value=[])
         handlers = _get_tool_handlers(mock_db)
@@ -311,7 +311,7 @@ class TestAnalyticsToolGetTopMessages:
         })
         mock_db.get_top_messages.assert_awaited_once()
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_error(self, mock_db):
         mock_db.get_top_messages = AsyncMock(side_effect=Exception("db err"))
         handlers = _get_tool_handlers(mock_db)
@@ -320,7 +320,7 @@ class TestAnalyticsToolGetTopMessages:
 
 
 class TestAnalyticsToolGetContentTypeStats:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_empty(self, mock_db):
         mock_db.get_engagement_by_media_type = AsyncMock(return_value=[])
         handlers = _get_tool_handlers(mock_db)
@@ -329,7 +329,7 @@ class TestAnalyticsToolGetContentTypeStats:
         })
         assert "не найдены" in _text(result) or "Нет данных" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_with_data(self, mock_db):
         rows = [
             {"content_type": "text", "message_count": 100, "avg_reactions": 5.0},
@@ -344,7 +344,7 @@ class TestAnalyticsToolGetContentTypeStats:
         assert "text" in text
         assert "100" in text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_error(self, mock_db):
         mock_db.get_engagement_by_media_type = AsyncMock(side_effect=Exception("err"))
         handlers = _get_tool_handlers(mock_db)
@@ -355,14 +355,14 @@ class TestAnalyticsToolGetContentTypeStats:
 
 
 class TestAnalyticsToolGetHourlyActivity:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_empty(self, mock_db):
         mock_db.get_hourly_activity = AsyncMock(return_value=[])
         handlers = _get_tool_handlers(mock_db)
         result = await handlers["get_hourly_activity"]({})
         assert "не найдены" in _text(result) or "Нет" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_with_data(self, mock_db):
         hours = [
             {"hour": 9, "message_count": 500, "avg_reactions": 5.0},
@@ -375,7 +375,7 @@ class TestAnalyticsToolGetHourlyActivity:
         assert "09:00" in text
         assert "500" in text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_error(self, mock_db):
         mock_db.get_hourly_activity = AsyncMock(side_effect=Exception("err"))
         handlers = _get_tool_handlers(mock_db)

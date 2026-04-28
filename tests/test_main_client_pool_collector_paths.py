@@ -231,7 +231,7 @@ class TestClientPoolCachedDialogs:
 class TestClientPoolFlood:
     """Cover flood wait tracking (report_flood, clear_flood, premium_flood)."""
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_report_flood(self):
         from src.telegram.client_pool import ClientPool
 
@@ -241,7 +241,7 @@ class TestClientPoolFlood:
         await pool.report_flood("+1", 60)
         pool._db.update_account_flood.assert_called_once()
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_report_premium_flood(self):
         from src.telegram.client_pool import ClientPool
 
@@ -250,7 +250,7 @@ class TestClientPoolFlood:
         await pool.report_premium_flood("+1", 60)
         assert "+1" in pool._premium_flood_wait_until
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_report_premium_flood_cleans_expired(self):
         from src.telegram.client_pool import ClientPool
 
@@ -262,7 +262,7 @@ class TestClientPoolFlood:
         assert "+old" not in pool._premium_flood_wait_until
         assert "+1" in pool._premium_flood_wait_until
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_clear_flood(self):
         from src.telegram.client_pool import ClientPool
 
@@ -291,7 +291,7 @@ class TestClientPoolFlood:
 class TestClientPoolDisconnect:
     """Cover disconnect_all."""
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_disconnect_all_empty(self):
         from src.telegram.client_pool import ClientPool
 
@@ -300,7 +300,7 @@ class TestClientPoolDisconnect:
         await pool.disconnect_all()
         assert len(pool.clients) == 0
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_disconnect_all_with_clients(self):
         from src.telegram.client_pool import ClientPool
 
@@ -384,7 +384,7 @@ class TestClientPoolProperties:
         pool._dialogs_fetched = set()
         assert pool.is_dialogs_fetched("+2") is False
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_reconnect_phone_not_found(self):
         from src.telegram.client_pool import ClientPool
 
@@ -393,7 +393,7 @@ class TestClientPoolProperties:
         result = await pool.reconnect_phone("+1")
         assert result is False
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_reconnect_phone_already_connected(self):
         from src.telegram.client_pool import ClientPool
 
@@ -405,7 +405,7 @@ class TestClientPoolProperties:
         result = await pool.reconnect_phone("+1")
         assert result is True
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_reconnect_phone_disconnected(self):
         from src.telegram.client_pool import ClientPool
 
@@ -420,7 +420,7 @@ class TestClientPoolProperties:
         mock_client.connect.assert_called_once()
         assert result is True
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_reconnect_phone_exception(self):
         from src.telegram.client_pool import ClientPool
 
@@ -432,7 +432,7 @@ class TestClientPoolProperties:
         result = await pool.reconnect_phone("+1")
         assert result is False
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_remove_client(self):
         from src.telegram.client_pool import ClientPool
 
@@ -451,7 +451,7 @@ class TestClientPoolProperties:
         assert "+1" not in pool._session_overrides
         assert "+1" not in pool.clients
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_get_db_cached_dialogs_empty(self):
         from src.telegram.client_pool import ClientPool
 
@@ -465,7 +465,7 @@ class TestClientPoolProperties:
         result = await pool._get_db_cached_dialogs("+1", "full")
         assert result is None
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_get_db_cached_dialogs_full(self):
         from src.telegram.client_pool import ClientPool
 
@@ -484,7 +484,7 @@ class TestClientPoolProperties:
         assert result is not None
         assert len(result) == 2
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_get_db_cached_dialogs_channels_only(self):
         from src.telegram.client_pool import ClientPool
 
@@ -503,7 +503,7 @@ class TestClientPoolProperties:
         assert result is not None
         assert len(result) == 1  # dm filtered out
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_get_cached_dialog_found(self):
         from src.telegram.client_pool import ClientPool
 
@@ -515,7 +515,7 @@ class TestClientPoolProperties:
         assert result is not None
         assert result["channel_id"] == 100
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_get_cached_dialog_not_found(self):
         from src.telegram.client_pool import ClientPool
 
@@ -530,7 +530,7 @@ class TestClientPoolProperties:
         result = await pool._get_cached_dialog("+1", 999)
         assert result is None
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_get_cached_dialog_no_cache(self):
         from src.telegram.client_pool import ClientPool
 
@@ -568,7 +568,7 @@ class TestCollectorProperties:
         c._cancel_event.set()
         assert c.is_cancelled is True
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_cancel(self):
         from src.telegram.collector import Collector
 
@@ -589,7 +589,7 @@ class TestCollectorProperties:
 class TestCollectorAutoDelete:
     """Cover _is_auto_delete_enabled (reads DB setting, caches result)."""
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_auto_delete_not_enabled(self):
         from src.telegram.collector import Collector
 
@@ -603,7 +603,7 @@ class TestCollectorAutoDelete:
         result = await c._is_auto_delete_enabled()
         assert result is False
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_auto_delete_enabled(self):
         from src.telegram.collector import Collector
 
@@ -616,7 +616,7 @@ class TestCollectorAutoDelete:
         result = await c._is_auto_delete_enabled()
         assert result is True
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_auto_delete_cached(self):
         from src.telegram.collector import Collector
 
@@ -625,7 +625,7 @@ class TestCollectorAutoDelete:
         result = await c._is_auto_delete_enabled()
         assert result is True
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_maybe_auto_delete_disabled(self):
         from src.telegram.collector import Collector
 
@@ -634,7 +634,7 @@ class TestCollectorAutoDelete:
         result = await c._maybe_auto_delete(100)
         assert result is False
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_maybe_auto_delete_success(self):
         from src.telegram.collector import Collector
 
@@ -645,7 +645,7 @@ class TestCollectorAutoDelete:
         result = await c._maybe_auto_delete(100)
         assert result is True
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_maybe_auto_delete_exception(self):
         from src.telegram.collector import Collector
 
@@ -719,7 +719,7 @@ class TestTelegramAuth:
         auth = TelegramAuth(0, "")
         assert auth.api_id == 0
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_verify_code_no_pending(self):
         """Line 165: no pending auth raises ValueError."""
         from src.telegram.auth import TelegramAuth
@@ -787,7 +787,7 @@ class TestTelegramAuth:
 class TestClientPoolResolveChannel:
     """Cover resolve_channel (lines 689-759)."""
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_resolve_no_client(self):
         from src.telegram.client_pool import ClientPool
 
@@ -796,7 +796,7 @@ class TestClientPoolResolveChannel:
         with pytest.raises(RuntimeError, match="no_client"):
             await pool.resolve_channel("@test_channel")
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_resolve_numeric_id(self):
         from src.telegram.client_pool import ClientPool
 
@@ -828,7 +828,7 @@ class TestClientPoolResolveChannel:
         assert result is not None
         assert result["channel_id"] == 12345
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_resolve_user_not_channel(self):
         from src.telegram.client_pool import ClientPool
 
@@ -848,7 +848,7 @@ class TestClientPoolResolveChannel:
 
         assert result is None
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_resolve_timeout(self):
         from src.telegram.client_pool import ClientPool
 
@@ -868,7 +868,7 @@ class TestClientPoolResolveChannel:
 class TestClientPoolGetAccountForPhone:
     """Cover _get_account_for_phone (lines 530-539)."""
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_account_from_db(self):
         from src.models import Account
         from src.telegram.client_pool import ClientPool
@@ -882,7 +882,7 @@ class TestClientPoolGetAccountForPhone:
         assert result is not None
         assert result.phone == "+1"
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_account_from_overrides(self):
         from src.telegram.client_pool import ClientPool
 
@@ -894,7 +894,7 @@ class TestClientPoolGetAccountForPhone:
         assert result is not None
         assert result.session_string == "override_session"
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_account_not_found(self):
         from src.telegram.client_pool import ClientPool
 
@@ -909,7 +909,7 @@ class TestClientPoolGetAccountForPhone:
 class TestClientPoolAcquirePhoneLease:
     """Cover _acquire_phone_lease (lines 541-558)."""
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_acquire_phone_lease_from_pool(self):
         from src.telegram.client_pool import ClientPool
 
@@ -921,7 +921,7 @@ class TestClientPoolAcquirePhoneLease:
         result = await pool._acquire_phone_lease("+1")
         assert result is lease
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_acquire_phone_not_connected(self):
         from src.telegram.client_pool import ClientPool
 
@@ -932,7 +932,7 @@ class TestClientPoolAcquirePhoneLease:
         result = await pool._acquire_phone_lease("+1")
         assert result is None
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_acquire_phone_no_account(self):
         from src.telegram.client_pool import ClientPool
 
@@ -944,7 +944,7 @@ class TestClientPoolAcquirePhoneLease:
         result = await pool._acquire_phone_lease("+1")
         assert result is None
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_acquire_phone_flood_waited(self):
         from src.models import Account
         from src.telegram.client_pool import ClientPool
@@ -961,7 +961,7 @@ class TestClientPoolAcquirePhoneLease:
         result = await pool._acquire_phone_lease("+1")
         assert result is None
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_acquire_phone_exclusive(self):
         from src.models import Account
         from src.telegram.client_pool import ClientPool
@@ -978,7 +978,7 @@ class TestClientPoolAcquirePhoneLease:
         assert result is not None
         assert result.shared is False
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_acquire_phone_shared(self):
         from src.models import Account
         from src.telegram.client_pool import ClientPool
@@ -1084,7 +1084,7 @@ class TestClientPoolClassifyEntity:
 class TestCollectorCollectSingle:
     """Cover collect_single_channel entry point."""
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_collect_filtered_no_force(self):
         """Line 154-159: filtered channel without force → skip."""
         from src.telegram.collector import Collector
@@ -1101,7 +1101,7 @@ class TestCollectorCollectSingle:
         result = await c.collect_single_channel(channel, force=False)
         assert result == 0
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_collect_full_resets_min_id(self):
         """Line 165-166: full=True resets last_collected_id."""
         from src.telegram.collector import Collector
@@ -1128,7 +1128,7 @@ class TestCollectorCollectSingle:
 class TestCollectorLoadMinSubs:
     """Cover _load_min_subscribers_filter."""
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_load_min_subs_default(self):
         from src.telegram.collector import Collector
 
@@ -1138,7 +1138,7 @@ class TestCollectorLoadMinSubs:
         result = await c._load_min_subscribers_filter()
         assert result == 0
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_load_min_subs_from_db(self):
         from src.telegram.collector import Collector
 
@@ -1152,7 +1152,7 @@ class TestCollectorLoadMinSubs:
 class TestCollectorMaybeAutoDelete:
     """Cover _maybe_auto_delete deeper paths."""
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_maybe_auto_delete_with_count(self):
         from src.telegram.collector import Collector
 
@@ -1168,7 +1168,7 @@ class TestCollectorMaybeAutoDelete:
 class TestClientPoolGetStatsAvail:
     """Cover get_stats_availability methods (lines 475-492)."""
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_premium_stats_avail_has_premium(self):
         from src.telegram.client_pool import ClientPool
 
@@ -1245,7 +1245,7 @@ class TestSessionMaterializerCacheHit:
 class TestBackendsAbstract:
     """Cover abstract method raise (line 314) and unauthorized path (372-373)."""
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_acquire_client_abstract(self):
         from src.telegram.backends import TelegramBackend
 
@@ -1263,7 +1263,7 @@ class TestBackendsAbstract:
 class TestLeasePoolEdge:
     """Cover remaining lines in account_lease_pool."""
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_acquire_available_no_active(self):
         from src.telegram.account_lease_pool import AccountLeasePool
 
@@ -1273,7 +1273,7 @@ class TestLeasePoolEdge:
         result = await pool.acquire_available(connected_phones=set())
         assert result is None
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_acquire_by_phone_not_found(self):
         from src.telegram.account_lease_pool import AccountLeasePool
 
@@ -1283,7 +1283,7 @@ class TestLeasePoolEdge:
         result = await pool.acquire_by_phone("+999", connected_phones=set())
         assert result is None
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_acquire_available_all_in_use_flood_waited(self):
         """Line 45: in-use account but flood-waited → skip, return None."""
         from src.models import Account

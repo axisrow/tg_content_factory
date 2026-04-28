@@ -174,7 +174,7 @@ class TestDownstreamNodesNoEdges:
 # ---------------------------------------------------------------------------
 
 class TestExecuteHappyPath:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_execute_sets_context_from_handlers(self):
         graph = PipelineGraph(
             nodes=[_node("n1"), _node("n2")],
@@ -208,7 +208,7 @@ class TestExecuteHappyPath:
 # ---------------------------------------------------------------------------
 
 class TestExecuteConditionSkip:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_condition_false_skips_downstream(self):
         graph = PipelineGraph(
             nodes=[
@@ -257,7 +257,7 @@ class TestExecuteConditionSkip:
 # ---------------------------------------------------------------------------
 
 class TestExecuteNodeFailure:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_exception_propagates(self):
         graph = PipelineGraph(
             nodes=[_node("bad")],
@@ -285,7 +285,7 @@ class TestExecuteNodeFailure:
 # ---------------------------------------------------------------------------
 
 class TestExecuteSeedsContext:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_pipeline_fields_seeded_into_context(self):
         graph = PipelineGraph(
             nodes=[_node("n1")],
@@ -331,7 +331,7 @@ class TestExecutorResultSemantics:
     each pipeline shape: generation-only, action-only, mixed, empty-success.
     """
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_generation_only_graph_returns_generated_items(self):
         graph = PipelineGraph(
             nodes=[
@@ -361,7 +361,7 @@ class TestExecutorResultSemantics:
         assert result["result_count"] == 2
         assert result["generated_text"] == "draft text"
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_mixed_graph_generation_wins_but_action_counts_preserved(self):
         from src.services.pipeline_result import increment_action_count
 
@@ -398,7 +398,7 @@ class TestExecutorResultSemantics:
         # But action counts remain visible for UI/metadata consumers.
         assert result["action_counts"] == {"react": 3}
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_action_only_graph_with_empty_text_is_not_zero_result(self):
         """Regression: empty generated_text MUST NOT collapse result_count to 0."""
         from src.services.pipeline_result import increment_action_count
@@ -430,7 +430,7 @@ class TestExecutorResultSemantics:
         assert result["result_count"] == 5
         assert (result.get("generated_text") or "") == ""
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_empty_successful_graph_returns_zero_processed(self):
         graph = PipelineGraph(
             nodes=[_node("src", PipelineNodeType.SOURCE)],
@@ -450,7 +450,7 @@ class TestExecutorResultSemantics:
         assert result["result_kind"] == "processed_messages"
         assert result["result_count"] == 0
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_executor_propagates_node_errors_from_context(self):
         """Issue #463: errors recorded via ctx.record_error() must appear in result['node_errors']."""
         graph = PipelineGraph(
@@ -484,7 +484,7 @@ class TestExecutorResultSemantics:
             }
         ]
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_executor_node_errors_default_empty(self):
         graph = PipelineGraph(nodes=[_node("src", PipelineNodeType.SOURCE)], edges=[])
         pipeline = _pipeline()
@@ -499,7 +499,7 @@ class TestExecutorResultSemantics:
 
         assert result["node_errors"] == []
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_mixed_action_types_all_preserved(self):
         """Multiple action types (react + forward + delete) all surface in action_counts."""
         from src.services.pipeline_result import increment_action_count

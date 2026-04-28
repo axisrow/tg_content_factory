@@ -35,7 +35,7 @@ def _make_mock_pool():
 
 
 class TestGetNotificationStatusTool:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_not_configured_returns_message(self, mock_db):
         with (
             patch("src.services.notification_service.NotificationService") as mock_ns,
@@ -46,7 +46,7 @@ class TestGetNotificationStatusTool:
             result = await handlers["get_notification_status"]({})
         assert "не настроен" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_configured_shows_bot_info(self, mock_db):
         bot = SimpleNamespace(bot_username="mybot", chat_id=12345, created_at="2025-01-01")
         with (
@@ -60,7 +60,7 @@ class TestGetNotificationStatusTool:
         assert "@mybot" in text
         assert "12345" in text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_error_returns_text(self, mock_db):
         with (
             patch("src.services.notification_service.NotificationService") as mock_ns,
@@ -71,7 +71,7 @@ class TestGetNotificationStatusTool:
             result = await handlers["get_notification_status"]({})
         assert "Ошибка получения статуса бота" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_not_configured_with_pool(self, mock_db):
         notif_svc = MagicMock()
         notif_svc.get_status = AsyncMock(return_value=None)
@@ -82,7 +82,7 @@ class TestGetNotificationStatusTool:
             result = await handlers["get_notification_status"]({})
         assert "не настроен" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_configured_shows_bot_details_with_pool(self, mock_db):
         notif_svc = MagicMock()
         bot = MagicMock()
@@ -101,20 +101,20 @@ class TestGetNotificationStatusTool:
 
 
 class TestSetupNotificationBotTool:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_no_pool_returns_pool_gate(self, mock_db):
         handlers = _get_tool_handlers(mock_db, client_pool=None)
         result = await handlers["setup_notification_bot"]({"confirm": True})
         assert "Telegram-клиент" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_no_confirm_returns_gate(self, mock_db):
         pool = MagicMock()
         handlers = _get_tool_handlers(mock_db, client_pool=pool)
         result = await handlers["setup_notification_bot"]({})
         assert "confirm=true" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_with_confirm_creates_bot(self, mock_db):
         pool = MagicMock()
         bot = SimpleNamespace(bot_username="newbot", chat_id=99999)
@@ -129,13 +129,13 @@ class TestSetupNotificationBotTool:
         assert "создан" in text
         assert "@newbot" in text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_no_pool_returns_gate_cli_check(self, mock_db):
         handlers = _get_tool_handlers(mock_db, client_pool=None)
         result = await handlers["setup_notification_bot"]({"confirm": True})
         assert "CLI-режиме" in _text(result) or "Telegram-клиент" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_with_pool_and_confirm_success(self, mock_db):
         notif_svc = MagicMock()
         bot = MagicMock()
@@ -152,20 +152,20 @@ class TestSetupNotificationBotTool:
 
 
 class TestDeleteNotificationBotTool:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_no_pool_returns_pool_gate(self, mock_db):
         handlers = _get_tool_handlers(mock_db, client_pool=None)
         result = await handlers["delete_notification_bot"]({"confirm": True})
         assert "Telegram-клиент" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_no_confirm_returns_gate(self, mock_db):
         pool = MagicMock()
         handlers = _get_tool_handlers(mock_db, client_pool=pool)
         result = await handlers["delete_notification_bot"]({})
         assert "confirm=true" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_with_confirm_deletes_bot(self, mock_db):
         pool = MagicMock()
         with (
@@ -177,7 +177,7 @@ class TestDeleteNotificationBotTool:
             result = await handlers["delete_notification_bot"]({"confirm": True})
         assert "удалён" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_with_confirm_deleted_via_ctx(self, mock_db):
         notif_svc = MagicMock()
         notif_svc.teardown_bot = AsyncMock()
@@ -190,13 +190,13 @@ class TestDeleteNotificationBotTool:
 
 
 class TestTestNotificationTool:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_no_pool_returns_pool_gate(self, mock_db):
         handlers = _get_tool_handlers(mock_db, client_pool=None)
         result = await handlers["test_notification"]({})
         assert "Telegram-клиент" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_not_configured_returns_message(self, mock_db):
         pool = MagicMock()
         with (
@@ -208,7 +208,7 @@ class TestTestNotificationTool:
             result = await handlers["test_notification"]({})
         assert "не настроен" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_sends_notification(self, mock_db):
         pool = MagicMock()
         bot = SimpleNamespace(bot_username="testbot", chat_id=1)
@@ -224,7 +224,7 @@ class TestTestNotificationTool:
         assert "отправлено" in _text(result)
         inst.send_notification.assert_awaited_once()
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_configured_sends_test_via_ctx(self, mock_db):
         notif_svc = MagicMock()
         bot = MagicMock()

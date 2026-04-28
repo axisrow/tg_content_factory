@@ -28,7 +28,7 @@ def mock_pool():
 
 
 class TestIndexMessagesTool:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_success(self, mock_db):
         with patch(
             "src.services.embedding_service.EmbeddingService"
@@ -43,7 +43,7 @@ class TestIndexMessagesTool:
         text = _text(result)
         assert "42" in text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_error_returns_text(self, mock_db):
         with patch(
             "src.services.embedding_service.EmbeddingService"
@@ -68,13 +68,13 @@ class TestIndexMessagesTool:
 
 
 class TestSearchTelegramTool:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_no_pool_returns_error(self, mock_db):
         handlers = _get_tool_handlers(mock_db, client_pool=None)
         result = await handlers["search_telegram"]({"query": "test"})
         assert "требует Telegram-клиент" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_with_results(self, mock_db, mock_pool):
         fake_result = SimpleNamespace(
             query="cats",
@@ -99,7 +99,7 @@ class TestSearchTelegramTool:
         assert "Найдено 1" in text
         assert "Cats are great" in text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_empty_result(self, mock_db, mock_pool):
         fake_result = SimpleNamespace(
             query="nothing",
@@ -121,7 +121,7 @@ class TestSearchTelegramTool:
         text = _text(result)
         assert "Ничего не найдено" in text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_result_with_error_field(self, mock_db, mock_pool):
         fake_result = SimpleNamespace(
             query="fail",
@@ -143,7 +143,7 @@ class TestSearchTelegramTool:
         text = _text(result)
         assert "Premium required" in text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_exception_returns_error_text(self, mock_db, mock_pool):
         with (
             patch("src.services.embedding_service.EmbeddingService"),
@@ -166,13 +166,13 @@ class TestSearchTelegramTool:
 
 
 class TestSearchMyChatsTool:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_no_pool_returns_error(self, mock_db):
         handlers = _get_tool_handlers(mock_db, client_pool=None)
         result = await handlers["search_my_chats"]({"query": "test"})
         assert "требует Telegram-клиент" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_with_results(self, mock_db, mock_pool):
         fake_result = SimpleNamespace(
             query="hello",
@@ -197,7 +197,7 @@ class TestSearchMyChatsTool:
         assert "Найдено 1" in text
         assert "Hello world" in text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_error_field_rendered(self, mock_db, mock_pool):
         fake_result = SimpleNamespace(
             query="x",
@@ -219,7 +219,7 @@ class TestSearchMyChatsTool:
         text = _text(result)
         assert "Not authenticated" in text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_exception_returns_error_text(self, mock_db, mock_pool):
         with (
             patch("src.services.embedding_service.EmbeddingService"),
@@ -241,19 +241,19 @@ class TestSearchMyChatsTool:
 
 
 class TestSearchInChannelTool:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_no_pool_returns_error(self, mock_db):
         handlers = _get_tool_handlers(mock_db, client_pool=None)
         result = await handlers["search_in_channel"]({"channel_id": 100, "query": "test"})
         assert "требует Telegram-клиент" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_missing_channel_id(self, mock_db, mock_pool):
         handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
         result = await handlers["search_in_channel"]({"query": "test"})
         assert "channel_id обязателен" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_with_results(self, mock_db, mock_pool):
         fake_result = SimpleNamespace(
             query="news",
@@ -279,7 +279,7 @@ class TestSearchInChannelTool:
         text = _text(result)
         assert "Breaking news" in text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_error_field_rendered(self, mock_db, mock_pool):
         fake_result = SimpleNamespace(
             query="x",
@@ -303,7 +303,7 @@ class TestSearchInChannelTool:
         text = _text(result)
         assert "Channel not found" in text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_exception_returns_error_text(self, mock_db, mock_pool):
         with (
             patch("src.services.embedding_service.EmbeddingService"),
@@ -327,7 +327,7 @@ class TestSearchInChannelTool:
 
 
 class TestSearchHybridTool:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_with_results(self, mock_db, mock_pool):
         fake_result = SimpleNamespace(
             query="ai",
@@ -358,7 +358,7 @@ class TestSearchHybridTool:
         assert call_kwargs["channel_id"] == 100
         assert call_kwargs["limit"] == 5
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_empty_result(self, mock_db, mock_pool):
         fake_result = SimpleNamespace(
             query="nothing",
@@ -380,7 +380,7 @@ class TestSearchHybridTool:
         text = _text(result)
         assert "Ничего не найдено" in text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_error_field_rendered(self, mock_db, mock_pool):
         fake_result = SimpleNamespace(
             query="x",
@@ -402,7 +402,7 @@ class TestSearchHybridTool:
         text = _text(result)
         assert "Index not built" in text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_exception_returns_error_text(self, mock_db, mock_pool):
         with (
             patch("src.services.embedding_service.EmbeddingService"),
@@ -418,7 +418,7 @@ class TestSearchHybridTool:
         assert "Ошибка гибридного поиска" in text
         assert "OOM" in text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_optional_filters_passed(self, mock_db, mock_pool):
         fake_result = SimpleNamespace(
             query="test",
@@ -452,7 +452,7 @@ class TestSearchHybridTool:
         assert call_kwargs["min_length"] == 50
         assert call_kwargs["max_length"] == 500
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_no_client_pool_hybrid_still_works(self, mock_db):
         """search_hybrid does not require client_pool (local DB only)."""
         fake_result = SimpleNamespace(
@@ -482,7 +482,7 @@ class TestSearchHybridTool:
 
 
 class TestSearchMessagesOptionalFilters:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_all_optional_filters_passed(self, mock_db):
         mock_db.search_messages = AsyncMock(return_value=([], 0))
         handlers = _get_tool_handlers(mock_db)
@@ -505,7 +505,7 @@ class TestSearchMessagesOptionalFilters:
         assert call_kwargs["max_length"] == 100
         assert call_kwargs["limit"] == 5
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_channel_id_as_string_converted(self, mock_db):
         mock_db.search_messages = AsyncMock(return_value=([], 0))
         handlers = _get_tool_handlers(mock_db)

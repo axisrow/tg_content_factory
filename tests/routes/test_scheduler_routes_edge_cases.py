@@ -47,7 +47,7 @@ async def client(base_app):
 # ── cancel_task: line 179 (shutting_down) ──────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_cancel_task_shutting_down(client):
     """Test cancel task when shutting down (line 179)."""
     client._transport.app.state.shutting_down = True
@@ -61,7 +61,7 @@ async def test_cancel_task_shutting_down(client):
 # ── clear_pending_collect_tasks: line 188 (shutting_down) ──────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_clear_pending_collect_shutting_down(client):
     """Test clear pending collect when shutting down (line 188)."""
     client._transport.app.state.shutting_down = True
@@ -78,35 +78,35 @@ async def test_clear_pending_collect_shutting_down(client):
 # ── scheduler_page: lines 223, 256-258 ─────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_scheduler_page_status_filter_completed(client):
     """Test scheduler page with completed status filter (line 271)."""
     resp = await client.get("/scheduler/?status=completed")
     assert resp.status_code == 200
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_scheduler_page_status_filter_active(client):
     """Test scheduler page with active status filter."""
     resp = await client.get("/scheduler/?status=active")
     assert resp.status_code == 200
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_scheduler_page_status_filter_invalid(client):
     """Test scheduler page with invalid status filter falls back to 'all'."""
     resp = await client.get("/scheduler/?status=invalid_status")
     assert resp.status_code == 200
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_scheduler_page_with_pagination(client):
     """Test scheduler page with pagination parameters (line 256-258)."""
     resp = await client.get("/scheduler/?page=2&limit=10")
     assert resp.status_code == 200
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_scheduler_page_page_exceeds_total(client):
     """Test scheduler page when page exceeds total pages (lines 282-286)."""
     db = client._transport.app.state.db
@@ -124,7 +124,7 @@ async def test_scheduler_page_page_exceeds_total(client):
 # ── toggle_scheduler_job: line 338 (shutting_down), 348 ────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_toggle_scheduler_job_shutting_down(client):
     """Test toggle job when shutting down (line 338)."""
     client._transport.app.state.shutting_down = True
@@ -138,7 +138,7 @@ async def test_toggle_scheduler_job_shutting_down(client):
     client._transport.app.state.shutting_down = False
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_toggle_scheduler_job_invalid(client):
     """Test toggle job with invalid job_id (line 339-340)."""
     resp = await client.post(
@@ -150,7 +150,7 @@ async def test_toggle_scheduler_job_invalid(client):
     assert "error=invalid_job" in location
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_toggle_scheduler_job_syncs_running(client, base_app):
     """Test toggle job syncs when scheduler is running (line 348)."""
     app, db, _ = base_app
@@ -173,7 +173,7 @@ async def test_toggle_scheduler_job_syncs_running(client, base_app):
 # ── set_job_interval: lines 355, 359, 361-369, 371-385 ────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_set_job_interval_shutting_down(client):
     """Test set interval when shutting down (line 355)."""
     client._transport.app.state.shutting_down = True
@@ -188,7 +188,7 @@ async def test_set_job_interval_shutting_down(client):
     client._transport.app.state.shutting_down = False
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_set_job_interval_invalid_job(client):
     """Test set interval with invalid job_id (line 357-358)."""
     resp = await client.post(
@@ -201,7 +201,7 @@ async def test_set_job_interval_invalid_job(client):
     assert "error=invalid_job" in location
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_set_job_interval_photo_due_blocked(client):
     """Test set interval for photo_due is blocked (line 358-359)."""
     resp = await client.post(
@@ -214,7 +214,7 @@ async def test_set_job_interval_photo_due_blocked(client):
     assert "error=invalid_job" in location
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_set_job_interval_photo_auto_blocked(client):
     """Test set interval for photo_auto is blocked."""
     resp = await client.post(
@@ -227,7 +227,7 @@ async def test_set_job_interval_photo_auto_blocked(client):
     assert "error=invalid_job" in location
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_set_job_interval_missing_value(client):
     """Test set interval with missing value (line 364)."""
     resp = await client.post(
@@ -240,7 +240,7 @@ async def test_set_job_interval_missing_value(client):
     assert "error=invalid_interval" in location
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_set_job_interval_collect_all(client, base_app):
     """Test set interval for collect_all (lines 368-370)."""
     app, db, _ = base_app
@@ -258,7 +258,7 @@ async def test_set_job_interval_collect_all(client, base_app):
     assert saved == "45"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_set_job_interval_search_query(client, base_app):
     """Test set interval for search query job (lines 371-377)."""
     app, db, _ = base_app
@@ -277,7 +277,7 @@ async def test_set_job_interval_search_query(client, base_app):
     assert "msg=interval_updated" in location
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_set_job_interval_pipeline(client, base_app):
     """Test set interval for pipeline_run job (lines 378-385)."""
     app, db, _ = base_app
@@ -296,7 +296,7 @@ async def test_set_job_interval_pipeline(client, base_app):
     assert "msg=interval_updated" in location
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_set_job_interval_content_generate(client, base_app):
     """Test set interval for content_generate job (lines 378-385)."""
     app, db, _ = base_app
@@ -318,7 +318,7 @@ async def test_set_job_interval_content_generate(client, base_app):
 # ── test_notification: lines 418, 427 ──────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_test_notification_shutting_down(client):
     """Test test notification when shutting down (line 418)."""
     client._transport.app.state.shutting_down = True
@@ -329,7 +329,7 @@ async def test_test_notification_shutting_down(client):
     client._transport.app.state.shutting_down = False
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_test_notification_bot_not_configured(client):
     """Test notification route now queues a worker command."""
     db = client._transport.app.state.db
@@ -344,7 +344,7 @@ async def test_test_notification_bot_not_configured(client):
     assert commands[0].command_type == "notifications.test"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_test_notification_with_search_query(client, base_app):
     """Test notification route queues command even when queries exist."""
     app, db, _ = base_app
@@ -364,7 +364,7 @@ async def test_test_notification_with_search_query(client, base_app):
     assert commands[0].command_type == "notifications.test"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_test_notification_no_messages(client, base_app):
     """Test notification route queues command when there are no matches."""
     app, db, _ = base_app
@@ -387,7 +387,7 @@ async def test_test_notification_no_messages(client, base_app):
 # ── dry-run-notifications: lines 490-492 ────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_dry_run_with_completed_task_and_matches(client, base_app):
     """Test dry-run with completed task and matching messages (lines 460-507)."""
     app, db, _ = base_app
@@ -412,7 +412,7 @@ async def test_dry_run_with_completed_task_and_matches(client, base_app):
     assert resp.status_code == 200
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_dry_run_search_error(client, base_app, caplog):
     """Test dry-run handles search error for a query (lines 489-492)."""
     app, db, _ = base_app
@@ -442,7 +442,7 @@ async def test_dry_run_search_error(client, base_app, caplog):
 # ── _build_collector_health_context: lines 103-109 ─────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_scheduler_health_with_naive_flood_wait(client, base_app):
     """Test health context handles flood_wait_until without tzinfo (lines 103-104)."""
     app, db, _ = base_app
@@ -462,7 +462,7 @@ async def test_scheduler_health_with_naive_flood_wait(client, base_app):
 # ── _build_jobs_context: lines 202-244 ─────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_scheduler_page_with_disabled_job(client, base_app):
     """Test scheduler page shows disabled job (lines 220-228)."""
     app, db, _ = base_app
@@ -472,7 +472,7 @@ async def test_scheduler_page_with_disabled_job(client, base_app):
     assert resp.status_code == 200
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_scheduler_page_with_sq_job(client, base_app):
     """Test scheduler page shows search query job."""
     app, db, _ = base_app
@@ -491,7 +491,7 @@ async def test_scheduler_page_with_sq_job(client, base_app):
 # ── trigger: line 410-412 ──────────────────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_trigger_collection_uses_bulk_enqueue_msg(client, base_app):
     """Test trigger collection uses bulk_enqueue_msg for flash message."""
     from src.services.collection_service import BulkEnqueueResult
@@ -515,7 +515,7 @@ async def test_trigger_collection_uses_bulk_enqueue_msg(client, base_app):
 # ── _is_worker_alive / state=worker_down (fix for #457) ────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_is_worker_alive_fresh_heartbeat(base_app):
     """Fresh heartbeat → worker is alive."""
     from src.web.routes.scheduler import _is_worker_alive
@@ -525,7 +525,7 @@ async def test_is_worker_alive_fresh_heartbeat(base_app):
     assert await _is_worker_alive(db) is True
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_is_worker_alive_missing_heartbeat(tmp_path):
     """No heartbeat snapshot → worker is considered down.
 
@@ -542,7 +542,7 @@ async def test_is_worker_alive_missing_heartbeat(tmp_path):
         await db.close()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_is_worker_alive_stale_heartbeat(base_app):
     """Heartbeat older than threshold → worker is considered down."""
     from src.models import RuntimeSnapshot
@@ -560,7 +560,7 @@ async def test_is_worker_alive_stale_heartbeat(base_app):
     assert await _is_worker_alive(db) is False
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_is_worker_alive_naive_datetime(base_app):
     """Heartbeat with a naive datetime must still be comparable (UTC assumed)."""
     from src.models import RuntimeSnapshot
@@ -579,7 +579,7 @@ async def test_is_worker_alive_naive_datetime(base_app):
     assert await _is_worker_alive(db) is True
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_scheduler_page_renders_worker_down_banner(client, base_app):
     """/scheduler/ surfaces the `worker_down` banner when the heartbeat is stale.
 
@@ -607,7 +607,7 @@ async def test_scheduler_page_renders_worker_down_banner(client, base_app):
     assert "python -m src.main worker" in body
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_scheduler_page_no_worker_banner_when_heartbeat_fresh(client, base_app):
     """Fresh heartbeat must NOT render the worker_down banner."""
     resp = await client.get("/scheduler/")
@@ -618,7 +618,7 @@ async def test_scheduler_page_no_worker_banner_when_heartbeat_fresh(client, base
 # ── web_mode fixture sanity (#457 round 3) ─────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_web_mode_app_has_snapshot_shims(web_mode_app):
     """Sanity check — the new fixture must really produce the web-mode wiring."""
     from src.web.runtime_shims import (
@@ -641,7 +641,7 @@ async def test_web_mode_app_has_snapshot_shims(web_mode_app):
     assert isinstance(container.pool, SnapshotClientPool)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_web_mode_scheduler_page_renders(web_mode_client):
     """/scheduler/ must render a 200 OK under the real web-mode wiring, no 500."""
     resp = await web_mode_client.get("/scheduler/", follow_redirects=True)
@@ -651,7 +651,7 @@ async def test_web_mode_scheduler_page_renders(web_mode_client):
 # ── web-mode fallback: collection_queue=None must not 500 (fix for #457 round 2) ─
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_clear_pending_collect_web_mode_falls_back_to_db(client, base_app):
     """POST /scheduler/tasks/clear-pending-collect must NOT 500 in web-mode.
 
@@ -687,7 +687,7 @@ async def test_clear_pending_collect_web_mode_falls_back_to_db(client, base_app)
     assert not any(t.id == task_id for t in remaining)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_cancel_task_web_mode_falls_back_to_db(client, base_app):
     """POST /scheduler/tasks/{id}/cancel must NOT 500 in web-mode.
 
@@ -745,7 +745,7 @@ async def _assert_filter_preserved(resp, expected_msg_or_error: str) -> str:
     return location
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_trigger_preserves_filter(web_mode_client, _filter_qs):
     resp = await web_mode_client.post(f"/scheduler/trigger?{_filter_qs}")
     # On empty DB there are no active channels → bulk_enqueue_msg returns
@@ -757,31 +757,31 @@ async def test_trigger_preserves_filter(web_mode_client, _filter_qs):
     assert "limit=25" in loc
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_start_scheduler_preserves_filter(web_mode_client, _filter_qs):
     resp = await web_mode_client.post(f"/scheduler/start?{_filter_qs}")
     await _assert_filter_preserved(resp, "msg=scheduler_started")
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_stop_scheduler_preserves_filter(web_mode_client, _filter_qs):
     resp = await web_mode_client.post(f"/scheduler/stop?{_filter_qs}")
     await _assert_filter_preserved(resp, "msg=scheduler_stopped")
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_trigger_warm_preserves_filter(web_mode_client, _filter_qs):
     resp = await web_mode_client.post(f"/scheduler/trigger-warm?{_filter_qs}")
     await _assert_filter_preserved(resp, "msg=warm_dialogs_started")
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_test_notification_preserves_filter(web_mode_client, _filter_qs):
     resp = await web_mode_client.post(f"/scheduler/test-notification?{_filter_qs}")
     await _assert_filter_preserved(resp, "msg=test_notification_queued")
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_clear_pending_collect_preserves_filter(web_mode_client, _filter_qs):
     resp = await web_mode_client.post(
         f"/scheduler/tasks/clear-pending-collect?{_filter_qs}"
@@ -789,7 +789,7 @@ async def test_clear_pending_collect_preserves_filter(web_mode_client, _filter_q
     await _assert_filter_preserved(resp, "msg=pending_collect_tasks_empty")
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_cancel_task_preserves_filter(web_mode_client, web_mode_app, _filter_qs):
     _, container = web_mode_app
     task_id = await container.db.repos.tasks.create_collection_task_if_not_active(
@@ -799,13 +799,13 @@ async def test_cancel_task_preserves_filter(web_mode_client, web_mode_app, _filt
     await _assert_filter_preserved(resp, "msg=task_cancelled")
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_toggle_scheduler_job_preserves_filter(web_mode_client, _filter_qs):
     resp = await web_mode_client.post(f"/scheduler/jobs/collect_all/toggle?{_filter_qs}")
     await _assert_filter_preserved(resp, "msg=job_toggled")
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_set_job_interval_preserves_filter(web_mode_client, _filter_qs):
     resp = await web_mode_client.post(
         f"/scheduler/jobs/collect_all/set-interval?{_filter_qs}",
@@ -818,13 +818,13 @@ async def test_set_job_interval_preserves_filter(web_mode_client, _filter_qs):
 # the user to status=all on top of the error, which was the actual bad UX.
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_invalid_job_toggle_preserves_filter(web_mode_client, _filter_qs):
     resp = await web_mode_client.post(f"/scheduler/jobs/not-a-real-job/toggle?{_filter_qs}")
     await _assert_filter_preserved(resp, "error=invalid_job")
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_shutting_down_preserves_filter(web_mode_app, web_mode_client, _filter_qs):
     app, _ = web_mode_app
     app.state.shutting_down = True
@@ -835,7 +835,7 @@ async def test_shutting_down_preserves_filter(web_mode_app, web_mode_client, _fi
         app.state.shutting_down = False
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_default_filter_omitted_from_url(web_mode_client):
     """When user is already on default filters, the redirect URL stays clean."""
     resp = await web_mode_client.post("/scheduler/start")
@@ -853,7 +853,7 @@ async def test_default_filter_omitted_from_url(web_mode_client):
 # nullable service) automatically.
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 @pytest.mark.parametrize(
     "method, path, form",
     [

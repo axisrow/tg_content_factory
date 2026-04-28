@@ -24,14 +24,14 @@ def _make_scheduler_mgr():
 
 
 class TestGetSchedulerStatusTool:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_no_manager_returns_error(self, mock_db):
         """Without a scheduler_manager the tool catches RuntimeError and returns text."""
         handlers = _get_tool_handlers(mock_db)
         result = await handlers["get_scheduler_status"]({})
         assert "Ошибка получения статуса планировщика" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_with_manager_shows_running_state(self, mock_db):
         mgr = _make_scheduler_mgr()
         handlers = _get_tool_handlers(mock_db, scheduler_manager=mgr)
@@ -40,7 +40,7 @@ class TestGetSchedulerStatusTool:
         assert "запущен" in text
         assert "60 мин" in text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_with_manager_lists_jobs(self, mock_db):
         mgr = _make_scheduler_mgr()
         handlers = _get_tool_handlers(mock_db, scheduler_manager=mgr)
@@ -50,7 +50,7 @@ class TestGetSchedulerStatusTool:
         assert "вкл" in text
         assert "2025-01-01 12:00" in text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_with_manager_stopped(self, mock_db):
         mgr = _make_scheduler_mgr()
         mgr.is_running = False
@@ -60,20 +60,20 @@ class TestGetSchedulerStatusTool:
 
 
 class TestStartSchedulerTool:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_no_pool_returns_pool_gate(self, mock_db):
         handlers = _get_tool_handlers(mock_db, client_pool=None)
         result = await handlers["start_scheduler"]({"confirm": True})
         assert "Telegram-клиент" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_no_confirm_returns_gate(self, mock_db):
         mock_pool = MagicMock()
         handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
         result = await handlers["start_scheduler"]({})
         assert "confirm=true" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_with_pool_and_confirm_starts(self, mock_db):
         mgr = _make_scheduler_mgr()
         mock_pool = MagicMock()
@@ -82,7 +82,7 @@ class TestStartSchedulerTool:
         assert "Планировщик запущен" in _text(result)
         mgr.start.assert_awaited_once()
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_error_returns_text(self, mock_db):
         mgr = _make_scheduler_mgr()
         mgr.start = AsyncMock(side_effect=Exception("already running"))
@@ -93,13 +93,13 @@ class TestStartSchedulerTool:
 
 
 class TestStopSchedulerTool:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_no_confirm_returns_gate(self, mock_db):
         handlers = _get_tool_handlers(mock_db)
         result = await handlers["stop_scheduler"]({})
         assert "confirm=true" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_with_confirm_stops(self, mock_db):
         mgr = _make_scheduler_mgr()
         handlers = _get_tool_handlers(mock_db, scheduler_manager=mgr)
@@ -107,7 +107,7 @@ class TestStopSchedulerTool:
         assert "Планировщик остановлен" in _text(result)
         mgr.stop.assert_awaited_once()
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_error_returns_text(self, mock_db):
         mgr = _make_scheduler_mgr()
         mgr.stop = AsyncMock(side_effect=Exception("not running"))
@@ -117,20 +117,20 @@ class TestStopSchedulerTool:
 
 
 class TestTriggerCollectionTool:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_no_pool_returns_pool_gate(self, mock_db):
         handlers = _get_tool_handlers(mock_db, client_pool=None)
         result = await handlers["trigger_collection"]({"confirm": True})
         assert "Telegram-клиент" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_no_confirm_returns_gate(self, mock_db):
         mock_pool = MagicMock()
         handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
         result = await handlers["trigger_collection"]({})
         assert "confirm=true" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_with_pool_and_confirm_triggers(self, mock_db):
         mgr = _make_scheduler_mgr()
         mock_pool = MagicMock()
@@ -140,7 +140,7 @@ class TestTriggerCollectionTool:
         assert "Сбор запущен" in text
         mgr.trigger_now.assert_awaited_once()
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_error_returns_text(self, mock_db):
         mgr = _make_scheduler_mgr()
         mgr.trigger_now = AsyncMock(side_effect=Exception("busy"))
@@ -151,13 +151,13 @@ class TestTriggerCollectionTool:
 
 
 class TestToggleSchedulerJobTool:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_missing_job_id_returns_error(self, mock_db):
         handlers = _get_tool_handlers(mock_db)
         result = await handlers["toggle_scheduler_job"]({})
         assert "job_id обязателен" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_enabled_job_becomes_disabled(self, mock_db):
         mgr = _make_scheduler_mgr()
         mgr.is_job_enabled = AsyncMock(return_value=True)
@@ -168,7 +168,7 @@ class TestToggleSchedulerJobTool:
         assert "выключена" in text
         mgr.sync_job_state.assert_awaited_once_with("collect", False)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_disabled_job_becomes_enabled(self, mock_db):
         mgr = _make_scheduler_mgr()
         mgr.is_job_enabled = AsyncMock(return_value=False)
@@ -179,13 +179,13 @@ class TestToggleSchedulerJobTool:
         assert "включена" in text
         mgr.sync_job_state.assert_awaited_once_with("notify", True)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_no_manager_returns_error(self, mock_db):
         handlers = _get_tool_handlers(mock_db)
         result = await handlers["toggle_scheduler_job"]({"job_id": "collect"})
         assert "Ошибка переключения задачи" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_error_returns_text(self, mock_db):
         mgr = _make_scheduler_mgr()
         mgr.is_job_enabled = AsyncMock(side_effect=Exception("unknown job"))

@@ -90,7 +90,7 @@ def mock_db():
 
 
 class TestAwaitWithCountdown:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_extends_deadline_on_activity(self):
         """Deadline is extended when activity_ts indicates fresh SDK activity."""
         queue: asyncio.Queue = asyncio.Queue()
@@ -113,7 +113,7 @@ class TestAwaitWithCountdown:
         )
         assert result == "done"
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_shows_thinking_status_after_api_request_delay(self):
         """Shows 'thinking' status when api_request_ts is stale (>15s)."""
         queue: asyncio.Queue = asyncio.Queue()
@@ -138,7 +138,7 @@ class TestAwaitWithCountdown:
         thinking_items = [i for i in items if "thinking" in i]
         assert len(thinking_items) >= 1, f"Expected thinking event, got: {items}"
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_max_timeout_caps_deadline(self):
         """max_timeout prevents deadline from extending beyond hard ceiling."""
         queue: asyncio.Queue = asyncio.Queue()
@@ -159,7 +159,7 @@ class TestAwaitWithCountdown:
                 max_timeout=0.8,
             )
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_cancelled_error_propagation(self):
         """CancelledError from outer scope propagates correctly."""
         queue: asyncio.Queue = asyncio.Queue()
@@ -184,7 +184,7 @@ class TestAwaitWithCountdown:
 
 
 class TestToolTracker:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_on_first_event_idempotent(self):
         """on_first_event only emits once."""
         queue: asyncio.Queue = asyncio.Queue()
@@ -193,7 +193,7 @@ class TestToolTracker:
         await tracker.on_first_event()  # second call should be no-op
         assert queue.qsize() == 1
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_on_block_stop_with_invalid_json(self):
         """Accumulated input that is not valid JSON produces empty summary."""
         queue: asyncio.Queue = asyncio.Queue()
@@ -209,7 +209,7 @@ class TestToolTracker:
         assert len(tool_end_events) == 1
         assert tool_end_events[0]["is_error"] is False
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_on_block_stop_ignores_mismatched_index(self):
         """on_block_stop with non-matching index does not emit tool_end."""
         queue: asyncio.Queue = asyncio.Queue()
@@ -221,7 +221,7 @@ class TestToolTracker:
         await tracker.on_block_stop(99)  # different index — should be ignored
         assert queue.empty()
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_on_tool_result_unknown_id(self):
         """Tool result with unknown tool_use_id defaults to 'tool'."""
         queue: asyncio.Queue = asyncio.Queue()
@@ -234,7 +234,7 @@ class TestToolTracker:
         results = [json.loads(i.removeprefix("data: ")) for i in items]
         assert results[0]["tool"] == "tool"
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_on_tool_result_with_error(self):
         """Tool result with is_error=True is correctly emitted."""
         queue: asyncio.Queue = asyncio.Queue()
@@ -249,7 +249,7 @@ class TestToolTracker:
         tool_result = [r for r in results if r.get("type") == "tool_result"][0]
         assert tool_result["is_error"] is True
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_on_tool_result_none_content(self):
         """Tool result with None content produces empty summary."""
         queue: asyncio.Queue = asyncio.Queue()
@@ -262,7 +262,7 @@ class TestToolTracker:
         results = [json.loads(i.removeprefix("data: ")) for i in items]
         assert results[0]["summary"] == ""
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_on_status_emits_status_event(self):
         """on_status pushes a status event to the queue."""
         queue: asyncio.Queue = asyncio.Queue()
@@ -337,7 +337,7 @@ class TestEmbedHistoryInPrompt:
 
 
 class TestClaudeSdkBackendChatStreamErrors:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_total_timeout_exceeded(self, db):
         """When total timeout is exceeded during stream, error is emitted."""
         thread_id = await db.create_agent_thread("total-timeout")
@@ -379,7 +379,7 @@ class TestClaudeSdkBackendChatStreamErrors:
         errors = [p for p in payloads if "error" in p]
         assert errors, f"Expected timeout error, got: {payloads}"
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_cli_not_found_error(self, db):
         """CLINotFoundError produces user-friendly error message."""
         thread_id = await db.create_agent_thread("cli-not-found")
@@ -404,7 +404,7 @@ class TestClaudeSdkBackendChatStreamErrors:
         assert errors, f"Expected error, got: {payloads}"
         assert "Claude CLI" in errors[0]["error"] or "npm install" in errors[0].get("error", "")
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_process_error(self, db):
         """ProcessError produces error with captured stderr details."""
         thread_id = await db.create_agent_thread("process-error")
@@ -428,7 +428,7 @@ class TestClaudeSdkBackendChatStreamErrors:
         errors = [p for p in payloads if "error" in p]
         assert errors, f"Expected error, got: {payloads}"
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_process_error_with_long_stderr_truncated(self, db):
         """ProcessError with long stderr truncates the details."""
         thread_id = await db.create_agent_thread("long-stderr")
@@ -457,7 +457,7 @@ class TestClaudeSdkBackendChatStreamErrors:
         if details:
             assert len(details) <= 503  # 500 + "..."
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_cli_connection_error_retries_then_fails(self, db):
         """CLIConnectionError retries once then fails with user message."""
         thread_id = await db.create_agent_thread("conn-error")
@@ -481,7 +481,7 @@ class TestClaudeSdkBackendChatStreamErrors:
         errors = [p for p in payloads if "error" in p]
         assert errors, f"Expected error, got: {payloads}"
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_cli_connection_error_overloaded_message(self, db):
         """CLIConnectionError with 'overloaded' uses specific message."""
         thread_id = await db.create_agent_thread("overloaded")
@@ -510,7 +510,7 @@ class TestClaudeSdkBackendChatStreamErrors:
         assert errors
         assert call_count == 2
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_sdk_error_produces_error_payload(self, db):
         """ClaudeSDKError produces error with SDK details."""
         thread_id = await db.create_agent_thread("sdk-error")
@@ -535,7 +535,7 @@ class TestClaudeSdkBackendChatStreamErrors:
         assert errors
         assert "SDK" in errors[0]["error"]
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_base_exception_group_with_retryable_error(self, db):
         """ExceptionGroup with retryable error retries once then fails."""
         thread_id = await db.create_agent_thread("exc-group")
@@ -565,7 +565,7 @@ class TestClaudeSdkBackendChatStreamErrors:
         done_or_error = [p for p in payloads if p.get("done") or "error" in p]
         assert done_or_error, f"Expected done or error, got: {payloads}"
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_base_exception_group_with_timeout_no_retry(self, db):
         """ExceptionGroup containing TimeoutError does NOT retry."""
         thread_id = await db.create_agent_thread("exc-group-timeout")
@@ -592,7 +592,7 @@ class TestClaudeSdkBackendChatStreamErrors:
         assert errors
         assert call_count == 1, "Should not retry on timeout"
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_generic_exception_with_control_request_timeout_retries(self, db):
         """Generic Exception with 'Control request timeout' retries once."""
         thread_id = await db.create_agent_thread("ctrl-timeout")
@@ -619,7 +619,7 @@ class TestClaudeSdkBackendChatStreamErrors:
 
         assert call_count >= 2, f"Expected retry, got {call_count} calls"
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_generic_exception_no_retry(self, db):
         """Generic Exception without retry keywords fails immediately."""
         thread_id = await db.create_agent_thread("generic-fail")
@@ -641,7 +641,7 @@ class TestClaudeSdkBackendChatStreamErrors:
         errors = [p for p in payloads if "error" in p]
         assert errors
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_rate_limit_event_rejected(self, db):
         """RateLimitEvent with 'rejected' status surfaces as warning."""
         thread_id = await db.create_agent_thread("rate-limit")
@@ -673,7 +673,7 @@ class TestClaudeSdkBackendChatStreamErrors:
         warnings = [p for p in payloads if p.get("type") == "warning"]
         assert warnings, f"Expected warning for rejected rate limit, got: {payloads}"
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_rate_limit_event_non_rejected(self, db):
         """RateLimitEvent with non-rejected status emits status event."""
         thread_id = await db.create_agent_thread("rate-limit-ok")
@@ -707,7 +707,7 @@ class TestClaudeSdkBackendChatStreamErrors:
         ]
         assert status_events, f"Expected Rate limit status, got: {payloads}"
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_rate_limit_event_with_none_info(self, db):
         """RateLimitEvent with None rate_limit_info uses 'unknown' status."""
         thread_id = await db.create_agent_thread("rl-none-info")
@@ -738,7 +738,7 @@ class TestClaudeSdkBackendChatStreamErrors:
         assert status_events
         assert "unknown" in status_events[0]["text"]
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_stream_event_error_overloaded(self, db):
         """StreamEvent with error type 'overloaded_error' raises CLIConnectionError."""
         thread_id = await db.create_agent_thread("overload-error")
@@ -766,7 +766,7 @@ class TestClaudeSdkBackendChatStreamErrors:
         errors = [p for p in payloads if "error" in p]
         assert errors
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_stream_event_error_generic(self, db):
         """StreamEvent with generic error type raises ClaudeSDKError."""
         thread_id = await db.create_agent_thread("api-error")
@@ -794,7 +794,7 @@ class TestClaudeSdkBackendChatStreamErrors:
         errors = [p for p in payloads if "error" in p]
         assert errors
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_content_block_start_non_tool_use(self, db):
         """content_block_start with non-tool_use type is logged but doesn't crash."""
         thread_id = await db.create_agent_thread("block-start")
@@ -826,7 +826,7 @@ class TestClaudeSdkBackendChatStreamErrors:
 
         assert chunks
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_result_message_with_cost_and_turns(self, db):
         """ResultMessage with total_cost_usd and num_turns fields."""
         thread_id = await db.create_agent_thread("result-msg")
@@ -859,7 +859,7 @@ class TestClaudeSdkBackendChatStreamErrors:
         assert done_events[0]["num_turns"] == 3
         assert done_events[0]["session_id"] == "test-session-id"
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_unhandled_message_type_logs_warning(self, db):
         """Unknown SDK message type logs a warning without crashing."""
         thread_id = await db.create_agent_thread("unhandled-msg")
@@ -881,7 +881,7 @@ class TestClaudeSdkBackendChatStreamErrors:
 
         assert chunks  # should not crash
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_cancelled_error_sets_draining(self, db):
         """CancelledError during stream sets draining=True and continues."""
         thread_id = await db.create_agent_thread("cancel-drain")
@@ -902,7 +902,7 @@ class TestClaudeSdkBackendChatStreamErrors:
 
         assert chunks
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_idle_timeout_with_rate_limit_info(self, db):
         """Idle timeout includes rate limit info in error message."""
         thread_id = await db.create_agent_thread("idle-rl")
@@ -944,7 +944,7 @@ class TestClaudeSdkBackendChatStreamErrors:
         errors = [p for p in payloads if "error" in p]
         assert errors
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_stderr_debug_lines_dumped_after_error(self, db):
         """Debug and stderr lines are dumped to log after error in chat_stream."""
         thread_id = await db.create_agent_thread("debug-dump")
@@ -1465,7 +1465,7 @@ class TestDeepagentsProbeAndRun:
             with pytest.raises(RuntimeError, match="get_channels"):
                 backend._run_probe(cfg)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_probe_config_supported(self, mock_db):
         """probe_config returns 'supported' on successful probe."""
         config = AppConfig()
@@ -1486,7 +1486,7 @@ class TestDeepagentsProbeAndRun:
         assert result.status == "supported"
         assert result.model == "gpt-4"
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_probe_config_timeout(self, mock_db):
         """probe_config returns 'unknown' on timeout."""
         config = AppConfig()
@@ -1517,7 +1517,7 @@ class TestDeepagentsProbeAndRun:
         assert result.status == "unknown"
         assert "timed out" in (result.reason or "").lower()
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_probe_config_exception(self, mock_db):
         """probe_config returns appropriate status on exception."""
         config = AppConfig()
@@ -1539,7 +1539,7 @@ class TestDeepagentsProbeAndRun:
 
 
 class TestDeepagentsChatStream:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_chat_stream_empty_response(self, mock_db):
         """chat_stream handles empty response from agent."""
         config = AppConfig()
@@ -1585,7 +1585,7 @@ class TestDeepagentsChatStream:
         assert done_events
         assert done_events[0]["full_text"] == ""
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_chat_stream_multiple_providers_fallback(self, mock_db):
         """chat_stream tries next provider when first fails."""
         config = AppConfig()
@@ -1649,7 +1649,7 @@ class TestDeepagentsChatStream:
         assert done_events
         assert done_events[0]["full_text"] == "provider 2 response"
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_chat_stream_all_providers_fail(self, mock_db):
         """chat_stream raises RuntimeError when all providers fail."""
         config = AppConfig()
@@ -1682,7 +1682,7 @@ class TestDeepagentsChatStream:
 
 
 class TestDeepagentsResearcherWriter:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_run_researcher_writer_success(self, mock_db):
         """run_researcher_writer completes research and writer phases."""
         config = AppConfig()
@@ -1706,7 +1706,7 @@ class TestDeepagentsResearcherWriter:
                     assert result == "research done"
                     assert mock_run.call_count == 2
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_run_researcher_writer_all_fail(self, mock_db):
         """run_researcher_writer raises when all providers fail."""
         config = AppConfig()
@@ -1736,7 +1736,7 @@ class TestDeepagentsResearcherWriter:
 
 
 class TestAgentManagerChatStreamErrors:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_chat_stream_with_no_backend_selected(self, db, monkeypatch):
         """chat_stream yields error when no backend is selected."""
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
@@ -1759,7 +1759,7 @@ class TestAgentManagerChatStreamErrors:
         errors = [p for p in payloads if "error" in p]
         assert errors, f"Expected error for no backend, got: {payloads}"
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_chat_stream_deepagents_backend_selected(self, db, monkeypatch):
         """chat_stream works when deepagents backend is selected."""
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
@@ -1789,7 +1789,7 @@ class TestAgentManagerChatStreamErrors:
         assert done_events
         assert done_events[0]["backend"] == "deepagents"
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_chat_stream_cancel_stream(self, db):
         """cancel_stream cancels active stream."""
         mgr = AgentManager(db)
@@ -1797,7 +1797,7 @@ class TestAgentManagerChatStreamErrors:
         result = await mgr.cancel_stream(999)
         assert result is False
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_chat_stream_with_invalid_model_for_claude(self, db):
         """chat_stream ignores invalid model for Claude backend."""
         thread_id = await db.create_agent_thread("invalid-model")
@@ -1818,7 +1818,7 @@ class TestAgentManagerChatStreamErrors:
             ]
             assert chunks
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_chat_stream_backend_exception_with_ollama_500(self, db, monkeypatch):
         """chat_stream shows Ollama 500 error with helpful message."""
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
@@ -1849,7 +1849,7 @@ class TestAgentManagerChatStreamErrors:
         assert errors
         assert any("Ollama" in e.get("error", "") for e in errors)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_chat_stream_backend_exception_with_ollama_connection_refused(
         self, db, monkeypatch
     ):
@@ -1908,14 +1908,14 @@ class TestAgentManagerPermissionGate:
 
 
 class TestAgentManagerCloseAll:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_close_all_with_no_tasks(self, db):
         """close_all completes immediately with no active tasks."""
         mgr = AgentManager(db)
         await mgr.close_all()
         assert len(mgr._active_tasks) == 0
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_close_all_cancels_active_tasks(self, db):
         """close_all cancels and waits for active tasks."""
         mgr = AgentManager(db)
@@ -1932,7 +1932,7 @@ class TestAgentManagerCloseAll:
 
 
 class TestAgentManagerEstimateTokens:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_estimate_prompt_tokens(self, db):
         """estimate_prompt_tokens returns reasonable estimate."""
         mgr = AgentManager(db)
@@ -1944,7 +1944,7 @@ class TestAgentManagerEstimateTokens:
 
 
 class TestAgentManagerRuntimeStatusEdgeCases:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_runtime_status_with_dev_override_unavailable_deepagents(
         self, db, monkeypatch
     ):
@@ -1962,7 +1962,7 @@ class TestAgentManagerRuntimeStatusEdgeCases:
         assert status.selected_backend == "deepagents"
         assert status.error is not None
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_runtime_status_with_invalid_override(self, db, monkeypatch):
         """Runtime status falls back to auto for invalid override values."""
         monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
@@ -1974,7 +1974,7 @@ class TestAgentManagerRuntimeStatusEdgeCases:
 
         assert status.backend_override == "auto"
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_runtime_status_no_backends_available(self, db, monkeypatch):
         """Runtime status reports error when no backend is available."""
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
@@ -1987,7 +1987,7 @@ class TestAgentManagerRuntimeStatusEdgeCases:
         assert status.selected_backend is None
         assert status.error is not None
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_runtime_status_deepagents_without_db_configs(self, db, monkeypatch):
         """Runtime status selects claude when deepagents has no usable DB configs."""
         monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
@@ -2002,7 +2002,7 @@ class TestAgentManagerRuntimeStatusEdgeCases:
 
         assert status.selected_backend == "claude"
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_runtime_status_deepagents_has_db_configs(self, db, monkeypatch):
         """Runtime status selects deepagents when it has usable DB configs."""
         monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
@@ -2037,7 +2037,7 @@ class TestAgentManagerRuntimeStatusEdgeCases:
 
 
 class TestAgentManagerCachedSettings:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_settings_cache_hit(self, db):
         """Cached settings are used on subsequent calls."""
         mgr = AgentManager(db)
@@ -2049,7 +2049,7 @@ class TestAgentManagerCachedSettings:
         val2 = await mgr._get_setting_cached("test_key")
         assert val2 == "test_value"
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_settings_cache_default(self, db):
         """Default value is used when setting is not found."""
         mgr = AgentManager(db)
@@ -2058,7 +2058,7 @@ class TestAgentManagerCachedSettings:
 
 
 class TestAgentManagerProbeProvider:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_probe_provider_config_delegates(self, db):
         """probe_provider_config delegates to deepagents backend."""
         mgr = AgentManager(db)
@@ -2105,7 +2105,7 @@ class TestDeepagentsRunDbToolSync:
 
 
 class TestDeepagentsRefreshSettingsCache:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_refresh_resets_state_on_change(self, mock_db):
         """refresh_settings_cache resets state when configs change."""
         config = AppConfig()
@@ -2137,7 +2137,7 @@ class TestDeepagentsRefreshSettingsCache:
         assert backend._last_used_model == ""
         assert backend._preflight_available is None
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_refresh_keeps_state_when_no_change(self, mock_db):
         """refresh_settings_cache keeps state when configs haven't changed."""
         config = AppConfig()
@@ -2167,7 +2167,7 @@ class TestDeepagentsRefreshSettingsCache:
         assert backend._last_used_provider == "openai"
         assert backend._last_used_model == "gpt-4"
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_refresh_clears_state_when_no_configs(self, mock_db):
         """refresh_settings_cache clears state when no configs returned."""
         config = AppConfig()
@@ -2290,7 +2290,7 @@ class TestTruncate:
 
 
 class TestAsPromptStream:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_yields_single_message(self):
         from src.agent.manager import _as_prompt_stream
 
@@ -2304,7 +2304,7 @@ class TestAsPromptStream:
 
 
 class TestAutoApproveTool:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_returns_allow(self):
         from claude_agent_sdk import PermissionResultAllow
 

@@ -92,7 +92,7 @@ def _user_entity(user_id: int, first_name: str = "First", last_name: str = "Last
 class TestResolveAnyEntityClientPool:
     """Tests for ClientPool.resolve_any_entity()."""
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_resolve_user_by_username(self):
         pool = _make_pool()
         entity = _user_entity(111, "Alex", "Z", "alxz500")
@@ -110,7 +110,7 @@ class TestResolveAnyEntityClientPool:
         assert result["title"] == "Alex Z"
         assert result["username"] == "alxz500"
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_resolve_bot_by_username(self):
         pool = _make_pool()
         entity = _user_entity(222, "My", "Bot", "mybot", bot=True)
@@ -125,7 +125,7 @@ class TestResolveAnyEntityClientPool:
         assert result is not None
         assert result["channel_type"] == "bot"
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_resolve_channel_by_username(self):
         pool = _make_pool()
         entity = _channel_entity(333, "News Channel", "newschan", broadcast=True)
@@ -141,7 +141,7 @@ class TestResolveAnyEntityClientPool:
         assert result["channel_type"] == "channel"
         assert result["title"] == "News Channel"
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_resolve_group_by_username(self):
         pool = _make_pool()
         entity = _channel_entity(444, "My Group", "mygroup", broadcast=False, megagroup=True)
@@ -156,7 +156,7 @@ class TestResolveAnyEntityClientPool:
         assert result is not None
         assert result["channel_type"] == "supergroup"
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_resolve_by_tme_link(self):
         pool = _make_pool()
         entity = _user_entity(555, "Alex", "", "alxz500")
@@ -171,7 +171,7 @@ class TestResolveAnyEntityClientPool:
         assert result is not None
         assert result["channel_id"] == 555
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_tme_post_link_stripped_to_channel(self):
         """t.me/chan/123 → resolve t.me/chan, not the post number."""
         pool = _make_pool()
@@ -189,7 +189,7 @@ class TestResolveAnyEntityClientPool:
         call_args = mock_session.resolve_entity.call_args[0][0]
         assert "123" not in str(call_args)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_positive_numeric_id_uses_peer_user(self):
         """Positive numeric ID → PeerUser."""
         from telethon.tl.types import PeerUser
@@ -207,7 +207,7 @@ class TestResolveAnyEntityClientPool:
         assert isinstance(peer_arg, PeerUser)
         assert peer_arg.user_id == 12345
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_negative_numeric_id_uses_peer_channel(self):
         """Negative Bot API format ID → PeerChannel with stripped MTProto ID.
 
@@ -228,7 +228,7 @@ class TestResolveAnyEntityClientPool:
         assert isinstance(peer_arg, PeerChannel)
         assert peer_arg.channel_id == 1234567890
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_username_not_found_returns_none(self):
         from telethon.errors import UsernameNotOccupiedError
         pool = _make_pool()
@@ -245,7 +245,7 @@ class TestResolveAnyEntityClientPool:
 
         assert result is None
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_username_invalid_returns_none(self):
         from telethon.errors import UsernameInvalidError
         pool = _make_pool()
@@ -262,7 +262,7 @@ class TestResolveAnyEntityClientPool:
 
         assert result is None
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_timeout_returns_none(self):
         pool = _make_pool()
         mock_session = AsyncMock()
@@ -278,7 +278,7 @@ class TestResolveAnyEntityClientPool:
 
         assert result is None
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_no_available_client_raises(self):
         pool = _make_pool()
         pool.get_available_client = AsyncMock(return_value=None)
@@ -286,7 +286,7 @@ class TestResolveAnyEntityClientPool:
         with pytest.raises(RuntimeError, match="no_client"):
             await pool.resolve_any_entity("@alxz500")
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_channel_forbidden_returns_none(self):
         from telethon.tl.types import ChannelForbidden
         pool = _make_pool()
@@ -302,7 +302,7 @@ class TestResolveAnyEntityClientPool:
 
         assert result is None
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_preferred_phone_tried_first(self):
         """If phone given, get_client_by_phone is called before get_available_client."""
         pool = _make_pool()
@@ -319,7 +319,7 @@ class TestResolveAnyEntityClientPool:
         pool.get_client_by_phone.assert_called_once_with("+123")
         pool.get_available_client.assert_not_called()
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_preferred_phone_fallback_to_any(self):
         """If preferred phone unavailable, falls back to any available client."""
         pool = _make_pool()
@@ -336,7 +336,7 @@ class TestResolveAnyEntityClientPool:
         assert result is not None
         pool.get_available_client.assert_called()
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_user_with_no_last_name(self):
         """User with only first_name → title is just first_name."""
         pool = _make_pool()
@@ -351,7 +351,7 @@ class TestResolveAnyEntityClientPool:
 
         assert result["title"] == "Alex"
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_generic_exception_returns_none(self):
         """Unexpected exception → returns None gracefully."""
         pool = _make_pool()
@@ -368,7 +368,7 @@ class TestResolveAnyEntityClientPool:
 
         assert result is None
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_random_garbage_input_returns_none(self):
         """Arbitrary garbage text → treated as username string, not found."""
         from telethon.errors import UsernameInvalidError
@@ -395,7 +395,7 @@ class TestResolveAnyEntityClientPool:
 class TestResolveEntityTool:
     """Tests for the resolve_entity MCP tool in dialogs.py."""
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_resolve_user_success(self, mock_db):
         pool = MagicMock()
         pool.resolve_any_entity = AsyncMock(return_value={
@@ -415,7 +415,7 @@ class TestResolveEntityTool:
         assert "111" in text
         assert "@alxz500" in text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_resolve_bot_shows_bot_type(self, mock_db):
         pool = MagicMock()
         pool.resolve_any_entity = AsyncMock(return_value={
@@ -429,7 +429,7 @@ class TestResolveEntityTool:
         result = await handlers["resolve_entity"]({"identifier": "@mybot"})
         assert "bot" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_resolve_channel_shows_channel_type(self, mock_db):
         pool = MagicMock()
         pool.resolve_any_entity = AsyncMock(return_value={
@@ -443,7 +443,7 @@ class TestResolveEntityTool:
         result = await handlers["resolve_entity"]({"identifier": "@newschan"})
         assert "channel" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_empty_identifier_returns_error(self, mock_db):
         pool = MagicMock()
         handlers = _get_tool_handlers(mock_db, client_pool=pool)
@@ -451,7 +451,7 @@ class TestResolveEntityTool:
         result = await handlers["resolve_entity"]({"identifier": ""})
         assert "обязателен" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_missing_identifier_returns_error(self, mock_db):
         pool = MagicMock()
         handlers = _get_tool_handlers(mock_db, client_pool=pool)
@@ -459,7 +459,7 @@ class TestResolveEntityTool:
         result = await handlers["resolve_entity"]({})
         assert "обязателен" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_no_pool_returns_gate(self, mock_db):
         handlers = _get_tool_handlers(mock_db, client_pool=None)
 
@@ -467,7 +467,7 @@ class TestResolveEntityTool:
         # require_pool returns a message about Telegram client not available
         assert "telegram" in _text(result).lower() or "cli" in _text(result).lower()
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_entity_not_found_returns_not_found(self, mock_db):
         pool = MagicMock()
         pool.resolve_any_entity = AsyncMock(return_value=None)
@@ -476,7 +476,7 @@ class TestResolveEntityTool:
         result = await handlers["resolve_entity"]({"identifier": "@gibberish_nonexistent"})
         assert "не найдена" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_no_client_raises_runtime_error(self, mock_db):
         pool = MagicMock()
         pool.resolve_any_entity = AsyncMock(side_effect=RuntimeError("no_client"))
@@ -485,7 +485,7 @@ class TestResolveEntityTool:
         result = await handlers["resolve_entity"]({"identifier": "@alxz500"})
         assert "аккаунт" in _text(result).lower()
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_generic_exception_returns_error(self, mock_db):
         pool = MagicMock()
         pool.resolve_any_entity = AsyncMock(side_effect=Exception("network error"))
@@ -494,7 +494,7 @@ class TestResolveEntityTool:
         result = await handlers["resolve_entity"]({"identifier": "@alxz500"})
         assert "Ошибка resolve" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_random_garbage_text_attempts_resolve(self, mock_db):
         """Arbitrary text → tool attempts resolve (returns not found)."""
         pool = MagicMock()
@@ -506,7 +506,7 @@ class TestResolveEntityTool:
         assert _text(result)
         pool.resolve_any_entity.assert_called_once()
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_at_nonexistent_username_attempts_resolve(self, mock_db):
         """@skdjfsdlkjf → tool calls resolve_any_entity with the identifier."""
         pool = MagicMock()
@@ -519,7 +519,7 @@ class TestResolveEntityTool:
         call_identifier = pool.resolve_any_entity.call_args[0][0]
         assert "skdjfsdlkjf" in call_identifier
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_entity_without_username_no_username_line(self, mock_db):
         """Entity with no username → username line not shown."""
         pool = MagicMock()
@@ -534,7 +534,7 @@ class TestResolveEntityTool:
         result = await handlers["resolve_entity"]({"identifier": "999"})
         assert "Username" not in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_with_phone_param_passed_to_resolve(self, mock_db):
         """phone param is forwarded to resolve_any_entity."""
         pool = MagicMock()

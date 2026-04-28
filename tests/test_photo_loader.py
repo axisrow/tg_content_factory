@@ -123,7 +123,7 @@ async def _build_photo_loader_app(
     return app, db
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_photo_task_send_now_uses_send_file(db, tmp_path, real_pool_harness_factory):
     image = tmp_path / "one.jpg"
     image.write_bytes(b"x")
@@ -163,7 +163,7 @@ async def test_photo_task_send_now_uses_send_file(db, tmp_path, real_pool_harnes
     assert client.send_file.await_args.kwargs["schedule"] is None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_photo_task_schedule_send_passes_schedule(db, tmp_path, real_pool_harness_factory):
     image = tmp_path / "one.jpg"
     image.write_bytes(b"x")
@@ -195,7 +195,7 @@ async def test_photo_task_schedule_send_passes_schedule(db, tmp_path, real_pool_
     assert client.send_file.await_args.kwargs["schedule"] == schedule_at
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_photo_task_run_due_processes_pending_items(db, tmp_path, real_pool_harness_factory):
     image = tmp_path / "one.jpg"
     image.write_bytes(b"x")
@@ -233,7 +233,7 @@ async def test_photo_task_run_due_processes_pending_items(db, tmp_path, real_poo
     assert item.status == PhotoBatchStatus.COMPLETED
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_photo_auto_upload_sends_only_new_files(db, tmp_path, real_pool_harness_factory):
     folder = tmp_path / "photos"
     folder.mkdir()
@@ -280,7 +280,7 @@ async def test_photo_auto_upload_sends_only_new_files(db, tmp_path, real_pool_ha
     client.send_file.assert_not_called()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_scheduler_registers_photo_jobs():
     collector = MagicMock()
     collector.collect_all_channels = AsyncMock(return_value={"channels": 0})
@@ -309,7 +309,7 @@ async def test_scheduler_registers_photo_jobs():
     await manager.stop()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_photo_loader_page_renders(tmp_path, telethon_cli_spy, native_auth_spy):
     config = AppConfig()
     config.database.path = str(tmp_path / "test.db")
@@ -404,7 +404,7 @@ async def test_photo_loader_page_renders(tmp_path, telethon_cli_spy, native_auth
     await db.close()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 @pytest.mark.parametrize(
     ("query", "expected_title", "expected_text", "highlight_kind"),
     [
@@ -531,7 +531,7 @@ async def test_photo_loader_page_feedback_panel_and_highlight_hooks(
     await db.close()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_photo_loader_page_without_phone_selects_first_account(
     tmp_path,
     telethon_cli_spy,
@@ -600,7 +600,7 @@ async def test_photo_loader_page_without_phone_selects_first_account(
     await db.close()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_photo_loader_page_without_selectable_targets_disables_forms(
     tmp_path,
     telethon_cli_spy,
@@ -656,7 +656,7 @@ async def test_photo_loader_page_without_selectable_targets_disables_forms(
     await db.close()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_photo_loader_page_without_accounts_renders_empty_state(
     tmp_path,
     telethon_cli_spy,
@@ -703,7 +703,7 @@ async def test_photo_loader_page_without_accounts_renders_empty_state(
     await db.close()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_photo_loader_refresh_warms_dialog_cache(
     tmp_path,
     telethon_cli_spy,
@@ -835,7 +835,7 @@ def test_photo_loader_cli_send_command(tmp_path, cli_init_patch, capsys):
     asyncio.run(db.close())
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_photo_schedule_logs_exception(tmp_path, caplog, telethon_cli_spy, native_auth_spy):
     app, db = await _build_photo_loader_app(tmp_path, telethon_cli_spy, native_auth_spy)
     app.state.photo_task_service = SimpleNamespace(
@@ -872,7 +872,7 @@ async def test_photo_schedule_logs_exception(tmp_path, caplog, telethon_cli_spy,
     await db.close()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_photo_schedule_redirects_when_target_validation_raises(
     tmp_path,
     caplog,
@@ -919,7 +919,7 @@ async def test_photo_schedule_redirects_when_target_validation_raises(
     await db.close()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_photo_schedule_requires_target_selection(
     tmp_path,
     telethon_cli_spy,
@@ -958,7 +958,7 @@ async def test_photo_schedule_requires_target_selection(
     await db.close()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_photo_schedule_rejects_unknown_target(tmp_path, telethon_cli_spy, native_auth_spy):
     app, db = await _build_photo_loader_app(tmp_path, telethon_cli_spy, native_auth_spy)
     app.state.photo_task_service = SimpleNamespace(
@@ -993,7 +993,7 @@ async def test_photo_schedule_rejects_unknown_target(tmp_path, telethon_cli_spy,
     await db.close()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_photo_send_logs_exception(tmp_path, caplog, telethon_cli_spy, native_auth_spy):
     app, db = await _build_photo_loader_app(tmp_path, telethon_cli_spy, native_auth_spy)
     app.state.photo_task_service = SimpleNamespace(
@@ -1029,7 +1029,7 @@ async def test_photo_send_logs_exception(tmp_path, caplog, telethon_cli_spy, nat
     await db.close()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_photo_send_redirects_when_target_validation_raises(
     tmp_path,
     caplog,
@@ -1075,7 +1075,7 @@ async def test_photo_send_redirects_when_target_validation_raises(
     await db.close()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_photo_send_requires_target_selection(tmp_path, telethon_cli_spy, native_auth_spy):
     app, db = await _build_photo_loader_app(tmp_path, telethon_cli_spy, native_auth_spy)
     app.state.photo_task_service = SimpleNamespace(
@@ -1109,7 +1109,7 @@ async def test_photo_send_requires_target_selection(tmp_path, telethon_cli_spy, 
     await db.close()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_photo_batch_logs_exception(tmp_path, caplog, telethon_cli_spy, native_auth_spy):
     app, db = await _build_photo_loader_app(tmp_path, telethon_cli_spy, native_auth_spy)
     app.state.photo_task_service = SimpleNamespace(
@@ -1143,7 +1143,7 @@ async def test_photo_batch_logs_exception(tmp_path, caplog, telethon_cli_spy, na
     await db.close()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_photo_batch_redirects_when_target_validation_raises(
     tmp_path,
     caplog,
@@ -1188,7 +1188,7 @@ async def test_photo_batch_redirects_when_target_validation_raises(
     await db.close()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_photo_batch_rejects_unknown_target(tmp_path, telethon_cli_spy, native_auth_spy):
     app, db = await _build_photo_loader_app(tmp_path, telethon_cli_spy, native_auth_spy)
     app.state.photo_task_service = SimpleNamespace(
@@ -1221,7 +1221,7 @@ async def test_photo_batch_rejects_unknown_target(tmp_path, telethon_cli_spy, na
     await db.close()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_photo_send_rejects_bot_target(tmp_path, telethon_cli_spy, native_auth_spy):
     app, db = await _build_photo_loader_app(
         tmp_path,
@@ -1263,7 +1263,7 @@ async def test_photo_send_rejects_bot_target(tmp_path, telethon_cli_spy, native_
     await db.close()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_photo_auto_logs_exception(tmp_path, caplog, telethon_cli_spy, native_auth_spy):
     app, db = await _build_photo_loader_app(tmp_path, telethon_cli_spy, native_auth_spy)
     app.state.photo_auto_upload_service = SimpleNamespace(
@@ -1299,7 +1299,7 @@ async def test_photo_auto_logs_exception(tmp_path, caplog, telethon_cli_spy, nat
     await db.close()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_photo_auto_redirects_when_target_validation_raises(
     tmp_path,
     caplog,
@@ -1346,7 +1346,7 @@ async def test_photo_auto_redirects_when_target_validation_raises(
     await db.close()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_photo_auto_requires_target_selection(tmp_path, telethon_cli_spy, native_auth_spy):
     app, db = await _build_photo_loader_app(tmp_path, telethon_cli_spy, native_auth_spy)
     app.state.photo_auto_upload_service = SimpleNamespace(
@@ -1381,7 +1381,7 @@ async def test_photo_auto_requires_target_selection(tmp_path, telethon_cli_spy, 
     await db.close()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_photo_run_due_logs_exception(tmp_path, caplog, telethon_cli_spy, native_auth_spy):
     app, db = await _build_photo_loader_app(tmp_path, telethon_cli_spy, native_auth_spy)
     app.state.photo_task_service = SimpleNamespace(

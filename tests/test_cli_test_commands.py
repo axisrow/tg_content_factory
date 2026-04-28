@@ -263,7 +263,7 @@ class TestRunBenchmarkStep:
 
 
 class TestCheckGetStats:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_pass(self):
         db = MagicMock()
         db.get_stats = AsyncMock(return_value={"channels": 5})
@@ -271,7 +271,7 @@ class TestCheckGetStats:
         assert result.status == Status.PASS
         assert "channels=5" in result.detail
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_fail(self):
         db = MagicMock()
         db.get_stats = AsyncMock(side_effect=RuntimeError("no db"))
@@ -281,7 +281,7 @@ class TestCheckGetStats:
 
 
 class TestCheckAccountList:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_pass(self):
         db = MagicMock()
         db.get_accounts = AsyncMock(return_value=[MagicMock()])
@@ -289,7 +289,7 @@ class TestCheckAccountList:
         assert result.status == Status.PASS
         assert "1 accounts" in result.detail
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_fail(self):
         db = MagicMock()
         db.get_accounts = AsyncMock(side_effect=Exception("fail"))
@@ -298,7 +298,7 @@ class TestCheckAccountList:
 
 
 class TestCheckChannelList:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_pass(self):
         db = MagicMock()
         db.get_channels_with_counts = AsyncMock(return_value=[MagicMock(), MagicMock()])
@@ -308,14 +308,14 @@ class TestCheckChannelList:
 
 
 class TestCheckNotificationQueries:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_skip_when_empty(self):
         db = MagicMock()
         db.get_notification_queries = AsyncMock(return_value=[])
         result = await _check_notification_queries(db)
         assert result.status == Status.SKIP
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_pass(self):
         db = MagicMock()
         db.get_notification_queries = AsyncMock(return_value=[MagicMock()])
@@ -325,7 +325,7 @@ class TestCheckNotificationQueries:
 
 
 class TestCheckLocalSearch:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_pass(self):
         db = MagicMock()
         db.search_messages = AsyncMock(return_value=([], 0))
@@ -335,7 +335,7 @@ class TestCheckLocalSearch:
 
 
 class TestCheckCollectionTasks:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_pass(self):
         db = MagicMock()
         db.get_collection_tasks = AsyncMock(return_value=[MagicMock()])
@@ -345,14 +345,14 @@ class TestCheckCollectionTasks:
 
 
 class TestCheckRecentSearches:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_skip_when_empty(self):
         db = MagicMock()
         db.get_recent_searches = AsyncMock(return_value=[])
         result = await _check_recent_searches(db)
         assert result.status == Status.SKIP
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_pass(self):
         db = MagicMock()
         db.get_recent_searches = AsyncMock(return_value=[MagicMock(), MagicMock()])
@@ -362,7 +362,7 @@ class TestCheckRecentSearches:
 
 
 class TestCheckPipelineList:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_pass(self):
         db = MagicMock()
         db.repos.content_pipelines.get_all = AsyncMock(return_value=[MagicMock()])
@@ -370,7 +370,7 @@ class TestCheckPipelineList:
         assert result.status == Status.PASS
         assert "1 pipelines" in result.detail
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_fail(self):
         db = MagicMock()
         db.repos.content_pipelines.get_all = AsyncMock(side_effect=Exception("err"))
@@ -379,7 +379,7 @@ class TestCheckPipelineList:
 
 
 class TestCheckNotificationBot:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_none_configured(self):
         db = MagicMock()
         db.repos.notification_bots.count = AsyncMock(return_value=0)
@@ -387,7 +387,7 @@ class TestCheckNotificationBot:
         assert result.status == Status.PASS
         assert "none configured" in result.detail
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_configured(self):
         db = MagicMock()
         db.repos.notification_bots.count = AsyncMock(return_value=2)
@@ -397,7 +397,7 @@ class TestCheckNotificationBot:
 
 
 class TestCheckPhotoTasks:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_pass(self):
         db = MagicMock()
         db.repos.photo_loader.list_batches = AsyncMock(return_value=[MagicMock()])
@@ -405,7 +405,7 @@ class TestCheckPhotoTasks:
         assert result.status == Status.PASS
         assert "1 batches" in result.detail
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_fail(self):
         db = MagicMock()
         db.repos.photo_loader.list_batches = AsyncMock(side_effect=Exception("err"))

@@ -56,7 +56,7 @@ class TestDescribeNextType:
 
 
 class TestSendCode:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_send_code_returns_dict(self):
         auth = TelegramAuth(api_id=123, api_hash="abc")
         fake_type = FakeSentCodeTypeApp()
@@ -87,7 +87,7 @@ class TestSendCode:
         assert info["timeout"] == 60
         assert "+1234567890" in auth._pending
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_send_code_disconnects_previous_pending_client(self):
         auth = TelegramAuth(api_id=123, api_hash="abc")
         old_client = MagicMock()
@@ -117,13 +117,13 @@ class TestSendCode:
 
 
 class TestResendCode:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_resend_code_no_pending(self):
         auth = TelegramAuth(api_id=123, api_hash="abc")
         with pytest.raises(ValueError, match="No pending auth"):
             await auth.resend_code("+1234567890")
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_resend_code_calls_resend_request(self):
         auth = TelegramAuth(api_id=123, api_hash="abc")
         mock_client = AsyncMock()
@@ -153,7 +153,7 @@ class TestResendCode:
 
 
 class TestVerifyCode:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_verify_code_disconnects_temporary_client(self):
         auth = TelegramAuth(api_id=123, api_hash="abc")
         mock_client = AsyncMock()

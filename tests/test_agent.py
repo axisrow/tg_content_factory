@@ -28,20 +28,20 @@ def _default_agent_env(monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-claude-key")
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_make_mcp_server_returns_server(db):
     server = make_mcp_server(db)
     assert server is not None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_agent_manager_initialize(db):
     mgr = AgentManager(db)
     mgr.initialize()
     assert mgr._claude_backend._server is not None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_agent_chat_stream_mocked(db):
     thread_id = await db.create_agent_thread("test thread")
     await db.save_agent_message(thread_id, "user", "test")
@@ -72,7 +72,7 @@ async def test_agent_chat_stream_mocked(db):
     assert "done" in last_chunk or "full_text" in last_chunk or "hello" in last_chunk
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_chat_stream_stream_events_yield_incremental_chunks(db):
     """StreamEvent content_block_delta/text_delta chunks are forwarded as SSE data."""
     thread_id = await db.create_agent_thread("stream-event thread")
@@ -124,7 +124,7 @@ async def test_chat_stream_stream_events_yield_incremental_chunks(db):
     assert done_payloads[0]["full_text"] == "привет мир"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_chat_stream_fallback_to_assistant_message_when_no_stream_events(db):
     """When no StreamEvents arrive, AssistantMessage text is used as fallback."""
     thread_id = await db.create_agent_thread("fallback thread")
@@ -155,7 +155,7 @@ async def test_chat_stream_fallback_to_assistant_message_when_no_stream_events(d
     )
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_chat_stream_emits_tool_start_and_tool_end_events(db):
     """StreamEvent content_block_start (tool_use) and content_block_stop emit tool_start/tool_end SSE."""
     thread_id = await db.create_agent_thread("tool-visibility thread")
@@ -220,7 +220,7 @@ async def test_chat_stream_emits_tool_start_and_tool_end_events(db):
     assert "query" in tool_end["summary"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_chat_stream_emits_tool_start_end_from_assistant_message(db):
     """ToolUseBlock inside AssistantMessage emits tool_start and tool_end SSE events.
 
@@ -267,7 +267,7 @@ async def test_chat_stream_emits_tool_start_end_from_assistant_message(db):
     assert "limit" in tool_end["summary"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_chat_stream_passes_prompt_as_async_iterable(db):
     """query() receives an AsyncIterable prompt, not a plain string.
 
@@ -307,7 +307,7 @@ async def test_chat_stream_passes_prompt_as_async_iterable(db):
     assert not isinstance(captured_prompt, str), "prompt must not be a plain string"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_chat_stream_options_have_can_use_tool(db):
     """ClaudeAgentOptions must include can_use_tool to auto-approve CLI permissions.
 
@@ -344,7 +344,7 @@ async def test_chat_stream_options_have_can_use_tool(db):
     )
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_chat_stream_closes_sdk_generator(db):
     """aiter.aclose() must be called to kill the Claude CLI subprocess."""
     from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
@@ -378,7 +378,7 @@ async def test_chat_stream_closes_sdk_generator(db):
     assert aclose_called, "aiter.aclose() was never called — subprocess may leak"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_chat_stream_closes_sdk_generator_on_timeout(db):
     """aiter.aclose() must be called even when timeout fires."""
     thread_id = await db.create_agent_thread("aclose-timeout thread")
@@ -406,7 +406,7 @@ async def test_chat_stream_closes_sdk_generator_on_timeout(db):
     assert aclose_called, "aiter.aclose() not called on timeout — subprocess may leak"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_stderr_errors_surfaced_as_warnings(db):
     """Errors from claude-cli stderr are emitted as warning events to the user."""
     from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
@@ -449,7 +449,7 @@ async def test_stderr_errors_surfaced_as_warnings(db):
     assert any("connection refused" in t for t in warning_texts), f"Missing 'connection refused' in {warning_texts}"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_stderr_debug_lines_not_surfaced(db):
     """DEBUG/TRACE stderr lines must NOT be shown to the user."""
     from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
@@ -483,7 +483,7 @@ async def test_stderr_debug_lines_not_surfaced(db):
     assert len(warnings) == 0, f"DEBUG/TRACE should not produce warnings: {warnings}"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_stderr_stage_keywords_not_duplicated_as_warnings(db):
     """stderr lines matching stage keywords should emit status, not warning."""
     from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
@@ -522,7 +522,7 @@ async def test_stderr_stage_keywords_not_duplicated_as_warnings(db):
     )
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_stderr_api_request_counter_not_deduped(db):
     """Each [api:request] event gets a unique counter, not deduped."""
     from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
@@ -564,7 +564,7 @@ async def test_stderr_api_request_counter_not_deduped(db):
     assert "API #3" in api_statuses[2]["text"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_user_message_does_not_break_stream(db):
     """UserMessage (tool results sent to Claude) should not break the stream."""
     from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock, UserMessage
@@ -598,7 +598,7 @@ async def test_user_message_does_not_break_stream(db):
     assert any(p.get("done") for p in payloads), "Stream should complete with done"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_chat_stream_emits_tool_result_from_assistant_message(db):
     """ToolResultBlock in AssistantMessage emits tool_result SSE event."""
     thread_id = await db.create_agent_thread("tool-result thread")
@@ -641,7 +641,7 @@ async def test_chat_stream_emits_tool_result_from_assistant_message(db):
     assert "Found 5 channels" in tool_results[0]["summary"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_chat_stream_retry_emits_status_event(db):
     """When Claude SDK retries after timeout, a status SSE event is emitted."""
     thread_id = await db.create_agent_thread("retry thread")
@@ -677,7 +677,7 @@ async def test_chat_stream_retry_emits_status_event(db):
     assert retry_events, f"retry status event not found, status_events: {status_events}"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_chat_stream_text_delta_not_broken_by_tool_tracking(db):
     """Existing text streaming still works correctly with tool tracking in place."""
     thread_id = await db.create_agent_thread("text-delta thread")
@@ -718,7 +718,7 @@ async def test_chat_stream_text_delta_not_broken_by_tool_tracking(db):
     assert done_payloads[0]["full_text"] == "привет мир"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_chat_stream_multiple_tools_sequence(db):
     """Multiple tool calls in sequence emit correct tool_start/tool_end pairs."""
     thread_id = await db.create_agent_thread("multi-tool thread")
@@ -776,7 +776,7 @@ async def test_chat_stream_multiple_tools_sequence(db):
     assert tool_ends[1]["tool"] == "list_channels"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_chat_stream_emits_initial_connection_status(db):
     """First SSE event is always a status event with backend connection info."""
     thread_id = await db.create_agent_thread("init-status thread")
@@ -806,7 +806,7 @@ async def test_chat_stream_emits_initial_connection_status(db):
     assert "Подключение" in first_payload["text"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_chat_stream_emits_stderr_stage_status(db):
     """Stderr lines with stage keywords emit status events to the stream."""
     thread_id = await db.create_agent_thread("stderr-status")
@@ -843,7 +843,7 @@ async def test_chat_stream_emits_stderr_stage_status(db):
     assert any("API" in t for t in status_texts), f"missing stderr-derived status: {status_texts}"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_chat_stream_renders_saved_prompt_template_variables(db):
     await db.set_setting(
         AGENT_PROMPT_TEMPLATE_SETTING,
@@ -894,7 +894,7 @@ async def test_chat_stream_renders_saved_prompt_template_variables(db):
     assert chunks
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_runtime_status_prefers_claude_when_available(db, monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "claude-key")
     monkeypatch.setenv("AGENT_FALLBACK_MODEL", "openai:gpt-4.1-mini")
@@ -908,7 +908,7 @@ async def test_runtime_status_prefers_claude_when_available(db, monkeypatch):
     assert status.deepagents_available is True
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_runtime_status_prefers_db_backed_deepagents_over_claude(db, monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "claude-key")
     config = AppConfig()
@@ -936,7 +936,7 @@ async def test_runtime_status_prefers_db_backed_deepagents_over_claude(db, monke
     assert status.deepagents_available is True
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_runtime_status_falls_back_to_deepagents_when_claude_missing(db, monkeypatch):
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
@@ -952,7 +952,7 @@ async def test_runtime_status_falls_back_to_deepagents_when_claude_missing(db, m
     assert status.error is None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_runtime_status_respects_dev_override(db, monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "claude-key")
     monkeypatch.setenv("AGENT_FALLBACK_MODEL", "openai:gpt-4.1-mini")
@@ -978,7 +978,7 @@ def test_deepagents_tools_can_be_converted_to_structured_tools(db):
     assert "channels" in channels_tool.description.lower()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_deepagents_search_tool_returns_friendly_error_inside_running_loop(db):
     mgr = AgentManager(db)
 
@@ -1036,7 +1036,7 @@ def test_deepagents_backend_requires_explicit_key_for_anthropic_fallback(db):
     assert mgr._deepagents_backend.init_error is not None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_runtime_status_reports_failed_deepagents_initialization(db, monkeypatch):
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
@@ -1052,7 +1052,7 @@ async def test_runtime_status_reports_failed_deepagents_initialization(db, monke
     assert status.error is not None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_runtime_status_treats_valid_legacy_fallback_as_available(db, monkeypatch):
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
@@ -1074,7 +1074,7 @@ async def test_runtime_status_treats_valid_legacy_fallback_as_available(db, monk
     assert status.error is None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_runtime_status_treats_invalid_legacy_fallback_as_unavailable(db, monkeypatch):
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
@@ -1089,7 +1089,7 @@ async def test_runtime_status_treats_invalid_legacy_fallback_as_unavailable(db, 
     assert "provider:model" in status.error
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_claude_backend_uses_model_from_config(db):
     thread_id = await db.create_agent_thread("test thread")
     await db.save_agent_message(thread_id, "user", "test")
@@ -1120,7 +1120,7 @@ async def test_claude_backend_uses_model_from_config(db):
 # ── DB round-trip tests ───────────────────────────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_agent_thread_crud(db):
     tid = await db.create_agent_thread("My Thread")
     assert isinstance(tid, int)
@@ -1140,7 +1140,7 @@ async def test_agent_thread_crud(db):
     assert await db.get_agent_thread(tid) is None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_agent_messages_cascade_delete(db):
     tid = await db.create_agent_thread("cascade test")
     await db.save_agent_message(tid, "user", "hello")
@@ -1158,7 +1158,7 @@ async def test_agent_messages_cascade_delete(db):
 # ── build_prompt tests ────────────────────────────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_build_prompt_empty_history(db):
     mgr = AgentManager(db)
     prompt, stats = mgr._build_prompt([], "hello")
@@ -1169,7 +1169,7 @@ async def test_build_prompt_empty_history(db):
     assert stats["prompt_chars"] == len(prompt)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_build_prompt_multi_turn(db):
     mgr = AgentManager(db)
     history = [
@@ -1240,7 +1240,7 @@ def test_build_prompt_edge(db, name, text):
 
 
 @pytest.mark.parametrize("name,text", EDGE_CASES, ids=[c[0] for c in EDGE_CASES])
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_chat_stream_edge(db, name, text):
     """chat_stream with mocked query correctly handles special characters."""
     thread_id = await db.create_agent_thread(f"edge-{name}")
@@ -1273,7 +1273,7 @@ async def test_chat_stream_edge(db, name, text):
         assert isinstance(payload, dict)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_chat_stream_edge_history_mix(db):
     """Multiple edge-case messages in a single conversation history."""
     thread_id = await db.create_agent_thread("multi-edge")
@@ -1464,7 +1464,7 @@ def test_deepagents_backend_configured_flag(db, monkeypatch):
 # ── Runtime status extended tests ──────────────────────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_runtime_status_dev_mode_override_respects_backend_override(db, monkeypatch):
     """Runtime status respects dev mode backend override even when other backend is available."""
     monkeypatch.setenv("ANTHROPIC_API_KEY", "claude-key")
@@ -1480,7 +1480,7 @@ async def test_runtime_status_dev_mode_override_respects_backend_override(db, mo
     assert status.using_override is True
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_runtime_status_reports_error_when_override_backend_unavailable(db, monkeypatch):
     """Runtime status reports error when overridden backend is unavailable."""
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
@@ -1499,7 +1499,7 @@ async def test_runtime_status_reports_error_when_override_backend_unavailable(db
     assert "claude-agent-sdk" in status.error
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_runtime_status_fallback_info_includes_provider_details(db, monkeypatch):
     """Runtime status includes fallback provider/model info."""
     monkeypatch.setenv("ANTHROPIC_API_KEY", "claude-key")
@@ -1516,7 +1516,7 @@ async def test_runtime_status_fallback_info_includes_provider_details(db, monkey
 # ── DeepagentsBackend streaming tests ──────────────────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_deepagents_backend_chat_stream_handles_exception(db, monkeypatch):
     """DeepagentsBackend.chat_stream handles and propagates exceptions."""
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
@@ -1728,7 +1728,7 @@ def test_build_agent_tools_import_error_shows_details(db, monkeypatch):
 # ── Refresh re-init tests ─────────────────────────────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_refresh_reinitializes_on_preflight_true(db, monkeypatch):
     """refresh_settings_cache(preflight=True) re-inits even when preflight_available is not None."""
     monkeypatch.setenv("AGENT_FALLBACK_MODEL", "openai:gpt-4.1-mini")
@@ -1746,7 +1746,7 @@ async def test_refresh_reinitializes_on_preflight_true(db, monkeypatch):
         mock_init.assert_called_once()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_runtime_status_selected_backend_deepagents_override(db, monkeypatch):
     """When override=deepagents, selected_backend is deepagents even if claude_available=True."""
     monkeypatch.setenv("ANTHROPIC_API_KEY", "claude-key")
@@ -1781,7 +1781,7 @@ def test_agent_config_timeout_defaults():
     assert config.agent.total_timeout == 300
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_await_with_countdown_normal():
     """_await_with_countdown returns result when coro completes within timeout."""
     from src.agent.manager import _await_with_countdown
@@ -1795,7 +1795,7 @@ async def test_await_with_countdown_normal():
     assert result == 42
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_await_with_countdown_timeout_fires():
     """_await_with_countdown raises TimeoutError when coro exceeds timeout."""
     from src.agent.manager import _await_with_countdown
@@ -1809,7 +1809,7 @@ async def test_await_with_countdown_timeout_fires():
         await _await_with_countdown(slow_coro(), timeout=0.2, queue=queue, label="test", countdown_interval=1)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_await_with_countdown_emits_status():
     """_await_with_countdown pushes countdown status events to queue."""
     from src.agent.manager import _await_with_countdown
@@ -1832,7 +1832,7 @@ async def test_await_with_countdown_emits_status():
     assert len(countdown_items) >= 1, f"ожидали хотя бы один countdown event, получили: {items}"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_first_event_timeout_fires(db):
     """When query() yields no events, first_event_timeout triggers with error."""
     thread_id = await db.create_agent_thread("timeout thread")
@@ -1863,7 +1863,7 @@ async def test_first_event_timeout_fires(db):
     assert "90" not in errors[0]["error"], "должен использовать конфиг first_event_timeout=1, не дефолт 90"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_idle_timeout_fires(db):
     """When query() stops yielding mid-stream, idle_timeout triggers."""
     thread_id = await db.create_agent_thread("idle-timeout thread")
@@ -1899,7 +1899,7 @@ async def test_idle_timeout_fires(db):
     assert "замолчал" in errors[0]["error"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_permission_timeout_from_config(db):
     """permission_timeout from AgentConfig is passed to AgentRequestContext."""
     from src.agent.permission_gate import AgentRequestContext
@@ -1917,7 +1917,7 @@ async def test_permission_timeout_from_config(db):
     assert ctx.permission_timeout == 77
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_stream_close_timeout_from_config(db, monkeypatch):
     """stream_close_timeout from config is used for CLAUDE_CODE_STREAM_CLOSE_TIMEOUT env var."""
     monkeypatch.delenv("CLAUDE_CODE_STREAM_CLOSE_TIMEOUT", raising=False)

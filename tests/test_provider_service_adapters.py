@@ -96,7 +96,7 @@ def test_http_adapter_registration_exception(clean_env):
 # === get_provider_status_list exception ===
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_provider_status_list_db_exception():
     """Returns empty list when DB load fails."""
     svc = AgentProviderService()
@@ -117,7 +117,7 @@ async def test_get_provider_status_list_db_exception():
 # === get_provider_callable: OpenAI not registered but GPT model requested ===
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_provider_gpt_fallback_without_openai():
     """When OpenAI not registered but gpt model requested, falls back to default."""
     svc = AgentProviderService()
@@ -129,7 +129,7 @@ async def test_get_provider_gpt_fallback_without_openai():
 # === _make_openai_compat_provider: non-200 status ===
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_openai_compat_provider_non_200():
     """Provider raises RuntimeError on non-200 status."""
     svc = AgentProviderService()
@@ -158,7 +158,7 @@ async def test_openai_compat_provider_non_200():
 # === _make_openai_compat_provider: malformed response ===
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_openai_compat_provider_malformed_response():
     """Provider returns stringified response when choices not found."""
     svc = AgentProviderService()
@@ -188,7 +188,7 @@ async def test_openai_compat_provider_malformed_response():
 # === _make_openai_provider: malformed response fallback ===
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_openai_provider_malformed_response_fallback(clean_env):
     """OpenAI provider returns stringified response when choices not found."""
     os.environ["OPENAI_API_KEY"] = "test-key"
@@ -218,7 +218,7 @@ async def test_openai_provider_malformed_response_fallback(clean_env):
 # === get_provider_status_list: with configs ===
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_provider_status_list_with_configs():
     """Returns status list for configured providers."""
     svc = AgentProviderService()

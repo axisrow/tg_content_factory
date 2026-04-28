@@ -10,13 +10,13 @@ from tests.agent_tools_helpers import _get_tool_handlers, _text
 
 
 class TestImagesToolGenerateImage:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_missing_prompt(self, mock_db):
         handlers = _get_tool_handlers(mock_db)
         result = await handlers["generate_image"]({"prompt": ""})
         assert "prompt обязателен" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_not_available(self, mock_db):
         with patch("src.services.image_generation_service.ImageGenerationService") as mock_svc:
             mock_svc.return_value.is_available = AsyncMock(return_value=False)
@@ -24,7 +24,7 @@ class TestImagesToolGenerateImage:
             result = await handlers["generate_image"]({"prompt": "a cat"})
         assert "не настроена" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_local_path_result(self, mock_db):
         with patch("src.services.image_generation_service.ImageGenerationService") as mock_svc:
             mock_svc.return_value.is_available = AsyncMock(return_value=True)
@@ -34,7 +34,7 @@ class TestImagesToolGenerateImage:
         text = _text(result)
         assert "/local/path/image.png" in text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_no_result(self, mock_db):
         with patch("src.services.image_generation_service.ImageGenerationService") as mock_svc:
             mock_svc.return_value.is_available = AsyncMock(return_value=True)
@@ -43,7 +43,7 @@ class TestImagesToolGenerateImage:
             result = await handlers["generate_image"]({"prompt": "something"})
         assert "не вернула результат" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_error_returns_text(self, mock_db):
         with patch("src.services.image_generation_service.ImageGenerationService") as mock_svc:
             mock_svc.return_value.is_available = AsyncMock(side_effect=Exception("provider down"))
@@ -53,13 +53,13 @@ class TestImagesToolGenerateImage:
 
 
 class TestImagesToolListImageModels:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_missing_provider(self, mock_db):
         handlers = _get_tool_handlers(mock_db)
         result = await handlers["list_image_models"]({"provider": ""})
         assert "provider обязателен" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_empty_models(self, mock_db):
         with patch("src.services.image_generation_service.ImageGenerationService") as mock_svc:
             mock_svc.return_value.search_models = AsyncMock(return_value=[])
@@ -67,7 +67,7 @@ class TestImagesToolListImageModels:
             result = await handlers["list_image_models"]({"provider": "together"})
         assert "не найдены" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_with_models(self, mock_db):
         models = [
             {"id": "flux-schnell", "run_count": 10000, "rank": 1},
@@ -84,7 +84,7 @@ class TestImagesToolListImageModels:
 
 
 class TestImagesToolListImageProviders:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_no_providers(self, mock_db):
         with patch("src.services.image_generation_service.ImageGenerationService") as mock_svc:
             mock_svc.return_value.adapter_names = []
@@ -92,7 +92,7 @@ class TestImagesToolListImageProviders:
             result = await handlers["list_image_providers"]({})
         assert "не настроены" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_with_providers(self, mock_db):
         with patch("src.services.image_generation_service.ImageGenerationService") as mock_svc:
             mock_svc.return_value.adapter_names = ["together", "hf", "replicate"]
@@ -104,7 +104,7 @@ class TestImagesToolListImageProviders:
         assert "replicate" in text
         assert "Провайдеры изображений (3)" in text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_error(self, mock_db):
         with patch("src.services.image_generation_service.ImageGenerationService") as mock_svc:
             mock_svc.side_effect = Exception("provider fail")
@@ -114,7 +114,7 @@ class TestImagesToolListImageProviders:
 
 
 class TestImagesToolListGeneratedImages:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_empty(self, mock_db):
         mock_db.repos = MagicMock()
         mock_db.repos.generated_images.list_recent = AsyncMock(return_value=[])
@@ -122,7 +122,7 @@ class TestImagesToolListGeneratedImages:
         result = await handlers["list_generated_images"]({})
         assert "Нет сгенерированных" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_with_images(self, mock_db):
         img = SimpleNamespace(
             id=1,
@@ -140,7 +140,7 @@ class TestImagesToolListGeneratedImages:
         assert "together:flux" in text
         assert "/data/img/abc.png" in text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_long_prompt_truncated(self, mock_db):
         long_prompt = "x" * 100
         img = SimpleNamespace(
@@ -160,7 +160,7 @@ class TestImagesToolListGeneratedImages:
         assert "x" * 60 in text
         assert "x" * 61 not in text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_error(self, mock_db):
         mock_db.repos = MagicMock()
         mock_db.repos.generated_images.list_recent = AsyncMock(side_effect=Exception("db err"))

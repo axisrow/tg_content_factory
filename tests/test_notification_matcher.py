@@ -50,7 +50,7 @@ def make_query(
 # === match_and_notify tests ===
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_match_and_notify_empty_messages():
     """Empty message list returns {}."""
     notifier = AsyncMock()
@@ -62,7 +62,7 @@ async def test_match_and_notify_empty_messages():
     notifier.notify.assert_not_called()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_match_and_notify_empty_queries():
     """Empty query list returns {}."""
     notifier = AsyncMock()
@@ -74,7 +74,7 @@ async def test_match_and_notify_empty_queries():
     notifier.notify.assert_not_called()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_match_and_notify_plain_text_match():
     """Plain text query matches message text."""
     notifier = AsyncMock()
@@ -89,7 +89,7 @@ async def test_match_and_notify_plain_text_match():
     notifier.notify.assert_awaited_once()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_match_and_notify_case_insensitive():
     """Matching is case-insensitive."""
     notifier = AsyncMock()
@@ -103,7 +103,7 @@ async def test_match_and_notify_case_insensitive():
     assert result == {1: 1}
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_match_and_notify_regex_query():
     """Regex query matches via re.search."""
     notifier = AsyncMock()
@@ -117,7 +117,7 @@ async def test_match_and_notify_regex_query():
     assert result == {1: 1}
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_match_and_notify_regex_error_falls_through():
     """Invalid regex in query does not crash."""
     notifier = AsyncMock()
@@ -132,7 +132,7 @@ async def test_match_and_notify_regex_error_falls_through():
     assert result == {}  # No match due to regex error
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_match_and_notify_fts_query_and():
     """FTS5 AND logic - both terms required."""
     notifier = AsyncMock()
@@ -151,7 +151,7 @@ async def test_match_and_notify_fts_query_and():
     assert result == {1: 1}  # Only one message matched
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_match_and_notify_fts_query_or():
     """FTS5 OR logic - any term matches."""
     notifier = AsyncMock()
@@ -171,7 +171,7 @@ async def test_match_and_notify_fts_query_or():
     assert result.get(1, 0) == 2
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_match_and_notify_excludes_by_pattern():
     """Messages matching exclude patterns are skipped."""
     notifier = AsyncMock()
@@ -188,7 +188,7 @@ async def test_match_and_notify_excludes_by_pattern():
     assert result == {1: 1}  # Only non-spam message
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_match_and_notify_max_length_filter():
     """Messages at/above max_length are skipped."""
     notifier = AsyncMock()
@@ -209,7 +209,7 @@ async def test_match_and_notify_max_length_filter():
     assert result == {1: 1}
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_match_and_notify_message_no_text():
     """Messages with None text are skipped."""
     notifier = AsyncMock()
@@ -223,7 +223,7 @@ async def test_match_and_notify_message_no_text():
     assert result == {1: 1}
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_match_and_notify_counts_multiple_matches():
     """One query matching multiple messages counts correctly."""
     notifier = AsyncMock()
@@ -244,7 +244,7 @@ async def test_match_and_notify_counts_multiple_matches():
     assert "3 times" in call_args
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_match_and_notify_multiple_queries():
     """Multiple queries each produce separate counts."""
     notifier = AsyncMock()

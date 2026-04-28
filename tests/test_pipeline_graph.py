@@ -135,7 +135,7 @@ def test_node_context_get_last():
 # ── Handler tests ─────────────────────────────────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_source_handler():
     handler = SourceHandler()
     ctx = NodeContext()
@@ -143,7 +143,7 @@ async def test_source_handler():
     assert ctx.get_global("source_channel_ids") == [1, 2, 3]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_filter_handler_keywords():
     from unittest.mock import MagicMock
 
@@ -160,7 +160,7 @@ async def test_filter_handler_keywords():
     assert filtered[0] is m1
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_filter_handler_anonymous():
     from unittest.mock import MagicMock
 
@@ -181,7 +181,7 @@ async def test_filter_handler_anonymous():
     assert filtered[0] is m1
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_condition_handler_not_empty():
     handler = ConditionHandler()
     ctx = NodeContext()
@@ -190,7 +190,7 @@ async def test_condition_handler_not_empty():
     assert ctx.get_global("condition_result") is True
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_condition_handler_empty():
     handler = ConditionHandler()
     ctx = NodeContext()
@@ -199,7 +199,7 @@ async def test_condition_handler_empty():
     assert ctx.get_global("condition_result") is False
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_delay_handler_zero():
     handler = DelayHandler()
     ctx = NodeContext()
@@ -207,7 +207,7 @@ async def test_delay_handler_zero():
     await handler.execute({"min_seconds": 0, "max_seconds": 0}, ctx, {})
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_llm_generate_handler():
     handler = LlmGenerateHandler()
     ctx = NodeContext()
@@ -228,7 +228,7 @@ async def test_llm_generate_handler():
 # ── PipelineExecutor integration ──────────────────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_executor_linear_pipeline():
     graph = PipelineGraph(
         nodes=[
@@ -258,7 +258,7 @@ async def test_executor_linear_pipeline():
     assert result["generated_text"] == "Hello from LLM"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_executor_condition_stops_on_false():
     graph = PipelineGraph(
         nodes=[
@@ -281,7 +281,7 @@ async def test_executor_condition_stops_on_false():
     assert result["context"].get_global("publish_targets") is None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_react_handler_tracks_successful_reactions():
     class FakeSession:
         def __init__(self):
@@ -316,7 +316,7 @@ async def test_react_handler_tracks_successful_reactions():
     assert ctx.get_global("action_counts") == {"react": 1}
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_executor_returns_processed_message_result_for_action_only_pipeline(monkeypatch):
     class FakeHandler:
         async def execute(self, node_config, context, services):

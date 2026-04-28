@@ -9,7 +9,7 @@ import pytest
 from src.database.migrations import _migrate_vec_to_portable
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 @pytest.mark.aiosqlite_serial
 async def test_migrate_vec_to_portable_converts_json_to_blob(tmp_path):
     db_path = str(tmp_path / "test.db")
@@ -43,7 +43,7 @@ async def test_migrate_vec_to_portable_converts_json_to_blob(tmp_path):
         await conn.close()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 @pytest.mark.aiosqlite_serial
 async def test_migrate_vec_skips_when_no_vec_table(tmp_path):
     db_path = str(tmp_path / "test.db")
@@ -65,7 +65,7 @@ async def test_migrate_vec_skips_when_no_vec_table(tmp_path):
         await conn.close()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 @pytest.mark.aiosqlite_serial
 async def test_migrate_vec_is_idempotent_with_existing_data(tmp_path):
     """Migration adds missing rows from vec_messages even if message_embeddings already has data."""
@@ -101,7 +101,7 @@ async def test_migrate_vec_is_idempotent_with_existing_data(tmp_path):
         await conn.close()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 @pytest.mark.aiosqlite_serial
 async def test_migrate_vec_skips_empty_vec_table(tmp_path):
     db_path = str(tmp_path / "test.db")

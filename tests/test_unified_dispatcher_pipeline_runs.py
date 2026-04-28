@@ -69,7 +69,7 @@ def _task(task_type, task_id=1, payload=None, status=CollectionTaskStatus.RUNNIN
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_translate_batch_full_flow_with_chaining():
     """Translate batch processes messages and chains follow-up task when more remain."""
     mock_db = MagicMock()
@@ -120,7 +120,7 @@ async def test_translate_batch_full_flow_with_chaining():
     d._tasks.create_generic_task.assert_called_once()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_translate_batch_no_remaining_no_chain():
     """Translate batch does not chain when no more messages remain."""
     mock_db = MagicMock()
@@ -155,7 +155,7 @@ async def test_translate_batch_no_remaining_no_chain():
     d._tasks.create_generic_task.assert_not_called()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_translate_batch_no_messages():
     """Translate batch completes immediately when no messages to translate."""
     mock_db = MagicMock()
@@ -182,7 +182,7 @@ async def test_translate_batch_no_messages():
     assert "No more messages" in call[1].get("note", "")
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_translate_batch_only_stub_provider():
     """Translate batch fails when only the stub default provider is available."""
     mock_db = MagicMock()
@@ -206,7 +206,7 @@ async def test_translate_batch_only_stub_provider():
     assert "stub" in call[1].get("error", "").lower()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_translate_batch_exception():
     """Translate batch handles exceptions during processing."""
     mock_db = MagicMock()
@@ -229,7 +229,7 @@ async def test_translate_batch_exception():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_content_generate_auto_publish_failure():
     """Auto-publish failure marks task as FAILED with descriptive error."""
     d = _make_dispatcher()
@@ -278,7 +278,7 @@ async def test_content_generate_auto_publish_failure():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_content_publish_with_approved_runs():
     """Publish approved runs successfully."""
     d = _make_dispatcher()
@@ -349,7 +349,7 @@ async def test_content_publish_with_approved_runs():
     assert call[1].get("messages_collected") == 1
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_content_publish_run_without_pipeline_id():
     """Runs with pipeline_id=None are skipped during publish."""
     d = _make_dispatcher()
@@ -404,7 +404,7 @@ async def test_content_publish_run_without_pipeline_id():
     assert call[1].get("messages_collected") == 0
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_content_publish_pipeline_not_found():
     """Runs whose pipeline is not found are skipped."""
     d = _make_dispatcher()
@@ -462,7 +462,7 @@ async def test_content_publish_pipeline_not_found():
     assert call[1].get("messages_collected") == 0
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_content_publish_exception():
     """Exception during publish marks task as FAILED."""
     d = _make_dispatcher()
@@ -491,7 +491,7 @@ async def test_content_publish_exception():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_pipeline_run_outer_exception_during_setup():
     """Exception during service setup is caught by outer try/except."""
     d = _make_dispatcher()
@@ -522,7 +522,7 @@ async def test_pipeline_run_outer_exception_during_setup():
     assert call[0][1] == CollectionTaskStatus.FAILED
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_pipeline_run_generation_fails_with_run_id():
     """Generation failure with run_id set marks both run and task as failed."""
     d = _make_dispatcher()
@@ -561,7 +561,7 @@ async def test_pipeline_run_generation_fails_with_run_id():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_run_loop_marks_running_task_failed_on_exception():
     """When dispatch raises unexpectedly, running task should be marked failed."""
     d = _make_dispatcher(poll_interval_sec=0.01)
@@ -621,7 +621,7 @@ async def test_run_loop_marks_running_task_failed_on_exception():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_stats_all_stop_event_interrupts_batch():
     """When stop_event is set during batch processing, handler exits early."""
     d = _make_dispatcher(poll_interval_sec=0.01)
@@ -640,7 +640,7 @@ async def test_stats_all_stop_event_interrupts_batch():
     d._collector.collect_channel_stats.assert_not_awaited()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_stats_all_successful_completion():
     """Full batch processes all channels and completes."""
     d = _make_dispatcher(poll_interval_sec=0.01)
@@ -663,7 +663,7 @@ async def test_stats_all_successful_completion():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_sq_stats_exception_during_stat_recording():
     """Exception during stat recording marks task as failed."""
     d = _make_dispatcher()
@@ -688,7 +688,7 @@ async def test_sq_stats_exception_during_stat_recording():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_content_generate_moderated_mode_no_publish():
     """Content generate with moderated mode does not auto-publish."""
     d = _make_dispatcher()
@@ -739,7 +739,7 @@ def test_handled_types_includes_translate_batch():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_handler_map_cached():
     """_handler_map returns the same dict on subsequent calls."""
     d = _make_dispatcher()
@@ -753,7 +753,7 @@ async def test_handler_map_cached():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_start_recovered_tasks_logged():
     """start() recovers interrupted tasks and logs the count."""
     d = _make_dispatcher()
@@ -771,7 +771,7 @@ async def test_start_recovered_tasks_logged():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_content_generate_pipeline_not_found():
     """When pipeline not found, task is marked COMPLETED with note."""
     d = _make_dispatcher()
@@ -799,7 +799,7 @@ async def test_content_generate_pipeline_not_found():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_pipeline_run_pipeline_not_found_with_deps():
     """Pipeline not found returns COMPLETED with note even with all deps set."""
     d = _make_dispatcher()

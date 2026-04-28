@@ -19,7 +19,7 @@ def mock_config():
     return MagicMock()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_load_db_providers_no_db_or_config():
     """Returns 0 when db or config is None."""
     svc = AgentProviderService(db=None, config=None)
@@ -32,7 +32,7 @@ async def test_load_db_providers_no_db_or_config():
     assert await svc3.load_db_providers() == 0
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_load_db_providers_registers_openai(mock_db, mock_config):
     """OpenAI-style provider from DB is registered as adapter."""
     mock_cfg = MagicMock()
@@ -56,7 +56,7 @@ async def test_load_db_providers_registers_openai(mock_db, mock_config):
     assert "openai" in svc._registry
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_load_db_providers_skips_empty_secrets(mock_db, mock_config):
     """Provider with empty secrets (all required) is skipped."""
     mock_cfg = MagicMock()
@@ -79,7 +79,7 @@ async def test_load_db_providers_skips_empty_secrets(mock_db, mock_config):
     assert not svc.has_providers()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_load_db_providers_skips_disabled(mock_db, mock_config):
     """Disabled provider is skipped."""
     mock_cfg = MagicMock()
@@ -101,7 +101,7 @@ async def test_load_db_providers_skips_disabled(mock_db, mock_config):
     assert added == 0
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_load_db_providers_skips_duplicate(mock_db, mock_config):
     """Provider already in registry (from env) is not duplicated."""
     mock_cfg = MagicMock()
@@ -125,7 +125,7 @@ async def test_load_db_providers_skips_duplicate(mock_db, mock_config):
     assert added == 0
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_reload_db_providers_clears_and_reloads(mock_db, mock_config):
     """reload clears db providers and reloads."""
     mock_cfg = MagicMock()
@@ -153,7 +153,7 @@ async def test_reload_db_providers_clears_and_reloads(mock_db, mock_config):
     assert "groq" not in svc._registry
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_build_provider_service_loads_db_providers(mock_db, mock_config):
     """Async helper should eagerly load DB-backed providers when config is available."""
     with patch("src.services.provider_service.AgentProviderService.load_db_providers", new=AsyncMock()) as mock_load:
@@ -163,7 +163,7 @@ async def test_build_provider_service_loads_db_providers(mock_db, mock_config):
     mock_load.assert_awaited_once()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_load_db_providers_cohere_adapter(mock_db, mock_config):
     """Cohere provider gets make_cohere_adapter."""
     mock_cfg = MagicMock()
@@ -186,7 +186,7 @@ async def test_load_db_providers_cohere_adapter(mock_db, mock_config):
     assert "cohere" in svc._registry
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_load_db_providers_ollama_adapter_with_key(mock_db, mock_config):
     """Ollama provider with api_key is registered."""
     mock_cfg = MagicMock()
@@ -209,7 +209,7 @@ async def test_load_db_providers_ollama_adapter_with_key(mock_db, mock_config):
     assert "ollama" in svc._registry
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_load_db_providers_ollama_without_api_key(mock_db, mock_config):
     """Ollama with no api_key should be valid since api_key is optional."""
     mock_cfg = MagicMock()
@@ -233,7 +233,7 @@ async def test_load_db_providers_ollama_without_api_key(mock_db, mock_config):
     assert "ollama" in svc._registry
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_load_db_providers_handles_exception(mock_db, mock_config):
     """Exception during load_provider_configs returns 0 gracefully."""
     with patch(
@@ -299,7 +299,7 @@ def test_has_valid_secrets_requires_secrets_for_required_providers():
     assert svc._has_valid_secrets(cfg) is False
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_provider_status_list_disabled(mock_db, mock_config):
     """get_provider_status_list returns disabled status."""
     mock_cfg = MagicMock()
@@ -324,7 +324,7 @@ async def test_get_provider_status_list_disabled(mock_db, mock_config):
     assert statuses[0]["status"] == "disabled"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_provider_status_list_invalid_secrets(mock_db, mock_config):
     """get_provider_status_list returns invalid_secrets with reason."""
     mock_cfg = MagicMock()
@@ -349,7 +349,7 @@ async def test_get_provider_status_list_invalid_secrets(mock_db, mock_config):
     assert "SESSION_ENCRYPTION_KEY" in statuses[0]["reason"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_provider_status_list_no_adapter(mock_db, mock_config):
     """get_provider_status_list returns no_adapter for unsupported providers."""
     mock_cfg = MagicMock()
@@ -374,7 +374,7 @@ async def test_get_provider_status_list_no_adapter(mock_db, mock_config):
     assert "google_genai" in statuses[0]["reason"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_provider_status_list_active(mock_db, mock_config):
     """get_provider_status_list returns active for registered providers."""
     mock_cfg = MagicMock()
@@ -399,7 +399,7 @@ async def test_get_provider_status_list_active(mock_db, mock_config):
     assert statuses[0]["status"] == "active"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_provider_status_list_no_db():
     """Returns empty list when no DB configured."""
     svc = AgentProviderService(db=None, config=None)

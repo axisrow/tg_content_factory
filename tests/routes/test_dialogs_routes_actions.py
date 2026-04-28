@@ -9,13 +9,13 @@ import pytest
 # === participants ===
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_participants_missing_fields(route_client):
     resp = await route_client.get("/dialogs/participants?phone=")
     assert resp.status_code == 400
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_participants_queues(route_client):
     resp = await route_client.get(
         "/dialogs/participants?phone=%2B1234567890&chat_id=-100123",
@@ -25,7 +25,7 @@ async def test_participants_queues(route_client):
     assert resp.json()["command_id"] is not None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_participants_with_search_queues(route_client):
     resp = await route_client.get(
         "/dialogs/participants?phone=%2B1234567890&chat_id=-100123&search=test",
@@ -35,7 +35,7 @@ async def test_participants_with_search_queues(route_client):
     assert resp.json()["command_id"] is not None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_participants_cache_hit(route_client, monkeypatch):
     snapshot = SimpleNamespace(payload={"participants": [{"id": 1}]})
     mock_db = MagicMock()
@@ -49,7 +49,7 @@ async def test_participants_cache_hit(route_client, monkeypatch):
 # === edit-admin ===
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_edit_admin_missing_fields(route_client):
     resp = await route_client.post(
         "/dialogs/edit-admin",
@@ -59,7 +59,7 @@ async def test_edit_admin_missing_fields(route_client):
     assert resp.status_code == 303
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_edit_admin_success(route_client):
     resp = await route_client.post(
         "/dialogs/edit-admin",
@@ -78,7 +78,7 @@ async def test_edit_admin_success(route_client):
 # === edit-permissions ===
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_edit_permissions_no_flags(route_client):
     resp = await route_client.post(
         "/dialogs/edit-permissions",
@@ -93,7 +93,7 @@ async def test_edit_permissions_no_flags(route_client):
     assert "no_permission_flags" in resp.headers.get("location", "")
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_edit_permissions_success(route_client):
     resp = await route_client.post(
         "/dialogs/edit-permissions",
@@ -110,7 +110,7 @@ async def test_edit_permissions_success(route_client):
     assert resp.status_code == 303
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_edit_permissions_missing_fields(route_client):
     resp = await route_client.post(
         "/dialogs/edit-permissions",
@@ -124,7 +124,7 @@ async def test_edit_permissions_missing_fields(route_client):
 # === kick ===
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_kick_missing_fields(route_client):
     resp = await route_client.post(
         "/dialogs/kick",
@@ -134,7 +134,7 @@ async def test_kick_missing_fields(route_client):
     assert resp.status_code == 303
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_kick_success(route_client):
     resp = await route_client.post(
         "/dialogs/kick",
@@ -151,13 +151,13 @@ async def test_kick_success(route_client):
 # === broadcast-stats ===
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_broadcast_stats_missing_fields(route_client):
     resp = await route_client.get("/dialogs/broadcast-stats?phone=")
     assert resp.status_code == 400
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_broadcast_stats_queues(route_client):
     resp = await route_client.get(
         "/dialogs/broadcast-stats?phone=%2B1234567890&chat_id=-100123",
@@ -169,7 +169,7 @@ async def test_broadcast_stats_queues(route_client):
 # === archive ===
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_archive_missing_fields(route_client):
     resp = await route_client.post(
         "/dialogs/archive",
@@ -179,7 +179,7 @@ async def test_archive_missing_fields(route_client):
     assert resp.status_code == 303
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_archive_success(route_client):
     resp = await route_client.post(
         "/dialogs/archive",
@@ -195,7 +195,7 @@ async def test_archive_success(route_client):
 # === unarchive ===
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_unarchive_missing_fields(route_client):
     resp = await route_client.post(
         "/dialogs/unarchive",
@@ -205,7 +205,7 @@ async def test_unarchive_missing_fields(route_client):
     assert resp.status_code == 303
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_unarchive_success(route_client):
     resp = await route_client.post(
         "/dialogs/unarchive",
@@ -221,7 +221,7 @@ async def test_unarchive_success(route_client):
 # === mark-read ===
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_mark_read_missing_fields(route_client):
     resp = await route_client.post(
         "/dialogs/mark-read",
@@ -231,7 +231,7 @@ async def test_mark_read_missing_fields(route_client):
     assert resp.status_code == 303
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_mark_read_success(route_client):
     resp = await route_client.post(
         "/dialogs/mark-read",
@@ -245,7 +245,7 @@ async def test_mark_read_success(route_client):
     assert resp.status_code == 303
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_mark_read_no_max_id(route_client):
     resp = await route_client.post(
         "/dialogs/mark-read",

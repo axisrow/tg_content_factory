@@ -49,7 +49,7 @@ def test_is_session_approved_missing_session():
 # ── resolve() ───────────────────────────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_resolve_sets_future_result():
     gate = PermissionGate()
     request_id = "test-req-1"
@@ -61,13 +61,13 @@ async def test_resolve_sets_future_result():
     assert future.result() == "once"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_resolve_unknown_request_returns_false():
     gate = PermissionGate()
     assert gate.resolve("nonexistent-id", "once") is False
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_resolve_already_done_future_still_returns_true():
     gate = PermissionGate()
     request_id = "test-req-2"
@@ -97,7 +97,7 @@ def test_clear_session_nonexistent():
 # ── check() with no context ────────────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_check_returns_none_without_context():
     """When no request context is set, check returns None (fall through)."""
     gate = PermissionGate()
@@ -108,7 +108,7 @@ async def test_check_returns_none_without_context():
 # ── check() with session already approved ──────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_check_returns_none_when_session_approved():
     gate = PermissionGate()
     gate._session_overrides["session-1"] = {"my_tool"}
@@ -131,7 +131,7 @@ async def test_check_returns_none_when_session_approved():
 # ── check() — user grants "once" ───────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_check_user_grants_once():
     gate = PermissionGate()
     ctx = AgentRequestContext(
@@ -167,7 +167,7 @@ async def test_check_user_grants_once():
 # ── check() — user grants "session" ────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_check_user_grants_session():
     gate = PermissionGate()
     ctx = AgentRequestContext(
@@ -198,7 +198,7 @@ async def test_check_user_grants_session():
 # ── check() — user denies ──────────────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_check_user_denies():
     gate = PermissionGate()
     ctx = AgentRequestContext(
@@ -229,7 +229,7 @@ async def test_check_user_denies():
 # ── check() — timeout ──────────────────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_check_timeout():
     gate = PermissionGate()
     ctx = AgentRequestContext(
@@ -251,7 +251,7 @@ async def test_check_timeout():
 # ── check() — cancellation ─────────────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_check_cancelled_error_propagates():
     gate = PermissionGate()
     ctx = AgentRequestContext(

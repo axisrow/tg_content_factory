@@ -16,7 +16,7 @@ from src.services.production_limits_service import (
 # === RateLimiter tests ===
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_rate_limiter_allows_under_limits():
     """Requests under all limits succeed."""
     limiter = RateLimiter(RateLimitConfig(requests_per_minute=10, tokens_per_minute=1000))
@@ -27,7 +27,7 @@ async def test_rate_limiter_allows_under_limits():
         assert wait_time == 0.0
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_rate_limiter_blocks_over_rpm():
     """Requests over requests_per_minute limit are blocked."""
     limiter = RateLimiter(RateLimitConfig(requests_per_minute=3, tokens_per_minute=1000))
@@ -40,7 +40,7 @@ async def test_rate_limiter_blocks_over_rpm():
     assert wait_time > 0
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_rate_limiter_blocks_over_tpm():
     """Requests over tokens_per_minute limit are blocked."""
     limiter = RateLimiter(RateLimitConfig(requests_per_minute=10, tokens_per_minute=500))
@@ -53,7 +53,7 @@ async def test_rate_limiter_blocks_over_tpm():
     assert wait_time > 0
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_rate_limiter_blocks_over_tpd():
     """Requests over tokens_per_day limit are blocked."""
     limiter = RateLimiter(
@@ -68,7 +68,7 @@ async def test_rate_limiter_blocks_over_tpd():
     assert wait_time > 0
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_rate_limiter_get_usage():
     """get_usage returns correct structure with accumulated counts."""
     limiter = RateLimiter(
@@ -90,7 +90,7 @@ async def test_rate_limiter_get_usage():
     assert usage["day"]["limit_tokens"] == 10000
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_rate_limiter_window_reset():
     """Minute and day windows reset after their respective durations."""
     fake_time = 1000.0
@@ -120,7 +120,7 @@ async def test_rate_limiter_window_reset():
 # === CostTracker tests ===
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_cost_tracker_estimate_text_cost():
     """Token cost estimation: (tokens / 1000) * cost_per_1k_tokens."""
     tracker = CostTracker(CostConfig(cost_per_1k_tokens=2.0))
@@ -129,7 +129,7 @@ async def test_cost_tracker_estimate_text_cost():
     assert await tracker.estimate_cost(tokens=1500, is_image=False) == 3.0
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_cost_tracker_estimate_image_cost():
     """Image cost estimation returns fixed cost_per_image regardless of tokens."""
     tracker = CostTracker(CostConfig(cost_per_image=0.05))
@@ -138,7 +138,7 @@ async def test_cost_tracker_estimate_image_cost():
     assert await tracker.estimate_cost(tokens=1000, is_image=True) == 0.05
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_cost_tracker_cap_not_exceeded():
     """check_cost_cap allows when within budget and does not charge."""
     tracker = CostTracker(CostConfig(cost_per_1k_tokens=1.0, daily_cost_cap=10.0))
@@ -150,7 +150,7 @@ async def test_cost_tracker_cap_not_exceeded():
     assert tracker.get_daily_cost() == 0.0
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_cost_tracker_cap_exceeded():
     """check_cost_cap blocks when the request would exceed the daily cap."""
     tracker = CostTracker(CostConfig(cost_per_1k_tokens=1.0, daily_cost_cap=1.0))
@@ -163,7 +163,7 @@ async def test_cost_tracker_cap_exceeded():
     assert estimated > 0
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_cost_tracker_record_cost_accumulates():
     """record_cost adds to the running daily total."""
     tracker = CostTracker(CostConfig(cost_per_1k_tokens=2.0, daily_cost_cap=100.0))
@@ -177,7 +177,7 @@ async def test_cost_tracker_record_cost_accumulates():
     assert tracker.get_daily_cost() == 3.0
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_cost_tracker_remaining_budget():
     """remaining_budget returns cap minus accumulated cost, floored at 0."""
     tracker = CostTracker(CostConfig(cost_per_1k_tokens=1.0, daily_cost_cap=5.0))
@@ -189,7 +189,7 @@ async def test_cost_tracker_remaining_budget():
     assert tracker.get_remaining_budget() == 3.0
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_cost_tracker_day_reset():
     """Daily cost resets after 86400 seconds."""
     fake_time = 5000.0
@@ -209,7 +209,7 @@ async def test_cost_tracker_day_reset():
 # === ProductionLimitsService tests ===
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_production_limits_acquire_allowed():
     """Acquire succeeds when both rate and cost caps are within limits."""
     service = ProductionLimitsService(
@@ -224,7 +224,7 @@ async def test_production_limits_acquire_allowed():
     assert error is None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_production_limits_acquire_blocked_by_cost_cap():
     """Acquire fails with cost-cap message when daily budget is exhausted."""
     service = ProductionLimitsService(
@@ -239,7 +239,7 @@ async def test_production_limits_acquire_blocked_by_cost_cap():
     assert "Daily cost cap exceeded" in error
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_production_limits_get_stats():
     """get_stats aggregates rate-limiter usage and cost tracker state."""
     service = ProductionLimitsService(
@@ -261,7 +261,7 @@ async def test_production_limits_get_stats():
 # === RateLimiter wait_and_acquire tests ===
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_rate_limiter_wait_and_acquire_times_out():
     """wait_and_acquire returns False when max_wait is exceeded."""
     limiter = RateLimiter(RateLimitConfig(requests_per_minute=0))
@@ -270,7 +270,7 @@ async def test_rate_limiter_wait_and_acquire_times_out():
     assert result is False
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_rate_limiter_wait_and_acquire_succeeds_after_window():
     """wait_and_acquire returns True once a window opens."""
     limiter = RateLimiter(RateLimitConfig(requests_per_minute=1))
@@ -300,7 +300,7 @@ async def test_rate_limiter_wait_and_acquire_succeeds_after_window():
 # === CostTracker record_cost day reset ===
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_cost_tracker_record_cost_day_reset():
     """record_cost resets daily_cost when 86400s have elapsed."""
     fake_time = 5000.0
@@ -319,7 +319,7 @@ async def test_cost_tracker_record_cost_day_reset():
 # === ProductionLimitsService execute_with_retry ===
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_execute_with_retry_success():
     """execute_with_retry returns result on first successful call."""
     service = ProductionLimitsService(
@@ -331,7 +331,7 @@ async def test_execute_with_retry_success():
     assert result == "ok"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_execute_with_retry_retries_on_failure():
     """execute_with_retry retries and eventually succeeds."""
     service = ProductionLimitsService(
@@ -354,7 +354,7 @@ async def test_execute_with_retry_retries_on_failure():
     assert call_count == 3
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_execute_with_retry_raises_after_max_retries():
     """execute_with_retry raises when all retries are exhausted."""
     service = ProductionLimitsService(
@@ -373,7 +373,7 @@ async def test_execute_with_retry_raises_after_max_retries():
             )
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_execute_with_retry_rate_limit_raises():
     """execute_with_retry raises RuntimeError when rate limit blocks acquire."""
     service = ProductionLimitsService(

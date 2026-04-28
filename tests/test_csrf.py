@@ -204,7 +204,7 @@ def test_is_same_origin_url_alias():
 # === OriginCSRFMiddleware tests ===
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_csrf_safe_method_get():
     """GET requests pass through."""
     request = MagicMock()
@@ -222,7 +222,7 @@ async def test_csrf_safe_method_get():
     call_next.assert_called_once()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_csrf_safe_method_head():
     """HEAD requests pass through."""
     request = MagicMock()
@@ -239,7 +239,7 @@ async def test_csrf_safe_method_head():
     assert response.status_code == 200
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_csrf_exempt_path_login():
     """Login path is exempt from CSRF."""
     request = MagicMock()
@@ -256,7 +256,7 @@ async def test_csrf_exempt_path_login():
     assert response.status_code == 200
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_csrf_exempt_path_static():
     """Static paths are exempt from CSRF."""
     request = MagicMock()
@@ -273,7 +273,7 @@ async def test_csrf_exempt_path_static():
     assert response.status_code == 200
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_csrf_post_with_valid_origin():
     """POST with valid Origin passes."""
     request = make_mock_request(scheme="http", netloc="localhost:8000")
@@ -290,7 +290,7 @@ async def test_csrf_post_with_valid_origin():
     assert response.status_code == 200
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_csrf_post_with_invalid_origin():
     """POST with invalid Origin is rejected."""
     request = make_mock_request(scheme="http", netloc="localhost:8000")
@@ -308,7 +308,7 @@ async def test_csrf_post_with_invalid_origin():
     assert b"CSRF" in response.body
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_csrf_post_with_null_origin():
     """POST with 'null' Origin is rejected."""
     request = MagicMock()
@@ -325,7 +325,7 @@ async def test_csrf_post_with_null_origin():
     assert response.status_code == 403
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_csrf_post_with_valid_referer():
     """POST with valid Referer passes."""
     request = make_mock_request(scheme="http", netloc="localhost:8000")
@@ -342,7 +342,7 @@ async def test_csrf_post_with_valid_referer():
     assert response.status_code == 200
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_csrf_post_with_invalid_referer():
     """POST with invalid Referer is rejected."""
     request = make_mock_request(scheme="http", netloc="localhost:8000")
@@ -359,7 +359,7 @@ async def test_csrf_post_with_invalid_referer():
     assert response.status_code == 403
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_csrf_post_no_origin_no_referer_no_cookie():
     """POST without Origin/Referer but no session cookie passes."""
     request = MagicMock()
@@ -376,7 +376,7 @@ async def test_csrf_post_no_origin_no_referer_no_cookie():
     assert response.status_code == 200
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_csrf_post_no_origin_with_session_cookie():
     """POST without Origin/Referer but with session cookie is rejected."""
     from src.web.session import COOKIE_NAME

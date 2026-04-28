@@ -61,7 +61,7 @@ _LLM_ENV_VARS = [
 ]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_pipelines_page_renders(pipeline_client, monkeypatch):
     for var in _LLM_ENV_VARS:
         monkeypatch.delenv(var, raising=False)
@@ -73,7 +73,7 @@ async def test_pipelines_page_renders(pipeline_client, monkeypatch):
     assert "LLM-провайдер не настроен" in resp.text
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_add_pipeline_route(pipeline_client):
     resp = await pipeline_client.post(
         "/pipelines/add",

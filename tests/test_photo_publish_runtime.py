@@ -12,7 +12,7 @@ from src.telegram.flood_wait import HandledFloodWaitError
 from tests.helpers import FakeCliTelethonClient
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_photo_publish_service_sends_album_via_transport_session(
     real_pool_harness_factory,
 ):
@@ -46,7 +46,7 @@ async def test_photo_publish_service_sends_album_via_transport_session(
     client.send_file.assert_awaited_once()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_photo_publish_service_reports_flood_from_transport_session(
     real_pool_harness_factory,
 ):
@@ -81,7 +81,7 @@ async def test_photo_publish_service_reports_flood_from_transport_session(
     assert accounts[0].flood_wait_until is not None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_photo_publish_service_does_not_wrap_dialog_resolver_with_short_timeout(
     real_pool_harness_factory,
     monkeypatch,

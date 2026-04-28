@@ -39,7 +39,7 @@ def _make_mgr(**overrides) -> MagicMock:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_escaping_agent_not_available(capsys):
     """When agent is not available, prints skip message and returns."""
     db = make_cli_db()
@@ -52,7 +52,7 @@ async def test_escaping_agent_not_available(capsys):
     assert "пропуск" in out or "не настроены" in out
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_escaping_stream_ok(capsys):
     """Successful escaping test streams responses and counts passed."""
     db = make_cli_db()
@@ -79,7 +79,7 @@ async def test_escaping_stream_ok(capsys):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_tools_agent_not_available(capsys):
     """When agent is not available, prints skip message."""
     db = make_cli_db()
@@ -92,7 +92,7 @@ async def test_tools_agent_not_available(capsys):
     assert "пропуск" in out or "не настроен" in out
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_tools_stream_with_tool_events(capsys):
     """Successful tools test receives tool_start/tool_end events."""
     db = make_cli_db()
@@ -658,7 +658,7 @@ def test_run_chat_with_model(capsys):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_tools_exits_on_failure():
     db = make_cli_db()
     config = make_cli_config()

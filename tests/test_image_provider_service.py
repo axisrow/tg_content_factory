@@ -24,14 +24,14 @@ def _make_readonly_service(db) -> ImageProviderService:
 # ── load / save ──
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_load_empty(db):
     svc = _make_service(db)
     configs = await svc.load_provider_configs()
     assert configs == []
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_save_and_load_roundtrip(db):
     svc = _make_service(db)
     cfg = ImageProviderConfig(provider="together", enabled=True, api_key="sk-test-key")
@@ -43,7 +43,7 @@ async def test_save_and_load_roundtrip(db):
     assert loaded[0].api_key == "sk-test-key"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_save_multiple_providers(db):
     svc = _make_service(db)
     configs = [
@@ -57,7 +57,7 @@ async def test_save_multiple_providers(db):
     assert providers == {"together", "openai"}
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_save_without_key_omits_encrypted_field(db):
     svc = _make_service(db)
     cfg = ImageProviderConfig(provider="replicate", enabled=True, api_key="")
@@ -67,7 +67,7 @@ async def test_save_without_key_omits_encrypted_field(db):
     assert loaded[0].api_key == ""
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_save_preserves_encrypted_on_decrypt_failure(db):
     """When api_key is empty but _api_key_enc_preserved has a value, it's written to DB."""
     svc = _make_service(db)
@@ -92,7 +92,7 @@ async def test_save_preserves_encrypted_on_decrypt_failure(db):
     assert reloaded[0].api_key == "real-key"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_writes_disabled_without_cipher(db):
     svc = _make_readonly_service(db)
     assert svc.writes_enabled is False
@@ -100,7 +100,7 @@ async def test_writes_disabled_without_cipher(db):
         await svc.save_provider_configs([])
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_load_ignores_unknown_providers(db):
     svc = _make_service(db)
     cfg = ImageProviderConfig(provider="together", enabled=True, api_key="key")
@@ -120,7 +120,7 @@ async def test_load_ignores_unknown_providers(db):
 # ── parse_provider_form ──
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_parse_provider_form_new_key(db):
     svc = _make_service(db)
     form = {
@@ -134,7 +134,7 @@ async def test_parse_provider_form_new_key(db):
     assert configs[0].enabled is True
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_parse_provider_form_keep_old_key(db):
     svc = _make_service(db)
     existing = [ImageProviderConfig(provider="together", enabled=True, api_key="old-key")]
@@ -147,7 +147,7 @@ async def test_parse_provider_form_keep_old_key(db):
     assert configs[0].api_key == "old-key"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_parse_provider_form_preserves_enc(db):
     svc = _make_service(db)
     existing = [
@@ -188,7 +188,7 @@ def test_build_provider_views():
 # ── build_adapters ──
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_build_adapters_from_db(db):
     svc = _make_service(db)
     configs = [ImageProviderConfig(provider="together", enabled=True, api_key="test-key")]
@@ -197,7 +197,7 @@ async def test_build_adapters_from_db(db):
     assert callable(adapters["together"])
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_build_adapters_disabled_provider_skipped(db):
     svc = _make_service(db)
     configs = [ImageProviderConfig(provider="together", enabled=False, api_key="test-key")]
@@ -205,7 +205,7 @@ async def test_build_adapters_disabled_provider_skipped(db):
     assert "together" not in adapters
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_build_adapters_env_fallback(db, monkeypatch):
     svc = _make_service(db)
     monkeypatch.setenv("REPLICATE_API_TOKEN", "env-token")
@@ -216,7 +216,7 @@ async def test_build_adapters_env_fallback(db, monkeypatch):
     assert "replicate" in adapters  # from env
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_build_adapters_disabled_blocks_env(db, monkeypatch):
     """Disabled DB config should block env-var fallback for that provider."""
     svc = _make_service(db)

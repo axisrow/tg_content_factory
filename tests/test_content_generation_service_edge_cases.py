@@ -173,7 +173,7 @@ def _restore_provider(original):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_generate_set_status_failure_marks_run_failed():
     """If set_status('running') raises, run should be marked 'failed'."""
     engine = DummySearchEngine([_make_msg()])
@@ -213,7 +213,7 @@ async def test_generate_set_status_failure_marks_run_failed():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_generate_publish_reply_and_reply_to_id():
     """publish_reply and reply_to_message_id should be stored in metadata."""
     engine = DummySearchEngine([_make_msg()])
@@ -256,7 +256,7 @@ async def test_generate_publish_reply_and_reply_to_id():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_generate_image_url_from_graph_executor():
     """When graph executor returns image_url, it should be saved to the run."""
     engine = DummySearchEngine([_make_msg()])
@@ -311,7 +311,7 @@ async def test_generate_image_url_from_graph_executor():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_generate_legacy_image_with_image_service():
     """Legacy pipeline with image_model and image_service generates image."""
     engine = DummySearchEngine([_make_msg()])
@@ -350,7 +350,7 @@ async def test_generate_legacy_image_with_image_service():
         _restore_provider(orig)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_generate_legacy_image_with_default_model():
     """Legacy pipeline uses default_image_model from settings when image_model not set."""
     engine = DummySearchEngine([_make_msg()])
@@ -379,7 +379,7 @@ async def test_generate_legacy_image_with_default_model():
         _restore_provider(orig)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_generate_no_image_without_service():
     """No image generation when image_service is None and image_model is set."""
     engine = DummySearchEngine([_make_msg()])
@@ -410,7 +410,7 @@ async def test_generate_no_image_without_service():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_generate_refinement_steps_applied_metadata():
     """Refinement steps count is stored in metadata."""
     engine = DummySearchEngine([_make_msg()])
@@ -445,7 +445,7 @@ async def test_generate_refinement_steps_applied_metadata():
         _restore_provider(orig)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_generate_refinement_steps_skipped_for_graph_pipeline():
     """Refinement steps are NOT applied when pipeline has pipeline_json (graph-based)."""
     engine = DummySearchEngine([_make_msg()])
@@ -480,7 +480,7 @@ async def test_generate_refinement_steps_skipped_for_graph_pipeline():
             pipeline_executor.PipelineExecutor.execute = original_execute
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_refinement_returns_empty_string_keeps_previous():
     """If refinement step returns empty, previous text is kept."""
     engine = DummySearchEngine([_make_msg()])
@@ -514,7 +514,7 @@ async def test_refinement_returns_empty_string_keeps_previous():
         _restore_provider(orig)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_refinement_returns_dict():
     """Refinement step that returns dict with 'text' key."""
     engine = DummySearchEngine([_make_msg()])
@@ -548,7 +548,7 @@ async def test_refinement_returns_dict():
         _restore_provider(orig)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_refinement_returns_dict_generated_text():
     """Refinement step that returns dict with 'generated_text' key."""
     engine = DummySearchEngine([_make_msg()])
@@ -587,7 +587,7 @@ async def test_refinement_returns_dict_generated_text():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_deep_agents_no_manager():
     """DEEP_AGENTS backend without agent_manager raises RuntimeError."""
     engine = DummySearchEngine([_make_msg()])
@@ -607,7 +607,7 @@ async def test_deep_agents_no_manager():
         await service._run_deep_agents(pipeline, None, 512, 0.7)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_deep_agents_with_manager():
     """DEEP_AGENTS backend calls agent_manager.chat_stream and returns text."""
     engine = DummySearchEngine([_make_msg()])
@@ -637,7 +637,7 @@ async def test_deep_agents_with_manager():
     assert result["citations"] == []
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_deep_agents_invalid_json_chunk():
     """Invalid JSON chunks in stream are ignored."""
     engine = DummySearchEngine([_make_msg()])
@@ -671,7 +671,7 @@ async def test_deep_agents_invalid_json_chunk():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_run_graph_passes_services():
     """_run_graph builds PipelineExecutor with correct service dict."""
     engine = DummySearchEngine([_make_msg()])
@@ -735,7 +735,7 @@ async def test_run_graph_passes_services():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_run_rag_returns_generated_text():
     """_run_rag calls GenerationService and returns result dict."""
     engine = DummySearchEngine([_make_msg()])
@@ -764,7 +764,7 @@ async def test_run_rag_returns_generated_text():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_generate_run_not_found_after_save():
     """If generation_runs.get returns None after save, raise RuntimeError."""
     engine = DummySearchEngine([_make_msg()])
@@ -809,7 +809,7 @@ async def test_generate_run_not_found_after_save():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_generate_exception_sets_failed():
     """Any exception during generation should mark run as failed."""
     engine = DummySearchEngine([_make_msg()])
@@ -848,7 +848,7 @@ async def test_generate_exception_sets_failed():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_generate_image_no_service():
     """_generate_image returns None when no image_service."""
     engine = DummySearchEngine([_make_msg()])
@@ -866,7 +866,7 @@ async def test_generate_image_no_service():
     assert result is None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_generate_image_with_service():
     """_generate_image delegates to image_service.generate."""
     engine = DummySearchEngine([_make_msg()])
@@ -886,7 +886,7 @@ async def test_generate_image_with_service():
     assert image_svc.calls == [("override-model", "test text")]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_generate_image_uses_pipeline_model_when_no_model_arg():
     """_generate_image uses pipeline.image_model when model arg is None."""
     engine = DummySearchEngine([_make_msg()])
@@ -911,7 +911,7 @@ async def test_generate_image_uses_pipeline_model_when_no_model_arg():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_run_generation_selects_graph():
     """_run_generation selects _run_graph when pipeline_json is set."""
     engine = DummySearchEngine([_make_msg()])
@@ -944,7 +944,7 @@ async def test_run_generation_selects_graph():
             pipeline_executor.PipelineExecutor.execute = original_execute
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_run_generation_selects_deep_agents():
     """_run_generation selects _run_deep_agents when backend is DEEP_AGENTS."""
     engine = DummySearchEngine([_make_msg()])

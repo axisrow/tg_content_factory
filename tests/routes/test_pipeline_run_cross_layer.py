@@ -17,7 +17,7 @@ from src.models import (
     PipelineRunTaskPayload,
 )
 
-pytestmark = pytest.mark.asyncio
+pytestmark = pytest.mark.anyio
 
 
 async def _seed_run_and_task(

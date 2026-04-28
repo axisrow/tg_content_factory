@@ -43,7 +43,7 @@ def scheduler_config():
     return SchedulerConfig(collect_interval_minutes=60)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_scheduler_start_stop(scheduler_config, mock_bundle):
     mgr = SchedulerManager(scheduler_config, scheduler_bundle=mock_bundle)
     await mgr.start()
@@ -54,7 +54,7 @@ async def test_scheduler_start_stop(scheduler_config, mock_bundle):
     assert not mgr.is_running
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_scheduler_start_already_running(scheduler_config, mock_bundle):
     mgr = SchedulerManager(scheduler_config, scheduler_bundle=mock_bundle)
     await mgr.start()
@@ -65,7 +65,7 @@ async def test_scheduler_start_already_running(scheduler_config, mock_bundle):
     await mgr.stop()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_scheduler_start_cleans_stale_scheduler(scheduler_config, mock_bundle):
     """If a previous scheduler exists but is not running, start() should clean it up."""
     mgr = SchedulerManager(scheduler_config, scheduler_bundle=mock_bundle)
@@ -83,7 +83,7 @@ async def test_scheduler_start_cleans_stale_scheduler(scheduler_config, mock_bun
     await mgr.stop()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_scheduler_update_interval(scheduler_config, mock_bundle):
     mgr = SchedulerManager(scheduler_config, scheduler_bundle=mock_bundle)
     await mgr.start()
@@ -92,7 +92,7 @@ async def test_scheduler_update_interval(scheduler_config, mock_bundle):
     await mgr.stop()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_scheduler_trigger_now_with_enqueuer(
     scheduler_config,
     mock_bundle,
@@ -108,14 +108,14 @@ async def test_scheduler_trigger_now_with_enqueuer(
     mock_task_enqueuer.enqueue_all_channels.assert_called_once()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_scheduler_trigger_now_without_enqueuer(scheduler_config, mock_bundle):
     mgr = SchedulerManager(scheduler_config, scheduler_bundle=mock_bundle)
     res = await mgr.trigger_now()
     assert res["enqueued"] == 0
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_scheduler_trigger_background(
     scheduler_config,
     mock_bundle,
@@ -131,7 +131,7 @@ async def test_scheduler_trigger_background(
     await mgr._bg_task
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_run_collection_failure(
     scheduler_config,
     mock_bundle,
@@ -147,7 +147,7 @@ async def test_run_collection_failure(
     assert res["errors"] == 1
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_sync_search_query_jobs(
     scheduler_config,
     mock_bundle,
@@ -182,7 +182,7 @@ async def test_sync_search_query_jobs(
     await mgr.stop()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_run_search_query_with_enqueuer(
     scheduler_config,
     mock_bundle,
@@ -197,13 +197,13 @@ async def test_run_search_query_with_enqueuer(
     mock_task_enqueuer.enqueue_sq_stats.assert_called_once_with(1)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_run_search_query_no_enqueuer(scheduler_config, mock_bundle):
     mgr = SchedulerManager(scheduler_config, scheduler_bundle=mock_bundle)
     await mgr._run_search_query(1)  # Should return without error
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_saved_interval_from_bundle(mock_bundle):
     mock_bundle.get_setting = AsyncMock(return_value="5")
     config = SchedulerConfig(collect_interval_minutes=60)

@@ -124,7 +124,7 @@ def test_handled_types_contains_expected():
 # === start/stop tests ===
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_start_creates_task(dispatcher):
     """start() creates background task."""
     await dispatcher.start()
@@ -133,7 +133,7 @@ async def test_start_creates_task(dispatcher):
     await dispatcher.stop()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_start_idempotent(dispatcher):
     """start() is idempotent - second call does nothing."""
     await dispatcher.start()
@@ -143,7 +143,7 @@ async def test_start_idempotent(dispatcher):
     await dispatcher.stop()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_stop_cancels_task(dispatcher):
     """stop() cancels background task."""
     await dispatcher.start()
@@ -151,13 +151,13 @@ async def test_stop_cancels_task(dispatcher):
     assert dispatcher._task is None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_stop_without_start(dispatcher):
     """stop() without start() does nothing."""
     await dispatcher.stop()  # Should not raise
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_start_requeues_interrupted_tasks(mock_collector, mock_channel_bundle, mock_tasks_repo):
     """start() requeues interrupted tasks on startup."""
     mock_tasks_repo.requeue_running_generic_tasks_on_startup.return_value = 3
@@ -175,7 +175,7 @@ async def test_start_requeues_interrupted_tasks(mock_collector, mock_channel_bun
     mock_tasks_repo.requeue_running_generic_tasks_on_startup.assert_called_once()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_handle_stats_all_stops_after_cancelled_result(
     mock_collector,
     mock_channel_bundle,
@@ -213,7 +213,7 @@ async def test_handle_stats_all_stops_after_cancelled_result(
 # === _run_loop tests ===
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_run_loop_processes_task(mock_collector, mock_channel_bundle, mock_tasks_repo):
     """_run_loop processes available tasks."""
     task = CollectionTask(
@@ -241,7 +241,7 @@ async def test_run_loop_processes_task(mock_collector, mock_channel_bundle, mock
 # === _handle_stats_all tests ===
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_handle_stats_all_empty_channels(dispatcher, mock_tasks_repo):
     """_handle_stats_all completes immediately if next_index >= len(channel_ids)."""
     task = CollectionTask(
@@ -262,7 +262,7 @@ async def test_handle_stats_all_empty_channels(dispatcher, mock_tasks_repo):
     assert args[1] == CollectionTaskStatus.COMPLETED
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_handle_stats_all_no_task_id(dispatcher, mock_tasks_repo):
     """_handle_stats_all returns early if task.id is None."""
     task = CollectionTask(
@@ -277,7 +277,7 @@ async def test_handle_stats_all_no_task_id(dispatcher, mock_tasks_repo):
     mock_tasks_repo.update_collection_task.assert_not_called()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_handle_stats_all_invalid_payload(dispatcher, mock_tasks_repo):
     """_handle_stats_all fails if payload is wrong type."""
     task = CollectionTask(
@@ -294,7 +294,7 @@ async def test_handle_stats_all_invalid_payload(dispatcher, mock_tasks_repo):
     assert args[1] == CollectionTaskStatus.FAILED
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_handle_stats_all_processes_batch(
     mock_collector, mock_channel_bundle, mock_tasks_repo
 ):
@@ -322,7 +322,7 @@ async def test_handle_stats_all_processes_batch(
     assert mock_collector.collect_channel_stats.call_count == 3
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_handle_stats_all_channel_not_found(
     mock_collector, mock_channel_bundle, mock_tasks_repo
 ):
@@ -352,7 +352,7 @@ async def test_handle_stats_all_channel_not_found(
     mock_collector.collect_channel_stats.assert_not_called()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_handle_stats_all_timeout(
     mock_collector, mock_channel_bundle, mock_tasks_repo
 ):
@@ -385,7 +385,7 @@ async def test_handle_stats_all_timeout(
     assert kwargs.get("messages_collected") == 1  # channel processed despite error
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_handle_stats_all_stats_unavailable(
     mock_collector, mock_channel_bundle, mock_tasks_repo
 ):
@@ -420,7 +420,7 @@ async def test_handle_stats_all_stats_unavailable(
     assert args[1] == CollectionTaskStatus.FAILED
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_handle_stats_all_flood_wait_reschedules_same_task(
     mock_collector, mock_channel_bundle, mock_tasks_repo
 ):
@@ -463,7 +463,7 @@ async def test_handle_stats_all_flood_wait_reschedules_same_task(
 # === _handle_sq_stats tests ===
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_handle_sq_stats_success(dispatcher, mock_tasks_repo, mock_sq_bundle):
     """_handle_sq_stats records stats successfully."""
     dispatcher._sq_bundle = mock_sq_bundle
@@ -483,7 +483,7 @@ async def test_handle_sq_stats_success(dispatcher, mock_tasks_repo, mock_sq_bund
     assert args[1] == CollectionTaskStatus.COMPLETED
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_handle_sq_stats_no_bundle(dispatcher, mock_tasks_repo):
     """_handle_sq_stats completes with note when no bundle configured."""
     dispatcher._sq_bundle = None
@@ -503,7 +503,7 @@ async def test_handle_sq_stats_no_bundle(dispatcher, mock_tasks_repo):
     assert "note" in kwargs
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_handle_sq_stats_invalid_payload(dispatcher, mock_tasks_repo):
     """_handle_sq_stats fails with invalid payload."""
     dispatcher._sq_bundle = MagicMock()
@@ -522,7 +522,7 @@ async def test_handle_sq_stats_invalid_payload(dispatcher, mock_tasks_repo):
     assert args[1] == CollectionTaskStatus.FAILED
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_handle_sq_stats_query_not_found(dispatcher, mock_tasks_repo, mock_sq_bundle):
     """_handle_sq_stats completes when query not found."""
     dispatcher._sq_bundle = mock_sq_bundle
@@ -542,7 +542,7 @@ async def test_handle_sq_stats_query_not_found(dispatcher, mock_tasks_repo, mock
     assert args[1] == CollectionTaskStatus.COMPLETED
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_handle_sq_stats_exception(dispatcher, mock_tasks_repo, mock_sq_bundle):
     """_handle_sq_stats handles exceptions."""
     dispatcher._sq_bundle = mock_sq_bundle
@@ -565,7 +565,7 @@ async def test_handle_sq_stats_exception(dispatcher, mock_tasks_repo, mock_sq_bu
 # === _handle_photo_due tests ===
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_handle_photo_due_success(dispatcher, mock_tasks_repo, mock_photo_task_service):
     """_handle_photo_due processes due photos."""
     dispatcher._photo_task_service = mock_photo_task_service
@@ -586,7 +586,7 @@ async def test_handle_photo_due_success(dispatcher, mock_tasks_repo, mock_photo_
     assert kwargs.get("messages_collected") == 5
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_handle_photo_due_no_service(dispatcher, mock_tasks_repo):
     """_handle_photo_due fails when no service configured (was COMPLETED silently)."""
     dispatcher._photo_task_service = None
@@ -605,7 +605,7 @@ async def test_handle_photo_due_no_service(dispatcher, mock_tasks_repo):
     assert args[1] == CollectionTaskStatus.FAILED
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_handle_photo_due_exception(dispatcher, mock_tasks_repo, mock_photo_task_service):
     """_handle_photo_due handles exceptions."""
     dispatcher._photo_task_service = mock_photo_task_service
@@ -628,7 +628,7 @@ async def test_handle_photo_due_exception(dispatcher, mock_tasks_repo, mock_phot
 # === _handle_photo_auto tests ===
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_handle_photo_auto_success(dispatcher, mock_tasks_repo, mock_photo_auto_upload_service):
     """_handle_photo_auto processes auto jobs."""
     dispatcher._photo_auto_upload_service = mock_photo_auto_upload_service
@@ -649,7 +649,7 @@ async def test_handle_photo_auto_success(dispatcher, mock_tasks_repo, mock_photo
     assert kwargs.get("messages_collected") == 3
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_handle_photo_auto_no_service(dispatcher, mock_tasks_repo):
     """_handle_photo_auto fails when no service configured (was COMPLETED silently)."""
     dispatcher._photo_auto_upload_service = None
@@ -671,7 +671,7 @@ async def test_handle_photo_auto_no_service(dispatcher, mock_tasks_repo):
 # === _handle_pipeline_run tests ===
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_handle_pipeline_run_invalid_payload(dispatcher, mock_tasks_repo):
     """_handle_pipeline_run fails with invalid payload."""
     dispatcher._pipeline_bundle = MagicMock()
@@ -693,7 +693,7 @@ async def test_handle_pipeline_run_invalid_payload(dispatcher, mock_tasks_repo):
     assert "Invalid PIPELINE_RUN payload" in kwargs.get("error", "")
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_handle_pipeline_run_missing_deps(dispatcher, mock_tasks_repo):
     """_handle_pipeline_run fails when dependencies not configured."""
     dispatcher._pipeline_bundle = None
@@ -718,7 +718,7 @@ async def test_handle_pipeline_run_missing_deps(dispatcher, mock_tasks_repo):
 # === _dispatch tests ===
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_dispatch_unknown_type(dispatcher, mock_tasks_repo):
     """_dispatch fails for unknown task type."""
     task = CollectionTask(
@@ -739,7 +739,7 @@ async def test_dispatch_unknown_type(dispatcher, mock_tasks_repo):
 # === Error recovery tests ===
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_run_loop_handles_exception(
     mock_collector, mock_channel_bundle, mock_tasks_repo
 ):
@@ -782,7 +782,7 @@ async def test_run_loop_handles_exception(
 # === _handle_pipeline_run extended tests ===
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_handle_pipeline_run_success_with_mocked_services(
     dispatcher, mock_tasks_repo
 ):
@@ -829,7 +829,7 @@ async def test_handle_pipeline_run_success_with_mocked_services(
     assert args[1] == CollectionTaskStatus.COMPLETED
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_handle_pipeline_run_pipeline_not_found(dispatcher, mock_tasks_repo):
     """_handle_pipeline_run completes when pipeline not found."""
     mock_pipeline_bundle = MagicMock()
@@ -854,7 +854,7 @@ async def test_handle_pipeline_run_pipeline_not_found(dispatcher, mock_tasks_rep
     assert "not found" in kwargs.get("note", "")
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_handle_pipeline_run_generation_exception(dispatcher, mock_tasks_repo):
     """_handle_pipeline_run handles generation errors."""
     from unittest.mock import patch
@@ -898,7 +898,7 @@ async def test_handle_pipeline_run_generation_exception(dispatcher, mock_tasks_r
 # === _handle_content_generate tests ===
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_handle_content_generate_with_auto_publish(dispatcher, mock_tasks_repo):
     """_handle_content_generate publishes automatically when mode is AUTO."""
     from unittest.mock import patch
@@ -954,7 +954,7 @@ async def test_handle_content_generate_with_auto_publish(dispatcher, mock_tasks_
     assert args[1] == CollectionTaskStatus.COMPLETED
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_handle_content_generate_without_auto_publish(
     dispatcher, mock_tasks_repo
 ):
@@ -1003,7 +1003,7 @@ async def test_handle_content_generate_without_auto_publish(
     assert kwargs.get("messages_collected") == 1
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_handle_content_generate_pipeline_not_found(
     dispatcher, mock_tasks_repo
 ):
@@ -1030,7 +1030,7 @@ async def test_handle_content_generate_pipeline_not_found(
     assert "not found" in kwargs.get("note", "")
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_handle_content_generate_exception(dispatcher, mock_tasks_repo):
     """_handle_content_generate handles exceptions."""
     from unittest.mock import patch
@@ -1067,7 +1067,7 @@ async def test_handle_content_generate_exception(dispatcher, mock_tasks_repo):
 # === _handle_content_publish tests ===
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_handle_content_publish_no_approved_runs(dispatcher, mock_tasks_repo):
     """_handle_content_publish completes when no approved runs."""
     mock_db = MagicMock()
@@ -1098,7 +1098,7 @@ async def test_handle_content_publish_no_approved_runs(dispatcher, mock_tasks_re
     assert "No approved runs" in kwargs.get("note", "")
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_handle_content_publish_success(dispatcher, mock_tasks_repo):
     """_handle_content_publish publishes approved runs."""
     from unittest.mock import patch
@@ -1170,7 +1170,7 @@ async def test_handle_content_publish_success(dispatcher, mock_tasks_repo):
 # === _handle_stats_all extended edge cases ===
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_handle_stats_all_timeout_waiting_for_collector(
     mock_collector, mock_channel_bundle, mock_tasks_repo
 ):
@@ -1203,7 +1203,7 @@ async def test_handle_stats_all_timeout_waiting_for_collector(
     assert "Timed out" in kwargs.get("error", "")
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_handle_stats_all_exception_during_stats(
     mock_collector, mock_channel_bundle, mock_tasks_repo
 ):
@@ -1241,7 +1241,7 @@ async def test_handle_stats_all_exception_during_stats(
 # === _run_loop extended exception recovery tests ===
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_run_loop_marks_task_failed_on_unexpected_exception(
     mock_collector, mock_channel_bundle, mock_tasks_repo
 ):
@@ -1290,7 +1290,7 @@ async def test_run_loop_marks_task_failed_on_unexpected_exception(
 # === _build_image_service ===
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_build_image_service_no_config(mock_collector, mock_channel_bundle, mock_tasks_repo):
     """Without config, falls back to env-based registration."""
     dispatcher = UnifiedDispatcher(
@@ -1302,7 +1302,7 @@ async def test_build_image_service_no_config(mock_collector, mock_channel_bundle
     assert svc is not None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_build_image_service_with_db_config(
     mock_collector, mock_channel_bundle, mock_tasks_repo, db, monkeypatch,
 ):
@@ -1332,7 +1332,7 @@ async def test_build_image_service_with_db_config(
     assert "together" in svc.adapter_names
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_build_image_service_disabled_blocks_env(
     mock_collector, mock_channel_bundle, mock_tasks_repo, db, monkeypatch,
 ):

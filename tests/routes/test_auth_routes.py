@@ -65,14 +65,14 @@ async def client_unconfigured(base_app):
 
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_login_page(client):
     """Test login page renders."""
     resp = await client.get("/auth/login")
     assert resp.status_code == 200
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_login_page_shows_phone_step(client):
     """Test login page shows phone step when configured."""
     resp = await client.get("/auth/login")
@@ -81,7 +81,7 @@ async def test_login_page_shows_phone_step(client):
     assert "phone" in resp.text.lower() or "телефон" in resp.text.lower()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_login_page_shows_credentials_step(client_unconfigured):
     """Test login page shows credentials step when not configured."""
     resp = await client_unconfigured.get("/auth/login")
@@ -90,7 +90,7 @@ async def test_login_page_shows_credentials_step(client_unconfigured):
     assert "api" in resp.text.lower() or "credential" in resp.text.lower()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_save_credentials_redirect(client_unconfigured):
     """Test save credentials redirects to login."""
     resp = await client_unconfigured.post(
@@ -102,7 +102,7 @@ async def test_save_credentials_redirect(client_unconfigured):
     assert "/auth/login" in resp.headers.get("location", "")
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_save_credentials_updates_auth(client_unconfigured):
     """Test save credentials updates auth."""
     await client_unconfigured.post(
@@ -116,7 +116,7 @@ async def test_save_credentials_updates_auth(client_unconfigured):
     assert api_id == "12345"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_send_code_success(client):
     """Test send code is enqueued instead of executed inline."""
     db = client._transport.app.state.db
@@ -136,7 +136,7 @@ async def test_send_code_success(client):
     assert commands[0].payload["phone"] == "+1234567890"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_send_code_unconfigured(client_unconfigured):
     """Test send code when auth not configured."""
     resp = await client_unconfigured.post(
@@ -148,7 +148,7 @@ async def test_send_code_unconfigured(client_unconfigured):
     assert "error" in resp.text.lower() or "api" in resp.text.lower()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_send_code_error(client):
     """Test send code route does not call TelegramAuth inline on web."""
     db = client._transport.app.state.db
@@ -168,7 +168,7 @@ async def test_send_code_error(client):
     assert commands[0].command_type == "auth.send_code"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_resend_code_success(client):
     """Test resend code is enqueued instead of executed inline."""
     db = client._transport.app.state.db
@@ -187,7 +187,7 @@ async def test_resend_code_success(client):
     assert commands[0].payload["phone_code_hash"] == "old_hash"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_resend_code_error(client):
     """Test resend code route does not call TelegramAuth inline on web."""
     db = client._transport.app.state.db
@@ -207,7 +207,7 @@ async def test_resend_code_error(client):
     assert commands[0].command_type == "auth.resend_code"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_verify_code_success(client):
     """Test verify code is enqueued instead of executed inline."""
     auth = client._transport.app.state.auth
@@ -236,7 +236,7 @@ async def test_verify_code_success(client):
     assert commands[0].payload["password_2fa"] == ""
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_verify_code_2fa_required(client):
     """Test login page shows 2FA form for failed queued verify command."""
     db = client._transport.app.state.db
@@ -256,7 +256,7 @@ async def test_verify_code_2fa_required(client):
     assert "2fa" in resp.text.lower() or "password" in resp.text.lower()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_verify_code_with_2fa(client):
     """Test verify code enqueues 2FA password for worker processing."""
     db = client._transport.app.state.db
@@ -275,7 +275,7 @@ async def test_verify_code_with_2fa(client):
     assert commands[0].payload["password_2fa"] == "mypassword"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_verify_code_invalid_code(client):
     """Test login page surfaces invalid-code error from failed queued command."""
     db = client._transport.app.state.db
@@ -302,7 +302,7 @@ async def test_verify_code_invalid_code(client):
     assert "Invalid code" in resp.text
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_verify_code_generic_error(client):
     """Test login page surfaces generic verify error from failed queued command."""
     db = client._transport.app.state.db
@@ -322,7 +322,7 @@ async def test_verify_code_generic_error(client):
     assert "Connection lost" in resp.text
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_verify_code_sets_primary(client):
     """Test verify_code command reflects existing DB primary-state context."""
     db = client._transport.app.state.db
@@ -340,7 +340,7 @@ async def test_verify_code_sets_primary(client):
     assert "is_primary" not in commands[0].payload  # worker recomputes from fresh DB state
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_verify_code_detects_premium(client):
     """Test verify code route no longer mutates accounts synchronously."""
     db = client._transport.app.state.db
@@ -358,7 +358,7 @@ async def test_verify_code_detects_premium(client):
     assert len(accounts) == 1  # only the fixture account, new phone not added synchronously
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_verify_code_timeout_parsing(client):
     """Test login page tolerates non-numeric timeout from failed queued command."""
     db = client._transport.app.state.db
@@ -379,7 +379,7 @@ async def test_verify_code_timeout_parsing(client):
     assert resp.status_code == 200
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_send_code_returns_code_info(client):
     """Test login page renders code-step data from successful queued command."""
     db = client._transport.app.state.db
@@ -403,7 +403,7 @@ async def test_send_code_returns_code_info(client):
     assert "code" in text_lower or "код" in text_lower
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_login_page_api_configured_flag(client):
     """Test login page correctly detects API configuration."""
     resp = await client.get("/auth/login")
@@ -412,7 +412,7 @@ async def test_login_page_api_configured_flag(client):
     assert "phone" in resp.text.lower()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_save_credentials_validates_input(client_unconfigured):
     """Test save credentials accepts form data."""
     resp = await client_unconfigured.post(
@@ -423,7 +423,7 @@ async def test_save_credentials_validates_input(client_unconfigured):
     assert resp.status_code == 200 or resp.status_code == 303
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_verify_code_missing_phone_code_hash(client):
     """POST /auth/verify-code without phone_code_hash enqueues with empty hash → 303."""
     resp = await client.post(
@@ -434,7 +434,7 @@ async def test_verify_code_missing_phone_code_hash(client):
     assert resp.status_code == 303
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_resend_code_missing_phone_code_hash(client):
     """POST /auth/resend-code without phone_code_hash enqueues with empty hash → 303."""
     resp = await client.post(
@@ -445,7 +445,7 @@ async def test_resend_code_missing_phone_code_hash(client):
     assert resp.status_code == 303
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_verify_code_empty_password(client):
     """Test empty 2FA password is preserved as empty string in queued payload."""
     db = client._transport.app.state.db
@@ -463,7 +463,7 @@ async def test_verify_code_empty_password(client):
     assert commands[0].payload["password_2fa"] == ""
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_verify_code_get_me_error(client):
     """Test verify_code route itself is unaffected by later worker-side premium refresh."""
     resp = await client.post(
@@ -479,14 +479,14 @@ async def test_verify_code_get_me_error(client):
     assert resp.status_code == 303
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_send_code_missing_phone(client):
     """POST /auth/send-code without phone renders login page (200)."""
     resp = await client.post("/auth/send-code", data={}, follow_redirects=False)
     assert resp.status_code == 200
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_save_credentials_missing_api_id(client_unconfigured):
     """POST /auth/save-credentials without api_id returns 422."""
     resp = await client_unconfigured.post(
@@ -497,7 +497,7 @@ async def test_save_credentials_missing_api_id(client_unconfigured):
     assert resp.status_code == 303
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_save_credentials_missing_api_hash(client_unconfigured):
     """POST /auth/save-credentials without api_hash returns 422."""
     resp = await client_unconfigured.post(

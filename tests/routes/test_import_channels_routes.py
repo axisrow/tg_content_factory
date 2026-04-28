@@ -58,14 +58,14 @@ async def client_no_resolve(client):
     return client
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_import_page(client):
     """Test import page renders."""
     resp = await client.get("/channels/import")
     assert resp.status_code == 200
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_import_page_shows_form(client):
     """Test import page shows upload form."""
     resp = await client.get("/channels/import")
@@ -102,7 +102,7 @@ async def test_import_page_shows_form(client):
         "large-list",
     ],
 )
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_import_text_variants(client, text_input):
     """Test supported text import variants."""
     resp = await client.post(
@@ -112,7 +112,7 @@ async def test_import_text_variants(client, text_input):
     assert resp.status_code == 200
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_import_deduplication(client):
     """Test duplicate channels are skipped."""
     # First import
@@ -130,7 +130,7 @@ async def test_import_deduplication(client):
     assert "queued" in resp.text.lower() or "очеред" in resp.text.lower()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_import_file_txt(client):
     """Test importing from txt file."""
     content = b"@channel1\n@channel2\n@channel3"
@@ -143,7 +143,7 @@ async def test_import_file_txt(client):
     assert resp.status_code == 200
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_import_file_empty(client):
     """Test importing empty file."""
     file = ("empty.txt", io.BytesIO(b""), "text/plain")
@@ -155,7 +155,7 @@ async def test_import_file_empty(client):
     assert resp.status_code == 200
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_import_file_and_text_combined(client):
     """Test importing from both file and text."""
     content = b"@filechannel"
@@ -169,7 +169,7 @@ async def test_import_file_and_text_combined(client):
     assert resp.status_code == 200
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_import_results_structure(client):
     """Test import results contain expected fields."""
     resp = await client.post(
@@ -183,7 +183,7 @@ async def test_import_results_structure(client):
     assert "results" in text_lower or "результат" in text_lower
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_import_no_client_error(client, client_no_resolve):
     """Test import handles no_client error gracefully."""
     resp = await client.post(
@@ -195,7 +195,7 @@ async def test_import_no_client_error(client, client_no_resolve):
     assert "failed" in resp.text.lower() or "нет" in resp.text.lower()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_import_resolve_failure(client):
     """Test import handles resolve failure."""
 
@@ -211,7 +211,7 @@ async def test_import_resolve_failure(client):
     assert resp.status_code == 200
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_import_mixed_success_failure(client):
     """Test import with mix of success and failures."""
     # First add a channel that will be skipped
@@ -228,7 +228,7 @@ async def test_import_mixed_success_failure(client):
     assert resp2.status_code == 200
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_import_scam_channel(client):
     """Test import marks scam/fake channels as inactive."""
 
@@ -250,7 +250,7 @@ async def test_import_scam_channel(client):
     assert resp.status_code == 200
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_import_preserves_existing_channels(client):
     """Test import doesn't affect existing channels."""
     # Add a channel
@@ -275,7 +275,7 @@ async def test_import_preserves_existing_channels(client):
     assert any(c.channel_id == -1001111111111 for c in channels)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_import_results_total_count(client):
     """Test import shows total count."""
     resp = await client.post(
@@ -285,7 +285,7 @@ async def test_import_results_total_count(client):
     assert resp.status_code == 200
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_import_file_csv(client):
     """Test importing from CSV file."""
     content = b"channel\n@channel1\n@channel2"
@@ -298,7 +298,7 @@ async def test_import_file_csv(client):
     assert resp.status_code == 200
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_import_negative_id(client):
     """Test import with negative channel ID."""
 

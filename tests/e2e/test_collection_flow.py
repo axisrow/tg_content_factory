@@ -138,7 +138,7 @@ async def _task_status(db_path: str, channel_id: int) -> str | None:
         await db.close()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_trigger_collection_persists_messages_via_embedded_worker(tmp_path):
     """`serve` with the embedded worker must complete the full collect tract.
 
@@ -163,7 +163,7 @@ async def test_trigger_collection_persists_messages_via_embedded_worker(tmp_path
             assert status == CollectionTaskStatus.COMPLETED.value
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_trigger_collection_stuck_without_worker(tmp_path):
     """Regression guard: if `serve` is started with `--no-worker`, the same
     click leaves the task in PENDING. This proves the happy-path test above
@@ -187,7 +187,7 @@ async def test_trigger_collection_stuck_without_worker(tmp_path):
             assert status == CollectionTaskStatus.PENDING.value
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_embedded_worker_publishes_heartbeat(tmp_path):
     """Sanity: the embedded worker writes a fresh `worker_heartbeat` snapshot.
 
@@ -218,7 +218,7 @@ async def test_embedded_worker_publishes_heartbeat(tmp_path):
                 await db.close()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_health_reflects_accounts_after_snapshot_publish(tmp_path):
     """Regression guard for the `/scheduler/` shows 0/0 bug.
 

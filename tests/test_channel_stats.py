@@ -11,7 +11,7 @@ from src.telegram.collector import Collector
 from tests.helpers import make_mock_pool
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_save_and_get_channel_stats(db):
     ch = Channel(channel_id=-100123, title="Test")
     await db.add_channel(ch)
@@ -35,7 +35,7 @@ async def test_save_and_get_channel_stats(db):
     assert result[0].collected_at is not None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_delete_channel_removes_stats(db):
     ch = Channel(channel_id=-100123, title="Test")
     await db.add_channel(ch)
@@ -50,7 +50,7 @@ async def test_delete_channel_removes_stats(db):
     assert len(await db.get_channel_stats(-100123)) == 0
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_latest_stats_for_all(db):
     ch1 = Channel(channel_id=-100111, title="Ch1")
     ch2 = Channel(channel_id=-100222, title="Ch2")
@@ -67,7 +67,7 @@ async def test_get_latest_stats_for_all(db):
     assert latest[-100222].subscriber_count == 300
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_previous_subscriber_counts(db):
     ch1 = Channel(channel_id=-100111, title="Ch1")
     ch2 = Channel(channel_id=-100222, title="Ch2")
@@ -204,7 +204,7 @@ async def _create_stats_web_test_context(tmp_path, collector):
     return app, db, pk
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_collect_channel_stats_success(db):
     ch = Channel(channel_id=-100123, title="Test", username="test_chan")
     await db.add_channel(ch)
@@ -238,7 +238,7 @@ async def test_collect_channel_stats_success(db):
     assert mock_client.iter_messages.call_args.kwargs["wait_time"] == 1
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_collect_channel_stats_rotates_on_flood_wait(db):
     ch = Channel(channel_id=-100321, title="Rotate", username="rotate_chan")
     await db.add_channel(ch)
@@ -270,7 +270,7 @@ async def test_collect_channel_stats_rotates_on_flood_wait(db):
     client2.get_entity.assert_awaited_once_with("rotate_chan")
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_collect_channel_stats_releases_client(db):
     ch = Channel(channel_id=-100123, title="Test", username="test_chan")
     await db.add_channel(ch)
@@ -290,7 +290,7 @@ async def test_collect_channel_stats_releases_client(db):
     pool.release_client.assert_awaited_once_with("+7000")
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_collect_channel_stats_fallback_on_stale_username(db):
     """Stale username in DB → resolve via numeric ID and mark channel filtered."""
     from telethon.errors import UsernameNotOccupiedError
@@ -333,7 +333,7 @@ async def test_collect_channel_stats_fallback_on_stale_username(db):
     assert "title_changed" in updated.filter_flags
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_collect_channel_stats_no_client(db):
     ch = Channel(channel_id=-100123, title="Test")
     await db.add_channel(ch)
@@ -345,7 +345,7 @@ async def test_collect_channel_stats_no_client(db):
     assert result is None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_stats_web_endpoint_enqueues_command(tmp_path):
     """Web route only enqueues a telegram command; worker executes it."""
     import base64
@@ -381,7 +381,7 @@ async def test_stats_web_endpoint_enqueues_command(tmp_path):
         await db.close()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_collect_all_stats(db):
     ch1 = Channel(channel_id=-100111, title="Ch1", username="ch1")
     ch2 = Channel(channel_id=-100222, title="Ch2", username="ch2")

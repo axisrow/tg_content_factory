@@ -43,7 +43,7 @@ def _message(msg_id: int, text: str = "msg"):
     )
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_collect_single_channel_retries_on_flood_with_second_account(
     db,
     real_pool_harness_factory,
@@ -85,7 +85,7 @@ async def test_collect_single_channel_retries_on_flood_with_second_account(
     assert flooded.flood_wait_until is not None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_collect_channel_stats_uses_transport_session_and_persists_stats(
     db,
     real_pool_harness_factory,

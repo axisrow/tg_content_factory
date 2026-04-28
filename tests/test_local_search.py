@@ -44,7 +44,7 @@ def make_message(**kwargs) -> Message:
 # === search tests ===
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_search_basic(mock_search_bundle):
     """Basic search returns SearchResult."""
     msg = make_message(text="test message", channel_id=1, message_id=1)
@@ -59,7 +59,7 @@ async def test_search_basic(mock_search_bundle):
     mock_search_bundle.search_messages.assert_called_once()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_search_with_channel_filter(mock_search_bundle):
     """Search with channel_id filter."""
     mock_search_bundle.search_messages.return_value = ([], 0)
@@ -71,7 +71,7 @@ async def test_search_with_channel_filter(mock_search_bundle):
     assert kwargs["channel_id"] == 123
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_search_with_date_range(mock_search_bundle):
     """Search with date range."""
     mock_search_bundle.search_messages.return_value = ([], 0)
@@ -84,7 +84,7 @@ async def test_search_with_date_range(mock_search_bundle):
     assert kwargs["date_to"] == "2024-12-31"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_search_with_length_filters(mock_search_bundle):
     """Search with min/max length filters."""
     mock_search_bundle.search_messages.return_value = ([], 0)
@@ -97,7 +97,7 @@ async def test_search_with_length_filters(mock_search_bundle):
     assert kwargs["max_length"] == 500
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_search_with_fts_flag(mock_search_bundle):
     """Search with FTS flag."""
     mock_search_bundle.search_messages.return_value = ([], 0)
@@ -109,7 +109,7 @@ async def test_search_with_fts_flag(mock_search_bundle):
     assert kwargs["is_fts"] is True
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_search_with_pagination(mock_search_bundle):
     """Search with limit and offset."""
     mock_search_bundle.search_messages.return_value = ([], 0)
@@ -125,7 +125,7 @@ async def test_search_with_pagination(mock_search_bundle):
 # === search_semantic tests ===
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_search_semantic_basic(mock_search_bundle, mock_embedding_service):
     """Basic semantic search returns SearchResult."""
     msg = make_message(text="semantic match")
@@ -139,7 +139,7 @@ async def test_search_semantic_basic(mock_search_bundle, mock_embedding_service)
     mock_embedding_service.embed_query.assert_called_once_with("test")
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_search_semantic_with_filters(mock_search_bundle, mock_embedding_service):
     """Semantic search with filters."""
     mock_search_bundle.messages.search_semantic_messages.return_value = ([], 0)
@@ -166,7 +166,7 @@ async def test_search_semantic_with_filters(mock_search_bundle, mock_embedding_s
     assert kwargs["max_length"] == 200
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_search_semantic_no_embedding_service(mock_search_bundle):
     """Semantic search without embedding service raises."""
     local_search = LocalSearch(mock_search_bundle, embedding_service=None)
@@ -180,7 +180,7 @@ async def test_search_semantic_no_embedding_service(mock_search_bundle):
 # === search_hybrid tests ===
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_search_hybrid_basic(mock_search_bundle, mock_embedding_service):
     """Basic hybrid search returns SearchResult."""
     msg = make_message(text="hybrid match")
@@ -194,7 +194,7 @@ async def test_search_hybrid_basic(mock_search_bundle, mock_embedding_service):
     mock_embedding_service.embed_query.assert_called_once_with("test")
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_search_hybrid_with_filters(mock_search_bundle, mock_embedding_service):
     """Hybrid search with filters."""
     mock_search_bundle.messages.search_hybrid_messages.return_value = ([], 0)
@@ -224,7 +224,7 @@ async def test_search_hybrid_with_filters(mock_search_bundle, mock_embedding_ser
     assert kwargs["max_length"] == 100
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_search_hybrid_no_embedding_service(mock_search_bundle):
     """Hybrid search without embedding service raises."""
     local_search = LocalSearch(mock_search_bundle, embedding_service=None)

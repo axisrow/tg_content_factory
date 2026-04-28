@@ -5,7 +5,7 @@ import pytest
 from src.models import PhotoAutoUploadJob, PhotoBatch, PhotoBatchItem, PhotoBatchStatus
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_create_and_get_batch(db):
     repo = db.repos.photo_loader
     batch = PhotoBatch(phone="+123", target_dialog_id=100, target_title="Chat", target_type="channel")
@@ -17,12 +17,12 @@ async def test_create_and_get_batch(db):
     assert fetched.target_dialog_id == 100
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_batch_not_found(db):
     assert await db.repos.photo_loader.get_batch(99999) is None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_list_batches(db):
     repo = db.repos.photo_loader
     await repo.create_batch(PhotoBatch(phone="+1", target_dialog_id=1))
@@ -30,7 +30,7 @@ async def test_list_batches(db):
     assert len(await repo.list_batches()) == 2
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_update_batch_status(db):
     repo = db.repos.photo_loader
     bid = await repo.create_batch(PhotoBatch(phone="+1", target_dialog_id=1))
@@ -40,7 +40,7 @@ async def test_update_batch_status(db):
     assert b.error == "ok"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_update_batch_no_changes(db):
     repo = db.repos.photo_loader
     bid = await repo.create_batch(PhotoBatch(phone="+1", target_dialog_id=1))
@@ -49,7 +49,7 @@ async def test_update_batch_no_changes(db):
     assert b.status == PhotoBatchStatus.PENDING
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_update_batch_last_run_at(db):
     repo = db.repos.photo_loader
     bid = await repo.create_batch(PhotoBatch(phone="+1", target_dialog_id=1))
@@ -59,7 +59,7 @@ async def test_update_batch_last_run_at(db):
     assert b.last_run_at is not None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_create_and_get_item(db):
     repo = db.repos.photo_loader
     bid = await repo.create_batch(PhotoBatch(phone="+1", target_dialog_id=1))
@@ -75,7 +75,7 @@ async def test_create_and_get_item(db):
     assert fetched.batch_id == bid
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_list_items(db):
     repo = db.repos.photo_loader
     bid = await repo.create_batch(PhotoBatch(phone="+1", target_dialog_id=1))
@@ -88,7 +88,7 @@ async def test_list_items(db):
     assert len(items) == 3
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_list_items_for_batch(db):
     repo = db.repos.photo_loader
     b1 = await repo.create_batch(PhotoBatch(phone="+1", target_dialog_id=1))
@@ -100,7 +100,7 @@ async def test_list_items_for_batch(db):
     assert len(await repo.list_items_for_batch(b2)) == 1
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_update_item_status(db):
     repo = db.repos.photo_loader
     bid = await repo.create_batch(PhotoBatch(phone="+1", target_dialog_id=1))
@@ -111,7 +111,7 @@ async def test_update_item_status(db):
     assert item.telegram_message_ids == [10, 20]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_update_item_no_changes(db):
     repo = db.repos.photo_loader
     bid = await repo.create_batch(PhotoBatch(phone="+1", target_dialog_id=1))
@@ -121,7 +121,7 @@ async def test_update_item_no_changes(db):
     assert item.status == PhotoBatchStatus.PENDING
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_cancel_item(db):
     repo = db.repos.photo_loader
     bid = await repo.create_batch(PhotoBatch(phone="+1", target_dialog_id=1))
@@ -131,7 +131,7 @@ async def test_cancel_item(db):
     assert item.status == PhotoBatchStatus.CANCELLED
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_cancel_item_already_completed(db):
     repo = db.repos.photo_loader
     bid = await repo.create_batch(PhotoBatch(phone="+1", target_dialog_id=1))
@@ -140,7 +140,7 @@ async def test_cancel_item_already_completed(db):
     assert await repo.cancel_item(iid) is False
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_claim_next_due_item(db):
     repo = db.repos.photo_loader
     bid = await repo.create_batch(PhotoBatch(phone="+1", target_dialog_id=1))
@@ -155,14 +155,14 @@ async def test_claim_next_due_item(db):
     assert claimed.status == PhotoBatchStatus.RUNNING
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_claim_next_due_item_none(db):
     repo = db.repos.photo_loader
     now = datetime.now(timezone.utc)
     assert await repo.claim_next_due_item(now) is None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_requeue_running_items_on_startup(db):
     repo = db.repos.photo_loader
     bid = await repo.create_batch(PhotoBatch(phone="+1", target_dialog_id=1))
@@ -178,7 +178,7 @@ async def test_requeue_running_items_on_startup(db):
     assert item.status == PhotoBatchStatus.PENDING
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_create_and_get_auto_job(db):
     repo = db.repos.photo_loader
     job = PhotoAutoUploadJob(phone="+1", target_dialog_id=100, folder_path="/tmp/photos", interval_minutes=30)
@@ -190,7 +190,7 @@ async def test_create_and_get_auto_job(db):
     assert fetched.interval_minutes == 30
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_update_auto_job(db):
     repo = db.repos.photo_loader
     job = PhotoAutoUploadJob(phone="+1", target_dialog_id=100, folder_path="/tmp/photos")
@@ -202,7 +202,7 @@ async def test_update_auto_job(db):
     assert updated.is_active is False
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_list_auto_jobs(db):
     repo = db.repos.photo_loader
     for i in range(3):
@@ -214,7 +214,7 @@ async def test_list_auto_jobs(db):
     assert len(await repo.list_auto_jobs(active_only=True)) == 2
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_delete_auto_job(db):
     repo = db.repos.photo_loader
     job_id = await repo.create_auto_job(
@@ -224,7 +224,7 @@ async def test_delete_auto_job(db):
     assert await repo.get_auto_job(job_id) is None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_auto_file_sent_tracking(db):
     repo = db.repos.photo_loader
     job_id = await repo.create_auto_job(

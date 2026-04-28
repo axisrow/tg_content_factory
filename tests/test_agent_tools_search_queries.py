@@ -24,12 +24,12 @@ async def _add_query(db, query="test query", interval_minutes=30, is_active=True
 
 
 class TestListSearchQueriesTool:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_empty_returns_not_found(self, sq_handlers):
         result = await sq_handlers["list_search_queries"]({"active_only": False})
         assert "не найдены" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_lists_all_when_active_only_false(self, db, sq_handlers):
         await _add_query(db, "query1", is_active=True)
         await _add_query(db, "query2", is_active=False)
@@ -39,7 +39,7 @@ class TestListSearchQueriesTool:
         assert "query2" in text
         assert "Поисковые запросы (2)" in text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_active_only_filters_inactive(self, db, sq_handlers):
         await _add_query(db, "active_query", is_active=True)
         await _add_query(db, "inactive_query", is_active=False)
@@ -48,7 +48,7 @@ class TestListSearchQueriesTool:
         assert "active_query" in text
         assert "inactive_query" not in text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_shows_status_labels(self, db, sq_handlers):
         await _add_query(db, "myquery", is_active=True)
         result = await sq_handlers["list_search_queries"]({})
@@ -57,18 +57,18 @@ class TestListSearchQueriesTool:
 
 
 class TestGetSearchQueryTool:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_missing_sq_id_returns_error(self, sq_handlers):
         result = await sq_handlers["get_search_query"]({})
         assert "sq_id обязателен" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_not_found_returns_error(self, sq_handlers):
         result = await sq_handlers["get_search_query"]({"sq_id": 9999})
         assert "не найден" in _text(result)
         assert "9999" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_found_shows_fields(self, db, sq_handlers):
         sq_id = await _add_query(db, "find this")
         result = await sq_handlers["get_search_query"]({"sq_id": sq_id})
@@ -80,24 +80,24 @@ class TestGetSearchQueryTool:
 
 
 class TestAddSearchQueryTool:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_missing_query_returns_error(self, sq_handlers):
         result = await sq_handlers["add_search_query"]({"confirm": True})
         assert "query обязателен" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_no_confirm_returns_gate(self, sq_handlers):
         result = await sq_handlers["add_search_query"]({"query": "hello"})
         assert "confirm=true" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_with_query_and_confirm_creates(self, sq_handlers):
         result = await sq_handlers["add_search_query"]({"query": "new query", "confirm": True})
         text = _text(result)
         assert "создан" in text
         assert "id=" in text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_with_custom_interval_creates(self, sq_handlers):
         result = await sq_handlers["add_search_query"](
             {"query": "custom interval", "interval_minutes": 120, "confirm": True}
@@ -106,22 +106,22 @@ class TestAddSearchQueryTool:
 
 
 class TestEditSearchQueryTool:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_missing_sq_id_returns_error(self, sq_handlers):
         result = await sq_handlers["edit_search_query"]({"confirm": True})
         assert "sq_id обязателен" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_no_confirm_returns_gate(self, sq_handlers):
         result = await sq_handlers["edit_search_query"]({"sq_id": 1})
         assert "confirm=true" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_not_found_returns_error(self, sq_handlers):
         result = await sq_handlers["edit_search_query"]({"sq_id": 9999, "confirm": True})
         assert "не найден" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_found_updates_query(self, db, sq_handlers):
         sq_id = await _add_query(db, "original")
         result = await sq_handlers["edit_search_query"](
@@ -129,7 +129,7 @@ class TestEditSearchQueryTool:
         )
         assert "обновлён" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_updates_interval(self, db, sq_handlers):
         sq_id = await _add_query(db, "some query")
         result = await sq_handlers["edit_search_query"](
@@ -139,17 +139,17 @@ class TestEditSearchQueryTool:
 
 
 class TestDeleteSearchQueryTool:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_missing_sq_id_returns_error(self, sq_handlers):
         result = await sq_handlers["delete_search_query"]({})
         assert "sq_id обязателен" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_no_confirm_returns_gate(self, sq_handlers):
         result = await sq_handlers["delete_search_query"]({"sq_id": 1})
         assert "confirm=true" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_with_confirm_deletes(self, db, sq_handlers):
         sq_id = await _add_query(db, "to delete")
         result = await sq_handlers["delete_search_query"]({"sq_id": sq_id, "confirm": True})
@@ -159,17 +159,17 @@ class TestDeleteSearchQueryTool:
 
 
 class TestToggleSearchQueryTool:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_missing_sq_id_returns_error(self, sq_handlers):
         result = await sq_handlers["toggle_search_query"]({})
         assert "sq_id обязателен" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_not_found_returns_error(self, sq_handlers):
         result = await sq_handlers["toggle_search_query"]({"sq_id": 9999})
         assert "не найден" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_active_query_gets_deactivated(self, db, sq_handlers):
         sq_id = await _add_query(db, "active one", is_active=True)
         result = await sq_handlers["toggle_search_query"]({"sq_id": sq_id})
@@ -177,7 +177,7 @@ class TestToggleSearchQueryTool:
         assert "деактивирован" in text
         assert str(sq_id) in text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_inactive_query_gets_activated(self, db, sq_handlers):
         sq_id = await _add_query(db, "inactive one", is_active=False)
         result = await sq_handlers["toggle_search_query"]({"sq_id": sq_id})
@@ -187,12 +187,12 @@ class TestToggleSearchQueryTool:
 
 
 class TestRunSearchQueryTool:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_missing_sq_id_returns_error(self, sq_handlers):
         result = await sq_handlers["run_search_query"]({})
         assert "sq_id обязателен" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_run_returns_count(self, db, sq_handlers):
         sq_id = await _add_query(db, "search term")
         result = await sq_handlers["run_search_query"]({"sq_id": sq_id})
@@ -201,7 +201,7 @@ class TestRunSearchQueryTool:
         assert "совпадений" in text
         assert str(sq_id) in text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_run_nonexistent_returns_zero_matches(self, sq_handlers):
         """run_search_query with a nonexistent id returns 0 matches (service is lenient)."""
         result = await sq_handlers["run_search_query"]({"sq_id": 9999})

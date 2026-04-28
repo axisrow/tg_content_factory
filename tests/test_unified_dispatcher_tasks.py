@@ -49,7 +49,7 @@ def _dispatcher(**kw):
     return UnifiedDispatcher(**defaults)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_dispatch_unknown_type():
     d = _dispatcher()
     # CHANNEL_COLLECT is not in the handler map, so it triggers "Unknown" path
@@ -60,21 +60,21 @@ async def test_dispatch_unknown_type():
     assert "Unknown" in call[1]["error"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_stats_all_no_id():
     d = _dispatcher()
     await d._handle_stats_all(_task(CollectionTaskType.STATS_ALL, task_id=None))
     d._tasks.update_collection_task.assert_not_called()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_stats_all_wrong_payload():
     d = _dispatcher()
     await d._handle_stats_all(_task(CollectionTaskType.STATS_ALL, payload={"bad": True}))
     assert d._tasks.update_collection_task.call_args[0][1] == CollectionTaskStatus.FAILED
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_stats_all_empty_ids_completes():
     d = _dispatcher()
     p = StatsAllTaskPayload(channel_ids=[])
@@ -82,7 +82,7 @@ async def test_stats_all_empty_ids_completes():
     assert d._tasks.update_collection_task.call_args[0][1] == CollectionTaskStatus.COMPLETED
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_stats_all_collects_and_completes():
     d = _dispatcher()
     ch = MagicMock(channel_id=42)
@@ -92,7 +92,7 @@ async def test_stats_all_collects_and_completes():
     assert d._tasks.update_collection_task.call_args[0][1] == CollectionTaskStatus.COMPLETED
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_stats_all_channel_not_found():
     d = _dispatcher()
     d._channel_bundle.get_by_channel_id = AsyncMock(return_value=None)
@@ -101,7 +101,7 @@ async def test_stats_all_channel_not_found():
     assert d._tasks.update_collection_task.call_args[0][1] == CollectionTaskStatus.COMPLETED
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_stats_all_reschedules_on_flood_wait():
     """_handle_stats_all reschedules same task when all clients flooded."""
     d = _dispatcher()
@@ -121,21 +121,21 @@ async def test_stats_all_reschedules_on_flood_wait():
     assert call_args[1]["payload"].next_index == 0
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_sq_stats_no_id():
     d = _dispatcher()
     await d._handle_sq_stats(_task(CollectionTaskType.SQ_STATS, task_id=None))
     d._tasks.update_collection_task.assert_not_called()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_sq_stats_no_bundle():
     d = _dispatcher(sq_bundle=None)
     await d._handle_sq_stats(_task(CollectionTaskType.SQ_STATS))
     d._tasks.update_collection_task.assert_called_once()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_sq_stats_wrong_payload():
     sq_bundle = MagicMock()
     d = _dispatcher(sq_bundle=sq_bundle)
@@ -143,7 +143,7 @@ async def test_sq_stats_wrong_payload():
     assert d._tasks.update_collection_task.call_args[0][1] == CollectionTaskStatus.FAILED
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_sq_stats_query_not_found():
     sq_bundle = MagicMock()
     sq_bundle.get_by_id = AsyncMock(return_value=None)
@@ -153,7 +153,7 @@ async def test_sq_stats_query_not_found():
     assert d._tasks.update_collection_task.call_args[0][1] == CollectionTaskStatus.COMPLETED
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_sq_stats_records_stat():
     sq = MagicMock(query="test query")
     sq_bundle = MagicMock()
@@ -166,21 +166,21 @@ async def test_sq_stats_records_stat():
     assert d._tasks.update_collection_task.call_args[0][1] == CollectionTaskStatus.COMPLETED
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_photo_due_no_id():
     d = _dispatcher()
     await d._handle_photo_due(_task(CollectionTaskType.PHOTO_DUE, task_id=None))
     d._tasks.update_collection_task.assert_not_called()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_photo_due_no_service():
     d = _dispatcher(photo_task_service=None)
     await d._handle_photo_due(_task(CollectionTaskType.PHOTO_DUE))
     assert d._tasks.update_collection_task.call_args[0][1] == CollectionTaskStatus.FAILED
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_photo_due_success():
     pts = AsyncMock()
     pts.run_due = AsyncMock(return_value=5)
@@ -189,7 +189,7 @@ async def test_photo_due_success():
     assert d._tasks.update_collection_task.call_args[0][1] == CollectionTaskStatus.COMPLETED
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_photo_due_error():
     pts = AsyncMock()
     pts.run_due = AsyncMock(side_effect=RuntimeError("boom"))
@@ -198,21 +198,21 @@ async def test_photo_due_error():
     assert d._tasks.update_collection_task.call_args[0][1] == CollectionTaskStatus.FAILED
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_photo_auto_no_id():
     d = _dispatcher()
     await d._handle_photo_auto(_task(CollectionTaskType.PHOTO_AUTO, task_id=None))
     d._tasks.update_collection_task.assert_not_called()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_photo_auto_no_service():
     d = _dispatcher(photo_auto_upload_service=None)
     await d._handle_photo_auto(_task(CollectionTaskType.PHOTO_AUTO))
     assert d._tasks.update_collection_task.call_args[0][1] == CollectionTaskStatus.FAILED
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_photo_auto_success():
     paus = AsyncMock()
     paus.run_due = AsyncMock(return_value=3)
@@ -221,7 +221,7 @@ async def test_photo_auto_success():
     assert d._tasks.update_collection_task.call_args[0][1] == CollectionTaskStatus.COMPLETED
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_photo_auto_error():
     paus = AsyncMock()
     paus.run_due = AsyncMock(side_effect=RuntimeError("boom"))
@@ -230,21 +230,21 @@ async def test_photo_auto_error():
     assert d._tasks.update_collection_task.call_args[0][1] == CollectionTaskStatus.FAILED
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_pipeline_run_no_id():
     d = _dispatcher()
     await d._handle_pipeline_run(_task(CollectionTaskType.PIPELINE_RUN, task_id=None))
     d._tasks.update_collection_task.assert_not_called()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_pipeline_run_wrong_payload():
     d = _dispatcher()
     await d._handle_pipeline_run(_task(CollectionTaskType.PIPELINE_RUN, payload={"bad": True}))
     assert d._tasks.update_collection_task.call_args[0][1] == CollectionTaskStatus.FAILED
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_pipeline_run_no_deps():
     d = _dispatcher(pipeline_bundle=None, search_engine=None, db=None)
     p = PipelineRunTaskPayload(pipeline_id=1)
@@ -252,21 +252,21 @@ async def test_pipeline_run_no_deps():
     assert d._tasks.update_collection_task.call_args[0][1] == CollectionTaskStatus.FAILED
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_content_generate_no_id():
     d = _dispatcher()
     await d._handle_content_generate(_task(CollectionTaskType.CONTENT_GENERATE, task_id=None))
     d._tasks.update_collection_task.assert_not_called()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_content_generate_wrong_payload():
     d = _dispatcher()
     await d._handle_content_generate(_task(CollectionTaskType.CONTENT_GENERATE, payload={"bad": True}))
     assert d._tasks.update_collection_task.call_args[0][1] == CollectionTaskStatus.FAILED
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_content_generate_no_deps():
     d = _dispatcher(pipeline_bundle=None, search_engine=None, db=None)
     p = ContentGenerateTaskPayload(pipeline_id=1)
@@ -274,21 +274,21 @@ async def test_content_generate_no_deps():
     assert d._tasks.update_collection_task.call_args[0][1] == CollectionTaskStatus.FAILED
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_content_publish_no_id():
     d = _dispatcher()
     await d._handle_content_publish(_task(CollectionTaskType.CONTENT_PUBLISH, task_id=None))
     d._tasks.update_collection_task.assert_not_called()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_content_publish_wrong_payload():
     d = _dispatcher()
     await d._handle_content_publish(_task(CollectionTaskType.CONTENT_PUBLISH, payload={"bad": True}))
     assert d._tasks.update_collection_task.call_args[0][1] == CollectionTaskStatus.FAILED
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_content_publish_no_deps():
     d = _dispatcher(pipeline_bundle=None, db=None)
     p = ContentPublishTaskPayload(pipeline_id=1)
@@ -296,21 +296,21 @@ async def test_content_publish_no_deps():
     assert d._tasks.update_collection_task.call_args[0][1] == CollectionTaskStatus.FAILED
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_translate_batch_no_id():
     d = _dispatcher()
     await d._handle_translate_batch(_task(CollectionTaskType.TRANSLATE_BATCH, task_id=None))
     d._tasks.update_collection_task.assert_not_called()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_translate_batch_wrong_payload():
     d = _dispatcher()
     await d._handle_translate_batch(_task(CollectionTaskType.TRANSLATE_BATCH, payload={"bad": True}))
     assert d._tasks.update_collection_task.call_args[0][1] == CollectionTaskStatus.FAILED
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_translate_batch_no_db():
     d = _dispatcher(db=None)
     p = TranslateBatchTaskPayload()
@@ -318,7 +318,7 @@ async def test_translate_batch_no_db():
     assert d._tasks.update_collection_task.call_args[0][1] == CollectionTaskStatus.FAILED
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_start_stop():
     d = _dispatcher()
     await d.start()
@@ -327,7 +327,7 @@ async def test_start_stop():
     assert d._task is None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_start_idempotent():
     d = _dispatcher()
     await d.start()
@@ -337,14 +337,14 @@ async def test_start_idempotent():
     await d.stop()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_build_image_service_no_db():
     d = _dispatcher(db=None, config=None)
     svc = await d._build_image_service()
     assert svc is not None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_build_image_service_db_exception():
     mock_db = MagicMock()
     mock_config = MagicMock()
@@ -390,7 +390,7 @@ class TestPipelineRunHappyPathSemantics:
     GenerationRun.result_count exactly — for all three run shapes.
     """
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_generation_run_maps_citation_count_to_messages_collected(self, monkeypatch):
         from tests.factories.pipeline_runs import make_generation_run
 
@@ -430,7 +430,7 @@ class TestPipelineRunHappyPathSemantics:
         assert call.kwargs["messages_collected"] == 3
         assert "id=42" in call.kwargs["note"]
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_action_only_run_propagates_action_count(self, monkeypatch):
         from tests.factories.pipeline_runs import make_action_only_run
 
@@ -465,7 +465,7 @@ class TestPipelineRunHappyPathSemantics:
         assert call.kwargs["messages_collected"] == 5
         assert call.args[1] == CollectionTaskStatus.COMPLETED
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_mixed_run_uses_generation_count(self, monkeypatch):
         """Mixed run: dispatcher stores generation count (not action count),
         consistent with summarize_result() precedence.
@@ -502,7 +502,7 @@ class TestPipelineRunHappyPathSemantics:
         call = d._tasks.update_collection_task.call_args
         assert call.kwargs["messages_collected"] == 2  # generation wins
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_empty_text_positive_count_regression(self, monkeypatch):
         """Issue #463 regression: run with empty text but positive result_count
         must NOT be stored as messages_collected=0.

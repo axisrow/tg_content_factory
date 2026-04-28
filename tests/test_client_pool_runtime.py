@@ -12,7 +12,7 @@ from src.telegram.flood_wait import HandledFloodWaitError
 from tests.helpers import FakeCliTelethonClient
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_initialize_uses_runtime_backend_without_persistent_clients(
     real_pool_harness_factory,
 ):
@@ -40,7 +40,7 @@ async def test_initialize_uses_runtime_backend_without_persistent_clients(
     assert len(harness.telethon_cli_spy.created) == 1
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_add_client_supports_session_override_before_db_write(
     real_pool_harness_factory,
 ):
@@ -65,7 +65,7 @@ async def test_add_client_supports_session_override_before_db_write(
     assert len(harness.telethon_cli_spy.created) == 1
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_shared_lease_keeps_phone_busy_until_last_release(
     real_pool_harness_factory,
 ):
@@ -92,7 +92,7 @@ async def test_shared_lease_keeps_phone_busy_until_last_release(
     assert third[1] == "+70000000002"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_premium_client_does_not_disable_generic_flood_reporting_on_persistent_session(
     real_pool_harness_factory,
 ):
@@ -123,7 +123,7 @@ async def test_premium_client_does_not_disable_generic_flood_reporting_on_persis
     await harness.pool.release_client("+70000000001")
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 @pytest.mark.native_backend_allowed
 async def test_native_client_by_phone_returns_flood_aware_session(
     real_pool_harness_factory,
@@ -156,7 +156,7 @@ async def test_native_client_by_phone_returns_flood_aware_session(
     assert accounts[0].flood_wait_until is not None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 @pytest.mark.native_backend_allowed
 async def test_auto_mode_falls_back_to_native_when_cli_acquire_fails(
     real_pool_harness_factory,
@@ -183,7 +183,7 @@ async def test_auto_mode_falls_back_to_native_when_cli_acquire_fails(
     assert harness.native_auth_spy.created == [("session-auto", native_client)]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 @pytest.mark.native_backend_allowed
 async def test_auto_mode_falls_back_to_native_for_subprocess_transport(
     real_pool_harness_factory,
@@ -205,7 +205,7 @@ async def test_auto_mode_falls_back_to_native_for_subprocess_transport(
     assert harness.native_auth_spy.created == [("session-subprocess", native_client)]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 @pytest.mark.native_backend_allowed
 async def test_get_native_client_by_phone_uses_native_backend_and_disconnects(
     real_pool_harness_factory,
@@ -236,7 +236,7 @@ async def test_get_native_client_by_phone_uses_native_backend_and_disconnects(
     native_client.disconnect.assert_awaited_once()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 @pytest.mark.native_backend_allowed
 async def test_notification_target_uses_real_pool_native_getter(
     real_pool_harness_factory,
@@ -265,7 +265,7 @@ async def test_notification_target_uses_real_pool_native_getter(
     native_client.disconnect.assert_awaited_once()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_acquire_reconnects_disconnected_client(
     real_pool_harness_factory,
 ):
@@ -289,7 +289,7 @@ async def test_acquire_reconnects_disconnected_client(
     cli_client.connect.assert_awaited()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_acquire_falls_back_to_backend_when_reconnect_fails(
     real_pool_harness_factory,
 ):

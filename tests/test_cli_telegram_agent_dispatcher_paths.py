@@ -202,7 +202,7 @@ class TestPrintResult:
 
 
 class TestDecideLiveFloodAction:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_no_availability_returns_skip(self):
         from src.cli.commands.test import _decide_live_test_flood_action
         from src.telegram.flood_wait import FloodWaitInfo
@@ -219,7 +219,7 @@ class TestDecideLiveFloodAction:
         decision = await _decide_live_test_flood_action(pool, info)
         assert decision.action == "skip"
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_not_flooded_returns_rotate(self):
         from src.cli.commands.test import _decide_live_test_flood_action
         from src.telegram.client_pool import StatsClientAvailability
@@ -240,7 +240,7 @@ class TestDecideLiveFloodAction:
 
 
 class TestTgCallWrapper:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_timeout_raises(self):
         from src.cli.commands.test import _tg_call
 
@@ -303,7 +303,7 @@ class TestTelegramLiveFloodDecision:
 
 
 class TestClientPoolDialogsCache:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_invalidate_all(self, db):
         from src.telegram.auth import TelegramAuth
         from src.telegram.client_pool import ClientPool
@@ -315,7 +315,7 @@ class TestClientPoolDialogsCache:
         pool.invalidate_dialogs_cache()
         assert len(pool._dialogs_cache) == 0
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_invalidate_by_phone(self, db):
         from src.telegram.auth import TelegramAuth
         from src.telegram.client_pool import ClientPool
@@ -327,7 +327,7 @@ class TestClientPoolDialogsCache:
         assert ("+7", "full") not in pool._dialogs_cache
         assert ("+8", "full") in pool._dialogs_cache
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_get_cached_expired(self, db):
         from src.telegram.auth import TelegramAuth
         from src.telegram.client_pool import ClientPool
@@ -339,7 +339,7 @@ class TestClientPoolDialogsCache:
         result = pool._get_cached_dialogs("+7", "full")
         assert result is None
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_get_cached_channels_only_from_full(self, db):
         from src.telegram.auth import TelegramAuth
         from src.telegram.client_pool import ClientPool
@@ -353,7 +353,7 @@ class TestClientPoolDialogsCache:
         assert len(result) == 1
         assert result[0]["channel_id"] == 1
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_get_cached_channels_only_full_expired(self, db):
         from src.telegram.auth import TelegramAuth
         from src.telegram.client_pool import ClientPool
@@ -366,7 +366,7 @@ class TestClientPoolDialogsCache:
 
 
 class TestClientPoolPremiumFlood:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_report_premium_flood(self, db):
         from src.telegram.auth import TelegramAuth
         from src.telegram.client_pool import ClientPool
@@ -375,7 +375,7 @@ class TestClientPoolPremiumFlood:
         await pool.report_premium_flood("+7", 60)
         assert "+7" in pool._premium_flood_wait_until
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_clear_premium_flood(self, db):
         from src.telegram.auth import TelegramAuth
         from src.telegram.client_pool import ClientPool
@@ -385,7 +385,7 @@ class TestClientPoolPremiumFlood:
         pool.clear_premium_flood("+7")
         assert "+7" not in pool._premium_flood_wait_until
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_premium_flood_expires_stale_entries(self, db):
         from src.telegram.auth import TelegramAuth
         from src.telegram.client_pool import ClientPool
@@ -400,7 +400,7 @@ class TestClientPoolPremiumFlood:
 
 
 class TestClientPoolStatsAvailability:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_get_stats_availability(self, db):
         from src.telegram.auth import TelegramAuth
         from src.telegram.client_pool import ClientPool
@@ -409,7 +409,7 @@ class TestClientPoolStatsAvailability:
         result = await pool.get_stats_availability()
         assert result.state in ("available", "no_connected_active", "all_flooded")
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_get_premium_stats_no_premium(self, db):
         from src.telegram.auth import TelegramAuth
         from src.telegram.client_pool import ClientPool
@@ -420,7 +420,7 @@ class TestClientPoolStatsAvailability:
 
 
 class TestClientPoolDialogsFetched:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_mark_and_check(self, db):
         from src.telegram.auth import TelegramAuth
         from src.telegram.client_pool import ClientPool
@@ -432,7 +432,7 @@ class TestClientPoolDialogsFetched:
 
 
 class TestClientPoolPremiumUnavailabilityReason:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_no_premium_accounts(self, db):
         from src.telegram.auth import TelegramAuth
         from src.telegram.client_pool import ClientPool
@@ -663,7 +663,7 @@ class TestAgentManager:
         manager.initialize()
         manager._claude_backend.initialize.assert_called_once()
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_refresh_settings_cache(self):
         from src.agent.manager import AgentManager
 
@@ -873,7 +873,7 @@ class TestCollectorGetMediaType:
 
 
 class TestCollectorProperties:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_is_cancelled(self, db):
         from tests.helpers import make_mock_pool
 
@@ -883,7 +883,7 @@ class TestCollectorProperties:
         await collector.cancel()
         assert collector.is_cancelled
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_delay_between_channels(self, db):
         from tests.helpers import make_mock_pool
 
@@ -894,7 +894,7 @@ class TestCollectorProperties:
 
 
 class TestCollectorAutoDelete:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_auto_delete_not_enabled(self, db):
         from tests.helpers import make_mock_pool
 
@@ -903,7 +903,7 @@ class TestCollectorAutoDelete:
         result = await collector._maybe_auto_delete(100)
         assert result is False
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_auto_delete_enabled(self, db):
         from tests.helpers import make_mock_pool
 
@@ -914,7 +914,7 @@ class TestCollectorAutoDelete:
         result = await collector._maybe_auto_delete(100)
         assert result is True
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_auto_delete_cached(self, db):
         from tests.helpers import make_mock_pool
 
@@ -930,7 +930,7 @@ class TestCollectorAutoDelete:
 
 
 class TestAgentProviderServiceRefresh:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_refresh_models_for_provider_live_fail(self, db):
         from src.services.agent_provider_service import AgentProviderService
 
@@ -942,7 +942,7 @@ class TestAgentProviderServiceRefresh:
         assert entry.error == "network"
         assert entry.source == "static cache"
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_refresh_all_models(self, db):
         from src.agent.provider_registry import ProviderRuntimeConfig
         from src.services.agent_provider_service import AgentProviderService
@@ -960,7 +960,7 @@ class TestAgentProviderServiceRefresh:
 
 
 class TestAgentProviderServiceSaveLoad:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_save_and_load_round_trip(self, db):
         from src.agent.provider_registry import ProviderRuntimeConfig
         from src.security import SessionCipher
@@ -1086,7 +1086,7 @@ class TestRunSync:
         result = _run_sync("test_tool", _op)
         assert result == 42
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_inside_event_loop_raises(self):
         from src.agent.tools.deepagents_sync import _run_sync
 
@@ -1198,28 +1198,28 @@ class TestDeepagentsSyncTools:
 
 
 class TestSchedulerManager:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_is_running_false(self):
         from src.scheduler.service import SchedulerManager
 
         sm = SchedulerManager(SchedulerConfig())
         assert sm.is_running is False
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_interval_minutes(self):
         from src.scheduler.service import SchedulerManager
 
         sm = SchedulerManager(SchedulerConfig(collect_interval_minutes=30))
         assert sm.interval_minutes == 30
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_is_job_enabled_no_bundle(self):
         from src.scheduler.service import SchedulerManager
 
         sm = SchedulerManager(SchedulerConfig())
         assert await sm.is_job_enabled("collect_all") is True
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_update_interval_no_scheduler(self):
         from src.scheduler.service import SchedulerManager
 
@@ -1227,28 +1227,28 @@ class TestSchedulerManager:
         sm.update_interval(15)
         assert sm._current_interval_minutes == 15
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_get_job_next_run_no_scheduler(self):
         from src.scheduler.service import SchedulerManager
 
         sm = SchedulerManager(SchedulerConfig())
         assert sm.get_job_next_run("collect_all") is None
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_get_all_jobs_no_scheduler(self):
         from src.scheduler.service import SchedulerManager
 
         sm = SchedulerManager(SchedulerConfig())
         assert sm.get_all_jobs_next_run() == {}
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_stop_not_running(self):
         from src.scheduler.service import SchedulerManager
 
         sm = SchedulerManager(SchedulerConfig())
         await sm.stop()  # Should not raise
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_trigger_now_no_enqueuer(self):
         from src.scheduler.service import SchedulerManager
 
@@ -1256,7 +1256,7 @@ class TestSchedulerManager:
         result = await sm.trigger_now()
         assert result["enqueued"] == 0
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_trigger_background_no_enqueuer(self):
         from src.scheduler.service import SchedulerManager
 
@@ -1266,7 +1266,7 @@ class TestSchedulerManager:
         if sm._bg_task:
             await sm._bg_task
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_run_photo_due_no_enqueuer(self):
         from src.scheduler.service import SchedulerManager
 
@@ -1274,7 +1274,7 @@ class TestSchedulerManager:
         result = await sm._run_photo_due()
         assert result == {"processed": 0}
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_run_photo_auto_no_enqueuer(self):
         from src.scheduler.service import SchedulerManager
 
@@ -1282,42 +1282,42 @@ class TestSchedulerManager:
         result = await sm._run_photo_auto()
         assert result == {"jobs": 0}
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_run_pipeline_job_no_enqueuer(self):
         from src.scheduler.service import SchedulerManager
 
         sm = SchedulerManager(SchedulerConfig())
         await sm._run_pipeline_job(1)  # Should not raise
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_run_content_generate_no_enqueuer(self):
         from src.scheduler.service import SchedulerManager
 
         sm = SchedulerManager(SchedulerConfig())
         await sm._run_content_generate_job(1)  # Should not raise
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_run_search_query_no_enqueuer(self):
         from src.scheduler.service import SchedulerManager
 
         sm = SchedulerManager(SchedulerConfig())
         await sm._run_search_query(1)  # Should not raise
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_load_settings_no_bundle(self):
         from src.scheduler.service import SchedulerManager
 
         sm = SchedulerManager(SchedulerConfig())
         await sm.load_settings()  # Should not raise
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_sync_job_state_not_running(self):
         from src.scheduler.service import SchedulerManager
 
         sm = SchedulerManager(SchedulerConfig())
         await sm.sync_job_state("collect_all", True)  # Should not raise
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_get_potential_jobs(self):
         from src.scheduler.service import SchedulerManager
 
@@ -1359,7 +1359,7 @@ def _make_dispatcher(**overrides):
 
 
 class TestUnifiedDispatcherDispatch:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_unknown_task_type(self):
         dispatcher, tasks_repo, _ = _make_dispatcher()
         task = CollectionTask(
@@ -1372,7 +1372,7 @@ class TestUnifiedDispatcherDispatch:
         call_args = tasks_repo.update_collection_task.call_args
         assert call_args[0][1] == CollectionTaskStatus.FAILED
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_photo_due_no_service(self):
         dispatcher, tasks_repo, _ = _make_dispatcher()
         task = CollectionTask(
@@ -1385,7 +1385,7 @@ class TestUnifiedDispatcherDispatch:
         call_args = tasks_repo.update_collection_task.call_args
         assert call_args[0][1] == CollectionTaskStatus.FAILED
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_photo_auto_no_service(self):
         dispatcher, tasks_repo, _ = _make_dispatcher()
         task = CollectionTask(
@@ -1396,7 +1396,7 @@ class TestUnifiedDispatcherDispatch:
         await dispatcher._handle_photo_auto(task)
         tasks_repo.update_collection_task.assert_awaited()
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_sq_stats_no_bundle(self):
         dispatcher, tasks_repo, _ = _make_dispatcher()
         task = CollectionTask(
@@ -1408,7 +1408,7 @@ class TestUnifiedDispatcherDispatch:
         await dispatcher._handle_sq_stats(task)
         tasks_repo.update_collection_task.assert_awaited()
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_sq_stats_invalid_payload(self):
         dispatcher, tasks_repo, _ = _make_dispatcher(sq_bundle=MagicMock())
         task = CollectionTask.model_construct(
@@ -1421,7 +1421,7 @@ class TestUnifiedDispatcherDispatch:
         call_args = tasks_repo.update_collection_task.call_args
         assert call_args[0][1] == CollectionTaskStatus.FAILED
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_pipeline_run_no_env(self):
         dispatcher, tasks_repo, _ = _make_dispatcher()
         task = CollectionTask(
@@ -1435,7 +1435,7 @@ class TestUnifiedDispatcherDispatch:
         assert call_args[0][1] == CollectionTaskStatus.FAILED
         assert "not configured" in str(call_args)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_pipeline_run_invalid_payload(self):
         dispatcher, tasks_repo, _ = _make_dispatcher(
             pipeline_bundle=MagicMock(), search_engine=MagicMock(), db=MagicMock()
@@ -1450,7 +1450,7 @@ class TestUnifiedDispatcherDispatch:
         call_args = tasks_repo.update_collection_task.call_args
         assert call_args[0][1] == CollectionTaskStatus.FAILED
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_content_generate_no_env(self):
         dispatcher, tasks_repo, _ = _make_dispatcher()
         task = CollectionTask(
@@ -1463,7 +1463,7 @@ class TestUnifiedDispatcherDispatch:
         call_args = tasks_repo.update_collection_task.call_args
         assert call_args[0][1] == CollectionTaskStatus.FAILED
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_content_generate_invalid_payload(self):
         dispatcher, tasks_repo, _ = _make_dispatcher(
             pipeline_bundle=MagicMock(), search_engine=MagicMock(), db=MagicMock()
@@ -1478,7 +1478,7 @@ class TestUnifiedDispatcherDispatch:
         call_args = tasks_repo.update_collection_task.call_args
         assert call_args[0][1] == CollectionTaskStatus.FAILED
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_content_publish_no_id(self):
         dispatcher, tasks_repo, _ = _make_dispatcher()
         task = CollectionTask(
@@ -1489,7 +1489,7 @@ class TestUnifiedDispatcherDispatch:
         await dispatcher._handle_content_publish(task)
         tasks_repo.update_collection_task.assert_not_awaited()
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_stats_all_no_id(self):
         dispatcher, tasks_repo, _ = _make_dispatcher()
         task = CollectionTask(
@@ -1500,7 +1500,7 @@ class TestUnifiedDispatcherDispatch:
         await dispatcher._handle_stats_all(task)
         tasks_repo.update_collection_task.assert_not_awaited()
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_stats_all_invalid_payload(self):
         dispatcher, tasks_repo, _ = _make_dispatcher()
         task = CollectionTask.model_construct(
@@ -1513,7 +1513,7 @@ class TestUnifiedDispatcherDispatch:
         call_args = tasks_repo.update_collection_task.call_args
         assert call_args[0][1] == CollectionTaskStatus.FAILED
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_stats_all_completed_all_done(self):
         dispatcher, tasks_repo, _ = _make_dispatcher()
         payload = StatsAllTaskPayload(
@@ -1532,7 +1532,7 @@ class TestUnifiedDispatcherDispatch:
 
 
 class TestUnifiedDispatcherStartStop:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_start_and_stop(self):
         dispatcher, tasks_repo, _ = _make_dispatcher()
         await dispatcher.start()
@@ -1540,7 +1540,7 @@ class TestUnifiedDispatcherStartStop:
         await dispatcher.stop()
         assert dispatcher._task is None
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_start_already_running(self):
         dispatcher, tasks_repo, _ = _make_dispatcher()
         await dispatcher.start()

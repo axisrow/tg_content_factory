@@ -174,7 +174,7 @@ def app_factory(db):
     return _factory
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_tui_mounts_and_shows_threads(db, app_factory):
     """App mounts, auto-creates a thread, sidebar renders it."""
     app = app_factory()
@@ -186,7 +186,7 @@ async def test_tui_mounts_and_shows_threads(db, app_factory):
         assert len(items) >= 1
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_tui_shows_existing_thread_messages(db, app_factory):
     """Existing messages are rendered when thread loads."""
     tid = await db.create_agent_thread("my thread")
@@ -204,7 +204,7 @@ async def test_tui_shows_existing_thread_messages(db, app_factory):
         assert "assistant" in roles
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_tui_send_message_calls_chat_stream(db, app_factory):
     """Sending a message triggers chat_stream on the AgentManager."""
     config = AppConfig()
@@ -230,7 +230,7 @@ async def test_tui_send_message_calls_chat_stream(db, app_factory):
     assert "test message" in str(call_args)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_tui_send_message_saves_to_db(db, app_factory):
     """User message and assistant response are saved to DB."""
     config = AppConfig()
@@ -257,7 +257,7 @@ async def test_tui_send_message_saves_to_db(db, app_factory):
     assert "my question" in contents
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_tui_new_thread_action(db, app_factory):
     """Ctrl+N creates a new thread."""
     app = app_factory()
@@ -270,7 +270,7 @@ async def test_tui_new_thread_action(db, app_factory):
         assert len(threads_after) == len(threads_before) + 1
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_tui_delete_thread_action(db, app_factory):
     """Ctrl+D deletes the active thread and auto-creates a new one if needed."""
     app = app_factory()
@@ -286,7 +286,7 @@ async def test_tui_delete_thread_action(db, app_factory):
         assert active_id not in remaining_ids
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_tui_toggle_sidebar(db, app_factory):
     """Ctrl+T toggles sidebar visibility."""
     app = app_factory()
@@ -304,7 +304,7 @@ async def test_tui_toggle_sidebar(db, app_factory):
         assert sidebar.display is True
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_tui_thread_auto_rename(db, app_factory):
     """First message auto-renames 'Новый тред'."""
     config = AppConfig()
@@ -328,7 +328,7 @@ async def test_tui_thread_auto_rename(db, app_factory):
     assert thread["title"] == "Hello world!"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_tui_error_chunk_cleans_up(db, app_factory):
     """SSE error chunk triggers cleanup via delete_last_agent_exchange."""
     config = AppConfig()
@@ -371,7 +371,7 @@ def test_ctrl_c_not_bound():
     assert "ctrl+c" not in bound_keys
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_copy_to_clipboard_called(db, app_factory, monkeypatch):
     """action_copy_text() delegates to copy_to_clipboard()."""
     app = app_factory()
@@ -557,7 +557,7 @@ class TestAgentChatInteractiveMode:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_button_toggles_to_stop_during_streaming(db, app_factory):
     """Button must show '■ Стоп (esc)' with error variant while streaming."""
     gate = asyncio.Event()
@@ -596,7 +596,7 @@ async def test_button_toggles_to_stop_during_streaming(db, app_factory):
         assert btn.variant == "success"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_button_reverts_after_cancel(db, app_factory):
     """Pressing ESC during streaming cancels and reverts button to Отправить."""
     gate = asyncio.Event()
@@ -635,7 +635,7 @@ async def test_button_reverts_after_cancel(db, app_factory):
     gate.set()  # cleanup
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_stop_button_click_cancels_streaming(db, app_factory):
     """Clicking the stop button during streaming cancels the stream."""
     gate = asyncio.Event()
@@ -676,7 +676,7 @@ async def test_stop_button_click_cancels_streaming(db, app_factory):
     gate.set()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_no_race_condition_button_set_before_worker_runs(db, app_factory):
     """Verify _set_button_streaming(True) executes before worker starts.
 
@@ -760,7 +760,7 @@ class TestAgentChatParser:
         assert args.thread_id == 5
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_tui_stream_shows_tool_status(db, app_factory):
     """Tool SSE events update the streaming widget status label."""
     config = AppConfig()

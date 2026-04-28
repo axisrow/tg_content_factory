@@ -49,7 +49,7 @@ class FakeScheduler:
         self.existing = [j for j in self.existing if j.id != job_id]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_sync_pipeline_jobs_adds_and_removes():
     p1 = FakePipeline(1, 10, is_active=True)
     p2 = FakePipeline(2, 20, is_active=True)
@@ -97,7 +97,7 @@ class FakePipelineService:
         return self._pipeline
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_pipeline_run_handler_without_env_marks_failed():
     fake_tasks = FakeTasksRepo()
     # collector and channel_bundle can be dummies; handler will fail early due to missing env
@@ -115,7 +115,7 @@ async def test_pipeline_run_handler_without_env_marks_failed():
     assert "Pipeline execution environment not configured" in last["error"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_pipeline_run_handler_uses_content_generation_service(monkeypatch):
     fake_tasks = FakeTasksRepo()
     pipeline = FakePipeline(1, 10, is_active=True)

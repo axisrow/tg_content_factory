@@ -32,7 +32,7 @@ def _make_container(db: Database) -> MagicMock:
     return container
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_start_container_autostarts_scheduler_when_flag_set(tmp_path):
     """start_container calls scheduler.start() when scheduler_autostart=1 is in DB."""
     db = Database(str(tmp_path / "test.db"))
@@ -51,7 +51,7 @@ async def test_start_container_autostarts_scheduler_when_flag_set(tmp_path):
         await db.close()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_start_container_no_autostart_when_flag_absent(tmp_path):
     """start_container does not call scheduler.start() when flag is not set."""
     db = Database(str(tmp_path / "test.db"))
@@ -70,7 +70,7 @@ async def test_start_container_no_autostart_when_flag_absent(tmp_path):
         await db.close()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_start_container_no_autostart_when_flag_zero(tmp_path):
     """start_container does not call scheduler.start() when scheduler_autostart=0."""
     db = Database(str(tmp_path / "test.db"))
@@ -89,7 +89,7 @@ async def test_start_container_no_autostart_when_flag_zero(tmp_path):
         await db.close()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_start_container_calls_load_settings(tmp_path):
     """start_container always calls scheduler.load_settings() on startup."""
     db = Database(str(tmp_path / "test.db"))
@@ -107,7 +107,7 @@ async def test_start_container_calls_load_settings(tmp_path):
         await db.close()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_start_container_web_mode_skips_telegram_runtime(tmp_path):
     """Web runtime should not initialize Telegram pool or worker dispatchers."""
     db = Database(str(tmp_path / "test.db"))
@@ -132,7 +132,7 @@ async def test_start_container_web_mode_skips_telegram_runtime(tmp_path):
         await db.close()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_start_container_worker_mode_initializes_runtime(tmp_path):
     """Worker runtime should initialize Telegram pool and dispatcher startup paths."""
     db = Database(str(tmp_path / "test.db"))
@@ -157,7 +157,7 @@ async def test_start_container_worker_mode_initializes_runtime(tmp_path):
         await db.close()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_search_engine_accepts_none_pool(tmp_path):
     """SearchEngine built with pool=None (web-mode) must not raise on check_search_quota."""
     db = Database(str(tmp_path / "test.db"))
@@ -171,7 +171,7 @@ async def test_search_engine_accepts_none_pool(tmp_path):
         await db.close()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_build_web_container_does_not_connect_telethon(tmp_path, monkeypatch):
     """Regression for #444 Test Plan: web startup without internet must not
     initiate a single Telegram connect/reconnect.

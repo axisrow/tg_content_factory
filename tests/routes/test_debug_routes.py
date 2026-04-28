@@ -92,7 +92,7 @@ def test_read_log_tail_respects_max_lines(tmp_path):
 
 # ─── route smoke tests ───────────────────────────────────────────────
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_debug_page_renders(client):
     """Test debug page renders successfully."""
     resp = await client.get("/debug/")
@@ -100,7 +100,7 @@ async def test_debug_page_renders(client):
     assert "debug" in resp.text.lower() or "log" in resp.text.lower()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_debug_page_reads_from_file(client, tmp_path, monkeypatch):
     """Debug page shows records read from log file."""
     log = tmp_path / "app.log"
@@ -114,7 +114,7 @@ async def test_debug_page_reads_from_file(client, tmp_path, monkeypatch):
     assert "Hello from file" in resp.text
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_debug_page_empty_when_no_file(client, tmp_path, monkeypatch):
     """Debug page renders without error when log file is absent."""
     monkeypatch.setattr("src.web.routes.debug.APP_LOG_PATH", tmp_path / "missing.log")
@@ -122,14 +122,14 @@ async def test_debug_page_empty_when_no_file(client, tmp_path, monkeypatch):
     assert resp.status_code == 200
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_debug_logs_partial(client):
     """Test debug logs partial endpoint."""
     resp = await client.get("/debug/logs")
     assert resp.status_code == 200
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_debug_page_empty_buffer(client):
     """Kept for compatibility — debug page renders when buffer is empty."""
     client._transport.app.state.log_buffer._records.clear()
@@ -137,7 +137,7 @@ async def test_debug_page_empty_buffer(client):
     assert resp.status_code == 200
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_log_buffer_maxlen():
     """Test LogBuffer respects max length."""
     import logging
@@ -157,7 +157,7 @@ async def test_log_buffer_maxlen():
     assert "Message 4" in records[-1]["message"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_log_buffer_record_format():
     """Test LogBuffer record format."""
     import logging
@@ -180,7 +180,7 @@ async def test_log_buffer_record_format():
     assert records[0]["logger"] == "test_format"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_log_buffer_levels():
     """Test LogBuffer captures different log levels."""
     import logging
@@ -205,7 +205,7 @@ async def test_log_buffer_levels():
     assert "ERROR" in levels
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_log_buffer_exception():
     """Test LogBuffer handles exceptions in records."""
     import logging
@@ -229,14 +229,14 @@ async def test_log_buffer_exception():
 # ─── timing endpoint tests ──────────────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_debug_timing_page(client):
     """Test timing page renders."""
     resp = await client.get("/debug/timing")
     assert resp.status_code == 200
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_debug_timing_rows(client):
     """Test timing rows partial."""
     resp = await client.get("/debug/timing/rows")
@@ -246,7 +246,7 @@ async def test_debug_timing_rows(client):
 # ─── memory endpoint tests ──────────────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_debug_memory_returns_json(client):
     """Test memory endpoint returns JSON with expected keys."""
     resp = await client.get("/debug/memory")
@@ -257,7 +257,7 @@ async def test_debug_memory_returns_json(client):
     assert "pool" in data
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_debug_memory_pool_info(client):
     """Test memory endpoint includes pool info."""
     resp = await client.get("/debug/memory")
@@ -266,7 +266,7 @@ async def test_debug_memory_pool_info(client):
     assert "dialogs_cache_entries" in data["pool"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_debug_memory_uses_snapshot_in_web_mode(client, base_app):
     """In web-mode, pool counters must come from runtime_snapshots.pool_counters."""
     from datetime import datetime, timezone
@@ -298,7 +298,7 @@ async def test_debug_memory_uses_snapshot_in_web_mode(client, base_app):
     assert body["pool"]["session_overrides"] == 3
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_debug_memory_reports_empty_source_without_snapshot(client, base_app):
     """web-mode without a snapshot yet: source=empty and counters are zero."""
     app, _, _ = base_app
@@ -310,7 +310,7 @@ async def test_debug_memory_reports_empty_source_without_snapshot(client, base_a
     assert body["pool"]["dialogs_cache_entries"] == 0
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_debug_memory_live_counters_in_worker_mode(client, base_app):
     """worker-mode: counters come from live pool, not snapshot."""
     app, _, pool = base_app

@@ -8,21 +8,21 @@ import pytest
 # ── Trends page ─────────────────────────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_trends_page_renders(route_client):
     """Test trends page renders."""
     resp = await route_client.get("/analytics/trends")
     assert resp.status_code == 200
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_trends_page_with_days(route_client):
     """Test trends page with custom days param."""
     resp = await route_client.get("/analytics/trends?days=14")
     assert resp.status_code == 200
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_trends_page_invalid_days(route_client):
     """Test trends page with invalid days falls back to 7."""
     resp = await route_client.get("/analytics/trends?days=99")
@@ -32,21 +32,21 @@ async def test_trends_page_invalid_days(route_client):
 # ── Channel analytics page ─────────────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_channel_analytics_page_renders(route_client):
     """Test channel analytics page renders."""
     resp = await route_client.get("/analytics/channels")
     assert resp.status_code == 200
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_channel_analytics_page_with_channel(route_client, base_app):
     """Test channel analytics page with channel_id param."""
     resp = await route_client.get("/analytics/channels?channel_id=100&days=30")
     assert resp.status_code == 200
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_channel_analytics_page_invalid_days(route_client):
     """Test channel analytics page with invalid days falls back to 30."""
     resp = await route_client.get("/analytics/channels?days=99")
@@ -56,7 +56,7 @@ async def test_channel_analytics_page_invalid_days(route_client):
 # ── Channel API endpoints ──────────────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_api_channel_overview(route_client):
     """Test channel overview API returns JSON."""
     from src.services.channel_analytics_service import ChannelOverview
@@ -79,7 +79,7 @@ async def test_api_channel_overview(route_client):
         assert data["title"] == "Test"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_api_subscriber_history(route_client):
     """Test subscriber history API returns JSON."""
     with patch("src.web.routes.analytics.ChannelAnalyticsService") as mock_svc:
@@ -93,7 +93,7 @@ async def test_api_subscriber_history(route_client):
         assert isinstance(data, list)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_api_views_timeseries(route_client):
     """Test views timeseries API returns JSON."""
     with patch("src.web.routes.analytics.ChannelAnalyticsService") as mock_svc:
@@ -107,7 +107,7 @@ async def test_api_views_timeseries(route_client):
         assert isinstance(data, list)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_api_post_frequency(route_client):
     """Test post frequency API returns JSON."""
     with patch("src.web.routes.analytics.ChannelAnalyticsService") as mock_svc:
@@ -121,7 +121,7 @@ async def test_api_post_frequency(route_client):
         assert isinstance(data, list)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_api_err(route_client):
     """Test ERR API returns JSON."""
     with patch("src.web.routes.analytics.ChannelAnalyticsService") as mock_svc:
@@ -135,7 +135,7 @@ async def test_api_err(route_client):
         assert data["err24"] == 3.1
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_api_hourly_activity(route_client):
     """Test hourly activity API returns JSON."""
     with patch("src.web.routes.analytics.ChannelAnalyticsService") as mock_svc:
@@ -149,7 +149,7 @@ async def test_api_hourly_activity(route_client):
         assert isinstance(data, list)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_api_citation_stats(route_client):
     """Test citation stats API returns JSON."""
     from src.services.channel_analytics_service import CitationStats
@@ -165,7 +165,7 @@ async def test_api_citation_stats(route_client):
         assert data["total_forwards"] == 100
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_api_heatmap(route_client):
     """Test heatmap API returns JSON."""
     with patch("src.web.routes.analytics.ChannelAnalyticsService") as mock_svc:
@@ -179,7 +179,7 @@ async def test_api_heatmap(route_client):
         assert isinstance(data, list)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_api_cross_citations(route_client):
     """Test cross-citations API returns JSON."""
     with patch("src.web.routes.analytics.ChannelAnalyticsService") as mock_svc:

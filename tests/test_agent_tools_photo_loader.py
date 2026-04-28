@@ -85,7 +85,7 @@ def _photo_ctx(photo_task_svc, auto_upload_svc):
 
 
 class TestListPhotoBatches:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_empty_returns_not_found(self, mock_db):
         photo_task_svc, auto_upload_svc = _make_photo_services()
         mock_pool, _ = _make_mock_pool()
@@ -95,7 +95,7 @@ class TestListPhotoBatches:
             result = await handlers["list_photo_batches"]({})
         assert "не найдены" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_with_batches_shows_info(self, mock_db):
         photo_task_svc, auto_upload_svc = _make_photo_services()
         mock_pool, _ = _make_mock_pool()
@@ -118,7 +118,7 @@ class TestListPhotoBatches:
 
 
 class TestListPhotoItems:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_empty_returns_not_found(self, mock_db):
         photo_task_svc, auto_upload_svc = _make_photo_services()
         mock_pool, _ = _make_mock_pool()
@@ -128,7 +128,7 @@ class TestListPhotoItems:
             result = await handlers["list_photo_items"]({})
         assert "не найдены" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_with_items_shows_info(self, mock_db):
         photo_task_svc, auto_upload_svc = _make_photo_services()
         mock_pool, _ = _make_mock_pool()
@@ -149,7 +149,7 @@ class TestListPhotoItems:
 
 
 class TestSendPhotosNow:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_no_pool_returns_gate(self, mock_db):
         handlers = _get_tool_handlers(mock_db, client_pool=None)
         result = await handlers["send_photos_now"](
@@ -157,7 +157,7 @@ class TestSendPhotosNow:
         )
         assert "CLI-режиме" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_no_confirm_returns_gate(self, mock_db):
         mock_pool, _ = _make_mock_pool()
         mock_db.get_accounts = AsyncMock(return_value=[_make_account()])
@@ -167,7 +167,7 @@ class TestSendPhotosNow:
         )
         assert "confirm=true" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_with_confirm_success(self, mock_db):
         photo_task_svc, auto_upload_svc = _make_photo_services()
         mock_pool, _ = _make_mock_pool()
@@ -186,7 +186,7 @@ class TestSendPhotosNow:
 
 
 class TestSchedulePhotos:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_no_pool_returns_gate(self, mock_db):
         handlers = _get_tool_handlers(mock_db, client_pool=None)
         result = await handlers["schedule_photos"](
@@ -194,7 +194,7 @@ class TestSchedulePhotos:
         )
         assert "CLI-режиме" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_no_confirm_returns_gate(self, mock_db):
         mock_pool, _ = _make_mock_pool()
         mock_db.get_accounts = AsyncMock(return_value=[_make_account()])
@@ -204,7 +204,7 @@ class TestSchedulePhotos:
         )
         assert "confirm=true" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_with_confirm_success(self, mock_db):
         photo_task_svc, auto_upload_svc = _make_photo_services()
         mock_pool, _ = _make_mock_pool()
@@ -229,21 +229,21 @@ class TestSchedulePhotos:
 
 
 class TestCancelPhotoItem:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_missing_item_id_returns_error(self, mock_db):
         mock_pool, _ = _make_mock_pool()
         handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
         result = await handlers["cancel_photo_item"]({})
         assert "item_id обязателен" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_no_confirm_returns_gate(self, mock_db):
         mock_pool, _ = _make_mock_pool()
         handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
         result = await handlers["cancel_photo_item"]({"item_id": 5})
         assert "confirm=true" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_found_item_cancelled(self, mock_db):
         photo_task_svc, auto_upload_svc = _make_photo_services()
         mock_pool, _ = _make_mock_pool()
@@ -254,7 +254,7 @@ class TestCancelPhotoItem:
             result = await handlers["cancel_photo_item"]({"item_id": 5, "confirm": True})
         assert "отменено" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_not_found_returns_message(self, mock_db):
         photo_task_svc, auto_upload_svc = _make_photo_services()
         mock_pool, _ = _make_mock_pool()
@@ -267,7 +267,7 @@ class TestCancelPhotoItem:
 
 
 class TestListAutoUploads:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_empty_returns_not_configured(self, mock_db):
         photo_task_svc, auto_upload_svc = _make_photo_services()
         mock_pool, _ = _make_mock_pool()
@@ -277,7 +277,7 @@ class TestListAutoUploads:
             result = await handlers["list_auto_uploads"]({})
         assert "не настроены" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_with_jobs_shows_info(self, mock_db):
         photo_task_svc, auto_upload_svc = _make_photo_services()
         mock_pool, _ = _make_mock_pool()
@@ -300,14 +300,14 @@ class TestListAutoUploads:
 
 
 class TestToggleAutoUpload:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_missing_job_id_returns_error(self, mock_db):
         mock_pool, _ = _make_mock_pool()
         handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
         result = await handlers["toggle_auto_upload"]({})
         assert "job_id обязателен" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_not_found_returns_error(self, mock_db):
         photo_task_svc, auto_upload_svc = _make_photo_services()
         mock_pool, _ = _make_mock_pool()
@@ -318,7 +318,7 @@ class TestToggleAutoUpload:
             result = await handlers["toggle_auto_upload"]({"job_id": 999})
         assert "не найдена" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_active_job_gets_paused(self, mock_db):
         photo_task_svc, auto_upload_svc = _make_photo_services()
         mock_pool, _ = _make_mock_pool()
@@ -331,7 +331,7 @@ class TestToggleAutoUpload:
             result = await handlers["toggle_auto_upload"]({"job_id": 3})
         assert "приостановлена" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_inactive_job_gets_activated(self, mock_db):
         photo_task_svc, auto_upload_svc = _make_photo_services()
         mock_pool, _ = _make_mock_pool()
@@ -346,21 +346,21 @@ class TestToggleAutoUpload:
 
 
 class TestDeleteAutoUpload:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_missing_job_id_returns_error(self, mock_db):
         mock_pool, _ = _make_mock_pool()
         handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
         result = await handlers["delete_auto_upload"]({})
         assert "job_id обязателен" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_no_confirm_returns_gate(self, mock_db):
         mock_pool, _ = _make_mock_pool()
         handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
         result = await handlers["delete_auto_upload"]({"job_id": 5})
         assert "confirm=true" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_with_confirm_deleted(self, mock_db):
         photo_task_svc, auto_upload_svc = _make_photo_services()
         mock_pool, _ = _make_mock_pool()
@@ -372,7 +372,7 @@ class TestDeleteAutoUpload:
 
 
 class TestCreatePhotoBatch:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_no_pool_returns_gate(self, mock_db):
         handlers = _get_tool_handlers(mock_db, client_pool=None)
         result = await handlers["create_photo_batch"](
@@ -380,7 +380,7 @@ class TestCreatePhotoBatch:
         )
         assert "CLI-режиме" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_missing_fields_returns_error(self, mock_db):
         mock_pool, _ = _make_mock_pool()
         mock_db.get_accounts = AsyncMock(return_value=[_make_account()])
@@ -388,7 +388,7 @@ class TestCreatePhotoBatch:
         result = await handlers["create_photo_batch"]({"phone": "+79001234567"})
         assert "обязательны" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_no_confirm_returns_gate(self, mock_db):
         mock_pool, _ = _make_mock_pool()
         mock_db.get_accounts = AsyncMock(return_value=[_make_account()])
@@ -398,7 +398,7 @@ class TestCreatePhotoBatch:
         )
         assert "confirm=true" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_with_confirm_batch_created(self, mock_db):
         photo_task_svc, auto_upload_svc = _make_photo_services()
         mock_pool, _ = _make_mock_pool()
@@ -417,20 +417,20 @@ class TestCreatePhotoBatch:
 
 
 class TestRunPhotoDue:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_no_pool_returns_gate(self, mock_db):
         handlers = _get_tool_handlers(mock_db, client_pool=None)
         result = await handlers["run_photo_due"]({"confirm": True})
         assert "CLI-режиме" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_no_confirm_returns_gate(self, mock_db):
         mock_pool, _ = _make_mock_pool()
         handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
         result = await handlers["run_photo_due"]({})
         assert "confirm=true" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_with_confirm_processes_items_and_jobs(self, mock_db):
         photo_task_svc, auto_upload_svc = _make_photo_services()
         mock_pool, _ = _make_mock_pool()
@@ -444,7 +444,7 @@ class TestRunPhotoDue:
 
 
 class TestCreateAutoUpload:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_no_pool_returns_gate(self, mock_db):
         handlers = _get_tool_handlers(mock_db, client_pool=None)
         result = await handlers["create_auto_upload"](
@@ -452,7 +452,7 @@ class TestCreateAutoUpload:
         )
         assert "CLI-режиме" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_missing_fields_returns_error(self, mock_db):
         mock_pool, _ = _make_mock_pool()
         mock_db.get_accounts = AsyncMock(return_value=[_make_account()])
@@ -460,7 +460,7 @@ class TestCreateAutoUpload:
         result = await handlers["create_auto_upload"]({"phone": "+79001234567"})
         assert "обязательны" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_no_confirm_returns_gate(self, mock_db):
         mock_pool, _ = _make_mock_pool()
         mock_db.get_accounts = AsyncMock(return_value=[_make_account()])
@@ -470,7 +470,7 @@ class TestCreateAutoUpload:
         )
         assert "confirm=true" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_with_confirm_job_created(self, mock_db):
         photo_task_svc, auto_upload_svc = _make_photo_services()
         mock_pool, _ = _make_mock_pool()
@@ -493,21 +493,21 @@ class TestCreateAutoUpload:
 
 
 class TestUpdateAutoUpload:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_missing_job_id_returns_error(self, mock_db):
         mock_pool, _ = _make_mock_pool()
         handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
         result = await handlers["update_auto_upload"]({})
         assert "job_id обязателен" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_no_confirm_returns_gate(self, mock_db):
         mock_pool, _ = _make_mock_pool()
         handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
         result = await handlers["update_auto_upload"]({"job_id": 1, "folder_path": "/new"})
         assert "confirm=true" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_not_found_returns_error(self, mock_db):
         photo_task_svc, auto_upload_svc = _make_photo_services()
         mock_pool, _ = _make_mock_pool()
@@ -518,7 +518,7 @@ class TestUpdateAutoUpload:
             result = await handlers["update_auto_upload"]({"job_id": 999, "confirm": True})
         assert "не найдена" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_with_confirm_updated(self, mock_db):
         photo_task_svc, auto_upload_svc = _make_photo_services()
         mock_pool, _ = _make_mock_pool()

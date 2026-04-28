@@ -14,7 +14,7 @@ NOW = datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
 # --- _rfc822 / _iso8601 unit tests ---
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_rfc822_none():
     from src.web.routes.rss import _rfc822
 
@@ -23,7 +23,7 @@ async def test_rfc822_none():
     assert len(result) > 10  # e.g. "Fri, 01 Jan 2026 00:00:00 +0000"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_rfc822_naive_datetime():
     from src.web.routes.rss import _rfc822
 
@@ -32,7 +32,7 @@ async def test_rfc822_naive_datetime():
     assert "+0000" in result or "GMT" in result or "UTC" in result
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_rfc822_aware_datetime():
     from src.web.routes.rss import _rfc822
 
@@ -41,7 +41,7 @@ async def test_rfc822_aware_datetime():
     assert "Jun" in result or "15" in result
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_iso8601_none():
     from src.web.routes.rss import _iso8601
 
@@ -53,7 +53,7 @@ async def test_iso8601_none():
 # --- RSS feed route tests ---
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_rss_feed_empty(route_client):
     resp = await route_client.get("/rss.xml")
     assert resp.status_code == 200
@@ -64,7 +64,7 @@ async def test_rss_feed_empty(route_client):
     assert "<item>" not in resp.text
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_rss_feed_with_messages(route_client, base_app):
     _, db, _ = base_app
 
@@ -87,7 +87,7 @@ async def test_rss_feed_with_messages(route_client, base_app):
 # --- Atom feed route tests ---
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_atom_feed_empty(route_client):
     resp = await route_client.get("/atom.xml")
     assert resp.status_code == 200
@@ -97,7 +97,7 @@ async def test_atom_feed_empty(route_client):
     assert "<entry>" not in resp.text
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_atom_feed_with_messages(route_client, base_app):
     _, db, _ = base_app
 

@@ -33,7 +33,7 @@ def service(mock_db):
 # === get_trending_topics tests ===
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_trending_topics_empty_db(service, mock_db):
     """get_trending_topics returns empty list when no messages."""
     mock_db.execute_fetchall = AsyncMock(return_value=[])
@@ -43,7 +43,7 @@ async def test_get_trending_topics_empty_db(service, mock_db):
     assert result == []
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_trending_topics_filters_high_frequency(service, mock_db):
     """get_trending_topics filters out words appearing in >85% of messages via max_df."""
     # "hello" appears in all 10 messages → 100% > max_df 85% → filtered
@@ -59,7 +59,7 @@ async def test_get_trending_topics_filters_high_frequency(service, mock_db):
     assert "topic" in keywords  # 30% documents → kept
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_trending_topics_respects_limit(service, mock_db):
     """get_trending_topics respects the limit parameter."""
     keywords = [
@@ -86,7 +86,7 @@ async def test_get_trending_topics_respects_limit(service, mock_db):
     assert {topic.keyword for topic in result}.issubset(set(keywords))
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_trending_topics_short_words_filtered(service, mock_db):
     """get_trending_topics filters words shorter than 4 characters."""
     mock_db.execute_fetchall = AsyncMock(
@@ -104,7 +104,7 @@ async def test_get_trending_topics_short_words_filtered(service, mock_db):
     assert "verify" in words
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_trending_topics_with_data(service, mock_db):
     """get_trending_topics processes and returns topics correctly."""
     mock_db.execute_fetchall = AsyncMock(
@@ -125,7 +125,7 @@ async def test_get_trending_topics_with_data(service, mock_db):
     assert important.count == 3
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_trending_topics_non_alpha_only(service, mock_db):
     """get_trending_topics only includes alphabetic words (4+ chars, RU/EN)."""
     mock_db.execute_fetchall = AsyncMock(
@@ -145,7 +145,7 @@ async def test_get_trending_topics_non_alpha_only(service, mock_db):
     assert "keepword" in words
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_trending_topics_respects_days(service, mock_db):
     """get_trending_topics respects days parameter."""
     mock_db.execute_fetchall = AsyncMock(
@@ -164,7 +164,7 @@ async def test_get_trending_topics_respects_days(service, mock_db):
 # === get_trending_channels tests ===
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_trending_channels_empty_db(service, mock_db):
     """get_trending_channels returns empty list when no data."""
     mock_db.execute_fetchall = AsyncMock(return_value=[])
@@ -174,7 +174,7 @@ async def test_get_trending_channels_empty_db(service, mock_db):
     assert result == []
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_trending_channels_with_min_messages(service, mock_db):
     """get_trending_channels only includes channels with >= 3 messages."""
     # SQL HAVING COUNT >= 3 filters, so mock only returns qualifying rows
@@ -198,7 +198,7 @@ async def test_get_trending_channels_with_min_messages(service, mock_db):
     assert result[0].message_count == 5
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_trending_channels_respects_limit(service, mock_db):
     """get_trending_channels respects the limit parameter."""
     # Mock returns 5 items (as SQL LIMIT would do)
@@ -223,7 +223,7 @@ async def test_get_trending_channels_respects_limit(service, mock_db):
 # === get_trending_emojis tests ===
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_trending_emojis_empty_db(service, mock_db):
     """get_trending_emojis returns empty list when no reactions."""
     mock_db.execute_fetchall = AsyncMock(return_value=[])
@@ -233,7 +233,7 @@ async def test_get_trending_emojis_empty_db(service, mock_db):
     assert result == []
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_trending_emojis_from_reactions(service, mock_db):
     """get_trending_emojis aggregates reactions correctly."""
     mock_db.execute_fetchall = AsyncMock(
@@ -252,7 +252,7 @@ async def test_get_trending_emojis_from_reactions(service, mock_db):
     assert result[1].count == 5
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_trending_emojis_respects_limit(service, mock_db):
     """get_trending_emojis respects the limit parameter."""
     mock_db.execute_fetchall = AsyncMock(
@@ -267,7 +267,7 @@ async def test_get_trending_emojis_respects_limit(service, mock_db):
 # === get_message_velocity tests ===
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_message_velocity_empty(service, mock_db):
     """get_message_velocity returns empty list when no messages."""
     mock_db.execute_fetchall = AsyncMock(return_value=[])
@@ -277,7 +277,7 @@ async def test_get_message_velocity_empty(service, mock_db):
     assert result == []
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_message_velocity_by_channel(service, mock_db):
     """get_message_velocity returns daily counts for a channel."""
     mock_db.execute_fetchall = AsyncMock(
@@ -299,7 +299,7 @@ async def test_get_message_velocity_by_channel(service, mock_db):
 # === get_peak_hours tests ===
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_peak_hours_empty(service, mock_db):
     """get_peak_hours returns empty list when no messages."""
     mock_db.execute_fetchall = AsyncMock(return_value=[])
@@ -309,7 +309,7 @@ async def test_get_peak_hours_empty(service, mock_db):
     assert result == []
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_peak_hours_distribution(service, mock_db):
     """get_peak_hours returns hourly distribution correctly."""
     mock_db.execute_fetchall = AsyncMock(
@@ -383,7 +383,7 @@ def test_peak_hour_dataclass():
 # === Regression tests ===
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_trending_topics_tfidf_suppresses_noise(service, mock_db):
     """Regression #329: words in every message should not appear in trends."""
     # "hello" appears in all 10 messages → max_df filters it out

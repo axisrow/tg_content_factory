@@ -26,7 +26,7 @@ async def db(base_app):
 # ── agent_page: lines 48-55 (redirects) ────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_agent_page_no_threads_creates_thread(client, db):
     """Test agent page auto-creates thread when none exist (lines 57-58)."""
     # Ensure no threads
@@ -42,7 +42,7 @@ async def test_agent_page_no_threads_creates_thread(client, db):
     assert "/agent?thread_id=" in location
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_agent_page_no_thread_id_redirects_to_first(client, db):
     """Test agent page with no thread_id redirects to first thread (lines 53-55)."""
     thread_id = await db.create_agent_thread("First Thread")
@@ -53,7 +53,7 @@ async def test_agent_page_no_thread_id_redirects_to_first(client, db):
     assert f"thread_id={thread_id}" in location
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_agent_page_invalid_thread_id_redirects(client, db):
     """Test agent page with invalid thread_id redirects to first (lines 48-50)."""
     thread_id = await db.create_agent_thread("Valid")
@@ -67,7 +67,7 @@ async def test_agent_page_invalid_thread_id_redirects(client, db):
 # ── rename_thread: line 95-99 ──────────────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_rename_thread_whitespace_title(client, db):
     """Test rename thread with whitespace-only title (line 96)."""
     thread_id = await db.create_agent_thread("Original")
@@ -83,7 +83,7 @@ async def test_rename_thread_whitespace_title(client, db):
 # ── get_forum_topics: lines 126-128, 132-136 ───────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_forum_topics_api_fails_falls_back_to_db(client, db, pool_mock):
     """Test get forum topics falls back to DB cache when API returns None (lines 131-136)."""
     pool_mock.get_forum_topics = AsyncMock(return_value=None)
@@ -94,7 +94,7 @@ async def test_get_forum_topics_api_fails_falls_back_to_db(client, db, pool_mock
     assert "command_id" in data
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_forum_topics_api_returns_data_caches_to_db(client, db, pool_mock):
     """Test get forum topics caches fresh data to DB (lines 126-128)."""
     topics = [{"id": 1, "title": "Topic 1"}, {"id": 2, "title": "Topic 2"}]
@@ -109,7 +109,7 @@ async def test_get_forum_topics_api_returns_data_caches_to_db(client, db, pool_m
 # ── inject_context: line 134, 142-153 ──────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_inject_context_with_topic_id_none_string(client, db):
     """Test inject context with topic_id as 'None' string (line 150)."""
     thread_id = await db.create_agent_thread("Context")
@@ -124,7 +124,7 @@ async def test_inject_context_with_topic_id_none_string(client, db):
     assert "content" in data
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_inject_context_large_limit_capped(client, db):
     """Test inject context with limit > 10000 is capped (line 147)."""
     thread_id = await db.create_agent_thread("Context")
@@ -139,7 +139,7 @@ async def test_inject_context_large_limit_capped(client, db):
     assert "content" in data
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_inject_context_zero_limit_uses_default(client, db):
     """Test inject context with limit=0 uses default 10000 (line 147)."""
     thread_id = await db.create_agent_thread("Context")
@@ -155,7 +155,7 @@ async def test_inject_context_zero_limit_uses_default(client, db):
 # ── resolve_permission: lines 196-204 ──────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_resolve_permission_invalid_choice(client, db):
     """Test resolve permission with invalid choice (line 198)."""
     thread_id = await db.create_agent_thread("Perm")
@@ -168,7 +168,7 @@ async def test_resolve_permission_invalid_choice(client, db):
     assert resp.status_code == 400
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_resolve_permission_no_agent_manager(client, db):
     """Test resolve permission when agent_manager is None (lines 200-202)."""
     thread_id = await db.create_agent_thread("Perm")
@@ -182,7 +182,7 @@ async def test_resolve_permission_no_agent_manager(client, db):
     assert resp.status_code == 503
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_resolve_permission_valid_choices(client, db):
     """Test resolve permission with all valid choices."""
     thread_id = await db.create_agent_thread("Perm")
@@ -205,7 +205,7 @@ async def test_resolve_permission_valid_choices(client, db):
 # ── stop_chat: lines 211-213 ───────────────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_stop_chat_with_agent_manager_cancel(client, db):
     """Test stop chat calls cancel_stream on agent manager (lines 212-213)."""
     thread_id = await db.create_agent_thread("Stop")
@@ -219,7 +219,7 @@ async def test_stop_chat_with_agent_manager_cancel(client, db):
     mock_mgr.cancel_stream.assert_called_once_with(thread_id)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_stop_chat_no_agent_manager(client, db):
     """Test stop chat without agent manager (line 211)."""
     thread_id = await db.create_agent_thread("Stop")
@@ -234,7 +234,7 @@ async def test_stop_chat_no_agent_manager(client, db):
 # ── chat: lines 221-241, 248, 264-282 ─────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_chat_using_override_with_error(client, db):
     """Test chat when using_override is True with error (lines 237-238)."""
     thread_id = await db.create_agent_thread("Chat")
@@ -255,7 +255,7 @@ async def test_chat_using_override_with_error(client, db):
     assert resp.status_code == 503
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_chat_prompt_too_large(client, db):
     """Test chat when estimated prompt exceeds 100K tokens (lines 247-251)."""
     thread_id = await db.create_agent_thread("Chat")
@@ -272,7 +272,7 @@ async def test_chat_prompt_too_large(client, db):
     assert resp.status_code == 400
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_chat_auto_renames_thread(client, db):
     """Test chat auto-renames thread from first message (lines 257-258)."""
     thread_id = await db.create_agent_thread("Новый тред")
@@ -289,7 +289,7 @@ async def test_chat_auto_renames_thread(client, db):
     assert thread["title"] == "My first message"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_chat_does_not_rename_custom_thread(client, db):
     """Test chat does not rename thread with custom title."""
     thread_id = await db.create_agent_thread("Custom Title")
@@ -306,7 +306,7 @@ async def test_chat_does_not_rename_custom_thread(client, db):
     assert thread["title"] == "Custom Title"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_chat_with_model_parameter(client, db):
     """Test chat with explicit model parameter (line 225-226)."""
     thread_id = await db.create_agent_thread("Chat")
@@ -329,7 +329,7 @@ async def test_chat_with_model_parameter(client, db):
 # ── delete_thread: lines 86-88 (permission gate clearing) ──────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_delete_thread_clears_permission_gate(client, db):
     """Test delete thread clears permission gate for session (lines 86-88)."""
     thread_id = await db.create_agent_thread("Perm")
@@ -343,7 +343,7 @@ async def test_delete_thread_clears_permission_gate(client, db):
     mock_gate.clear_session.assert_called_once()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_delete_thread_no_permission_gate(client, db):
     """Test delete thread with no permission_gate (line 87)."""
     thread_id = await db.create_agent_thread("Perm")
@@ -357,7 +357,7 @@ async def test_delete_thread_no_permission_gate(client, db):
     assert data["ok"] is True
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_delete_thread_no_agent_manager(client, db):
     """Test delete thread when agent_manager is None (line 86)."""
     thread_id = await db.create_agent_thread("Perm")
@@ -372,7 +372,7 @@ async def test_delete_thread_no_agent_manager(client, db):
 # ── get_channels_json: line 106 ────────────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_channels_json_with_data(client, db):
     """Test get channels JSON with active channels."""
     from src.models import Channel

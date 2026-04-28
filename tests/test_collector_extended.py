@@ -57,7 +57,7 @@ def collector(mock_pool, mock_db):
     return Collector(mock_pool, mock_db, SchedulerConfig())
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_collect_channel_flood_wait_retry(collector, mock_pool, mock_db):
     channel = Channel(id=1, channel_id=123, title="Ch", last_collected_id=10)
     mock_db.get_channel_by_pk.return_value = channel
@@ -86,7 +86,7 @@ async def test_collect_channel_flood_wait_retry(collector, mock_pool, mock_db):
     mock_pool.report_flood.assert_called_once()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_collect_channel_pre_filter_min_subs(collector, mock_pool, mock_db):
     channel = Channel(channel_id=123, title="Ch")
     mock_db.get_setting.return_value = "100"  # min_subscribers_filter
@@ -100,7 +100,7 @@ async def test_collect_channel_pre_filter_min_subs(collector, mock_pool, mock_db
     mock_db.set_channels_filtered_bulk.assert_called_with([(123, "low_subscriber_manual")])
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_collect_channel_pre_filter_ratio(collector, mock_pool, mock_db):
     channel = Channel(channel_id=123, title="Ch", channel_type="channel")
     mock_db.get_channel_stats.return_value = [ChannelStats(channel_id=123, subscriber_count=10)]
@@ -114,7 +114,7 @@ async def test_collect_channel_pre_filter_ratio(collector, mock_pool, mock_db):
     mock_db.set_channels_filtered_bulk.assert_called_with([(123, "low_subscriber_ratio")])
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_flush_batch_persistence_error(collector, mock_pool, mock_db):
     channel = Channel(channel_id=123, title="Ch")
     client = AsyncMock()
@@ -136,7 +136,7 @@ async def test_flush_batch_persistence_error(collector, mock_pool, mock_db):
     assert res == 0  # persisted_max_msg_id not updated, stop_due_to_persistence_error = True
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_notification_queries_logic(collector, mock_db):
     notifier = AsyncMock()
     collector._notifier = notifier
@@ -157,7 +157,7 @@ async def test_notification_queries_logic(collector, mock_db):
     assert "https://t.me/mychan/42" in call_text
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_notification_queries_private_channel_link(collector, mock_db):
     """Private channel (no username) should produce t.me/c/ link."""
     notifier = AsyncMock()
@@ -175,7 +175,7 @@ async def test_notification_queries_private_channel_link(collector, mock_db):
     assert "https://t.me/c/1234567890/99" in call_text
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_fts_query_matches_logic():
     from src.services.notification_matcher import _fts_query_matches
 
@@ -189,7 +189,7 @@ async def test_fts_query_matches_logic():
     assert not _fts_query_matches("apple*", "I love bananas")
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_collect_channel_stats_flooded_error(collector, mock_pool):
     channel = Channel(channel_id=123)
     mock_pool.get_available_client.return_value = None
@@ -206,7 +206,7 @@ async def test_collect_channel_stats_flooded_error(collector, mock_pool):
         await collector._collect_channel_stats(channel)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_collect_all_stats_no_clients(collector, mock_db):
     mock_db.get_channels.return_value = [Channel(channel_id=123)]
     with patch.object(collector, "_collect_channel_stats", side_effect=NoActiveStatsClientsError):
@@ -214,7 +214,7 @@ async def test_collect_all_stats_no_clients(collector, mock_db):
         assert res["errors"] == 1
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_collect_channel_entity_timeout(collector, mock_pool):
     channel = Channel(channel_id=123, username="user")
     client = AsyncMock()
@@ -225,7 +225,7 @@ async def test_collect_channel_entity_timeout(collector, mock_pool):
     assert res == 0
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_collect_channel_username_changed(collector, mock_pool, mock_db):
     channel = Channel(channel_id=123, username="old_user")
     client = AsyncMock()
@@ -249,7 +249,7 @@ async def test_collect_channel_username_changed(collector, mock_pool, mock_db):
 # --- Tests for Collector._handle_meta_change_review (the unified helper) ---
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_handle_meta_change_review_no_change(collector, mock_db):
     channel = Channel(channel_id=777, username="same", title="Same", filter_flags="")
     changed = await collector._handle_meta_change_review(
@@ -261,7 +261,7 @@ async def test_handle_meta_change_review_no_change(collector, mock_db):
     mock_db.create_rename_event.assert_not_called()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_handle_meta_change_review_username_only(collector, mock_db):
     channel = Channel(channel_id=777, username="old", title="Same", filter_flags="")
     changed = await collector._handle_meta_change_review(
@@ -273,7 +273,7 @@ async def test_handle_meta_change_review_username_only(collector, mock_db):
     mock_db.create_rename_event.assert_called_once()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_handle_meta_change_review_title_only(collector, mock_db):
     channel = Channel(channel_id=777, username="same", title="Old", filter_flags="")
     changed = await collector._handle_meta_change_review(
@@ -284,7 +284,7 @@ async def test_handle_meta_change_review_title_only(collector, mock_db):
     mock_db.create_rename_event.assert_called_once()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_handle_meta_change_review_preserves_existing_flags(collector, mock_db):
     # Channel already has an unrelated filter reason; the helper must preserve it.
     channel = Channel(

@@ -130,7 +130,7 @@ def test_passes_threshold_low_value():
 # === score_content tests (integration with default provider) ===
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_score_content_uses_default_provider(mock_db):
     """Score content uses default provider which returns DRAFT prefix."""
     service = QualityScoringService(mock_db)
@@ -141,7 +141,7 @@ async def test_score_content_uses_default_provider(mock_db):
     assert score.issues == []
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_score_content_with_model_param(mock_db):
     """Score content passes model parameter."""
     service = QualityScoringService(mock_db)
@@ -153,7 +153,7 @@ async def test_score_content_with_model_param(mock_db):
 # === score_and_check tests ===
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_score_and_check_with_default_provider(mock_db):
     """Score and check with default provider."""
     service = QualityScoringService(mock_db)
@@ -163,7 +163,7 @@ async def test_score_and_check_with_default_provider(mock_db):
     assert passes is False
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_score_and_check_custom_threshold_lower(mock_db):
     """Custom threshold lower than score passes."""
     service = QualityScoringService(mock_db)
@@ -172,7 +172,7 @@ async def test_score_and_check_custom_threshold_lower(mock_db):
     assert passes is True
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_score_and_check_custom_threshold_higher(mock_db):
     """Custom threshold higher than score fails."""
     service = QualityScoringService(mock_db)
@@ -184,7 +184,7 @@ async def test_score_and_check_custom_threshold_higher(mock_db):
 # === Edge case tests ===
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_score_content_empty_string(mock_db):
     """Handles empty content string."""
     service = QualityScoringService(mock_db)
@@ -192,7 +192,7 @@ async def test_score_content_empty_string(mock_db):
     assert score.overall == 0.5
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_score_content_long_string(mock_db):
     """Handles long content string."""
     service = QualityScoringService(mock_db)
@@ -201,7 +201,7 @@ async def test_score_content_long_string(mock_db):
     assert score.overall == 0.5
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_score_and_check_with_model(mock_db):
     """Score and check with model parameter."""
     service = QualityScoringService(mock_db)
