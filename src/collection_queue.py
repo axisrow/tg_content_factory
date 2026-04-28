@@ -94,6 +94,7 @@ class CollectionQueue:
         for task in list(self._delayed_requeues):
             task.cancel()
         self._delayed_requeues.clear()
+        self._known_task_ids.clear()
         logger.info(
             "Cleared %d pending collection tasks from DB and %d queued items from memory",
             deleted,
@@ -124,9 +125,10 @@ class CollectionQueue:
             except asyncio.QueueFull:
                 logger.warning(
                     "Collection queue full on delayed requeue; task %d stays PENDING "
-                    "in DB and will be picked up by requeue_startup_tasks",
+                    "in DB and will be picked up by the DB pull loop",
                     task_id,
                 )
+                self._known_task_ids.discard(task_id)
             self._ensure_worker()
 
         # Reserve the slot up front so the periodic DB pull does not double-ingest
