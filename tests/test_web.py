@@ -218,6 +218,17 @@ async def test_settings_page(client):
     assert "Режим разработчика" in resp.text
     assert "Я понимаю, что включаю потенциально опасные изменения" in resp.text
     assert "Backend override" not in resp.text
+    assert 'src="/static/settings.js' in resp.text
+    assert "activateTabFromHash" not in resp.text
+
+
+@pytest.mark.asyncio
+async def test_settings_static_js_handles_pane_hashes(client):
+    resp = await client.get("/static/settings.js")
+    assert resp.status_code == 200
+    assert "settingsTabIdFromHash" in resp.text
+    assert "replace(/^pane-/, '')" in resp.text
+    assert "hashchange" in resp.text
 
 
 @pytest.mark.asyncio

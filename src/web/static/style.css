@@ -35,6 +35,15 @@ html { font-size: 14px; }
 .tga-table-striped-hover > tbody > tr:nth-of-type(odd) > * { --bs-table-accent-bg: var(--bs-table-striped-bg, rgba(0,0,0,0.05)); color: var(--bs-table-striped-color, var(--bs-table-color)); }
 .tga-table-striped-hover > tbody > tr:hover > * { --bs-table-accent-bg: var(--bs-table-hover-bg, rgba(0,0,0,0.075)); color: var(--bs-table-hover-color, var(--bs-table-color)); }
 
+/* TGConfirm shared confirm/alert dialog */
+.tgdlg-overlay { position: fixed; inset: 0; z-index: 10000; background: rgba(0,0,0,.5); display: flex; align-items: flex-end; justify-content: center; padding-bottom: 1.5rem; }
+.tgdlg-box { background: var(--bs-dark-bg-subtle,#1e1e2e); border: 1px solid var(--bs-primary); border-radius: 6px; padding: 1rem 1.5rem; min-width: 320px; max-width: 560px; font-family: var(--bs-font-monospace,monospace); }
+.tgdlg-message { color: var(--bs-body-color); margin-bottom: .75rem; font-size: .95rem; font-family: var(--bs-font-sans-serif,sans-serif); white-space: pre-wrap; }
+.tgdlg-item { padding: .2rem 0; cursor: pointer; white-space: pre; color: var(--bs-body-color); }
+.tgdlg-item.tgdlg-selected { color: var(--bs-primary); }
+.tgdlg-cursor { display: inline-block; width: 1ch; }
+.tgdlg-hint { margin-top: .75rem; color: var(--bs-secondary-color); font-size: .8rem; }
+
 /* Debug log coloring */
 .log-error td { color: var(--bs-danger); }
 .log-warning td { color: var(--bs-warning); }
@@ -322,4 +331,3 @@ label:first-child .hint::before { left: 0.5em; transform: none; }
 .wizard-type-card input[type="radio"] {
     display: none;
 }
-
