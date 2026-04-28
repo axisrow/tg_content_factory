@@ -73,7 +73,7 @@ async def _web_mode_client(tmp_path):
         await container.db.close()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_web_container_uses_snapshot_shims(tmp_path):
     """Verify runtime_mode="web" really produces the snapshot shims."""
     async with _web_mode_client(tmp_path) as (_, container):
@@ -85,7 +85,7 @@ async def test_web_container_uses_snapshot_shims(tmp_path):
         assert container.telegram_command_dispatcher is None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_account_toggle_in_web_mode_enqueues_command(tmp_path):
     """POST /settings/{id}/toggle in real web bootstrap: no live pool, just a queued command."""
     async with _web_mode_client(tmp_path) as (client, container):
@@ -101,7 +101,7 @@ async def test_account_toggle_in_web_mode_enqueues_command(tmp_path):
         assert commands[0].payload == {"account_id": acc.id}
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_account_delete_in_web_mode_enqueues_command(tmp_path):
     """POST /settings/{id}/delete in real web bootstrap: DB row untouched, command enqueued."""
     async with _web_mode_client(tmp_path) as (client, container):
@@ -119,7 +119,7 @@ async def test_account_delete_in_web_mode_enqueues_command(tmp_path):
         assert commands[0].command_type == "accounts.delete"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_agent_chat_in_web_mode_returns_worker_only_error(tmp_path):
     """POST /agent/threads/{id}/chat in real web bootstrap returns a clear 503,
     not the old opaque 'AgentManager not initialized'."""
@@ -135,7 +135,7 @@ async def test_agent_chat_in_web_mode_returns_worker_only_error(tmp_path):
         assert "worker" in detail.lower()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_agent_permission_in_web_mode_returns_worker_only_error(tmp_path):
     """POST /agent/threads/{id}/permission/{req_id} in web returns the same 503 contract."""
     async with _web_mode_client(tmp_path) as (client, container):
@@ -150,7 +150,7 @@ async def test_agent_permission_in_web_mode_returns_worker_only_error(tmp_path):
         assert "worker" in detail.lower()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_agent_page_in_web_mode_renders_banner(tmp_path):
     """GET /agent in web mode renders the disabled banner but does not 500."""
     async with _web_mode_client(tmp_path) as (client, container):

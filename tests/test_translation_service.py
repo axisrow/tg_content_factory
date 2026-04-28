@@ -36,14 +36,14 @@ def test_detect_language_none_for_short():
 
 # ── translate_message ────────────────────────────────────────────────
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_translate_skips_same_language():
     svc = TranslationService(db=AsyncMock())
     result = await svc.translate_message("Привет", "ru", "ru")
     assert result is None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_translate_message_calls_provider():
     mock_provider = AsyncMock(return_value="Hello, how are you?")
     mock_provider_service = MagicMock()
@@ -55,7 +55,7 @@ async def test_translate_message_calls_provider():
     mock_provider.assert_called_once()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_translate_message_no_provider():
     svc = TranslationService(db=AsyncMock(), provider_service=None)
     result = await svc.translate_message("你好", "zh", "en")
@@ -64,7 +64,7 @@ async def test_translate_message_no_provider():
 
 # ── translate_batch ──────────────────────────────────────────────────
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_translate_batch():
     mock_provider = AsyncMock(return_value="1: Hello\n2: Good morning")
     mock_provider_service = MagicMock()
@@ -84,7 +84,7 @@ async def test_translate_batch():
     assert results[1] == (2, "Good morning")
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_translate_batch_skips_same_lang():
     mock_provider_service = MagicMock()
     svc = TranslationService(db=AsyncMock(), provider_service=mock_provider_service)
@@ -133,7 +133,7 @@ def test_get_source_filter():
 
 # ── DB repository methods ───────────────────────────────────────────
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_language_stats(db):
     # Insert messages with detected_lang
     await db.repos.messages._db.execute(
@@ -156,7 +156,7 @@ async def test_language_stats(db):
     assert lang_map["ru"] == 1
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_update_translation(db):
     await db.repos.messages._db.execute(
         "INSERT INTO messages (channel_id, message_id, text, date, detected_lang) VALUES (?, ?, ?, ?, ?)",
@@ -183,7 +183,7 @@ async def test_update_translation(db):
     assert msg.translation_custom == "Hallo"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_untranslated_messages(db):
     # Insert channels first for JOIN
     await db.repos.messages._db.execute(
@@ -206,7 +206,7 @@ async def test_get_untranslated_messages(db):
     assert msgs[0].detected_lang == "zh-cn"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_untranslated_with_source_filter(db):
     await db.repos.messages._db.execute(
         "INSERT OR IGNORE INTO channels (channel_id, title, username) VALUES (?, ?, ?)",
@@ -228,7 +228,7 @@ async def test_get_untranslated_with_source_filter(db):
     assert msgs[0].detected_lang == "zh-cn"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_backfill_language_detection(db):
     await db.repos.messages._db.execute(
         "INSERT INTO messages (channel_id, message_id, text, date) VALUES (?, ?, ?, ?)",
@@ -263,7 +263,7 @@ def test_detect_language_with_none_text():
 # ── translate_message with stub default provider ────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_translate_message_skips_stub_default_provider():
     """When get_provider_callable returns the stub default, translate skips."""
     svc = TranslationService(db=AsyncMock())
@@ -278,7 +278,7 @@ async def test_translate_message_skips_stub_default_provider():
     assert result is None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_translate_message_exception_returns_none():
     """When provider raises, translate_message returns None."""
     mock_provider = AsyncMock(side_effect=RuntimeError("API down"))
@@ -295,14 +295,14 @@ async def test_translate_message_exception_returns_none():
 # ── translate_batch edge cases ──────────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_translate_batch_empty_messages():
     svc = TranslationService(db=AsyncMock(), provider_service=MagicMock())
     result = await svc.translate_batch([], "en")
     assert result == []
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_translate_batch_no_provider():
     svc = TranslationService(db=AsyncMock(), provider_service=None)
     msgs = [Message(id=1, channel_id=100, message_id=1, text="hi", detected_lang="ru", date=datetime.now(timezone.utc))]
@@ -310,7 +310,7 @@ async def test_translate_batch_no_provider():
     assert result == []
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_translate_batch_skips_stub_default_provider():
     """Batch translation should skip when only stub default provider available."""
     mock_default = AsyncMock(return_value="stub")
@@ -326,7 +326,7 @@ async def test_translate_batch_skips_stub_default_provider():
     assert result == []
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_translate_batch_provider_exception():
     """Batch translation returns [] when provider raises."""
     mock_provider = AsyncMock(side_effect=RuntimeError("API error"))
@@ -342,7 +342,7 @@ async def test_translate_batch_provider_exception():
     assert result == []
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_translate_batch_provider_returns_none():
     """Batch translation returns [] when provider returns None."""
     mock_provider = AsyncMock(return_value=None)
@@ -361,7 +361,7 @@ async def test_translate_batch_provider_returns_none():
 # ── get_settings ────────────────────────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_settings():
     mock_db = AsyncMock()
     mock_db.get_setting = AsyncMock(side_effect=lambda k: f"value_for_{k}")

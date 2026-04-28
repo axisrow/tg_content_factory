@@ -40,7 +40,7 @@ async def _add_filtered_channel(db: Database, channel_id: int, title: str | None
     return pk
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_purge_channels_by_pks_empty_list(db):
     """Test purge with empty list returns empty result."""
     service = FilterDeletionService(db)
@@ -50,7 +50,7 @@ async def test_purge_channels_by_pks_empty_list(db):
     assert result.purged_titles == []
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_purge_channels_by_pks_channel_not_found(db):
     """Test purge skips non-existent channels."""
     service = FilterDeletionService(db)
@@ -59,7 +59,7 @@ async def test_purge_channels_by_pks_channel_not_found(db):
     assert result.skipped_count == 1
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_purge_channels_by_pks_not_filtered(db):
     """Test purge skips channels that are not filtered."""
     await db.add_channel(Channel(channel_id=100, title="Test"))
@@ -70,7 +70,7 @@ async def test_purge_channels_by_pks_not_filtered(db):
     assert result.skipped_count == 1
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_purge_channels_by_pks_success(db):
     """Test successful purge of filtered channel."""
     pk = await _add_filtered_channel(db, channel_id=100, title="Filtered Channel")
@@ -92,7 +92,7 @@ async def test_purge_channels_by_pks_success(db):
     assert result.total_messages_deleted == 1
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_purge_channels_by_pks_no_title(db):
     """Test purge with channel that has no title."""
     pk = await _add_filtered_channel(db, channel_id=100, title=None)
@@ -103,7 +103,7 @@ async def test_purge_channels_by_pks_no_title(db):
     assert f"pk={pk}" in result.purged_titles[0]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_purge_channels_by_pks_exception_handling(db):
     """Test purge handles exceptions gracefully."""
     # Create a mock db that raises exception
@@ -116,7 +116,7 @@ async def test_purge_channels_by_pks_exception_handling(db):
     assert result.skipped_count == 1
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_purge_all_filtered_no_channels(db):
     """Test purge all when no filtered channels exist."""
     await db.add_channel(Channel(channel_id=100, title="Active"))
@@ -126,7 +126,7 @@ async def test_purge_all_filtered_no_channels(db):
     assert result.purged_count == 0
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_purge_all_filtered_with_channels(db):
     """Test purge all with filtered channels."""
     _pk1 = await _add_filtered_channel(db, channel_id=100, title="Filtered 1")
@@ -156,7 +156,7 @@ async def test_purge_all_filtered_with_channels(db):
     assert result.total_messages_deleted == 2
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_hard_delete_requires_channel_service(db):
     """Test hard delete raises error without channel service."""
     service = FilterDeletionService(db, channel_service=None)
@@ -165,7 +165,7 @@ async def test_hard_delete_requires_channel_service(db):
         await service.hard_delete_channels_by_pks([1])
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_hard_delete_channel_not_found(db, channel_service):
     """Test hard delete skips non-existent channels."""
     channel_service.get_by_pk = AsyncMock(return_value=None)
@@ -176,7 +176,7 @@ async def test_hard_delete_channel_not_found(db, channel_service):
     assert result.skipped_count == 1
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_hard_delete_not_filtered(db, channel_service):
     """Test hard delete skips channels that are not filtered."""
     channel = Channel(channel_id=100, title="Test", is_filtered=False)
@@ -188,7 +188,7 @@ async def test_hard_delete_not_filtered(db, channel_service):
     assert result.skipped_count == 1
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_hard_delete_success(db, channel_service):
     """Test successful hard delete of filtered channel."""
     channel = Channel(channel_id=100, title="To Delete", is_filtered=True)
@@ -202,7 +202,7 @@ async def test_hard_delete_success(db, channel_service):
     channel_service.delete.assert_called_once_with(1)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_hard_delete_no_title(db, channel_service):
     """Test hard delete with channel that has no title."""
     channel = Channel(channel_id=100, title=None, is_filtered=True)
@@ -215,7 +215,7 @@ async def test_hard_delete_no_title(db, channel_service):
     assert "pk=1" in result.purged_titles[0]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_hard_delete_exception_handling(db, channel_service):
     """Test hard delete handles exceptions gracefully."""
     channel_service.get_by_pk = AsyncMock(side_effect=Exception("DB error"))

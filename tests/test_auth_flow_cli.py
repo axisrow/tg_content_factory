@@ -7,7 +7,7 @@ import pytest
 
 
 @pytest.mark.telegram_unit
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_cli_send_code_saves_hash_to_db(tmp_path):
     """account send-code saves phone_code_hash to DB under auth_pending:{phone}."""
     import json
@@ -47,7 +47,7 @@ async def test_cli_send_code_saves_hash_to_db(tmp_path):
 
 
 @pytest.mark.telegram_unit
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_sign_in_fresh_success():
     """sign_in_fresh() passes session_str to StringSession and signs in."""
     from src.telegram.auth import TelegramAuth
@@ -77,7 +77,7 @@ async def test_sign_in_fresh_success():
 
 
 @pytest.mark.telegram_unit
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_sign_in_fresh_2fa_required():
     """sign_in_fresh raises ValueError('2FA') when SessionPasswordNeededError and no password given."""
     from telethon.errors import SessionPasswordNeededError
@@ -94,7 +94,7 @@ async def test_sign_in_fresh_2fa_required():
 
 
 @pytest.mark.telegram_unit
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_sign_in_fresh_2fa_with_password():
     """sign_in_fresh with password succeeds after SessionPasswordNeededError."""
     from telethon.errors import SessionPasswordNeededError
@@ -118,7 +118,7 @@ async def test_sign_in_fresh_2fa_with_password():
 
 
 @pytest.mark.telegram_unit
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_sign_in_fresh_does_not_require_pending():
     """sign_in_fresh works without prior send_code in same process (no _pending check)."""
     from src.telegram.auth import TelegramAuth

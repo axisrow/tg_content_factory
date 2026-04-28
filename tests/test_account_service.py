@@ -23,7 +23,7 @@ def mock_pool():
     return pool
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_account_service_list(mock_bundle):
     mock_bundle.list_accounts.return_value = [Account(id=1, phone="+7999", session_string="sess")]
     svc = AccountService(mock_bundle)
@@ -32,7 +32,7 @@ async def test_account_service_list(mock_bundle):
     assert results[0].phone == "+7999"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_account_service_toggle_no_pool(mock_bundle):
     acc = Account(id=1, phone="+7999", session_string="sess", is_active=True)
     mock_bundle.list_accounts.return_value = [acc]
@@ -42,7 +42,7 @@ async def test_account_service_toggle_no_pool(mock_bundle):
     mock_bundle.set_active.assert_called_once_with(1, False)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_account_service_toggle_activate_with_pool(mock_bundle, mock_pool):
     acc = Account(id=1, phone="+7999", session_string="sess", is_active=False)
     mock_bundle.list_accounts.return_value = [acc]
@@ -53,7 +53,7 @@ async def test_account_service_toggle_activate_with_pool(mock_bundle, mock_pool)
     mock_pool.add_client.assert_called_once_with("+7999", "sess")
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_account_service_toggle_deactivate_with_pool(mock_bundle, mock_pool):
     acc = Account(id=1, phone="+7999", session_string="sess", is_active=True)
     mock_bundle.list_accounts.return_value = [acc]
@@ -64,7 +64,7 @@ async def test_account_service_toggle_deactivate_with_pool(mock_bundle, mock_poo
     mock_pool.remove_client.assert_called_once_with("+7999")
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_account_service_toggle_add_client_error(mock_bundle, mock_pool):
     acc = Account(id=1, phone="+7999", session_string="sess", is_active=False)
     mock_bundle.list_accounts.return_value = [acc]
@@ -76,7 +76,7 @@ async def test_account_service_toggle_add_client_error(mock_bundle, mock_pool):
     mock_bundle.set_active.assert_called_once_with(1, True)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_account_service_toggle_not_found(mock_bundle):
     mock_bundle.list_accounts.return_value = []
     svc = AccountService(mock_bundle)
@@ -84,7 +84,7 @@ async def test_account_service_toggle_not_found(mock_bundle):
     mock_bundle.set_active.assert_not_called()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_account_service_delete_with_pool(mock_bundle, mock_pool):
     acc = Account(id=1, phone="+7999", session_string="sess")
     mock_bundle.list_accounts.return_value = [acc]
@@ -95,14 +95,14 @@ async def test_account_service_delete_with_pool(mock_bundle, mock_pool):
     mock_bundle.delete_account.assert_called_once_with(1)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_account_service_delete_no_pool(mock_bundle):
     svc = AccountService(mock_bundle)
     await svc.delete(1)
     mock_bundle.delete_account.assert_called_once_with(1)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_account_service_init_with_db():
     from src.database import Database
 

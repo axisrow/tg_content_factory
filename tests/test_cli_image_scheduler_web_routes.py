@@ -17,7 +17,6 @@ import base64
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
 from src.collection_queue import CollectionQueue
@@ -421,7 +420,7 @@ class TestCLISchedulerCommand:
 # ---------------------------------------------------------------------------
 
 
-@pytest_asyncio.fixture(loop_scope="function")
+@pytest.fixture
 async def base_app(tmp_path):
     """Minimal app with one account and channel for web route tests."""
     config = AppConfig()
@@ -471,7 +470,7 @@ async def base_app(tmp_path):
     await db.close()
 
 
-@pytest_asyncio.fixture(loop_scope="function")
+@pytest.fixture
 async def route_client(base_app):
     """AsyncClient with Basic auth for web route tests."""
     app, db, pool_mock = base_app
@@ -497,7 +496,7 @@ async def route_client(base_app):
 class TestWebImagesRoutes:
     """Tests for src/web/routes/images.py"""
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_images_page_renders(self, route_client):
         """GET /images/ returns 200."""
         with patch("src.web.routes.images._get_image_service", new_callable=AsyncMock) as mock_svc_fn:
@@ -507,7 +506,7 @@ class TestWebImagesRoutes:
             resp = await route_client.get("/images/")
         assert resp.status_code == 200
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_generate_no_prompt(self, route_client):
         """POST /images/generate without prompt returns 400."""
         with patch("src.web.routes.images._get_image_service", new_callable=AsyncMock) as mock_svc_fn:
@@ -519,7 +518,7 @@ class TestWebImagesRoutes:
         data = resp.json()
         assert data["ok"] is False
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_generate_no_providers(self, route_client):
         """POST /images/generate when no providers returns 409."""
         with patch("src.web.routes.images._get_image_service", new_callable=AsyncMock) as mock_svc_fn:
@@ -529,7 +528,7 @@ class TestWebImagesRoutes:
             resp = await route_client.post("/images/generate", data={"prompt": "a cat"})
         assert resp.status_code == 409
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_generate_success(self, route_client):
         """POST /images/generate with valid prompt and provider returns 200 with url."""
         with patch("src.web.routes.images._get_image_service", new_callable=AsyncMock) as mock_svc_fn:
@@ -546,7 +545,7 @@ class TestWebImagesRoutes:
         assert data["ok"] is True
         assert "url" in data
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_generate_provider_failure(self, route_client):
         """POST /images/generate when generation fails returns 500."""
         with patch("src.web.routes.images._get_image_service", new_callable=AsyncMock) as mock_svc_fn:
@@ -557,13 +556,13 @@ class TestWebImagesRoutes:
             resp = await route_client.post("/images/generate", data={"prompt": "a cat"})
         assert resp.status_code == 500
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_models_search_no_provider(self, route_client):
         """GET /images/models/search without provider returns 400."""
         resp = await route_client.get("/images/models/search")
         assert resp.status_code == 400
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_models_search_with_provider(self, route_client):
         """GET /images/models/search with provider returns model list."""
         with (
@@ -588,7 +587,7 @@ class TestWebImagesRoutes:
 class TestWebAccountsRoutes:
     """Tests for src/web/routes/accounts.py"""
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_flood_status_empty(self, route_client, base_app):
         """GET /settings/flood-status returns list of accounts."""
         resp = await route_client.get("/settings/flood-status")
@@ -599,7 +598,7 @@ class TestWebAccountsRoutes:
         assert "phone" in data[0]
         assert "flood_wait_until" in data[0]
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_flood_status_ok_field(self, route_client, base_app):
         """GET /settings/flood-status returns ok status for accounts with no flood."""
         resp = await route_client.get("/settings/flood-status")
@@ -609,13 +608,13 @@ class TestWebAccountsRoutes:
         assert acc["flood_wait_until"] == "ok"
         assert acc["remaining_seconds"] == 0
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_flood_clear_not_found(self, route_client):
         """POST /settings/999/flood-clear with non-existent account redirects with error."""
         resp = await route_client.post("/settings/999/flood-clear", follow_redirects=False)
         assert resp.status_code in (303, 200)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_toggle_account(self, route_client, base_app):
         """POST /settings/{id}/toggle redirects to settings."""
         _, db, _ = base_app
@@ -625,7 +624,7 @@ class TestWebAccountsRoutes:
         assert resp.status_code == 303
         assert "settings" in resp.headers["location"]
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_delete_account(self, route_client, base_app):
         """POST /settings/{id}/delete redirects to settings."""
         _, db, _ = base_app
@@ -644,25 +643,25 @@ class TestWebAccountsRoutes:
 class TestWebCalendarRoutes:
     """Tests for src/web/routes/calendar.py"""
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_calendar_page_renders(self, route_client):
         """GET /calendar/ returns 200."""
         resp = await route_client.get("/calendar/")
         assert resp.status_code == 200
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_calendar_page_with_days_param(self, route_client):
         """GET /calendar/?days=14 returns 200."""
         resp = await route_client.get("/calendar/?days=14")
         assert resp.status_code == 200
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_calendar_page_invalid_days(self, route_client):
         """GET /calendar/?days=0 returns 422 (out of range)."""
         resp = await route_client.get("/calendar/?days=0")
         assert resp.status_code == 422
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_api_calendar_returns_json(self, route_client):
         """GET /calendar/api/calendar returns JSON list."""
         resp = await route_client.get("/calendar/api/calendar")
@@ -670,7 +669,7 @@ class TestWebCalendarRoutes:
         data = resp.json()
         assert isinstance(data, list)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_api_calendar_with_days(self, route_client):
         """GET /calendar/api/calendar?days=3 returns JSON."""
         resp = await route_client.get("/calendar/api/calendar?days=3")
@@ -678,7 +677,7 @@ class TestWebCalendarRoutes:
         data = resp.json()
         assert isinstance(data, list)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_api_upcoming_returns_json(self, route_client):
         """GET /calendar/api/upcoming returns JSON list."""
         resp = await route_client.get("/calendar/api/upcoming")
@@ -686,7 +685,7 @@ class TestWebCalendarRoutes:
         data = resp.json()
         assert isinstance(data, list)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_api_upcoming_with_limit(self, route_client):
         """GET /calendar/api/upcoming?limit=5 returns list."""
         resp = await route_client.get("/calendar/api/upcoming?limit=5")
@@ -694,7 +693,7 @@ class TestWebCalendarRoutes:
         data = resp.json()
         assert isinstance(data, list)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_api_stats_returns_json(self, route_client):
         """GET /calendar/api/stats returns JSON dict."""
         resp = await route_client.get("/calendar/api/stats")
@@ -702,7 +701,7 @@ class TestWebCalendarRoutes:
         data = resp.json()
         assert isinstance(data, dict)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_api_calendar_pipeline_filter(self, route_client):
         """GET /calendar/api/calendar?pipeline_id=999 returns empty list."""
         resp = await route_client.get("/calendar/api/calendar?pipeline_id=999")

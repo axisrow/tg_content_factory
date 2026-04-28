@@ -19,7 +19,7 @@ from src.services.agent_provider_service import (
 )
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_provider_configs_are_encrypted_in_settings(db):
     config = AppConfig()
     config.security.session_encryption_key = "provider-secret"
@@ -47,7 +47,7 @@ async def test_provider_configs_are_encrypted_in_settings(db):
     assert loaded[0].secret_fields["api_key"] == "sk-test"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_load_provider_configs_tolerates_undecryptable_secrets(db):
     write_config = AppConfig()
     write_config.security.session_encryption_key = "provider-secret"
@@ -76,7 +76,7 @@ async def test_load_provider_configs_tolerates_undecryptable_secrets(db):
     assert "could not be decrypted" in loaded[0].last_validation_error
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_refresh_models_uses_static_cache_on_live_fetch_failure(db, monkeypatch):
     config = AppConfig()
     config.security.session_encryption_key = "provider-secret"
@@ -95,7 +95,7 @@ async def test_refresh_models_uses_static_cache_on_live_fetch_failure(db, monkey
     assert saved["openai"]["source"] == "static cache"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_refresh_models_uses_live_source_on_success(db, monkeypatch):
     config = AppConfig()
     config.security.session_encryption_key = "provider-secret"
@@ -112,7 +112,7 @@ async def test_refresh_models_uses_live_source_on_success(db, monkeypatch):
     assert entry.models == ["gpt-4.1", "gpt-4.1-mini"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_fetch_google_genai_models_uses_api_key_header(db, monkeypatch):
     service = AgentProviderService(db, AppConfig())
     captured: dict[str, object] = {}
@@ -131,7 +131,7 @@ async def test_fetch_google_genai_models_uses_api_key_header(db, monkeypatch):
     assert captured["headers"] == {"x-goog-api-key": "google-api-key"}
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_refresh_all_models_only_refreshes_configured_providers(db, monkeypatch):
     config = AppConfig()
     config.security.session_encryption_key = "provider-secret"
@@ -176,7 +176,7 @@ def test_validate_provider_config_returns_error_for_unknown_provider(db):
     assert service.validate_provider_config(cfg) == "Unknown provider: unknown"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_load_model_cache_supports_legacy_entries_without_compatibility(db):
     await db.set_setting(
         MODEL_CACHE_SETTINGS_KEY,
@@ -200,7 +200,7 @@ async def test_load_model_cache_supports_legacy_entries_without_compatibility(db
     assert cache["openai"].compatibility == {}
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_ensure_model_compatibility_reuses_fresh_cached_result(db):
     config = AppConfig()
     config.security.session_encryption_key = "provider-secret"
@@ -241,7 +241,7 @@ async def test_ensure_model_compatibility_reuses_fresh_cached_result(db):
     assert result.config_fingerprint == fingerprint
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_ensure_model_compatibility_force_bypasses_cached_result(db):
     config = AppConfig()
     config.security.session_encryption_key = "provider-secret"
@@ -346,7 +346,7 @@ def test_config_fingerprint_depends_on_routing_fields(db):
     assert service.config_fingerprint(cfg_local) != service.config_fingerprint(cfg_cloud)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_fetch_ollama_models_supports_cloud_api_key(db, monkeypatch):
     config = AppConfig()
     config.security.session_encryption_key = "provider-secret"
@@ -367,7 +367,7 @@ async def test_fetch_ollama_models_supports_cloud_api_key(db, monkeypatch):
     assert captured["headers"] == {"Authorization": "Bearer ollama-key"}
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_fetch_ollama_models_normalizes_cloud_api_base_url(db, monkeypatch):
     config = AppConfig()
     config.security.session_encryption_key = "provider-secret"
@@ -388,7 +388,7 @@ async def test_fetch_ollama_models_normalizes_cloud_api_base_url(db, monkeypatch
     assert captured["headers"] == {"Authorization": "Bearer ollama-key"}
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_fetch_ollama_models_normalizes_local_api_base_url(db, monkeypatch):
     config = AppConfig()
     config.security.session_encryption_key = "provider-secret"
@@ -409,7 +409,7 @@ async def test_fetch_ollama_models_normalizes_local_api_base_url(db, monkeypatch
     assert captured["headers"] is None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_agent_manager_prefers_db_provider_configs_over_legacy_env(db, monkeypatch):
     config = AppConfig()
     config.security.session_encryption_key = "provider-secret"
@@ -454,7 +454,7 @@ async def test_agent_manager_prefers_db_provider_configs_over_legacy_env(db, mon
     assert any('"provider": "openai"' in chunk for chunk in chunks)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_agent_manager_falls_back_to_legacy_env_when_db_provider_is_unsupported(
     db, monkeypatch
 ):
@@ -528,7 +528,7 @@ async def test_agent_manager_falls_back_to_legacy_env_when_db_provider_is_unsupp
     assert any('"provider": "anthropic"' in chunk for chunk in chunks)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_agent_manager_fails_over_to_next_provider_on_init_error(db, monkeypatch):
     config = AppConfig()
     config.security.session_encryption_key = "provider-secret"
@@ -577,7 +577,7 @@ async def test_agent_manager_fails_over_to_next_provider_on_init_error(db, monke
     assert any('"provider": "anthropic"' in chunk for chunk in chunks)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_agent_manager_fails_over_to_next_provider_on_run_error(db, monkeypatch):
     config = AppConfig()
     config.security.session_encryption_key = "provider-secret"
@@ -626,7 +626,7 @@ async def test_agent_manager_fails_over_to_next_provider_on_run_error(db, monkey
     assert any('"provider": "groq"' in chunk for chunk in chunks)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_ollama_cloud_provider_uses_bearer_headers(db, monkeypatch):
     config = AppConfig()
     config.security.session_encryption_key = "provider-secret"
@@ -669,7 +669,7 @@ async def test_ollama_cloud_provider_uses_bearer_headers(db, monkeypatch):
     assert any('"provider": "ollama"' in chunk for chunk in chunks)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_ollama_provider_normalizes_api_suffix_for_runtime(db, monkeypatch):
     config = AppConfig()
     config.security.session_encryption_key = "provider-secret"
@@ -713,7 +713,7 @@ async def test_ollama_provider_normalizes_api_suffix_for_runtime(db, monkeypatch
     assert any('"provider": "ollama"' in chunk for chunk in chunks)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_runtime_status_reports_db_provider_preflight_failure(db, monkeypatch):
     config = AppConfig()
     config.security.session_encryption_key = "provider-secret"
@@ -746,7 +746,7 @@ async def test_runtime_status_reports_db_provider_preflight_failure(db, monkeypa
     assert "provider init failed" in (status.error or "")
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_agent_manager_skips_cached_unsupported_provider_and_fails_over(db, monkeypatch):
     config = AppConfig()
     config.security.session_encryption_key = "provider-secret"
@@ -820,7 +820,7 @@ async def test_agent_manager_skips_cached_unsupported_provider_and_fails_over(db
 # === _fetch_live_models HTTP error handling tests ===
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_fetch_live_models_http_error_fallback_to_static(db, monkeypatch):
     """_fetch_live_models propagates exception, caller handles fallback."""
     import aiohttp
@@ -852,7 +852,7 @@ async def test_fetch_live_models_http_error_fallback_to_static(db, monkeypatch):
         await service._fetch_live_models(spec, cfg)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_fetch_live_models_success_updates_cache(db, monkeypatch):
     """_fetch_live_models returns live models on success."""
     config = AppConfig()
@@ -881,7 +881,7 @@ async def test_fetch_live_models_success_updates_cache(db, monkeypatch):
     assert "gpt-4.1-mini" in models
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_fetch_live_models_zai_uses_bearer_auth(db, monkeypatch):
     """Z.AI live model fetch uses native API endpoint with Bearer auth."""
     config = AppConfig()
@@ -917,7 +917,7 @@ async def test_fetch_live_models_zai_uses_bearer_auth(db, monkeypatch):
 # === save_provider_configs encryption tests ===
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_save_provider_configs_requires_encryption_key(db):
     """save_provider_configs requires encryption key."""
     service = AgentProviderService(db, AppConfig())  # No encryption key
@@ -1087,7 +1087,7 @@ def test_build_provider_views_keeps_empty_plain_field_value(db):
 # === export_compatibility_catalog tests ===
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_export_compatibility_catalog_creates_file(db, tmp_path):
     """export_compatibility_catalog creates catalog file."""
     config = AppConfig()
@@ -1192,7 +1192,7 @@ def test_canonical_endpoint_fingerprint_for_ollama_cloud(db):
 # === Z.AI edge case tests ===
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_zai_fetch_models_http_error_propagates(db, monkeypatch):
     """Z.AI model fetch propagates HTTP errors (caller handles fallback)."""
     config = AppConfig()
@@ -1217,7 +1217,7 @@ async def test_zai_fetch_models_http_error_propagates(db, monkeypatch):
         await service._fetch_live_models(spec, cfg)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_zai_fetch_models_empty_response(db, monkeypatch):
     """Z.AI model fetch handles empty response gracefully."""
     config = AppConfig()
@@ -1242,7 +1242,7 @@ async def test_zai_fetch_models_empty_response(db, monkeypatch):
     assert models == []
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_zai_fetch_models_missing_api_key(db, monkeypatch):
     """Z.AI model fetch handles missing api_key gracefully."""
     config = AppConfig()

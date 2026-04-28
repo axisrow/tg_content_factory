@@ -8,7 +8,7 @@ import pytest
 from src.models import Account
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_toggle_account_enqueues_command(route_client, base_app):
     """Web toggle only enqueues `accounts.toggle`; worker reconciles the pool."""
     app, db, pool = base_app
@@ -31,7 +31,7 @@ async def test_toggle_account_enqueues_command(route_client, base_app):
     assert commands[0].payload == {"account_id": acc.id}
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_delete_account_enqueues_command(route_client, base_app):
     """Web delete only enqueues `accounts.delete`; the DB row survives until the worker runs."""
     app, db, pool = base_app
@@ -57,7 +57,7 @@ async def test_delete_account_enqueues_command(route_client, base_app):
     assert commands[0].payload == {"account_id": to_delete.id}
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_flood_status_empty(route_client, base_app):
     """Flood status returns JSON with no active floods."""
     app, db, pool = base_app
@@ -71,7 +71,7 @@ async def test_flood_status_empty(route_client, base_app):
         assert "remaining_seconds" in item
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_flood_status_active_flood(route_client, base_app):
     """Flood status shows active flood wait."""
     app, db, pool = base_app
@@ -89,7 +89,7 @@ async def test_flood_status_active_flood(route_client, base_app):
     assert flooded[0]["remaining_seconds"] > 0
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_flood_status_expired_flood(route_client, base_app):
     """Flood status shows ok for expired flood wait."""
     app, db, pool = base_app
@@ -107,7 +107,7 @@ async def test_flood_status_expired_flood(route_client, base_app):
     assert entry[0]["remaining_seconds"] == 0
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_flood_clear_success(route_client, base_app):
     """Flood clear resets flood wait."""
     app, db, pool = base_app
@@ -121,7 +121,7 @@ async def test_flood_clear_success(route_client, base_app):
     assert "/settings" in resp.headers.get("location", "")
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_flood_clear_not_found(route_client, base_app):
     """Flood clear for non-existent account redirects."""
     resp = await route_client.post("/settings/99999/flood-clear", follow_redirects=False)

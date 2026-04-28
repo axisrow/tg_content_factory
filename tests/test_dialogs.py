@@ -147,7 +147,7 @@ async def client(db, real_pool_harness_factory):
     await app.state.collection_queue.shutdown()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_dialogs_page_renders(client):
     resp = await client.get("/dialogs/")
     assert resp.status_code == 200
@@ -158,7 +158,7 @@ async def test_dialogs_page_renders(client):
     assert "загрузить список диалогов" in resp.text
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_dialogs_page_shows_dialogs(db, real_pool_harness_factory):
     # Under the queued-command model, the dialogs page reads from dialog_cache;
     # seed the cache so it has something to render.
@@ -183,7 +183,7 @@ async def test_dialogs_page_shows_dialogs(db, real_pool_harness_factory):
     await app.state.collection_queue.shutdown()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_dialogs_page_requires_auth(db, real_pool_harness_factory):
     app, db, harness = await _build_dialogs_app(
         db,
@@ -198,7 +198,7 @@ async def test_dialogs_page_requires_auth(db, real_pool_harness_factory):
     await app.state.collection_queue.shutdown()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_leave_channels_success():
     """All dialogs → True; PeerChannel for channels/groups, PeerUser for dm/bot."""
     from telethon.tl.types import PeerChannel, PeerUser
@@ -236,7 +236,7 @@ async def test_leave_channels_success():
     pool._db.repos.dialog_cache.clear_dialogs.assert_awaited_once_with("+1234567890")
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_leave_channels_partial_failure():
     """One delete_dialog raises RuntimeError → that id is False, others True."""
     from src.telegram.client_pool import ClientPool
@@ -273,7 +273,7 @@ async def test_leave_channels_partial_failure():
     pool._db.repos.dialog_cache.clear_dialogs.assert_awaited_once_with("+1234567890")
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_leave_channels_flood_breaks_loop():
     """FloodWaitError → reports flood, marks all remaining ids as False, stops loop."""
     from telethon.errors import FloodWaitError
@@ -311,7 +311,7 @@ async def test_leave_channels_flood_breaks_loop():
     pool._db.repos.dialog_cache.clear_dialogs.assert_awaited_once_with("+1234567890")
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_leave_dialogs_post(client):
     """POST /dialogs/leave enqueues a dialogs.leave command."""
     resp = await client.post(
@@ -324,7 +324,7 @@ async def test_leave_dialogs_post(client):
     assert "phone=" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_refresh_dialogs_post_enqueues_command(db, real_pool_harness_factory):
     """POST /dialogs/refresh enqueues a dialogs.refresh command (queued model)."""
     app, db, harness = await _build_dialogs_app(db, real_pool_harness_factory)
@@ -346,7 +346,7 @@ async def test_refresh_dialogs_post_enqueues_command(db, real_pool_harness_facto
     await app.state.collection_queue.shutdown()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_leave_dialogs_flash_message(client):
     """GET with left/failed params shows flash banner."""
     resp = await client.get("/dialogs/?phone=%2B1234567890&left=2&failed=1")
@@ -356,7 +356,7 @@ async def test_leave_dialogs_flash_message(client):
     assert "<strong>1</strong>" in resp.text
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_my_dialogs_enriches_already_added(db):
     """get_my_dialogs() marks dialogs already in the channel DB.
 
@@ -392,7 +392,7 @@ async def test_get_my_dialogs_enriches_already_added(db):
     assert by_id[888]["already_added"] is False
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_my_dialogs_passes_refresh_flag(db):
     pool = MagicMock()
     pool.get_dialogs_for_phone = AsyncMock(return_value=list(_FAKE_DIALOGS))
@@ -409,7 +409,7 @@ async def test_get_my_dialogs_passes_refresh_flag(db):
     )
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_my_dialogs_bot_type():
     """entity with bot=True → channel_type='bot'."""
     from src.telegram.client_pool import ClientPool
@@ -453,7 +453,7 @@ async def test_get_my_dialogs_bot_type():
     assert result[0]["channel_id"] == 777
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_dialogs_for_phone_partial_on_timeout():
     """When iter_dialogs times out, partial accumulated results are returned."""
     from src.telegram.client_pool import ClientPool
@@ -506,7 +506,7 @@ async def test_get_dialogs_for_phone_partial_on_timeout():
     assert result[0]["channel_id"] == -100999
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_dialogs_page_without_phone_does_not_fetch_dialogs(
     db,
     real_pool_harness_factory,
@@ -524,7 +524,7 @@ async def test_dialogs_page_without_phone_does_not_fetch_dialogs(
     await app.state.collection_queue.shutdown()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_dialogs_page_without_accounts_shows_disabled_photo_loader(
     db,
     real_pool_harness_factory,
@@ -546,7 +546,7 @@ async def test_dialogs_page_without_accounts_shows_disabled_photo_loader(
     await app.state.collection_queue.shutdown()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_dialogs_for_phone_uses_manual_cache():
     from src.telegram.client_pool import ClientPool
 
@@ -573,7 +573,7 @@ async def test_get_dialogs_for_phone_uses_manual_cache():
     assert mock_client.iter_dialogs.call_count == 1
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_dialogs_for_phone_refresh_bypasses_cache():
     from src.telegram.client_pool import ClientPool
 
@@ -599,7 +599,7 @@ async def test_get_dialogs_for_phone_refresh_bypasses_cache():
     assert mock_client.iter_dialogs.call_count == 2
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_dialogs_for_phone_refetches_after_ttl_expiry():
     from src.telegram.client_pool import ClientPool
 
@@ -626,7 +626,7 @@ async def test_get_dialogs_for_phone_refetches_after_ttl_expiry():
     assert mock_client.iter_dialogs.call_count == 2
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_dialogs_for_phone_uses_db_cache_across_pool_instances(db):
     from src.telegram.client_pool import ClientPool
 
@@ -649,7 +649,7 @@ async def test_get_dialogs_for_phone_uses_db_cache_across_pool_instances(db):
     pool.get_client_by_phone.assert_not_awaited()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_dialogs_for_phone_refresh_replaces_db_cache(db):
     from src.telegram.client_pool import ClientPool
 
@@ -685,7 +685,7 @@ async def test_get_dialogs_for_phone_refresh_replaces_db_cache(db):
     assert cached[0]["title"] == "Fresh Title"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_dialogs_for_phone_failed_refresh_keeps_existing_db_cache(db):
     from src.telegram.client_pool import ClientPool
 
@@ -710,7 +710,7 @@ async def test_get_dialogs_for_phone_failed_refresh_keeps_existing_db_cache(db):
     assert _strip_extra_dialog_fields(cached) == _strip_extra_dialog_fields(_FAKE_DIALOGS)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_dialogs_for_phone_partial_timeout_keeps_existing_db_cache(db):
     from src.telegram.client_pool import ClientPool
 

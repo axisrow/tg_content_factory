@@ -62,7 +62,7 @@ def _search_engine(messages=None, semantic_available=True):
 # ── SourceHandler ──────────────────────────────────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_source_handler_sets_channel_ids():
     ctx = NodeContext()
     await SourceHandler().execute({"channel_ids": [1, 2, 3]}, ctx, {})
@@ -72,7 +72,7 @@ async def test_source_handler_sets_channel_ids():
 # ── RetrieveContextHandler ────────────────────────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_retrieve_context_no_search_engine():
     ctx = NodeContext()
     await RetrieveContextHandler().execute({}, ctx, {})
@@ -81,7 +81,7 @@ async def test_retrieve_context_no_search_engine():
     assert any(e["code"] == "missing_dependency" for e in errors)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_retrieve_context_hybrid_with_semantic():
     ctx = NodeContext()
     engine = _search_engine([_msg("hybrid")])
@@ -91,7 +91,7 @@ async def test_retrieve_context_hybrid_with_semantic():
     assert ctx.get_global("context_messages")[0].text == "hybrid"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_retrieve_context_semantic_method():
     ctx = NodeContext()
     engine = _search_engine([_msg("semantic")])
@@ -100,7 +100,7 @@ async def test_retrieve_context_semantic_method():
     assert ctx.get_global("context_messages")[0].text == "semantic"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_retrieve_context_fallback_to_local():
     ctx = NodeContext()
     engine = _search_engine([_msg("local")], semantic_available=False)
@@ -109,7 +109,7 @@ async def test_retrieve_context_fallback_to_local():
     assert ctx.get_global("context_messages")[0].text == "local"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_retrieve_context_search_exception():
     ctx = NodeContext()
     engine = AsyncMock()
@@ -119,7 +119,7 @@ async def test_retrieve_context_search_exception():
     assert ctx.get_global("context_messages") == []
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_retrieve_context_single_source_scopes_channel():
     ctx = NodeContext()
     ctx.set_global("source_channel_ids", [42])
@@ -129,7 +129,7 @@ async def test_retrieve_context_single_source_scopes_channel():
     assert kwargs["channel_id"] == 42
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_retrieve_context_uses_preseeded_channel_scope_when_multiple_sources():
     ctx = NodeContext()
     ctx.set_global("source_channel_ids", [1, 2])
@@ -143,14 +143,14 @@ async def test_retrieve_context_uses_preseeded_channel_scope_when_multiple_sourc
 # ── LlmGenerateHandler ────────────────────────────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_llm_generate_no_provider_raises():
     ctx = NodeContext()
     with pytest.raises(RuntimeError, match="no provider_callable"):
         await LlmGenerateHandler().execute({}, ctx, {})
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_llm_generate_provider_returns_str():
     ctx = NodeContext()
     ctx.set_global("context_messages", [])
@@ -165,7 +165,7 @@ async def test_llm_generate_provider_returns_str():
     assert ctx.get_global("citations") == []
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_llm_generate_provider_returns_dict():
     ctx = NodeContext()
     m = _msg(text="source text", channel_title="Chan", date=datetime(2024, 3, 15, tzinfo=timezone.utc))
@@ -181,7 +181,7 @@ async def test_llm_generate_provider_returns_dict():
     assert ctx.get_global("citations") == ["a"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_llm_generate_source_parts_format():
     ctx = NodeContext()
     m = _msg(text="body", channel_title="Title", date=datetime(2024, 6, 1, 12, 0, tzinfo=timezone.utc))
@@ -203,14 +203,14 @@ async def test_llm_generate_source_parts_format():
 # ── LlmRefineHandler ──────────────────────────────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_llm_refine_no_provider_raises():
     ctx = NodeContext()
     with pytest.raises(RuntimeError, match="no provider_callable"):
         await LlmRefineHandler().execute({}, ctx, {})
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_llm_refine_with_generated_text():
     ctx = NodeContext()
     ctx.set_global("generated_text", "original")
@@ -221,7 +221,7 @@ async def test_llm_refine_with_generated_text():
     provider.assert_awaited_once()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_llm_refine_fallback_to_context_messages():
     ctx = NodeContext()
     msgs = [_msg(text="first"), _msg(text="second"), _msg(text="third"), _msg(text="fourth")]
@@ -241,7 +241,7 @@ async def test_llm_refine_fallback_to_context_messages():
     assert ctx.get_global("generated_text") == "refined from messages"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_llm_refine_provider_returns_empty_no_update():
     ctx = NodeContext()
     ctx.set_global("generated_text", "keep this")
@@ -256,7 +256,7 @@ async def test_llm_refine_provider_returns_empty_no_update():
 # ── ImageGenerateHandler ─────────────────────────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_image_generate_no_service():
     ctx = NodeContext()
     ctx.set_global("generated_text", "a cat")
@@ -266,7 +266,7 @@ async def test_image_generate_no_service():
     assert any(e["code"] == "missing_dependency" for e in errors)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_image_generate_no_model():
     ctx = NodeContext()
     svc = AsyncMock()
@@ -274,7 +274,7 @@ async def test_image_generate_no_model():
     svc.generate.assert_not_awaited()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_image_generate_success():
     ctx = NodeContext()
     ctx.set_global("generated_text", "a sunset")
@@ -284,7 +284,7 @@ async def test_image_generate_success():
     assert ctx.get_global("image_url") == "https://img.example/1.png"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_image_generate_exception_no_crash():
     ctx = NodeContext()
     ctx.set_global("generated_text", "x")
@@ -297,7 +297,7 @@ async def test_image_generate_exception_no_crash():
 # ── PublishHandler ────────────────────────────────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_publish_without_reply():
     ctx = NodeContext()
     await PublishHandler().execute(
@@ -308,7 +308,7 @@ async def test_publish_without_reply():
     assert ctx.get_global("publish_reply") is False
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_publish_with_reply_and_messages():
     ctx = NodeContext()
     m = _msg(message_id=42)
@@ -318,7 +318,7 @@ async def test_publish_with_reply_and_messages():
     assert ctx.get_global("reply_to_message_id") == 42
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_publish_with_reply_empty_messages():
     ctx = NodeContext()
     ctx.set_global("context_messages", [])
@@ -329,7 +329,7 @@ async def test_publish_with_reply_empty_messages():
 # ── NotifyHandler ─────────────────────────────────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_notify_no_service():
     ctx = NodeContext()
     ctx.set_global("generated_text", "hello")
@@ -338,7 +338,7 @@ async def test_notify_no_service():
     assert any(e["code"] == "missing_dependency" for e in errors)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_notify_success():
     ctx = NodeContext()
     ctx.set_global("generated_text", "news")
@@ -350,7 +350,7 @@ async def test_notify_success():
     svc.send_text.assert_awaited_once_with("[Chan] news")
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_notify_send_raises():
     ctx = NodeContext()
     ctx.set_global("generated_text", "x")
@@ -363,7 +363,7 @@ async def test_notify_send_raises():
 # ── FilterHandler ─────────────────────────────────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_filter_keywords_match():
     ctx = NodeContext()
     m1 = _msg(text="buy cheap crypto")
@@ -373,7 +373,7 @@ async def test_filter_keywords_match():
     assert ctx.get_global("context_messages") == [m1]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_filter_match_links():
     ctx = NodeContext()
     m1 = _msg(text="visit https://example.com now")
@@ -383,7 +383,7 @@ async def test_filter_match_links():
     assert ctx.get_global("context_messages") == [m1]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_filter_service_message():
     ctx = NodeContext()
     m1 = _msg(text="user joined the group")
@@ -395,7 +395,7 @@ async def test_filter_service_message():
     assert ctx.get_global("context_messages") == [m1]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_filter_anonymous_sender():
     ctx = NodeContext()
     m1 = _msg(sender_id=None, sender_name=None)
@@ -405,7 +405,7 @@ async def test_filter_anonymous_sender():
     assert ctx.get_global("context_messages") == [m1]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_filter_regex():
     ctx = NodeContext()
     m1 = _msg(text="price: $100")
@@ -415,7 +415,7 @@ async def test_filter_regex():
     assert ctx.get_global("context_messages") == [m1]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_filter_invalid_regex():
     ctx = NodeContext()
     m1 = _msg(text="anything")
@@ -424,7 +424,7 @@ async def test_filter_invalid_regex():
     assert ctx.get_global("context_messages") == []
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_filter_message_filter_service_join():
     ctx = NodeContext()
     m1 = _msg(text="joined")
@@ -444,7 +444,7 @@ async def test_filter_message_filter_service_join():
     assert ctx.get_global("context_messages") == [m1]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_filter_message_filter_sender_kind():
     ctx = NodeContext()
     m1 = _msg(text="anon")
@@ -460,7 +460,7 @@ async def test_filter_message_filter_sender_kind():
     assert ctx.get_global("context_messages") == [m1]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_filter_unknown_type_returns_all():
     ctx = NodeContext()
     m1 = _msg(text="a")
@@ -473,7 +473,7 @@ async def test_filter_unknown_type_returns_all():
 # ── DelayHandler ──────────────────────────────────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 @patch("asyncio.sleep", new_callable=AsyncMock)
 async def test_delay_fixed(mock_sleep):
     ctx = NodeContext()
@@ -481,7 +481,7 @@ async def test_delay_fixed(mock_sleep):
     mock_sleep.assert_awaited_once_with(5.0)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 @patch("asyncio.sleep", new_callable=AsyncMock)
 async def test_delay_zero(mock_sleep):
     ctx = NodeContext()
@@ -489,7 +489,7 @@ async def test_delay_zero(mock_sleep):
     mock_sleep.assert_not_awaited()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 @patch("asyncio.sleep", new_callable=AsyncMock)
 async def test_delay_range(mock_sleep):
     ctx = NodeContext()
@@ -501,7 +501,7 @@ async def test_delay_range(mock_sleep):
 # ── ReactHandler ──────────────────────────────────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_react_no_client_pool():
     ctx = NodeContext()
     ctx.set_global("context_messages", [_msg()])
@@ -509,7 +509,7 @@ async def test_react_no_client_pool():
         await ReactHandler().execute({"emoji": "👍"}, ctx, {})
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_react_success():
     ctx = NodeContext()
     m = _msg(channel_id=-100, message_id=7)
@@ -523,7 +523,7 @@ async def test_react_success():
     pool.release_client.assert_awaited_once_with("phone1")
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_react_client_none_breaks_loop():
     ctx = NodeContext()
     m1 = _msg()
@@ -535,7 +535,7 @@ async def test_react_client_none_breaks_loop():
     pool.get_available_client.assert_awaited_once()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_react_random_emojis():
     ctx = NodeContext()
     m = _msg(channel_id=-100, message_id=1)
@@ -552,7 +552,7 @@ async def test_react_random_emojis():
 # ── Issue #463: ReactHandler records structured node errors ───────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_react_records_error_when_no_client_pool():
     ctx = NodeContext()
     ctx.set_global("context_messages", [_msg()])
@@ -566,7 +566,7 @@ async def test_react_records_error_when_no_client_pool():
     assert errors[0]["node_id"] == "react_1"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_react_records_no_available_client_when_pool_returns_none():
     ctx = NodeContext()
     ctx.set_global("context_messages", [_msg()])
@@ -581,7 +581,7 @@ async def test_react_records_no_available_client_when_pool_returns_none():
     assert errors[0]["node_id"] == "react_1"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_react_records_flood_wait_error():
     from telethon.errors import FloodWaitError
 
@@ -604,7 +604,7 @@ async def test_react_records_flood_wait_error():
     assert errors[0]["node_id"] == "react_1"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_react_records_chat_write_forbidden_error():
     from telethon.errors import ChatWriteForbiddenError
 
@@ -625,7 +625,7 @@ async def test_react_records_chat_write_forbidden_error():
     assert errors[0]["code"] == "chat_write_forbidden"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_react_records_unexpected_error_for_generic_exception():
     ctx = NodeContext()
     ctx.set_global("context_messages", [_msg(channel_id=-100, message_id=42)])
@@ -646,7 +646,7 @@ async def test_react_records_unexpected_error_for_generic_exception():
 # ── ForwardHandler ────────────────────────────────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_forward_no_client_pool():
     ctx = NodeContext()
     ctx.set_global("context_messages", [_msg()])
@@ -654,7 +654,7 @@ async def test_forward_no_client_pool():
         await ForwardHandler().execute({"targets": []}, ctx, {})
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_forward_success():
     ctx = NodeContext()
     m = _msg(channel_id=-200, message_id=10)
@@ -668,7 +668,7 @@ async def test_forward_success():
     session.forward_messages.assert_awaited_once_with(-300, 10, -200)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_forward_missing_phone_or_dialog_skips():
     ctx = NodeContext()
     ctx.set_global("context_messages", [_msg()])
@@ -682,7 +682,7 @@ async def test_forward_missing_phone_or_dialog_skips():
     pool.get_client_by_phone.assert_not_awaited()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_forward_get_client_returns_none_skips():
     ctx = NodeContext()
     m = _msg()
@@ -697,7 +697,7 @@ async def test_forward_get_client_returns_none_skips():
 # ── Issue #463: ForwardHandler records structured node errors ────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_forward_records_error_when_no_client_pool():
     ctx = NodeContext()
     ctx.set_global("context_messages", [_msg()])
@@ -712,7 +712,7 @@ async def test_forward_records_error_when_no_client_pool():
     assert errors[0]["node_id"] == "fwd_1"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_forward_records_no_available_client_when_pool_returns_none():
     ctx = NodeContext()
     ctx.set_global("context_messages", [_msg()])
@@ -727,7 +727,7 @@ async def test_forward_records_no_available_client_when_pool_returns_none():
     assert errors and errors[0]["code"] == "no_available_client"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_forward_records_flood_wait_error():
     from telethon.errors import FloodWaitError
 
@@ -753,7 +753,7 @@ async def test_forward_records_flood_wait_error():
 # ── DeleteMessageHandler ─────────────────────────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_delete_no_client_pool():
     ctx = NodeContext()
     ctx.set_global("context_messages", [_msg()])
@@ -761,7 +761,7 @@ async def test_delete_no_client_pool():
         await DeleteMessageHandler().execute({}, ctx, {})
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_delete_success():
     ctx = NodeContext()
     m = _msg(channel_id=-500, message_id=22)
@@ -774,7 +774,7 @@ async def test_delete_success():
     session.delete_messages.assert_awaited_once_with(-500, [22])
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_delete_client_none_breaks():
     ctx = NodeContext()
     m1 = _msg()
@@ -789,7 +789,7 @@ async def test_delete_client_none_breaks():
 # ── Issue #463: DeleteMessageHandler records structured node errors ──────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_delete_records_error_when_no_client_pool():
     ctx = NodeContext()
     ctx.set_global("context_messages", [_msg()])
@@ -802,7 +802,7 @@ async def test_delete_records_error_when_no_client_pool():
     assert errors[0]["node_id"] == "del_1"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_delete_records_no_available_client_when_pool_returns_none():
     ctx = NodeContext()
     ctx.set_global("context_messages", [_msg()])
@@ -818,7 +818,7 @@ async def test_delete_records_no_available_client_when_pool_returns_none():
 # ── ConditionHandler ──────────────────────────────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_condition_not_empty_with_value():
     ctx = NodeContext()
     ctx.set_global("generated_text", "exists")
@@ -826,7 +826,7 @@ async def test_condition_not_empty_with_value():
     assert ctx.get_global("condition_result") is True
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_condition_not_empty_with_empty():
     ctx = NodeContext()
     ctx.set_global("generated_text", "")
@@ -834,7 +834,7 @@ async def test_condition_not_empty_with_empty():
     assert ctx.get_global("condition_result") is False
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_condition_empty():
     ctx = NodeContext()
     ctx.set_global("val", "")
@@ -842,7 +842,7 @@ async def test_condition_empty():
     assert ctx.get_global("condition_result") is True
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_condition_contains():
     ctx = NodeContext()
     ctx.set_global("text", "Hello World")
@@ -850,7 +850,7 @@ async def test_condition_contains():
     assert ctx.get_global("condition_result") is True
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_condition_eq():
     ctx = NodeContext()
     ctx.set_global("status", "ok")
@@ -858,7 +858,7 @@ async def test_condition_eq():
     assert ctx.get_global("condition_result") is True
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_condition_gt():
     ctx = NodeContext()
     ctx.set_global("count", "10")
@@ -866,7 +866,7 @@ async def test_condition_gt():
     assert ctx.get_global("condition_result") is True
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_condition_gt_type_error():
     ctx = NodeContext()
     ctx.set_global("count", "not_a_number")
@@ -877,7 +877,7 @@ async def test_condition_gt_type_error():
 # ── SearchQueryTriggerHandler ─────────────────────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_search_trigger_no_engine():
     ctx = NodeContext()
     await SearchQueryTriggerHandler().execute({"query": "test"}, ctx, {})
@@ -885,7 +885,7 @@ async def test_search_trigger_no_engine():
     assert any(e["code"] == "missing_dependency" for e in errors)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_search_trigger_empty_query():
     ctx = NodeContext()
     engine = _search_engine()
@@ -893,7 +893,7 @@ async def test_search_trigger_empty_query():
     engine.search_local.assert_not_awaited()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_search_trigger_messages_found():
     ctx = NodeContext()
     m = _msg(text="matched text", channel_title="Chan")
@@ -904,7 +904,7 @@ async def test_search_trigger_messages_found():
     assert ctx.get_global("trigger_matched") is True
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_search_trigger_empty_result():
     ctx = NodeContext()
     engine = _search_engine([])
@@ -912,7 +912,7 @@ async def test_search_trigger_empty_result():
     assert ctx.get_global("trigger_matched") is False
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_search_trigger_exception():
     ctx = NodeContext()
     engine = AsyncMock()
@@ -924,7 +924,7 @@ async def test_search_trigger_exception():
 # --- AgentLoopHandler ---
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_agent_loop_generates_text():
     ctx = NodeContext()
     ctx.set_global("context_messages", [
@@ -945,14 +945,14 @@ async def test_agent_loop_generates_text():
     assert call_kwargs.kwargs["max_tokens"] == 500
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_agent_loop_no_provider_raises():
     ctx = NodeContext()
     with pytest.raises(RuntimeError, match="no provider_callable"):
         await AgentLoopHandler().execute({}, ctx, {})
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_agent_loop_empty_messages():
     ctx = NodeContext()
     ctx.set_global("context_messages", [])
@@ -964,7 +964,7 @@ async def test_agent_loop_empty_messages():
     assert ctx.get_global("generated_text") == "Nothing to analyze"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_agent_loop_multi_step_with_tools():
     """Agent calls a tool, gets result, then gives final answer."""
     ctx = NodeContext()
@@ -998,7 +998,7 @@ async def test_agent_loop_multi_step_with_tools():
     assert "search_messages" in second_prompt
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_agent_loop_max_steps_exhaustion():
     """Agent keeps calling tools until max_steps is reached."""
     ctx = NodeContext()
@@ -1024,7 +1024,7 @@ async def test_agent_loop_max_steps_exhaustion():
     assert ctx.get_global("generated_text") == ""
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_agent_loop_tool_error():
     """Tool raises an exception — agent receives error message and continues."""
     ctx = NodeContext()
@@ -1051,7 +1051,7 @@ async def test_agent_loop_tool_error():
     assert ctx.get_global("generated_text") == "Final answer despite tool error"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_agent_loop_unknown_tool():
     """Agent references a tool name not in agent_tools."""
     ctx = NodeContext()
@@ -1077,7 +1077,7 @@ async def test_agent_loop_unknown_tool():
     assert ctx.get_global("generated_text") == "Final answer after unknown tool"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_fetch_messages_respects_limit():
     """FetchMessagesHandler slices context_messages to node_config['limit']."""
     from src.services.pipeline_nodes.handlers import FetchMessagesHandler
@@ -1100,7 +1100,7 @@ async def test_fetch_messages_respects_limit():
     assert len(ctx.get_global("context_messages")) == 10
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_agent_loop_with_tools_in_graph_execution():
     """Integration: AgentLoopHandler receives agent_tools through PipelineExecutor."""
     from src.models import ContentPipeline, PipelineEdge, PipelineGraph, PipelineNode

@@ -14,14 +14,14 @@ async def db(base_app):
     return db
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_search_queries_page_renders_empty(route_client):
     """Test search queries page renders empty."""
     resp = await route_client.get("/search-queries/")
     assert resp.status_code == 200
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_search_queries_page_lists_items(route_client):
     """Test search queries page lists items after add."""
     await route_client.post(
@@ -33,7 +33,7 @@ async def test_search_queries_page_lists_items(route_client):
     assert "test query" in resp.text
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_add_search_query_redirects(route_client):
     """Test add search query redirects."""
     resp = await route_client.post(
@@ -45,7 +45,7 @@ async def test_add_search_query_redirects(route_client):
     assert "msg=sq_added" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_add_search_query_with_all_fields(route_client):
     """Test add search query with all fields."""
     resp = await route_client.post(
@@ -66,7 +66,7 @@ async def test_add_search_query_with_all_fields(route_client):
     assert "msg=sq_added" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_toggle_search_query(route_client):
     """Test toggle search query."""
     await route_client.post(
@@ -78,7 +78,7 @@ async def test_toggle_search_query(route_client):
     assert "msg=sq_toggled" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_edit_search_query(route_client):
     """Test edit search query."""
     await route_client.post(
@@ -94,7 +94,7 @@ async def test_edit_search_query(route_client):
     assert "msg=sq_edited" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_delete_search_query(route_client, db):
     """Test delete search query."""
     await route_client.post(
@@ -106,7 +106,7 @@ async def test_delete_search_query(route_client, db):
     assert "msg=sq_deleted" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_run_search_query(route_client):
     """Test run search query."""
     await route_client.post(
@@ -121,7 +121,7 @@ async def test_run_search_query(route_client):
         assert "msg=sq_run" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_scheduler_synced_after_add(route_client):
     """Test scheduler syncs after add when running."""
     route_client._transport_app.state.scheduler._running = True
@@ -143,7 +143,7 @@ async def test_scheduler_synced_after_add(route_client):
         mock_scheduler.sync_search_query_jobs.assert_called_once()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_scheduler_synced_after_toggle(route_client):
     """Test scheduler syncs after toggle when running."""
     await route_client.post(
@@ -164,21 +164,21 @@ async def test_scheduler_synced_after_toggle(route_client):
         mock_scheduler.sync_search_query_jobs.assert_called_once()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_delete_nonexistent_no_crash(route_client):
     """Test delete nonexistent query doesn't crash."""
     resp = await route_client.post("/search-queries/999999/delete", follow_redirects=False)
     assert resp.status_code == 303
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_add_search_query_missing_query(route_client):
     """POST /search-queries/add without query returns 422."""
     resp = await route_client.post("/search-queries/add", data={}, follow_redirects=False)
     assert resp.status_code == 303
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_edit_search_query_missing_query(route_client):
     """POST /search-queries/{id}/edit without query returns 422."""
     resp = await route_client.post("/search-queries/1/edit", data={}, follow_redirects=False)

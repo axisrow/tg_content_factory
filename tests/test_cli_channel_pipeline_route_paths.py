@@ -991,7 +991,7 @@ async def _route_client_b3(_base_app_b3):
 # --- Channel routes ---
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_channels_refresh_types_redirect(_route_client_b3):
     """POST /channels/refresh-types enqueues a channels.refresh_types command."""
     client = _route_client_b3
@@ -1007,7 +1007,7 @@ async def test_channels_refresh_types_redirect(_route_client_b3):
     assert commands[0].command_type == "channels.refresh_types"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_channels_refresh_types_enqueues_single_command(_route_client_b3):
     """A second invocation enqueues another command; web path never calls pool."""
     client = _route_client_b3
@@ -1024,7 +1024,7 @@ async def test_channels_refresh_types_enqueues_single_command(_route_client_b3):
 # removed: replaced by queued-command model — web no longer runs resolve inline
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_channels_refresh_meta_success(_route_client_b3):
     """POST /channels/refresh-meta enqueues a channels.refresh_meta command."""
     client = _route_client_b3
@@ -1062,14 +1062,14 @@ def _settings_patch():
         yield
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_settings_page_renders_b3(_route_client_b3, _settings_patch):
     client = _route_client_b3
     resp = await client.get("/settings/")
     assert resp.status_code == 200
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_settings_save_scheduler_valid_b3(_route_client_b3):
     client = _route_client_b3
     resp = await client.post(
@@ -1081,7 +1081,7 @@ async def test_settings_save_scheduler_valid_b3(_route_client_b3):
     assert "msg=scheduler_saved" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_settings_save_scheduler_invalid_b3(_route_client_b3):
     client = _route_client_b3
     resp = await client.post(
@@ -1093,7 +1093,7 @@ async def test_settings_save_scheduler_invalid_b3(_route_client_b3):
     assert "error=invalid_value" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_settings_save_credentials_valid_b3(_route_client_b3):
     client = _route_client_b3
     resp = await client.post(
@@ -1105,7 +1105,7 @@ async def test_settings_save_credentials_valid_b3(_route_client_b3):
     assert "msg=credentials_saved" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_settings_save_credentials_invalid_api_id_b3(_route_client_b3):
     client = _route_client_b3
     resp = await client.post(
@@ -1117,7 +1117,7 @@ async def test_settings_save_credentials_invalid_api_id_b3(_route_client_b3):
     assert "error=invalid_api_id" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_settings_save_filters_valid_b3(_route_client_b3):
     client = _route_client_b3
     resp = await client.post(
@@ -1129,7 +1129,7 @@ async def test_settings_save_filters_valid_b3(_route_client_b3):
     assert "msg=filters_saved" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_settings_save_filters_invalid_b3(_route_client_b3):
     client = _route_client_b3
     resp = await client.post(
@@ -1141,7 +1141,7 @@ async def test_settings_save_filters_invalid_b3(_route_client_b3):
     assert "error=invalid_value" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_settings_save_agent_backend_override_b3(_route_client_b3):
     client = _route_client_b3
     resp = await client.post(
@@ -1153,7 +1153,7 @@ async def test_settings_save_agent_backend_override_b3(_route_client_b3):
     assert "msg=agent_saved" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_settings_save_agent_tool_permissions_b3(_route_client_b3):
     """save-agent with tool_permissions scope saves permissions."""
     client = _route_client_b3
@@ -1166,7 +1166,7 @@ async def test_settings_save_agent_tool_permissions_b3(_route_client_b3):
     assert "tool_permissions_saved" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_settings_save_notification_account_empty_b3(_route_client_b3):
     """Saving empty notification phone clears it."""
     client = _route_client_b3
@@ -1184,7 +1184,7 @@ async def test_settings_save_notification_account_empty_b3(_route_client_b3):
     assert "msg=notification_account_saved" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_settings_save_semantic_search_valid_b3(_route_client_b3):
     client = _route_client_b3
     resp = await client.post(
@@ -1200,7 +1200,7 @@ async def test_settings_save_semantic_search_valid_b3(_route_client_b3):
     assert "msg=semantic_saved" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_settings_save_semantic_search_invalid_batch_b3(_route_client_b3):
     client = _route_client_b3
     resp = await client.post(
@@ -1216,7 +1216,7 @@ async def test_settings_save_semantic_search_invalid_batch_b3(_route_client_b3):
     assert "error=semantic_invalid_value" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_settings_save_semantic_search_empty_provider_b3(_route_client_b3):
     client = _route_client_b3
     resp = await client.post(

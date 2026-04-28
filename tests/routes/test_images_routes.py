@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_images_page(route_client, monkeypatch):
     mock_svc = MagicMock()
     mock_svc.adapter_names = ["test_provider"]
@@ -20,7 +20,7 @@ async def test_images_page(route_client, monkeypatch):
     assert "text/html" in resp.headers["content-type"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_generate_no_prompt(route_client, monkeypatch):
     resp = await route_client.post("/images/generate", data={})
     assert resp.status_code == 400
@@ -29,7 +29,7 @@ async def test_generate_no_prompt(route_client, monkeypatch):
     assert "Prompt" in body["error"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_generate_no_providers(route_client, monkeypatch):
     mock_svc = MagicMock()
     mock_svc.is_available = AsyncMock(return_value=False)
@@ -43,7 +43,7 @@ async def test_generate_no_providers(route_client, monkeypatch):
     assert "No image providers" in body["error"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_generate_success(route_client, monkeypatch):
     mock_svc = MagicMock()
     mock_svc.is_available = AsyncMock(return_value=True)
@@ -59,7 +59,7 @@ async def test_generate_success(route_client, monkeypatch):
     assert body["url"] == "https://img.example.com/1.png"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_generate_failure(route_client, monkeypatch):
     mock_svc = MagicMock()
     mock_svc.is_available = AsyncMock(return_value=True)
@@ -75,7 +75,7 @@ async def test_generate_failure(route_client, monkeypatch):
     assert "Generation failed" in body["error"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_search_models_no_provider(route_client, monkeypatch):
     resp = await route_client.get("/images/models/search?provider=")
     assert resp.status_code == 400
@@ -83,7 +83,7 @@ async def test_search_models_no_provider(route_client, monkeypatch):
     assert "provider" in body["error"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_search_models_success(route_client, monkeypatch):
     monkeypatch.setattr(
         "src.web.routes.images._get_provider_api_key",
@@ -102,7 +102,7 @@ async def test_search_models_success(route_client, monkeypatch):
         assert len(body["models"]) == 1
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_search_models_no_api_key(route_client, monkeypatch):
     """Test search models when no API key is found."""
     monkeypatch.setattr(
@@ -115,7 +115,7 @@ async def test_search_models_no_api_key(route_client, monkeypatch):
     assert body["ok"] is True
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_images_page_with_db_error(route_client, monkeypatch):
     """Test images page when DB provider loading fails."""
     with patch("src.services.image_provider_service.ImageProviderService", side_effect=Exception("DB error")):
@@ -123,7 +123,7 @@ async def test_images_page_with_db_error(route_client, monkeypatch):
     assert resp.status_code == 200
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_generate_with_model(route_client, monkeypatch):
     """Test generate with specific model selection."""
     mock_svc = MagicMock()
@@ -140,7 +140,7 @@ async def test_generate_with_model(route_client, monkeypatch):
     assert body["model"] == "test:model"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_provider_api_key_from_db_config(monkeypatch):
     """API key returned from DB provider config."""
     mock_config = MagicMock(provider="together", api_key="db-key-123")
@@ -154,7 +154,7 @@ async def test_get_provider_api_key_from_db_config(monkeypatch):
     assert result == "db-key-123"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_provider_api_key_env_fallback(monkeypatch):
     """Falls back to env var when DB config has no matching key."""
     mock_config = MagicMock(provider="other", api_key="other-key")
@@ -178,7 +178,7 @@ async def test_get_provider_api_key_env_fallback(monkeypatch):
     assert result == "env-key-456"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_provider_api_key_exception_returns_empty():
     """Returns empty string on any exception."""
     from src.web.routes.images import _get_provider_api_key

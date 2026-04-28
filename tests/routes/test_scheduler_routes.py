@@ -40,14 +40,14 @@ async def client(base_app):
 
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_scheduler_page(client):
     """Test scheduler page renders."""
     resp = await client.get("/scheduler/")
     assert resp.status_code == 200
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_scheduler_page_shows_status(client):
     """Test scheduler page shows scheduler status."""
     resp = await client.get("/scheduler/")
@@ -56,21 +56,21 @@ async def test_scheduler_page_shows_status(client):
     assert "scheduler" in resp.text.lower() or "планировщик" in resp.text.lower()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_scheduler_page_with_message(client):
     """Test scheduler page with message query param."""
     resp = await client.get("/scheduler/?msg=test_message")
     assert resp.status_code == 200
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_scheduler_page_with_error(client):
     """Test scheduler page with error query param."""
     resp = await client.get("/scheduler/?error=shutting_down")
     assert resp.status_code == 200
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_start_scheduler_redirect(client):
     """Test start scheduler redirects."""
     with patch("src.web.routes.scheduler.deps.scheduler_service") as mock_svc:
@@ -80,7 +80,7 @@ async def test_start_scheduler_redirect(client):
         assert "/scheduler" in resp.headers.get("location", "")
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_start_scheduler_shutting_down(client):
     """Test start scheduler when shutting down."""
     client._transport.app.state.shutting_down = True
@@ -90,7 +90,7 @@ async def test_start_scheduler_shutting_down(client):
     assert "error=shutting_down" in location
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_stop_scheduler_redirect(client):
     """Test stop scheduler redirects."""
     with patch("src.web.routes.scheduler.deps.scheduler_service") as mock_svc:
@@ -100,7 +100,7 @@ async def test_stop_scheduler_redirect(client):
         assert "/scheduler" in resp.headers.get("location", "")
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_trigger_collection_redirect(client):
     """Test trigger collection redirects."""
     with patch("src.web.routes.scheduler.deps.scheduler_service") as mock_svc:
@@ -110,7 +110,7 @@ async def test_trigger_collection_redirect(client):
         assert "/scheduler" in resp.headers.get("location", "")
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_trigger_collection_shutting_down(client):
     """Test trigger collection when shutting down."""
     client._transport.app.state.shutting_down = True
@@ -120,7 +120,7 @@ async def test_trigger_collection_shutting_down(client):
     assert "error=shutting_down" in location
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_trigger_collection_enqueues(client):
     """Test trigger collection enqueues channels."""
     resp = await client.post("/scheduler/trigger", follow_redirects=False)
@@ -129,7 +129,7 @@ async def test_trigger_collection_enqueues(client):
     assert "/scheduler" in location
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_cancel_task_redirect(client):
     """Test cancel task redirects."""
     # Create a task first
@@ -144,7 +144,7 @@ async def test_cancel_task_redirect(client):
     assert "/scheduler" in resp.headers.get("location", "")
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_cancel_task_nonexistent(client):
     """Test cancel nonexistent task."""
     resp = await client.post("/scheduler/tasks/999999/cancel", follow_redirects=False)
@@ -152,7 +152,7 @@ async def test_cancel_task_nonexistent(client):
     assert resp.status_code == 303
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_scheduler_page_shows_tasks(client):
     """Test scheduler page shows collection tasks."""
     db = client._transport.app.state.db
@@ -167,7 +167,7 @@ async def test_scheduler_page_shows_tasks(client):
     assert resp.status_code == 200
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_scheduler_page_shows_processed_message_label_for_pipeline_runs(client):
     db = client._transport.app.state.db
 
@@ -201,7 +201,7 @@ async def test_scheduler_page_shows_processed_message_label_for_pipeline_runs(cl
     assert "Обработано" in resp.text
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_scheduler_page_shows_search_log(client):
     """Test scheduler page shows search log."""
     db = client._transport.app.state.db
@@ -213,7 +213,7 @@ async def test_scheduler_page_shows_search_log(client):
     assert resp.status_code == 200
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_scheduler_shows_collector_status(client):
     """Test scheduler page shows collector running status."""
     resp = await client.get("/scheduler/")
@@ -223,7 +223,7 @@ async def test_scheduler_shows_collector_status(client):
     assert "running" in text_lower or "остановлен" in text_lower or "запущен" in text_lower
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_scheduler_shows_collector_health_card_when_all_accounts_flooded(client):
     db = client._transport.app.state.db
     accounts = await db.get_accounts(active_only=False)
@@ -238,28 +238,28 @@ async def test_scheduler_shows_collector_health_card_when_all_accounts_flooded(c
     assert "Что делать" in resp.text
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_scheduler_shows_interval(client):
     """Test scheduler page shows collection interval."""
     resp = await client.get("/scheduler/")
     assert resp.status_code == 200
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_scheduler_page_empty_tasks(client):
     """Test scheduler page with no tasks."""
     resp = await client.get("/scheduler/")
     assert resp.status_code == 200
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_scheduler_page_empty_search_log(client):
     """Test scheduler page with no search log."""
     resp = await client.get("/scheduler/")
     assert resp.status_code == 200
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_scheduler_has_active_tasks_flag(client):
     """Test scheduler page has active tasks detection."""
     db = client._transport.app.state.db
@@ -274,7 +274,7 @@ async def test_scheduler_has_active_tasks_flag(client):
     assert resp.status_code == 200
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_scheduler_last_run_display(client):
     """Test scheduler displays last run time."""
     # Set last_run on scheduler
@@ -286,7 +286,7 @@ async def test_scheduler_last_run_display(client):
     assert resp.status_code == 200
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_scheduler_last_stats_display(client):
     """Test scheduler displays last stats."""
     client._transport.app.state.scheduler._last_stats = {"collected": 100}
@@ -295,7 +295,7 @@ async def test_scheduler_last_stats_display(client):
     assert resp.status_code == 200
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_scheduler_last_search_run_display(client):
     """Test scheduler displays last search run time."""
     from datetime import datetime
@@ -306,7 +306,7 @@ async def test_scheduler_last_search_run_display(client):
     assert resp.status_code == 200
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_scheduler_last_search_stats_display(client):
     """Test scheduler displays last search stats."""
     client._transport.app.state.scheduler._last_search_stats = {"queries": 5}
@@ -315,21 +315,21 @@ async def test_scheduler_last_search_stats_display(client):
     assert resp.status_code == 200
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_scheduler_interval_minutes(client):
     """Test scheduler displays interval minutes."""
     resp = await client.get("/scheduler/")
     assert resp.status_code == 200
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_scheduler_search_interval_minutes(client):
     """Test scheduler displays search interval minutes."""
     resp = await client.get("/scheduler/")
     assert resp.status_code == 200
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_start_scheduler_calls_service(client):
     """Test start scheduler enqueues reconcile command."""
     db = client._transport.app.state.db
@@ -338,7 +338,7 @@ async def test_start_scheduler_calls_service(client):
     assert commands[0].command_type == "scheduler.reconcile"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_stop_scheduler_calls_service(client):
     """Test stop scheduler enqueues reconcile command."""
     db = client._transport.app.state.db
@@ -347,7 +347,7 @@ async def test_stop_scheduler_calls_service(client):
     assert commands[0].command_type == "scheduler.reconcile"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_start_scheduler_sets_autostart_flag(client):
     """POST /scheduler/start persists scheduler_autostart=1 to DB."""
     db = client._transport.app.state.db
@@ -357,7 +357,7 @@ async def test_start_scheduler_sets_autostart_flag(client):
     assert value == "1"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_stop_scheduler_clears_autostart_flag(client):
     """POST /scheduler/stop persists scheduler_autostart=0 to DB."""
     db = client._transport.app.state.db
@@ -368,7 +368,7 @@ async def test_stop_scheduler_clears_autostart_flag(client):
     assert value == "0"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_trigger_collection_calls_service(client):
     """Test trigger collection calls collection service."""
     mock_service = MagicMock()
@@ -386,7 +386,7 @@ async def test_trigger_collection_calls_service(client):
         mock_service.enqueue_all_channels.assert_called_once()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_cancel_task_calls_queue(client):
     """Test cancel task calls queue cancel."""
     db = client._transport.app.state.db
@@ -400,7 +400,7 @@ async def test_cancel_task_calls_queue(client):
     assert resp.status_code == 200
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_clear_pending_collect_tasks_redirects_and_deletes_only_pending_channel_tasks(client):
     db = client._transport.app.state.db
 
@@ -426,7 +426,7 @@ async def test_clear_pending_collect_tasks_redirects_and_deletes_only_pending_ch
     assert (await db.get_collection_task(running_id)).status == CollectionTaskStatus.RUNNING
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_clear_pending_collect_tasks_empty_queue_redirects(client):
     resp = await client.post(
         "/scheduler/tasks/clear-pending-collect",
@@ -437,7 +437,7 @@ async def test_clear_pending_collect_tasks_empty_queue_redirects(client):
     assert "msg=pending_collect_tasks_empty" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_scheduler_page_shows_clear_pending_collect_button(client):
     db = client._transport.app.state.db
     await db.create_collection_task(
@@ -451,14 +451,14 @@ async def test_scheduler_page_shows_clear_pending_collect_button(client):
     assert "Очистить очередь загрузки" in resp.text
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_scheduler_page_hides_clear_button_when_no_pending(client):
     resp = await client.get("/scheduler/")
     assert resp.status_code == 200
     assert 'action="/scheduler/tasks/clear-pending-collect"' not in resp.text
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_scheduler_page_with_completed_task(client):
     """Test scheduler page shows completed task status."""
     db = client._transport.app.state.db
@@ -473,7 +473,7 @@ async def test_scheduler_page_with_completed_task(client):
     assert resp.status_code == 200
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_scheduler_page_with_failed_task(client):
     """Test scheduler page shows failed task status."""
     db = client._transport.app.state.db
@@ -488,7 +488,7 @@ async def test_scheduler_page_with_failed_task(client):
     assert resp.status_code == 200
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_scheduler_page_with_cancelled_task(client):
     """Test scheduler page shows cancelled task status."""
     db = client._transport.app.state.db
@@ -503,7 +503,7 @@ async def test_scheduler_page_with_cancelled_task(client):
     assert resp.status_code == 200
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_trigger_then_get_scheduler_with_pending_tasks(client):
     """Trigger collect-all then follow redirect to scheduler page with pending tasks.
 
@@ -527,7 +527,7 @@ async def test_trigger_then_get_scheduler_with_pending_tasks(client):
     assert "Планировщик" in resp.text
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_scheduler_page_with_many_pending_tasks(client):
     """Scheduler page renders correctly with many pending tasks."""
     db = client._transport.app.state.db
@@ -547,7 +547,7 @@ async def test_scheduler_page_with_many_pending_tasks(client):
 # ── Dry-run notification tests ──────────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_dry_run_no_queries(client):
     """Dry-run with no notification queries shows empty state."""
     resp = await client.post("/scheduler/dry-run-notifications")
@@ -555,7 +555,7 @@ async def test_dry_run_no_queries(client):
     assert "Нет активных запросов" in resp.text
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_dry_run_excludes_inactive_queries(client):
     """Dry-run excludes queries with is_active=False."""
     db = client._transport.app.state.db
@@ -570,7 +570,7 @@ async def test_dry_run_excludes_inactive_queries(client):
     assert "inactive_query" not in resp.text
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_dry_run_excludes_disabled_scheduler_job(client):
     """Dry-run excludes queries whose scheduler job is disabled."""
     db = client._transport.app.state.db
@@ -687,7 +687,7 @@ def _non_pipeline_rows(soup):
     ]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_scheduler_renders_processed_label_for_action_only_run(base_app, route_client):
     """Action-only pipeline run should render «Обработано» label + action count."""
     from bs4 import BeautifulSoup
@@ -719,7 +719,7 @@ async def test_scheduler_renders_processed_label_for_action_only_run(base_app, r
     assert "5" in result_cell_text
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_scheduler_renders_generation_label_for_generation_run(base_app, route_client):
     from bs4 import BeautifulSoup
 
@@ -749,7 +749,7 @@ async def test_scheduler_renders_generation_label_for_generation_run(base_app, r
     assert "3" in result_cell_text
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_scheduler_shows_warning_badge_when_run_has_node_errors(base_app, route_client):
     """Issue #463: when metadata.node_errors is non-empty, scheduler must render
     a warning badge with count next to result_count, so users see why 0.
@@ -781,7 +781,7 @@ async def test_scheduler_shows_warning_badge_when_run_has_node_errors(base_app, 
     assert "⚠" in cell_html or "pipe-run-warning" in cell_html
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_scheduler_mixed_page_non_pipeline_tasks_unaffected(base_app, route_client):
     """When a pipeline_run coexists with a plain non-pipeline task on /scheduler,
     the non-pipeline row must keep its plain messages_collected display
@@ -844,7 +844,7 @@ async def test_scheduler_mixed_page_non_pipeline_tasks_unaffected(base_app, rout
     assert "42" in plain_text
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_scheduler_shows_flood_wait_countdown(client):
     """Test that scheduler page shows flood wait countdown in hours and minutes."""
     db = client._transport.app.state.db
@@ -865,7 +865,7 @@ async def test_scheduler_shows_flood_wait_countdown(client):
     assert " ч " in resp.text or " мин)" in resp.text
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_scheduler_hides_countdown_if_too_short(client):
     """Test that countdown is hidden if less than 60 seconds remain."""
     db = client._transport.app.state.db

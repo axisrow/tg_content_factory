@@ -100,21 +100,21 @@ class TestRequirePool:
 
 
 class TestResolvePhone:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_non_empty_phone_passed_through(self):
         db = MagicMock()
         phone, err = await resolve_phone(db, "+79001234567")
         assert phone == "+79001234567"
         assert err is None
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_normalizes_phone_without_plus(self):
         db = MagicMock()
         phone, err = await resolve_phone(db, "79001234567")
         assert phone == "+79001234567"
         assert err is None
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_empty_phone_defaults_to_primary(self):
         primary = SimpleNamespace(phone="+11111111111", is_primary=True)
         secondary = SimpleNamespace(phone="+22222222222", is_primary=False)
@@ -125,7 +125,7 @@ class TestResolvePhone:
         assert phone == "+11111111111"
         assert err is None
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_empty_phone_no_primary_picks_first(self):
         acc1 = SimpleNamespace(phone="+111", is_primary=False)
         acc2 = SimpleNamespace(phone="+222", is_primary=False)
@@ -136,7 +136,7 @@ class TestResolvePhone:
         assert phone == "+111"
         assert err is None
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_empty_phone_no_accounts(self):
         db = MagicMock()
         db.get_accounts = AsyncMock(return_value=[])
@@ -145,7 +145,7 @@ class TestResolvePhone:
         assert err is not None
         assert "нет подключённых" in err["content"][0]["text"]
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_db_exception_returns_error(self):
         db = MagicMock()
         db.get_accounts = AsyncMock(side_effect=Exception("DB down"))
@@ -159,21 +159,21 @@ class TestResolvePhone:
 
 
 class TestRequirePhonePermission:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_no_setting_allows_all(self):
         db = MagicMock()
         db.get_setting = AsyncMock(return_value=None)
         result = await require_phone_permission(db, "+7900", "search_messages")
         assert result is None
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_empty_setting_allows_all(self):
         db = MagicMock()
         db.get_setting = AsyncMock(return_value="")
         result = await require_phone_permission(db, "+7900", "search_messages")
         assert result is None
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_malformed_json_blocks(self):
         db = MagicMock()
         db.get_setting = AsyncMock(return_value="not-json")
@@ -181,7 +181,7 @@ class TestRequirePhonePermission:
         assert result is not None
         assert "заблокировано" in result["content"][0]["text"]
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_db_exception_blocks(self):
         db = MagicMock()
         db.get_setting = AsyncMock(side_effect=Exception("err"))
@@ -189,7 +189,7 @@ class TestRequirePhonePermission:
         assert result is not None
         assert "заблокировано" in result["content"][0]["text"]
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_phone_in_allowed_list(self):
         db = MagicMock()
         perms = {"+7900": {"search_messages": True}}
@@ -197,7 +197,7 @@ class TestRequirePhonePermission:
         result = await require_phone_permission(db, "+7900", "search_messages")
         assert result is None
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_phone_not_allowed(self):
         """Phone is in perms dict but tool is disabled for it → blocked."""
         db = MagicMock()
@@ -213,7 +213,7 @@ class TestRequirePhonePermission:
         assert "не разрешён" in text
         assert "+7900" in text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_phone_not_in_perms_defaults_allowed(self):
         """Phone not in perms dict at all → defaults to allowed."""
         db = MagicMock()
@@ -224,7 +224,7 @@ class TestRequirePhonePermission:
         # Phone not in perms dict → allowed (returns None)
         assert result is None
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_no_phone_shows_phone_list(self):
         db = MagicMock()
         perms = {"+7900": {"search_messages": True}}
@@ -235,7 +235,7 @@ class TestRequirePhonePermission:
         text = result["content"][0]["text"]
         assert "укажи параметр phone" in text or "Разрешённые" in text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_tool_not_restricted_for_any_phone(self):
         """If no phone has this tool enabled, tool is not restricted → allow."""
         db = MagicMock()

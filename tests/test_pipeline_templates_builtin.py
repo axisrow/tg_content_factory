@@ -199,7 +199,7 @@ async def _create_from_template(db, template_name, source_ids, target_refs=None)
     )
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_forward_template_source_wiring(_seeded_db):
     db = _seeded_db
     pipeline_id = await _create_from_template(
@@ -218,7 +218,7 @@ async def test_forward_template_source_wiring(_seeded_db):
     assert forward_node.config["targets"][0]["dialog_id"] == 77
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_react_template_source_wiring(_seeded_db):
     db = _seeded_db
     pipeline_id = await _create_from_template(db, "Реакции на сообщения", [1001])
@@ -232,7 +232,7 @@ async def test_react_template_source_wiring(_seeded_db):
     assert react_node is not None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_cleanup_template_source_wiring(_seeded_db):
     db = _seeded_db
     pipeline_id = await _create_from_template(db, "Удаление join/leave сообщений", [1001])
@@ -250,7 +250,7 @@ async def test_cleanup_template_source_wiring(_seeded_db):
     assert delete_node is not None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_template_without_targets_no_injection(_seeded_db):
     """Templates without source_ids should leave source node config empty."""
     db = _seeded_db

@@ -63,7 +63,7 @@ async def client(base_app):
 
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_dialogs_page_no_phone(client):
     """Test dialogs page without phone selection."""
     resp = await client.get("/dialogs/")
@@ -72,14 +72,14 @@ async def test_dialogs_page_no_phone(client):
     assert "+1234567890" in resp.text or "account" in resp.text.lower()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_dialogs_page_with_phone(client):
     """Test dialogs page with phone selection."""
     resp = await client.get("/dialogs/?phone=%2B1234567890")
     assert resp.status_code == 200
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_legacy_dialogs_route_redirects_to_dialogs(client):
     legacy_prefix = "/my" + "-telegram"
     resp = await client.get(f"{legacy_prefix}/?phone=%2B1234567890", follow_redirects=False)
@@ -87,7 +87,7 @@ async def test_legacy_dialogs_route_redirects_to_dialogs(client):
     assert resp.headers["location"] == "/dialogs/?phone=%2B1234567890"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_legacy_dialogs_post_route_redirects_to_dialogs(client):
     legacy_prefix = "/my" + "-telegram"
     resp = await client.post(
@@ -102,21 +102,21 @@ async def test_legacy_dialogs_post_route_redirects_to_dialogs(client):
     assert resp.headers["location"] == "/dialogs/leave"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_dialogs_page_invalid_phone(client):
     """Test dialogs page with invalid phone."""
     resp = await client.get("/dialogs/?phone=invalid")
     assert resp.status_code == 200
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_dialogs_page_shows_accounts(client):
     """Test dialogs page shows available accounts."""
     resp = await client.get("/dialogs/")
     assert resp.status_code == 200
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_leave_dialogs_redirect(client):
     """Test leave dialogs redirects."""
     resp = await client.post(
@@ -131,7 +131,7 @@ async def test_leave_dialogs_redirect(client):
     assert "/dialogs/" in resp.headers.get("location", "")
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_leave_dialogs_empty(client):
     """Test leave dialogs with no selections."""
     resp = await client.post(
@@ -144,7 +144,7 @@ async def test_leave_dialogs_empty(client):
     assert resp.status_code == 303
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_leave_dialogs_malformed_channel_id(client):
     """Test leave dialogs handles malformed channel IDs."""
     resp = await client.post(
@@ -159,7 +159,7 @@ async def test_leave_dialogs_malformed_channel_id(client):
     assert resp.status_code == 303
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_leave_dialogs_negative_channel_id(client):
     """Test leave dialogs with negative channel IDs."""
     resp = await client.post(
@@ -173,7 +173,7 @@ async def test_leave_dialogs_negative_channel_id(client):
     assert resp.status_code == 303
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_leave_dialogs_no_colon(client):
     """Test leave dialogs with malformed ID (no colon)."""
     resp = await client.post(
@@ -188,28 +188,28 @@ async def test_leave_dialogs_no_colon(client):
     assert resp.status_code == 303
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_dialogs_shows_left_count(client):
     """Test dialogs page shows left count from query param."""
     resp = await client.get("/dialogs/?left=2&failed=0")
     assert resp.status_code == 200
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_dialogs_shows_failed_count(client):
     """Test dialogs page shows failed count from query param."""
     resp = await client.get("/dialogs/?left=0&failed=1")
     assert resp.status_code == 200
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_dialogs_phone_url_encoded(client):
     """Test dialogs with URL-encoded phone number."""
     resp = await client.get("/dialogs/?phone=%2B1234567890")
     assert resp.status_code == 200
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_dialogs_no_accounts(client):
     """Test dialogs with no connected accounts."""
     # Remove accounts
@@ -225,7 +225,7 @@ async def test_dialogs_no_accounts(client):
     assert resp.status_code == 200
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_leave_dialogs_preserves_phone(client):
     """Test leave dialogs preserves phone in redirect."""
     resp = await client.post(
@@ -242,7 +242,7 @@ async def test_leave_dialogs_preserves_phone(client):
     assert "phone=" in location
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_dialogs_logs_request(client, caplog):
     """Test dialogs logs request details."""
     import logging
@@ -252,7 +252,7 @@ async def test_dialogs_logs_request(client, caplog):
         assert resp.status_code == 200
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_dialogs_shows_already_added(client):
     """Test dialogs shows already added flag."""
     # Add a channel that matches one of the dialogs
@@ -269,7 +269,7 @@ async def test_dialogs_shows_already_added(client):
     assert resp.status_code == 200
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_dialogs_empty_dialogs(client):
     """Test dialogs with no dialogs."""
     client._transport.app.state.pool.get_dialogs_for_phone = AsyncMock(return_value=[])
@@ -278,7 +278,7 @@ async def test_dialogs_empty_dialogs(client):
     assert resp.status_code == 200
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_leave_dialogs_single(client):
     """Test leaving single dialog."""
     resp = await client.post(
@@ -292,7 +292,7 @@ async def test_leave_dialogs_single(client):
     assert resp.status_code == 303
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_leave_dialogs_multiple(client):
     """Test leaving multiple dialogs."""
     resp = await client.post(
@@ -309,7 +309,7 @@ async def test_leave_dialogs_multiple(client):
 # ─── refresh & cache ────────────────────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_refresh_dialogs_redirects(client):
     """Test refresh dialogs redirects back."""
     resp = await client.post(
@@ -321,14 +321,14 @@ async def test_refresh_dialogs_redirects(client):
     assert "phone=" in resp.headers.get("location", "")
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_refresh_dialogs_missing_phone(client):
     """Test refresh without phone returns validation error."""
     resp = await client.post("/dialogs/refresh", follow_redirects=False)
     assert resp.status_code == 303
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_create_channel_missing_phone(client):
     """POST /dialogs/create-channel without phone returns 422."""
     resp = await client.post(
@@ -339,7 +339,7 @@ async def test_create_channel_missing_phone(client):
     assert resp.status_code == 303
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_create_channel_missing_title(client):
     """POST /dialogs/create-channel without title returns 422."""
     resp = await client.post(
@@ -350,7 +350,7 @@ async def test_create_channel_missing_title(client):
     assert resp.status_code == 303
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_cache_status_returns_json(client):
     """Test cache-status endpoint returns JSON list."""
     db = client._transport.app.state.db
@@ -364,7 +364,7 @@ async def test_cache_status_returns_json(client):
     assert isinstance(data, list)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_cache_clear_with_phone(client):
     """Test cache-clear with phone param."""
     resp = await client.post(
@@ -375,7 +375,7 @@ async def test_cache_clear_with_phone(client):
     assert resp.status_code == 303
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_cache_clear_without_phone(client):
     """Test cache-clear without phone clears all."""
     resp = await client.post("/dialogs/cache-clear", follow_redirects=False)
@@ -385,14 +385,14 @@ async def test_cache_clear_without_phone(client):
 # ─── send / edit / delete messages ──────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_send_message_missing_fields(client):
     """Test send with missing required fields redirects."""
     resp = await client.post("/dialogs/send", follow_redirects=False)
     assert resp.status_code == 303
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_send_message_no_client(client):
     """Test send when native client is unavailable."""
     pool = client._transport.app.state.pool
@@ -406,7 +406,7 @@ async def test_send_message_no_client(client):
     assert resp.status_code == 303
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_send_message_success(client):
     """Test successful send message."""
     native_mock = AsyncMock()
@@ -422,21 +422,21 @@ async def test_send_message_success(client):
     assert resp.status_code == 303
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_edit_message_missing_fields(client):
     """Test edit-message with missing fields redirects."""
     resp = await client.post("/dialogs/edit-message", follow_redirects=False)
     assert resp.status_code == 303
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_delete_message_missing_fields(client):
     """Test delete-message with missing fields redirects."""
     resp = await client.post("/dialogs/delete-message", follow_redirects=False)
     assert resp.status_code == 303
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_delete_message_invalid_ids(client):
     """Test delete-message with non-numeric message_ids."""
     resp = await client.post(
@@ -448,7 +448,7 @@ async def test_delete_message_invalid_ids(client):
     assert "error=invalid_ids" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_forward_messages_missing_fields(client):
     """Test forward-messages with missing fields redirects."""
     resp = await client.post("/dialogs/forward-messages", follow_redirects=False)
@@ -458,14 +458,14 @@ async def test_forward_messages_missing_fields(client):
 # ─── pin / unpin ────────────────────────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_pin_message_missing_fields(client):
     """Test pin-message with missing fields redirects."""
     resp = await client.post("/dialogs/pin-message", follow_redirects=False)
     assert resp.status_code == 303
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_unpin_message_missing_fields(client):
     """Test unpin-message with missing fields redirects."""
     resp = await client.post("/dialogs/unpin-message", follow_redirects=False)
@@ -475,28 +475,28 @@ async def test_unpin_message_missing_fields(client):
 # ─── participants / archive / unarchive / mark-read ─────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_participants_missing_params(client):
     """Test participants with missing params returns 400."""
     resp = await client.get("/dialogs/participants")
     assert resp.status_code == 400
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_archive_dialog_missing_fields(client):
     """Test archive with missing fields redirects."""
     resp = await client.post("/dialogs/archive", follow_redirects=False)
     assert resp.status_code == 303
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_unarchive_dialog_missing_fields(client):
     """Test unarchive with missing fields redirects."""
     resp = await client.post("/dialogs/unarchive", follow_redirects=False)
     assert resp.status_code == 303
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_mark_read_missing_fields(client):
     """Test mark-read with missing fields redirects."""
     resp = await client.post("/dialogs/mark-read", follow_redirects=False)
@@ -506,7 +506,7 @@ async def test_mark_read_missing_fields(client):
 # ─── create-channel page ────────────────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_create_channel_page_renders(client):
     """Test create-channel page renders."""
     resp = await client.get("/dialogs/create-channel")
@@ -516,7 +516,7 @@ async def test_create_channel_page_renders(client):
 # ─── leave_dialogs with channel_service ─────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_leave_dialogs_calls_channel_service(client):
     """Test leave_dialogs queues a command."""
     resp = await client.post(
@@ -534,7 +534,7 @@ async def test_leave_dialogs_calls_channel_service(client):
 # ─── send_message success / error paths ─────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_send_message_exception(client):
     """Test send message handles exception."""
     native_mock = AsyncMock()
@@ -554,7 +554,7 @@ async def test_send_message_exception(client):
 # ─── edit_message success / no_client / error ───────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_edit_message_no_client(client):
     """Test edit-message with no native client."""
     pool = client._transport.app.state.pool
@@ -569,7 +569,7 @@ async def test_edit_message_no_client(client):
     assert "command_id=" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_edit_message_success(client):
     """Test successful edit message."""
     native_mock = AsyncMock()
@@ -586,7 +586,7 @@ async def test_edit_message_success(client):
     assert "command_id=" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_edit_message_exception(client):
     """Test edit message handles exception."""
     native_mock = AsyncMock()
@@ -606,7 +606,7 @@ async def test_edit_message_exception(client):
 # ─── delete_message success / no_client / error ─────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_delete_message_no_client(client):
     """Test delete-message with no native client."""
     pool = client._transport.app.state.pool
@@ -621,7 +621,7 @@ async def test_delete_message_no_client(client):
     assert "command_id=" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_delete_message_success(client):
     """Test successful delete messages."""
     native_mock = AsyncMock()
@@ -638,7 +638,7 @@ async def test_delete_message_success(client):
     assert "command_id=" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_delete_message_exception(client):
     """Test delete messages handles exception."""
     native_mock = AsyncMock()
@@ -658,7 +658,7 @@ async def test_delete_message_exception(client):
 # ─── forward_messages success / no_client / error / invalid_ids ──────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_forward_messages_invalid_ids(client):
     """Test forward-messages with non-numeric ids."""
     resp = await client.post(
@@ -675,7 +675,7 @@ async def test_forward_messages_invalid_ids(client):
     assert "error=invalid_ids" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_forward_messages_no_client(client):
     """Test forward-messages with no native client."""
     pool = client._transport.app.state.pool
@@ -695,7 +695,7 @@ async def test_forward_messages_no_client(client):
     assert "command_id=" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_forward_messages_success(client):
     """Test successful forward messages."""
     native_mock = AsyncMock()
@@ -717,7 +717,7 @@ async def test_forward_messages_success(client):
     assert "command_id=" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_forward_messages_exception(client):
     """Test forward messages handles exception."""
     native_mock = AsyncMock()
@@ -742,7 +742,7 @@ async def test_forward_messages_exception(client):
 # ─── pin_message success / no_client / error ────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_pin_message_no_client(client):
     """Test pin-message with no native client."""
     pool = client._transport.app.state.pool
@@ -757,7 +757,7 @@ async def test_pin_message_no_client(client):
     assert "command_id=" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_pin_message_success(client):
     """Test successful pin message."""
     native_mock = AsyncMock()
@@ -774,7 +774,7 @@ async def test_pin_message_success(client):
     assert "command_id=" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_pin_message_exception(client):
     """Test pin message handles exception."""
     native_mock = AsyncMock()
@@ -794,7 +794,7 @@ async def test_pin_message_exception(client):
 # ─── unpin_message success / no_client / error ──────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_unpin_message_no_client(client):
     """Test unpin-message with no native client."""
     pool = client._transport.app.state.pool
@@ -809,7 +809,7 @@ async def test_unpin_message_no_client(client):
     assert "command_id=" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_unpin_message_success(client):
     """Test successful unpin message."""
     native_mock = AsyncMock()
@@ -826,7 +826,7 @@ async def test_unpin_message_success(client):
     assert "command_id=" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_unpin_message_exception(client):
     """Test unpin message handles exception."""
     native_mock = AsyncMock()
@@ -846,7 +846,7 @@ async def test_unpin_message_exception(client):
 # ─── download-media ─────────────────────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_download_media_missing_fields(client):
     """Test download-media with missing fields."""
     resp = await client.post("/dialogs/download-media", follow_redirects=False)
@@ -854,7 +854,7 @@ async def test_download_media_missing_fields(client):
     assert "error=missing_fields" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_download_media_no_client(client):
     """Test download-media with no native client."""
     pool = client._transport.app.state.pool
@@ -869,7 +869,7 @@ async def test_download_media_no_client(client):
     assert "command_id=" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_download_media_message_not_found(client):
     """Test download-media when message is not found."""
     native_mock = AsyncMock()
@@ -886,7 +886,7 @@ async def test_download_media_message_not_found(client):
     assert "command_id=" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_download_media_no_media(client):
     """Test download-media when message has no media."""
 
@@ -908,7 +908,7 @@ async def test_download_media_no_media(client):
     assert "command_id=" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_download_media_exception(client):
     """Test download-media handles exception."""
     native_mock = AsyncMock()
@@ -928,7 +928,7 @@ async def test_download_media_exception(client):
 # ─── participants success / no_client / error ───────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_participants_no_client(client):
     """Test participants with no native client returns 503."""
     pool = client._transport.app.state.pool
@@ -940,7 +940,7 @@ async def test_participants_no_client(client):
     assert resp.status_code == 202
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_participants_success(client):
     """Test successful participants fetch."""
     participant = SimpleNamespace(id=1, first_name="Alice", last_name="Smith", username="alice")
@@ -956,7 +956,7 @@ async def test_participants_success(client):
     assert "command_id" in resp.json()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_participants_exception(client):
     """Test participants handles exception."""
     native_mock = AsyncMock()
@@ -973,7 +973,7 @@ async def test_participants_exception(client):
 # ─── edit-admin ─────────────────────────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_edit_admin_missing_fields(client):
     """Test edit-admin with missing fields."""
     resp = await client.post("/dialogs/edit-admin", follow_redirects=False)
@@ -981,7 +981,7 @@ async def test_edit_admin_missing_fields(client):
     assert "error=missing_fields" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_edit_admin_no_client(client):
     """Test edit-admin with no native client."""
     pool = client._transport.app.state.pool
@@ -996,7 +996,7 @@ async def test_edit_admin_no_client(client):
     assert "command_id=" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_edit_admin_success(client):
     """Test successful edit admin."""
     native_mock = AsyncMock()
@@ -1013,7 +1013,7 @@ async def test_edit_admin_success(client):
     assert "command_id=" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_edit_admin_exception(client):
     """Test edit admin handles exception."""
     native_mock = AsyncMock()
@@ -1033,7 +1033,7 @@ async def test_edit_admin_exception(client):
 # ─── edit-permissions ───────────────────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_edit_permissions_no_flags(client):
     """Test edit-permissions with no permission flags."""
     resp = await client.post(
@@ -1045,7 +1045,7 @@ async def test_edit_permissions_no_flags(client):
     assert "error=no_permission_flags" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_edit_permissions_missing_fields(client):
     """Test edit-permissions with missing phone/chat/user."""
     resp = await client.post(
@@ -1057,7 +1057,7 @@ async def test_edit_permissions_missing_fields(client):
     assert "error=missing_fields" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_edit_permissions_no_client(client):
     """Test edit-permissions with no native client."""
     pool = client._transport.app.state.pool
@@ -1072,7 +1072,7 @@ async def test_edit_permissions_no_client(client):
     assert "command_id=" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_edit_permissions_success(client):
     """Test successful edit permissions."""
     native_mock = AsyncMock()
@@ -1096,7 +1096,7 @@ async def test_edit_permissions_success(client):
     assert "command_id=" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_edit_permissions_exception(client):
     """Test edit permissions handles exception."""
     native_mock = AsyncMock()
@@ -1116,7 +1116,7 @@ async def test_edit_permissions_exception(client):
 # ─── kick ───────────────────────────────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_kick_missing_fields(client):
     """Test kick with missing fields."""
     resp = await client.post("/dialogs/kick", follow_redirects=False)
@@ -1124,7 +1124,7 @@ async def test_kick_missing_fields(client):
     assert "error=missing_fields" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_kick_no_client(client):
     """Test kick with no native client."""
     pool = client._transport.app.state.pool
@@ -1139,7 +1139,7 @@ async def test_kick_no_client(client):
     assert "command_id=" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_kick_success(client):
     """Test successful kick participant."""
     native_mock = AsyncMock()
@@ -1156,7 +1156,7 @@ async def test_kick_success(client):
     assert "command_id=" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_kick_exception(client):
     """Test kick handles exception."""
     native_mock = AsyncMock()
@@ -1176,14 +1176,14 @@ async def test_kick_exception(client):
 # ─── broadcast-stats ────────────────────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_broadcast_stats_missing_params(client):
     """Test broadcast-stats with missing params returns 400."""
     resp = await client.get("/dialogs/broadcast-stats")
     assert resp.status_code == 400
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_broadcast_stats_no_client(client):
     """Test broadcast-stats with no native client returns 503."""
     pool = client._transport.app.state.pool
@@ -1195,7 +1195,7 @@ async def test_broadcast_stats_no_client(client):
     assert resp.status_code == 202
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_broadcast_stats_success(client):
     """Test successful broadcast stats fetch."""
     stats = SimpleNamespace(
@@ -1222,7 +1222,7 @@ async def test_broadcast_stats_success(client):
     assert "command_id" in resp.json()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_broadcast_stats_empty(client):
     """Test broadcast stats with no available stats fields."""
     stats = SimpleNamespace(spec=[])
@@ -1238,7 +1238,7 @@ async def test_broadcast_stats_empty(client):
     assert "command_id" in resp.json()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_broadcast_stats_exception(client):
     """Test broadcast stats handles exception."""
     native_mock = AsyncMock()
@@ -1255,7 +1255,7 @@ async def test_broadcast_stats_exception(client):
 # ─── archive / unarchive success + error ────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_archive_no_client(client):
     """Test archive with no native client."""
     pool = client._transport.app.state.pool
@@ -1270,7 +1270,7 @@ async def test_archive_no_client(client):
     assert "command_id=" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_archive_success(client):
     """Test successful archive dialog."""
     native_mock = AsyncMock()
@@ -1287,7 +1287,7 @@ async def test_archive_success(client):
     assert "command_id=" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_archive_exception(client):
     """Test archive handles exception."""
     native_mock = AsyncMock()
@@ -1304,7 +1304,7 @@ async def test_archive_exception(client):
     assert "command_id=" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_unarchive_no_client(client):
     """Test unarchive with no native client."""
     pool = client._transport.app.state.pool
@@ -1319,7 +1319,7 @@ async def test_unarchive_no_client(client):
     assert "command_id=" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_unarchive_success(client):
     """Test successful unarchive dialog."""
     native_mock = AsyncMock()
@@ -1336,7 +1336,7 @@ async def test_unarchive_success(client):
     assert "command_id=" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_unarchive_exception(client):
     """Test unarchive handles exception."""
     native_mock = AsyncMock()
@@ -1356,7 +1356,7 @@ async def test_unarchive_exception(client):
 # ─── mark-read success / no_client / error ──────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_mark_read_no_client(client):
     """Test mark-read with no native client."""
     pool = client._transport.app.state.pool
@@ -1371,7 +1371,7 @@ async def test_mark_read_no_client(client):
     assert "command_id=" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_mark_read_success(client):
     """Test successful mark read."""
     native_mock = AsyncMock()
@@ -1388,7 +1388,7 @@ async def test_mark_read_success(client):
     assert "command_id=" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_mark_read_exception(client):
     """Test mark read handles exception."""
     native_mock = AsyncMock()
@@ -1408,7 +1408,7 @@ async def test_mark_read_exception(client):
 # ─── create-channel POST ────────────────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_create_channel_post_no_client(client):
     """Test create channel POST with no matching client."""
     resp = await client.post(
@@ -1420,7 +1420,7 @@ async def test_create_channel_post_no_client(client):
     assert "command_id=" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_create_channel_post_exception(client):
     """Test create channel POST handles exception."""
     from unittest.mock import MagicMock
@@ -1440,7 +1440,7 @@ async def test_create_channel_post_exception(client):
 # ─── download-media success path with file ───────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_download_media_success(client, tmp_path):
     """Test download-media returns file when media exists."""
     from tests.helpers import AsyncIterMessages
@@ -1470,7 +1470,7 @@ async def test_download_media_success(client, tmp_path):
 # ─── create-channel POST success ─────────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_create_channel_post_success(client):
     """Test successful create channel."""
     mock_result = MagicMock()
@@ -1492,7 +1492,7 @@ async def test_create_channel_post_success(client):
     assert "My New Channel" in resp.text or "created" in resp.text.lower()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_create_channel_post_success_no_username(client):
     """Test create channel without username."""
     mock_result = MagicMock()
@@ -1516,7 +1516,7 @@ async def test_create_channel_post_success_no_username(client):
 # ─── broadcast-stats with non-standard fields ─────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_broadcast_stats_with_string_fields(client):
     """Test broadcast stats where stat fields are not SimpleNamespace."""
     stats = SimpleNamespace(

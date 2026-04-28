@@ -30,7 +30,7 @@ async def db(base_app):
 # ============================================================================
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_agent_page_no_threads_creates_thread(client, db):
     """Covers auto-creating thread when none exist."""
     threads = await db.get_agent_threads()
@@ -42,7 +42,7 @@ async def test_agent_page_no_threads_creates_thread(client, db):
     assert "thread_id=" in resp.headers.get("location", "")
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_agent_page_has_threads_no_thread_id(client, db):
     """Covers redirect to first thread when threads exist but no thread_id param."""
     tid = await db.create_agent_thread("First")
@@ -51,7 +51,7 @@ async def test_agent_page_has_threads_no_thread_id(client, db):
     assert f"thread_id={tid}" in resp.headers.get("location", "")
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_agent_chat_whitespace_message(client, db):
     """Covers chat with whitespace-only message."""
     tid = await db.create_agent_thread("Chat")
@@ -63,7 +63,7 @@ async def test_agent_chat_whitespace_message(client, db):
     assert resp.status_code == 400
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_agent_chat_invalid_model(client, db):
     """Covers chat with unrecognized model parameter."""
     tid = await db.create_agent_thread("Chat")
@@ -80,7 +80,7 @@ async def test_agent_chat_invalid_model(client, db):
 # ============================================================================
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_channels_list_tags_empty(client, db):
     """Covers GET /channels/tags with no tags."""
     resp = await client.get("/channels/tags")
@@ -89,7 +89,7 @@ async def test_channels_list_tags_empty(client, db):
     assert "tags" in data
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_channels_create_tag(client, db):
     """Covers POST /channels/tags creates a tag."""
     resp = await client.post(
@@ -101,7 +101,7 @@ async def test_channels_create_tag(client, db):
     assert "msg=tag_created" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_channels_delete_tag(client, db):
     """Covers DELETE /channels/tags/{name}."""
     await db.repos.channels.create_tag("del-me")
@@ -111,7 +111,7 @@ async def test_channels_delete_tag(client, db):
     assert data["ok"] is True
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_channels_get_channel_tags(client, db):
     """Covers GET /channels/{pk}/tags."""
     from src.models import Channel
@@ -126,7 +126,7 @@ async def test_channels_get_channel_tags(client, db):
     assert "tags" in data
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_channels_set_channel_tags(client, db):
     """Covers POST /channels/{pk}/tags."""
     from src.models import Channel
@@ -144,7 +144,7 @@ async def test_channels_set_channel_tags(client, db):
     assert "msg=tags_updated" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_channels_refresh_types(client, db):
     """Covers POST /channels/refresh-types."""
     with patch("src.web.routes.channels.deps.telegram_command_service") as mock_svc:
@@ -157,7 +157,7 @@ async def test_channels_refresh_types(client, db):
         assert "command_id=42" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_channels_refresh_meta(client, db):
     """Covers POST /channels/refresh-meta."""
     with patch("src.web.routes.channels.deps.telegram_command_service") as mock_svc:
@@ -170,7 +170,7 @@ async def test_channels_refresh_meta(client, db):
         assert "command_id=43" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_channels_add_empty_identifier(client, db):
     """Covers POST /channels/add with empty identifier."""
     resp = await client.post(
@@ -182,7 +182,7 @@ async def test_channels_add_empty_identifier(client, db):
     assert "error=resolve" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_channels_show_all_view(client, db):
     """Covers channels list with view=all param."""
     resp = await client.get("/channels/?view=all")

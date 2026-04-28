@@ -9,7 +9,7 @@ from src.database import Database
 from src.models import RuntimeSnapshot, TelegramCommand, TelegramCommandStatus
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_telegram_commands_repository_round_trip(tmp_path):
     db = Database(str(tmp_path / "test.db"))
     await db.initialize()
@@ -33,7 +33,7 @@ async def test_telegram_commands_repository_round_trip(tmp_path):
         await db.close()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_claim_next_command_rolls_back_on_error(tmp_path):
     """If an exception happens mid-claim, the DB must not stay locked."""
     db = Database(str(tmp_path / "test.db"))
@@ -71,7 +71,7 @@ async def test_claim_next_command_rolls_back_on_error(tmp_path):
         await db.close()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_claim_next_command_recovers_from_stale_transaction(tmp_path):
     db = Database(str(tmp_path / "test.db"))
     await db.initialize()
@@ -95,7 +95,7 @@ async def test_claim_next_command_recovers_from_stale_transaction(tmp_path):
         await db.close()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_runtime_snapshots_repository_upsert_and_get(tmp_path):
     db = Database(str(tmp_path / "test.db"))
     await db.initialize()
@@ -119,7 +119,7 @@ async def test_runtime_snapshots_repository_upsert_and_get(tmp_path):
         await db.close()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_runtime_snapshots_repository_handles_non_primitive_payload(tmp_path):
     """Regression for #473 tail: payload with datetime/bytes must round-trip
     via safe_json_dumps without raising TypeError.

@@ -18,14 +18,14 @@ def _channel_entity(
     return make_channel_entity(channel_id, title=title, username=username)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_pool_initialize_no_accounts(real_pool_harness_factory):
     harness = real_pool_harness_factory()
     await harness.initialize_connected_accounts()
     assert len(harness.pool.clients) == 0
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_pool_initialize_completes_with_accounts(real_pool_harness_factory):
     """initialize() with working accounts completes quickly."""
     import time
@@ -42,7 +42,7 @@ async def test_pool_initialize_completes_with_accounts(real_pool_harness_factory
     assert elapsed < 5.0, f"initialize took {elapsed:.1f}s, expected < 5s"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_pool_initialize_skips_hanging_connect(real_pool_harness_factory, caplog):
     """Account whose _connect_account hangs is skipped after timeout."""
     import asyncio
@@ -76,7 +76,7 @@ async def test_pool_initialize_skips_hanging_connect(real_pool_harness_factory, 
     assert elapsed < 5.0
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_pool_initialize_handles_fetch_me_error(real_pool_harness_factory, caplog):
     """Account whose get_me raises an error is handled gracefully."""
     from unittest.mock import AsyncMock
@@ -93,14 +93,14 @@ async def test_pool_initialize_handles_fetch_me_error(real_pool_harness_factory,
     assert "Failed to fetch premium status" in caplog.text
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_pool_get_available_no_clients(real_pool_harness_factory):
     harness = real_pool_harness_factory()
     result = await harness.pool.get_available_client()
     assert result is None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_stats_availability_no_connected_active(real_pool_harness_factory):
     harness = real_pool_harness_factory()
     await harness.add_account("+70000000001", session_string="s1", is_primary=True)
@@ -110,7 +110,7 @@ async def test_stats_availability_no_connected_active(real_pool_harness_factory)
     assert availability.retry_after_sec is None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_stats_availability_all_flooded(real_pool_harness_factory):
     harness = real_pool_harness_factory()
     harness.queue_cli_client(phone="+70000000002", client=FakeCliTelethonClient())
@@ -127,7 +127,7 @@ async def test_stats_availability_all_flooded(real_pool_harness_factory):
     assert availability.next_available_at_utc is not None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_pool_report_flood(real_pool_harness_factory):
     harness = real_pool_harness_factory()
     await harness.add_account("+71234567890", session_string="session1", is_primary=True)
@@ -138,7 +138,7 @@ async def test_pool_report_flood(real_pool_harness_factory):
     assert accounts[0].flood_wait_until is not None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_pool_disconnect_all_releases_active_leases(real_pool_harness_factory):
     harness = real_pool_harness_factory()
     cli_client = harness.queue_cli_client(
@@ -158,7 +158,7 @@ async def test_pool_disconnect_all_releases_active_leases(real_pool_harness_fact
     assert cli_client.disconnect.await_count == 1
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_pool_skips_flooded_returns_next(real_pool_harness_factory):
     harness = real_pool_harness_factory()
     harness.queue_cli_client(phone="+70001111111", client=FakeCliTelethonClient())
@@ -174,7 +174,7 @@ async def test_pool_skips_flooded_returns_next(real_pool_harness_factory):
     assert result[1] == "+70002222222"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_resolve_channel_returns_raw_id(real_pool_harness_factory):
     harness = real_pool_harness_factory()
     client = harness.queue_cli_client(
@@ -195,7 +195,7 @@ async def test_resolve_channel_returns_raw_id(real_pool_harness_factory):
     client.get_entity.assert_awaited_with("@test_chan")
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_resolve_channel_no_client_raises(real_pool_harness_factory):
     harness = real_pool_harness_factory()
 
@@ -203,7 +203,7 @@ async def test_resolve_channel_no_client_raises(real_pool_harness_factory):
         await harness.pool.resolve_channel("@test_chan")
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_resolve_channel_entity_not_found_returns_none(real_pool_harness_factory):
     harness = real_pool_harness_factory()
     harness.queue_cli_client(
@@ -219,7 +219,7 @@ async def test_resolve_channel_entity_not_found_returns_none(real_pool_harness_f
     assert result is None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_resolve_channel_flood_rotates(real_pool_harness_factory):
     harness = real_pool_harness_factory()
     flood_err = FloodWaitError(request=None, capture=0)
@@ -246,7 +246,7 @@ async def test_resolve_channel_flood_rotates(real_pool_harness_factory):
     assert result["channel_id"] == 123456
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_resolve_channel_user_returns_none(real_pool_harness_factory):
     harness = real_pool_harness_factory()
     harness.queue_cli_client(
@@ -262,7 +262,7 @@ async def test_resolve_channel_user_returns_none(real_pool_harness_factory):
     assert result is None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_premium_client_fallback_when_in_use(real_pool_harness_factory):
     harness = real_pool_harness_factory()
     harness.queue_cli_client(
@@ -286,7 +286,7 @@ async def test_get_premium_client_fallback_when_in_use(real_pool_harness_factory
     assert second[1] == "+70001111111"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_resolve_channel_strips_post_id_from_url(real_pool_harness_factory):
     harness = real_pool_harness_factory()
     client = harness.queue_cli_client(

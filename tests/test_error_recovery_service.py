@@ -12,7 +12,7 @@ from src.services.error_recovery_service import (
 )
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_execute_with_recovery_awaits_async_fallback():
     service = ErrorRecoveryService(retry_policy=RetryPolicy(max_retries=0, jitter=False))
 
@@ -27,7 +27,7 @@ async def test_execute_with_recovery_awaits_async_fallback():
     assert result == "fallback-value"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_circuit_breaker_enforces_half_open_limit():
     breaker = CircuitBreaker(
         CircuitBreakerConfig(failure_threshold=1, recovery_timeout=0.0, half_open_max_calls=1)
@@ -44,7 +44,7 @@ async def test_circuit_breaker_enforces_half_open_limit():
     assert state == "half_open_limit"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_half_open_success_closes_circuit():
     breaker = CircuitBreaker(
         CircuitBreakerConfig(failure_threshold=1, recovery_timeout=0.0, half_open_max_calls=1)
@@ -70,7 +70,7 @@ def test_error_classifier_detects_rate_limit():
 # === Additional tests ===
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_execute_with_recovery_success():
     """Test execute_with_recovery with successful function."""
     service = ErrorRecoveryService()
@@ -82,7 +82,7 @@ async def test_execute_with_recovery_success():
     assert result == "success-value"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_execute_with_recovery_retries():
     """Test execute_with_recovery retries on transient error."""
     call_count = 0
@@ -100,7 +100,7 @@ async def test_execute_with_recovery_retries():
     assert call_count == 2
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_execute_with_recovery_circuit_open():
     """Test execute_with_recovery when circuit is open."""
     service = ErrorRecoveryService(
@@ -120,7 +120,7 @@ async def test_execute_with_recovery_circuit_open():
     assert result == "fallback"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_execute_with_recovery_circuit_open_no_fallback():
     """Test execute_with_recovery when circuit is open without fallback."""
     service = ErrorRecoveryService(
@@ -136,7 +136,7 @@ async def test_execute_with_recovery_circuit_open_no_fallback():
         await service.execute_with_recovery(lambda: None)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_error_stats():
     """Test get_error_stats returns statistics."""
     service = ErrorRecoveryService()
@@ -153,7 +153,7 @@ async def test_error_stats():
     assert len(stats["recent"]) == 1
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_error_stats_empty():
     """Test get_error_stats when no errors recorded."""
     service = ErrorRecoveryService()
@@ -189,7 +189,7 @@ def test_error_classifier_unknown():
     assert ErrorClassifier.classify(err) == ErrorCategory.UNKNOWN
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_circuit_breaker_closed_state():
     """Test circuit breaker starts in closed state."""
     breaker = CircuitBreaker(CircuitBreakerConfig())
@@ -197,7 +197,7 @@ async def test_circuit_breaker_closed_state():
     assert state["state"] == "closed"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_circuit_breaker_opens_after_threshold():
     """Test circuit breaker opens after failure threshold."""
     breaker = CircuitBreaker(
@@ -212,7 +212,7 @@ async def test_circuit_breaker_opens_after_threshold():
     assert state == "open"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_retry_policy_with_jitter():
     """Test retry policy calculates delay with jitter."""
     policy = RetryPolicy(max_retries=3, base_delay=1.0, jitter=True)
@@ -226,7 +226,7 @@ async def test_retry_policy_with_jitter():
 # === New tests for improved coverage ===
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_error_history_trims_at_max():
     """Error history is trimmed to _max_history=100 entries."""
     service = ErrorRecoveryService()
@@ -238,7 +238,7 @@ async def test_error_history_trims_at_max():
     assert len(service._error_history) == 100
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_execute_with_recovery_fatal_error_no_retries():
     """Fatal errors raise immediately without retries."""
     service = ErrorRecoveryService(
@@ -258,7 +258,7 @@ async def test_execute_with_recovery_fatal_error_no_retries():
     assert call_count == 1  # No retries
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_execute_with_recovery_fatal_error_with_fallback():
     """Fatal error with fallback returns fallback value."""
     service = ErrorRecoveryService(
@@ -276,7 +276,7 @@ async def test_execute_with_recovery_fatal_error_with_fallback():
     assert result == "fallback-value"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_circuit_breaker_recovery_timeout_transition(monkeypatch):
     """Circuit breaker transitions from open to half_open after recovery timeout."""
     current_time = {"value": 100.0}
@@ -299,7 +299,7 @@ async def test_circuit_breaker_recovery_timeout_transition(monkeypatch):
     assert state == "half_open"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_circuit_breaker_half_open_failure_reopens(monkeypatch):
     """Failure in half_open state transitions back to open."""
     current_time = {"value": 100.0}

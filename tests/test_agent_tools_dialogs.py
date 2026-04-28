@@ -10,13 +10,13 @@ from tests.agent_tools_helpers import _get_tool_handlers, _text
 
 
 class TestDialogsToolSearchDialogs:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_no_pool(self, mock_db):
         handlers = _get_tool_handlers(mock_db, client_pool=None)
         result = await handlers["search_dialogs"]({"phone": "+7123456"})
         assert "CLI-режиме" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_empty_dialogs(self, mock_db):
         mock_db.get_accounts = AsyncMock(
             return_value=[SimpleNamespace(phone="+79001234567", is_primary=True)]
@@ -30,7 +30,7 @@ class TestDialogsToolSearchDialogs:
             result = await handlers["search_dialogs"]({"phone": "+79001234567"})
         assert "не найдены" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_with_dialogs(self, mock_db):
         mock_db.get_accounts = AsyncMock(
             return_value=[SimpleNamespace(phone="+79001234567", is_primary=True)]
@@ -52,13 +52,13 @@ class TestDialogsToolSearchDialogs:
 
 
 class TestDialogsToolRefreshDialogs:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_no_pool(self, mock_db):
         handlers = _get_tool_handlers(mock_db, client_pool=None)
         result = await handlers["refresh_dialogs"]({"phone": "+7123456"})
         assert "CLI-режиме" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_refresh_success(self, mock_db):
         mock_db.get_accounts = AsyncMock(
             return_value=[SimpleNamespace(phone="+79001234567", is_primary=True)]
@@ -78,13 +78,13 @@ class TestDialogsToolRefreshDialogs:
 
 
 class TestDialogsToolLeaveDialogs:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_no_pool(self, mock_db):
         handlers = _get_tool_handlers(mock_db, client_pool=None)
         result = await handlers["leave_dialogs"]({"phone": "+7123456", "dialog_ids": "1,2"})
         assert "CLI-режиме" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_missing_dialog_ids(self, mock_db):
         mock_db.get_accounts = AsyncMock(
             return_value=[SimpleNamespace(phone="+79001234567", is_primary=True)]
@@ -97,7 +97,7 @@ class TestDialogsToolLeaveDialogs:
         )
         assert "dialog_ids обязателен" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_requires_confirmation(self, mock_db):
         mock_db.get_accounts = AsyncMock(
             return_value=[SimpleNamespace(phone="+79001234567", is_primary=True)]
@@ -112,20 +112,20 @@ class TestDialogsToolLeaveDialogs:
 
 
 class TestDialogsToolGetForumTopics:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_missing_channel_id(self, mock_db):
         handlers = _get_tool_handlers(mock_db)
         result = await handlers["get_forum_topics"]({})
         assert "channel_id обязателен" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_empty_topics(self, mock_db):
         mock_db.get_forum_topics = AsyncMock(return_value=[])
         handlers = _get_tool_handlers(mock_db)
         result = await handlers["get_forum_topics"]({"channel_id": 123})
         assert "не найдены" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_with_topics(self, mock_db):
         topics = [
             {"topic_id": 1, "title": "General"},
@@ -139,7 +139,7 @@ class TestDialogsToolGetForumTopics:
         assert "Off-topic" in text
         assert "id=1" in text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_error(self, mock_db):
         mock_db.get_forum_topics = AsyncMock(side_effect=Exception("no access"))
         handlers = _get_tool_handlers(mock_db)
@@ -148,14 +148,14 @@ class TestDialogsToolGetForumTopics:
 
 
 class TestDialogsToolClearDialogCache:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_requires_confirmation(self, mock_db):
         mock_db.get_setting = AsyncMock(return_value=None)
         handlers = _get_tool_handlers(mock_db)
         result = await handlers["clear_dialog_cache"]({"phone": "+79001234567", "confirm": False})
         assert "Подтвердите" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_clears_for_phone(self, mock_db):
         mock_db.get_setting = AsyncMock(return_value=None)
         mock_db.repos = MagicMock()
@@ -167,7 +167,7 @@ class TestDialogsToolClearDialogCache:
         assert "очищен" in _text(result)
         mock_db.repos.dialog_cache.clear_dialogs.assert_awaited_once_with("+79001234567")
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_clears_all_when_no_phone(self, mock_db):
         mock_db.repos = MagicMock()
         mock_db.repos.dialog_cache.clear_all_dialogs = AsyncMock()
@@ -178,7 +178,7 @@ class TestDialogsToolClearDialogCache:
 
 
 class TestDialogsToolGetCacheStatus:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_empty_cache(self, mock_db):
         mock_db.repos = MagicMock()
         mock_db.repos.dialog_cache.get_all_phones = AsyncMock(return_value=[])
@@ -186,7 +186,7 @@ class TestDialogsToolGetCacheStatus:
         result = await handlers["get_cache_status"]({})
         assert "пуст" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_with_cache_entries(self, mock_db):
         from datetime import datetime, timezone
 
@@ -203,7 +203,7 @@ class TestDialogsToolGetCacheStatus:
         assert "42" in text
         assert "2026-01-01" in text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_error(self, mock_db):
         mock_db.repos = MagicMock()
         mock_db.repos.dialog_cache.get_all_phones = AsyncMock(side_effect=Exception("cache err"))

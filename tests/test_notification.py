@@ -174,7 +174,7 @@ async def test_delete_bot_success():
     confirm_msg.click.assert_awaited_once()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_setup_bot_success(db, real_pool_harness_factory):
     harness = real_pool_harness_factory()
     native_client = await _connect_notification_account(
@@ -204,7 +204,7 @@ async def test_setup_bot_success(db, real_pool_harness_factory):
     assert saved.bot_username == "leadhunter_alice_bot"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_setup_bot_custom_prefix(db, real_pool_harness_factory):
     harness = real_pool_harness_factory()
     native_client = await _connect_notification_account(
@@ -235,7 +235,7 @@ async def test_setup_bot_custom_prefix(db, real_pool_harness_factory):
     assert mock_create.await_args.args[1:] == ("Acme (bob)", "acme_bob_bot")
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_setup_bot_slug_truncated(db, real_pool_harness_factory):
     long_username = "averylongusernamethatexceeds17"
     harness = real_pool_harness_factory()
@@ -261,7 +261,7 @@ async def test_setup_bot_slug_truncated(db, real_pool_harness_factory):
     assert len(bot.bot_username) <= 32
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_setup_bot_no_client(db, real_pool_harness_factory):
     harness = real_pool_harness_factory()
     svc = NotificationService(db, NotificationTargetService(db, harness.pool))
@@ -270,7 +270,7 @@ async def test_setup_bot_no_client(db, real_pool_harness_factory):
         await svc.setup_bot()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_setup_bot_bot_id_none_if_entity_fails(db, real_pool_harness_factory):
     harness = real_pool_harness_factory()
     harness.queue_cli_client(phone="+70001111111", client=FakeCliTelethonClient())
@@ -300,7 +300,7 @@ async def test_setup_bot_bot_id_none_if_entity_fails(db, real_pool_harness_facto
     native_client.disconnect.assert_awaited_once()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_status_no_bot(db, real_pool_harness_factory):
     harness = real_pool_harness_factory()
     await _connect_notification_account(
@@ -316,7 +316,7 @@ async def test_get_status_no_bot(db, real_pool_harness_factory):
     assert result is None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_status_returns_bot(db, real_pool_harness_factory):
     saved = NotificationBot(
         tg_user_id=666,
@@ -344,7 +344,7 @@ async def test_get_status_returns_bot(db, real_pool_harness_factory):
     assert result.bot_username == "leadhunter_dave_bot"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_teardown_bot_success(db, real_pool_harness_factory):
     saved = NotificationBot(
         tg_user_id=777,
@@ -376,7 +376,7 @@ async def test_teardown_bot_success(db, real_pool_harness_factory):
     native_client.disconnect.assert_awaited_once()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_teardown_bot_no_bot_raises(db, real_pool_harness_factory):
     harness = real_pool_harness_factory()
     native_client = await _connect_notification_account(
@@ -395,7 +395,7 @@ async def test_teardown_bot_no_bot_raises(db, real_pool_harness_factory):
     native_client.disconnect.assert_awaited_once()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_notifier_uses_primary_account_by_default(db, real_pool_harness_factory):
     harness = real_pool_harness_factory()
     native_client = await _connect_notification_account(
@@ -415,7 +415,7 @@ async def test_notifier_uses_primary_account_by_default(db, real_pool_harness_fa
     native_client.disconnect.assert_awaited_once()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_notifier_does_not_fallback_from_selected_account(db, real_pool_harness_factory):
     harness = real_pool_harness_factory()
     primary_client = await _connect_notification_account(
@@ -453,7 +453,7 @@ async def test_notifier_does_not_fallback_from_selected_account(db, real_pool_ha
     primary_client.send_message.assert_not_awaited()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_notification_service_uses_selected_account(db, real_pool_harness_factory):
     harness = real_pool_harness_factory()
     await _connect_notification_account(

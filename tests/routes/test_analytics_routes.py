@@ -5,14 +5,14 @@ from __future__ import annotations
 import pytest
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_analytics_page_renders(route_client):
     """Test analytics page renders without errors."""
     resp = await route_client.get("/analytics")
     assert resp.status_code == 200
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_analytics_page_with_dates(route_client):
     """Test analytics page with date filters."""
     resp = await route_client.get(
@@ -21,14 +21,14 @@ async def test_analytics_page_with_dates(route_client):
     assert resp.status_code == 200
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_analytics_page_limit_param(route_client):
     """Test analytics page with limit parameter."""
     resp = await route_client.get("/analytics?limit=20")
     assert resp.status_code == 200
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_analytics_page_invalid_limit(route_client):
     """Test analytics page with invalid limit returns 422."""
     resp = await route_client.get("/analytics?limit=abc")
@@ -36,21 +36,21 @@ async def test_analytics_page_invalid_limit(route_client):
     assert resp.status_code == 422
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_analytics_page_empty_db(route_client):
     """Test analytics page with empty database."""
     resp = await route_client.get("/analytics")
     assert resp.status_code == 200
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_content_analytics_page_renders(route_client):
     """Test content analytics page renders."""
     resp = await route_client.get("/analytics/content")
     assert resp.status_code == 200
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_api_content_summary_returns_json(route_client):
     """Test content summary API returns JSON."""
     resp = await route_client.get("/analytics/content/api/summary")
@@ -60,7 +60,7 @@ async def test_api_content_summary_returns_json(route_client):
     assert isinstance(data, dict)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_api_pipelines_returns_json(route_client):
     """Test pipeline stats API returns JSON."""
     resp = await route_client.get("/analytics/content/api/pipelines")
@@ -70,7 +70,7 @@ async def test_api_pipelines_returns_json(route_client):
     assert isinstance(data, list)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_api_pipelines_with_data(route_client):
     """Test pipeline stats API with created pipeline."""
     db = route_client._transport_app.state.db
@@ -110,7 +110,7 @@ async def test_api_pipelines_with_data(route_client):
     assert data[0]["pipeline_name"] == "Test Pipeline"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_api_pipelines_filter_by_id(route_client):
     """Test pipeline stats API filtered by pipeline_id."""
     db = route_client._transport_app.state.db

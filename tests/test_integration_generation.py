@@ -53,7 +53,7 @@ async def pipeline_client(tmp_path, real_pool_harness_factory):
     await built_db.close()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_pipeline_generate_and_publish(pipeline_client, monkeypatch):
     # Mock LLM provider service so the Generate button is shown in the template
     from unittest.mock import MagicMock
@@ -138,7 +138,7 @@ async def test_pipeline_generate_and_publish(pipeline_client, monkeypatch):
     assert run_after.metadata and run_after.metadata.get("published") is True
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_pipeline_generate_action_only_runs_graph(pipeline_client, monkeypatch):
     """Regression: POST /pipelines/{id}/generate on an action-only pipeline
     (with pipeline_json graph) must exercise PipelineExecutor — not the legacy

@@ -60,7 +60,7 @@ async def _create_pipeline(db: Database, *, publish_mode: PipelinePublishMode) -
     )
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_moderation_page_renders_empty_queue(client):
     resp = await client.get("/moderation/")
     assert resp.status_code == 200
@@ -68,7 +68,7 @@ async def test_moderation_page_renders_empty_queue(client):
     assert "request.query_params.get" not in resp.text
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_publish_run_uses_publish_service(client, monkeypatch):
     db = client._transport_app.state.db
     pipeline_id = await _create_pipeline(db, publish_mode=PipelinePublishMode.MODERATED)
@@ -81,7 +81,7 @@ async def test_publish_run_uses_publish_service(client, monkeypatch):
     assert "command_id=" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_publish_run_rejects_unapproved_run(client, monkeypatch):
     db = client._transport_app.state.db
     pipeline_id = await _create_pipeline(db, publish_mode=PipelinePublishMode.MODERATED)
@@ -119,7 +119,7 @@ async def _create_pipeline_and_run(
     return pipeline_id, run_id
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_view_run_renders(client):
     """Test view run renders page."""
     db = client._transport_app.state.db
@@ -130,7 +130,7 @@ async def test_view_run_renders(client):
     assert "Generated content" in resp.text
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_view_run_not_found(client):
     """Test view run with invalid ID redirects."""
     resp = await client.get("/moderation/999999/view", follow_redirects=False)
@@ -138,7 +138,7 @@ async def test_view_run_not_found(client):
     assert "error=run_not_found" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_approve_run(client):
     """Test approve run sets status."""
     db = client._transport_app.state.db
@@ -152,7 +152,7 @@ async def test_approve_run(client):
     assert run.moderation_status == "approved"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_approve_run_not_found(client):
     """Test approve run with invalid ID redirects."""
     resp = await client.post("/moderation/999999/approve", follow_redirects=False)
@@ -160,7 +160,7 @@ async def test_approve_run_not_found(client):
     assert "error=run_not_found" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_reject_run(client):
     """Test reject run sets status."""
     db = client._transport_app.state.db
@@ -174,7 +174,7 @@ async def test_reject_run(client):
     assert run.moderation_status == "rejected"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_reject_run_not_found(client):
     """Test reject run with invalid ID redirects."""
     resp = await client.post("/moderation/999999/reject", follow_redirects=False)
@@ -182,7 +182,7 @@ async def test_reject_run_not_found(client):
     assert "error=run_not_found" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_bulk_approve(client):
     """Test bulk approve sets status for multiple runs."""
     db = client._transport_app.state.db
@@ -203,7 +203,7 @@ async def test_bulk_approve(client):
     assert run_2.moderation_status == "approved"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_bulk_reject(client):
     """Test bulk reject sets status for multiple runs."""
     db = client._transport_app.state.db
@@ -224,7 +224,7 @@ async def test_bulk_reject(client):
     assert run_2.moderation_status == "rejected"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_bulk_approve_empty(client):
     """Test bulk approve with no IDs doesn't crash."""
     resp = await client.post("/moderation/bulk-approve", follow_redirects=False)
@@ -232,7 +232,7 @@ async def test_bulk_approve_empty(client):
     assert "msg=runs_approved" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_moderation_page_with_pipeline_filter(client):
     """Test moderation page with pipeline filter."""
     resp = await client.get("/moderation/?pipeline_id=1")

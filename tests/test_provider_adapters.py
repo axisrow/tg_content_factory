@@ -65,120 +65,120 @@ def fake_client_session_factory(resp):
 # === _parse_json_for_text tests ===
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_parse_json_none_returns_empty():
     assert await _parse_json_for_text(None) == ""
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_parse_json_string_returns_as_is():
     assert await _parse_json_for_text("hello world") == "hello world"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_parse_json_openai_choices_with_message():
     data = {"choices": [{"message": {"content": "OpenAI reply"}}]}
     assert await _parse_json_for_text(data) == "OpenAI reply"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_parse_json_openai_choices_with_text():
     data = {"choices": [{"text": "OpenAI text"}]}
     assert await _parse_json_for_text(data) == "OpenAI text"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_parse_json_cohere_generations():
     data = {"generations": [{"text": "Cohere response"}]}
     assert await _parse_json_for_text(data) == "Cohere response"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_parse_json_huggingface_generated_text():
     data = {"generated_text": "HF output"}
     assert await _parse_json_for_text(data) == "HF output"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_parse_json_outputs_with_content():
     data = {"outputs": [{"content": "Output content"}]}
     assert await _parse_json_for_text(data) == "Output content"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_parse_json_outputs_with_text():
     data = {"outputs": [{"text": "Output text"}]}
     assert await _parse_json_for_text(data) == "Output text"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_parse_json_outputs_string():
     data = {"outputs": ["string output"]}
     assert "string output" in await _parse_json_for_text(data)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_parse_json_result_string():
     data = {"result": "Result string"}
     assert await _parse_json_for_text(data) == "Result string"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_parse_json_result_dict_with_text():
     data = {"result": {"text": "Result text"}}
     assert await _parse_json_for_text(data) == "Result text"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_parse_json_result_dict_with_content():
     data = {"result": {"content": "Result content"}}
     assert await _parse_json_for_text(data) == "Result content"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_parse_json_result_dict_with_generated_text():
     data = {"result": {"generated_text": "Generated"}}
     assert await _parse_json_for_text(data) == "Generated"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_parse_json_result_dict_fallback():
     data = {"result": {"unknown_key": "value"}}
     assert "unknown_key" in await _parse_json_for_text(data)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_parse_json_ollama_results_nested():
     data = {"results": [{"content": {"text": "Ollama nested"}}]}
     assert await _parse_json_for_text(data) == "Ollama nested"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_parse_json_ollama_results_flat():
     data = {"results": [{"text": "Ollama flat"}]}
     assert await _parse_json_for_text(data) == "Ollama flat"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_parse_json_fallback_first_string():
     data = {"key1": 123, "key2": "first string", "key3": "second"}
     assert await _parse_json_for_text(data) == "first string"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_parse_json_fallback_str():
     data = {"key1": 123, "key2": [1, 2]}
     result = await _parse_json_for_text(data)
     assert "key1" in result
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_parse_json_list():
     data = [{"text": "list item"}]
     assert await _parse_json_for_text(data) == "list item"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_parse_json_unknown_type():
     result = await _parse_json_for_text(42)
     assert result == "42"
@@ -187,7 +187,7 @@ async def test_parse_json_unknown_type():
 # === Cohere adapter tests ===
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_cohere_adapter_parses_generations(monkeypatch):
     resp = FakeResp(
         status=200, json_data={"generations": [{"text": "Hello from Cohere"}]}, text_data="ok"
@@ -198,7 +198,7 @@ async def test_cohere_adapter_parses_generations(monkeypatch):
     assert "Hello from Cohere" in out
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_cohere_adapter_with_model(monkeypatch):
     resp = FakeResp(status=200, json_data={"generations": [{"text": "Model response"}]})
     monkeypatch.setattr("aiohttp.ClientSession", fake_client_session_factory(resp))
@@ -207,7 +207,7 @@ async def test_cohere_adapter_with_model(monkeypatch):
     assert "Model response" in out
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_cohere_adapter_error_status(monkeypatch):
     resp = FakeResp(status=500, text_data="Internal error")
     monkeypatch.setattr("aiohttp.ClientSession", fake_client_session_factory(resp))
@@ -217,7 +217,7 @@ async def test_cohere_adapter_error_status(monkeypatch):
     assert "500" in str(exc_info.value)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_cohere_adapter_custom_base_url(monkeypatch):
     resp = FakeResp(status=200, json_data={"generations": [{"text": "OK"}]})
     monkeypatch.setattr("aiohttp.ClientSession", fake_client_session_factory(resp))
@@ -226,7 +226,7 @@ async def test_cohere_adapter_custom_base_url(monkeypatch):
     assert "OK" in out
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_cohere_shim():
     adapter = make_cohere("test_key")
     assert callable(adapter)
@@ -235,7 +235,7 @@ async def test_cohere_shim():
 # === Ollama adapter tests ===
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_ollama_adapter_parses_results(monkeypatch):
     resp = FakeResp(status=200, json_data={"results": [{"content": {"text": "Ollama says hi"}}]})
     monkeypatch.setattr("aiohttp.ClientSession", fake_client_session_factory(resp))
@@ -244,7 +244,7 @@ async def test_ollama_adapter_parses_results(monkeypatch):
     assert "Ollama says hi" in out
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_ollama_adapter_with_api_key(monkeypatch):
     resp = FakeResp(status=200, json_data={"results": [{"text": "Auth response"}]})
     monkeypatch.setattr("aiohttp.ClientSession", fake_client_session_factory(resp))
@@ -253,7 +253,7 @@ async def test_ollama_adapter_with_api_key(monkeypatch):
     assert "Auth response" in out
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_ollama_adapter_error_status(monkeypatch):
     resp = FakeResp(status=400, text_data="Bad request")
     monkeypatch.setattr("aiohttp.ClientSession", fake_client_session_factory(resp))
@@ -263,7 +263,7 @@ async def test_ollama_adapter_error_status(monkeypatch):
     assert "400" in str(exc_info.value)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_ollama_shim():
     adapter = make_ollama("http://localhost:11434")
     assert callable(adapter)
@@ -272,7 +272,7 @@ async def test_ollama_shim():
 # === HuggingFace adapter tests ===
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_hf_adapter_parses_generated_text(monkeypatch):
     resp = FakeResp(status=200, json_data={"generated_text": "HF reply"})
     monkeypatch.setattr("aiohttp.ClientSession", fake_client_session_factory(resp))
@@ -281,7 +281,7 @@ async def test_hf_adapter_parses_generated_text(monkeypatch):
     assert "HF reply" in out
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_hf_adapter_without_model(monkeypatch):
     resp = FakeResp(status=200, json_data={"generated_text": "No model response"})
     monkeypatch.setattr("aiohttp.ClientSession", fake_client_session_factory(resp))
@@ -290,7 +290,7 @@ async def test_hf_adapter_without_model(monkeypatch):
     assert "No model response" in out
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_hf_adapter_error_status(monkeypatch):
     resp = FakeResp(status=403, text_data="Forbidden")
     monkeypatch.setattr("aiohttp.ClientSession", fake_client_session_factory(resp))
@@ -300,7 +300,7 @@ async def test_hf_adapter_error_status(monkeypatch):
     assert "403" in str(exc_info.value)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_huggingface_shim():
     adapter = make_huggingface("test_token")
     assert callable(adapter)
@@ -309,7 +309,7 @@ async def test_huggingface_shim():
 # === Generic HTTP adapter tests ===
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_generic_http_adapter_success(monkeypatch):
     resp = FakeResp(status=200, json_data={"text": "Generic response"})
     monkeypatch.setattr("aiohttp.ClientSession", fake_client_session_factory(resp))
@@ -318,7 +318,7 @@ async def test_generic_http_adapter_success(monkeypatch):
     assert "Generic response" in out
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_generic_http_adapter_with_model(monkeypatch):
     resp = FakeResp(status=200, json_data={"result": "Model output"})
     monkeypatch.setattr("aiohttp.ClientSession", fake_client_session_factory(resp))
@@ -327,7 +327,7 @@ async def test_generic_http_adapter_with_model(monkeypatch):
     assert "Model output" in out
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_generic_http_adapter_with_api_key(monkeypatch):
     resp = FakeResp(status=200, json_data={"text": "Authenticated"})
     monkeypatch.setattr("aiohttp.ClientSession", fake_client_session_factory(resp))
@@ -336,7 +336,7 @@ async def test_generic_http_adapter_with_api_key(monkeypatch):
     assert "Authenticated" in out
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_generic_http_adapter_custom_header(monkeypatch):
     resp = FakeResp(status=200, json_data={"text": "Custom header"})
     monkeypatch.setattr("aiohttp.ClientSession", fake_client_session_factory(resp))
@@ -349,7 +349,7 @@ async def test_generic_http_adapter_custom_header(monkeypatch):
     assert "Custom header" in out
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_generic_http_adapter_error(monkeypatch):
     resp = FakeResp(status=502, text_data="Bad gateway")
     monkeypatch.setattr("aiohttp.ClientSession", fake_client_session_factory(resp))
@@ -362,7 +362,7 @@ async def test_generic_http_adapter_error(monkeypatch):
 # === Context7 adapter tests ===
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_context7_adapter_success(monkeypatch):
     resp = FakeResp(status=200, json_data={"text": "Context7 response"})
     monkeypatch.setattr("aiohttp.ClientSession", fake_client_session_factory(resp))
@@ -371,7 +371,7 @@ async def test_context7_adapter_success(monkeypatch):
     assert "Context7 response" in out
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_context7_adapter_custom_base_url(monkeypatch):
     resp = FakeResp(status=200, json_data={"text": "Custom base"})
     monkeypatch.setattr("aiohttp.ClientSession", fake_client_session_factory(resp))
@@ -383,7 +383,7 @@ async def test_context7_adapter_custom_base_url(monkeypatch):
 # === Anthropic adapter tests ===
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_anthropic_adapter_success(monkeypatch):
     from src.services.provider_adapters import make_anthropic_adapter
 
@@ -397,7 +397,7 @@ async def test_anthropic_adapter_success(monkeypatch):
     assert "Claude response" in out
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_anthropic_adapter_error_status(monkeypatch):
     from src.services.provider_adapters import make_anthropic_adapter
 
@@ -408,7 +408,7 @@ async def test_anthropic_adapter_error_status(monkeypatch):
         await adapter("hello")
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_anthropic_adapter_custom_base_url(monkeypatch):
     from src.services.provider_adapters import make_anthropic_adapter
 
@@ -422,7 +422,7 @@ async def test_anthropic_adapter_custom_base_url(monkeypatch):
     assert "ZAI response" in out
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_anthropic_adapter_malformed_response(monkeypatch):
     """When response JSON lacks expected structure, falls back to str()."""
     from src.services.provider_adapters import make_anthropic_adapter
@@ -438,7 +438,7 @@ async def test_anthropic_adapter_malformed_response(monkeypatch):
 # === _parse_json_for_text edge cases (edge-case lines) ===
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_parse_json_openai_choices_empty_list():
     """Empty choices list falls through to str(data) fallback."""
     data = {"choices": []}
@@ -446,7 +446,7 @@ async def test_parse_json_openai_choices_empty_list():
     assert "choices" in result
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_parse_json_cohere_generations_empty():
     """Empty generations list falls through."""
     data = {"generations": []}
@@ -454,7 +454,7 @@ async def test_parse_json_cohere_generations_empty():
     assert "generations" in result
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_parse_json_outputs_non_dict_item():
     """outputs with non-dict items falls to str(out)."""
     data = {"outputs": [42]}
@@ -462,7 +462,7 @@ async def test_parse_json_outputs_non_dict_item():
     assert "42" in result
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_parse_json_result_dict_nested():
     """result dict with unknown keys falls to str(r)."""
     data = {"result": {"random_key": 123}}
@@ -470,7 +470,7 @@ async def test_parse_json_result_dict_nested():
     assert "random_key" in result
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_parse_json_ollama_results_non_dict():
     """results with non-dict items raises IndexError, falls to str(data)."""
     data = {"results": []}
@@ -478,14 +478,14 @@ async def test_parse_json_ollama_results_non_dict():
     assert "results" in result
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_parse_json_list_empty():
     """Empty list falls to str(data)."""
     result = await _parse_json_for_text([])
     assert result == "[]"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_parse_json_result_non_dict_non_string():
     """result that is neither str nor dict falls to str(r)."""
     data = {"result": [1, 2, 3]}
@@ -498,7 +498,7 @@ async def test_parse_json_result_non_dict_non_string():
 # === Image adapter tests ===
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_together_image_adapter_success(monkeypatch):
     from src.services.provider_adapters import make_together_image_adapter
 
@@ -512,7 +512,7 @@ async def test_together_image_adapter_success(monkeypatch):
     assert result == "https://img.example.com/1.png"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_together_image_adapter_error_status(monkeypatch):
     from src.services.provider_adapters import make_together_image_adapter
 
@@ -523,7 +523,7 @@ async def test_together_image_adapter_error_status(monkeypatch):
         await adapter("a cat")
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_together_image_adapter_empty_data(monkeypatch):
     from src.services.provider_adapters import make_together_image_adapter
 
@@ -534,7 +534,7 @@ async def test_together_image_adapter_empty_data(monkeypatch):
         await adapter("a cat")
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_huggingface_image_adapter_warns_no_slash(monkeypatch, caplog):
     import logging
 
@@ -566,7 +566,7 @@ async def test_huggingface_image_adapter_warns_no_slash(monkeypatch, caplog):
         assert result.endswith(".png")
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_huggingface_image_adapter_error_status(monkeypatch):
     from src.services.provider_adapters import make_huggingface_image_adapter
 
@@ -581,7 +581,7 @@ async def test_huggingface_image_adapter_error_status(monkeypatch):
             await adapter("a cat")
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_huggingface_image_adapter_non_image_content_type(monkeypatch):
     from src.services.provider_adapters import make_huggingface_image_adapter
 
@@ -599,7 +599,7 @@ async def test_huggingface_image_adapter_non_image_content_type(monkeypatch):
             await adapter("a cat")
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_openai_image_adapter_success(monkeypatch):
     from src.services.provider_adapters import make_openai_image_adapter
 
@@ -613,7 +613,7 @@ async def test_openai_image_adapter_success(monkeypatch):
     assert result == "https://img.example.com/dalle.png"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_openai_image_adapter_error_status(monkeypatch):
     from src.services.provider_adapters import make_openai_image_adapter
 
@@ -624,7 +624,7 @@ async def test_openai_image_adapter_error_status(monkeypatch):
         await adapter("a sunset")
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_openai_image_adapter_empty_data(monkeypatch):
     from src.services.provider_adapters import make_openai_image_adapter
 
@@ -635,7 +635,7 @@ async def test_openai_image_adapter_empty_data(monkeypatch):
         await adapter("a sunset")
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_replicate_image_adapter_success(monkeypatch):
     from src.services.provider_adapters import make_replicate_image_adapter
 
@@ -668,7 +668,7 @@ async def test_replicate_image_adapter_success(monkeypatch):
     assert result == "https://img.example.com/replicate.png"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_replicate_image_adapter_create_error(monkeypatch):
     from src.services.provider_adapters import make_replicate_image_adapter
 
@@ -690,7 +690,7 @@ async def test_replicate_image_adapter_create_error(monkeypatch):
         await adapter("a cat")
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_replicate_image_adapter_missing_poll_url(monkeypatch):
     from src.services.provider_adapters import make_replicate_image_adapter
 
@@ -712,7 +712,7 @@ async def test_replicate_image_adapter_missing_poll_url(monkeypatch):
         await adapter("a cat")
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_replicate_image_adapter_prediction_failed(monkeypatch):
     from src.services.provider_adapters import make_replicate_image_adapter
 
@@ -744,7 +744,7 @@ async def test_replicate_image_adapter_prediction_failed(monkeypatch):
         await adapter("a cat")
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_replicate_image_adapter_prediction_canceled(monkeypatch):
     from src.services.provider_adapters import make_replicate_image_adapter
 
@@ -776,7 +776,7 @@ async def test_replicate_image_adapter_prediction_canceled(monkeypatch):
         await adapter("a cat")
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_replicate_image_adapter_warns_no_slash(monkeypatch, caplog):
     import logging
 
@@ -813,7 +813,7 @@ async def test_replicate_image_adapter_warns_no_slash(monkeypatch, caplog):
     assert result == "https://img.example.com/img.png"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_replicate_image_adapter_list_output(monkeypatch):
     """Replicate adapter returns first item when output is a list."""
     from src.services.provider_adapters import make_replicate_image_adapter
@@ -846,7 +846,7 @@ async def test_replicate_image_adapter_list_output(monkeypatch):
     assert result == "https://img.example.com/1.png"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_replicate_image_adapter_timeout(monkeypatch):
     """Replicate adapter raises RuntimeError when prediction times out."""
 

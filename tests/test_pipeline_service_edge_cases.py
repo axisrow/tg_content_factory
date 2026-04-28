@@ -69,32 +69,32 @@ async def pipeline_id(svc):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_list_returns_all(svc, pipeline_id):
     items = await svc.list()
     assert len(items) == 1
     assert items[0].name == "TestPipeline"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_list_active_only(svc, pipeline_id):
     items = await svc.list(active_only=True)
     assert len(items) == 1
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_existing(svc, pipeline_id):
     p = await svc.get(pipeline_id)
     assert p is not None
     assert p.id == pipeline_id
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_nonexistent(svc):
     assert await svc.get(99999) is None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_retrieval_scope_single_source(svc):
     pipeline_id = await svc.add(
         name="SingleSource",
@@ -108,7 +108,7 @@ async def test_get_retrieval_scope_single_source(svc):
     assert scope.channel_id == 1001
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_retrieval_scope_multi_source(svc, pipeline_id):
     pipeline = await svc.get(pipeline_id)
     scope = await svc.get_retrieval_scope(pipeline)
@@ -116,7 +116,7 @@ async def test_get_retrieval_scope_multi_source(svc, pipeline_id):
     assert scope.channel_id is None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_toggle_deactivates(svc, pipeline_id):
     result = await svc.toggle(pipeline_id)
     assert result is True
@@ -124,7 +124,7 @@ async def test_toggle_deactivates(svc, pipeline_id):
     assert p.is_active is False
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_toggle_reactivates(svc, pipeline_id):
     await svc.toggle(pipeline_id)  # deactivate
     result = await svc.toggle(pipeline_id)  # reactivate
@@ -133,13 +133,13 @@ async def test_toggle_reactivates(svc, pipeline_id):
     assert p.is_active is True
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_toggle_nonexistent(svc):
     result = await svc.toggle(99999)
     assert result is False
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_delete(svc, pipeline_id):
     await svc.delete(pipeline_id)
     assert await svc.get(pipeline_id) is None
@@ -150,7 +150,7 @@ async def test_delete(svc, pipeline_id):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_update_pipeline(svc, pipeline_id):
     ok = await svc.update(
         pipeline_id,
@@ -169,14 +169,14 @@ async def test_update_pipeline(svc, pipeline_id):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_sources(svc, pipeline_id):
     sources = await svc.get_sources(pipeline_id)
     assert len(sources) == 2
     assert {s.channel_id for s in sources} == {1001, 1002}
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_targets(svc, pipeline_id):
     targets = await svc.get_targets(pipeline_id)
     assert len(targets) == 1
@@ -184,7 +184,7 @@ async def test_get_targets(svc, pipeline_id):
     assert targets[0].dialog_id == 77
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_detail(svc, pipeline_id):
     detail = await svc.get_detail(pipeline_id)
     assert detail is not None
@@ -194,12 +194,12 @@ async def test_get_detail(svc, pipeline_id):
     assert len(detail["source_titles"]) == 2
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_detail_nonexistent(svc):
     assert await svc.get_detail(99999) is None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_with_relations(svc, pipeline_id):
     rows = await svc.get_with_relations()
     assert len(rows) == 1
@@ -207,13 +207,13 @@ async def test_get_with_relations(svc, pipeline_id):
     assert rows[0]["source_ids"] == [1001, 1002]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_with_relations_active_only(svc, pipeline_id):
     rows = await svc.get_with_relations(active_only=True)
     assert len(rows) == 1
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_with_relations_source_title_fallback(svc):
     """Source channel not found in channels_by_id falls back to str(channel_id)."""
     # Create a pipeline using channel 1001 which exists
@@ -235,7 +235,7 @@ async def test_get_with_relations_source_title_fallback(svc):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_list_cached_dialogs_by_phone(svc, db):
     result = await svc.list_cached_dialogs_by_phone()
     assert "+100" in result
@@ -247,7 +247,7 @@ async def test_list_cached_dialogs_by_phone(svc, db):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_build_pipeline_empty_name(svc):
     with pytest.raises(PipelineValidationError, match="[Нн]азвание"):
         await svc.add(
@@ -258,7 +258,7 @@ async def test_build_pipeline_empty_name(svc):
         )
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_build_pipeline_empty_template(svc):
     with pytest.raises(PipelineValidationError, match="[Шш]аблон"):
         await svc.add(
@@ -269,7 +269,7 @@ async def test_build_pipeline_empty_template(svc):
         )
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_build_pipeline_invalid_mode(svc):
     with pytest.raises(PipelineValidationError, match="[Рр]ежим"):
         await svc.add(
@@ -281,7 +281,7 @@ async def test_build_pipeline_invalid_mode(svc):
         )
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_build_pipeline_invalid_interval(svc):
     with pytest.raises(PipelineValidationError, match="[Ии]нтервал"):
         await svc.add(
@@ -298,7 +298,7 @@ async def test_build_pipeline_invalid_interval(svc):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_normalize_sources_empty(svc):
     with pytest.raises(PipelineValidationError, match="[Вв]ыберите.*источник"):
         await svc.add(
@@ -309,7 +309,7 @@ async def test_normalize_sources_empty(svc):
         )
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_normalize_sources_unknown_channel(svc):
     with pytest.raises(PipelineValidationError, match="[Нн]еизвестные"):
         await svc.add(
@@ -325,7 +325,7 @@ async def test_normalize_sources_unknown_channel(svc):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_normalize_targets_empty(svc):
     with pytest.raises(PipelineValidationError, match="[Вв]ыберите.*цель"):
         await svc.add(
@@ -336,7 +336,7 @@ async def test_normalize_targets_empty(svc):
         )
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_normalize_targets_unknown_phone(svc):
     with pytest.raises(PipelineValidationError, match="[Аа]ккаунт"):
         await svc.add(
@@ -347,7 +347,7 @@ async def test_normalize_targets_unknown_phone(svc):
         )
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_normalize_targets_bot_rejected(svc, db):
     """Targets pointing at bots should be rejected."""
     await db.repos.dialog_cache.replace_dialogs(
@@ -370,7 +370,7 @@ async def test_normalize_targets_bot_rejected(svc, db):
         )
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_normalize_targets_dialog_not_cached(svc):
     with pytest.raises(PipelineValidationError, match="кеш"):
         await svc.add(
@@ -381,7 +381,7 @@ async def test_normalize_targets_dialog_not_cached(svc):
         )
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_normalize_targets_duplicate_ref_deduped(svc, db):
     """Duplicate target refs are deduplicated."""
     pid = await svc.add(
@@ -402,7 +402,7 @@ async def test_normalize_targets_duplicate_ref_deduped(svc, db):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_export_json(svc, pipeline_id):
     data = await svc.export_json(pipeline_id)
     assert data is not None
@@ -412,12 +412,12 @@ async def test_export_json(svc, pipeline_id):
     assert data["publish_mode"] == "moderated"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_export_json_nonexistent(svc):
     assert await svc.export_json(99999) is None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_export_json_with_pipeline_graph(svc, db):
     """Export pipeline that has a pipeline_json graph."""
     graph = PipelineGraph(
@@ -438,7 +438,7 @@ async def test_export_json_with_pipeline_graph(svc, db):
     assert len(data["pipeline_json"]["nodes"]) == 1
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_import_json_from_dict(svc, pipeline_id):
     """Import a pipeline from a dict."""
     export = await svc.export_json(pipeline_id)
@@ -452,7 +452,7 @@ async def test_import_json_from_dict(svc, pipeline_id):
     assert imported.is_active is False
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_import_json_from_string(svc, pipeline_id):
     """Import a pipeline from a JSON string."""
     export = await svc.export_json(pipeline_id)
@@ -463,7 +463,7 @@ async def test_import_json_from_string(svc, pipeline_id):
     assert new_id > 0
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_import_json_with_pipeline_graph(svc, pipeline_id, db):
     """Import with pipeline_json field."""
     graph = PipelineGraph(
@@ -483,7 +483,7 @@ async def test_import_json_with_pipeline_graph(svc, pipeline_id, db):
     assert len(imported.pipeline_json.nodes) == 1
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_import_json_with_target_refs(svc, pipeline_id):
     """Import with target_refs in the data."""
     export = await svc.export_json(pipeline_id)
@@ -495,7 +495,7 @@ async def test_import_json_with_target_refs(svc, pipeline_id):
     assert len(targets) >= 1
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_import_json_with_invalid_pipeline_graph(svc, pipeline_id):
     """Import with unparsable pipeline_json field -- should be ignored gracefully."""
     export = await svc.export_json(pipeline_id)
@@ -510,7 +510,7 @@ async def test_import_json_with_invalid_pipeline_graph(svc, pipeline_id):
     assert imported.pipeline_json is None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_import_json_empty_sources_and_targets(svc):
     """Import with no sources/targets creates inactive pipeline."""
     data = {
@@ -524,7 +524,7 @@ async def test_import_json_empty_sources_and_targets(svc):
     assert new_id > 0
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_import_json_injects_source_ids_into_dag_source_node(svc):
     """Regression: source_ids from --source must backfill DAG source node config.
 
@@ -563,7 +563,7 @@ async def test_import_json_injects_source_ids_into_dag_source_node(svc):
     assert src_node.config["channel_ids"] == [1001]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_import_json_preserves_explicit_channel_ids(svc):
     """If the imported SOURCE node already has channel_ids, don't overwrite."""
     data = {
@@ -603,7 +603,7 @@ async def test_import_json_preserves_explicit_channel_ids(svc):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_list_templates_no_repo(db):
     """When pipeline_templates is None, returns empty list."""
     from src.database.bundles import PipelineBundle
@@ -620,7 +620,7 @@ async def test_list_templates_no_repo(db):
     assert templates == []
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_list_templates_with_repo(svc, db):
     """When pipeline_templates repo exists, delegates to list_all."""
     mock_tpl_repo = MagicMock()
@@ -641,7 +641,7 @@ async def test_list_templates_with_repo(svc, db):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_create_from_template_no_repo(db):
     """When pipeline_templates is None, raises error."""
     from src.database.bundles import PipelineBundle
@@ -663,7 +663,7 @@ async def test_create_from_template_no_repo(db):
         )
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_create_from_template_not_found(svc, db):
     """When template_id not found, raises error."""
     mock_tpl_repo = MagicMock()
@@ -684,7 +684,7 @@ async def test_create_from_template_not_found(svc, db):
         )
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_create_from_template_success(svc, db):
     """Create pipeline from a template with llm_generate node."""
     graph = PipelineGraph(
@@ -726,7 +726,7 @@ async def test_create_from_template_success(svc, db):
     assert p.pipeline_json is not None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_create_from_template_no_prompt_in_graph(svc, db):
     """Template with no prompt_template in graph uses name as prompt."""
     graph = PipelineGraph(
@@ -757,7 +757,7 @@ async def test_create_from_template_no_prompt_in_graph(svc, db):
     assert p.prompt_template == "FallbackName"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_create_from_template_no_sources_targets(svc, db):
     """Create from template without sources/targets creates inactive pipeline."""
     graph = PipelineGraph(
@@ -800,14 +800,14 @@ async def test_create_from_template_no_sources_targets(svc, db):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_edit_via_llm_pipeline_not_found(svc, db):
     result = await svc.edit_via_llm(99999, "change something", db)
     assert result["ok"] is False
     assert "не найден" in result["error"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_edit_via_llm_success(svc, db, pipeline_id):
     """edit_via_llm with a working provider returns updated graph."""
     new_graph_json = json.dumps({
@@ -828,7 +828,7 @@ async def test_edit_via_llm_success(svc, db, pipeline_id):
     assert len(result["pipeline_json"]["nodes"]) == 1
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_edit_via_llm_with_markdown_fences(svc, db, pipeline_id):
     """edit_via_llm strips markdown code fences from LLM response."""
     new_graph = {"nodes": [], "edges": []}
@@ -846,7 +846,7 @@ async def test_edit_via_llm_with_markdown_fences(svc, db, pipeline_id):
     assert result["ok"] is True
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_edit_via_llm_provider_failure(svc, db, pipeline_id):
     """edit_via_llm returns error when provider raises."""
     mock_provider = AsyncMock(side_effect=RuntimeError("API down"))
@@ -861,7 +861,7 @@ async def test_edit_via_llm_provider_failure(svc, db, pipeline_id):
     assert "API down" in result["error"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_edit_via_llm_dict_result(svc, db, pipeline_id):
     """edit_via_llm handles provider returning dict with 'text' key."""
     new_graph = {"nodes": [], "edges": []}
@@ -878,7 +878,7 @@ async def test_edit_via_llm_dict_result(svc, db, pipeline_id):
     assert result["ok"] is True
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_edit_via_llm_pipeline_without_graph(svc, db, pipeline_id):
     """edit_via_llm works when pipeline has no existing pipeline_json."""
     p = await svc.get(pipeline_id)
@@ -901,7 +901,7 @@ async def test_edit_via_llm_pipeline_without_graph(svc, db, pipeline_id):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_build_pipeline_strips_llm_model(svc):
     """Empty/whitespace llm_model is normalized to None."""
     pid = await svc.add(
@@ -915,7 +915,7 @@ async def test_build_pipeline_strips_llm_model(svc):
     assert p.llm_model is None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_build_pipeline_keeps_llm_model(svc):
     pid = await svc.add(
         name="KeepModel",
@@ -928,7 +928,7 @@ async def test_build_pipeline_keeps_llm_model(svc):
     assert p.llm_model == "gpt-4"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_build_pipeline_invalid_template_variable(svc):
     with pytest.raises(PipelineValidationError):
         await svc.add(
@@ -944,7 +944,7 @@ async def test_build_pipeline_invalid_template_variable(svc):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_init_with_database(db):
     """PipelineService accepts Database and wraps it in PipelineBundle."""
     svc = PipelineService(db)
@@ -983,26 +983,26 @@ async def graph_pipeline_id(svc, db):
     return pid
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_graph_returns_graph(svc, graph_pipeline_id):
     graph = await svc.get_graph(graph_pipeline_id)
     assert graph is not None
     assert len(graph.nodes) == 3
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_graph_returns_none_for_legacy(svc, pipeline_id):
     graph = await svc.get_graph(pipeline_id)
     assert graph is None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_graph_pipeline_not_found(svc):
     graph = await svc.get_graph(99999)
     assert graph is None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_add_node(svc, graph_pipeline_id):
     new_node = PipelineNode(id="pub", type=PipelineNodeType.PUBLISH, name="publish", config={"targets": []})
     ok = await svc.add_node(graph_pipeline_id, new_node)
@@ -1012,7 +1012,7 @@ async def test_add_node(svc, graph_pipeline_id):
     assert graph.nodes[3].id == "pub"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_add_node_auto_position(svc, graph_pipeline_id):
     new_node = PipelineNode(id="delay1", type=PipelineNodeType.DELAY, name="delay", config={})
     await svc.add_node(graph_pipeline_id, new_node)
@@ -1021,14 +1021,14 @@ async def test_add_node_auto_position(svc, graph_pipeline_id):
     assert added.position["x"] > 0
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_add_node_no_graph(svc, pipeline_id):
     new_node = PipelineNode(id="x", type=PipelineNodeType.DELAY, name="d")
     ok = await svc.add_node(pipeline_id, new_node)
     assert ok is False
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_remove_node_removes_edges(svc, graph_pipeline_id):
     ok = await svc.remove_node(graph_pipeline_id, "fetch")
     assert ok is True
@@ -1040,13 +1040,13 @@ async def test_remove_node_removes_edges(svc, graph_pipeline_id):
         assert e.from_node != "fetch" and e.to_node != "fetch"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_remove_node_not_found(svc, graph_pipeline_id):
     ok = await svc.remove_node(graph_pipeline_id, "nonexistent")
     assert ok is False
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_replace_node_preserves_edges(svc, graph_pipeline_id):
     new_node = PipelineNode(id="gen", type=PipelineNodeType.AGENT_LOOP, name="agent", config={"max_steps": 5})
     ok = await svc.replace_node(graph_pipeline_id, "gen", new_node)
@@ -1060,7 +1060,7 @@ async def test_replace_node_preserves_edges(svc, graph_pipeline_id):
     assert edge_from_fetch[0].to_node == "gen"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_replace_node_with_new_id_updates_edges(svc, graph_pipeline_id):
     new_node = PipelineNode(id="agent_v2", type=PipelineNodeType.AGENT_LOOP, name="agent", config={})
     ok = await svc.replace_node(graph_pipeline_id, "gen", new_node)
@@ -1072,7 +1072,7 @@ async def test_replace_node_with_new_id_updates_edges(svc, graph_pipeline_id):
     assert any(e.to_node == "agent_v2" for e in graph.edges)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_replace_first_node_with_new_id_updates_edges(svc, graph_pipeline_id):
     """Regression: replacing the first node (index 0) must still rewrite edges."""
     new_node = PipelineNode(id="src_v2", type=PipelineNodeType.SOURCE, name="source", config={})
@@ -1083,7 +1083,7 @@ async def test_replace_first_node_with_new_id_updates_edges(svc, graph_pipeline_
     assert any(e.from_node == "src_v2" for e in graph.edges)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_add_edge(svc, graph_pipeline_id):
     ok = await svc.add_edge(graph_pipeline_id, "src", "gen")
     assert ok is True
@@ -1091,7 +1091,7 @@ async def test_add_edge(svc, graph_pipeline_id):
     assert any(e.from_node == "src" and e.to_node == "gen" for e in graph.edges)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_add_edge_idempotent(svc, graph_pipeline_id):
     await svc.add_edge(graph_pipeline_id, "src", "gen")
     graph1 = await svc.get_graph(graph_pipeline_id)
@@ -1100,13 +1100,13 @@ async def test_add_edge_idempotent(svc, graph_pipeline_id):
     assert len(graph1.edges) == len(graph2.edges)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_add_edge_no_graph(svc, pipeline_id):
     ok = await svc.add_edge(pipeline_id, "a", "b")
     assert ok is False
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_remove_edge(svc, graph_pipeline_id):
     ok = await svc.remove_edge(graph_pipeline_id, "src", "fetch")
     assert ok is True
@@ -1114,7 +1114,7 @@ async def test_remove_edge(svc, graph_pipeline_id):
     assert not any(e.from_node == "src" and e.to_node == "fetch" for e in graph.edges)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_remove_edge_not_found(svc, graph_pipeline_id):
     ok = await svc.remove_edge(graph_pipeline_id, "src", "gen")
     assert ok is False
