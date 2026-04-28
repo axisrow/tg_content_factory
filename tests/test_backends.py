@@ -149,6 +149,39 @@ async def test_transport_session_reports_flood_from_stream():
 
 
 @pytest.mark.asyncio
+async def test_transport_session_closes_stream_iterator_on_flood():
+    err = FloodWaitError(request=None, capture=0)
+    err.seconds = 7
+
+    class FloodingIterator:
+        closed = False
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            raise err
+
+        async def aclose(self):
+            self.closed = True
+
+    iterator = FloodingIterator()
+    pool = AsyncMock()
+    session = TelegramTransportSession(
+        FakeCliTelethonClient(iter_messages_factory=lambda *a, **kw: iterator),
+        phone="+7001",
+        pool=pool,
+    )
+
+    with pytest.raises(HandledFloodWaitError):
+        async for _msg in session.iter_messages("entity"):
+            pass
+
+    assert iterator.closed is True
+    pool.report_flood.assert_awaited_once_with("+7001", 7)
+
+
+@pytest.mark.asyncio
 async def test_transport_session_reports_flood_from_raw_request():
     err = FloodWaitError(request=None, capture=0)
     err.seconds = 9

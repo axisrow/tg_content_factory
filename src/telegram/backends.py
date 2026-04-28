@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import logging
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
@@ -91,8 +92,15 @@ class TelegramTransportSession:
 
     async def _stream(self, operation: str, iterator: AsyncIterator[Any]) -> AsyncIterator[Any]:
         try:
-            async for item in iterator:
-                yield item
+            try:
+                async for item in iterator:
+                    yield item
+            finally:
+                aclose = getattr(iterator, "aclose", None)
+                if aclose is not None:
+                    result = aclose()
+                    if inspect.isawaitable(result):
+                        await result
         except HandledFloodWaitError:
             raise
         except Exception as exc:
