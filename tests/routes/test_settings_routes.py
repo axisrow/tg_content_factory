@@ -22,10 +22,10 @@ async def db(base_app):
 async def test_settings_page_renders(route_client):
     """Test settings page renders."""
     with patch(
-        "src.web.routes.settings.AgentProviderService.load_provider_configs",
+        "src.web.settings.handlers.AgentProviderService.load_provider_configs",
         AsyncMock(return_value=[]),
     ), patch(
-        "src.web.routes.settings.AgentProviderService.load_model_cache",
+        "src.web.settings.handlers.AgentProviderService.load_model_cache",
         AsyncMock(return_value={}),
     ):
         resp = await route_client.get("/settings/")
@@ -36,10 +36,10 @@ async def test_settings_page_renders(route_client):
 async def test_settings_shows_accounts(route_client):
     """Test settings page shows accounts."""
     with patch(
-        "src.web.routes.settings.AgentProviderService.load_provider_configs",
+        "src.web.settings.handlers.AgentProviderService.load_provider_configs",
         AsyncMock(return_value=[]),
     ), patch(
-        "src.web.routes.settings.AgentProviderService.load_model_cache",
+        "src.web.settings.handlers.AgentProviderService.load_model_cache",
         AsyncMock(return_value={}),
     ):
         resp = await route_client.get("/settings/")
@@ -55,10 +55,10 @@ async def test_settings_shows_flood_banner_and_account_availability(route_client
         await db.update_account_flood(acc.phone, future)
 
     with patch(
-        "src.web.routes.settings.AgentProviderService.load_provider_configs",
+        "src.web.settings.handlers.AgentProviderService.load_provider_configs",
         AsyncMock(return_value=[]),
     ), patch(
-        "src.web.routes.settings.AgentProviderService.load_model_cache",
+        "src.web.settings.handlers.AgentProviderService.load_model_cache",
         AsyncMock(return_value={}),
     ):
         resp = await route_client.get("/settings/")
@@ -72,10 +72,10 @@ async def test_settings_shows_flood_banner_and_account_availability(route_client
 async def test_settings_msg_param(route_client):
     """Test settings page with message param."""
     with patch(
-        "src.web.routes.settings.AgentProviderService.load_provider_configs",
+        "src.web.settings.handlers.AgentProviderService.load_provider_configs",
         AsyncMock(return_value=[]),
     ), patch(
-        "src.web.routes.settings.AgentProviderService.load_model_cache",
+        "src.web.settings.handlers.AgentProviderService.load_model_cache",
         AsyncMock(return_value={}),
     ):
         resp = await route_client.get("/settings/?msg=credentials_saved")
@@ -324,7 +324,7 @@ async def test_save_semantic_search_reset_index(route_client, db):
 async def test_run_semantic_index(route_client, db):
     """Test running semantic index."""
     with patch(
-        "src.web.routes.settings.EmbeddingService.index_pending_messages",
+        "src.web.settings.handlers.EmbeddingService.index_pending_messages",
         AsyncMock(return_value=5),
     ):
         resp = await route_client.post(
@@ -341,7 +341,7 @@ async def test_run_semantic_index(route_client, db):
 async def test_run_semantic_index_with_reset(route_client, db):
     """Test running semantic index with reset."""
     with patch(
-        "src.web.routes.settings.EmbeddingService.index_pending_messages",
+        "src.web.settings.handlers.EmbeddingService.index_pending_messages",
         AsyncMock(return_value=3),
     ):
         resp = await route_client.post(
@@ -460,7 +460,7 @@ async def test_add_agent_provider_writes_disabled(route_client, db):
     """Test add agent provider when writes are disabled."""
     await db.set_setting("agent_dev_mode_enabled", "1")
 
-    with patch("src.web.routes.settings.AgentProviderService") as mock_service_cls:
+    with patch("src.web.settings.handlers.AgentProviderService") as mock_service_cls:
         mock_service = MagicMock()
         mock_service.writes_enabled = False
         mock_service.load_provider_configs = AsyncMock(return_value=[])
@@ -480,7 +480,7 @@ async def test_add_agent_provider_dev_mode_required(route_client, db):
     """Test add agent provider requires dev mode."""
     await db.set_setting("agent_dev_mode_enabled", "0")
 
-    with patch("src.web.routes.settings.AgentProviderService") as mock_service_cls:
+    with patch("src.web.settings.handlers.AgentProviderService") as mock_service_cls:
         mock_service = MagicMock()
         mock_service.writes_enabled = True  # Set writes_enabled first
         mock_service.load_provider_configs = AsyncMock(return_value=[])
@@ -501,7 +501,7 @@ async def test_save_agent_providers_writes_disabled(route_client, db):
     """Test save agent providers when writes are disabled."""
     await db.set_setting("agent_dev_mode_enabled", "1")
 
-    with patch("src.web.routes.settings.AgentProviderService") as mock_service_cls:
+    with patch("src.web.settings.handlers.AgentProviderService") as mock_service_cls:
         mock_service = MagicMock()
         mock_service.writes_enabled = False
         mock_service.load_provider_configs = AsyncMock(return_value=[])
@@ -521,7 +521,7 @@ async def test_delete_agent_provider_writes_disabled(route_client, db):
     """Test delete agent provider when writes are disabled."""
     await db.set_setting("agent_dev_mode_enabled", "1")
 
-    with patch("src.web.routes.settings.AgentProviderService") as mock_service_cls:
+    with patch("src.web.settings.handlers.AgentProviderService") as mock_service_cls:
         mock_service = MagicMock()
         mock_service.writes_enabled = False
         mock_service.load_provider_configs = AsyncMock(return_value=[])
@@ -592,7 +592,7 @@ async def test_test_all_agent_provider_models_dev_mode_required(route_client, db
     """Test test all requires dev mode."""
     await db.set_setting("agent_dev_mode_enabled", "0")
 
-    with patch("src.web.routes.settings.AgentProviderService") as mock_service_cls:
+    with patch("src.web.settings.handlers.AgentProviderService") as mock_service_cls:
         mock_service = MagicMock()
         mock_service.writes_enabled = True  # Must be True to reach dev_mode check
         mock_service_cls.return_value = mock_service
@@ -618,7 +618,7 @@ async def test_test_all_status_dev_mode_required(route_client, db):
     """Test test all status requires dev mode."""
     await db.set_setting("agent_dev_mode_enabled", "0")
 
-    with patch("src.web.routes.settings.AgentProviderService") as mock_service_cls:
+    with patch("src.web.settings.handlers.AgentProviderService") as mock_service_cls:
         mock_service = MagicMock()
         mock_service.writes_enabled = True  # Must be True to reach dev_mode check
         mock_service_cls.return_value = mock_service

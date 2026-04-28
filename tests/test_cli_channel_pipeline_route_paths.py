@@ -1050,13 +1050,13 @@ async def test_channels_refresh_meta_success(_route_client_b3):
 def _settings_patch():
     """Patch AgentProviderService methods to avoid needing config."""
     with patch(
-        "src.web.routes.settings.AgentProviderService.load_provider_configs",
+        "src.web.settings.handlers.AgentProviderService.load_provider_configs",
         AsyncMock(return_value=[]),
     ), patch(
-        "src.web.routes.settings.AgentProviderService.load_model_cache",
+        "src.web.settings.handlers.AgentProviderService.load_model_cache",
         AsyncMock(return_value={}),
     ), patch(
-        "src.web.routes.settings.ImageProviderService.load_provider_configs",
+        "src.web.settings.handlers.ImageProviderService.load_provider_configs",
         AsyncMock(return_value=[]),
     ):
         yield
