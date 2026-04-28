@@ -1295,20 +1295,20 @@ class TestUnifiedDispatcherHandlers:
 
 class TestSettingsRouteHelpers:
     async def test_require_agent_dev_mode_disabled(self, db):
-        from src.web.routes.settings import _require_agent_dev_mode
+        from src.web.settings.handlers import _require_agent_dev_mode
 
         request = MagicMock()
         # Patch deps.get_db to return our real db
-        with patch("src.web.routes.settings.deps.get_db", return_value=db):
+        with patch("src.web.settings.handlers.deps.get_db", return_value=db):
             await db.set_setting("agent_dev_mode_enabled", "0")
             result = await _require_agent_dev_mode(request)
             assert result is not None  # returns redirect
 
     async def test_require_agent_dev_mode_enabled(self, db):
-        from src.web.routes.settings import _require_agent_dev_mode
+        from src.web.settings.handlers import _require_agent_dev_mode
 
         request = MagicMock()
-        with patch("src.web.routes.settings.deps.get_db", return_value=db):
+        with patch("src.web.settings.handlers.deps.get_db", return_value=db):
             await db.set_setting("agent_dev_mode_enabled", "1")
             result = await _require_agent_dev_mode(request)
             assert result is None

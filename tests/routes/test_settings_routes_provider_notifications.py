@@ -29,10 +29,10 @@ async def test_settings_page_flood_wait_naive_tz(route_client, db):
         await db.update_account_flood(acc.phone, future_naive)
 
     with patch(
-        "src.web.routes.settings.AgentProviderService.load_provider_configs",
+        "src.web.settings.handlers.AgentProviderService.load_provider_configs",
         AsyncMock(return_value=[]),
     ), patch(
-        "src.web.routes.settings.AgentProviderService.load_model_cache",
+        "src.web.settings.handlers.AgentProviderService.load_model_cache",
         AsyncMock(return_value={}),
     ):
         resp = await route_client.get("/settings/")
@@ -48,10 +48,10 @@ async def test_settings_page_expired_flood_cleared(route_client, db):
         await db.update_account_flood(acc.phone, past)
 
     with patch(
-        "src.web.routes.settings.AgentProviderService.load_provider_configs",
+        "src.web.settings.handlers.AgentProviderService.load_provider_configs",
         AsyncMock(return_value=[]),
     ), patch(
-        "src.web.routes.settings.AgentProviderService.load_model_cache",
+        "src.web.settings.handlers.AgentProviderService.load_model_cache",
         AsyncMock(return_value={}),
     ):
         resp = await route_client.get("/settings/")
@@ -75,10 +75,10 @@ async def test_settings_page_inactive_account(route_client, db):
     await db.add_account(Account(phone="+15555555555", session_string="test2"))
 
     with patch(
-        "src.web.routes.settings.AgentProviderService.load_provider_configs",
+        "src.web.settings.handlers.AgentProviderService.load_provider_configs",
         AsyncMock(return_value=[]),
     ), patch(
-        "src.web.routes.settings.AgentProviderService.load_model_cache",
+        "src.web.settings.handlers.AgentProviderService.load_model_cache",
         AsyncMock(return_value={}),
     ):
         resp = await route_client.get("/settings/")
@@ -89,10 +89,10 @@ async def test_settings_page_inactive_account(route_client, db):
 async def test_settings_page_notification_bot_error(route_client, db):
     """Test settings page renders without inline notification bot fetch."""
     with patch(
-        "src.web.routes.settings.AgentProviderService.load_provider_configs",
+        "src.web.settings.handlers.AgentProviderService.load_provider_configs",
         AsyncMock(return_value=[]),
     ), patch(
-        "src.web.routes.settings.AgentProviderService.load_model_cache",
+        "src.web.settings.handlers.AgentProviderService.load_model_cache",
         AsyncMock(return_value={}),
     ), patch(
         "src.web.routes.settings.deps.get_notification_target_service"
@@ -218,7 +218,7 @@ async def test_run_semantic_index_unavailable(route_client, db):
 async def test_run_semantic_index_with_reset_flag(route_client, db):
     """Test semantic index with reset flag (line 628)."""
     with patch(
-        "src.web.routes.settings.EmbeddingService.index_pending_messages",
+        "src.web.settings.handlers.EmbeddingService.index_pending_messages",
         AsyncMock(return_value=0),
     ), patch(
         "src.web.routes.settings.deps.get_search_engine"
@@ -398,9 +398,9 @@ async def test_add_agent_provider_invalid_name(route_client, db):
     await db.set_setting("agent_dev_mode_enabled", "1")
 
     with patch(
-        "src.web.routes.settings.AgentProviderService"
+        "src.web.settings.handlers.AgentProviderService"
     ) as mock_service_cls, patch(
-        "src.web.routes.settings.deepagents_provider_spec"
+        "src.web.settings.handlers.deepagents_provider_spec"
     ) as mock_spec:
         mock_service = MagicMock()
         mock_service.writes_enabled = True
@@ -422,9 +422,9 @@ async def test_add_agent_provider_already_exists(route_client, db):
     await db.set_setting("agent_dev_mode_enabled", "1")
 
     with patch(
-        "src.web.routes.settings.AgentProviderService"
+        "src.web.settings.handlers.AgentProviderService"
     ) as mock_service_cls, patch(
-        "src.web.routes.settings.deepagents_provider_spec"
+        "src.web.settings.handlers.deepagents_provider_spec"
     ) as mock_spec:
         mock_service = MagicMock()
         mock_service.writes_enabled = True
@@ -453,9 +453,9 @@ async def test_add_agent_provider_refreshes_manager(route_client, db):
     route_client._transport_app.state.agent_manager = mock_manager
 
     with patch(
-        "src.web.routes.settings.AgentProviderService"
+        "src.web.settings.handlers.AgentProviderService"
     ) as mock_service_cls, patch(
-        "src.web.routes.settings.deepagents_provider_spec"
+        "src.web.settings.handlers.deepagents_provider_spec"
     ) as mock_spec:
         mock_service = MagicMock()
         mock_service.writes_enabled = True
@@ -483,7 +483,7 @@ async def test_save_agent_providers_dev_mode_required(route_client, db):
     await db.set_setting("agent_dev_mode_enabled", "0")
 
     with patch(
-        "src.web.routes.settings.AgentProviderService"
+        "src.web.settings.handlers.AgentProviderService"
     ) as mock_service_cls:
         mock_service = MagicMock()
         mock_service.writes_enabled = True
@@ -508,11 +508,11 @@ async def test_save_agent_providers_probes_enabled(route_client, db):
     cfg.provider = "openai"
 
     with patch(
-        "src.web.routes.settings.AgentProviderService"
+        "src.web.settings.handlers.AgentProviderService"
     ) as mock_service_cls, patch(
         "src.web.routes.settings.deps.get_agent_manager"
     ) as mock_get_mgr, patch(
-        "src.web.routes.settings._probe_provider_config",
+        "src.web.settings.handlers._probe_provider_config",
         AsyncMock(return_value=MagicMock()),
     ):
         mock_service = MagicMock()
@@ -545,7 +545,7 @@ async def test_delete_agent_provider_dev_mode_required(route_client, db):
     await db.set_setting("agent_dev_mode_enabled", "0")
 
     with patch(
-        "src.web.routes.settings.AgentProviderService"
+        "src.web.settings.handlers.AgentProviderService"
     ) as mock_service_cls:
         mock_service = MagicMock()
         mock_service.writes_enabled = True
@@ -571,7 +571,7 @@ async def test_delete_agent_provider_refreshes_manager(route_client, db):
     route_client._transport_app.state.agent_manager = mock_manager
 
     with patch(
-        "src.web.routes.settings.AgentProviderService"
+        "src.web.settings.handlers.AgentProviderService"
     ) as mock_service_cls:
         mock_service = MagicMock()
         mock_service.writes_enabled = True
@@ -599,7 +599,7 @@ async def test_refresh_agent_provider_dev_mode_required_json(route_client, db):
     await db.set_setting("agent_dev_mode_enabled", "0")
 
     with patch(
-        "src.web.routes.settings.AgentProviderService"
+        "src.web.settings.handlers.AgentProviderService"
     ) as mock_service_cls:
         mock_service = MagicMock()
         mock_service.writes_enabled = True
@@ -618,9 +618,9 @@ async def test_refresh_agent_provider_unknown(route_client, db):
     await db.set_setting("agent_dev_mode_enabled", "1")
 
     with patch(
-        "src.web.routes.settings.AgentProviderService"
+        "src.web.settings.handlers.AgentProviderService"
     ) as mock_service_cls, patch(
-        "src.web.routes.settings.deepagents_provider_spec"
+        "src.web.settings.handlers.deepagents_provider_spec"
     ) as mock_spec:
         mock_service = MagicMock()
         mock_service.writes_enabled = True
@@ -643,9 +643,9 @@ async def test_probe_agent_provider_unknown(route_client, db):
     await db.set_setting("agent_dev_mode_enabled", "1")
 
     with patch(
-        "src.web.routes.settings.AgentProviderService"
+        "src.web.settings.handlers.AgentProviderService"
     ) as mock_service_cls, patch(
-        "src.web.routes.settings.deepagents_provider_spec"
+        "src.web.settings.handlers.deepagents_provider_spec"
     ) as mock_spec:
         mock_service = MagicMock()
         mock_service.writes_enabled = True
@@ -665,9 +665,9 @@ async def test_probe_agent_provider_validation_blocked(route_client, db):
     await db.set_setting("agent_dev_mode_enabled", "1")
 
     with patch(
-        "src.web.routes.settings.AgentProviderService"
+        "src.web.settings.handlers.AgentProviderService"
     ) as mock_service_cls, patch(
-        "src.web.routes.settings.deepagents_provider_spec"
+        "src.web.settings.handlers.deepagents_provider_spec"
     ) as mock_spec:
         mock_service = MagicMock()
         mock_service.writes_enabled = True
@@ -706,11 +706,11 @@ async def test_probe_agent_provider_success(route_client, db):
     )
 
     with patch(
-        "src.web.routes.settings.AgentProviderService"
+        "src.web.settings.handlers.AgentProviderService"
     ) as mock_service_cls, patch(
-        "src.web.routes.settings.deepagents_provider_spec"
+        "src.web.settings.handlers.deepagents_provider_spec"
     ) as mock_spec, patch(
-        "src.web.routes.settings._probe_provider_config",
+        "src.web.settings.handlers._probe_provider_config",
         AsyncMock(return_value=record),
     ):
         mock_service = MagicMock()
@@ -972,9 +972,9 @@ async def test_test_notification_notify_fails(route_client, db):
 async def test_add_image_provider_invalid(route_client, db):
     """Test add image provider with invalid name (lines 1204-1207)."""
     with patch(
-        "src.web.routes.settings.ImageProviderService"
+        "src.web.settings.handlers.ImageProviderService"
     ) as mock_service_cls, patch(
-        "src.web.routes.settings.image_provider_spec"
+        "src.web.settings.handlers.image_provider_spec"
     ) as mock_spec:
         mock_service = MagicMock()
         mock_service.writes_enabled = True
@@ -994,9 +994,9 @@ async def test_add_image_provider_invalid(route_client, db):
 async def test_add_image_provider_already_exists(route_client, db):
     """Test add image provider when it already exists (lines 1208-1209)."""
     with patch(
-        "src.web.routes.settings.ImageProviderService"
+        "src.web.settings.handlers.ImageProviderService"
     ) as mock_service_cls, patch(
-        "src.web.routes.settings.image_provider_spec"
+        "src.web.settings.handlers.image_provider_spec"
     ) as mock_spec:
         mock_service = MagicMock()
         mock_service.writes_enabled = True
@@ -1019,9 +1019,9 @@ async def test_add_image_provider_already_exists(route_client, db):
 async def test_save_image_providers_missing_key(route_client, db):
     """Test save image providers with missing API key (lines 1226-1233)."""
     with patch(
-        "src.web.routes.settings.ImageProviderService"
+        "src.web.settings.handlers.ImageProviderService"
     ) as mock_service_cls, patch(
-        "src.web.routes.settings.image_provider_spec"
+        "src.web.settings.handlers.image_provider_spec"
     ) as mock_spec:
         mock_service = MagicMock()
         mock_service.writes_enabled = True
@@ -1052,7 +1052,7 @@ async def test_save_image_providers_missing_key(route_client, db):
 async def test_save_image_providers_success(route_client, db):
     """Test save image providers success (lines 1236-1239)."""
     with patch(
-        "src.web.routes.settings.ImageProviderService"
+        "src.web.settings.handlers.ImageProviderService"
     ) as mock_service_cls:
         mock_service = MagicMock()
         mock_service.writes_enabled = True
@@ -1076,7 +1076,7 @@ async def test_save_image_providers_success(route_client, db):
 async def test_delete_image_provider(route_client, db):
     """Test delete image provider (lines 1246-1250)."""
     with patch(
-        "src.web.routes.settings.ImageProviderService"
+        "src.web.settings.handlers.ImageProviderService"
     ) as mock_service_cls:
         mock_service = MagicMock()
         mock_service.writes_enabled = True
@@ -1159,10 +1159,10 @@ async def test_settings_page_reload_llm_providers_failure(route_client, db, capl
     route_client._transport_app.state.llm_provider_service = mock_llm_svc
 
     with patch(
-        "src.web.routes.settings.AgentProviderService.load_provider_configs",
+        "src.web.settings.handlers.AgentProviderService.load_provider_configs",
         AsyncMock(return_value=[]),
     ), patch(
-        "src.web.routes.settings.AgentProviderService.load_model_cache",
+        "src.web.settings.handlers.AgentProviderService.load_model_cache",
         AsyncMock(return_value={}),
     ), caplog.at_level(
         logging.WARNING, logger="src.web.routes.settings"

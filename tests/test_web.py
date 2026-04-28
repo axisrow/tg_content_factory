@@ -711,13 +711,13 @@ async def test_settings_add_agent_provider_persists_provider_in_db(client):
 async def test_settings_save_agent_providers_preserves_priority_order(client, monkeypatch):
     db = client._transport.app.state.db
     await db.set_setting("agent_dev_mode_enabled", "1")
-    from src.web.routes import settings as settings_routes
+    from src.web.settings import handlers as settings_handlers
 
     probe_mock = AsyncMock()
     fake_manager = SimpleNamespace(refresh_settings_cache=AsyncMock())
-    monkeypatch.setattr(settings_routes, "_probe_provider_config", probe_mock)
+    monkeypatch.setattr(settings_handlers, "_probe_provider_config", probe_mock)
     monkeypatch.setattr(
-        settings_routes, "_settings_agent_manager", lambda request: (fake_manager, False)
+        settings_handlers, "_settings_agent_manager", lambda request: (fake_manager, False)
     )
 
     await client.post(
@@ -757,13 +757,13 @@ async def test_settings_save_agent_providers_skips_probe_for_disabled_provider(c
     await client.post(
         "/settings/agent-providers/add", data={"provider": "openai"}, follow_redirects=False
     )
-    from src.web.routes import settings as settings_routes
+    from src.web.settings import handlers as settings_handlers
 
     probe_mock = AsyncMock()
     fake_manager = SimpleNamespace(refresh_settings_cache=AsyncMock())
-    monkeypatch.setattr(settings_routes, "_probe_provider_config", probe_mock)
+    monkeypatch.setattr(settings_handlers, "_probe_provider_config", probe_mock)
     monkeypatch.setattr(
-        settings_routes, "_settings_agent_manager", lambda request: (fake_manager, False)
+        settings_handlers, "_settings_agent_manager", lambda request: (fake_manager, False)
     )
 
     resp = await client.post(
@@ -1018,7 +1018,7 @@ async def test_settings_probe_agent_provider_model_returns_cached_json(client, m
     await client.post(
         "/settings/agent-providers/add", data={"provider": "openai"}, follow_redirects=False
     )
-    from src.web.routes import settings as settings_routes
+    from src.web.settings import handlers as settings_handlers
 
     fake_manager = SimpleNamespace(
         probe_provider_config=AsyncMock(
@@ -1032,7 +1032,7 @@ async def test_settings_probe_agent_provider_model_returns_cached_json(client, m
         )
     )
     monkeypatch.setattr(
-        settings_routes, "_settings_agent_manager", lambda request: (fake_manager, False)
+        settings_handlers, "_settings_agent_manager", lambda request: (fake_manager, False)
     )
 
     resp = await client.post(
@@ -1064,7 +1064,7 @@ async def test_settings_save_agent_providers_keeps_unsupported_probe_in_cache_on
     await client.post(
         "/settings/agent-providers/add", data={"provider": "openai"}, follow_redirects=False
     )
-    from src.web.routes import settings as settings_routes
+    from src.web.settings import handlers as settings_handlers
 
     fake_manager = SimpleNamespace(
         probe_provider_config=AsyncMock(
@@ -1080,7 +1080,7 @@ async def test_settings_save_agent_providers_keeps_unsupported_probe_in_cache_on
         refresh_settings_cache=AsyncMock(),
     )
     monkeypatch.setattr(
-        settings_routes, "_settings_agent_manager", lambda request: (fake_manager, False)
+        settings_handlers, "_settings_agent_manager", lambda request: (fake_manager, False)
     )
 
     resp = await client.post(
@@ -1128,7 +1128,7 @@ async def test_settings_bulk_test_uses_unsaved_form_values(client, monkeypatch):
             )
         ]
     )
-    from src.web.routes import settings as settings_routes
+    from src.web.settings import handlers as settings_handlers
 
     captured_configs: list[ProviderRuntimeConfig] = []
     started = asyncio.Event()
@@ -1139,7 +1139,7 @@ async def test_settings_bulk_test_uses_unsaved_form_values(client, monkeypatch):
             captured_configs.extend(configs)
         started.set()
 
-    monkeypatch.setattr(settings_routes, "_run_bulk_test_job", _fake_run_bulk_test_job)
+    monkeypatch.setattr(settings_handlers, "_run_bulk_test_job", _fake_run_bulk_test_job)
 
     resp = await client.post(
         "/settings/agent-providers/test-all",
@@ -1164,18 +1164,18 @@ async def test_settings_bulk_test_uses_unsaved_form_values(client, monkeypatch):
 async def test_settings_bulk_test_clears_running_status_when_startup_raises(client, monkeypatch):
     db = client._transport.app.state.db
     await db.set_setting("agent_dev_mode_enabled", "1")
-    from src.web.routes import settings as settings_routes
+    from src.web.settings import handlers as settings_handlers
 
     request = SimpleNamespace(app=client._transport.app, state=SimpleNamespace())
 
     def _broken_logger_info(*args, **kwargs):
         raise RuntimeError("log sink unavailable")
 
-    monkeypatch.setattr(settings_routes.logger, "info", _broken_logger_info)
+    monkeypatch.setattr(settings_handlers.logger, "info", _broken_logger_info)
 
-    await settings_routes._run_bulk_test_job(request, configs=[])
+    await settings_handlers._run_bulk_test_job(request, configs=[])
 
-    status = settings_routes._bulk_test_status_payload(request)
+    status = settings_handlers._bulk_test_status_payload(request)
     assert status["running"] is False
     assert status["error"] == "log sink unavailable"
 
@@ -1196,7 +1196,7 @@ async def test_settings_bulk_test_refreshes_each_provider_once(client, monkeypat
             )
         ]
     )
-    from src.web.routes import settings as settings_routes
+    from src.web.settings import handlers as settings_handlers
 
     refresh_calls: list[str] = []
     request = SimpleNamespace(app=client._transport.app, state=SimpleNamespace())
@@ -1231,19 +1231,19 @@ async def test_settings_bulk_test_refreshes_each_provider_once(client, monkeypat
         "refresh_models_for_provider",
         _fake_refresh_models_for_provider,
     )
-    monkeypatch.setattr(settings_routes, "_probe_provider_config", probe_mock)
+    monkeypatch.setattr(settings_handlers, "_probe_provider_config", probe_mock)
     monkeypatch.setattr(
         AgentProviderService,
         "export_compatibility_catalog",
         _fake_export_catalog,
     )
     monkeypatch.setattr(
-        settings_routes,
+        settings_handlers,
         "_settings_agent_manager",
         lambda request: (SimpleNamespace(refresh_settings_cache=AsyncMock()), False),
     )
 
-    await settings_routes._run_bulk_test_job(request)
+    await settings_handlers._run_bulk_test_job(request)
 
     assert refresh_calls == ["openai"]
     probe_mock.assert_awaited_once()
@@ -1265,13 +1265,13 @@ async def test_settings_bulk_test_exports_catalog(client, monkeypatch, tmp_path)
             )
         ]
     )
-    from src.web.routes import settings as settings_routes
+    from src.web.settings import handlers as settings_handlers
 
     export_path = tmp_path / "compat_catalog.json"
 
     async def _fake_run_bulk_test_job(request, configs=None):
         del configs
-        status = settings_routes._bulk_test_status_payload(request)
+        status = settings_handlers._bulk_test_status_payload(request)
         status.update(
             {
                 "running": False,
@@ -1309,7 +1309,7 @@ async def test_settings_bulk_test_exports_catalog(client, monkeypatch, tmp_path)
         )
         export_path.write_text('{"providers": []}', encoding="utf-8")
 
-    monkeypatch.setattr(settings_routes, "_run_bulk_test_job", _fake_run_bulk_test_job)
+    monkeypatch.setattr(settings_handlers, "_run_bulk_test_job", _fake_run_bulk_test_job)
 
     resp = await client.post("/settings/agent-providers/test-all")
 
@@ -3576,7 +3576,7 @@ async def test_settings_clears_stale_flood_on_load(tmp_path, real_pool_harness_f
     """GET /settings clears flood_wait_until from DB when the timestamp is expired."""
     from datetime import timedelta
 
-    from src.web.routes import settings as settings_routes
+    from src.web.settings import handlers as settings_handlers
 
     config = make_test_config(tmp_path)
     harness = real_pool_harness_factory()
@@ -3587,10 +3587,10 @@ async def test_settings_clears_stale_flood_on_load(tmp_path, real_pool_harness_f
         await db.update_account_flood("+70011", past)
 
         probe_mock = AsyncMock(return_value=("ok", None))
-        monkeypatch.setattr(settings_routes, "_probe_provider_config", probe_mock)
+        monkeypatch.setattr(settings_handlers, "_probe_provider_config", probe_mock)
         fake_manager = SimpleNamespace(available=False)
         monkeypatch.setattr(
-            settings_routes, "_settings_agent_manager", lambda request: (fake_manager, False)
+            settings_handlers, "_settings_agent_manager", lambda request: (fake_manager, False)
         )
 
         async with make_auth_client(app) as c:
