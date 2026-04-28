@@ -6,6 +6,7 @@ from datetime import datetime
 import aiosqlite
 
 from src.models import GenerationRun
+from src.utils.json import safe_json_dumps
 
 
 def _dt(value: str | None) -> datetime | None:
@@ -74,7 +75,7 @@ class GenerationRunsRepository:
             await self._db.execute(
                 ("UPDATE generation_runs SET status = ?, metadata = ?, "
                  "updated_at = datetime('now') WHERE id = ?"),
-                (status, json.dumps(metadata, ensure_ascii=False), run_id),
+                (status, safe_json_dumps(metadata, ensure_ascii=False), run_id),
             )
         else:
             await self._db.execute(
@@ -89,7 +90,7 @@ class GenerationRunsRepository:
         await self._db.execute(
             ("UPDATE generation_runs SET generated_text = ?, metadata = ?, status = 'completed', "
              "updated_at = datetime('now') WHERE id = ?"),
-            (generated_text, json.dumps(metadata or {}, ensure_ascii=False), run_id),
+            (generated_text, safe_json_dumps(metadata or {}, ensure_ascii=False), run_id),
         )
         await self._db.commit()
 
@@ -111,7 +112,7 @@ class GenerationRunsRepository:
     async def set_quality_score(
         self, run_id: int, score: float, issues: list[str] | None = None
     ) -> None:
-        issues_json = json.dumps(issues, ensure_ascii=False) if issues else None
+        issues_json = safe_json_dumps(issues, ensure_ascii=False) if issues else None
         await self._db.execute(
             ("UPDATE generation_runs SET quality_score = ?, quality_issues = ?, "
              "updated_at = datetime('now') WHERE id = ?"),
@@ -122,7 +123,7 @@ class GenerationRunsRepository:
     async def set_variants(self, run_id: int, variants: list[str]) -> None:
         await self._db.execute(
             "UPDATE generation_runs SET variants = ?, updated_at = datetime('now') WHERE id = ?",
-            (json.dumps(variants, ensure_ascii=False), run_id),
+            (safe_json_dumps(variants, ensure_ascii=False), run_id),
         )
         await self._db.commit()
 

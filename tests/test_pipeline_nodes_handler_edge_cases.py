@@ -69,11 +69,15 @@ async def test_source_handler_missing_channel_ids_key():
 
 @pytest.mark.asyncio
 async def test_fetch_messages_no_db_service():
-    """When db is None in services, sets empty context_messages."""
+    """When db is None in services, sets empty context_messages and records the error."""
     ctx = NodeContext()
     ctx.set_global("source_channel_ids", [1, 2])
     await FetchMessagesHandler().execute({}, ctx, {})
     assert ctx.get_global("context_messages") == []
+    errors = ctx.get_errors()
+    assert len(errors) == 1
+    assert errors[0]["code"] == "missing_dependency"
+    assert "db" in errors[0]["detail"]
 
 
 @pytest.mark.asyncio
