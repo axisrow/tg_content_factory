@@ -7,6 +7,7 @@ from typing import Any
 import aiosqlite
 
 from src.models import RuntimeSnapshot
+from src.utils.json import safe_json_dumps
 
 
 def _parse_json(raw: str | None) -> dict[str, Any]:
@@ -44,7 +45,7 @@ class RuntimeSnapshotsRepository:
             (
                 snapshot.snapshot_type,
                 snapshot.scope,
-                json.dumps(snapshot.payload),
+                safe_json_dumps(snapshot.payload),
                 snapshot.updated_at.isoformat() if snapshot.updated_at is not None else None,
             ),
         )

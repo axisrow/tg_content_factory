@@ -117,3 +117,28 @@ async def test_runtime_snapshots_repository_upsert_and_get(tmp_path):
         assert stored.payload == {"status": "alive"}
     finally:
         await db.close()
+
+
+@pytest.mark.asyncio
+async def test_runtime_snapshots_repository_handles_non_primitive_payload(tmp_path):
+    """Regression for #473 tail: payload with datetime/bytes must round-trip
+    via safe_json_dumps without raising TypeError.
+    """
+    db = Database(str(tmp_path / "test.db"))
+    await db.initialize()
+
+    try:
+        snap_dt = datetime(2026, 4, 27, 12, 0, 0, tzinfo=timezone.utc)
+        snapshot = RuntimeSnapshot(
+            snapshot_type="exotic_payload",
+            scope="global",
+            payload={"published_at": snap_dt, "blob": b"\xde\xad\xbe\xef"},
+        )
+        await db.repos.runtime_snapshots.upsert_snapshot(snapshot)
+
+        stored = await db.repos.runtime_snapshots.get_snapshot("exotic_payload", "global")
+        assert stored is not None
+        assert stored.payload["published_at"] == "2026-04-27T12:00:00+00:00"
+        assert stored.payload["blob"] == "deadbeef"
+    finally:
+        await db.close()

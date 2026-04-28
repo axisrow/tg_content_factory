@@ -70,6 +70,13 @@ class FetchMessagesHandler(BaseNodeHandler):
     async def execute(self, node_config: dict, context: NodeContext, services: dict) -> None:
         db = services.get("db")
         if db is None:
+            node_id = _current_node_id(services, default="fetch_messages")
+            context.record_error(
+                node_id=node_id,
+                code="missing_dependency",
+                detail="db not available in services",
+            )
+            logger.warning("FetchMessagesHandler[%s]: no db, skipping", node_id)
             context.set_global("context_messages", [])
             return
         channel_ids = context.get_global("source_channel_ids", [])
