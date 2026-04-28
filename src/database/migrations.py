@@ -429,6 +429,7 @@ async def run_migrations(db: aiosqlite.Connection) -> bool:
         await db.commit()
     if "selected_variant" not in gr_columns:
         await db.execute("ALTER TABLE generation_runs ADD COLUMN selected_variant INTEGER")
+        await db.commit()
     # Ensure publish_times column exists in content_pipelines (PR #125)
     cur = await db.execute("PRAGMA table_info(content_pipelines)")
     cp_columns = {row["name"] for row in await cur.fetchall()}
