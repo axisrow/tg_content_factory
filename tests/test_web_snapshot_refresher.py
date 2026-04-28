@@ -153,3 +153,21 @@ async def test_refresher_stop_without_start_is_noop():
     db = _mock_db()
     refresher = SnapshotRefresher(_container_with_shims(db), interval=0.05)
     await refresher.stop()  # must not raise
+
+
+async def test_refresher_can_restart_after_stop():
+    db = _mock_db()
+    container = _container_with_shims(db)
+    refresher = SnapshotRefresher(container, interval=0.02)
+
+    await refresher.start()
+    await refresher.stop()
+
+    snapshot = MagicMock(payload={"connected_phones": ["+79991"]})
+    db.repos.runtime_snapshots.get_snapshot = AsyncMock(return_value=snapshot)
+
+    await refresher.start()
+    try:
+        assert await _wait_for(lambda: set(container.pool.clients.keys()) == {"+79991"}, timeout=1.0)
+    finally:
+        await refresher.stop()

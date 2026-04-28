@@ -37,6 +37,7 @@ class SnapshotRefresher:
     async def start(self) -> None:
         if self._task is not None:
             raise RuntimeError("SnapshotRefresher already started")
+        self._stop.clear()
         self._task = asyncio.create_task(self._run(), name="snapshot-refresher")
 
     async def stop(self, timeout: float = 5.0) -> None:
