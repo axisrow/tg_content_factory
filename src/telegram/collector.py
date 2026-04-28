@@ -4,7 +4,7 @@ import asyncio
 import json
 import logging
 from collections.abc import Awaitable, Callable
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from telethon.errors import FloodWaitError, UsernameInvalidError, UsernameNotOccupiedError
 from telethon.tl.types import (
@@ -43,6 +43,10 @@ from src.telegram.flood_wait import HandledFloodWaitError, run_with_flood_wait
 from src.telegram.notifier import Notifier
 
 logger = logging.getLogger(__name__)
+
+RESOLVE_USERNAME_OPERATION = "collect_channel_resolve_username"
+RESOLVE_USERNAME_GLOBAL_BACKOFF_THRESHOLD_SEC = 300
+RESOLVE_USERNAME_GLOBAL_BACKOFF_MAX_SEC = 3600
 
 
 class NoActiveStatsClientsError(RuntimeError):
@@ -112,6 +116,25 @@ class Collector:
         self._stats_lock = asyncio.Lock()
         self._stats_all_lock = asyncio.Lock()
         self._last_unavailability_log: tuple[str, str | int | None, datetime | None] | None = None
+        self._resolve_username_backoff_until_utc: datetime | None = None
+
+    def _get_resolve_username_backoff_remaining_sec(self) -> int:
+        if self._resolve_username_backoff_until_utc is None:
+            return 0
+        remaining = (
+            self._resolve_username_backoff_until_utc - datetime.now(timezone.utc)
+        ).total_seconds()
+        if remaining <= 0:
+            self._resolve_username_backoff_until_utc = None
+            return 0
+        return int(remaining)
+
+    def _set_resolve_username_backoff(self, wait_seconds: int) -> int:
+        backoff_seconds = min(wait_seconds, RESOLVE_USERNAME_GLOBAL_BACKOFF_MAX_SEC)
+        self._resolve_username_backoff_until_utc = datetime.now(timezone.utc) + timedelta(
+            seconds=backoff_seconds
+        )
+        return backoff_seconds
 
     async def get_collection_availability(self):
         availability_fn = getattr(self._pool, "get_stats_availability", None)
@@ -440,6 +463,19 @@ class Collector:
             channel_id = channel.channel_id
             min_id = channel.last_collected_id
 
+            if channel.username:
+                backoff_remaining_sec = self._get_resolve_username_backoff_remaining_sec()
+                if backoff_remaining_sec > 0:
+                    logger.warning(
+                        "Skipping username resolve for channel %d (%s): "
+                        "%s backoff active for %ss",
+                        channel_id,
+                        channel.username,
+                        RESOLVE_USERNAME_OPERATION,
+                        backoff_remaining_sec,
+                    )
+                    return total_collected
+
             # For private groups (no username):
             #   1. preferred_phone from DB (persists across restarts)
             #   2. in-memory map built by warm_all_dialogs()
@@ -490,6 +526,7 @@ class Collector:
             all_messages: list[Message] = []
             persisted_max_msg_id = min_id
             flood_wait_sec: int | None = None
+            flood_wait_operation: str | None = None
             stop_due_to_persistence_error = False
 
             is_first_run = channel.last_collected_id == 0
@@ -548,7 +585,7 @@ class Collector:
                     try:
                         entity = await run_with_flood_wait(
                             session.resolve_entity(channel.username),
-                            operation="collect_channel_resolve_username",
+                            operation=RESOLVE_USERNAME_OPERATION,
                             phone=phone,
                             pool=self._pool,
                             logger_=logger,
@@ -562,6 +599,7 @@ class Collector:
                         return total_collected
                     except HandledFloodWaitError as exc:
                         flood_wait_sec = exc.info.wait_seconds
+                        flood_wait_operation = RESOLVE_USERNAME_OPERATION
                         raise
                     except (ValueError, UsernameNotOccupiedError, UsernameInvalidError):
                         logger.warning(
@@ -580,6 +618,7 @@ class Collector:
                             )
                         except HandledFloodWaitError as exc:
                             flood_wait_sec = exc.info.wait_seconds
+                            flood_wait_operation = exc.info.operation
                             raise
                         except Exception:
                             logger.warning(
@@ -621,6 +660,7 @@ class Collector:
                         return total_collected
                     except HandledFloodWaitError as exc:
                         flood_wait_sec = exc.info.wait_seconds
+                        flood_wait_operation = exc.info.operation
                         raise
                     except ValueError:
                         # preferred_phone turned out to be wrong (account was kicked,
@@ -725,6 +765,7 @@ class Collector:
                         sample_prefixes = []
                     except HandledFloodWaitError as exc:
                         flood_wait_sec = exc.info.wait_seconds
+                        flood_wait_operation = exc.info.operation
                         raise
                     unique_prefixes = list(dict.fromkeys(sample_prefixes))
                     if len(unique_prefixes) >= PRECHECK_CROSS_DUPE_MIN_SAMPLE:
@@ -833,6 +874,7 @@ class Collector:
                 raise
             except HandledFloodWaitError as exc:
                 flood_wait_sec = exc.info.wait_seconds
+                flood_wait_operation = flood_wait_operation or exc.info.operation
             finally:
                 # Flush remaining messages — each operation is protected
                 # independently so a failure in one doesn't prevent the
@@ -868,11 +910,32 @@ class Collector:
                 return total_collected + len(all_messages)
 
             # Handle FloodWait AFTER finally has flushed progress.
-            # Always attempt rotation to another account regardless of wait
-            # duration — report_flood() was already called, so the next
-            # get_available_client() call will skip the flooded account.
+            # Rotate regular collection FloodWaits to another account
+            # regardless of wait duration — report_flood() was already
+            # called, so the next get_available_client() call will skip
+            # the flooded account. Long username-resolve FloodWaits are
+            # handled below with a process-local backoff instead.
             # Only skip the channel if the channel no longer exists in DB.
             if flood_wait_sec is not None:
+                if (
+                    flood_wait_operation == RESOLVE_USERNAME_OPERATION
+                    and flood_wait_sec > RESOLVE_USERNAME_GLOBAL_BACKOFF_THRESHOLD_SEC
+                ):
+                    backoff_seconds = self._set_resolve_username_backoff(flood_wait_sec)
+                    logger.warning(
+                        "%s got long FloodWait %ss on %s; pausing username resolves for %ss",
+                        RESOLVE_USERNAME_OPERATION,
+                        flood_wait_sec,
+                        phone,
+                        backoff_seconds,
+                    )
+                    if self._notifier:
+                        await self._notifier.notify(
+                            f"FloodWait {flood_wait_sec}s on {phone}, "
+                            f"channel {channel_id} — pausing username resolves for {backoff_seconds}s"
+                        )
+                    return total_collected + len(all_messages)
+
                 if self._notifier and flood_wait_sec > self._config.max_flood_wait_sec:
                     await self._notifier.notify(
                         f"FloodWait {flood_wait_sec}s on {phone}, "
