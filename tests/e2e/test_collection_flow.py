@@ -28,7 +28,7 @@ from httpx import ASGITransport, AsyncClient
 
 from src.config import AppConfig, DatabaseConfig
 from src.database import Database
-from src.models import Account, Channel, CollectionTaskStatus, Message
+from src.models import Account, Channel, CollectionTaskStatus, Message, RuntimeSnapshot
 from src.web.app import create_app
 
 _PASS = "testpass"
@@ -216,3 +216,44 @@ async def test_embedded_worker_publishes_heartbeat(tmp_path):
                 assert snapshot.payload.get("status") == "alive"
             finally:
                 await db.close()
+
+
+@pytest.mark.asyncio
+async def test_health_reflects_accounts_after_snapshot_publish(tmp_path):
+    """Regression guard for the `/scheduler/` shows 0/0 bug.
+
+    Web container's read-only shims used to refresh exactly once at startup,
+    so `/health` and `/scheduler/` reported `accounts_connected = 0` forever
+    even when the worker kept publishing fresh `accounts_status` snapshots.
+
+    Here we boot `serve` without an embedded worker (so nothing internally
+    overwrites the snapshot), seed an `accounts_status` row directly, and
+    expect the web container's `SnapshotRefresher` to pick it up within a
+    couple of refresh ticks.
+    """
+    async with _serve_app(tmp_path, embed_worker=False) as (client, config):
+        resp = await client.get("/health")
+        assert resp.json()["accounts_connected"] == 0
+
+        db = Database(config.database.path)
+        await db.initialize()
+        try:
+            await db.repos.runtime_snapshots.upsert_snapshot(
+                RuntimeSnapshot(
+                    snapshot_type="accounts_status",
+                    payload={"connected_phones": ["+7999"], "connected_count": 1},
+                )
+            )
+        finally:
+            await db.close()
+
+        # SnapshotRefresher cadence is 3s; allow up to ~5s of jitter.
+        deadline = asyncio.get_running_loop().time() + 6.0
+        connected = 0
+        while asyncio.get_running_loop().time() < deadline:
+            resp = await client.get("/health")
+            connected = resp.json()["accounts_connected"]
+            if connected >= 1:
+                break
+            await asyncio.sleep(0.25)
+        assert connected == 1, f"expected refresher to pick up snapshot, got accounts_connected={connected}"

@@ -34,6 +34,7 @@ from src.web.panel_auth import (
     set_session_cookie,
 )
 from src.web.paths import TEMPLATES_DIR
+from src.web.snapshot_refresher import SnapshotRefresher
 from src.web.template_globals import configure_template_globals
 
 logger = logging.getLogger(__name__)
@@ -265,10 +266,24 @@ async def lifespan(app: FastAPI):
     else:
         logger.debug("Embedded worker not spawned (app.state.embed_worker is not True)")
 
+    # Periodic reader of `runtime_snapshots` so the web container's read-only
+    # shims (SnapshotClientPool / SnapshotCollector / SnapshotSchedulerManager)
+    # stay in sync with whatever worker is publishing — embedded or split.
+    refresher: SnapshotRefresher | None = None
+    if container.runtime_mode == "web":
+        refresher = SnapshotRefresher(container)
+        await refresher.start()
+        app.state.snapshot_refresher = refresher
+
     try:
         yield
     finally:
         logger.info("Shutting down...")
+        if refresher is not None:
+            try:
+                await refresher.stop()
+            except Exception:
+                logger.exception("Error stopping snapshot refresher")
         if embedded_worker is not None:
             try:
                 await embedded_worker.stop()
