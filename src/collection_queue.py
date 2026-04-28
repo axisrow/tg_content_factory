@@ -323,7 +323,7 @@ class CollectionQueue:
         except asyncio.QueueFull:
             logger.warning(
                 "Collection queue full on reconnect requeue; task %d stays PENDING "
-                "and will be picked up by requeue_startup_tasks",
+                "and will be picked up by the DB pull loop",
                 task_id,
             )
             return False
