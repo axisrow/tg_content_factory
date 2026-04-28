@@ -31,8 +31,9 @@ def _container_with_shims(db):
 
 
 async def _wait_for(predicate, *, timeout: float = 1.0, step: float = 0.02) -> bool:
-    deadline = asyncio.get_event_loop().time() + timeout
-    while asyncio.get_event_loop().time() < deadline:
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    while loop.time() < deadline:
         if predicate():
             return True
         await asyncio.sleep(step)
