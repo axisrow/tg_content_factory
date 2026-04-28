@@ -230,7 +230,9 @@ async def test_setup_bot_custom_prefix(db, real_pool_harness_factory):
         bot = await svc.setup_bot()
 
     assert bot.bot_username == "acme_bob_bot"
-    mock_create.assert_awaited_once_with(native_client, "Acme (bob)", "acme_bob_bot")
+    created_client = mock_create.await_args.args[0]
+    assert created_client.raw_client is native_client
+    assert mock_create.await_args.args[1:] == ("Acme (bob)", "acme_bob_bot")
 
 
 @pytest.mark.asyncio

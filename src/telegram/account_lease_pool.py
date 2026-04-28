@@ -36,19 +36,11 @@ class AccountLeasePool:
                     await self._db.update_account_flood(account.phone, None)
                     account.flood_wait_until = None
 
-            n = len(accounts)
-            if n == 0:
+            ordered_accounts = self._round_robin_accounts(accounts)
+            if not ordered_accounts:
                 return None
 
-            start = 0
-            if self._last_phone is not None:
-                for i, acc in enumerate(accounts):
-                    if acc.phone == self._last_phone:
-                        start = (i + 1) % n
-                        break
-
-            for offset in range(n):
-                account = accounts[(start + offset) % n]
+            for account in ordered_accounts:
                 if account.phone not in connected_phones:
                     continue
                 if account.phone in self._in_use:
@@ -59,11 +51,12 @@ class AccountLeasePool:
                 self._last_phone = account.phone
                 return AccountLease(account=account, shared=False)
 
-            for account in accounts:
+            for account in ordered_accounts:
                 if account.phone not in connected_phones:
                     continue
                 if self._is_flood_waited(account, now):
                     continue
+                self._last_phone = account.phone
                 return AccountLease(account=account, shared=True)
 
             return None
@@ -149,6 +142,17 @@ class AccountLeasePool:
 
     async def _get_account(self, phone: str) -> Account | None:
         return await self.get_account(phone, active_only=True)
+
+    def _round_robin_accounts(self, accounts: list[Account]) -> list[Account]:
+        if not accounts:
+            return []
+        if self._last_phone is None:
+            return accounts
+        for i, account in enumerate(accounts):
+            if account.phone == self._last_phone:
+                start = (i + 1) % len(accounts)
+                return accounts[start:] + accounts[:start]
+        return accounts
 
     @classmethod
     def _is_flood_waited(cls, account: Account, now: datetime | None = None) -> bool:

@@ -212,3 +212,24 @@ async def test_cursor_unchanged_when_all_flooded(db, pool):
     lease = await pool.acquire_available(connected)
     assert lease is not None
     assert lease.account.phone == "+76002"
+
+
+@pytest.mark.asyncio
+async def test_shared_fallback_uses_round_robin_order(db):
+    """When every account is in use, shared leases still rotate instead of preferring primary."""
+    phones = ["+77001", "+77002", "+77003"]
+    for p in phones:
+        await db.add_account(Account(phone=p, session_string=p, is_active=True))
+
+    pool = AccountLeasePool(db, set(phones))
+    connected = set(phones)
+
+    seen: list[str] = []
+    for _ in range(4):
+        lease = await pool.acquire_available(connected)
+        assert lease is not None
+        assert lease.shared is True
+        seen.append(lease.account.phone)
+
+    assert seen[:3] == phones
+    assert seen[3] == phones[0]
