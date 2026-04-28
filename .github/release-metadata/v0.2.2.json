@@ -1,0 +1,46 @@
+{
+  "tag": "v0.2.2",
+  "title": "Production Stability — Flood Wait Rotation, Auth Reliability & Web/Worker Sync",
+  "highlights": [
+    {
+      "title": "Telegram FloodWait Rotation Fix",
+      "description": "Telethon's default flood_sleep_threshold=60 silently slept on short FloodWaits and never raised, so the account pool never rotated and Telegram eventually returned multi-hour FloodWaits on the same phone. Setting flood_sleep_threshold=0 (#498) plus username-resolve throttling on long flood waits (#502) and centralized flood-wait handling (#499) restore proper rotation."
+    },
+    {
+      "title": "Two-Step CLI Auth & Cross-Process StringSession",
+      "description": "Replaced interactive `account add` (TTY-only) with `account send-code` + `account verify-code` (#467). phone_code_hash and StringSession are persisted in the DB between invocations, fixing PhoneCodeExpiredError caused by Telegram binding the hash to the originating MTProto session. Also fixes 422 errors on web auth forms."
+    },
+    {
+      "title": "Scheduler PENDING Tasks Picked Up Without Restart",
+      "description": "In web/embedded-worker mode the web side falls back to a DB-only INSERT for new collection tasks. The worker only ran requeue_startup_tasks once at boot, so 'Собрать все каналы' enqueued PENDING rows that were ignored until next restart. Added a periodic 3s DB-pull loop to CollectionQueue (#494)."
+    },
+    {
+      "title": "Web Snapshot Refresher",
+      "description": "Web container's snapshot shims (SnapshotClientPool/Collector/SchedulerManager) refreshed exactly once at startup, so /scheduler/, /dashboard/ and /health reported '0 connected / 0 available' forever even while the worker kept publishing fresh runtime_snapshots. Added SnapshotRefresher background task (3s interval) started in lifespan independently of embed_worker (#492)."
+    },
+    {
+      "title": "Content Factory Production Features",
+      "description": "Scheduled publish for text content (#229), channel tags and categories (#230), message retention policy (#231), backup/export functionality (#232), cost tracking persistence across restarts (#233), Bot API publish adapter (#234), webhook triggers (#235), and RSS/Atom feed (#236) — completing the Content Factory milestone."
+    },
+    {
+      "title": "Channel Analytics & Forwards",
+      "description": "channels.created_at column captures Telegram entity.date (#382), forward_from_channel_id normalization stores the correct positive ID format (#381), advanced statistics (#330), per-channel hour×weekday heatmap and cross-channel citations."
+    },
+    {
+      "title": "Web/Worker Architecture Cutover",
+      "description": "Embedded Telegram worker by default in `serve` (#457), queue auth/scheduler actions through worker commands (#455), full web-mode cutover for accounts and /agent (#453), Telegram worker runtime with command dispatching (#452). Single-command 'serve' now gives UI + collection out of the box."
+    },
+    {
+      "title": "Pipeline Generation Hardening",
+      "description": "Provider resolution fixes for ZAI URL, empty context, and provider fallback (#436); Anthropic and Z.AI adapters added (#385); per-pipeline LLM gate stops hiding the add form (#378); LLM banner regression resolved (#360, #354); pipeline wizard redesign with emoji stepper, dry-run, and FetchMessagesHandler (#400); CLI run/generate now wire client_pool so ReactHandler/ForwardHandler aren't silently skipped (#470)."
+    },
+    {
+      "title": "Account Selection for Private Groups",
+      "description": "Private channels require the specific account that has access. Added preferred_phone column to channels (persists across restarts), warm_all_dialogs background task that prefills entity cache and channel→phone map for all accounts at startup and on a 24h scheduler job, with DB → in-memory map → wait-for-warm → discovery fallback in Collector lookup (#443)."
+    },
+    {
+      "title": "Test Coverage 90%+ and Web Refactor",
+      "description": "+751 tests across 20 modules raised coverage from 79% to 82% (#438), then to 90%+ (#456). Web refactor (#357, #459, #460): inline JS extraction, Jinja template deduplication via macros (status_dot, task_status_badge, empty_state), normalized .tga-table CSS utilities, agent route tests, and HTMX vs fetch() frontend policy documented (#418)."
+    }
+  ]
+}
