@@ -44,5 +44,21 @@ jobs:
       - name: Ruff
         run: ruff check src tests conftest.py
 
+      - name: Enforce pytest warnings as errors
+        run: |
+          python - <<'PY'
+          import sys
+          import tomllib
+
+          with open("pyproject.toml", "rb") as f:
+              config = tomllib.load(f)
+
+          actual = config["tool"]["pytest"]["ini_options"].get("filterwarnings")
+          expected = ["error"]
+          if actual != expected:
+              print(f"Expected tool.pytest.ini_options.filterwarnings = {expected!r}, got {actual!r}")
+              sys.exit(1)
+          PY
+
       - name: Pytest
         run: pytest tests -q -m "not aiosqlite_serial" -n auto && pytest tests -q -m aiosqlite_serial

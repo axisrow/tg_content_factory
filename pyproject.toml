@@ -101,11 +101,7 @@ asyncio_default_fixture_loop_scope = "session"
 testpaths = ["tests"]
 timeout = 30
 addopts = "--dist=loadfile"
-filterwarnings = [
-    "ignore:Exception ignored in.*_SyncHttpxClientWrapper:pytest.PytestUnraisableExceptionWarning",
-    "ignore:unclosed event loop:ResourceWarning",
-    "ignore:Exception in thread.*_connection_worker_thread:pytest.PytestUnhandledThreadExceptionWarning",
-]
+filterwarnings = ["error"]
 markers = [
     "native_backend_allowed: test intentionally exercises explicit native Telethon allowlist flows",
     "real_tg_safe: opt-in real Telegram API test limited to read-only sandbox scenarios",
