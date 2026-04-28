@@ -690,7 +690,7 @@ class ClientPool:
         lease: BackendClientLease | None = None
         try:
             if direct_session is not None:
-                direct_session.with_flood_context(
+                context_session = direct_session.with_flood_context(
                     phone=phone,
                     pool=self,
                     logger_=logger,
@@ -698,7 +698,7 @@ class ClientPool:
                 )
                 lease = BackendClientLease(
                     phone=phone,
-                    session=direct_session,
+                    session=context_session,
                     backend_name="direct",
                     disconnect_on_release=False,
                 )
@@ -707,7 +707,7 @@ class ClientPool:
                     account_lease.account,
                     force_native=force_native,
                 )
-                lease.session.with_flood_context(
+                lease.session = lease.session.with_flood_context(
                     phone=phone,
                     pool=self,
                     logger_=logger,
@@ -722,7 +722,6 @@ class ClientPool:
                         phone=phone,
                         pool=self,
                         logger_=logger,
-                        report_flood_wait=report_generic_flood,
                     )
                     lease.disconnect_on_release = False
 
@@ -744,7 +743,7 @@ class ClientPool:
 
     async def _connect_account(self, account: Account) -> BackendClientLease:
         lease = await self._backend_router.acquire_client(account)
-        lease.session.with_flood_context(
+        lease.session = lease.session.with_flood_context(
             phone=account.phone,
             pool=self,
             logger_=logger,

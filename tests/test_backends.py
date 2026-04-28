@@ -22,6 +22,26 @@ def _session(**kwargs) -> TelegramTransportSession:
     return TelegramTransportSession(FakeCliTelethonClient(**kwargs))
 
 
+def test_with_flood_context_returns_distinct_session_without_mutating_original():
+    pool = object()
+    original = _session()
+
+    contextual = original.with_flood_context(
+        phone="+7000",
+        pool=pool,
+        report_flood_wait=False,
+    )
+
+    assert contextual is not original
+    assert contextual.raw_client is original.raw_client
+    assert original._phone is None
+    assert original._pool is None
+    assert original._report_flood_wait is True
+    assert contextual._phone == "+7000"
+    assert contextual._pool is pool
+    assert contextual._report_flood_wait is False
+
+
 # --- Batch 1: Messages (#184, #185, #186, #190) ---
 
 

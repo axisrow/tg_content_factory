@@ -59,12 +59,14 @@ class TelegramTransportSession:
         logger_: logging.Logger | None = None,
         report_flood_wait: bool = True,
     ) -> TelegramTransportSession:
-        self._phone = phone
-        self._pool = pool
-        self._report_flood_wait = report_flood_wait
-        if logger_ is not None:
-            self._logger = logger_
-        return self
+        return TelegramTransportSession(
+            self._client,
+            disconnect_on_close=self._disconnect_on_close,
+            phone=phone,
+            pool=pool,
+            logger_=logger_ or self._logger,
+            report_flood_wait=report_flood_wait,
+        )
 
     async def _run(self, operation: str, awaitable: Any) -> Any:
         try:

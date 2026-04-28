@@ -93,6 +93,37 @@ async def test_shared_lease_keeps_phone_busy_until_last_release(
 
 
 @pytest.mark.asyncio
+async def test_premium_client_does_not_disable_generic_flood_reporting_on_persistent_session(
+    real_pool_harness_factory,
+):
+    harness = real_pool_harness_factory()
+    cli_client = harness.queue_cli_client(
+        phone="+70000000001",
+        client=FakeCliTelethonClient(me=MagicMock(premium=True)),
+    )
+    await harness.add_account(
+        "+70000000001",
+        session_string="session-a",
+        is_primary=True,
+        is_premium=True,
+    )
+    await harness.initialize_connected_accounts()
+    persistent_session = harness.pool.clients["+70000000001"]
+
+    acquired = await harness.pool.get_premium_client()
+
+    assert acquired is not None
+    premium_session, phone = acquired
+    assert phone == "+70000000001"
+    assert premium_session is not persistent_session
+    assert premium_session.raw_client is cli_client
+    assert premium_session._report_flood_wait is False
+    assert persistent_session._report_flood_wait is True
+
+    await harness.pool.release_client("+70000000001")
+
+
+@pytest.mark.asyncio
 @pytest.mark.native_backend_allowed
 async def test_native_client_by_phone_returns_flood_aware_session(
     real_pool_harness_factory,
