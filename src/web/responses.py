@@ -26,6 +26,8 @@ def flash_redirect(
         raise ValueError("flash_redirect accepts either msg or error, not both")
 
     parts = urlsplit(path)
+    if parts.scheme or parts.netloc:
+        raise ValueError(f"flash_redirect requires a relative path, got: {path!r}")
     query = dict(parse_qsl(parts.query, keep_blank_values=True))
     if msg is not None:
         query["msg"] = msg
@@ -52,9 +54,18 @@ def json_response(content: Any, *, status_code: int = 200) -> JSONResponse:
     return JSONResponse(content=content, status_code=status_code)
 
 
+def _reject_payload_keys(payload: Mapping[str, object], reserved: set[str]) -> None:
+    collisions = sorted(reserved.intersection(payload))
+    if collisions:
+        keys = ", ".join(collisions)
+        raise ValueError(f"response payload cannot override reserved key(s): {keys}")
+
+
 def json_ok(**payload: Any) -> JSONResponse:
+    _reject_payload_keys(payload, {"ok"})
     return json_response({"ok": True, **payload})
 
 
 def json_error(error: str, *, status_code: int = 400, **payload: Any) -> JSONResponse:
+    _reject_payload_keys(payload, {"ok", "error"})
     return json_response({"ok": False, "error": error, **payload}, status_code=status_code)

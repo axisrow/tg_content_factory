@@ -134,6 +134,14 @@ def test_flash_redirect_rejects_message_and_error_together():
         flash_redirect("/settings", msg="saved", error="invalid")
 
 
+@pytest.mark.parametrize("target", ["https://evil.example/path", "//evil.example/path"])
+def test_flash_redirect_rejects_absolute_targets(target):
+    from src.web.responses import flash_redirect
+
+    with pytest.raises(ValueError, match="relative path"):
+        flash_redirect(target, msg="saved")
+
+
 def test_json_response_helpers():
     from src.web.responses import json_error, json_ok, json_response
 
@@ -147,3 +155,13 @@ def test_json_response_helpers():
     assert json.loads(ok.body) == {"ok": True, "started": True}
     assert error.status_code == 422
     assert json.loads(error.body) == {"ok": False, "error": "invalid", "field": "name"}
+
+
+def test_json_helpers_reject_reserved_payload_keys():
+    from src.web.responses import json_error, json_ok
+
+    with pytest.raises(ValueError, match="reserved key"):
+        json_ok(**{"ok": False})
+
+    with pytest.raises(ValueError, match="reserved key"):
+        json_error("invalid", **{"ok": True})
