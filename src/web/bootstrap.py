@@ -333,6 +333,10 @@ async def start_container(container: AppContainer) -> None:
         requeued = await container.collection_queue.requeue_startup_tasks()
         if requeued:
             logger.info("Re-enqueued %d pending collection tasks on startup", requeued)
+        # Periodically re-check the DB for new PENDING tasks created by the
+        # web container in split / embedded-worker setups (CollectionService
+        # falls back to a DB-only insert when collection_queue is None).
+        container.collection_queue.start_db_pull()
     logger.info("startup: collection queue done (%.1fs)", time.monotonic() - t_start)
 
     if _is_dev:
