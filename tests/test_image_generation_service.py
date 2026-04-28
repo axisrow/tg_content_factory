@@ -17,7 +17,7 @@ def _make_clean_service():
 # ── search_models() huggingface ──
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_search_models_huggingface_with_token(monkeypatch):
     """Test HuggingFace model search with API token."""
     monkeypatch.delenv("HUGGINGFACE_API_KEY", raising=False)
@@ -61,7 +61,7 @@ async def test_search_models_huggingface_with_token(monkeypatch):
         )
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_search_models_huggingface_no_token_returns_empty(monkeypatch):
     """Test HuggingFace search returns empty list when no token available."""
     monkeypatch.delenv("HUGGINGFACE_API_KEY", raising=False)
@@ -73,7 +73,7 @@ async def test_search_models_huggingface_no_token_returns_empty(monkeypatch):
     assert result == []
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_search_models_huggingface_exception_returns_empty():
     """Test HuggingFace search handles exceptions gracefully."""
     svc = _make_clean_service()
@@ -94,7 +94,7 @@ async def test_search_models_huggingface_exception_returns_empty():
 # ── generate() ──
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_generate_returns_url_with_adapter():
     svc = _make_clean_service()
 
@@ -106,14 +106,14 @@ async def test_generate_returns_url_with_adapter():
     assert result == "https://img.example.com/my-model.png"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_generate_returns_none_no_adapters():
     svc = _make_clean_service()
     result = await svc.generate("some-model", "A sunset")
     assert result is None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_generate_empty_text_returns_none():
     svc = _make_clean_service()
 
@@ -125,7 +125,7 @@ async def test_generate_empty_text_returns_none():
     assert result is None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_generate_catches_adapter_error():
     svc = _make_clean_service()
 
@@ -140,13 +140,13 @@ async def test_generate_catches_adapter_error():
 # ── is_available() ──
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_is_available_false_when_empty():
     svc = _make_clean_service()
     assert await svc.is_available() is False
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_is_available_true_with_adapter():
     svc = _make_clean_service()
 
@@ -189,7 +189,7 @@ def test_parse_model_string_with_slashes():
 # ── fallback ──
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_fallback_to_first_adapter():
     svc = _make_clean_service()
     calls = []
@@ -227,7 +227,7 @@ def test_adapter_names():
 # ── constructor with adapters param ──
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_init_with_prebuilt_adapters():
     async def fake(prompt: str, model: str) -> str:
         return "prebuilt-url"
@@ -310,7 +310,7 @@ def test_resolve_adapter_returns_none_when_no_adapters():
 # ── generate() S3 upload ──
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_generate_uploads_to_s3_when_local_path():
     """When adapter returns a non-http path and S3 is configured, uploads to S3."""
     svc = _make_clean_service()
@@ -329,7 +329,7 @@ async def test_generate_uploads_to_s3_when_local_path():
     svc._s3.upload_file.assert_called_once_with("/tmp/image.png")
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_generate_skips_s3_when_adapter_returns_url():
     """When adapter returns a URL, S3 upload is skipped."""
     svc = _make_clean_service()
@@ -347,7 +347,7 @@ async def test_generate_skips_s3_when_adapter_returns_url():
     svc._s3.upload_file.assert_not_called()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_generate_s3_upload_fails_returns_local_path():
     """When S3 upload fails, returns local path as fallback."""
     svc = _make_clean_service()
@@ -367,7 +367,7 @@ async def test_generate_s3_upload_fails_returns_local_path():
 # ── generate() OSError and TimeoutError ──
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_generate_catches_os_error():
     svc = _make_clean_service()
 
@@ -379,7 +379,7 @@ async def test_generate_catches_os_error():
     assert result is None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_generate_catches_timeout_error():
     svc = _make_clean_service()
 
@@ -394,7 +394,7 @@ async def test_generate_catches_timeout_error():
 # ── generate() no adapter for provider ──
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_generate_no_adapter_for_named_provider():
     """When no adapters are registered at all, returns None."""
     svc = _make_clean_service()
@@ -448,7 +448,7 @@ def test_register_from_env_replicate(monkeypatch):
 # ── search_models static catalogs ──
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_search_models_together_catalog():
     svc = _make_clean_service()
     models = await svc.search_models("together", query="flux")
@@ -456,7 +456,7 @@ async def test_search_models_together_catalog():
     assert all("together:" in m["model_string"] for m in models)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_search_models_openai_catalog():
     svc = _make_clean_service()
     models = await svc.search_models("openai")
@@ -464,14 +464,14 @@ async def test_search_models_openai_catalog():
     assert any("dall-e-3" in m["id"] for m in models)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_search_models_unknown_provider():
     svc = _make_clean_service()
     models = await svc.search_models("unknown_provider")
     assert models == []
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_search_models_with_query_filter():
     svc = _make_clean_service()
     models = await svc.search_models("together", query="dev")
@@ -482,7 +482,7 @@ async def test_search_models_with_query_filter():
 # ── search_models Replicate (mocked HTTP) ──
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_search_models_replicate_no_token(monkeypatch):
     monkeypatch.delenv("REPLICATE_API_TOKEN", raising=False)
     svc = _make_clean_service()
@@ -490,7 +490,7 @@ async def test_search_models_replicate_no_token(monkeypatch):
     assert models == []
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_search_models_replicate_with_token(monkeypatch):
     class FakeAiohttpSession:
         async def __aenter__(self):

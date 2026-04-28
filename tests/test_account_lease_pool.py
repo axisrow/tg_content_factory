@@ -13,7 +13,7 @@ async def pool(db):
     return AccountLeasePool(db, set())
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_acquire_available_skips_active_flood(db, pool):
     """Account with future flood_wait_until is not returned."""
     await db.add_account(Account(phone="+70001", session_string="s1", is_active=True))
@@ -24,7 +24,7 @@ async def test_acquire_available_skips_active_flood(db, pool):
     assert result is None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_acquire_available_clears_expired_flood(db, pool):
     """Expired flood_wait_until is cleared from DB and account is returned."""
     await db.add_account(Account(phone="+70002", session_string="s2", is_active=True))
@@ -43,7 +43,7 @@ async def test_acquire_available_clears_expired_flood(db, pool):
     assert acc.flood_wait_until is None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_acquire_available_returns_non_flooded_when_one_flooded(db):
     """With two accounts, the flooded one is skipped and the other returned."""
     pool = AccountLeasePool(db, set())
@@ -59,7 +59,7 @@ async def test_acquire_available_returns_non_flooded_when_one_flooded(db):
     assert result.account.phone == "+70004"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_is_flood_waited_returns_false_for_expired(db):
     """_is_flood_waited correctly ignores expired timestamps."""
     past = datetime.now(timezone.utc) - timedelta(seconds=1)
@@ -67,7 +67,7 @@ async def test_is_flood_waited_returns_false_for_expired(db):
     assert not AccountLeasePool._is_flood_waited(account)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_is_flood_waited_returns_true_for_future(db):
     """_is_flood_waited correctly detects active flood wait."""
     future = datetime.now(timezone.utc) + timedelta(hours=1)
@@ -75,7 +75,7 @@ async def test_is_flood_waited_returns_true_for_future(db):
     assert AccountLeasePool._is_flood_waited(account)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_acquire_available_round_robin_distributes(db, pool):
     """Sequential acquire/release calls cycle through all available accounts."""
     phones = ["+71001", "+71002", "+71003"]
@@ -96,7 +96,7 @@ async def test_acquire_available_round_robin_distributes(db, pool):
     assert seen[3] == seen[0]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_round_robin_skips_in_use(db):
     """Phones already in_use are skipped by the round-robin walk."""
     phones = ["+72001", "+72002", "+72003"]
@@ -118,7 +118,7 @@ async def test_round_robin_skips_in_use(db):
     assert lease2.account.phone == "+72003"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_round_robin_skips_flood_waited(db, pool):
     """Flood-waited accounts are skipped during round-robin selection."""
     phones = ["+73001", "+73002", "+73003"]
@@ -140,7 +140,7 @@ async def test_round_robin_skips_flood_waited(db, pool):
     assert "+73002" not in seen
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_round_robin_skips_disconnected(db, pool):
     """Phones missing from connected_phones are skipped."""
     phones = ["+74001", "+74002", "+74003"]
@@ -159,7 +159,7 @@ async def test_round_robin_skips_disconnected(db, pool):
     assert set(seen) == {"+74001", "+74003"}
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_round_robin_survives_account_change(db, pool):
     """Cursor based on phone (not index) survives account list mutations."""
     a_id = await db.add_account(Account(phone="+75001", session_string="A", is_active=True))
@@ -183,7 +183,7 @@ async def test_round_robin_survives_account_change(db, pool):
     assert lease2.account.phone == "+75003"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_cursor_unchanged_when_all_flooded(db, pool):
     """When no exclusive account is available, cursor must not advance."""
     phones = ["+76001", "+76002", "+76003"]
@@ -214,7 +214,7 @@ async def test_cursor_unchanged_when_all_flooded(db, pool):
     assert lease.account.phone == "+76002"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_shared_fallback_uses_round_robin_order(db):
     """When every account is in use, shared leases still rotate instead of preferring primary."""
     phones = ["+77001", "+77002", "+77003"]

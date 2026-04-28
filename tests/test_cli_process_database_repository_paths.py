@@ -98,7 +98,7 @@ class TestIsPremiumFlood:
 
 
 class TestGetLiveFloodAvailability:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_premium_flood_uses_premium_getter(self):
         from src.cli.commands.test import _get_live_flood_availability
 
@@ -109,7 +109,7 @@ class TestGetLiveFloodAvailability:
         result = await _get_live_flood_availability(pool, info)
         assert result is avail
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_non_premium_uses_regular_getter(self):
         from src.cli.commands.test import _get_live_flood_availability
 
@@ -120,7 +120,7 @@ class TestGetLiveFloodAvailability:
         result = await _get_live_flood_availability(pool, info)
         assert result is avail
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_returns_none_when_no_getter(self):
         from src.cli.commands.test import _get_live_flood_availability
 
@@ -131,7 +131,7 @@ class TestGetLiveFloodAvailability:
 
 
 class TestDecideLiveTestFloodAction:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_no_availability_returns_skip(self):
         from src.cli.commands.test import _decide_live_test_flood_action
 
@@ -140,7 +140,7 @@ class TestDecideLiveTestFloodAction:
         decision = await _decide_live_test_flood_action(pool, info)
         assert decision.action == "skip"
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_not_all_flooded_returns_rotate(self):
         from src.cli.commands.test import _decide_live_test_flood_action
 
@@ -152,7 +152,7 @@ class TestDecideLiveTestFloodAction:
         decision = await _decide_live_test_flood_action(pool, info)
         assert decision.action == "rotate"
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_all_flooded_short_retry_returns_wait_retry(self):
         from src.cli.commands.test import _decide_live_test_flood_action
 
@@ -167,7 +167,7 @@ class TestDecideLiveTestFloodAction:
         assert decision.action == "wait_retry"
         assert decision.retry_after_sec == 10
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_all_flooded_long_retry_returns_skip(self):
         from src.cli.commands.test import _decide_live_test_flood_action
 
@@ -238,7 +238,7 @@ class TestSkipRemainingChecks:
 
 
 class TestRunChecks:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_check_get_stats_fail(self):
         from src.cli.commands.test import Status, _check_get_stats
 
@@ -248,7 +248,7 @@ class TestRunChecks:
         assert result.status == Status.FAIL
         assert "stats error" in result.detail
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_check_account_list_fail(self):
         from src.cli.commands.test import Status, _check_account_list
 
@@ -257,7 +257,7 @@ class TestRunChecks:
         result = await _check_account_list(db)
         assert result.status == Status.FAIL
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_check_channel_list_fail(self):
         from src.cli.commands.test import Status, _check_channel_list
 
@@ -266,7 +266,7 @@ class TestRunChecks:
         result = await _check_channel_list(db)
         assert result.status == Status.FAIL
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_check_notification_queries_with_data(self):
         from src.cli.commands.test import Status, _check_notification_queries
 
@@ -276,7 +276,7 @@ class TestRunChecks:
         assert result.status == Status.PASS
         assert "2 queries" in result.detail
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_check_notification_queries_fail(self):
         from src.cli.commands.test import Status, _check_notification_queries
 
@@ -285,7 +285,7 @@ class TestRunChecks:
         result = await _check_notification_queries(db)
         assert result.status == Status.FAIL
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_check_local_search_fail(self):
         from src.cli.commands.test import Status, _check_local_search
 
@@ -294,7 +294,7 @@ class TestRunChecks:
         result = await _check_local_search(db)
         assert result.status == Status.FAIL
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_check_collection_tasks_fail(self):
         from src.cli.commands.test import Status, _check_collection_tasks
 
@@ -303,7 +303,7 @@ class TestRunChecks:
         result = await _check_collection_tasks(db)
         assert result.status == Status.FAIL
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_check_recent_searches_with_data(self):
         from src.cli.commands.test import Status, _check_recent_searches
 
@@ -313,7 +313,7 @@ class TestRunChecks:
         assert result.status == Status.PASS
         assert "1 entries" in result.detail
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_check_recent_searches_fail(self):
         from src.cli.commands.test import Status, _check_recent_searches
 
@@ -322,7 +322,7 @@ class TestRunChecks:
         result = await _check_recent_searches(db)
         assert result.status == Status.FAIL
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_check_pipeline_list_fail(self):
         from src.cli.commands.test import Status, _check_pipeline_list
 
@@ -333,7 +333,7 @@ class TestRunChecks:
         result = await _check_pipeline_list(db)
         assert result.status == Status.FAIL
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_check_notification_bot_fail(self):
         from src.cli.commands.test import Status, _check_notification_bot
 
@@ -344,7 +344,7 @@ class TestRunChecks:
         result = await _check_notification_bot(db)
         assert result.status == Status.FAIL
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_check_notification_bot_configured(self):
         from src.cli.commands.test import Status, _check_notification_bot
 
@@ -356,7 +356,7 @@ class TestRunChecks:
         assert result.status == Status.PASS
         assert "2 configured" in result.detail
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_check_photo_tasks_fail(self):
         from src.cli.commands.test import Status, _check_photo_tasks
 
@@ -461,7 +461,7 @@ class TestCLITestRunEntry:
 
 
 class TestDisableFloodAutoSleep:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_sets_threshold_to_zero(self):
         from src.cli.commands.test import _disable_flood_auto_sleep
 
@@ -481,7 +481,7 @@ class TestDisableFloodAutoSleep:
 
         assert raw_client.flood_sleep_threshold == 0
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_skips_when_no_raw_client(self):
         from src.cli.commands.test import _disable_flood_auto_sleep
 
@@ -632,7 +632,7 @@ class TestProcessControlAdditional:
 
 
 class TestDBConnectionAdditional:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_execute_method_works(self, tmp_path):
         from src.database.connection import DBConnection
 
@@ -645,7 +645,7 @@ class TestDBConnectionAdditional:
         finally:
             await conn.close()
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_connect_sets_row_factory(self, tmp_path):
         from src.database.connection import DBConnection
 
@@ -657,7 +657,7 @@ class TestDBConnectionAdditional:
         finally:
             await conn.close()
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_connect_sets_foreign_keys(self, tmp_path):
         from src.database.connection import DBConnection
 
@@ -670,7 +670,7 @@ class TestDBConnectionAdditional:
         finally:
             await conn.close()
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_profiling_connection_execute_without_profiler(self, tmp_path):
         from src.database.connection import ProfilingConnection
 
@@ -681,7 +681,7 @@ class TestDBConnectionAdditional:
             row = await cur.fetchone()
             assert row[0] == 1
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_profiling_connection_execute_fetchall(self, tmp_path):
         from src.database.connection import ProfilingConnection
 
@@ -691,7 +691,7 @@ class TestDBConnectionAdditional:
             rows = await pc.execute_fetchall("SELECT 1 AS n UNION SELECT 2")
             assert len(rows) == 2
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_profiling_connection_executemany(self, tmp_path):
         from src.database.connection import ProfilingConnection
 
@@ -703,7 +703,7 @@ class TestDBConnectionAdditional:
             rows = await raw.execute_fetchall("SELECT * FROM t")
             assert len(rows) == 3
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_profiling_connection_executescript(self, tmp_path):
         from src.database.connection import ProfilingConnection
 
@@ -712,7 +712,7 @@ class TestDBConnectionAdditional:
             pc = ProfilingConnection(raw)
             await pc.executescript("CREATE TABLE x (id INTEGER PRIMARY KEY)")
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_profiling_connection_getattr_delegates(self, tmp_path):
         from src.database.connection import ProfilingConnection
 
@@ -722,7 +722,7 @@ class TestDBConnectionAdditional:
             # row_factory attribute should delegate to underlying connection
             assert pc.row_factory is aiosqlite.Row
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_profiling_connection_with_profiler(self, tmp_path):
         """ProfilingConnection records timing when profiler is active."""
         from src.database.connection import ProfilingConnection
@@ -749,7 +749,7 @@ class TestDBConnectionAdditional:
 # ===========================================================================
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_messages_search_with_query_and_date_from(db):
     """search_messages with query + date_from filter should work."""
     msg = _make_msg(channel_id=10, message_id=1, text="important news")
@@ -764,7 +764,7 @@ async def test_messages_search_with_query_and_date_from(db):
     assert isinstance(total, int)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_messages_search_with_query_and_date_to(db):
     """search_messages with query + date_to filter should work."""
     msg = _make_msg(channel_id=11, message_id=2, text="date filter test")
@@ -778,7 +778,7 @@ async def test_messages_search_with_query_and_date_to(db):
     assert isinstance(msgs, list)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_messages_search_with_channel_id_filter(db):
     """search_messages with channel_id filter."""
     msg = _make_msg(channel_id=42, message_id=3, text="channel specific")
@@ -791,7 +791,7 @@ async def test_messages_search_with_channel_id_filter(db):
     assert all(m.channel_id == 42 for m in msgs)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_messages_search_with_min_max_length(db):
     """search_messages with min/max length filters."""
     msg = _make_msg(channel_id=50, message_id=4, text="A" * 100)
@@ -805,7 +805,7 @@ async def test_messages_search_with_min_max_length(db):
     assert isinstance(msgs, list)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_messages_search_with_offset(db):
     """search_messages with offset should skip rows."""
     for i in range(5):
@@ -817,7 +817,7 @@ async def test_messages_search_with_offset(db):
     assert len(msgs_all) - 2 == len(msgs_offset)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_messages_search_fts_mode(db):
     """search_messages with is_fts=True."""
     msg = _make_msg(channel_id=70, message_id=1, text="fts mode test phrase")
@@ -831,7 +831,7 @@ async def test_messages_search_fts_mode(db):
     assert isinstance(msgs, list)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_messages_search_date_to_date_only_normalization(db):
     """date_to with a date-only string gets normalized to next day."""
     msg = _make_msg(channel_id=80, message_id=1, text="date norm test")
@@ -845,7 +845,7 @@ async def test_messages_search_date_to_date_only_normalization(db):
     assert isinstance(msgs, list)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_messages_get_by_id_existing(db):
     """get_by_id returns message for existing id."""
     msg = _make_msg(channel_id=90, message_id=1, text="by id test")
@@ -858,14 +858,14 @@ async def test_messages_get_by_id_existing(db):
     assert fetched.channel_id == 90
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_messages_get_by_id_nonexistent(db):
     """get_by_id returns None for unknown id."""
     result = await db.repos.messages.get_by_id(999999)
     assert result is None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_messages_build_fts_match_fts_mode():
     """_build_fts_match returns raw query in FTS mode."""
     from src.database.repositories.messages import MessagesRepository
@@ -874,7 +874,7 @@ async def test_messages_build_fts_match_fts_mode():
     assert result == "my query"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_messages_build_fts_match_phrase_mode():
     """_build_fts_match wraps query in quotes for phrase mode."""
     from src.database.repositories.messages import MessagesRepository
@@ -884,7 +884,7 @@ async def test_messages_build_fts_match_phrase_mode():
     assert result.endswith('"')
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_messages_build_fts_match_escapes_quotes():
     """_build_fts_match escapes internal quotes."""
     from src.database.repositories.messages import MessagesRepository
@@ -893,7 +893,7 @@ async def test_messages_build_fts_match_escapes_quotes():
     assert '""' in result
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_messages_build_extra_conditions_with_max_length():
     """_build_extra_conditions adds max_length and exclude patterns."""
     from src.database.repositories.messages import MessagesRepository
@@ -910,21 +910,21 @@ async def test_messages_build_extra_conditions_with_max_length():
     assert any("NOT LIKE" in c for c in conds)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_messages_upsert_embeddings_empty(db):
     """upsert_message_embeddings with empty list returns 0."""
     count = await db.repos.messages.upsert_message_embeddings([])
     assert count == 0
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_messages_upsert_embedding_json_empty(db):
     """upsert_message_embedding_json with empty list returns 0."""
     count = await db.repos.messages.upsert_message_embedding_json([])
     assert count == 0
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_messages_upsert_embeddings_mismatch_dims(db):
     """upsert_message_embeddings raises ValueError on mismatched dimensions."""
     with pytest.raises(ValueError, match="dimensions"):
@@ -933,7 +933,7 @@ async def test_messages_upsert_embeddings_mismatch_dims(db):
         )
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_messages_reset_embeddings_index(db):
     """reset_embeddings_index should complete without error."""
     await db.repos.messages.reset_embeddings_index()
@@ -941,7 +941,7 @@ async def test_messages_reset_embeddings_index(db):
     assert dims is None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_messages_get_embedding_dimensions_invalid_value(db):
     """get_embedding_dimensions returns None for invalid setting value."""
     await db.repos.messages._set_setting("semantic_embedding_dimensions", "not_a_number")
@@ -949,7 +949,7 @@ async def test_messages_get_embedding_dimensions_invalid_value(db):
     assert result is None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_messages_insert_batch_with_reactions(db):
     """insert_messages_batch handles messages with reactions."""
     import json as _json
@@ -966,7 +966,7 @@ async def test_messages_insert_batch_with_reactions(db):
     assert count >= 1
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_messages_parse_reactions_json_valid():
     from src.database.repositories.messages import _parse_reactions_json
 
@@ -975,7 +975,7 @@ async def test_messages_parse_reactions_json_valid():
     assert result[0]["emoji"] == "👍"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_messages_parse_reactions_json_invalid():
     from src.database.repositories.messages import _parse_reactions_json
 
@@ -983,7 +983,7 @@ async def test_messages_parse_reactions_json_invalid():
     assert result == []
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_messages_parse_reactions_json_none():
     from src.database.repositories.messages import _parse_reactions_json
 
@@ -991,7 +991,7 @@ async def test_messages_parse_reactions_json_none():
     assert result == []
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_messages_search_topic_id_filter(db):
     """search_messages with topic_id filter."""
     msg = _make_msg(channel_id=300, message_id=1, text="topic test")
@@ -1005,7 +1005,7 @@ async def test_messages_search_topic_id_filter(db):
     assert isinstance(msgs, list)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_messages_like_fallback_search(db):
     """MessagesRepository with fts_available=False uses LIKE search."""
     from src.database.repositories.messages import MessagesRepository
@@ -1024,7 +1024,7 @@ async def test_messages_like_fallback_search(db):
 # ===========================================================================
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_migrations_from_scratch_creates_all_tables():
     """run_migrations on fresh schema creates expected tables."""
     from src.database.migrations import run_migrations
@@ -1048,7 +1048,7 @@ async def test_migrations_from_scratch_creates_all_tables():
         assert "generation_runs" in tables
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_migrations_notification_bots_table_created():
     """notification_bots table is created during migration."""
     from src.database.migrations import run_migrations
@@ -1065,7 +1065,7 @@ async def test_migrations_notification_bots_table_created():
         assert "bot_username" in cols
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_migrations_photo_tables_created():
     """Photo tables are created during migration."""
     from src.database.migrations import run_migrations
@@ -1083,7 +1083,7 @@ async def test_migrations_photo_tables_created():
         assert "photo_batches" in tables or "collection_tasks" in tables
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_migrations_collection_tasks_index():
     """Collection tasks index is created during migration."""
     from src.database.migrations import run_migrations
@@ -1101,7 +1101,7 @@ async def test_migrations_collection_tasks_index():
         assert "idx_collection_tasks_type_status_run_after" in indices
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_migrations_search_queries_columns():
     """search_queries gets all expected columns."""
     from src.database.migrations import run_migrations
@@ -1119,7 +1119,7 @@ async def test_migrations_search_queries_columns():
         assert "is_fts" in cols
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_migrate_vec_to_portable_with_table_no_dims():
     """_migrate_vec_to_portable skips when dimensions setting is missing."""
     from src.database.migrations import _migrate_vec_to_portable
@@ -1138,7 +1138,7 @@ async def test_migrate_vec_to_portable_with_table_no_dims():
         await _migrate_vec_to_portable(conn)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_migrate_vec_to_portable_invalid_dims():
     """_migrate_vec_to_portable skips when dimensions value is invalid."""
     from src.database.migrations import _migrate_vec_to_portable
@@ -1216,7 +1216,7 @@ def _make_auto_job():
     )
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_photo_loader_create_and_get_batch(db):
     batch = _make_photo_batch()
     batch_id = await db.repos.photo_loader.create_batch(batch)
@@ -1228,13 +1228,13 @@ async def test_photo_loader_create_and_get_batch(db):
     assert fetched.phone == "+1234567890"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_photo_loader_get_batch_nonexistent(db):
     result = await db.repos.photo_loader.get_batch(999999)
     assert result is None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_photo_loader_list_batches(db):
     for i in range(3):
         batch = _make_photo_batch()
@@ -1244,7 +1244,7 @@ async def test_photo_loader_list_batches(db):
     assert len(batches) >= 3
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_photo_loader_list_batches_with_limit(db):
     for i in range(5):
         batch = _make_photo_batch()
@@ -1254,7 +1254,7 @@ async def test_photo_loader_list_batches_with_limit(db):
     assert len(batches) <= 2
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_photo_loader_update_batch_status(db):
     from src.models import PhotoBatchStatus
 
@@ -1266,7 +1266,7 @@ async def test_photo_loader_update_batch_status(db):
     assert fetched.status == PhotoBatchStatus.RUNNING
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_photo_loader_update_batch_error(db):
     batch = _make_photo_batch()
     batch_id = await db.repos.photo_loader.create_batch(batch)
@@ -1276,7 +1276,7 @@ async def test_photo_loader_update_batch_error(db):
     assert fetched.error == "Some error occurred"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_photo_loader_update_batch_last_run_at(db):
     batch = _make_photo_batch()
     batch_id = await db.repos.photo_loader.create_batch(batch)
@@ -1287,7 +1287,7 @@ async def test_photo_loader_update_batch_last_run_at(db):
     assert fetched.last_run_at is not None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_photo_loader_update_batch_no_sets(db):
     """update_batch with no args is a no-op."""
     batch = _make_photo_batch()
@@ -1296,7 +1296,7 @@ async def test_photo_loader_update_batch_no_sets(db):
     await db.repos.photo_loader.update_batch(batch_id)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_photo_loader_create_and_get_item(db):
     batch = _make_photo_batch()
     batch_id = await db.repos.photo_loader.create_batch(batch)
@@ -1311,13 +1311,13 @@ async def test_photo_loader_create_and_get_item(db):
     assert "/tmp/photo1.jpg" in fetched.file_paths
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_photo_loader_get_item_nonexistent(db):
     result = await db.repos.photo_loader.get_item(999999)
     assert result is None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_photo_loader_list_items(db):
     batch = _make_photo_batch()
     batch_id = await db.repos.photo_loader.create_batch(batch)
@@ -1330,7 +1330,7 @@ async def test_photo_loader_list_items(db):
     assert len(items) >= 3
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_photo_loader_list_items_for_batch(db):
     batch = _make_photo_batch()
     batch_id = await db.repos.photo_loader.create_batch(batch)
@@ -1344,7 +1344,7 @@ async def test_photo_loader_list_items_for_batch(db):
     assert all(it.batch_id == batch_id for it in items)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_photo_loader_update_item_status(db):
     from src.models import PhotoBatchStatus
 
@@ -1358,7 +1358,7 @@ async def test_photo_loader_update_item_status(db):
     assert fetched.status == PhotoBatchStatus.COMPLETED
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_photo_loader_update_item_error(db):
     batch = _make_photo_batch()
     batch_id = await db.repos.photo_loader.create_batch(batch)
@@ -1370,7 +1370,7 @@ async def test_photo_loader_update_item_error(db):
     assert fetched.error == "upload failed"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_photo_loader_update_item_telegram_ids(db):
     batch = _make_photo_batch()
     batch_id = await db.repos.photo_loader.create_batch(batch)
@@ -1382,7 +1382,7 @@ async def test_photo_loader_update_item_telegram_ids(db):
     assert fetched.telegram_message_ids == [111, 222]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_photo_loader_update_item_timestamps(db):
     batch = _make_photo_batch()
     batch_id = await db.repos.photo_loader.create_batch(batch)
@@ -1400,7 +1400,7 @@ async def test_photo_loader_update_item_timestamps(db):
     assert fetched.completed_at is not None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_photo_loader_update_item_no_sets(db):
     """update_item with no args is a no-op."""
     batch = _make_photo_batch()
@@ -1411,7 +1411,7 @@ async def test_photo_loader_update_item_no_sets(db):
     await db.repos.photo_loader.update_item(item_id)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_photo_loader_cancel_item(db):
     batch = _make_photo_batch()
     batch_id = await db.repos.photo_loader.create_batch(batch)
@@ -1426,13 +1426,13 @@ async def test_photo_loader_cancel_item(db):
     assert fetched.status == PhotoBatchStatus.CANCELLED
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_photo_loader_cancel_item_nonexistent(db):
     result = await db.repos.photo_loader.cancel_item(999999)
     assert result is False
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_photo_loader_claim_next_due_item(db):
     """claim_next_due_item returns pending item."""
     batch = _make_photo_batch()
@@ -1448,7 +1448,7 @@ async def test_photo_loader_claim_next_due_item(db):
     assert claimed.status == PhotoBatchStatus.RUNNING
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_photo_loader_claim_next_due_item_none(db):
     """claim_next_due_item returns None when no pending items."""
     now = datetime.now(timezone.utc)
@@ -1456,7 +1456,7 @@ async def test_photo_loader_claim_next_due_item_none(db):
     assert claimed is None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_photo_loader_requeue_running_items(db):
     """requeue_running_items_on_startup requeues RUNNING items."""
     from src.models import PhotoBatchStatus
@@ -1477,7 +1477,7 @@ async def test_photo_loader_requeue_running_items(db):
     assert fetched.status == PhotoBatchStatus.PENDING
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_photo_loader_create_and_get_auto_job(db):
     job = _make_auto_job()
     job_id = await db.repos.photo_loader.create_auto_job(job)
@@ -1490,13 +1490,13 @@ async def test_photo_loader_create_and_get_auto_job(db):
     assert fetched.is_active is True
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_photo_loader_get_auto_job_nonexistent(db):
     result = await db.repos.photo_loader.get_auto_job(999999)
     assert result is None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_photo_loader_list_auto_jobs(db):
     for i in range(3):
         job = _make_auto_job()
@@ -1506,7 +1506,7 @@ async def test_photo_loader_list_auto_jobs(db):
     assert len(jobs) >= 3
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_photo_loader_list_auto_jobs_active_only(db):
 
     # Active job
@@ -1524,7 +1524,7 @@ async def test_photo_loader_list_auto_jobs_active_only(db):
     assert inactive_id not in job_ids
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_photo_loader_update_auto_job_all_fields(db):
     job = _make_auto_job()
     job_id = await db.repos.photo_loader.create_auto_job(job)
@@ -1553,7 +1553,7 @@ async def test_photo_loader_update_auto_job_all_fields(db):
     assert fetched.last_seen_marker == "file_001.jpg"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_photo_loader_update_auto_job_no_sets(db):
     """update_auto_job with no args is a no-op."""
     job = _make_auto_job()
@@ -1562,7 +1562,7 @@ async def test_photo_loader_update_auto_job_no_sets(db):
     await db.repos.photo_loader.update_auto_job(job_id)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_photo_loader_delete_auto_job(db):
     job = _make_auto_job()
     job_id = await db.repos.photo_loader.create_auto_job(job)
@@ -1572,7 +1572,7 @@ async def test_photo_loader_delete_auto_job(db):
     assert result is None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_photo_loader_has_sent_auto_file(db):
     job = _make_auto_job()
     job_id = await db.repos.photo_loader.create_auto_job(job)
@@ -1586,7 +1586,7 @@ async def test_photo_loader_has_sent_auto_file(db):
     assert result_after is True
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_photo_loader_mark_auto_file_sent_idempotent(db):
     """mark_auto_file_sent is idempotent (INSERT OR IGNORE)."""
     job = _make_auto_job()
@@ -1601,7 +1601,7 @@ async def test_photo_loader_mark_auto_file_sent_idempotent(db):
     assert result is True
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_photo_loader_json_loads_list_valid():
     from src.database.repositories.photo_loader import _json_loads_list
 
@@ -1609,7 +1609,7 @@ async def test_photo_loader_json_loads_list_valid():
     assert result == [1, 2, 3]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_photo_loader_json_loads_list_invalid():
     from src.database.repositories.photo_loader import _json_loads_list
 
@@ -1617,7 +1617,7 @@ async def test_photo_loader_json_loads_list_invalid():
     assert result == []
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_photo_loader_json_loads_list_not_list():
     from src.database.repositories.photo_loader import _json_loads_list
 
@@ -1625,7 +1625,7 @@ async def test_photo_loader_json_loads_list_not_list():
     assert result == []
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_photo_loader_json_loads_list_empty():
     from src.database.repositories.photo_loader import _json_loads_list
 
@@ -1633,7 +1633,7 @@ async def test_photo_loader_json_loads_list_empty():
     assert result == []
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_photo_loader_dt_helper():
     from src.database.repositories.photo_loader import _dt
 

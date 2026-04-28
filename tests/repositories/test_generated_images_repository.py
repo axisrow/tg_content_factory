@@ -1,14 +1,14 @@
 import pytest
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_save_returns_id(db):
     repo = db.repos.generated_images
     img_id = await repo.save("a sunset", "together:flux", "https://img.example/1.png", None)
     assert img_id > 0
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_by_id_found(db):
     repo = db.repos.generated_images
     img_id = await repo.save("a sunset", "together:flux", "https://img.example/1.png", "/tmp/img.png")
@@ -20,13 +20,13 @@ async def test_get_by_id_found(db):
     assert img.local_path == "/tmp/img.png"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_by_id_not_found(db):
     repo = db.repos.generated_images
     assert await repo.get_by_id(99999) is None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_list_recent_default_limit(db):
     repo = db.repos.generated_images
     for i in range(60):
@@ -35,7 +35,7 @@ async def test_list_recent_default_limit(db):
     assert len(result) == 50
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_list_recent_custom_limit(db):
     repo = db.repos.generated_images
     for i in range(10):
@@ -44,7 +44,7 @@ async def test_list_recent_custom_limit(db):
     assert len(result) == 3
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_save_with_null_optional_fields(db):
     repo = db.repos.generated_images
     img_id = await repo.save("test", None, None, None)

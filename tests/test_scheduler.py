@@ -9,7 +9,7 @@ from src.database.bundles import SchedulerBundle
 from src.scheduler.service import SchedulerManager
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_run_collection_without_enqueuer():
     """Without task_enqueuer, _run_collection returns zero stats."""
     manager = SchedulerManager(SchedulerConfig())
@@ -19,7 +19,7 @@ async def test_run_collection_without_enqueuer():
     assert stats["errors"] == 0
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_run_collection_with_enqueuer():
     """Successful collection returns enqueue stats."""
     result = MagicMock()
@@ -39,7 +39,7 @@ async def test_run_collection_with_enqueuer():
     assert stats["errors"] == 0
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_load_settings_updates_interval():
     """load_settings() reads interval from DB and updates _current_interval_minutes."""
     bundle_mock = MagicMock(spec=SchedulerBundle)
@@ -53,7 +53,7 @@ async def test_load_settings_updates_interval():
     assert manager.interval_minutes == 15
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_load_settings_no_bundle():
     """load_settings() is a no-op when no scheduler_bundle is set."""
     manager = SchedulerManager(SchedulerConfig())
@@ -61,7 +61,7 @@ async def test_load_settings_no_bundle():
     assert manager.interval_minutes == 60
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_load_settings_missing_value_keeps_default():
     """load_settings() keeps config default when DB has no saved interval."""
     bundle_mock = MagicMock(spec=SchedulerBundle)
@@ -73,7 +73,7 @@ async def test_load_settings_missing_value_keeps_default():
     assert manager.interval_minutes == 60
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_run_collection_enqueuer_error():
     """Enqueue error returns error stats without crashing."""
     enqueuer = MagicMock()

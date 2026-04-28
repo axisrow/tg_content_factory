@@ -23,7 +23,7 @@ async def db(base_app):
     return db
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_agent_page_autocreates_thread(client, db):
     """Test agent page auto-creates first thread."""
     resp = await client.get("/agent", follow_redirects=False)
@@ -32,7 +32,7 @@ async def test_agent_page_autocreates_thread(client, db):
     assert "thread_id=" in location
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_agent_page_renders_with_thread(client, db):
     """Test agent page renders with existing thread."""
     thread_id = await db.create_agent_thread("Test Thread")
@@ -42,7 +42,7 @@ async def test_agent_page_renders_with_thread(client, db):
     assert "Test Thread" in resp.text
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_agent_page_invalid_thread_redirects(client, db):
     """Test agent page with invalid thread redirects to existing."""
     thread_id = await db.create_agent_thread("Valid Thread")
@@ -52,7 +52,7 @@ async def test_agent_page_invalid_thread_redirects(client, db):
     assert f"thread_id={thread_id}" in resp.headers.get("location", "")
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_create_thread(client, db):
     """Test create new thread."""
     resp = await client.post("/agent/threads", follow_redirects=False)
@@ -61,7 +61,7 @@ async def test_create_thread(client, db):
     assert "thread_id=" in location
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_delete_thread(client, db):
     """Test delete thread."""
     thread_id = await db.create_agent_thread("To Delete")
@@ -72,7 +72,7 @@ async def test_delete_thread(client, db):
     assert data["ok"] is True
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_rename_thread_success(client, db):
     """Test rename thread success."""
     thread_id = await db.create_agent_thread("Original")
@@ -87,7 +87,7 @@ async def test_rename_thread_success(client, db):
     assert data["ok"] is True
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_rename_thread_empty_title(client, db):
     """Test rename thread with empty title."""
     thread_id = await db.create_agent_thread("Original")
@@ -100,7 +100,7 @@ async def test_rename_thread_empty_title(client, db):
     assert resp.status_code == 400
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_channels_json(client, db):
     """Test get channels JSON."""
     resp = await client.get("/agent/channels-json")
@@ -109,7 +109,7 @@ async def test_get_channels_json(client, db):
     assert isinstance(data, list)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_forum_topics_empty(client, db, pool_mock):
     """Test get forum topics returns empty list."""
     pool_mock.get_forum_topics = AsyncMock(return_value=[])
@@ -120,7 +120,7 @@ async def test_get_forum_topics_empty(client, db, pool_mock):
     assert "command_id" in data
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_forum_topics_returns_data(client, db, pool_mock):
     """Test get forum topics returns data."""
     topics = [{"id": 1, "title": "Topic 1"}]
@@ -132,7 +132,7 @@ async def test_get_forum_topics_returns_data(client, db, pool_mock):
     assert "command_id" in data
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_inject_context_no_channel_id(client, db):
     """Test inject context without channel_id."""
     thread_id = await db.create_agent_thread("Context")
@@ -145,7 +145,7 @@ async def test_inject_context_no_channel_id(client, db):
     assert resp.status_code == 400
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_inject_context_thread_not_found(client):
     """Test inject context with invalid thread."""
     resp = await client.post(
@@ -156,7 +156,7 @@ async def test_inject_context_thread_not_found(client):
     assert resp.status_code == 404
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_inject_context_success(client, db):
     """Test inject context success."""
     thread_id = await db.create_agent_thread("Context")
@@ -171,7 +171,7 @@ async def test_inject_context_success(client, db):
     assert "content" in data
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_stop_chat(client, db):
     """Test stop chat."""
     thread_id = await db.create_agent_thread("Stop")
@@ -182,7 +182,7 @@ async def test_stop_chat(client, db):
     assert data["ok"] is True
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_chat_no_agent_manager(client, db):
     """Test chat without agent manager."""
     client._transport_app.state.agent_manager = None
@@ -196,7 +196,7 @@ async def test_chat_no_agent_manager(client, db):
     assert resp.status_code == 503
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_chat_empty_message(client, db):
     """Test chat with empty message."""
     thread_id = await db.create_agent_thread("Chat")
@@ -209,7 +209,7 @@ async def test_chat_empty_message(client, db):
     assert resp.status_code == 400
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_chat_thread_not_found(client):
     """Test chat with invalid thread."""
     resp = await client.post(
@@ -220,7 +220,7 @@ async def test_chat_thread_not_found(client):
     assert resp.status_code == 404
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_chat_no_backend(client, db):
     """Test chat when no backend available."""
     thread_id = await db.create_agent_thread("Chat")
@@ -241,7 +241,7 @@ async def test_chat_no_backend(client, db):
     assert resp.status_code == 503
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_chat_streaming(client, db):
     """Test chat returns SSE stream."""
     thread_id = await db.create_agent_thread("Stream")
@@ -255,7 +255,7 @@ async def test_chat_streaming(client, db):
     assert "text/event-stream" in resp.headers.get("content-type", "")
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_agent_page_shows_status(client, db):
     """Test agent page shows agent status."""
     thread_id = await db.create_agent_thread("Status")
@@ -266,7 +266,7 @@ async def test_agent_page_shows_status(client, db):
     assert "agent" in resp.text.lower() or "backend" in resp.text.lower()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_agent_page_without_agent_manager(client, db):
     """Test agent page without agent manager."""
     client._transport_app.state.agent_manager = None
@@ -279,7 +279,7 @@ async def test_agent_page_without_agent_manager(client, db):
 # === Additional tests ===
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_stop_chat_with_agent_manager(client, db):
     """Test stop chat with agent manager."""
     thread_id = await db.create_agent_thread("Stop")
@@ -290,7 +290,7 @@ async def test_stop_chat_with_agent_manager(client, db):
     assert data["ok"] is True
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_inject_context_with_topic(client, db):
     """Test inject context with topic_id."""
     thread_id = await db.create_agent_thread("Context")
@@ -305,7 +305,7 @@ async def test_inject_context_with_topic(client, db):
     assert "content" in data
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_inject_context_empty_topic(client, db):
     """Test inject context with empty topic_id."""
     thread_id = await db.create_agent_thread("Context")
@@ -320,7 +320,7 @@ async def test_inject_context_empty_topic(client, db):
     assert "content" in data
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_inject_context_with_limit(client, db):
     """Test inject context respects limit."""
     thread_id = await db.create_agent_thread("Context")
@@ -333,7 +333,7 @@ async def test_inject_context_with_limit(client, db):
     assert resp.status_code == 200
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_delete_thread_not_found(client):
     """Test delete non-existent thread returns ok (idempotent)."""
     resp = await client.delete("/agent/threads/999999")
@@ -343,7 +343,7 @@ async def test_delete_thread_not_found(client):
     assert data["ok"] is True
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_rename_thread_not_found(client):
     """Test rename non-existent thread returns ok (idempotent)."""
     resp = await client.post(
@@ -357,7 +357,7 @@ async def test_rename_thread_not_found(client):
     assert data["ok"] is True
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_forum_topics_fallback(client, db, pool_mock):
     """Test get forum topics fallback to cached when API fails."""
     # Simulate API returning empty (flood wait, etc.)

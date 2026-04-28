@@ -133,7 +133,7 @@ async def _init_minimal_schema(db):
     await db.commit()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_run_migrations_creates_dialog_cache(fresh_db):
     """Covers dialog_cache table creation."""
     await _init_minimal_schema(fresh_db)
@@ -144,7 +144,7 @@ async def test_run_migrations_creates_dialog_cache(fresh_db):
     assert await cur.fetchone() is not None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_run_migrations_creates_channel_rename_events(fresh_db):
     """Covers channel_rename_events table creation."""
     await _init_minimal_schema(fresh_db)
@@ -155,7 +155,7 @@ async def test_run_migrations_creates_channel_rename_events(fresh_db):
     assert await cur.fetchone() is not None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_run_migrations_creates_runtime_snapshots(fresh_db):
     """Covers runtime_snapshots table creation."""
     await _init_minimal_schema(fresh_db)
@@ -166,7 +166,7 @@ async def test_run_migrations_creates_runtime_snapshots(fresh_db):
     assert await cur.fetchone() is not None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_run_migrations_creates_telegram_commands(fresh_db):
     """Covers telegram_commands table creation."""
     await _init_minimal_schema(fresh_db)
@@ -177,7 +177,7 @@ async def test_run_migrations_creates_telegram_commands(fresh_db):
     assert await cur.fetchone() is not None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_run_migrations_creates_message_embeddings_json(fresh_db):
     """Covers message_embeddings_json table creation."""
     await _init_minimal_schema(fresh_db)
@@ -188,7 +188,7 @@ async def test_run_migrations_creates_message_embeddings_json(fresh_db):
     assert await cur.fetchone() is not None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_run_migrations_creates_dialog_cache_index(fresh_db):
     """Covers dialog_cache phone index creation."""
     await _init_minimal_schema(fresh_db)
@@ -199,7 +199,7 @@ async def test_run_migrations_creates_dialog_cache_index(fresh_db):
     assert await cur.fetchone() is not None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_run_migrations_creates_channel_stats_index(fresh_db):
     """Covers channel_stats lookup index creation."""
     await _init_minimal_schema(fresh_db)
@@ -210,7 +210,7 @@ async def test_run_migrations_creates_channel_stats_index(fresh_db):
     assert await cur.fetchone() is not None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_run_migrations_notification_search_cleanup(fresh_db):
     """Covers updating notification_search tasks to failed."""
     await _init_minimal_schema(fresh_db)
@@ -229,7 +229,7 @@ async def test_run_migrations_notification_search_cleanup(fresh_db):
     assert "removed" in row["error"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_run_migrations_channel_type_normalization(fresh_db):
     """Covers channel_type normalization: supergroup->group, chat->group."""
     await _init_minimal_schema(fresh_db)
@@ -257,7 +257,7 @@ async def test_run_migrations_channel_type_normalization(fresh_db):
     assert rows[3] == "group"  # 'chat' becomes 'group'
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_run_migrations_last_collected_id_fixup(fresh_db):
     """Covers last_collected_id=0 fixup with existing messages."""
     await _init_minimal_schema(fresh_db)
@@ -277,7 +277,7 @@ async def test_run_migrations_last_collected_id_fixup(fresh_db):
     assert row["last_collected_id"] == 99
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_run_migrations_adds_search_query_columns(fresh_db):
     """Covers search_queries column additions (is_regex, notify_on_collect, etc.)."""
     await _init_minimal_schema(fresh_db)
@@ -292,7 +292,7 @@ async def test_run_migrations_adds_search_query_columns(fresh_db):
     assert "max_length" in cols
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_run_migrations_adds_pipeline_target_columns(fresh_db):
     """Covers pipeline_targets target_title, target_type column additions."""
     await _init_minimal_schema(fresh_db)
@@ -303,7 +303,7 @@ async def test_run_migrations_adds_pipeline_target_columns(fresh_db):
     assert "target_type" in cols
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_run_migrations_adds_pipeline_json_and_refinement(fresh_db):
     """Covers content_pipelines refinement_steps and pipeline_json columns."""
     await _init_minimal_schema(fresh_db)
@@ -315,7 +315,7 @@ async def test_run_migrations_adds_pipeline_json_and_refinement(fresh_db):
     assert "publish_times" in cols
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_run_migrations_forward_from_channel_id(fresh_db):
     """Covers forward_from_channel_id column addition on messages."""
     await _init_minimal_schema(fresh_db)
@@ -325,7 +325,7 @@ async def test_run_migrations_forward_from_channel_id(fresh_db):
     assert "forward_from_channel_id" in cols
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_run_migrations_fwd_abs_normalization(fresh_db):
     """Covers _migration_fwd_abs_v1: negative forward_from_channel_id abs normalization."""
     await _init_minimal_schema(fresh_db)
@@ -346,7 +346,7 @@ async def test_run_migrations_fwd_abs_normalization(fresh_db):
     assert row["forward_from_channel_id"] == 100123456
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_run_migrations_adds_channel_preferred_phone(fresh_db):
     """Covers preferred_phone column on channels."""
     await _init_minimal_schema(fresh_db)
@@ -356,7 +356,7 @@ async def test_run_migrations_adds_channel_preferred_phone(fresh_db):
     assert "preferred_phone" in cols
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_run_migrations_adds_message_translation_columns(fresh_db):
     """Covers translation_en and translation_custom columns."""
     await _init_minimal_schema(fresh_db)
@@ -367,7 +367,7 @@ async def test_run_migrations_adds_message_translation_columns(fresh_db):
     assert "translation_custom" in cols
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_migrate_vec_to_portable_invalid_type_row(fresh_db):
     """Covers the `else: continue` branch when embedding type is not str/bytes/bytearray."""
     await _init_minimal_schema(fresh_db)
@@ -398,7 +398,7 @@ async def test_migrate_vec_to_portable_invalid_type_row(fresh_db):
     assert row["cnt"] == 1  # bytes blob should be migrated
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_migrate_tool_permission_empty_value(fresh_db):
     """Covers the case where the setting value is empty string."""
     await _init_minimal_schema(fresh_db)
@@ -412,7 +412,7 @@ async def test_migrate_tool_permission_empty_value(fresh_db):
     assert row["value"] == ""
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_migrate_tool_permission_non_dict_value(fresh_db):
     """Covers the case where the JSON value is a list (not dict)."""
     await _init_minimal_schema(fresh_db)
@@ -427,7 +427,7 @@ async def test_migrate_tool_permission_non_dict_value(fresh_db):
     assert row["value"] == "[1,2,3]"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_run_migrations_prompt_reset_already_done(fresh_db):
     """Covers the path where _migration_reset_prompt_v2 already exists."""
     await _init_minimal_schema(fresh_db)
@@ -443,7 +443,7 @@ async def test_run_migrations_prompt_reset_already_done(fresh_db):
     assert await cur.fetchone() is None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_run_migrations_adds_translation_columns_on_bare_messages(fresh_db):
     """Test adding translation columns on a bare messages table that lacks them."""
     await fresh_db.execute("""
@@ -503,7 +503,7 @@ async def test_run_migrations_adds_translation_columns_on_bare_messages(fresh_db
 # ============================================================================
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_publish_snapshots_basic():
     """Covers _publish_snapshots happy path with mocked container."""
     from src.runtime.worker import _publish_snapshots
@@ -553,7 +553,7 @@ async def test_publish_snapshots_basic():
     assert mock_runtime_snapshots.upsert_snapshot.call_count >= 5
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_publish_snapshots_with_available_notification():
     """Covers the notification bot snapshot path when target is available."""
     from src.runtime.worker import _publish_snapshots
@@ -595,7 +595,7 @@ async def test_publish_snapshots_with_available_notification():
     assert mock_runtime_snapshots.upsert_snapshot.call_count >= 5
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_publish_snapshots_notification_exception():
     """Covers the exception path when NotificationService.get_status() fails."""
     from src.runtime.worker import _publish_snapshots
@@ -648,7 +648,7 @@ async def test_publish_snapshots_notification_exception():
 # ============================================================================
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_generate_image_url_result(mock_db, tmp_path):
     """Covers the URL download path in generate_image (lines 58-93)."""
 
@@ -726,7 +726,7 @@ def clean_provider_env():
             os.environ[var] = val
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_load_db_providers_no_db():
     """Covers load_db_providers when db is None."""
     svc = AgentProviderService(db=None, config=None)
@@ -734,7 +734,7 @@ async def test_load_db_providers_no_db():
     assert result == 0
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_load_db_providers_db_exception():
     """Covers load_db_providers exception path."""
     mock_db = MagicMock()
@@ -754,7 +754,7 @@ async def test_load_db_providers_db_exception():
     assert result == 0
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_reload_db_providers():
     """Covers reload_db_providers: removes stale providers."""
     svc = AgentProviderService()
@@ -772,7 +772,7 @@ async def test_reload_db_providers():
     assert "db_only" not in svc._registry
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_provider_status_list_no_db():
     """Covers get_provider_status_list when db is None."""
     svc = AgentProviderService(db=None, config=None)
@@ -780,7 +780,7 @@ async def test_get_provider_status_list_no_db():
     assert result == []
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_provider_status_list_with_configs():
     """Covers get_provider_status_list with active/disabled/invalid providers."""
     mock_db = MagicMock()
@@ -807,7 +807,7 @@ async def test_get_provider_status_list_with_configs():
     assert any(s["provider"] == "disabled_prov" and s["status"] == "disabled" for s in statuses)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_has_providers_true_and_false():
     """Covers has_providers with and without real providers."""
     svc = AgentProviderService()
@@ -833,7 +833,7 @@ def test_get_provider_callable_returns_first_non_default():
     assert result == "custom"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_build_provider_service():
     """Covers build_provider_service factory function."""
     svc = await build_provider_service(db=None, config=None)
@@ -945,7 +945,7 @@ def test_has_valid_secrets_with_empty_secrets():
 # ============================================================================
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_load_telegram_credentials_from_config():
     """Covers load_telegram_credentials with config values."""
     from src.web.bootstrap import load_telegram_credentials
@@ -961,7 +961,7 @@ async def test_load_telegram_credentials_from_config():
     assert api_hash == "test_hash"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_load_telegram_credentials_from_db():
     """Covers load_telegram_credentials falling back to DB settings."""
     from src.web.bootstrap import load_telegram_credentials
@@ -977,7 +977,7 @@ async def test_load_telegram_credentials_from_db():
     assert api_hash == "db_hash"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_load_telegram_credentials_no_db_fallback():
     """Covers load_telegram_credentials with no DB values."""
     from src.web.bootstrap import load_telegram_credentials
@@ -1137,7 +1137,7 @@ def test_invalidate_numpy_index():
     assert local_search._numpy_index_loaded is False
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_search_semantic_no_vec_no_numpy():
     """Covers semantic search fallback when vec and numpy are unavailable."""
     mock_bundle = MagicMock()
@@ -1156,7 +1156,7 @@ async def test_search_semantic_no_vec_no_numpy():
     assert "unavailable" in str(exc_info.value)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_search_semantic_numpy_empty_index():
     """Covers semantic search with numpy fallback but empty index."""
     mock_bundle = MagicMock()
@@ -1181,7 +1181,7 @@ async def test_search_semantic_numpy_empty_index():
         assert result.messages == []
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_search_semantic_vec_path():
     """Covers semantic search using the vec (sqlite-vec) path."""
     mock_bundle = MagicMock()
@@ -1198,7 +1198,7 @@ async def test_search_semantic_vec_path():
     assert result.messages[0].text == "test"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_search_passes_offset_and_limit(mock_search_bundle_for_local):
     """Covers search with offset parameter."""
     local_search = LocalSearch(mock_search_bundle_for_local)
@@ -1224,7 +1224,7 @@ def mock_search_bundle_for_local():
 # ============================================================================
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_cancel_bg_tasks_empty():
     """Covers _cancel_bg_tasks with empty set."""
     from src.web.bootstrap import _cancel_bg_tasks
@@ -1234,7 +1234,7 @@ async def test_cancel_bg_tasks_empty():
     assert len(tasks) == 0
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_cancel_bg_tasks_with_tasks():
     """Covers _cancel_bg_tasks cancelling active tasks."""
     from src.web.bootstrap import _cancel_bg_tasks

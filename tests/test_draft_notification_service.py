@@ -74,7 +74,7 @@ def mock_auto_pipeline():
 # === notify_new_draft tests ===
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_notify_new_draft_without_notifier(mock_db, mock_run, mock_moderated_pipeline):
     """Returns False when notifier is None."""
     service = DraftNotificationService(mock_db, notifier=None)
@@ -82,7 +82,7 @@ async def test_notify_new_draft_without_notifier(mock_db, mock_run, mock_moderat
     assert result is False
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_notify_new_draft_auto_mode(
     mock_db, mock_notifier, mock_run, mock_auto_pipeline
 ):
@@ -93,7 +93,7 @@ async def test_notify_new_draft_auto_mode(
     mock_notifier.notify.assert_not_called()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_notify_new_draft_moderated_success(
     mock_db, mock_notifier, mock_run, mock_moderated_pipeline
 ):
@@ -108,7 +108,7 @@ async def test_notify_new_draft_moderated_success(
     assert "#123" in call_args
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_notify_new_draft_truncates_long_content(
     mock_db, mock_notifier, mock_long_run, mock_moderated_pipeline
 ):
@@ -121,7 +121,7 @@ async def test_notify_new_draft_truncates_long_content(
     assert "A" * 200 in call_args
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_notify_new_draft_short_content(
     mock_db, mock_notifier, mock_short_run, mock_moderated_pipeline
 ):
@@ -135,7 +135,7 @@ async def test_notify_new_draft_short_content(
     assert call_args.count("...") == 0
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_notify_new_draft_notifier_exception(
     mock_db, mock_notifier, mock_run, mock_moderated_pipeline
 ):
@@ -146,7 +146,7 @@ async def test_notify_new_draft_notifier_exception(
     assert result is False
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_notify_new_draft_notifier_returns_false(
     mock_db, mock_notifier, mock_run, mock_moderated_pipeline
 ):
@@ -157,7 +157,7 @@ async def test_notify_new_draft_notifier_returns_false(
     assert result is False
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_notify_new_draft_with_none_generated_text(
     mock_db, mock_notifier, mock_moderated_pipeline
 ):
@@ -173,7 +173,7 @@ async def test_notify_new_draft_with_none_generated_text(
 # === notify_bulk_drafts tests ===
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_notify_bulk_drafts_without_notifier(mock_db, mock_moderated_pipeline):
     """Returns 0 when notifier is None."""
     service = DraftNotificationService(mock_db, notifier=None)
@@ -182,7 +182,7 @@ async def test_notify_bulk_drafts_without_notifier(mock_db, mock_moderated_pipel
     assert result == 0
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_notify_bulk_drafts_auto_mode(mock_db, mock_notifier, mock_auto_pipeline):
     """Returns 0 for auto mode pipelines."""
     service = DraftNotificationService(mock_db, notifier=mock_notifier)
@@ -191,7 +191,7 @@ async def test_notify_bulk_drafts_auto_mode(mock_db, mock_notifier, mock_auto_pi
     assert result == 0
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_notify_bulk_drafts_single_run(
     mock_db, mock_notifier, mock_run, mock_moderated_pipeline
 ):
@@ -202,7 +202,7 @@ async def test_notify_bulk_drafts_single_run(
     mock_notifier.notify.assert_called_once()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_notify_bulk_drafts_multiple_runs(
     mock_db, mock_notifier, mock_moderated_pipeline
 ):
@@ -216,7 +216,7 @@ async def test_notify_bulk_drafts_multiple_runs(
     assert "5 новых черновиков" in call_args
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_notify_bulk_drafts_limits_displayed_runs(
     mock_db, mock_notifier, mock_moderated_pipeline
 ):
@@ -229,7 +229,7 @@ async def test_notify_bulk_drafts_limits_displayed_runs(
     assert "и ещё 5" in call_args
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_notify_bulk_drafts_notifier_exception(
     mock_db, mock_notifier, mock_moderated_pipeline
 ):
@@ -241,7 +241,7 @@ async def test_notify_bulk_drafts_notifier_exception(
     assert result == 0
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_notify_bulk_drafts_notifier_returns_false(
     mock_db, mock_notifier, mock_moderated_pipeline
 ):
@@ -253,7 +253,7 @@ async def test_notify_bulk_drafts_notifier_returns_false(
     assert result == 0
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_notify_bulk_drafts_empty_list(mock_db, mock_notifier, mock_moderated_pipeline):
     """Handles empty list gracefully."""
     service = DraftNotificationService(mock_db, notifier=mock_notifier)

@@ -51,7 +51,7 @@ def _mock_session(responses: list):
 # ── Together AI ──
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_together_image_adapter_success():
     adapter = make_together_image_adapter("test-key")
     resp = _mock_response(json_data={"data": [{"url": "https://img.together.xyz/abc.png"}]})
@@ -63,7 +63,7 @@ async def test_together_image_adapter_success():
     assert url == "https://img.together.xyz/abc.png"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_together_image_adapter_error():
     adapter = make_together_image_adapter("test-key")
     resp = _mock_response(status=429, json_data={})
@@ -77,7 +77,7 @@ async def test_together_image_adapter_error():
 # ── HuggingFace ──
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_huggingface_image_adapter_saves_binary(tmp_path):
     adapter = make_huggingface_image_adapter("test-token", output_dir=str(tmp_path))
     fake_png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 100
@@ -99,7 +99,7 @@ async def test_huggingface_image_adapter_saves_binary(tmp_path):
 # ── OpenAI ──
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_openai_image_adapter_success():
     adapter = make_openai_image_adapter("test-key")
     resp = _mock_response(json_data={"data": [{"url": "https://oaidalleapi.blob/img.png"}]})
@@ -114,7 +114,7 @@ async def test_openai_image_adapter_success():
 # ── Replicate ──
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_replicate_image_adapter_polls_until_complete():
     adapter = make_replicate_image_adapter("test-token", timeout=5.0)
 
@@ -141,7 +141,7 @@ async def test_replicate_image_adapter_polls_until_complete():
     assert url == "https://replicate.delivery/img.png"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_replicate_image_adapter_failed_prediction():
     adapter = make_replicate_image_adapter("test-token", timeout=5.0)
 

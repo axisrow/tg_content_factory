@@ -19,13 +19,13 @@ class FakeScheduler:
         return self._job if self._job and self._job.id == job_id else None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_job_next_run_returns_none_when_no_scheduler():
     mgr = SchedulerManager()
     assert mgr.get_job_next_run("pipeline_run_1") is None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_job_next_run_returns_time_when_job_exists():
     dt = datetime(2026, 3, 17, 12, 0)
     job = FakeJob("pipeline_run_1", next_run_time=dt)

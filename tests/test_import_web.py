@@ -34,7 +34,7 @@ async def client(tmp_path, real_pool_harness_factory):
     await db.close()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_import_page_get(client):
     resp = await client.get("/channels/import")
     assert resp.status_code == 200
@@ -42,7 +42,7 @@ async def test_import_page_get(client):
     assert "Импортировать" in resp.text
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_import_textarea(client):
     resp = await client.post(
         "/channels/import",
@@ -54,7 +54,7 @@ async def test_import_textarea(client):
     assert "channel2" in resp.text
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_import_empty_input(client):
     resp = await client.post(
         "/channels/import",
@@ -65,7 +65,7 @@ async def test_import_empty_input(client):
     assert "Всего" in resp.text
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_import_skips_duplicates(client):
     # First import
     await client.post(
@@ -81,7 +81,7 @@ async def test_import_skips_duplicates(client):
     assert "Пропущен" in resp.text
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_import_button_on_channels_page(client):
     resp = await client.get("/channels/")
     assert resp.status_code == 200
@@ -102,7 +102,7 @@ async def client_no_accounts(tmp_path, real_pool_harness_factory):
     await db.close()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_import_no_client_still_enqueues(client_no_accounts):
     """Under queued model, web just enqueues a channels.import_batch command.
 
@@ -119,7 +119,7 @@ async def test_import_no_client_still_enqueues(client_no_accounts):
     assert "chan3" in resp.text
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_import_file_upload(client):
     file_content = b"@filech1\n@filech2\n@filech3"
     resp = await client.post(

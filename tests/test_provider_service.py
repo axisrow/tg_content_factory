@@ -110,7 +110,7 @@ def test_openai_provider_not_registered_without_key(clean_env):
     assert "openai" not in svc._registry
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_openai_provider_calls_api(clean_env):
     """OpenAI provider makes correct API call."""
     os.environ["OPENAI_API_KEY"] = "test_key"
@@ -135,7 +135,7 @@ async def test_openai_provider_calls_api(clean_env):
         assert result == "Hello"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_openai_provider_error_status(clean_env):
     """OpenAI provider raises on error status."""
     os.environ["OPENAI_API_KEY"] = "test_key"

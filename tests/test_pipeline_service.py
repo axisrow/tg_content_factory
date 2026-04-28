@@ -30,7 +30,7 @@ async def svc(db):
     return PipelineService(PipelineBundle.from_database(db))
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_add_and_list_pipeline(svc):
     pipeline_id = await svc.add(
         name="Digest",
@@ -48,7 +48,7 @@ async def test_add_and_list_pipeline(svc):
     assert items[0]["target_refs"] == ["+100|77"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_invalid_prompt_is_rejected(svc):
     with pytest.raises(PipelineValidationError):
         await svc.add(
@@ -59,7 +59,7 @@ async def test_invalid_prompt_is_rejected(svc):
         )
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_missing_dialog_cache_is_rejected(svc):
     with pytest.raises(PipelineValidationError):
         await svc.add(

@@ -50,7 +50,7 @@ async def _set_run_times(
     await db.db.commit()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_content_analytics_summary_and_pipeline_stats(db):
     analytics = ContentAnalyticsService(db)
     pipeline_a = await _create_pipeline(db, "Pipeline A")
@@ -89,7 +89,7 @@ async def test_content_analytics_summary_and_pipeline_stats(db):
     assert stats[1].success_rate == 0.0
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_content_analytics_daily_stats_aggregate_all_pipelines(db):
     analytics = ContentAnalyticsService(db)
     pipeline_a = await _create_pipeline(db, "Pipeline A")

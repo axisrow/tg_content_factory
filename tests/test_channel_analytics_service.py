@@ -63,7 +63,7 @@ async def _seed_messages_batch(db, channel_id, messages):
 # ─── tests ───────────────────────────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_active_channels(db):
     await _seed_channel(db, channel_id=100111, title="Active 1", username="active1")
     await _seed_channel(db, channel_id=100222, title="Active 2", username="active2")
@@ -80,14 +80,14 @@ async def test_get_active_channels(db):
     assert all(isinstance(c, ChannelListItem) for c in channels)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_active_channels_empty(db):
     svc = ChannelAnalyticsService(db)
     channels = await svc.get_active_channels()
     assert channels == []
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_channel_overview_basic(db):
     await _seed_channel(db, channel_id=100123, title="Overview Chan", username="ov_chan")
     svc = ChannelAnalyticsService(db)
@@ -104,7 +104,7 @@ async def test_get_channel_overview_basic(db):
     assert overview.err24 is None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_channel_overview_with_subscribers(db):
     await _seed_channel(db, channel_id=100123, title="Sub Chan")
     # Two stats entries for delta calculation
@@ -120,7 +120,7 @@ async def test_get_channel_overview_with_subscribers(db):
     assert overview.avg_reactions == 25.0
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_channel_overview_with_posts(db):
     await _seed_channel(db, channel_id=100123, title="Post Chan")
     await _seed_stats(db, 100123, subscriber_count=500, avg_views=200.0)
@@ -175,7 +175,7 @@ async def test_get_channel_overview_with_posts(db):
     assert overview1.posts_month == 5  # 5 within last day
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_channel_overview_missing_channel(db):
     svc = ChannelAnalyticsService(db)
     overview = await svc.get_channel_overview(999999)
@@ -184,7 +184,7 @@ async def test_get_channel_overview_missing_channel(db):
     assert overview.username is None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_subscriber_history(db):
     await _seed_channel(db, channel_id=100123, title="Hist Chan")
     for i in range(5):
@@ -202,7 +202,7 @@ async def test_get_subscriber_history(db):
     assert counts[-1] == 300
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_views_timeseries(db):
     await _seed_channel(db, channel_id=100123, title="Views Chan")
     now = datetime.now(timezone.utc)
@@ -227,7 +227,7 @@ async def test_get_views_timeseries(db):
         assert "avg_views" in entry
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_post_frequency(db):
     await _seed_channel(db, channel_id=100123, title="Freq Chan")
     now = datetime.now(timezone.utc)
@@ -264,7 +264,7 @@ async def test_get_post_frequency(db):
     assert yesterday_count == 2
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_citation_stats(db):
     await _seed_channel(db, channel_id=100123, title="Cite Chan")
     messages = []
@@ -287,7 +287,7 @@ async def test_get_citation_stats(db):
     assert stats.avg_forwards == 20.0  # 100 / 5
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_err(db):
     await _seed_channel(db, channel_id=100123, title="ERR Chan")
     await _seed_stats(db, 100123, subscriber_count=1000, avg_views=200.0)
@@ -314,7 +314,7 @@ async def test_get_err(db):
     assert abs(err - 10.7) < 0.1
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_err_no_subscribers(db):
     await _seed_channel(db, channel_id=100123, title="No Sub Chan")
     svc = ChannelAnalyticsService(db)
@@ -322,7 +322,7 @@ async def test_get_err_no_subscribers(db):
     assert err is None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_err24(db):
     await _seed_channel(db, channel_id=100123, title="ERR24 Chan")
     await _seed_stats(db, 100123, subscriber_count=500)
@@ -346,7 +346,7 @@ async def test_get_err24(db):
     assert abs(err24 - 43.0) < 0.1
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_err24_no_recent_posts(db):
     await _seed_channel(db, channel_id=100123, title="Empty ERR24")
     await _seed_stats(db, 100123, subscriber_count=500)
@@ -364,7 +364,7 @@ async def test_get_err24_no_recent_posts(db):
     assert err24 is None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_hourly_activity(db):
     await _seed_channel(db, channel_id=100123, title="Hourly Chan")
     now = datetime.now(timezone.utc)
@@ -387,7 +387,7 @@ async def test_get_hourly_activity(db):
     assert hour_counts.get(20) == 1
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_ranked_channels_by_err(db):
     await _seed_channel(db, channel_id=100111, title="Low ERR", username="low_err")
     await _seed_channel(db, channel_id=100222, title="High ERR", username="high_err")
@@ -429,7 +429,7 @@ async def test_get_ranked_channels_by_err(db):
     assert rankings[1].rank == 2
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_ranked_channels_by_subscriber_count(db):
     await _seed_channel(db, channel_id=100111, title="Small", username="small")
     await _seed_channel(db, channel_id=100222, title="Big", username="big")
@@ -445,7 +445,7 @@ async def test_get_ranked_channels_by_subscriber_count(db):
     assert rankings[1].score == 100.0
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_ranked_channels_limit(db):
     for i in range(5):
         await _seed_channel(db, channel_id=-100100 - i, title=f"Ch {i}")
@@ -457,7 +457,7 @@ async def test_get_ranked_channels_limit(db):
     assert all(r.rank <= 3 for r in rankings)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_channel_comparison(db):
     await _seed_channel(db, channel_id=100111, title="Chan A", username="chan_a")
     await _seed_channel(db, channel_id=100222, title="Chan B", username="chan_b")
@@ -476,7 +476,7 @@ async def test_get_channel_comparison(db):
     assert "err" in comparison.metrics
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_channel_comparison_empty(db):
     svc = ChannelAnalyticsService(db)
     comparison = await svc.get_channel_comparison([])
@@ -484,7 +484,7 @@ async def test_get_channel_comparison_empty(db):
     assert comparison.channels == []
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_ranked_channels_unknown_metric(db):
     await _seed_channel(db, channel_id=100111, title="Unknown Metric Chan")
     await _seed_stats(db, 100111, subscriber_count=500)
@@ -495,7 +495,7 @@ async def test_get_ranked_channels_unknown_metric(db):
     assert rankings[0].score == 0.0
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_overview_to_dict(db):
     """Verify dataclass serialization works for template rendering."""
     await _seed_channel(db, channel_id=100123, title="Dict Chan")
@@ -513,7 +513,7 @@ async def test_overview_to_dict(db):
 # ── heatmap tests ────────────────────────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_heatmap_empty(db):
     await _seed_channel(db, channel_id=100123, title="Heatmap Empty")
     svc = ChannelAnalyticsService(db)
@@ -521,7 +521,7 @@ async def test_get_heatmap_empty(db):
     assert data == []
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_heatmap_basic(db):
     await _seed_channel(db, channel_id=100123, title="Heatmap Chan")
     now = datetime.now(timezone.utc)
@@ -564,7 +564,7 @@ async def test_get_heatmap_basic(db):
     assert total_count == 5  # 3 Monday + 2 Wednesday
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_heatmap_days_filter(db):
     await _seed_channel(db, channel_id=100123, title="Heatmap Days")
     now = datetime.now(timezone.utc)
@@ -591,7 +591,7 @@ async def test_get_heatmap_days_filter(db):
 # ── cross-channel citation tests ─────────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_cross_channel_citations_empty(db):
     await _seed_channel(db, channel_id=100123, title="Cite Empty")
     svc = ChannelAnalyticsService(db)
@@ -599,7 +599,7 @@ async def test_get_cross_channel_citations_empty(db):
     assert data == []
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_cross_channel_citations_basic(db):
     # Source channel
     await _seed_channel(db, channel_id=100500, title="Source Chan", username="src_chan")
@@ -635,7 +635,7 @@ async def test_get_cross_channel_citations_basic(db):
     assert data[0]["latest_date"] is not None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_cross_channel_citations_multiple_sources(db):
     await _seed_channel(db, channel_id=100111, title="Source A", username="src_a")
     await _seed_channel(db, channel_id=100222, title="Source B", username="src_b")
@@ -667,7 +667,7 @@ async def test_get_cross_channel_citations_multiple_sources(db):
     assert data[1]["citation_count"] == 2
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_cross_channel_citations_limit(db):
     await _seed_channel(db, channel_id=100123, title="Target Limit")
     now = datetime.now(timezone.utc)
@@ -687,7 +687,7 @@ async def test_get_cross_channel_citations_limit(db):
 # ── repo-level tests for new methods ─────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_repo_hour_weekday_heatmap(db):
     await _seed_channel(db, channel_id=100123, title="Repo Heatmap")
     now = datetime.now(timezone.utc)
@@ -710,7 +710,7 @@ async def test_repo_hour_weekday_heatmap(db):
         assert r["count"] > 0
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_repo_cross_channel_citations_no_forward(db):
     await _seed_channel(db, channel_id=100123, title="No Fwd")
     await db.insert_message(Message(
@@ -725,7 +725,7 @@ async def test_repo_cross_channel_citations_no_forward(db):
 # ── web API route tests ──────────────────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_api_heatmap_route(db):
     """Verify heatmap service returns list (route requires full app state)."""
     await _seed_channel(db, channel_id=100123, title="API Heat")
@@ -734,7 +734,7 @@ async def test_api_heatmap_route(db):
     assert isinstance(data, list)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_api_cross_citations_route(db):
     """Verify cross-citations service returns list (route requires full app state)."""
     await _seed_channel(db, channel_id=100123, title="API Cross")
@@ -746,7 +746,7 @@ async def test_api_cross_citations_route(db):
 # ── heatmap: weekday / hour precision tests ────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_heatmap_specific_weekday_hour_values(db):
     """Verify heatmap returns correct weekday (%w) and hour values."""
     await _seed_channel(db, channel_id=100123, title="Heatmap Precise")
@@ -779,7 +779,7 @@ async def test_heatmap_specific_weekday_hour_values(db):
     assert (0, 0) not in lookup or lookup.get((0, 0)) is None  # Sunday midnight unlikely
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_heatmap_aggregation_multiple_same_slot(db):
     """Multiple messages in the same (weekday, hour) slot aggregate."""
     await _seed_channel(db, channel_id=100123, title="Heatmap Agg")
@@ -806,7 +806,7 @@ async def test_heatmap_aggregation_multiple_same_slot(db):
 # ── cross-channel citation edge cases ─────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_cross_citations_date_filtering(db):
     """Messages outside the days window are excluded from cross-citations."""
     await _seed_channel(db, channel_id=100500, title="Source")
@@ -840,7 +840,7 @@ async def test_cross_citations_date_filtering(db):
     assert data_90d[0]["citation_count"] == 2  # both
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_cross_citations_unknown_source(db):
     """Cross-citations work even when source channel is not in channels table."""
     await _seed_channel(db, channel_id=100123, title="Target Only")
@@ -863,7 +863,7 @@ async def test_cross_citations_unknown_source(db):
     assert data[0]["citation_count"] == 1
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_cross_citations_respects_limit(db):
     """Limit parameter caps the number of returned source channels."""
     await _seed_channel(db, channel_id=100123, title="Target")
@@ -881,7 +881,7 @@ async def test_cross_citations_respects_limit(db):
     assert len(data) == 5
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_cross_citations_only_includes_forwards(db):
     """Regular messages (no forward_from_channel_id) are not counted."""
     await _seed_channel(db, channel_id=100123, title="No Fwd Target")
@@ -901,7 +901,7 @@ async def test_cross_citations_only_includes_forwards(db):
 # ── service-level heatmap / citation integration ──────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_heatmap_service_delegates_to_repo(db):
     """Service get_heatmap delegates correctly and returns repo output."""
     await _seed_channel(db, channel_id=100123, title="Delegator")
@@ -917,7 +917,7 @@ async def test_heatmap_service_delegates_to_repo(db):
     assert svc_data == repo_data
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_cross_citations_service_delegates_to_repo(db):
     """Service get_cross_channel_citations delegates correctly."""
     await _seed_channel(db, channel_id=100123, title="Delegator")
@@ -930,7 +930,7 @@ async def test_cross_citations_service_delegates_to_repo(db):
 # ── repo-level heatmap edge cases ─────────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_repo_heatmap_all_hours_covered(db):
     """Messages spanning many hours produce correct hour range."""
     await _seed_channel(db, channel_id=100123, title="All Hours")
@@ -949,7 +949,7 @@ async def test_repo_heatmap_all_hours_covered(db):
         assert h in hours_seen
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_repo_heatmap_no_messages_returns_empty(db):
     """Heatmap for a channel with no messages returns empty list."""
     await _seed_channel(db, channel_id=100123, title="Empty Heat")
@@ -957,7 +957,7 @@ async def test_repo_heatmap_no_messages_returns_empty(db):
     assert rows == []
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_repo_cross_citations_multiple_from_same_source(db):
     """Multiple forwarded messages from the same source are aggregated."""
     await _seed_channel(db, channel_id=100500, title="Agg Source")
@@ -977,7 +977,7 @@ async def test_repo_cross_citations_multiple_from_same_source(db):
     assert rows[0]["citation_count"] == 7
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_repo_cross_citations_latest_date(db):
     """latest_date is the most recent forwarded message date."""
     await _seed_channel(db, channel_id=100500, title="Src Latest")

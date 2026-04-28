@@ -38,7 +38,7 @@ def service(mock_db):
 # === get_calendar tests ===
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_calendar_empty_db(service, mock_db):
     """get_calendar returns empty days when no runs exist."""
     result = await service.get_calendar(days=3)
@@ -49,7 +49,7 @@ async def test_get_calendar_empty_db(service, mock_db):
         assert day.events == []
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_calendar_with_events_filters_by_date(service, mock_db):
     """get_calendar filters events by date range."""
     now = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -81,7 +81,7 @@ async def test_get_calendar_with_events_filters_by_date(service, mock_db):
     assert result[0].events[0].pipeline_name == "Test Pipeline"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_calendar_filters_by_pipeline(service, mock_db):
     """get_calendar filters by pipeline_id when provided."""
     mock_pipeline = MagicMock()
@@ -97,7 +97,7 @@ async def test_get_calendar_filters_by_pipeline(service, mock_db):
     mock_db.repos.generation_runs.list_runs_for_calendar.assert_not_called()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_calendar_skips_runs_without_pipeline(service, mock_db):
     """get_calendar skips runs without pipeline_id."""
     mock_run = MagicMock()
@@ -115,7 +115,7 @@ async def test_get_calendar_skips_runs_without_pipeline(service, mock_db):
 # === get_upcoming tests ===
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_upcoming_empty_db(service, mock_db):
     """get_upcoming returns empty list when no pending runs."""
     result = await service.get_upcoming(limit=10)
@@ -123,7 +123,7 @@ async def test_get_upcoming_empty_db(service, mock_db):
     assert result == []
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_upcoming_filters_by_status(service, mock_db):
     """get_upcoming only includes pending or approved runs."""
     mock_pipeline = MagicMock()
@@ -151,7 +151,7 @@ async def test_get_upcoming_filters_by_status(service, mock_db):
     assert result[0].moderation_status == "pending"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_upcoming_respects_limit(service, mock_db):
     """get_upcoming respects the limit parameter."""
     mock_pipeline = MagicMock()
@@ -181,7 +181,7 @@ async def test_get_upcoming_respects_limit(service, mock_db):
     assert len(result) == 5
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_upcoming_filters_by_pipeline(service, mock_db):
     """get_upcoming filters by pipeline_id when provided."""
     await service.get_upcoming(limit=10, pipeline_id=1)
@@ -192,7 +192,7 @@ async def test_get_upcoming_filters_by_pipeline(service, mock_db):
 # === get_stats tests ===
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_stats_delegates_to_repo(service, mock_db):
     """get_stats delegates to generation_runs repository."""
     mock_db.repos.generation_runs.get_calendar_stats = AsyncMock(
@@ -205,7 +205,7 @@ async def test_get_stats_delegates_to_repo(service, mock_db):
     assert result == {"total": 10, "approved": 5}
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_stats_empty(service, mock_db):
     """get_stats returns empty dict when no data."""
     mock_db.repos.generation_runs.get_calendar_stats = AsyncMock(return_value={})

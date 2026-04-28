@@ -41,7 +41,7 @@ async def _create_pending_task(db: Database, channel_id: int = -1001) -> int:
     )
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_db_pull_picks_up_pending_task_added_after_startup(tmp_path):
     db = Database(str(tmp_path / "queue.db"))
     await db.initialize()
@@ -73,7 +73,7 @@ async def test_db_pull_picks_up_pending_task_added_after_startup(tmp_path):
         await db.close()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_db_pull_does_not_double_ingest(tmp_path):
     db = Database(str(tmp_path / "queue.db"))
     await db.initialize()
@@ -102,7 +102,7 @@ async def test_db_pull_does_not_double_ingest(tmp_path):
         await db.close()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_db_pull_swallows_errors(tmp_path, monkeypatch):
     db = Database(str(tmp_path / "queue.db"))
     await db.initialize()
@@ -141,7 +141,7 @@ async def test_db_pull_swallows_errors(tmp_path, monkeypatch):
         await db.close()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_stop_db_pull_is_idempotent(tmp_path):
     db = Database(str(tmp_path / "queue.db"))
     await db.initialize()
@@ -164,7 +164,7 @@ async def test_stop_db_pull_is_idempotent(tmp_path):
         await db.close()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_delayed_requeue_queue_full_releases_known_task_id(tmp_path, monkeypatch):
     db = Database(str(tmp_path / "queue.db"))
     await db.initialize()
@@ -196,7 +196,7 @@ async def test_delayed_requeue_queue_full_releases_known_task_id(tmp_path, monke
         await db.close()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_clear_pending_tasks_clears_known_task_ids(tmp_path):
     db = Database(str(tmp_path / "queue.db"))
     await db.initialize()

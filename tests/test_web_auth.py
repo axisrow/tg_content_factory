@@ -19,7 +19,7 @@ from tests.helpers import build_web_app, make_auth_client
 class TestLoginPage:
     """Tests for GET /auth/login (Telegram account login page)."""
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_login_page_api_configured(self, db, real_pool_harness_factory):
         """Test login page when API credentials are configured."""
         config = AppConfig()
@@ -40,7 +40,7 @@ class TestLoginPage:
         # When API is configured, step should be "phone"
         assert "phone" in response.text.lower() or "телефон" in response.text.lower()
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_login_page_api_not_configured(self, db, real_pool_harness_factory):
         """Test login page when API credentials are not configured."""
         config = AppConfig()
@@ -65,7 +65,7 @@ class TestLoginPage:
 class TestSaveCredentials:
     """Tests for POST /auth/save-credentials."""
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_save_credentials_success(self, db, real_pool_harness_factory):
         """Test successful credential save."""
         config = AppConfig()
@@ -102,7 +102,7 @@ class TestSaveCredentials:
 class TestSendCode:
     """Tests for POST /auth/send-code."""
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_send_code_api_not_configured(self, db, real_pool_harness_factory):
         """Test send-code returns error when API credentials are not configured."""
         config = AppConfig()
@@ -125,7 +125,7 @@ class TestSendCode:
         # Should show credentials step with error
         assert "API credentials" in response.text or "api_id" in response.text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_send_code_success(self, db, real_pool_harness_factory):
         """Test send-code enqueues command instead of direct RPC."""
         config = AppConfig()
@@ -151,7 +151,7 @@ class TestSendCode:
         commands = await db.repos.telegram_commands.list_commands(limit=1)
         assert commands[0].command_type == "auth.send_code"
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_send_code_exception(self, db, real_pool_harness_factory):
         """Test send-code route does not execute auth inline."""
         config = AppConfig()
@@ -184,7 +184,7 @@ class TestSendCode:
 class TestResendCode:
     """Tests for POST /auth/resend-code."""
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_resend_code_success(self, db, real_pool_harness_factory):
         """Test resend-code enqueues command instead of direct RPC."""
         config = AppConfig()
@@ -210,7 +210,7 @@ class TestResendCode:
         commands = await db.repos.telegram_commands.list_commands(limit=1)
         assert commands[0].command_type == "auth.resend_code"
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_resend_code_exception(self, db, real_pool_harness_factory):
         """Test resend-code route does not execute auth inline."""
         config = AppConfig()
@@ -243,7 +243,7 @@ class TestResendCode:
 class TestVerifyCode:
     """Tests for POST /auth/verify-code."""
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_verify_code_success(self, db, real_pool_harness_factory):
         """Test verify-code enqueues command instead of direct RPC."""
         config = AppConfig()
@@ -282,7 +282,7 @@ class TestVerifyCode:
         commands = await db.repos.telegram_commands.list_commands(limit=1)
         assert commands[0].command_type == "auth.verify_code"
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_verify_code_2fa_required(self, db, real_pool_harness_factory):
         """Test login page shows 2FA state from failed queued command."""
         config = AppConfig()
@@ -309,7 +309,7 @@ class TestVerifyCode:
         assert response.status_code == 200
         assert "2fa" in response.text.lower() or "password" in response.text.lower()
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_verify_code_invalid_code(self, db, real_pool_harness_factory):
         """Test login page surfaces invalid-code error from failed queued command."""
         config = AppConfig()
@@ -346,7 +346,7 @@ class TestVerifyCode:
         assert response.status_code == 200
         assert "Invalid code" in response.text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_verify_code_exception(self, db, real_pool_harness_factory):
         """Test login page surfaces generic queued verify error."""
         config = AppConfig()
@@ -380,7 +380,7 @@ class TestVerifyCode:
         assert response.status_code == 200
         assert "Flood wait" in response.text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_verify_code_with_2fa_password(self, db, real_pool_harness_factory):
         """Test verify-code enqueues 2FA password for worker processing."""
         config = AppConfig()
@@ -412,7 +412,7 @@ class TestVerifyCode:
         commands = await db.repos.telegram_commands.list_commands(limit=1)
         assert commands[0].payload["password_2fa"] == "my2fapassword"
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_verify_code_existing_account_not_primary(self, db, real_pool_harness_factory):
         """Test queued verify-code carries non-primary context for later accounts."""
         config = AppConfig()

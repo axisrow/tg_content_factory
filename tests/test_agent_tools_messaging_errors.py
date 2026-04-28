@@ -63,7 +63,7 @@ def _setup_resolve_entity(pool, client, entity=None):
 
 
 class TestSendMessageExceptions:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_send_exception(self, mock_db, mock_pool):
         client = _make_client()
         _setup_resolve_entity(mock_pool, client)
@@ -88,7 +88,7 @@ class TestSendMessageExceptions:
 
 
 class TestEditMessageExceptions:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_edit_exception(self, mock_db, mock_pool):
         client = _make_client()
         _setup_resolve_entity(mock_pool, client)
@@ -114,7 +114,7 @@ class TestEditMessageExceptions:
 
 
 class TestDeleteMessageValidation:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_no_valid_ids(self, mock_db, mock_pool):
         handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
         result = await handlers["delete_message"]({
@@ -125,7 +125,7 @@ class TestDeleteMessageValidation:
         })
         assert "не указаны валидные message_ids" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_delete_exception(self, mock_db, mock_pool):
         client = _make_client()
         _setup_resolve_entity(mock_pool, client)
@@ -150,7 +150,7 @@ class TestDeleteMessageValidation:
 
 
 class TestForwardMessagesErrors:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_to_entity_resolve_error(self, mock_db, mock_pool):
         client = _make_client()
         # First resolve (from_chat) succeeds, second (to_chat) fails
@@ -178,7 +178,7 @@ class TestForwardMessagesErrors:
         text = _text(result)
         assert "не удалось найти" in text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_forward_exception(self, mock_db, mock_pool):
         client = _make_client()
         _setup_resolve_entity(mock_pool, client)
@@ -204,7 +204,7 @@ class TestForwardMessagesErrors:
 
 
 class TestPinMessageExceptions:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_pin_exception(self, mock_db, mock_pool):
         client = _make_client()
         _setup_resolve_entity(mock_pool, client)
@@ -229,7 +229,7 @@ class TestPinMessageExceptions:
 
 
 class TestUnpinMessageExceptions:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_unpin_exception(self, mock_db, mock_pool):
         client = _make_client()
         _setup_resolve_entity(mock_pool, client)
@@ -252,7 +252,7 @@ class TestUnpinMessageExceptions:
 
 
 class TestDownloadMediaErrors:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_message_not_found(self, mock_db, mock_pool):
         client = _make_client()
         _setup_resolve_entity(mock_pool, client)
@@ -272,7 +272,7 @@ class TestDownloadMediaErrors:
 
         assert "не найдено" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_no_media_in_message(self, mock_db, mock_pool):
         client = _make_client()
         _setup_resolve_entity(mock_pool, client)
@@ -294,7 +294,7 @@ class TestDownloadMediaErrors:
 
         assert "нет медиа" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_download_exception(self, mock_db, mock_pool):
         client = _make_client()
         _setup_resolve_entity(mock_pool, client)
@@ -324,7 +324,7 @@ class TestDownloadMediaErrors:
 
 
 class TestGetParticipantsExceptions:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_exception_returns_error(self, mock_db, mock_pool):
         client = _make_client()
         _setup_resolve_entity(mock_pool, client)
@@ -339,7 +339,7 @@ class TestGetParticipantsExceptions:
         text = _text(result)
         assert "Ошибка получения участников" in text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_with_participants(self, mock_db, mock_pool):
         client = _make_client()
         _setup_resolve_entity(mock_pool, client)
@@ -361,7 +361,7 @@ class TestGetParticipantsExceptions:
         assert "John Doe" in text
         assert "@johndoe" in text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_empty_participants(self, mock_db, mock_pool):
         client = _make_client()
         _setup_resolve_entity(mock_pool, client)
@@ -382,7 +382,7 @@ class TestGetParticipantsExceptions:
 
 
 class TestEditAdminErrors:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_user_resolve_error(self, mock_db, mock_pool):
         client = _make_client()
         call_count = 0
@@ -409,7 +409,7 @@ class TestEditAdminErrors:
         text = _text(result)
         assert "не удалось найти" in text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_edit_admin_exception(self, mock_db, mock_pool):
         client = _make_client()
         _setup_resolve_entity(mock_pool, client)
@@ -427,7 +427,7 @@ class TestEditAdminErrors:
         text = _text(result)
         assert "Ошибка изменения прав администратора" in text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_demote_user(self, mock_db, mock_pool):
         client = _make_client()
         _setup_resolve_entity(mock_pool, client)
@@ -456,7 +456,7 @@ class TestEditAdminErrors:
 
 
 class TestEditPermissionsErrors:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_missing_chat_and_user_id(self, mock_db, mock_pool):
         handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
         result = await handlers["edit_permissions"]({
@@ -466,7 +466,7 @@ class TestEditPermissionsErrors:
         })
         assert "chat_id и user_id обязательны" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_user_resolve_error(self, mock_db, mock_pool):
         client = _make_client()
         call_count = 0
@@ -493,7 +493,7 @@ class TestEditPermissionsErrors:
         text = _text(result)
         assert "не удалось найти" in text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_edit_permissions_exception(self, mock_db, mock_pool):
         client = _make_client()
         _setup_resolve_entity(mock_pool, client)
@@ -511,7 +511,7 @@ class TestEditPermissionsErrors:
         text = _text(result)
         assert "Ошибка изменения ограничений" in text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_no_flags_set_returns_error(self, mock_db, mock_pool):
         handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
         result = await handlers["edit_permissions"]({
@@ -522,7 +522,7 @@ class TestEditPermissionsErrors:
         })
         assert "укажите хотя бы один флаг" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_with_until_date(self, mock_db, mock_pool):
         client = _make_client()
         _setup_resolve_entity(mock_pool, client)
@@ -547,7 +547,7 @@ class TestEditPermissionsErrors:
 
 
 class TestKickParticipantErrors:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_user_resolve_error(self, mock_db, mock_pool):
         client = _make_client()
         call_count = 0
@@ -573,7 +573,7 @@ class TestKickParticipantErrors:
         text = _text(result)
         assert "не удалось найти" in text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_kick_exception(self, mock_db, mock_pool):
         client = _make_client()
         _setup_resolve_entity(mock_pool, client)
@@ -597,7 +597,7 @@ class TestKickParticipantErrors:
 
 
 class TestGetBroadcastStatsErrors:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_exception_returns_error(self, mock_db, mock_pool):
         client = _make_client()
         _setup_resolve_entity(mock_pool, client)
@@ -612,7 +612,7 @@ class TestGetBroadcastStatsErrors:
         text = _text(result)
         assert "Ошибка получения статистики" in text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_with_stats(self, mock_db, mock_pool):
         client = _make_client()
         _setup_resolve_entity(mock_pool, client)
@@ -640,7 +640,7 @@ class TestGetBroadcastStatsErrors:
         assert "800" in text
         assert "period" in text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_stats_no_fields_falls_to_raw(self, mock_db, mock_pool):
         client = _make_client()
         _setup_resolve_entity(mock_pool, client)
@@ -672,7 +672,7 @@ class TestGetBroadcastStatsErrors:
 
 
 class TestArchiveChatExceptions:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_archive_exception(self, mock_db, mock_pool):
         client = _make_client()
         _setup_resolve_entity(mock_pool, client)
@@ -695,7 +695,7 @@ class TestArchiveChatExceptions:
 
 
 class TestUnarchiveChatExceptions:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_unarchive_exception(self, mock_db, mock_pool):
         client = _make_client()
         _setup_resolve_entity(mock_pool, client)
@@ -718,7 +718,7 @@ class TestUnarchiveChatExceptions:
 
 
 class TestMarkReadExceptions:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_mark_read_exception(self, mock_db, mock_pool):
         client = _make_client()
         _setup_resolve_entity(mock_pool, client)
@@ -734,7 +734,7 @@ class TestMarkReadExceptions:
         text = _text(result)
         assert "Ошибка отметки сообщений" in text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_mark_read_success(self, mock_db, mock_pool):
         client = _make_client()
         _setup_resolve_entity(mock_pool, client)
@@ -756,13 +756,13 @@ class TestMarkReadExceptions:
 
 
 class TestReadMessagesTool:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_no_pool_returns_error(self, mock_db):
         handlers = _get_tool_handlers(mock_db, client_pool=None)
         result = await handlers["read_messages"]({"chat_id": "@test"})
         assert "требует Telegram-клиент" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_missing_chat_id(self, mock_db, mock_pool):
         handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
         result = await handlers["read_messages"]({
@@ -770,7 +770,7 @@ class TestReadMessagesTool:
         })
         assert "chat_id обязателен" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_with_messages(self, mock_db, mock_pool):
         client = _make_client()
         _setup_resolve_entity(mock_pool, client)
@@ -795,7 +795,7 @@ class TestReadMessagesTool:
         assert "Hello world" in text
         assert "1 сообщений" in text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_no_text_messages(self, mock_db, mock_pool):
         client = _make_client()
         _setup_resolve_entity(mock_pool, client)
@@ -815,7 +815,7 @@ class TestReadMessagesTool:
 
         assert "Сообщений с текстом не найдено" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_with_date_and_sender(self, mock_db, mock_pool):
         from datetime import datetime
 
@@ -845,7 +845,7 @@ class TestReadMessagesTool:
         assert "2025-06-15 12:30" in text
         assert "[id:42]" in text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_exception_returns_error(self, mock_db, mock_pool):
         client = _make_client()
         _setup_resolve_entity(mock_pool, client)
@@ -864,7 +864,7 @@ class TestReadMessagesTool:
         text = _text(result)
         assert "Ошибка чтения сообщений" in text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_invalid_limit_defaults_to_100(self, mock_db, mock_pool):
         client = _make_client()
         _setup_resolve_entity(mock_pool, client)
@@ -887,7 +887,7 @@ class TestReadMessagesTool:
         # Should still work with default limit=100
         assert "1 сообщений" in text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_character_budget_truncation(self, mock_db, mock_pool):
         client = _make_client()
         _setup_resolve_entity(mock_pool, client)
@@ -924,7 +924,7 @@ class TestReadMessagesTool:
 
 
 class TestSendValidation:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_missing_recipient(self, mock_db, mock_pool):
         handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
         result = await handlers["send_message"]({
@@ -934,7 +934,7 @@ class TestSendValidation:
         })
         assert "recipient и text обязательны" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_missing_text(self, mock_db, mock_pool):
         handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
         result = await handlers["send_message"]({
@@ -946,7 +946,7 @@ class TestSendValidation:
 
 
 class TestEditValidation:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_missing_fields(self, mock_db, mock_pool):
         handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
         result = await handlers["edit_message"]({
@@ -957,7 +957,7 @@ class TestEditValidation:
 
 
 class TestDeleteValidation:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_missing_fields(self, mock_db, mock_pool):
         handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
         result = await handlers["delete_message"]({
@@ -968,7 +968,7 @@ class TestDeleteValidation:
 
 
 class TestForwardValidation:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_missing_fields(self, mock_db, mock_pool):
         handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
         result = await handlers["forward_messages"]({
@@ -977,7 +977,7 @@ class TestForwardValidation:
         })
         assert "from_chat, to_chat и message_ids обязательны" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_no_valid_ids(self, mock_db, mock_pool):
         handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
         result = await handlers["forward_messages"]({
@@ -991,7 +991,7 @@ class TestForwardValidation:
 
 
 class TestPinValidation:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_missing_fields(self, mock_db, mock_pool):
         handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
         result = await handlers["pin_message"]({
@@ -1002,7 +1002,7 @@ class TestPinValidation:
 
 
 class TestUnpinValidation:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_missing_chat_id(self, mock_db, mock_pool):
         handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
         result = await handlers["unpin_message"]({
@@ -1013,7 +1013,7 @@ class TestUnpinValidation:
 
 
 class TestDownloadValidation:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_missing_fields(self, mock_db, mock_pool):
         handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
         result = await handlers["download_media"]({
@@ -1024,7 +1024,7 @@ class TestDownloadValidation:
 
 
 class TestParticipantsValidation:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_missing_chat_id(self, mock_db, mock_pool):
         handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
         result = await handlers["get_participants"]({
@@ -1034,7 +1034,7 @@ class TestParticipantsValidation:
 
 
 class TestEditAdminValidation:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_missing_fields(self, mock_db, mock_pool):
         handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
         result = await handlers["edit_admin"]({
@@ -1045,7 +1045,7 @@ class TestEditAdminValidation:
 
 
 class TestKickValidation:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_missing_fields(self, mock_db, mock_pool):
         handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
         result = await handlers["kick_participant"]({
@@ -1056,7 +1056,7 @@ class TestKickValidation:
 
 
 class TestBroadcastStatsValidation:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_missing_chat_id(self, mock_db, mock_pool):
         handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
         result = await handlers["get_broadcast_stats"]({
@@ -1066,7 +1066,7 @@ class TestBroadcastStatsValidation:
 
 
 class TestArchiveValidation:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_missing_chat_id(self, mock_db, mock_pool):
         handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
         result = await handlers["archive_chat"]({
@@ -1077,7 +1077,7 @@ class TestArchiveValidation:
 
 
 class TestUnarchiveValidation:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_missing_chat_id(self, mock_db, mock_pool):
         handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
         result = await handlers["unarchive_chat"]({
@@ -1088,7 +1088,7 @@ class TestUnarchiveValidation:
 
 
 class TestMarkReadValidation:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_missing_chat_id(self, mock_db, mock_pool):
         handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
         result = await handlers["mark_read"]({
@@ -1103,7 +1103,7 @@ class TestMarkReadValidation:
 
 
 class TestConfirmationGates:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_send_requires_confirm(self, mock_db, mock_pool):
         handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
         result = await handlers["send_message"]({
@@ -1113,7 +1113,7 @@ class TestConfirmationGates:
         })
         assert "confirm=true" in _text(result).lower()
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_edit_requires_confirm(self, mock_db, mock_pool):
         handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
         result = await handlers["edit_message"]({
@@ -1124,7 +1124,7 @@ class TestConfirmationGates:
         })
         assert "confirm=true" in _text(result).lower()
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_delete_requires_confirm(self, mock_db, mock_pool):
         handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
         result = await handlers["delete_message"]({
@@ -1134,7 +1134,7 @@ class TestConfirmationGates:
         })
         assert "confirm=true" in _text(result).lower()
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_forward_requires_confirm(self, mock_db, mock_pool):
         handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
         result = await handlers["forward_messages"]({
@@ -1145,7 +1145,7 @@ class TestConfirmationGates:
         })
         assert "confirm=true" in _text(result).lower()
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_pin_requires_confirm(self, mock_db, mock_pool):
         handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
         result = await handlers["pin_message"]({
@@ -1155,7 +1155,7 @@ class TestConfirmationGates:
         })
         assert "confirm=true" in _text(result).lower()
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_unpin_requires_confirm(self, mock_db, mock_pool):
         handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
         result = await handlers["unpin_message"]({
@@ -1164,7 +1164,7 @@ class TestConfirmationGates:
         })
         assert "confirm=true" in _text(result).lower()
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_archive_requires_confirm(self, mock_db, mock_pool):
         handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
         result = await handlers["archive_chat"]({
@@ -1173,7 +1173,7 @@ class TestConfirmationGates:
         })
         assert "confirm=true" in _text(result).lower()
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_unarchive_requires_confirm(self, mock_db, mock_pool):
         handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
         result = await handlers["unarchive_chat"]({
@@ -1182,7 +1182,7 @@ class TestConfirmationGates:
         })
         assert "confirm=true" in _text(result).lower()
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_edit_admin_requires_confirm(self, mock_db, mock_pool):
         handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
         result = await handlers["edit_admin"]({
@@ -1192,7 +1192,7 @@ class TestConfirmationGates:
         })
         assert "confirm=true" in _text(result).lower()
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_edit_permissions_requires_confirm(self, mock_db, mock_pool):
         handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
         result = await handlers["edit_permissions"]({
@@ -1203,7 +1203,7 @@ class TestConfirmationGates:
         })
         assert "confirm=true" in _text(result).lower()
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_kick_requires_confirm(self, mock_db, mock_pool):
         handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
         result = await handlers["kick_participant"]({

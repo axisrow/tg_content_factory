@@ -100,19 +100,19 @@ async def test_db(app_with_db):
 class TestAuthFlow:
     """Full authentication cycle: no auth → 401, with auth → 200, health → 200."""
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_no_auth_returns_401(self, noauth_client):
         resp = await noauth_client.get("/", follow_redirects=False)
         assert resp.status_code == 401
         assert "WWW-Authenticate" in resp.headers
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_with_auth_returns_200(self, auth_client):
         resp = await auth_client.get("/")
         assert resp.status_code == 200
         assert resp.url.path == "/search"
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_health_no_auth_returns_200(self, noauth_client):
         resp = await noauth_client.get("/health")
         assert resp.status_code == 200
@@ -120,7 +120,7 @@ class TestAuthFlow:
         assert data["status"] in ("healthy", "degraded")
         assert "db" in data
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_wrong_credentials_returns_401(self, app_with_db):
         app, _ = app_with_db
         transport = ASGITransport(app=app)
@@ -133,7 +133,7 @@ class TestAuthFlow:
             resp = await c.get("/")
             assert resp.status_code == 401
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_all_protected_pages_require_auth(self, noauth_client):
         for path in [
             "/settings/",
@@ -151,7 +151,7 @@ class TestAuthFlow:
 class TestChannelCRUD:
     """Add channel → list → toggle active → delete."""
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_full_channel_lifecycle(self, auth_client, test_db):
         """Add is now queued; toggle/delete remain synchronous."""
         # 1. POST /channels/add enqueues a channels.add_identifier command
@@ -197,7 +197,7 @@ class TestChannelCRUD:
         channels = await test_db.get_channels()
         assert len(channels) == 0
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_add_channel_enqueues_regardless_of_resolve(self, auth_client, app_with_db, test_db):
         """Under queued model, web just enqueues the command; resolve failure
         is the worker's concern. Web always redirects with command_id=."""
@@ -218,7 +218,7 @@ class TestChannelCRUD:
         assert commands[0].command_type == "channels.add_identifier"
         assert commands[0].payload.get("identifier") == "@nonexistent"
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_channels_page_lists_channels(self, auth_client, test_db):
         ch = Channel(channel_id=-100999, title="Visible Channel")
         await test_db.add_channel(ch)
@@ -231,7 +231,7 @@ class TestChannelCRUD:
 class TestSearchQueryCRUD:
     """Add search query → list → delete."""
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_add_plain_query(self, auth_client, test_db):
         resp = await auth_client.post(
             "/search-queries/add",
@@ -249,7 +249,7 @@ class TestSearchQueryCRUD:
         assert queries[0].query == "bitcoin"
         assert queries[0].is_regex is False
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_add_regex_query(self, auth_client, test_db):
         resp = await auth_client.post(
             "/search-queries/add",
@@ -267,7 +267,7 @@ class TestSearchQueryCRUD:
         assert len(queries) == 1
         assert queries[0].is_regex is True
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_delete_query(self, auth_client, test_db):
         repo = test_db.repos.search_queries
         sq = SearchQuery(query="delete_me")
@@ -279,7 +279,7 @@ class TestSearchQueryCRUD:
         queries = await repo.get_all()
         assert len(queries) == 0
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_query_appears_on_page(self, auth_client, test_db):
         repo = test_db.repos.search_queries
         await repo.add(SearchQuery(query="ethereum"))
@@ -291,12 +291,12 @@ class TestSearchQueryCRUD:
 class TestSearchModes:
     """Search local with results and without."""
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_search_local_no_results(self, auth_client):
         resp = await auth_client.get("/search?q=nonexistent&mode=local")
         assert resp.status_code == 200
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_search_local_with_results(self, auth_client, test_db):
         msgs = [
             Message(
@@ -318,7 +318,7 @@ class TestSearchModes:
         assert resp.status_code == 200
         assert "Bitcoin" in resp.text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_search_empty_query_shows_form(self, auth_client):
         resp = await auth_client.get("/search")
         assert resp.status_code == 200
@@ -388,13 +388,13 @@ class TestConfigEnvChain:
 class TestSchedulerStartStop:
     """Start/stop scheduler through web routes."""
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_scheduler_page_shows_status(self, auth_client):
         resp = await auth_client.get("/scheduler/")
         assert resp.status_code == 200
         assert "Остановлен" in resp.text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_start_and_stop_scheduler(self, auth_client, app_with_db):
         app, db = app_with_db
         sched = app.state.scheduler
@@ -427,7 +427,7 @@ class TestSchedulerStartStop:
             assert "scheduler_stopped" in resp.headers["location"]
         assert await db.get_setting("scheduler_autostart") == "0"
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_double_start_is_safe(self, auth_client, app_with_db):
         app, _ = app_with_db
 
@@ -444,7 +444,7 @@ class TestSchedulerStartStop:
             resp2 = await c.post("/scheduler/start")  # should not crash
             assert resp2.status_code == 303
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_trigger_enqueues_channels(self, app_with_db):
         """POST /scheduler/trigger enqueues collection tasks via the queue."""
         app, db = app_with_db
@@ -473,7 +473,7 @@ class TestSchedulerStartStop:
         assert len(tasks) == 2
         assert all(task.status == "pending" for task in tasks)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_trigger_empty_returns_collect_all_empty(self, app_with_db):
         """POST /scheduler/trigger with no channels returns collect_all_empty."""
         app, _ = app_with_db
@@ -494,7 +494,7 @@ class TestSchedulerStartStop:
 class TestCollectorIncremental:
     """Collector passes min_id from DB to iter_messages on incremental run."""
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_incremental_passes_min_id(self, test_db):
         from tests.helpers import AsyncIterEmpty as _AsyncIterEmpty
 
@@ -524,7 +524,7 @@ class TestCollectorIncremental:
 class TestSearchPagination:
     """Search with pagination (page=1, page=2)."""
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_paginated_search(self, auth_client, test_db):
         # Insert 60 messages containing "crypto"
         msgs = [
@@ -547,7 +547,7 @@ class TestSearchPagination:
         resp2 = await auth_client.get("/search?q=Crypto&mode=local&page=2")
         assert resp2.status_code == 200
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_search_engine_pagination_offsets(self, test_db):
         msgs = [
             Message(
@@ -584,7 +584,7 @@ class TestSearchPagination:
 class TestFloodWaitRotation:
     """ClientPool switches to another account on FloodWaitError."""
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_report_flood_marks_account(self, test_db):
         from src.models import Account
 
@@ -604,7 +604,7 @@ class TestFloodWaitRotation:
         healthy = [a for a in accounts if a.phone == "+70002222222"]
         assert healthy[0].flood_wait_until is None
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_collector_handles_flood_with_rotation(self, test_db):
         """FloodWaitError on client1 → report_flood → retry with client2."""
         from telethon.errors import FloodWaitError
@@ -645,7 +645,7 @@ class TestFloodWaitRotation:
 class TestNotificationQueryMatch:
     """Notification query patterns match correctly during collection check."""
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_plain_query_case_insensitive(self, test_db):
         repo = test_db.repos.search_queries
         await repo.add(
@@ -684,7 +684,7 @@ class TestNotificationQueryMatch:
         call_text = notifier.notify.call_args[0][0]
         assert "BITCOIN" in call_text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_regex_query_matches(self, test_db):
         repo = test_db.repos.search_queries
         await repo.add(
@@ -730,7 +730,7 @@ class TestNotificationQueryMatch:
         call_text = notifier.notify.call_args[0][0]
         assert "2 times" in call_text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_invalid_regex_does_not_crash(self, test_db):
         repo = test_db.repos.search_queries
         await repo.add(
@@ -764,7 +764,7 @@ class TestNotificationQueryMatch:
 class TestGracefulShutdown:
     """SchedulerManager cancels background task on stop."""
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_trigger_task_cancelled_on_stop(self, test_db):
         """trigger_background -> stop -> background task is cancelled."""
         started_event = asyncio.Event()
@@ -795,7 +795,7 @@ class TestGracefulShutdown:
         assert manager._bg_task is None
         assert cancelled_event.is_set()
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_stop_without_bg_task_is_safe(self, test_db):
         """stop() with no background task does not raise."""
         config = SchedulerConfig()
@@ -805,7 +805,7 @@ class TestGracefulShutdown:
         await manager.stop()
         assert manager._bg_task is None
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_trigger_background_deduplicates_racing_calls(self, test_db):
         started_event = asyncio.Event()
         release_event = asyncio.Event()
@@ -838,7 +838,7 @@ class TestGracefulShutdown:
 class TestAPICredentialsFallback:
     """When config has no API creds, lifespan loads them from DB settings."""
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_api_credentials_fallback_via_lifespan(self, tmp_path):
         from src.web.app import lifespan
 
@@ -863,7 +863,7 @@ class TestAPICredentialsFallback:
                 assert app.state.auth._api_id == 99999
                 assert app.state.auth._api_hash == "hash_from_db"
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_invalid_api_id_in_db_does_not_crash_lifespan(self, tmp_path):
         from src.web.app import lifespan
 
@@ -883,7 +883,7 @@ class TestAPICredentialsFallback:
                 assert app.state.auth.is_configured is False
                 initialize.assert_not_awaited()
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_invalid_api_id_in_db_does_not_crash_cli_pool_init(self, tmp_path):
         db_path = str(tmp_path / "bad-cli.db")
         db = Database(db_path)

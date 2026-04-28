@@ -90,7 +90,7 @@ def _make_pipeline(pipeline_id=1, *, name="Test", dag=None, backend=PipelineGene
 # ── api_channels_search ─────────────────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_api_channels_search_short_query(route_client, base_app):
     """Short query (< 2 chars) returns top 50 channels."""
     _, db, _ = base_app
@@ -101,7 +101,7 @@ async def test_api_channels_search_short_query(route_client, base_app):
     assert isinstance(data, list)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_api_channels_search_empty_query(route_client, base_app):
     """Empty q returns top 50 channels."""
     resp = await route_client.get("/pipelines/api/channels/search")
@@ -110,7 +110,7 @@ async def test_api_channels_search_empty_query(route_client, base_app):
     assert isinstance(data, list)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_api_channels_search_with_query(route_client, base_app):
     """Query >= 2 chars searches by title/username/channel_id."""
     _, db, _ = base_app
@@ -123,7 +123,7 @@ async def test_api_channels_search_with_query(route_client, base_app):
     assert any(item["title"] == "UniqueSearchTerm" for item in data)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_api_channels_search_by_channel_id(route_client, base_app):
     """Search by numeric channel_id substring."""
     _, db, _ = base_app
@@ -136,7 +136,7 @@ async def test_api_channels_search_by_channel_id(route_client, base_app):
     assert len(data) >= 1
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_api_channels_search_result_fields(route_client, base_app):
     """Each result has value, title, username, group keys."""
     _, db, _ = base_app
@@ -158,7 +158,7 @@ async def test_api_channels_search_result_fields(route_client, base_app):
 # ── create_wizard_submit ────────────────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_create_wizard_submit_success(client_with_dialog, base_app):
     """POST /pipelines/create-wizard creates a DAG pipeline."""
     app, db, _ = base_app
@@ -201,7 +201,7 @@ async def test_create_wizard_submit_success(client_with_dialog, base_app):
     assert "msg=pipeline_added" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_create_wizard_submit_with_run_after(client_with_dialog, base_app):
     """POST /pipelines/create-wizard with run_after triggers pipeline run."""
     app, db, _ = base_app
@@ -235,7 +235,7 @@ async def test_create_wizard_submit_with_run_after(client_with_dialog, base_app)
     assert "msg=pipeline_run_with_since" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_create_wizard_submit_validation_error(route_client, base_app):
     """POST /pipelines/create-wizard with invalid data redirects with error."""
     app, db, _ = base_app
@@ -258,7 +258,7 @@ async def test_create_wizard_submit_validation_error(route_client, base_app):
     assert "error=" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_create_wizard_submit_inactive(client_with_dialog, base_app):
     """POST /pipelines/create-wizard without is_active checkbox creates inactive pipeline."""
     app, db, _ = base_app
@@ -286,7 +286,7 @@ async def test_create_wizard_submit_inactive(client_with_dialog, base_app):
 # ── create_wizard_page ──────────────────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_create_wizard_page_renders(route_client, base_app):
     """GET /pipelines/create renders the wizard page."""
     app, _, _ = base_app
@@ -295,7 +295,7 @@ async def test_create_wizard_page_renders(route_client, base_app):
     assert resp.status_code == 200
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_create_wizard_missing_pipeline_json(route_client, base_app):
     """POST /pipelines/create-wizard without pipeline_json returns 422."""
     app, _, _ = base_app
@@ -311,7 +311,7 @@ async def test_create_wizard_missing_pipeline_json(route_client, base_app):
 # ── add_pipeline validation error ───────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_add_pipeline_validation_error(route_client, base_app):
     """POST /pipelines/add with validation error redirects with error."""
     app, _, _ = base_app
@@ -328,7 +328,7 @@ async def test_add_pipeline_validation_error(route_client, base_app):
     assert "error=pipeline_invalid" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_add_pipeline_missing_name(route_client, base_app):
     """POST /pipelines/add without name returns 422."""
     app, _, _ = base_app
@@ -341,7 +341,7 @@ async def test_add_pipeline_missing_name(route_client, base_app):
     assert resp.status_code == 303
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_add_pipeline_missing_prompt_template(route_client, base_app):
     """POST /pipelines/add without prompt_template returns 422."""
     app, _, _ = base_app
@@ -357,7 +357,7 @@ async def test_add_pipeline_missing_prompt_template(route_client, base_app):
 # ── edit_pipeline DAG preservation ──────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_edit_pipeline_dag_preserves_backend(client_with_dialog, base_app):
     """Edit a DAG pipeline preserves existing backend when CHAIN default is submitted."""
     app, db, _ = base_app
@@ -390,7 +390,7 @@ async def test_edit_pipeline_dag_preserves_backend(client_with_dialog, base_app)
     assert "msg=pipeline_edited" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_edit_pipeline_dag_preserves_prompt(client_with_dialog, base_app):
     """Edit a DAG pipeline preserves existing prompt_template when empty is submitted."""
     app, db, _ = base_app
@@ -430,7 +430,7 @@ async def test_edit_pipeline_dag_preserves_prompt(client_with_dialog, base_app):
     assert "msg=pipeline_edited" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_edit_pipeline_missing_name(route_client, base_app):
     """POST /pipelines/<id>/edit without name returns 422."""
     app, _, _ = base_app
@@ -443,7 +443,7 @@ async def test_edit_pipeline_missing_name(route_client, base_app):
     assert resp.status_code == 303
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_publish_pipeline_missing_run_id(route_client, base_app):
     """POST /pipelines/<id>/publish without run_id returns 422."""
     app, _, _ = base_app
@@ -456,7 +456,7 @@ async def test_publish_pipeline_missing_run_id(route_client, base_app):
     assert resp.status_code == 303
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_edit_pipeline_validation_error(route_client, base_app):
     """POST /pipelines/<id>/edit with validation error redirects with error."""
     app, _, _ = base_app
@@ -486,7 +486,7 @@ async def test_edit_pipeline_validation_error(route_client, base_app):
     assert "error=" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_edit_pipeline_update_returns_false(route_client, base_app):
     """POST /pipelines/<id>/edit when update returns False redirects with error."""
     app, _, _ = base_app
@@ -516,7 +516,7 @@ async def test_edit_pipeline_update_returns_false(route_client, base_app):
     assert "error=pipeline_invalid" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_edit_pipeline_with_phone_query_param(route_client, base_app):
     """POST /pipelines/<id>/edit with phone query param passes it to redirect."""
     app, _, _ = base_app
@@ -547,7 +547,7 @@ async def test_edit_pipeline_with_phone_query_param(route_client, base_app):
 # ── generate_stream SSE ─────────────────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_generate_stream_no_llm_nodes(route_client, base_app):
     """GET /pipelines/<id>/generate-stream for pipeline with no LLM nodes redirects."""
     app, db, _ = base_app
@@ -568,7 +568,7 @@ async def test_generate_stream_no_llm_nodes(route_client, base_app):
     assert "error=pipeline_no_llm_nodes" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_generate_stream_llm_not_configured(client_with_dialog, base_app):
     """GET /pipelines/<id>/generate-stream with no provider redirects."""
     app, db, _ = base_app
@@ -586,7 +586,7 @@ async def test_generate_stream_llm_not_configured(client_with_dialog, base_app):
 # ── generate_pipeline POST ──────────────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_generate_pipeline_no_llm_nodes_runs_graph(route_client, base_app):
     """POST /pipelines/<id>/generate on a pipeline WITHOUT LLM nodes (pure
     action/publish graph) must NOT be rejected — it's a legitimate use case.
@@ -632,7 +632,7 @@ async def test_generate_pipeline_no_llm_nodes_runs_graph(route_client, base_app)
     assert "pipeline_no_llm_nodes" not in resp.text
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_generate_pipeline_llm_not_configured(client_with_dialog, base_app):
     """POST /pipelines/<id>/generate with no provider redirects."""
     app, db, _ = base_app
@@ -653,7 +653,7 @@ async def test_generate_pipeline_llm_not_configured(client_with_dialog, base_app
 # ── dry_run_pipeline ────────────────────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_dry_run_pipeline_success(client_with_dialog, base_app):
     """POST /pipelines/<id>/dry-run enqueues dry run."""
     app, db, _ = base_app
@@ -669,7 +669,7 @@ async def test_dry_run_pipeline_success(client_with_dialog, base_app):
     assert "msg=pipeline_dry_run_enqueued" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_dry_run_pipeline_not_found(route_client, base_app):
     """POST /pipelines/<id>/dry-run with invalid ID redirects."""
     app, _, _ = base_app
@@ -682,7 +682,7 @@ async def test_dry_run_pipeline_not_found(route_client, base_app):
     assert "error=pipeline_invalid" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_dry_run_pipeline_llm_not_configured(client_with_dialog, base_app):
     """POST /pipelines/<id>/dry-run with no LLM provider redirects."""
     app, db, _ = base_app
@@ -695,7 +695,7 @@ async def test_dry_run_pipeline_llm_not_configured(client_with_dialog, base_app)
     assert "error=llm_not_configured" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_dry_run_pipeline_enqueue_failure(client_with_dialog, base_app):
     """POST /pipelines/<id>/dry-run handles enqueue failure."""
     app, db, _ = base_app
@@ -714,7 +714,7 @@ async def test_dry_run_pipeline_enqueue_failure(client_with_dialog, base_app):
 # ── dry_run_count ───────────────────────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_dry_run_count_not_found(route_client, base_app):
     """GET /pipelines/<id>/dry-run-count for missing pipeline returns 404."""
     app, _, _ = base_app
@@ -726,7 +726,7 @@ async def test_dry_run_count_not_found(route_client, base_app):
     assert resp.status_code == 404
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_dry_run_count_legacy_pipeline(route_client, base_app):
     """GET /pipelines/<id>/dry-run-count for legacy pipeline uses source IDs."""
     app, db, _ = base_app
@@ -742,7 +742,7 @@ async def test_dry_run_count_legacy_pipeline(route_client, base_app):
     assert "after_filter" in data
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_dry_run_count_dag_pipeline(route_client, base_app):
     """GET /pipelines/<id>/dry-run-count for DAG pipeline uses source node IDs."""
     app, db, _ = base_app
@@ -768,7 +768,7 @@ async def test_dry_run_count_dag_pipeline(route_client, base_app):
     assert "total" in data
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_dry_run_count_dag_pipeline_falls_back_to_sidecar_sources(route_client, base_app):
     """Broken DAG source config should still use persisted pipeline_sources."""
     app, db, _ = base_app
@@ -811,7 +811,7 @@ async def test_dry_run_count_dag_pipeline_falls_back_to_sidecar_sources(route_cl
 # ── dry_run_count_new ───────────────────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_dry_run_count_new(route_client, base_app):
     """GET /pipelines/dry-run-count returns total and after_filter."""
     app, _, _ = base_app
@@ -823,7 +823,7 @@ async def test_dry_run_count_new(route_client, base_app):
     assert "after_filter" in data
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_dry_run_count_new_empty_ids(route_client, base_app):
     """GET /pipelines/dry-run-count with empty source_ids."""
     app, _, _ = base_app
@@ -963,7 +963,7 @@ def test_apply_pipeline_filter_unknown_type():
 # ── export_pipeline ─────────────────────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_export_pipeline_success(client_with_dialog, base_app):
     """GET /pipelines/<id>/export returns JSON file."""
     app, db, _ = base_app
@@ -979,7 +979,7 @@ async def test_export_pipeline_success(client_with_dialog, base_app):
     assert data["name"] == "Test Pipeline"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_export_pipeline_not_found(route_client, base_app):
     """GET /pipelines/<id>/export for missing pipeline redirects."""
     app, _, _ = base_app
@@ -995,7 +995,7 @@ async def test_export_pipeline_not_found(route_client, base_app):
 # ── import_pipeline ─────────────────────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_import_pipeline_from_text(route_client, base_app):
     """POST /pipelines/import with json_text creates a pipeline."""
     app, db, _ = base_app
@@ -1019,7 +1019,7 @@ async def test_import_pipeline_from_text(route_client, base_app):
     assert "/generate" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_import_pipeline_from_file(route_client, base_app):
     """POST /pipelines/import with json_file creates a pipeline."""
     app, db, _ = base_app
@@ -1044,7 +1044,7 @@ async def test_import_pipeline_from_file(route_client, base_app):
     assert "/generate" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_import_pipeline_no_data(route_client, base_app):
     """POST /pipelines/import without file or text redirects with error."""
     app, _, _ = base_app
@@ -1059,7 +1059,7 @@ async def test_import_pipeline_no_data(route_client, base_app):
     assert "error=" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_import_pipeline_validation_error(route_client, base_app):
     """POST /pipelines/import with bad JSON redirects with error."""
     app, _, _ = base_app
@@ -1076,7 +1076,7 @@ async def test_import_pipeline_validation_error(route_client, base_app):
     assert "error=" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_import_pipeline_general_exception(route_client, base_app):
     """POST /pipelines/import with unexpected error redirects with error."""
     app, _, _ = base_app
@@ -1096,7 +1096,7 @@ async def test_import_pipeline_general_exception(route_client, base_app):
 # ── create_from_template ────────────────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_create_from_template_success(route_client, base_app):
     """POST /pipelines/from-template creates pipeline from template."""
     app, db, _ = base_app
@@ -1121,7 +1121,7 @@ async def test_create_from_template_success(route_client, base_app):
     assert "/pipelines/42/edit" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_create_from_template_validation_error(route_client, base_app):
     """POST /pipelines/from-template with bad data redirects with error."""
     app, db, _ = base_app
@@ -1146,7 +1146,7 @@ async def test_create_from_template_validation_error(route_client, base_app):
     assert "error=" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_create_from_template_missing_template_id(route_client, base_app):
     """POST /pipelines/from-template without template_id returns 422."""
     app, _, _ = base_app
@@ -1162,7 +1162,7 @@ async def test_create_from_template_missing_template_id(route_client, base_app):
 # ── templates_json ──────────────────────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_templates_json(route_client, base_app):
     """GET /pipelines/templates/json returns template list."""
     app, db, _ = base_app
@@ -1191,7 +1191,7 @@ async def test_templates_json(route_client, base_app):
 # ── templates_page ──────────────────────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_templates_page_renders(route_client, base_app):
     """GET /pipelines/templates renders the templates page."""
     app, db, _ = base_app
@@ -1211,7 +1211,7 @@ async def test_templates_page_renders(route_client, base_app):
 # ── ai_edit_pipeline ────────────────────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_ai_edit_pipeline_no_provider(route_client, base_app):
     """POST /pipelines/<id>/ai-edit without provider returns 400."""
     app, _, _ = base_app
@@ -1225,7 +1225,7 @@ async def test_ai_edit_pipeline_no_provider(route_client, base_app):
     assert resp.json()["ok"] is False
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_ai_edit_pipeline_no_instruction(route_client, base_app):
     """POST /pipelines/<id>/ai-edit without instruction returns 400."""
     app, _, _ = base_app
@@ -1239,7 +1239,7 @@ async def test_ai_edit_pipeline_no_instruction(route_client, base_app):
     assert "instruction is required" in resp.json()["error"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_ai_edit_pipeline_success(route_client, base_app):
     """POST /pipelines/<id>/ai-edit with valid instruction returns updated JSON."""
     app, db, _ = base_app
@@ -1258,7 +1258,7 @@ async def test_ai_edit_pipeline_success(route_client, base_app):
     assert data["ok"] is True
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_ai_edit_pipeline_exception(route_client, base_app):
     """POST /pipelines/<id>/ai-edit handles service exception."""
     app, db, _ = base_app
@@ -1277,7 +1277,7 @@ async def test_ai_edit_pipeline_exception(route_client, base_app):
 # ── get/set_refinement_steps ────────────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_refinement_steps_not_found(route_client, base_app):
     """GET /pipelines/<id>/refinement-steps for missing pipeline redirects."""
     app, db, _ = base_app
@@ -1288,7 +1288,7 @@ async def test_get_refinement_steps_not_found(route_client, base_app):
     assert "error=pipeline_not_found" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_refinement_steps_success(client_with_dialog, base_app):
     """GET /pipelines/<id>/refinement-steps returns steps list."""
     app, db, _ = base_app
@@ -1302,7 +1302,7 @@ async def test_get_refinement_steps_success(client_with_dialog, base_app):
     assert isinstance(data["steps"], list)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_set_refinement_steps_not_found(route_client, base_app):
     """POST /pipelines/<id>/refinement-steps for missing pipeline redirects."""
     app, db, _ = base_app
@@ -1317,7 +1317,7 @@ async def test_set_refinement_steps_not_found(route_client, base_app):
     assert "error=pipeline_not_found" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_set_refinement_steps_success(client_with_dialog, base_app):
     """POST /pipelines/<id>/refinement-steps saves steps and returns them."""
     app, db, _ = base_app
@@ -1338,7 +1338,7 @@ async def test_set_refinement_steps_success(client_with_dialog, base_app):
     assert len(data["steps"]) == 2
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_set_refinement_steps_invalid_steps(client_with_dialog, base_app):
     """POST /pipelines/<id>/refinement-steps with invalid steps returns 400."""
     app, db, _ = base_app
@@ -1353,7 +1353,7 @@ async def test_set_refinement_steps_invalid_steps(client_with_dialog, base_app):
     assert resp.json()["ok"] is False
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_set_refinement_steps_empty_prompt_filtered(client_with_dialog, base_app):
     """Steps with empty prompts are filtered out."""
     app, db, _ = base_app
@@ -1386,7 +1386,7 @@ async def test_set_refinement_steps_empty_prompt_filtered(client_with_dialog, ba
 # ── _page_context branches ──────────────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_pipelines_page_with_no_llm_provider(route_client, base_app):
     """Pipelines page renders when no LLM provider is configured."""
     app, db, _ = base_app
@@ -1396,7 +1396,7 @@ async def test_pipelines_page_with_no_llm_provider(route_client, base_app):
     assert resp.status_code == 200
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_pipelines_page_with_dialog_refresh(route_client, base_app):
     """Pipelines page handles dialog refresh with ?refresh=1."""
     app, db, pool_mock = base_app
@@ -1409,7 +1409,7 @@ async def test_pipelines_page_with_dialog_refresh(route_client, base_app):
 # ── edit_page with refresh ──────────────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_edit_page_with_refresh(client_with_dialog, base_app):
     """GET /pipelines/<id>/edit?refresh=1 triggers dialog cache refresh."""
     app, db, _ = base_app
@@ -1423,7 +1423,7 @@ async def test_edit_page_with_refresh(client_with_dialog, base_app):
 # ── Toggle with scheduler sync failure ──────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_toggle_pipeline_scheduler_sync_failure(client_with_dialog, base_app):
     """Toggle pipeline handles scheduler sync failure gracefully."""
     app, db, _ = base_app
@@ -1440,7 +1440,7 @@ async def test_toggle_pipeline_scheduler_sync_failure(client_with_dialog, base_a
 # ── Delete with scheduler sync failure ──────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_delete_pipeline_handles_scheduler(client_with_dialog, base_app):
     """Delete pipeline handles scheduler sync failure gracefully."""
     app, db, _ = base_app

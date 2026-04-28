@@ -500,7 +500,7 @@ class TestS3StoreInit:
 class TestS3StoreUploadFile:
     """Tests for S3Store.upload_file method."""
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_upload_file_import_error(self):
         """upload_file returns None when boto3 is not installed."""
         store = S3Store(
@@ -514,7 +514,7 @@ class TestS3StoreUploadFile:
             result = await store.upload_file("/tmp/test.jpg")
             assert result is None
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_upload_file_boto3_exception(self):
         """upload_file returns None on boto3 exception."""
         store = S3Store(
@@ -538,7 +538,7 @@ class TestS3StoreUploadFile:
             result = await store.upload_file("/tmp/test.jpg")
             assert result is None
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_upload_file_success(self):
         """upload_file returns URL on successful upload."""
         store = S3Store(
@@ -566,7 +566,7 @@ class TestS3StoreUploadFile:
             assert result == "https://s3.example.com/my-bucket/test_image.jpg"
             mock_client.upload_file.assert_called_once()
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_upload_file_uses_basename(self):
         """upload_file uses basename of path as S3 key."""
         store = S3Store(

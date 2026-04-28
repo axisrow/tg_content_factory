@@ -20,7 +20,7 @@ async def db(base_app):
 # ── settings_page: edge-case branches ──────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_settings_page_flood_wait_naive_tz(route_client, db):
     """Test settings page when flood_wait_until has no tzinfo (line 424)."""
     accounts = await db.get_accounts(active_only=False)
@@ -39,7 +39,7 @@ async def test_settings_page_flood_wait_naive_tz(route_client, db):
         assert resp.status_code == 200
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_settings_page_expired_flood_cleared(route_client, db):
     """Test settings page clears expired flood waits (lines 424-427)."""
     accounts = await db.get_accounts(active_only=False)
@@ -63,7 +63,7 @@ async def test_settings_page_expired_flood_cleared(route_client, db):
         assert acc.flood_wait_until is None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_settings_page_inactive_account(route_client, db):
     """Test settings page with inactive account (line 434)."""
     accounts = await db.get_accounts(active_only=False)
@@ -85,7 +85,7 @@ async def test_settings_page_inactive_account(route_client, db):
         assert resp.status_code == 200
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_settings_page_notification_bot_error(route_client, db):
     """Test settings page renders without inline notification bot fetch."""
     with patch(
@@ -107,7 +107,7 @@ async def test_settings_page_notification_bot_error(route_client, db):
 # ── save_scheduler: line 560-566 (interval update via scheduler) ───────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_save_scheduler_updates_running_scheduler(route_client, db):
     """Test save scheduler updates interval on running scheduler (lines 567-569)."""
     mock_scheduler = MagicMock()
@@ -124,7 +124,7 @@ async def test_save_scheduler_updates_running_scheduler(route_client, db):
     mock_scheduler.update_interval.assert_called_once_with(45)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_save_scheduler_clamps_interval(route_client, db):
     """Test save scheduler clamps interval to 1..1440."""
     resp = await route_client.post(
@@ -141,7 +141,7 @@ async def test_save_scheduler_clamps_interval(route_client, db):
 # ── save_semantic_search: lines 576-591 (branch coverage) ──────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_save_semantic_search_saves_api_key(route_client, db):
     """Test save semantic search saves API key when not masked (lines 610-613)."""
     resp = await route_client.post(
@@ -160,7 +160,7 @@ async def test_save_semantic_search_saves_api_key(route_client, db):
     assert saved_key == "sk-test-key-123"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_save_semantic_search_preserves_masked_api_key(route_client, db):
     """Test that masked API key is preserved (lines 611-612)."""
     await db.set_setting("semantic_embeddings_api_key", "original-key")
@@ -179,7 +179,7 @@ async def test_save_semantic_search_preserves_masked_api_key(route_client, db):
     assert saved_key == "original-key"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_save_semantic_search_no_api_key_field(route_client, db):
     """Test save semantic search with no api_key field at all (line 610)."""
     resp = await route_client.post(
@@ -198,7 +198,7 @@ async def test_save_semantic_search_no_api_key_field(route_client, db):
 # ── semantic-index: lines 624, 628 ─────────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_run_semantic_index_unavailable(route_client, db):
     """Test running semantic index when not available (line 624)."""
     with patch(
@@ -214,7 +214,7 @@ async def test_run_semantic_index_unavailable(route_client, db):
         assert "error=semantic_unavailable" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_run_semantic_index_with_reset_flag(route_client, db):
     """Test semantic index with reset flag (line 628)."""
     with patch(
@@ -239,7 +239,7 @@ async def test_run_semantic_index_with_reset_flag(route_client, db):
 # ── save_agent: lines 641-652 (tool_permissions scope) ─────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_save_agent_tool_permissions(route_client, db):
     """Test save agent with tool_permissions scope (lines 645-653)."""
     resp = await route_client.post(
@@ -255,7 +255,7 @@ async def test_save_agent_tool_permissions(route_client, db):
     assert "msg=tool_permissions_saved" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_save_agent_tool_permissions_with_phone(route_client, db):
     """Test save agent tool_permissions with phone (line 648)."""
     resp = await route_client.post(
@@ -274,7 +274,7 @@ async def test_save_agent_tool_permissions_with_phone(route_client, db):
 # ── save_agent: lines 655-669 (backend_override branches) ──────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_save_agent_backend_override_invalid(route_client, db):
     """Test save agent with invalid backend override (line 669)."""
     await db.set_setting("agent_dev_mode_enabled", "1")
@@ -296,7 +296,7 @@ async def test_save_agent_backend_override_invalid(route_client, db):
     assert saved == "auto"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_save_agent_dev_mode_no_disclaimer_keeps_current(route_client, db):
     """Test dev_mode scope without disclaimer keeps current state (line 679)."""
     # Start with dev mode enabled; request wants to enable but no disclaimer
@@ -318,7 +318,7 @@ async def test_save_agent_dev_mode_no_disclaimer_keeps_current(route_client, db)
     assert saved == "1"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_save_agent_prompt_template_empty_falls_back(route_client, db):
     """Test empty prompt template falls back to default (lines 683-684)."""
     await db.set_setting("agent_dev_mode_enabled", "1")
@@ -338,7 +338,7 @@ async def test_save_agent_prompt_template_empty_falls_back(route_client, db):
 # ── save_agent: lines 714-723 (claude override no credentials) ─────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_save_agent_claude_override_no_credentials(route_client, db, caplog):
     """Test claude override rejected without API key (lines 714-723)."""
     await db.set_setting("agent_dev_mode_enabled", "1")
@@ -367,7 +367,7 @@ async def test_save_agent_claude_override_no_credentials(route_client, db, caplo
 # ── save_agent: line 730 (agent_manager refresh) ───────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_save_agent_refreshes_agent_manager(route_client, db):
     """Test save agent refreshes agent_manager settings cache (line 730)."""
     await db.set_setting("agent_dev_mode_enabled", "0")
@@ -392,7 +392,7 @@ async def test_save_agent_refreshes_agent_manager(route_client, db):
 # ── agent-providers/add: lines 746-749, 751, 757 ──────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_add_agent_provider_invalid_name(route_client, db):
     """Test add agent provider with invalid name (lines 746-749)."""
     await db.set_setting("agent_dev_mode_enabled", "1")
@@ -416,7 +416,7 @@ async def test_add_agent_provider_invalid_name(route_client, db):
         assert "error=agent_provider_invalid" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_add_agent_provider_already_exists(route_client, db):
     """Test add agent provider when it already exists (line 751)."""
     await db.set_setting("agent_dev_mode_enabled", "1")
@@ -443,7 +443,7 @@ async def test_add_agent_provider_already_exists(route_client, db):
         assert "msg=agent_saved" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_add_agent_provider_refreshes_manager(route_client, db):
     """Test add agent provider refreshes agent manager (line 757)."""
     await db.set_setting("agent_dev_mode_enabled", "1")
@@ -477,7 +477,7 @@ async def test_add_agent_provider_refreshes_manager(route_client, db):
 # ── agent-providers/save: lines 771, 773, 801 ──────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_save_agent_providers_dev_mode_required(route_client, db):
     """Test save agent providers requires dev mode (line 771)."""
     await db.set_setting("agent_dev_mode_enabled", "0")
@@ -498,7 +498,7 @@ async def test_save_agent_providers_dev_mode_required(route_client, db):
         assert "error=agent_dev_mode_required" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_save_agent_providers_probes_enabled(route_client, db):
     """Test save agent providers probes enabled providers (lines 777-801)."""
     await db.set_setting("agent_dev_mode_enabled", "1")
@@ -539,7 +539,7 @@ async def test_save_agent_providers_probes_enabled(route_client, db):
 # ── agent-providers/{name}/delete: lines 813-825 ───────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_delete_agent_provider_dev_mode_required(route_client, db):
     """Test delete agent provider requires dev mode (lines 813-815)."""
     await db.set_setting("agent_dev_mode_enabled", "0")
@@ -561,7 +561,7 @@ async def test_delete_agent_provider_dev_mode_required(route_client, db):
         assert "error=agent_dev_mode_required" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_delete_agent_provider_refreshes_manager(route_client, db):
     """Test delete provider refreshes agent manager (lines 821-824)."""
     await db.set_setting("agent_dev_mode_enabled", "1")
@@ -593,7 +593,7 @@ async def test_delete_agent_provider_refreshes_manager(route_client, db):
 # ── agent-providers/{name}/refresh: lines 837, 839 ─────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_refresh_agent_provider_dev_mode_required_json(route_client, db):
     """Test refresh provider requires dev mode (JSON) (line 837)."""
     await db.set_setting("agent_dev_mode_enabled", "0")
@@ -612,7 +612,7 @@ async def test_refresh_agent_provider_dev_mode_required_json(route_client, db):
         assert resp.status_code == 403
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_refresh_agent_provider_unknown(route_client, db):
     """Test refresh unknown provider (line 839)."""
     await db.set_setting("agent_dev_mode_enabled", "1")
@@ -637,7 +637,7 @@ async def test_refresh_agent_provider_unknown(route_client, db):
 # ── agent-providers/{name}/probe: lines 902, 904, 907, 911-917 ────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_probe_agent_provider_unknown(route_client, db):
     """Test probe unknown provider (line 904)."""
     await db.set_setting("agent_dev_mode_enabled", "1")
@@ -659,7 +659,7 @@ async def test_probe_agent_provider_unknown(route_client, db):
         assert resp.status_code == 404
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_probe_agent_provider_validation_blocked(route_client, db):
     """Test probe provider when validation fails (lines 910-917)."""
     await db.set_setting("agent_dev_mode_enabled", "1")
@@ -690,7 +690,7 @@ async def test_probe_agent_provider_validation_blocked(route_client, db):
         assert data["reason"] == "Missing API key"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_probe_agent_provider_success(route_client, db):
     """Test probe provider with successful probe (lines 929-960)."""
     await db.set_setting("agent_dev_mode_enabled", "1")
@@ -736,7 +736,7 @@ async def test_probe_agent_provider_success(route_client, db):
 # ── save-filters: lines 1020-1024, 1048-1049 ──────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_save_filters_zero_subs_no_auto_delete(route_client, db):
     """Test save filters with zero min_subscribers and no auto_delete (lines 1020-1042)."""
     resp = await route_client.post(
@@ -750,7 +750,7 @@ async def test_save_filters_zero_subs_no_auto_delete(route_client, db):
     assert "msg=filters_saved" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_save_filters_with_auto_delete_on_collect(route_client, db):
     """Test save filters with auto_delete_on_collect checked."""
     resp = await route_client.post(
@@ -768,7 +768,7 @@ async def test_save_filters_with_auto_delete_on_collect(route_client, db):
 # ── save-notification-account: lines 1048-1049, 1058 ───────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_save_notification_account_with_notifier(route_client, db):
     """Test save notification account invalidates notifier cache (line 1058)."""
     mock_notifier = MagicMock()
@@ -792,7 +792,7 @@ async def test_save_notification_account_with_notifier(route_client, db):
         mock_notifier.invalidate_me_cache.assert_called_once()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_save_notification_account_empty_phone(route_client, db):
     """Test save notification account with empty phone clears setting."""
     with patch(
@@ -816,7 +816,7 @@ async def test_save_notification_account_empty_phone(route_client, db):
 # ── save-credentials: lines 1065-1078, 1087 ────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_save_credentials_only_hash(route_client, db):
     """Test save credentials with only api_hash changed (lines 1079-1080)."""
     await db.set_setting("tg_api_id", "99999")
@@ -830,7 +830,7 @@ async def test_save_credentials_only_hash(route_client, db):
     assert "msg=credentials_saved" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_save_credentials_no_changes(route_client, db):
     """Test save credentials when nothing changed."""
     resp = await route_client.post(
@@ -845,7 +845,7 @@ async def test_save_credentials_no_changes(route_client, db):
 # ── notifications/setup: lines 1098-1099, 1107, 1117 ──────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_notification_setup_general_exception(route_client, db):
     """Test notification setup redirect is queued."""
     resp = await route_client.post(
@@ -856,7 +856,7 @@ async def test_notification_setup_general_exception(route_client, db):
     assert "command_id=" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_notification_setup_general_exception_json(route_client, db):
     """Test notification setup JSON response is queued."""
     resp = await route_client.post(
@@ -869,7 +869,7 @@ async def test_notification_setup_general_exception_json(route_client, db):
     assert data["status"] == "queued"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_notification_setup_success_redirect(route_client, db):
     """Test notification setup success path is queued."""
     resp = await route_client.post(
@@ -883,7 +883,7 @@ async def test_notification_setup_success_redirect(route_client, db):
 # ── notifications/delete: lines 1142-1153 ──────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_notification_delete_runtime_error_account(route_client, db):
     """Test notification delete is queued."""
     resp = await route_client.post(
@@ -894,7 +894,7 @@ async def test_notification_delete_runtime_error_account(route_client, db):
     assert "command_id=" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_notification_delete_runtime_error_other(route_client, db):
     """Test notification delete keeps queued contract regardless of runtime outcome."""
     resp = await route_client.post(
@@ -905,7 +905,7 @@ async def test_notification_delete_runtime_error_other(route_client, db):
     assert "msg=notification_delete_queued" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_notification_delete_general_exception(route_client, db):
     """Test notification delete redirect remains queued."""
     resp = await route_client.post(
@@ -916,7 +916,7 @@ async def test_notification_delete_general_exception(route_client, db):
     assert "command_id=" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_notification_delete_general_exception_json(route_client, db):
     """Test notification delete JSON response is queued."""
     resp = await route_client.post(
@@ -932,7 +932,7 @@ async def test_notification_delete_general_exception_json(route_client, db):
 # ── notifications/test: lines 1167, 1169-1170, 1175-1184, 1192 ────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_test_notification_no_notifier_no_bot(route_client, db):
     """Test notification test is queued even without cached notifier state."""
     resp = await route_client.post(
@@ -943,7 +943,7 @@ async def test_test_notification_no_notifier_no_bot(route_client, db):
     assert "command_id=" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_test_notification_bot_sends_start(route_client, db):
     """Test notification test success path is queued."""
     resp = await route_client.post(
@@ -954,7 +954,7 @@ async def test_test_notification_bot_sends_start(route_client, db):
     assert "msg=notification_test_queued" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_test_notification_notify_fails(route_client, db):
     """Test notification test retains queued redirect contract."""
     resp = await route_client.post(
@@ -968,7 +968,7 @@ async def test_test_notification_notify_fails(route_client, db):
 # ── Image Providers: lines 1202-1262 ───────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_add_image_provider_invalid(route_client, db):
     """Test add image provider with invalid name (lines 1204-1207)."""
     with patch(
@@ -990,7 +990,7 @@ async def test_add_image_provider_invalid(route_client, db):
         assert "error=image_provider_invalid" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_add_image_provider_already_exists(route_client, db):
     """Test add image provider when it already exists (lines 1208-1209)."""
     with patch(
@@ -1015,7 +1015,7 @@ async def test_add_image_provider_already_exists(route_client, db):
         assert "msg=image_saved" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_save_image_providers_missing_key(route_client, db):
     """Test save image providers with missing API key (lines 1226-1233)."""
     with patch(
@@ -1048,7 +1048,7 @@ async def test_save_image_providers_missing_key(route_client, db):
         assert "error=image_provider_missing_key" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_save_image_providers_success(route_client, db):
     """Test save image providers success (lines 1236-1239)."""
     with patch(
@@ -1072,7 +1072,7 @@ async def test_save_image_providers_success(route_client, db):
         assert "msg=image_saved" in resp.headers["location"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_delete_image_provider(route_client, db):
     """Test delete image provider (lines 1246-1250)."""
     with patch(
@@ -1097,7 +1097,7 @@ async def test_delete_image_provider(route_client, db):
 # ── Translation settings: lines 1255-1262, 1267-1269 ──────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_save_translation_settings(route_client, db):
     """Test save translation settings (lines 1255-1262)."""
     resp = await route_client.post(
@@ -1120,7 +1120,7 @@ async def test_save_translation_settings(route_client, db):
     assert saved_lang == "en"  # .lower() applied
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_translation_backfill(route_client, db):
     """Test translation backfill (lines 1267-1269)."""
     resp = await route_client.post(
@@ -1134,7 +1134,7 @@ async def test_translation_backfill(route_client, db):
 # ── translation-run: lines 1276-1293 ───────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_translation_run_batch(route_client, db):
     """Test translation run batch (lines 1276-1293)."""
     await db.set_setting("translation_source_filter", "ru,ua")
@@ -1151,7 +1151,7 @@ async def test_translation_run_batch(route_client, db):
 # ── _reload_llm_providers: lines 80-83 ─────────────────────────────────
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_settings_page_reload_llm_providers_failure(route_client, db, caplog):
     """Test _reload_llm_providers handles exception (lines 80-83)."""
     mock_llm_svc = MagicMock()

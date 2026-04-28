@@ -45,14 +45,14 @@ def _text(result: dict) -> str:
 
 
 class TestListAgentThreads:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_empty(self, mock_db):
         mock_db.get_agent_threads = AsyncMock(return_value=[])
         handlers = _get_tool_handlers(mock_db)
         result = await handlers["list_agent_threads"]({})
         assert "Треды не найдены" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_with_threads(self, mock_db):
         mock_db.get_agent_threads = AsyncMock(
             return_value=[{"id": 1, "title": "Test Chat", "created_at": "2025-01-01"}]
@@ -62,7 +62,7 @@ class TestListAgentThreads:
         assert "Test Chat" in _text(result)
         assert "Треды (1)" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_exception_returns_error(self, mock_db):
         mock_db.get_agent_threads = AsyncMock(side_effect=Exception("db error"))
         handlers = _get_tool_handlers(mock_db)
@@ -71,7 +71,7 @@ class TestListAgentThreads:
 
 
 class TestCreateAgentThread:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_creates_with_title(self, mock_db):
         mock_db.create_agent_thread = AsyncMock(return_value=42)
         handlers = _get_tool_handlers(mock_db)
@@ -79,14 +79,14 @@ class TestCreateAgentThread:
         assert "id=42" in _text(result)
         assert "My Thread" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_creates_with_default_title(self, mock_db):
         mock_db.create_agent_thread = AsyncMock(return_value=1)
         handlers = _get_tool_handlers(mock_db)
         result = await handlers["create_agent_thread"]({})
         assert "id=1" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_exception(self, mock_db):
         mock_db.create_agent_thread = AsyncMock(side_effect=Exception("fail"))
         handlers = _get_tool_handlers(mock_db)
@@ -95,20 +95,20 @@ class TestCreateAgentThread:
 
 
 class TestDeleteAgentThread:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_requires_thread_id(self, mock_db):
         handlers = _get_tool_handlers(mock_db)
         result = await handlers["delete_agent_thread"]({})
         assert "thread_id обязателен" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_requires_confirm(self, mock_db):
         mock_db.get_agent_thread = AsyncMock(return_value={"title": "My Thread"})
         handlers = _get_tool_handlers(mock_db)
         result = await handlers["delete_agent_thread"]({"thread_id": 1})
         assert "confirm=true" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_thread_not_found_uses_fallback_name(self, mock_db):
         """When thread is None, name should be 'id=X' fallback."""
         mock_db.get_agent_thread = AsyncMock(return_value=None)
@@ -118,7 +118,7 @@ class TestDeleteAgentThread:
         assert "id=99" in _text(result)
         mock_db.delete_agent_thread.assert_awaited_once_with(99)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_delete_success(self, mock_db):
         mock_db.get_agent_thread = AsyncMock(return_value={"title": "Chat 1"})
         mock_db.delete_agent_thread = AsyncMock()
@@ -127,7 +127,7 @@ class TestDeleteAgentThread:
         assert "Chat 1" in _text(result)
         assert "удалён" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_delete_exception(self, mock_db):
         mock_db.get_agent_thread = AsyncMock(return_value={"title": "Chat"})
         mock_db.delete_agent_thread = AsyncMock(side_effect=Exception("boom"))
@@ -137,20 +137,20 @@ class TestDeleteAgentThread:
 
 
 class TestRenameAgentThread:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_requires_both_params(self, mock_db):
         handlers = _get_tool_handlers(mock_db)
         result = await handlers["rename_agent_thread"]({"thread_id": 1})
         assert "обязательны" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_rename_success(self, mock_db):
         mock_db.rename_agent_thread = AsyncMock()
         handlers = _get_tool_handlers(mock_db)
         result = await handlers["rename_agent_thread"]({"thread_id": 3, "title": "New Name"})
         assert "New Name" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_rename_exception(self, mock_db):
         mock_db.rename_agent_thread = AsyncMock(side_effect=Exception("fail"))
         handlers = _get_tool_handlers(mock_db)
@@ -159,20 +159,20 @@ class TestRenameAgentThread:
 
 
 class TestGetThreadMessages:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_requires_thread_id(self, mock_db):
         handlers = _get_tool_handlers(mock_db)
         result = await handlers["get_thread_messages"]({})
         assert "thread_id обязателен" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_empty(self, mock_db):
         mock_db.get_agent_messages = AsyncMock(return_value=[])
         handlers = _get_tool_handlers(mock_db)
         result = await handlers["get_thread_messages"]({"thread_id": 1})
         assert "Нет сообщений" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_with_messages(self, mock_db):
         msgs = [{"role": "user", "content": "hello"}, {"role": "assistant", "content": "hi"}]
         mock_db.get_agent_messages = AsyncMock(return_value=msgs)
@@ -182,7 +182,7 @@ class TestGetThreadMessages:
         assert "[user]: hello" in text
         assert "[assistant]: hi" in text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_limit_applied(self, mock_db):
         """Only last N messages should be returned when limit is small."""
         msgs = [{"role": "user", "content": f"msg{i}"} for i in range(10)]
@@ -195,7 +195,7 @@ class TestGetThreadMessages:
         assert "msg9" in text
         assert "msg0" not in text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_exception(self, mock_db):
         mock_db.get_agent_messages = AsyncMock(side_effect=Exception("fail"))
         handlers = _get_tool_handlers(mock_db)
@@ -209,7 +209,7 @@ class TestGetThreadMessages:
 
 
 class TestListPendingModeration:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_empty(self, mock_db):
         mock_db.repos = MagicMock()
         mock_db.repos.generation_runs.list_pending_moderation = AsyncMock(return_value=[])
@@ -217,7 +217,7 @@ class TestListPendingModeration:
         result = await handlers["list_pending_moderation"]({})
         assert "Нет черновиков" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_with_runs(self, mock_db):
         run = SimpleNamespace(
             id=1,
@@ -231,7 +231,7 @@ class TestListPendingModeration:
         result = await handlers["list_pending_moderation"]({"pipeline_id": 2, "limit": 5})
         assert "На модерации (1 шт.)" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_exception(self, mock_db):
         mock_db.repos = MagicMock()
         mock_db.repos.generation_runs.list_pending_moderation = AsyncMock(side_effect=Exception("db"))
@@ -241,13 +241,13 @@ class TestListPendingModeration:
 
 
 class TestApproveRun:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_requires_run_id(self, mock_db):
         handlers = _get_tool_handlers(mock_db)
         result = await handlers["approve_run"]({})
         assert "run_id обязателен" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_not_found(self, mock_db):
         mock_db.repos = MagicMock()
         mock_db.repos.generation_runs.get = AsyncMock(return_value=None)
@@ -255,7 +255,7 @@ class TestApproveRun:
         result = await handlers["approve_run"]({"run_id": 99})
         assert "не найден" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_approve_success(self, mock_db):
         mock_db.repos = MagicMock()
         mock_db.repos.generation_runs.get = AsyncMock(
@@ -266,7 +266,7 @@ class TestApproveRun:
         result = await handlers["approve_run"]({"run_id": 1})
         assert "одобрен" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_exception(self, mock_db):
         mock_db.repos = MagicMock()
         mock_db.repos.generation_runs.get = AsyncMock(side_effect=Exception("boom"))
@@ -276,13 +276,13 @@ class TestApproveRun:
 
 
 class TestRejectRun:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_requires_run_id(self, mock_db):
         handlers = _get_tool_handlers(mock_db)
         result = await handlers["reject_run"]({})
         assert "run_id обязателен" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_reject_success(self, mock_db):
         mock_db.repos = MagicMock()
         mock_db.repos.generation_runs.get = AsyncMock(
@@ -295,25 +295,25 @@ class TestRejectRun:
 
 
 class TestBulkApproveRuns:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_invalid_ids_format(self, mock_db):
         handlers = _get_tool_handlers(mock_db)
         result = await handlers["bulk_approve_runs"]({"run_ids": "a,b,c", "confirm": True})
         assert "числами через запятую" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_empty_ids(self, mock_db):
         handlers = _get_tool_handlers(mock_db)
         result = await handlers["bulk_approve_runs"]({"run_ids": "", "confirm": True})
         assert "пуст" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_requires_confirm(self, mock_db):
         handlers = _get_tool_handlers(mock_db)
         result = await handlers["bulk_approve_runs"]({"run_ids": "1,2,3"})
         assert "confirm=true" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_approves_multiple(self, mock_db):
         mock_db.repos = MagicMock()
         mock_db.repos.generation_runs.set_moderation_status = AsyncMock()
@@ -323,7 +323,7 @@ class TestBulkApproveRuns:
         assert "Одобрено 3 run(s)" in text
         assert mock_db.repos.generation_runs.set_moderation_status.await_count == 3
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_exception(self, mock_db):
         mock_db.repos = MagicMock()
         mock_db.repos.generation_runs.set_moderation_status = AsyncMock(side_effect=Exception("fail"))
@@ -333,7 +333,7 @@ class TestBulkApproveRuns:
 
 
 class TestBulkRejectRuns:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_rejects_multiple(self, mock_db):
         mock_db.repos = MagicMock()
         mock_db.repos.generation_runs.set_moderation_status = AsyncMock()
@@ -342,19 +342,19 @@ class TestBulkRejectRuns:
         text = _text(result)
         assert "Отклонено 2 run(s)" in text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_invalid_ids(self, mock_db):
         handlers = _get_tool_handlers(mock_db)
         result = await handlers["bulk_reject_runs"]({"run_ids": "x", "confirm": True})
         assert "числами через запятую" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_empty_ids(self, mock_db):
         handlers = _get_tool_handlers(mock_db)
         result = await handlers["bulk_reject_runs"]({"run_ids": "", "confirm": True})
         assert "пуст" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_requires_confirm(self, mock_db):
         handlers = _get_tool_handlers(mock_db)
         result = await handlers["bulk_reject_runs"]({"run_ids": "1"})
@@ -376,13 +376,13 @@ def _make_pool_with_account(phone="+79001234567"):
 
 
 class TestSearchMyTelegram:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_no_pool_returns_gate(self, mock_db):
         handlers = _get_tool_handlers(mock_db, client_pool=None)
         result = await handlers["search_dialogs"]({"phone": "+79001234567"})
         assert "CLI-режиме" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_with_data(self, mock_db):
         pool = _make_pool_with_account()
         mock_db.get_accounts = AsyncMock(
@@ -399,7 +399,7 @@ class TestSearchMyTelegram:
         text = _text(result)
         assert "Диалоги (2)" in text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_empty_dialogs(self, mock_db):
         pool = _make_pool_with_account()
         mock_db.get_accounts = AsyncMock(
@@ -411,7 +411,7 @@ class TestSearchMyTelegram:
             result = await handlers["search_dialogs"]({"phone": "+79001234567"})
         assert "не найдены" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_all_dialogs_shown_without_limit(self, mock_db):
         pool = _make_pool_with_account()
         mock_db.get_accounts = AsyncMock(
@@ -428,7 +428,7 @@ class TestSearchMyTelegram:
         assert "Диалоги (105)" in text
         assert "и ещё" not in text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_filter_empty_distinguishes_from_no_dialogs(self, mock_db):
         pool = _make_pool_with_account()
         mock_db.get_accounts = AsyncMock(
@@ -446,7 +446,7 @@ class TestSearchMyTelegram:
         assert "Всего диалогов" in text
         assert "не найдены" not in text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_limit_param(self, mock_db):
         pool = _make_pool_with_account()
         mock_db.get_accounts = AsyncMock(
@@ -462,7 +462,7 @@ class TestSearchMyTelegram:
         text = _text(result)
         assert "Диалоги (3)" in text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_search_param(self, mock_db):
         pool = _make_pool_with_account()
         mock_db.get_accounts = AsyncMock(
@@ -483,7 +483,7 @@ class TestSearchMyTelegram:
         assert "Python Weekly" in text
         assert "Golang Daily" not in text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_type_alias_channels(self, mock_db):
         pool = _make_pool_with_account()
         mock_db.get_accounts = AsyncMock(
@@ -503,7 +503,7 @@ class TestSearchMyTelegram:
         assert "Chan" in text
         assert "Group" not in text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_type_alias_groups(self, mock_db):
         pool = _make_pool_with_account()
         mock_db.get_accounts = AsyncMock(
@@ -522,7 +522,7 @@ class TestSearchMyTelegram:
         assert "Диалоги (2)" in text
         assert "Chan" not in text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_type_exact(self, mock_db):
         pool = _make_pool_with_account()
         mock_db.get_accounts = AsyncMock(
@@ -540,7 +540,7 @@ class TestSearchMyTelegram:
         assert "Диалоги (1)" in text
         assert "Bot1" in text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_exception(self, mock_db):
         pool = _make_pool_with_account()
         mock_db.get_accounts = AsyncMock(
@@ -554,13 +554,13 @@ class TestSearchMyTelegram:
 
 
 class TestLeaveDialogs:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_no_pool(self, mock_db):
         handlers = _get_tool_handlers(mock_db, client_pool=None)
         result = await handlers["leave_dialogs"]({"phone": "+7999", "dialog_ids": "1,2"})
         assert "CLI-режиме" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_no_dialog_ids(self, mock_db):
         pool = _make_pool_with_account()
         mock_db.get_accounts = AsyncMock(
@@ -570,7 +570,7 @@ class TestLeaveDialogs:
         result = await handlers["leave_dialogs"]({"phone": "+79001234567", "dialog_ids": ""})
         assert "dialog_ids обязателен" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_requires_confirm(self, mock_db):
         pool = _make_pool_with_account()
         mock_db.get_accounts = AsyncMock(
@@ -580,7 +580,7 @@ class TestLeaveDialogs:
         result = await handlers["leave_dialogs"]({"phone": "+79001234567", "dialog_ids": "1,2"})
         assert "confirm=true" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_leave_success(self, mock_db):
         pool = _make_pool_with_account()
         mock_db.get_accounts = AsyncMock(
@@ -594,7 +594,7 @@ class TestLeaveDialogs:
             )
         assert "2/2" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_leave_exception(self, mock_db):
         pool = _make_pool_with_account()
         mock_db.get_accounts = AsyncMock(
@@ -610,7 +610,7 @@ class TestLeaveDialogs:
 
 
 class TestGetCacheStatus:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_empty_cache(self, mock_db):
         mock_db.repos = MagicMock()
         mock_db.repos.dialog_cache.get_all_phones = AsyncMock(return_value=[])
@@ -618,7 +618,7 @@ class TestGetCacheStatus:
         result = await handlers["get_cache_status"]({})
         assert "Кеш диалогов пуст" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_with_phones(self, mock_db):
         mock_db.repos = MagicMock()
         mock_db.repos.dialog_cache.get_all_phones = AsyncMock(return_value=["+79001234567"])
@@ -632,7 +632,7 @@ class TestGetCacheStatus:
         assert "+79001234567" in text
         assert "42 записей" in text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_with_no_cached_at(self, mock_db):
         mock_db.repos = MagicMock()
         mock_db.repos.dialog_cache.get_all_phones = AsyncMock(return_value=["+7999"])
@@ -642,7 +642,7 @@ class TestGetCacheStatus:
         result = await handlers["get_cache_status"]({})
         assert "—" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_exception(self, mock_db):
         mock_db.repos = MagicMock()
         mock_db.repos.dialog_cache.get_all_phones = AsyncMock(side_effect=Exception("oops"))
@@ -652,13 +652,13 @@ class TestGetCacheStatus:
 
 
 class TestCreateTelegramChannel:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_no_pool(self, mock_db):
         handlers = _get_tool_handlers(mock_db, client_pool=None)
         result = await handlers["create_telegram_channel"]({"phone": "+7999", "title": "My Chan"})
         assert "CLI-режиме" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_requires_title(self, mock_db):
         pool = _make_pool_with_account()
         mock_db.get_accounts = AsyncMock(
@@ -668,7 +668,7 @@ class TestCreateTelegramChannel:
         result = await handlers["create_telegram_channel"]({"phone": "+79001234567", "title": ""})
         assert "title обязателен" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_requires_confirm(self, mock_db):
         pool = _make_pool_with_account()
         mock_db.get_accounts = AsyncMock(
@@ -680,7 +680,7 @@ class TestCreateTelegramChannel:
         )
         assert "confirm=true" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_client_not_found(self, mock_db):
         pool = _make_pool_with_account()
         pool.get_native_client_by_phone = AsyncMock(return_value=None)
@@ -726,19 +726,19 @@ def _photo_patches(photo_task_svc, auto_upload_svc):
 
 
 class TestCancelPhotoItem:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_requires_item_id(self, mock_db):
         handlers = _get_tool_handlers(mock_db)
         result = await handlers["cancel_photo_item"]({})
         assert "item_id обязателен" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_requires_confirm(self, mock_db):
         handlers = _get_tool_handlers(mock_db)
         result = await handlers["cancel_photo_item"]({"item_id": 1})
         assert "confirm=true" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_cancel_success(self, mock_db):
         photo_task_svc, auto_upload_svc = _make_photo_services()
         photo_task_svc.cancel_item = AsyncMock(return_value=True)
@@ -750,7 +750,7 @@ class TestCancelPhotoItem:
             result = await handlers["cancel_photo_item"]({"item_id": 5, "confirm": True})
         assert "отменено" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_cancel_item_not_found(self, mock_db):
         photo_task_svc, auto_upload_svc = _make_photo_services()
         photo_task_svc.cancel_item = AsyncMock(return_value=False)
@@ -763,7 +763,7 @@ class TestCancelPhotoItem:
         text = _text(result)
         assert "Не удалось отменить" in text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_exception(self, mock_db):
         photo_task_svc, auto_upload_svc = _make_photo_services()
         photo_task_svc.cancel_item = AsyncMock(side_effect=Exception("db"))
@@ -777,13 +777,13 @@ class TestCancelPhotoItem:
 
 
 class TestToggleAutoUpload:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_requires_job_id(self, mock_db):
         handlers = _get_tool_handlers(mock_db)
         result = await handlers["toggle_auto_upload"]({})
         assert "job_id обязателен" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_job_not_found(self, mock_db):
         photo_task_svc, auto_upload_svc = _make_photo_services()
         auto_upload_svc.get_job = AsyncMock(return_value=None)
@@ -795,7 +795,7 @@ class TestToggleAutoUpload:
             result = await handlers["toggle_auto_upload"]({"job_id": 1})
         assert "не найдена" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_toggle_active_to_paused(self, mock_db):
         photo_task_svc, auto_upload_svc = _make_photo_services()
         job = MagicMock()
@@ -810,7 +810,7 @@ class TestToggleAutoUpload:
             result = await handlers["toggle_auto_upload"]({"job_id": 1})
         assert "приостановлена" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_toggle_paused_to_active(self, mock_db):
         photo_task_svc, auto_upload_svc = _make_photo_services()
         job = MagicMock()
@@ -825,7 +825,7 @@ class TestToggleAutoUpload:
             result = await handlers["toggle_auto_upload"]({"job_id": 1})
         assert "активирована" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_exception(self, mock_db):
         photo_task_svc, auto_upload_svc = _make_photo_services()
         auto_upload_svc.get_job = AsyncMock(side_effect=Exception("fail"))
@@ -839,20 +839,20 @@ class TestToggleAutoUpload:
 
 
 class TestRunPhotoDue:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_no_pool(self, mock_db):
         handlers = _get_tool_handlers(mock_db, client_pool=None)
         result = await handlers["run_photo_due"]({})
         assert "CLI-режиме" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_requires_confirm(self, mock_db):
         pool = _make_pool_with_account()
         handlers = _get_tool_handlers(mock_db, client_pool=pool)
         result = await handlers["run_photo_due"]({})
         assert "confirm=true" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_run_due_success(self, mock_db):
         pool = _make_pool_with_account()
         photo_task_svc, auto_upload_svc = _make_photo_services()
@@ -868,7 +868,7 @@ class TestRunPhotoDue:
         assert "items=3" in text
         assert "auto_jobs=1" in text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_exception(self, mock_db):
         pool = _make_pool_with_account()
         with patch("src.database.bundles.PhotoLoaderBundle"):
@@ -900,14 +900,14 @@ class TestImageGenerationService:
         svc = ImageGenerationService(adapters={})
         assert svc.adapter_names == []
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_is_available_false_no_adapters(self):
         from src.services.image_generation_service import ImageGenerationService
 
         svc = ImageGenerationService(adapters={})
         assert not await svc.is_available()
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_is_available_true_with_adapter(self):
         from src.services.image_generation_service import ImageGenerationService
 
@@ -942,7 +942,7 @@ class TestImageGenerationService:
         assert provider is None
         assert model_id == ""
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_generate_no_text_returns_none(self):
         from src.services.image_generation_service import ImageGenerationService
 
@@ -950,7 +950,7 @@ class TestImageGenerationService:
         result = await svc.generate("together:model", "")
         assert result is None
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_generate_no_adapters_returns_none(self):
         from src.services.image_generation_service import ImageGenerationService
 
@@ -958,7 +958,7 @@ class TestImageGenerationService:
         result = await svc.generate("together:model", "some text")
         assert result is None
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_generate_success(self):
         from src.services.image_generation_service import ImageGenerationService
 
@@ -967,7 +967,7 @@ class TestImageGenerationService:
         result = await svc.generate("together:FLUX.1-schnell", "test prompt")
         assert result == "http://img.example.com/x.png"
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_generate_unknown_provider_uses_fallback(self):
         from src.services.image_generation_service import ImageGenerationService
 
@@ -977,7 +977,7 @@ class TestImageGenerationService:
         result = await svc.generate("replicate:some-model", "text")
         assert result == "http://fallback.example.com/img.png"
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_generate_os_error_returns_none(self):
         from src.services.image_generation_service import ImageGenerationService
 
@@ -986,7 +986,7 @@ class TestImageGenerationService:
         result = await svc.generate("x:model", "text")
         assert result is None
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_generate_unexpected_error_returns_none(self):
         from src.services.image_generation_service import ImageGenerationService
 
@@ -995,7 +995,7 @@ class TestImageGenerationService:
         result = await svc.generate("x:model", "text")
         assert result is None
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_search_models_together(self):
         from src.services.image_generation_service import ImageGenerationService
 
@@ -1004,7 +1004,7 @@ class TestImageGenerationService:
         assert len(models) > 0
         assert models[0]["id"].startswith("black-forest-labs")
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_search_models_openai(self):
         from src.services.image_generation_service import ImageGenerationService
 
@@ -1013,7 +1013,7 @@ class TestImageGenerationService:
         ids = [m["id"] for m in models]
         assert "dall-e-3" in ids
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_search_models_with_query_filter(self):
         from src.services.image_generation_service import ImageGenerationService
 
@@ -1021,7 +1021,7 @@ class TestImageGenerationService:
         models = await svc.search_models("openai", query="dall-e-3")
         assert all("dall-e-3" in m["id"] for m in models)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_search_models_unknown_provider_empty(self):
         from src.services.image_generation_service import ImageGenerationService
 
@@ -1029,7 +1029,7 @@ class TestImageGenerationService:
         models = await svc.search_models("unknown_provider")
         assert models == []
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_search_models_replicate_no_token(self):
         from src.services.image_generation_service import ImageGenerationService
 
@@ -1047,7 +1047,7 @@ class TestImageGenerationService:
 # ===========================================================================
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_messages_insert_and_count_embeddings(db):
     """Test insert_message + count_embeddings basic flow."""
     from datetime import datetime
@@ -1064,7 +1064,7 @@ async def test_messages_insert_and_count_embeddings(db):
     assert inserted
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_messages_insert_duplicate_returns_false(db):
     """Duplicate inserts should return False."""
     from datetime import datetime
@@ -1083,7 +1083,7 @@ async def test_messages_insert_duplicate_returns_false(db):
     assert not second
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_messages_insert_with_reactions(db):
     """Messages with reactions_json should populate message_reactions."""
     from datetime import datetime
@@ -1102,7 +1102,7 @@ async def test_messages_insert_with_reactions(db):
     assert inserted
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_messages_insert_batch(db):
     """insert_messages_batch should return count of inserted rows."""
     from datetime import datetime
@@ -1122,39 +1122,39 @@ async def test_messages_insert_batch(db):
     assert count == 5
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_messages_insert_empty_batch(db):
     count = await db.repos.messages.insert_messages_batch([])
     assert count == 0
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_messages_get_embedding_dimensions_none(db):
     dims = await db.repos.messages.get_embedding_dimensions()
     assert dims is None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_messages_ensure_embeddings_table(db):
     await db.repos.messages.ensure_embeddings_table(128)
     dims = await db.repos.messages.get_embedding_dimensions()
     assert dims == 128
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_messages_ensure_embeddings_table_invalid(db):
     with pytest.raises(ValueError):
         await db.repos.messages.ensure_embeddings_table(0)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_messages_ensure_embeddings_table_dimension_mismatch(db):
     await db.repos.messages.ensure_embeddings_table(128)
     with pytest.raises(RuntimeError):
         await db.repos.messages.ensure_embeddings_table(256)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_messages_upsert_embeddings(db):
     from datetime import datetime
 
@@ -1182,7 +1182,7 @@ async def test_messages_upsert_embeddings(db):
     assert total >= 1
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_messages_upsert_embedding_json(db):
     from datetime import datetime
 
@@ -1209,14 +1209,14 @@ async def test_messages_upsert_embedding_json(db):
     assert loaded[0][1] == pytest.approx([0.5, 0.6, 0.7], abs=1e-6)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_messages_search_no_query(db):
     msgs, total = await db.repos.messages.search_messages()
     assert isinstance(msgs, list)
     assert isinstance(total, int)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_messages_normalize_date_to_date_only():
     from src.database.repositories.messages import MessagesRepository
 
@@ -1225,7 +1225,7 @@ async def test_messages_normalize_date_to_date_only():
     assert val == "2025-01-16"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_messages_normalize_date_to_datetime():
     from src.database.repositories.messages import MessagesRepository
 
@@ -1234,7 +1234,7 @@ async def test_messages_normalize_date_to_datetime():
     assert val == "2025-01-15T12:00:00"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_messages_normalize_date_to_none():
     from src.database.repositories.messages import MessagesRepository
 
@@ -1248,7 +1248,7 @@ async def test_messages_normalize_date_to_none():
 # ===========================================================================
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_migrations_idempotent(db):
     """Running migrations again on an initialized DB should not raise."""
     import aiosqlite
@@ -1269,7 +1269,7 @@ async def test_migrations_idempotent(db):
         assert isinstance(result2, bool)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_migrations_adds_missing_columns():
     """If columns are missing, migrations should add them."""
     import aiosqlite
@@ -1293,7 +1293,7 @@ async def test_migrations_adds_missing_columns():
         assert "reactions_json" in cols
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_migrations_renames_legacy_dialog_search_permission_key():
     import json
 
@@ -1324,7 +1324,7 @@ async def test_migrations_renames_legacy_dialog_search_permission_key():
         assert legacy_key not in data
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_migrate_vec_to_portable_skips_without_table():
     """_migrate_vec_to_portable should return early if vec_messages table doesn't exist."""
     import aiosqlite
@@ -1367,7 +1367,7 @@ def _make_task_enqueuer():
     return enqueuer
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_scheduler_start_with_task_enqueuer():
     from src.config import SchedulerConfig
     from src.scheduler.service import SchedulerManager
@@ -1390,7 +1390,7 @@ async def test_scheduler_start_with_task_enqueuer():
     await mgr.stop()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_scheduler_stop_without_start():
     """Stop on non-running scheduler should not raise."""
     from src.config import SchedulerConfig
@@ -1400,7 +1400,7 @@ async def test_scheduler_stop_without_start():
     await mgr.stop()  # Should be a no-op
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_scheduler_stop_cancels_bg_task():
     from src.config import SchedulerConfig
     from src.scheduler.service import SchedulerManager
@@ -1414,7 +1414,7 @@ async def test_scheduler_stop_cancels_bg_task():
     assert mgr._bg_task is None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_scheduler_trigger_background_idempotent():
     """Second trigger_background call should not create another task if first is running."""
     import asyncio
@@ -1443,7 +1443,7 @@ async def test_scheduler_trigger_background_idempotent():
     await mgr._bg_task
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_scheduler_run_photo_due_no_enqueuer():
     from src.config import SchedulerConfig
     from src.scheduler.service import SchedulerManager
@@ -1453,7 +1453,7 @@ async def test_scheduler_run_photo_due_no_enqueuer():
     assert "processed" in result
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_scheduler_run_photo_auto_no_enqueuer():
     from src.config import SchedulerConfig
     from src.scheduler.service import SchedulerManager
@@ -1463,7 +1463,7 @@ async def test_scheduler_run_photo_auto_no_enqueuer():
     assert "jobs" in result
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_scheduler_run_photo_due_with_enqueuer():
     from src.config import SchedulerConfig
     from src.scheduler.service import SchedulerManager
@@ -1475,7 +1475,7 @@ async def test_scheduler_run_photo_due_with_enqueuer():
     enqueuer.enqueue_photo_due.assert_awaited_once()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_scheduler_run_photo_auto_with_enqueuer():
     from src.config import SchedulerConfig
     from src.scheduler.service import SchedulerManager
@@ -1487,7 +1487,7 @@ async def test_scheduler_run_photo_auto_with_enqueuer():
     enqueuer.enqueue_photo_auto.assert_awaited_once()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_scheduler_run_photo_due_exception():
     from src.config import SchedulerConfig
     from src.scheduler.service import SchedulerManager
@@ -1500,7 +1500,7 @@ async def test_scheduler_run_photo_due_exception():
     assert isinstance(result, dict)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_scheduler_run_pipeline_job():
     from src.config import SchedulerConfig
     from src.scheduler.service import SchedulerManager
@@ -1511,7 +1511,7 @@ async def test_scheduler_run_pipeline_job():
     enqueuer.enqueue_pipeline_run.assert_awaited_once_with(42)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_scheduler_run_content_generate_job():
     from src.config import SchedulerConfig
     from src.scheduler.service import SchedulerManager
@@ -1522,7 +1522,7 @@ async def test_scheduler_run_content_generate_job():
     enqueuer.enqueue_content_generate.assert_awaited_once_with(7)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_scheduler_run_search_query():
     from src.config import SchedulerConfig
     from src.scheduler.service import SchedulerManager
@@ -1533,7 +1533,7 @@ async def test_scheduler_run_search_query():
     enqueuer.enqueue_sq_stats.assert_awaited_once_with(5)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_scheduler_get_job_next_run_no_scheduler():
     from src.config import SchedulerConfig
     from src.scheduler.service import SchedulerManager
@@ -1543,7 +1543,7 @@ async def test_scheduler_get_job_next_run_no_scheduler():
     assert result is None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_scheduler_get_all_jobs_no_scheduler():
     from src.config import SchedulerConfig
     from src.scheduler.service import SchedulerManager
@@ -1553,7 +1553,7 @@ async def test_scheduler_get_all_jobs_no_scheduler():
     assert result == {}
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_scheduler_get_potential_jobs_no_bundles():
     from src.config import SchedulerConfig
     from src.scheduler.service import SchedulerManager
@@ -1563,7 +1563,7 @@ async def test_scheduler_get_potential_jobs_no_bundles():
     assert any(j["job_id"] == "collect_all" for j in jobs)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_scheduler_load_settings_no_bundle():
     """load_settings with no bundle should be a no-op."""
     from src.config import SchedulerConfig
@@ -1574,7 +1574,7 @@ async def test_scheduler_load_settings_no_bundle():
     assert mgr.interval_minutes == 45
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_scheduler_is_job_enabled_no_bundle():
     from src.config import SchedulerConfig
     from src.scheduler.service import SchedulerManager
@@ -1583,7 +1583,7 @@ async def test_scheduler_is_job_enabled_no_bundle():
     assert await mgr.is_job_enabled("collect_all")
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_scheduler_sync_job_state_not_running():
     """sync_job_state should be a no-op when scheduler is not running."""
     from src.config import SchedulerConfig
@@ -1593,7 +1593,7 @@ async def test_scheduler_sync_job_state_not_running():
     await mgr.sync_job_state("collect_all", True)  # Should not raise
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_scheduler_update_interval_no_job():
     """update_interval when job is disabled should just store the value."""
     from src.config import SchedulerConfig
@@ -1613,7 +1613,7 @@ async def test_scheduler_update_interval_no_job():
 # ===========================================================================
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_telegram_search_no_pool():
     from src.search.telegram_search import TelegramSearch
 
@@ -1625,7 +1625,7 @@ async def test_telegram_search_no_pool():
     assert "аккаунтов" in result.error
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_telegram_search_no_premium_client():
     from src.search.telegram_search import TelegramSearch
 
@@ -1643,7 +1643,7 @@ async def test_telegram_search_no_premium_client():
     assert result.error is not None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_telegram_search_my_chats_no_pool():
     from src.search.telegram_search import TelegramSearch
 
@@ -1654,7 +1654,7 @@ async def test_telegram_search_my_chats_no_pool():
     assert result.error is not None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_telegram_search_my_chats_no_client():
     from src.search.telegram_search import TelegramSearch
 
@@ -1669,7 +1669,7 @@ async def test_telegram_search_my_chats_no_client():
     assert "доступных" in result.error
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_telegram_search_in_channel_no_pool():
     from src.search.telegram_search import TelegramSearch
 
@@ -1680,7 +1680,7 @@ async def test_telegram_search_in_channel_no_pool():
     assert result.error is not None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_telegram_search_in_channel_no_client():
     from src.search.telegram_search import TelegramSearch
 
@@ -1694,7 +1694,7 @@ async def test_telegram_search_in_channel_no_client():
     assert result.error is not None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_check_search_quota_no_pool():
     from src.search.telegram_search import TelegramSearch
 
@@ -1705,7 +1705,7 @@ async def test_check_search_quota_no_pool():
     assert result is None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_check_search_quota_no_premium():
     from src.search.telegram_search import TelegramSearch
 
@@ -1719,7 +1719,7 @@ async def test_check_search_quota_no_premium():
     assert result is None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_premium_unavailability_reason_no_pool():
     from src.search.telegram_search import TelegramSearch
 
@@ -1730,7 +1730,7 @@ async def test_get_premium_unavailability_reason_no_pool():
     assert "аккаунтов" in reason
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_premium_unavailability_reason_no_method():
     from src.search.telegram_search import TelegramSearch
 
@@ -1782,7 +1782,7 @@ def _make_task(task_type, payload=None, task_id=1):
     return task
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_dispatcher_start_recovers_tasks():
     from src.services.unified_dispatcher import UnifiedDispatcher
 
@@ -1799,7 +1799,7 @@ async def test_dispatcher_start_recovers_tasks():
     tasks_repo.requeue_running_generic_tasks_on_startup.assert_awaited_once()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_dispatcher_start_idempotent():
     from src.services.unified_dispatcher import UnifiedDispatcher
 
@@ -1818,7 +1818,7 @@ async def test_dispatcher_start_idempotent():
     await dispatcher.stop()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_dispatcher_handle_photo_due_no_service():
     from src.models import CollectionTaskStatus, CollectionTaskType
     from src.services.unified_dispatcher import UnifiedDispatcher
@@ -1837,7 +1837,7 @@ async def test_dispatcher_handle_photo_due_no_service():
     )
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_dispatcher_handle_photo_due_with_service():
     from src.models import CollectionTaskStatus, CollectionTaskType
     from src.services.unified_dispatcher import UnifiedDispatcher
@@ -1858,7 +1858,7 @@ async def test_dispatcher_handle_photo_due_with_service():
     )
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_dispatcher_handle_photo_auto_no_service():
     from src.models import CollectionTaskStatus, CollectionTaskType
     from src.services.unified_dispatcher import UnifiedDispatcher
@@ -1877,7 +1877,7 @@ async def test_dispatcher_handle_photo_auto_no_service():
     )
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_dispatcher_handle_photo_auto_with_service():
     from src.models import CollectionTaskStatus, CollectionTaskType
     from src.services.unified_dispatcher import UnifiedDispatcher
@@ -1898,7 +1898,7 @@ async def test_dispatcher_handle_photo_auto_with_service():
     )
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_dispatcher_handle_sq_stats_no_bundle():
     from src.models import CollectionTaskStatus, CollectionTaskType
     from src.services.unified_dispatcher import UnifiedDispatcher
@@ -1919,7 +1919,7 @@ async def test_dispatcher_handle_sq_stats_no_bundle():
     )
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_dispatcher_handle_sq_stats_invalid_payload():
     from src.models import CollectionTaskStatus, CollectionTaskType
     from src.services.unified_dispatcher import UnifiedDispatcher
@@ -1941,7 +1941,7 @@ async def test_dispatcher_handle_sq_stats_invalid_payload():
     )
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_dispatcher_dispatch_unknown_task_type():
     from src.models import CollectionTaskStatus
     from src.services.unified_dispatcher import UnifiedDispatcher
@@ -1964,7 +1964,7 @@ async def test_dispatcher_dispatch_unknown_task_type():
     )
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_dispatcher_handle_photo_due_exception():
     from src.models import CollectionTaskStatus, CollectionTaskType
     from src.services.unified_dispatcher import UnifiedDispatcher
@@ -1985,7 +1985,7 @@ async def test_dispatcher_handle_photo_due_exception():
     assert any(CollectionTaskStatus.FAILED in c.args for c in calls)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_dispatcher_handle_stats_all_empty_channels():
     from src.models import CollectionTaskStatus, CollectionTaskType, StatsAllTaskPayload
     from src.services.unified_dispatcher import UnifiedDispatcher

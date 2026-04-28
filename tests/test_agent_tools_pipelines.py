@@ -44,7 +44,7 @@ def _make_run(run_id=1, pipeline_id=1, status="pending", moderation_status="pend
 
 
 class TestPipelinesToolListPipelines:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_empty(self, mock_db):
         with patch("src.services.pipeline_service.PipelineService") as mock_svc:
             mock_svc.return_value.list = AsyncMock(return_value=[])
@@ -52,7 +52,7 @@ class TestPipelinesToolListPipelines:
             result = await handlers["list_pipelines"]({"active_only": False})
         assert "не найдены" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_with_pipeline(self, mock_db):
         p = SimpleNamespace(
             id=5,
@@ -72,7 +72,7 @@ class TestPipelinesToolListPipelines:
         assert "id=5" in text
         assert "gpt-4" in text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_error(self, mock_db):
         with patch("src.services.pipeline_service.PipelineService") as mock_svc:
             mock_svc.return_value.list = AsyncMock(side_effect=Exception("db err"))
@@ -80,14 +80,14 @@ class TestPipelinesToolListPipelines:
             result = await handlers["list_pipelines"]({})
         assert "Ошибка" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_empty_returns_not_found(self, mock_db):
         with patch("src.services.pipeline_service.PipelineService.list", AsyncMock(return_value=[])):
             handlers = _get_tool_handlers(mock_db, config=MagicMock())
             result = await handlers["list_pipelines"]({})
             assert "Пайплайны не найдены" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_with_pipelines(self, mock_db):
         p = _make_pipeline(pk=1, name="NewsPipeline")
         with patch("src.services.pipeline_service.PipelineService.list", AsyncMock(return_value=[p])):
@@ -99,13 +99,13 @@ class TestPipelinesToolListPipelines:
 
 
 class TestPipelinesToolGetPipelineDetail:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_missing_id(self, mock_db):
         handlers = _get_tool_handlers(mock_db)
         result = await handlers["get_pipeline_detail"]({})
         assert "pipeline_id обязателен" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_not_found(self, mock_db):
         with patch("src.services.pipeline_service.PipelineService") as mock_svc:
             mock_svc.return_value.get_detail = AsyncMock(return_value=None)
@@ -113,7 +113,7 @@ class TestPipelinesToolGetPipelineDetail:
             result = await handlers["get_pipeline_detail"]({"pipeline_id": 999})
         assert "не найден" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_found(self, mock_db):
         p = SimpleNamespace(
             id=2,
@@ -139,13 +139,13 @@ class TestPipelinesToolGetPipelineDetail:
         assert "Detail Pipeline" in text
         assert "Channel A" in text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_missing_pipeline_id(self, mock_db):
         handlers = _get_tool_handlers(mock_db, config=MagicMock())
         result = await handlers["get_pipeline_detail"]({})
         assert "pipeline_id обязателен" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_pipeline_not_found(self, mock_db):
         with patch(
             "src.services.pipeline_service.PipelineService.get_detail", AsyncMock(return_value=None)
@@ -154,7 +154,7 @@ class TestPipelinesToolGetPipelineDetail:
             result = await handlers["get_pipeline_detail"]({"pipeline_id": 999})
             assert "не найден" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_shows_detail(self, mock_db):
         p = _make_pipeline(pk=1, name="TestPipeline")
         detail = {
@@ -175,14 +175,14 @@ class TestPipelinesToolGetPipelineDetail:
 
 
 class TestGetPipelineQueueTool:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_empty_queue(self, mock_db):
         mock_db.repos.generation_runs.list_by_status = AsyncMock(return_value=[])
         handlers = _get_tool_handlers(mock_db, config=MagicMock())
         result = await handlers["get_pipeline_queue"]({})
         assert "Очередь генерации пуста" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_with_runs(self, mock_db):
         run = _make_run(run_id=1, status="pending", text="Generated content preview")
         mock_db.repos.generation_runs.list_by_status = AsyncMock(return_value=[run])
@@ -194,7 +194,7 @@ class TestGetPipelineQueueTool:
 
 
 class TestPipelinesToolAddPipeline:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_requires_confirmation(self, mock_db):
         handlers = _get_tool_handlers(mock_db)
         result = await handlers["add_pipeline"]({
@@ -206,13 +206,13 @@ class TestPipelinesToolAddPipeline:
         })
         assert "Подтвердите" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_missing_required_fields(self, mock_db):
         handlers = _get_tool_handlers(mock_db)
         result = await handlers["add_pipeline"]({"confirm": True, "name": "only name"})
         assert "обязательны" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_invalid_target_ref_format(self, mock_db):
         handlers = _get_tool_handlers(mock_db)
         result = await handlers["add_pipeline"]({
@@ -224,7 +224,7 @@ class TestPipelinesToolAddPipeline:
         })
         assert "Неверный формат" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_creates_pipeline(self, mock_db):
         with patch("src.services.pipeline_service.PipelineService") as mock_svc:
             with patch("src.services.pipeline_service.PipelineTargetRef"):
@@ -243,13 +243,13 @@ class TestPipelinesToolAddPipeline:
         assert "id=10" in text
         assert "My Pipeline" in text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_requires_confirm_new(self, mock_db):
         handlers = _get_tool_handlers(mock_db, config=MagicMock())
         result = await handlers["add_pipeline"]({"name": "Test"})
         assert "confirm=true" in _text(result).lower()
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_missing_required_fields_new(self, mock_db):
         handlers = _get_tool_handlers(mock_db, config=MagicMock())
         result = await handlers["add_pipeline"]({"name": "Test", "confirm": True})
@@ -257,13 +257,13 @@ class TestPipelinesToolAddPipeline:
 
 
 class TestPipelinesToolTogglePipeline:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_missing_id(self, mock_db):
         handlers = _get_tool_handlers(mock_db)
         result = await handlers["toggle_pipeline"]({})
         assert "pipeline_id обязателен" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_not_found(self, mock_db):
         with patch("src.services.pipeline_service.PipelineService") as mock_svc:
             mock_svc.return_value.toggle = AsyncMock(return_value=False)
@@ -271,7 +271,7 @@ class TestPipelinesToolTogglePipeline:
             result = await handlers["toggle_pipeline"]({"pipeline_id": 99})
         assert "не найден" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_toggled(self, mock_db):
         p = SimpleNamespace(id=1, name="P1", is_active=True)
         with patch("src.services.pipeline_service.PipelineService") as mock_svc:
@@ -283,20 +283,20 @@ class TestPipelinesToolTogglePipeline:
         assert "P1" in text
         assert "активирован" in text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_missing_pipeline_id(self, mock_db):
         handlers = _get_tool_handlers(mock_db, config=MagicMock())
         result = await handlers["toggle_pipeline"]({})
         assert "pipeline_id обязателен" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_pipeline_not_found(self, mock_db):
         with patch("src.services.pipeline_service.PipelineService.toggle", AsyncMock(return_value=False)):
             handlers = _get_tool_handlers(mock_db, config=MagicMock())
             result = await handlers["toggle_pipeline"]({"pipeline_id": 999})
             assert "не найден" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_toggle_activates(self, mock_db):
         p = _make_pipeline(pk=1, name="Test", is_active=True)
         with patch(
@@ -308,13 +308,13 @@ class TestPipelinesToolTogglePipeline:
 
 
 class TestPipelinesToolDeletePipeline:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_missing_id(self, mock_db):
         handlers = _get_tool_handlers(mock_db)
         result = await handlers["delete_pipeline"]({})
         assert "pipeline_id обязателен" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_requires_confirmation(self, mock_db):
         p = SimpleNamespace(id=1, name="PipeX")
         with patch("src.services.pipeline_service.PipelineService") as mock_svc:
@@ -323,7 +323,7 @@ class TestPipelinesToolDeletePipeline:
             result = await handlers["delete_pipeline"]({"pipeline_id": 1, "confirm": False})
         assert "Подтвердите" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_deletes_with_confirmation(self, mock_db):
         p = SimpleNamespace(id=1, name="PipeToDelete")
         with patch("src.services.pipeline_service.PipelineService") as mock_svc:
@@ -335,7 +335,7 @@ class TestPipelinesToolDeletePipeline:
         assert "PipeToDelete" in text
         assert "удалён" in text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_requires_confirm_new(self, mock_db):
         p = _make_pipeline(pk=1, name="Test")
         with patch("src.services.pipeline_service.PipelineService.get", AsyncMock(return_value=p)):
@@ -343,7 +343,7 @@ class TestPipelinesToolDeletePipeline:
             result = await handlers["delete_pipeline"]({"pipeline_id": 1})
             assert "confirm=true" in _text(result).lower()
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_missing_pipeline_id(self, mock_db):
         handlers = _get_tool_handlers(mock_db, config=MagicMock())
         result = await handlers["delete_pipeline"]({})
@@ -351,13 +351,13 @@ class TestPipelinesToolDeletePipeline:
 
 
 class TestPipelinesToolListPipelineRuns:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_missing_pipeline_id(self, mock_db):
         handlers = _get_tool_handlers(mock_db)
         result = await handlers["list_pipeline_runs"]({})
         assert "pipeline_id обязателен" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_empty(self, mock_db):
         mock_db.repos = MagicMock()
         mock_db.repos.generation_runs.list_by_pipeline = AsyncMock(return_value=[])
@@ -365,7 +365,7 @@ class TestPipelinesToolListPipelineRuns:
         result = await handlers["list_pipeline_runs"]({"pipeline_id": 1})
         assert "Нет генераций" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_with_runs(self, mock_db):
         run = SimpleNamespace(
             id=10,
@@ -382,14 +382,14 @@ class TestPipelinesToolListPipelineRuns:
         assert "run_id=10" in text
         assert "approved" in text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_no_runs(self, mock_db):
         mock_db.repos.generation_runs.list_by_pipeline = AsyncMock(return_value=[])
         handlers = _get_tool_handlers(mock_db, config=MagicMock())
         result = await handlers["list_pipeline_runs"]({"pipeline_id": 1})
         assert "Нет генераций" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_with_runs_new(self, mock_db):
         run = _make_run(run_id=1, text="Preview text")
         mock_db.repos.generation_runs.list_by_pipeline = AsyncMock(return_value=[run])
@@ -401,13 +401,13 @@ class TestPipelinesToolListPipelineRuns:
 
 
 class TestPipelinesToolGetPipelineRun:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_missing_run_id(self, mock_db):
         handlers = _get_tool_handlers(mock_db)
         result = await handlers["get_pipeline_run"]({})
         assert "run_id обязателен" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_not_found(self, mock_db):
         mock_db.repos = MagicMock()
         mock_db.repos.generation_runs.get = AsyncMock(return_value=None)
@@ -415,7 +415,7 @@ class TestPipelinesToolGetPipelineRun:
         result = await handlers["get_pipeline_run"]({"run_id": 99})
         assert "не найден" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_found(self, mock_db):
         run = SimpleNamespace(
             id=5,
@@ -436,14 +436,14 @@ class TestPipelinesToolGetPipelineRun:
         assert "Full content text" in text
         assert "approved" in text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_run_not_found_new(self, mock_db):
         mock_db.repos.generation_runs.get = AsyncMock(return_value=None)
         handlers = _get_tool_handlers(mock_db, config=MagicMock())
         result = await handlers["get_pipeline_run"]({"run_id": 999})
         assert "не найден" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_shows_run_text(self, mock_db):
         run = _make_run(run_id=1, text="Full generated text content")
         mock_db.repos.generation_runs.get = AsyncMock(return_value=run)
@@ -455,20 +455,20 @@ class TestPipelinesToolGetPipelineRun:
 
 
 class TestGetRefinementStepsTool:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_missing_pipeline_id(self, mock_db):
         handlers = _get_tool_handlers(mock_db, config=MagicMock())
         result = await handlers["get_refinement_steps"]({})
         assert "pipeline_id обязателен" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_pipeline_not_found(self, mock_db):
         mock_db.repos.content_pipelines.get_by_id = AsyncMock(return_value=None)
         handlers = _get_tool_handlers(mock_db, config=MagicMock())
         result = await handlers["get_refinement_steps"]({"pipeline_id": 999})
         assert "не найден" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_no_steps(self, mock_db):
         p = MagicMock()
         p.refinement_steps = []
@@ -477,7 +477,7 @@ class TestGetRefinementStepsTool:
         result = await handlers["get_refinement_steps"]({"pipeline_id": 1})
         assert "не имеет шагов рефайнмента" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_with_steps(self, mock_db):
         p = MagicMock()
         p.refinement_steps = [
@@ -493,19 +493,19 @@ class TestGetRefinementStepsTool:
 
 
 class TestSetRefinementStepsTool:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_missing_pipeline_id(self, mock_db):
         handlers = _get_tool_handlers(mock_db, config=MagicMock())
         result = await handlers["set_refinement_steps"]({})
         assert "pipeline_id обязателен" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_requires_confirm(self, mock_db):
         handlers = _get_tool_handlers(mock_db, config=MagicMock())
         result = await handlers["set_refinement_steps"]({"pipeline_id": 1, "steps_json": "[]"})
         assert "confirm=true" in _text(result).lower()
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_invalid_json(self, mock_db):
         handlers = _get_tool_handlers(mock_db, config=MagicMock())
         result = await handlers["set_refinement_steps"](
@@ -513,7 +513,7 @@ class TestSetRefinementStepsTool:
         )
         assert "парсинга" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_not_a_list(self, mock_db):
         handlers = _get_tool_handlers(mock_db, config=MagicMock())
         result = await handlers["set_refinement_steps"](
@@ -521,7 +521,7 @@ class TestSetRefinementStepsTool:
         )
         assert "JSON-массивом" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_steps_missing_prompt(self, mock_db):
         handlers = _get_tool_handlers(mock_db, config=MagicMock())
         result = await handlers["set_refinement_steps"](
@@ -529,7 +529,7 @@ class TestSetRefinementStepsTool:
         )
         assert "не содержат поле 'prompt'" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_sets_valid_steps(self, mock_db):
         p = MagicMock()
         mock_db.repos.content_pipelines.get_by_id = AsyncMock(return_value=p)
@@ -547,13 +547,13 @@ class TestSetRefinementStepsTool:
 
 
 class TestEditPipelineTool:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_requires_confirm(self, mock_db):
         handlers = _get_tool_handlers(mock_db, config=MagicMock())
         result = await handlers["edit_pipeline"]({"pipeline_id": 1})
         assert "confirm=true" in _text(result).lower()
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_missing_pipeline_id(self, mock_db):
         handlers = _get_tool_handlers(mock_db, config=MagicMock())
         result = await handlers["edit_pipeline"]({"confirm": True})
@@ -564,7 +564,7 @@ class TestEditPipelineTool:
 
 
 class TestPipelineRunsToolResultSemantics:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_list_runs_shows_result_kind_and_count(self, mock_db):
         from tests.factories.pipeline_runs import make_action_only_run, make_generation_run
 
@@ -586,7 +586,7 @@ class TestPipelineRunsToolResultSemantics:
         assert "run_id=11" in text
         assert "processed_messages:5" in text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_get_run_shows_semantic_fields_for_empty_text_run(self, mock_db):
         """Regression #463: action-only run with empty text must still show
         result_kind/result_count (not just «(пусто)»).
@@ -605,7 +605,7 @@ class TestPipelineRunsToolResultSemantics:
         assert "processed_messages:8" in text
         assert "Run id=12" in text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_get_run_generation_shows_text_and_label(self, mock_db):
         from tests.factories.pipeline_runs import make_generation_run
 

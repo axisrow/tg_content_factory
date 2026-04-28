@@ -40,7 +40,7 @@ def test_from_env_partial(monkeypatch):
     assert store is None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_upload_file_success():
     mock_s3 = MagicMock()
     mock_client = MagicMock()
@@ -53,7 +53,7 @@ async def test_upload_file_success():
         mock_client.upload_file.assert_called_once()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_upload_file_no_boto3():
     with patch.dict("sys.modules", {"boto3": None}):
         store = S3Store("https://s3.test", "bucket", "ak", "sk")
@@ -61,7 +61,7 @@ async def test_upload_file_no_boto3():
         assert result is None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_upload_file_failure():
     mock_s3 = MagicMock()
     mock_client = MagicMock()

@@ -9,7 +9,7 @@ from tests.agent_tools_helpers import _get_tool_handlers, _text
 
 
 class TestGetSettingsTool:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_shows_all_settings_keys(self, mock_db):
         mock_db.get_setting = AsyncMock(return_value=None)
         handlers = _get_tool_handlers(mock_db)
@@ -19,7 +19,7 @@ class TestGetSettingsTool:
         assert "agent_prompt_template" in text
         assert "Настройки системы" in text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_shows_set_values(self, mock_db):
         async def fake_get(key):
             return "60" if key == "collect_interval_minutes" else None
@@ -29,14 +29,14 @@ class TestGetSettingsTool:
         result = await handlers["get_settings"]({})
         assert "60" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_error_returns_text(self, mock_db):
         mock_db.get_setting = AsyncMock(side_effect=Exception("no table"))
         handlers = _get_tool_handlers(mock_db)
         result = await handlers["get_settings"]({})
         assert "Ошибка получения настроек" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_returns_settings(self, mock_db):
         mock_db.get_setting = AsyncMock(side_effect=lambda k: {"collect_interval_minutes": "60"}.get(k))
         handlers = _get_tool_handlers(mock_db)
@@ -45,7 +45,7 @@ class TestGetSettingsTool:
         assert "Настройки системы" in text
         assert "collect_interval_minutes" in text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_error_handling(self, mock_db):
         mock_db.get_setting = AsyncMock(side_effect=Exception("db error"))
         handlers = _get_tool_handlers(mock_db)
@@ -54,13 +54,13 @@ class TestGetSettingsTool:
 
 
 class TestSaveAgentSettingsTool:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_no_confirm_returns_gate(self, mock_db):
         handlers = _get_tool_handlers(mock_db)
         result = await handlers["save_agent_settings"]({"backend": "claude"})
         assert "confirm=true" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_saves_prompt_template(self, mock_db):
         mock_db.set_setting = AsyncMock()
         handlers = _get_tool_handlers(mock_db)
@@ -70,7 +70,7 @@ class TestSaveAgentSettingsTool:
         assert "сохранены" in _text(result)
         mock_db.set_setting.assert_any_await("agent_prompt_template", "You are a helpful bot.")
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_saves_backend_override(self, mock_db):
         mock_db.set_setting = AsyncMock()
         handlers = _get_tool_handlers(mock_db)
@@ -78,13 +78,13 @@ class TestSaveAgentSettingsTool:
         assert "сохранены" in _text(result)
         mock_db.set_setting.assert_any_await("agent_backend_override", "deepagents")
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_requires_confirm(self, mock_db):
         handlers = _get_tool_handlers(mock_db)
         result = await handlers["save_agent_settings"]({"prompt_template": "new template"})
         assert "confirm=true" in _text(result).lower()
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_saves_prompt_template_via_call(self, mock_db):
         mock_db.set_setting = AsyncMock()
         handlers = _get_tool_handlers(mock_db)
@@ -94,7 +94,7 @@ class TestSaveAgentSettingsTool:
         assert "сохранены" in _text(result)
         mock_db.set_setting.assert_any_call("agent_prompt_template", "new template")
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_saves_backend(self, mock_db):
         mock_db.set_setting = AsyncMock()
         handlers = _get_tool_handlers(mock_db)
@@ -106,13 +106,13 @@ class TestSaveAgentSettingsTool:
 
 
 class TestSaveFilterSettingsTool:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_no_confirm_returns_gate(self, mock_db):
         handlers = _get_tool_handlers(mock_db)
         result = await handlers["save_filter_settings"]({"low_uniqueness_threshold": 0.5})
         assert "confirm=true" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_saves_thresholds(self, mock_db):
         mock_db.set_setting = AsyncMock()
         handlers = _get_tool_handlers(mock_db)
@@ -123,13 +123,13 @@ class TestSaveFilterSettingsTool:
         mock_db.set_setting.assert_any_await("low_uniqueness_threshold", "0.3")
         mock_db.set_setting.assert_any_await("low_subscriber_ratio_threshold", "0.1")
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_requires_confirm(self, mock_db):
         handlers = _get_tool_handlers(mock_db)
         result = await handlers["save_filter_settings"]({"low_uniqueness_threshold": 0.3})
         assert "confirm=true" in _text(result).lower()
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_saves_thresholds_via_call(self, mock_db):
         mock_db.set_setting = AsyncMock()
         handlers = _get_tool_handlers(mock_db)
@@ -141,13 +141,13 @@ class TestSaveFilterSettingsTool:
 
 
 class TestSaveSchedulerSettingsTool:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_requires_confirm(self, mock_db):
         handlers = _get_tool_handlers(mock_db)
         result = await handlers["save_scheduler_settings"]({"collect_interval_minutes": 30})
         assert "confirm=true" in _text(result).lower()
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_saves_interval(self, mock_db):
         mock_db.set_setting = AsyncMock()
         handlers = _get_tool_handlers(mock_db)
@@ -157,7 +157,7 @@ class TestSaveSchedulerSettingsTool:
         assert "30 мин" in _text(result)
         mock_db.set_setting.assert_called_with("collect_interval_minutes", "30")
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_clamps_interval_to_range(self, mock_db):
         mock_db.set_setting = AsyncMock()
         handlers = _get_tool_handlers(mock_db)
@@ -175,7 +175,7 @@ class TestSaveSchedulerSettingsTool:
 
 
 class TestGetSystemInfoTool:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_shows_stats(self, mock_db):
         mock_db.get_stats = AsyncMock(return_value={"channels": 10, "messages": 1000})
         handlers = _get_tool_handlers(mock_db)
@@ -185,14 +185,14 @@ class TestGetSystemInfoTool:
         assert "10" in text
         assert "Системная информация" in text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_error_returns_text(self, mock_db):
         mock_db.get_stats = AsyncMock(side_effect=Exception("no stats"))
         handlers = _get_tool_handlers(mock_db)
         result = await handlers["get_system_info"]({})
         assert "Ошибка получения системной информации" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_returns_stats(self, mock_db):
         mock_db.get_stats = AsyncMock(return_value={"channels": 10, "messages": 5000})
         handlers = _get_tool_handlers(mock_db)
@@ -201,7 +201,7 @@ class TestGetSystemInfoTool:
         assert "Системная информация" in text
         assert "channels" in text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_error_handling(self, mock_db):
         mock_db.get_stats = AsyncMock(side_effect=Exception("stats error"))
         handlers = _get_tool_handlers(mock_db)

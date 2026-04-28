@@ -18,6 +18,13 @@ from src.telegram.auth import TelegramAuth
 from src.telegram.session_materializer import SessionMaterializer
 from tests.helpers import RealPoolHarness
 
+
+@pytest.fixture(scope="session")
+def anyio_backend() -> str:
+    """Force asyncio backend for the entire suite — no trio."""
+    return "asyncio"
+
+
 REAL_TG_SAFE_MARK = "real_tg_safe"
 REAL_TG_MANUAL_MARK = "real_tg_manual"
 REAL_TG_NEVER_MARK = "real_tg_never"
@@ -39,7 +46,7 @@ REAL_TG_OPTIONAL_ENV_VARS = (
 
 
 @pytest.fixture
-async def db():
+async def db(anyio_backend):
     """In-memory test database."""
     database = Database(":memory:")
     await database.initialize()
@@ -87,11 +94,13 @@ def cli_init_patch():
         fresh_database: bool = False,
     ):
         runtime_config = config or AppConfig()
+        fresh_databases: list[Database] = []
 
         async def fake_init_db(_config_path: str):
             if isinstance(db, Database) and fresh_database:
                 cmd_db = Database(db._db_path, session_encryption_secret=db._session_encryption_secret)
                 await cmd_db.initialize()
+                fresh_databases.append(cmd_db)
                 return runtime_config, cmd_db
             if isinstance(db, Database) and db._connection.db is None:
                 await db.initialize()
@@ -100,7 +109,11 @@ def cli_init_patch():
         with ExitStack() as stack:
             for target in targets:
                 stack.enter_context(patch(target, side_effect=fake_init_db))
-            yield runtime_config, db
+            try:
+                yield runtime_config, db
+            finally:
+                for cmd_db in fresh_databases:
+                    asyncio.run(cmd_db.close())
 
     return _patch
 

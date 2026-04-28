@@ -9,7 +9,7 @@ import pytest
 
 
 class TestAdaptSdkTool:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_extracts_text_from_mcp_response(self):
         from claude_agent_sdk import SdkMcpTool
 
@@ -29,7 +29,7 @@ class TestAdaptSdkTool:
         result = await adapted()
         assert result == "hello world"
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_joins_multiple_text_parts(self):
         from claude_agent_sdk import SdkMcpTool
 
@@ -48,7 +48,7 @@ class TestAdaptSdkTool:
         result = await adapted()
         assert result == "part1\npart2"
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_non_text_parts_ignored(self):
         from claude_agent_sdk import SdkMcpTool
 
@@ -67,7 +67,7 @@ class TestAdaptSdkTool:
         result = await adapted()
         assert result == "only this"
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_non_dict_result_str(self):
         from claude_agent_sdk import SdkMcpTool
 
@@ -81,7 +81,7 @@ class TestAdaptSdkTool:
         result = await adapted()
         assert result == "plain string"
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_dict_without_content_key(self):
         from claude_agent_sdk import SdkMcpTool
 
@@ -95,7 +95,7 @@ class TestAdaptSdkTool:
         result = await adapted()
         assert "error" in result
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_passes_kwargs_as_args_dict(self):
         from claude_agent_sdk import SdkMcpTool
 
@@ -112,7 +112,7 @@ class TestAdaptSdkTool:
         await adapted(query="test", limit=5)
         assert captured == {"query": "test", "limit": 5}
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_docstring_preserved(self):
         from claude_agent_sdk import SdkMcpTool
 
@@ -125,7 +125,7 @@ class TestAdaptSdkTool:
         adapted = _adapt_sdk_tool(tool)
         assert adapted.__doc__ == "My description"
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_no_text_parts_returns_str(self):
         from claude_agent_sdk import SdkMcpTool
 
@@ -145,7 +145,7 @@ class TestAdaptSdkTool:
 
 
 class TestWrapWithSessionGate:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_no_gate_passes_through(self):
         from claude_agent_sdk import SdkMcpTool
 
@@ -163,7 +163,7 @@ class TestWrapWithSessionGate:
             result = await wrapped.handler()
         assert result["content"][0]["text"] == "ok"
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_gate_none_context_passes_through(self):
         from claude_agent_sdk import SdkMcpTool
 
@@ -184,7 +184,7 @@ class TestWrapWithSessionGate:
             result = await wrapped.handler()
         assert result["content"][0]["text"] == "passed"
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_gate_tool_disabled_returns_gate_result(self):
         from claude_agent_sdk import SdkMcpTool
 
@@ -210,7 +210,7 @@ class TestWrapWithSessionGate:
             result = await wrapped.handler()
         assert result["content"][0]["text"] == "blocked"
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_gate_tool_enabled_passes_through(self):
         from claude_agent_sdk import SdkMcpTool
 
@@ -310,7 +310,7 @@ class TestBuildAgentToolsDict:
         for tool_name in tools_dict:
             assert tool_name in _PIPELINE_SAFE_TOOLS, f"build_agent_tools_dict included unsafe tool: {tool_name}"
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_tool_functions_are_async_callable(self):
         from claude_agent_sdk import SdkMcpTool
 

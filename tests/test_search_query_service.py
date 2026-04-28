@@ -86,7 +86,7 @@ def service(bundle):
 # === add/list/get tests ===
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_add_creates_search_query(service, bundle):
     """Add delegates to bundle.add() with correct fields."""
     sq_id = await service.add(
@@ -111,7 +111,7 @@ async def test_add_creates_search_query(service, bundle):
     assert stored.max_length == 500
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_list_returns_all_queries(service, bundle):
     """List delegates to bundle.get_all()."""
     await service.add("query1")
@@ -122,7 +122,7 @@ async def test_list_returns_all_queries(service, bundle):
     assert len(result) == 2
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_list_active_only(service, bundle):
     """List with active_only filters inactive queries."""
     id1 = await service.add("active query")
@@ -135,7 +135,7 @@ async def test_list_active_only(service, bundle):
     assert result[0].id == id1
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_returns_query_by_id(service, bundle):
     """Get delegates to bundle.get_by_id()."""
     sq_id = await service.add("test")
@@ -146,7 +146,7 @@ async def test_get_returns_query_by_id(service, bundle):
     assert result.query == "test"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_nonexistent_returns_none(service):
     """Get returns None for nonexistent query."""
     result = await service.get(999)
@@ -157,7 +157,7 @@ async def test_get_nonexistent_returns_none(service):
 # === toggle tests ===
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_toggle_switches_active_state(service, bundle):
     """Toggle switches is_active on existing query."""
     sq_id = await service.add("test", is_regex=False)
@@ -169,7 +169,7 @@ async def test_toggle_switches_active_state(service, bundle):
     assert stored.is_active is False  # Started as True, toggled to False
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_toggle_nonexistent_does_nothing(service):
     """Toggle is a no-op when query not found."""
     # Should not raise
@@ -179,7 +179,7 @@ async def test_toggle_nonexistent_does_nothing(service):
 # === update tests ===
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_update_modifies_query(service, bundle):
     """Update delegates to bundle.update() preserving is_active."""
     sq_id = await service.add("old query")
@@ -205,7 +205,7 @@ async def test_update_modifies_query(service, bundle):
     assert stored.is_active is False  # Preserved
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_update_nonexistent_returns_false(service):
     """Update returns False when query not found."""
     result = await service.update(
@@ -220,7 +220,7 @@ async def test_update_nonexistent_returns_false(service):
 # === run_once tests ===
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_run_once_regex_query_returns_zero(service, bundle):
     """Regex queries return 0 (not FTS-countable)."""
     sq_id = await service.add("test", is_regex=True)
@@ -230,7 +230,7 @@ async def test_run_once_regex_query_returns_zero(service, bundle):
     assert result == 0
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_run_once_fts_query_with_stats(service, bundle):
     """FTS query records stats when track_stats=True."""
     sq_id = await service.add("test", is_fts=True, track_stats=True)
@@ -288,7 +288,7 @@ def test_fill_missing_days_none_stats():
 # === get_with_stats tests ===
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_with_stats_excludes_regex_from_fts(service, bundle):
     """Regex queries are excluded from FTS stats batch."""
     await service.add("regex.*", is_regex=True, track_stats=True)

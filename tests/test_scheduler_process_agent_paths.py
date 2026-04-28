@@ -74,7 +74,7 @@ async def _make_mgr(db=None, *, config=None, task_enqueuer=None, sq_bundle=None,
 
 
 class TestSchedulerUpdateInterval:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_update_interval_while_running(self):
         mgr = await _make_mgr()
         await mgr.start()
@@ -84,7 +84,7 @@ class TestSchedulerUpdateInterval:
         finally:
             await mgr.stop()
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_update_interval_stores_when_job_disabled(self):
         """update_interval stores value when collect_all job is not registered."""
         mock_bundle = _make_mock_bundle("1")  # job disabled
@@ -100,7 +100,7 @@ class TestSchedulerUpdateInterval:
         finally:
             await mgr.stop()
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_update_interval_when_not_running(self):
         mgr = await _make_mgr()
         mgr.update_interval(45)
@@ -108,12 +108,12 @@ class TestSchedulerUpdateInterval:
 
 
 class TestSchedulerGetJobNextRun:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_get_job_next_run_scheduler_none(self):
         mgr = await _make_mgr()
         assert mgr.get_job_next_run("collect_all") is None
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_get_job_next_run_existing_job(self):
         mgr = await _make_mgr()
         await mgr.start()
@@ -123,7 +123,7 @@ class TestSchedulerGetJobNextRun:
         finally:
             await mgr.stop()
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_get_job_next_run_nonexistent_job(self):
         mgr = await _make_mgr()
         await mgr.start()
@@ -135,13 +135,13 @@ class TestSchedulerGetJobNextRun:
 
 
 class TestSchedulerGetAllJobsNextRun:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_returns_empty_when_scheduler_none(self):
         mgr = await _make_mgr()
         result = mgr.get_all_jobs_next_run()
         assert result == {}
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_returns_dict_when_running(self):
         mgr = await _make_mgr()
         await mgr.start()
@@ -152,7 +152,7 @@ class TestSchedulerGetAllJobsNextRun:
         finally:
             await mgr.stop()
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_ttl_cache_returns_same_object_within_5s(self):
         mgr = await _make_mgr()
         await mgr.start()
@@ -164,7 +164,7 @@ class TestSchedulerGetAllJobsNextRun:
         finally:
             await mgr.stop()
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_ttl_cache_refreshes_after_expiry(self):
         mgr = await _make_mgr()
         await mgr.start()
@@ -180,7 +180,7 @@ class TestSchedulerGetAllJobsNextRun:
 
 
 class TestSchedulerSyncSearchQueryJobs:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_sync_sq_jobs_adds_job_for_active_query(self):
         sq = SearchQuery(id=5, name="test", query="test", track_stats=True, interval_minutes=15)
         sq_bundle = _make_mock_sq_bundle([sq])
@@ -193,7 +193,7 @@ class TestSchedulerSyncSearchQueryJobs:
         finally:
             await mgr.stop()
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_sync_sq_jobs_skips_non_track_stats(self):
         sq = SearchQuery(id=6, name="no_track", query="no_track", track_stats=False, interval_minutes=15)
         sq_bundle = _make_mock_sq_bundle([sq])
@@ -206,7 +206,7 @@ class TestSchedulerSyncSearchQueryJobs:
         finally:
             await mgr.stop()
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_sync_sq_jobs_removes_stale_job(self):
         sq = SearchQuery(id=7, name="q7", query="q7", track_stats=True, interval_minutes=10)
         sq_bundle = _make_mock_sq_bundle([sq])
@@ -222,7 +222,7 @@ class TestSchedulerSyncSearchQueryJobs:
         finally:
             await mgr.stop()
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_sync_sq_jobs_no_bundle(self):
         """sync_search_query_jobs should return immediately when bundle is None."""
         mgr = SchedulerManager(SchedulerConfig(), scheduler_bundle=_make_mock_bundle())
@@ -234,7 +234,7 @@ class TestSchedulerSyncSearchQueryJobs:
 
 
 class TestSchedulerSyncPipelineJobs:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_sync_pipeline_jobs_adds_jobs(self):
         pipeline = MagicMock()
         pipeline.id = 10
@@ -252,7 +252,7 @@ class TestSchedulerSyncPipelineJobs:
         finally:
             await mgr.stop()
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_sync_pipeline_jobs_removes_stale(self):
         pipeline = MagicMock()
         pipeline.id = 11
@@ -271,7 +271,7 @@ class TestSchedulerSyncPipelineJobs:
         finally:
             await mgr.stop()
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_sync_pipeline_jobs_no_bundle(self):
         mgr = SchedulerManager(SchedulerConfig(), scheduler_bundle=_make_mock_bundle())
         await mgr.start()
@@ -282,13 +282,13 @@ class TestSchedulerSyncPipelineJobs:
 
 
 class TestSchedulerGetPotentialJobs:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_get_potential_jobs_basic(self):
         mgr = await _make_mgr()
         jobs = await mgr.get_potential_jobs()
         assert any(j["job_id"] == "collect_all" for j in jobs)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_get_potential_jobs_with_task_enqueuer(self):
         enqueuer = _make_task_enqueuer()
         mgr = await _make_mgr(task_enqueuer=enqueuer)
@@ -297,7 +297,7 @@ class TestSchedulerGetPotentialJobs:
         assert "photo_due" in job_ids
         assert "photo_auto" in job_ids
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_get_potential_jobs_with_sq_bundle(self):
         sq = SearchQuery(id=20, name="sq20", query="sq20", track_stats=True, interval_minutes=10)
         sq_bundle = _make_mock_sq_bundle([sq])
@@ -305,7 +305,7 @@ class TestSchedulerGetPotentialJobs:
         jobs = await mgr.get_potential_jobs()
         assert any(j["job_id"] == "sq_20" for j in jobs)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_get_potential_jobs_with_pipeline_bundle(self):
         pipeline = MagicMock()
         pipeline.id = 99
@@ -320,20 +320,20 @@ class TestSchedulerGetPotentialJobs:
 
 
 class TestSchedulerLoadSettings:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_load_settings_reads_interval(self):
         mock_bundle = _make_mock_bundle("25")
         mgr = SchedulerManager(SchedulerConfig(collect_interval_minutes=60), scheduler_bundle=mock_bundle)
         await mgr.load_settings()
         assert mgr._current_interval_minutes == 25
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_load_settings_uses_default_when_no_bundle(self):
         mgr = SchedulerManager(SchedulerConfig(collect_interval_minutes=60))
         await mgr.load_settings()
         assert mgr._current_interval_minutes == 60
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_load_settings_invalid_value_uses_default(self):
         mock_bundle = _make_mock_bundle("not_a_number")
         mgr = SchedulerManager(SchedulerConfig(collect_interval_minutes=45), scheduler_bundle=mock_bundle)
@@ -342,24 +342,24 @@ class TestSchedulerLoadSettings:
 
 
 class TestSchedulerIsJobEnabled:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_is_job_enabled_returns_true_when_no_bundle(self):
         mgr = SchedulerManager(SchedulerConfig())
         assert await mgr.is_job_enabled("collect_all") is True
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_is_job_enabled_returns_true_by_default(self):
         mock_bundle = _make_mock_bundle(None)
         mgr = SchedulerManager(SchedulerConfig(), scheduler_bundle=mock_bundle)
         assert await mgr.is_job_enabled("collect_all") is True
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_is_job_enabled_returns_false_when_disabled(self):
         mock_bundle = _make_mock_bundle("1")
         mgr = SchedulerManager(SchedulerConfig(), scheduler_bundle=mock_bundle)
         assert await mgr.is_job_enabled("collect_all") is False
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_is_job_enabled_returns_true_when_not_one(self):
         mock_bundle = _make_mock_bundle("0")
         mgr = SchedulerManager(SchedulerConfig(), scheduler_bundle=mock_bundle)
@@ -367,13 +367,13 @@ class TestSchedulerIsJobEnabled:
 
 
 class TestSchedulerRunPhotoDue:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_run_photo_due_no_enqueuer(self):
         mgr = await _make_mgr()
         result = await mgr._run_photo_due()
         assert result == {"processed": 0}
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_run_photo_due_with_enqueuer(self):
         enqueuer = _make_task_enqueuer()
         mgr = await _make_mgr(task_enqueuer=enqueuer)
@@ -381,13 +381,13 @@ class TestSchedulerRunPhotoDue:
         assert result == {"enqueued": True}
         enqueuer.enqueue_photo_due.assert_called_once()
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_run_photo_auto_no_enqueuer(self):
         mgr = await _make_mgr()
         result = await mgr._run_photo_auto()
         assert result == {"jobs": 0}
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_run_photo_auto_with_enqueuer(self):
         enqueuer = _make_task_enqueuer()
         mgr = await _make_mgr(task_enqueuer=enqueuer)
@@ -507,14 +507,14 @@ class TestCLINotification:
 
 
 class TestCLITestReadChecks:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_check_get_stats_pass(self, db):
         from src.cli.commands.test import Status, _check_get_stats
 
         result = await _check_get_stats(db)
         assert result.status == Status.PASS
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_check_account_list_pass(self, db):
         from src.cli.commands.test import Status, _check_account_list
 
@@ -522,56 +522,56 @@ class TestCLITestReadChecks:
         assert result.status == Status.PASS
         assert "accounts" in result.detail
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_check_channel_list_pass(self, db):
         from src.cli.commands.test import Status, _check_channel_list
 
         result = await _check_channel_list(db)
         assert result.status == Status.PASS
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_check_notification_queries_skip_when_empty(self, db):
         from src.cli.commands.test import Status, _check_notification_queries
 
         result = await _check_notification_queries(db)
         assert result.status == Status.SKIP
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_check_local_search_pass(self, db):
         from src.cli.commands.test import Status, _check_local_search
 
         result = await _check_local_search(db)
         assert result.status == Status.PASS
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_check_collection_tasks_pass(self, db):
         from src.cli.commands.test import Status, _check_collection_tasks
 
         result = await _check_collection_tasks(db)
         assert result.status == Status.PASS
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_check_recent_searches_skip_when_empty(self, db):
         from src.cli.commands.test import Status, _check_recent_searches
 
         result = await _check_recent_searches(db)
         assert result.status == Status.SKIP
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_check_pipeline_list_pass(self, db):
         from src.cli.commands.test import Status, _check_pipeline_list
 
         result = await _check_pipeline_list(db)
         assert result.status == Status.PASS
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_check_notification_bot_pass(self, db):
         from src.cli.commands.test import Status, _check_notification_bot
 
         result = await _check_notification_bot(db)
         assert result.status == Status.PASS
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_check_photo_tasks_pass(self, db):
         from src.cli.commands.test import Status, _check_photo_tasks
 
@@ -788,7 +788,7 @@ class TestProcessControl:
 
 
 class TestDBConnection:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_connect_creates_wal_db(self, tmp_path):
         from src.database.connection import DBConnection
 
@@ -804,7 +804,7 @@ class TestDBConnection:
         finally:
             await conn.close()
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_close_is_idempotent(self, tmp_path):
         from src.database.connection import DBConnection
 
@@ -814,7 +814,7 @@ class TestDBConnection:
         await conn.close()
         await conn.close()  # second close should not raise
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_close_when_not_connected(self, tmp_path):
         from src.database.connection import DBConnection
 
@@ -822,7 +822,7 @@ class TestDBConnection:
         conn = DBConnection(db_path)
         await conn.close()  # should not raise
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_execute_fetchall(self, tmp_path):
         from src.database.connection import DBConnection
 
@@ -835,7 +835,7 @@ class TestDBConnection:
         finally:
             await conn.close()
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_creates_parent_directory(self, tmp_path):
         from src.database.connection import DBConnection
 
@@ -917,7 +917,7 @@ class TestAgentManagerInit:
 
 
 class TestAgentManagerRefreshSettingsCache:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_refresh_settings_cache_no_preflight(self, db):
         from src.agent.manager import AgentManager
 
@@ -925,7 +925,7 @@ class TestAgentManagerRefreshSettingsCache:
         # Should not raise
         await mgr.refresh_settings_cache(preflight=False)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_refresh_settings_cache_with_preflight_no_config(self, db):
         from src.agent.manager import AgentManager
 
@@ -935,7 +935,7 @@ class TestAgentManagerRefreshSettingsCache:
 
 
 class TestAgentManagerGetRuntimeStatus:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_get_runtime_status_returns_status(self, db):
         from src.agent.manager import AgentManager, AgentRuntimeStatus
 
@@ -945,7 +945,7 @@ class TestAgentManagerGetRuntimeStatus:
         assert isinstance(status.claude_available, bool)
         assert isinstance(status.deepagents_available, bool)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_get_runtime_status_no_backends(self, db):
         from src.agent.manager import AgentManager, ClaudeSdkBackend
 
@@ -955,7 +955,7 @@ class TestAgentManagerGetRuntimeStatus:
             status = await mgr.get_runtime_status()
         assert isinstance(status.selected_backend, (str, type(None)))
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_get_runtime_status_dev_mode_override(self, db):
         from src.agent.manager import AgentManager
 

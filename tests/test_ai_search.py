@@ -30,7 +30,7 @@ def fake_deepagents():
         yield create_deep_agent
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_ai_search_disabled(mock_search_bundle):
     config = LLMConfig(enabled=False)
     engine = AISearchEngine(config, mock_search_bundle)
@@ -41,7 +41,7 @@ async def test_ai_search_disabled(mock_search_bundle):
     assert "AI search is not available" in res.ai_summary
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_ai_search_initialization_success(llm_config, mock_search_bundle):
     mock_create = MagicMock()
     mock_agent = MagicMock()
@@ -56,7 +56,7 @@ async def test_ai_search_initialization_success(llm_config, mock_search_bundle):
     mock_create.assert_called_once()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_ai_search_initialization_import_error(llm_config, mock_search_bundle):
     with patch.dict(sys.modules, {"deepagents": None}):
         engine = AISearchEngine(llm_config, mock_search_bundle)
@@ -64,7 +64,7 @@ async def test_ai_search_initialization_import_error(llm_config, mock_search_bun
         assert engine._agent is None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_ai_search_initialization_general_error(llm_config, mock_search_bundle):
     mock_create = MagicMock(side_effect=Exception("unexpected"))
     module = types.SimpleNamespace(create_deep_agent=mock_create)
@@ -76,7 +76,7 @@ async def test_ai_search_initialization_general_error(llm_config, mock_search_bu
     assert engine._agent is None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_ai_search_run_success(llm_config, mock_search_bundle, fake_deepagents):
     mock_agent = MagicMock()
     mock_agent.run.return_value = "AI Summary Result"
@@ -95,7 +95,7 @@ async def test_ai_search_run_success(llm_config, mock_search_bundle, fake_deepag
     assert res.total == 1
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_ai_search_run_error(llm_config, mock_search_bundle, fake_deepagents):
     mock_agent = MagicMock()
     mock_agent.run.side_effect = Exception("AI Fail")
@@ -108,7 +108,7 @@ async def test_ai_search_run_error(llm_config, mock_search_bundle, fake_deepagen
     assert "AI search error: AI Fail" in res.ai_summary
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_search_posts_tool_logic(llm_config, mock_search_bundle, fake_deepagents):
     # This tests the tool function defined inside initialize
     mock_search_bundle.search_messages.return_value = (
@@ -130,7 +130,7 @@ async def test_search_posts_tool_logic(llm_config, mock_search_bundle, fake_deep
     assert "content" in result
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_search_posts_tool_no_results(llm_config, mock_search_bundle, fake_deepagents):
     mock_search_bundle.search_messages.return_value = ([], 0)
 

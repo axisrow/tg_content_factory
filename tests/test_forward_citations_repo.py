@@ -41,7 +41,7 @@ async def _plain_msg(db, target_ch: int, msg_id: int, text: str = "plain") -> No
     )
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_citation_positive_ids(db):
     """After fix, forward_from_channel_id stores positive values matching channels.channel_id."""
     await _seed(db, 100500, "Source Chan", "src")
@@ -56,7 +56,7 @@ async def test_citation_positive_ids(db):
     assert rows[0]["citation_count"] == 1
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_citation_multiple_sources(db):
     """Multiple source channels are correctly identified."""
     await _seed(db, 100111, "Source A", "a")
@@ -76,7 +76,7 @@ async def test_citation_multiple_sources(db):
     assert rows[1]["citation_count"] == 2
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_citation_null_source(db):
     """Messages without forward_from_channel_id are excluded."""
     await _seed(db, 100123, "Target")
@@ -87,7 +87,7 @@ async def test_citation_null_source(db):
     assert len(rows) == 0
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_citation_unknown_source(db):
     """Forward from unknown channel returns citation with NULL title."""
     await _seed(db, 100123, "Target")
@@ -101,7 +101,7 @@ async def test_citation_unknown_source(db):
     assert rows[0]["citation_count"] == 1
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_citation_limit(db):
     """Limit parameter works correctly."""
     await _seed(db, 100123, "Target")
@@ -113,7 +113,7 @@ async def test_citation_limit(db):
     assert len(rows) == 3
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_citation_date_filtering(db):
     """Only messages within the date window are included."""
     await _seed(db, 100500, "Source")
@@ -133,7 +133,7 @@ async def test_citation_date_filtering(db):
     assert rows_90d[0]["citation_count"] == 2
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_citation_ordering(db):
     """Results ordered by citation_count DESC."""
     await _seed(db, 100111, "Less")

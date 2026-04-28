@@ -24,7 +24,7 @@ async def db(base_app):
 # === inject_context: large context warning (line 181-185) ===
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_inject_context_large_context_warning(client, db):
     """Test inject context logs warning for very large content (>200K chars)."""
     thread_id = await db.create_agent_thread("Context")
@@ -43,7 +43,7 @@ async def test_inject_context_large_context_warning(client, db):
 # === chat: generate() — save assistant message on done (line 282-283) ===
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_chat_streaming_saves_assistant_message(client, db):
     """Test chat streaming saves assistant message when done."""
     thread_id = await db.create_agent_thread("Chat")
@@ -68,7 +68,7 @@ async def test_chat_streaming_saves_assistant_message(client, db):
 # === chat: generate() — IntegrityError on save (line 284-285) ===
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_chat_streaming_integrity_error_on_save(client, db):
     """Test chat streaming handles IntegrityError when saving assistant message."""
     thread_id = await db.create_agent_thread("Chat")
@@ -101,7 +101,7 @@ async def test_chat_streaming_integrity_error_on_save(client, db):
 # === chat: generate() — error in stream (line 286-290) ===
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_chat_streaming_error_in_stream(client, db):
     """Test chat streaming handles error chunk from agent."""
     thread_id = await db.create_agent_thread("Chat")
@@ -126,7 +126,7 @@ async def test_chat_streaming_error_in_stream(client, db):
 # === chat: generate() — IntegrityError on delete_last_exchange (line 289) ===
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_chat_streaming_error_integrity_delete(client, db):
     """Test chat streaming handles IntegrityError during error cleanup."""
     thread_id = await db.create_agent_thread("Chat")
@@ -152,7 +152,7 @@ async def test_chat_streaming_error_integrity_delete(client, db):
 # === chat: generate() — JSONDecodeError (line 291) ===
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_chat_streaming_malformed_chunk(client, db):
     """Test chat streaming skips malformed JSON chunks."""
     thread_id = await db.create_agent_thread("Chat")
@@ -178,7 +178,7 @@ async def test_chat_streaming_malformed_chunk(client, db):
 # === chat: generate() — generic exception (line 293) ===
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_chat_streaming_generic_exception(client, db):
     """Test chat streaming handles generic exceptions during message processing."""
     thread_id = await db.create_agent_thread("Chat")
@@ -211,7 +211,7 @@ async def test_chat_streaming_generic_exception(client, db):
 # === chat: no model parameter (line 232-233) ===
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_chat_with_invalid_model_ignored(client, db):
     """Test chat with invalid model string is ignored (model=None)."""
     thread_id = await db.create_agent_thread("Chat")
@@ -227,7 +227,7 @@ async def test_chat_with_invalid_model_ignored(client, db):
 # === forum-topics cached (line 130-131) ===
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_forum_topics_cached(client, db):
     """Test get forum topics returns cached data from DB."""
     # Insert topics via upsert_forum_topics (not RuntimeSnapshot)

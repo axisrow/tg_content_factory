@@ -30,7 +30,7 @@ class FakeEmbeddings:
         return [0.5, 0.5]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_embedding_service_indexes_pending_messages_incrementally(db, monkeypatch):
 
     await db.insert_messages_batch(
@@ -78,7 +78,7 @@ async def test_embedding_service_indexes_pending_messages_incrementally(db, monk
     assert messages[0].text == "Crypto market update"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_hybrid_search_fuses_keyword_and_semantic_candidates(db):
 
     await db.insert_messages_batch(
@@ -149,7 +149,7 @@ def test_embedding_runtime_config_model_ref_without_colon():
     assert config.model_ref == "cohere:embed-english-v3.0"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_embedding_service_get_embeddings_langchain_not_installed(db):
     """Test _get_embeddings when LangChain is not installed."""
     service = EmbeddingService(db)
@@ -162,7 +162,7 @@ async def test_embedding_service_get_embeddings_langchain_not_installed(db):
             await service._get_embeddings()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_embedding_service_get_embeddings_provider_not_installed(db):
     """Test _get_embeddings when provider package is not installed."""
     service = EmbeddingService(db)
@@ -181,7 +181,7 @@ async def test_embedding_service_get_embeddings_provider_not_installed(db):
             await service._get_embeddings()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_embedding_service_get_embeddings_init_exception(db):
     """Test _get_embeddings when initialization fails with non-import error."""
     _service = EmbeddingService(db)
@@ -206,7 +206,7 @@ async def test_embedding_service_get_embeddings_init_exception(db):
             pytest.skip("Cannot easily mock dynamic import inside function")
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_embedding_service_embed_documents_sync_fallback(db):
     """Test _embed_documents uses sync fallback when async not available."""
 
@@ -227,7 +227,7 @@ async def test_embedding_service_embed_documents_sync_fallback(db):
         assert result[0] == [0.1, 0.2]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_embedding_service_embed_query_sync_fallback(db):
     """Test embed_query uses sync fallback when async not available."""
 
@@ -247,7 +247,7 @@ async def test_embedding_service_embed_query_sync_fallback(db):
         assert result == [0.3, 0.4]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_embedding_service_index_pending_messages_empty(db, monkeypatch):
     """Test index_pending_messages with no pending messages."""
     service = EmbeddingService(db)

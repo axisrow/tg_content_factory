@@ -872,19 +872,19 @@ class TestDeepagentsSyncGenerateImage:
 
 
 class TestPipelinesToolEditPipeline:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_requires_confirmation(self, mock_db):
         handlers = _get_tool_handlers(mock_db)
         result = await handlers["edit_pipeline"]({"pipeline_id": 1, "confirm": False})
         assert "Подтвердите" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_missing_pipeline_id(self, mock_db):
         handlers = _get_tool_handlers(mock_db)
         result = await handlers["edit_pipeline"]({"confirm": True})
         assert "pipeline_id обязателен" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_not_found(self, mock_db):
         with patch("src.services.pipeline_service.PipelineService") as mock_svc:
             mock_svc.return_value.get_detail = AsyncMock(return_value=None)
@@ -892,7 +892,7 @@ class TestPipelinesToolEditPipeline:
             result = await handlers["edit_pipeline"]({"pipeline_id": 99, "confirm": True})
         assert "не найден" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_invalid_target_ref_format(self, mock_db):
         p = SimpleNamespace(
             id=1,
@@ -918,7 +918,7 @@ class TestPipelinesToolEditPipeline:
             )
         assert "Неверный формат" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_success(self, mock_db):
         p = SimpleNamespace(
             id=1,
@@ -948,7 +948,7 @@ class TestPipelinesToolEditPipeline:
         assert "NewName" in _text(result)
         assert "обновлён" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_update_fails(self, mock_db):
         p = SimpleNamespace(
             id=1,
@@ -965,7 +965,7 @@ class TestPipelinesToolEditPipeline:
             result = await handlers["edit_pipeline"]({"pipeline_id": 1, "confirm": True})
         assert "Не удалось обновить" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_error(self, mock_db):
         with patch("src.services.pipeline_service.PipelineService") as mock_svc:
             mock_svc.return_value.get_detail = AsyncMock(side_effect=Exception("db err"))
@@ -980,13 +980,13 @@ class TestPipelinesToolEditPipeline:
 
 
 class TestPipelinesToolRunPipeline:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_missing_id(self, mock_db):
         handlers = _get_tool_handlers(mock_db)
         result = await handlers["run_pipeline"]({})
         assert "pipeline_id обязателен" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_not_found(self, mock_db):
         with patch("src.services.pipeline_service.PipelineService") as mock_svc:
             mock_svc.return_value.get = AsyncMock(return_value=None)
@@ -994,7 +994,7 @@ class TestPipelinesToolRunPipeline:
             result = await handlers["run_pipeline"]({"pipeline_id": 99})
         assert "не найден" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_inactive_pipeline(self, mock_db):
         p = SimpleNamespace(id=1, name="InactivePipe", is_active=False)
         with patch("src.services.pipeline_service.PipelineService") as mock_svc:
@@ -1003,7 +1003,7 @@ class TestPipelinesToolRunPipeline:
             result = await handlers["run_pipeline"]({"pipeline_id": 1})
         assert "неактивен" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_success(self, mock_db):
         p = SimpleNamespace(id=1, name="ActivePipe", is_active=True)
         run = SimpleNamespace(id=10, generated_text="Generated content", moderation_status="pending")
@@ -1020,7 +1020,7 @@ class TestPipelinesToolRunPipeline:
         assert "run id=10" in text
         assert "Generated content" in text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_error(self, mock_db):
         with patch("src.services.pipeline_service.PipelineService") as mock_svc:
             mock_svc.return_value.get = AsyncMock(side_effect=Exception("db err"))
@@ -1035,7 +1035,7 @@ class TestPipelinesToolRunPipeline:
 
 
 class TestPipelinesToolGenerateDraft:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_success_with_query(self, mock_db):
         gen_result = {
             "generated_text": "Draft text",
@@ -1052,7 +1052,7 @@ class TestPipelinesToolGenerateDraft:
         assert "Draft text" in text
         assert "Chan" in text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_with_pipeline_id(self, mock_db):
         p = SimpleNamespace(id=1, name="P", prompt_template="Write about {topic}", llm_model="gpt-4")
         gen_result = {"generated_text": "Pipeline draft", "citations": []}
@@ -1073,7 +1073,7 @@ class TestPipelinesToolGenerateDraft:
         text = _text(result)
         assert "Pipeline draft" in text
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_error(self, mock_db):
         with patch("src.search.engine.SearchEngine", side_effect=Exception("search fail")):
             handlers = _get_tool_handlers(mock_db)
@@ -1087,7 +1087,7 @@ class TestPipelinesToolGenerateDraft:
 
 
 class TestPipelinesToolPublishPipelineRun:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_no_pool(self, mock_db):
         # No client_pool passed → require_pool gate should trigger
         handlers = _get_tool_handlers(mock_db, client_pool=None)
@@ -1095,14 +1095,14 @@ class TestPipelinesToolPublishPipelineRun:
         txt = _text(result)
         assert "недоступен" in txt or "Подтвердите" in txt or "pool" in txt.lower() or "Telegram" in txt
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_requires_confirmation(self, mock_db):
         pool = MagicMock()
         handlers = _get_tool_handlers(mock_db, client_pool=pool)
         result = await handlers["publish_pipeline_run"]({"run_id": 1, "confirm": False})
         assert "Подтвердите" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_run_not_found(self, mock_db):
         pool = MagicMock()
         mock_db.repos.generation_runs.get = AsyncMock(return_value=None)
@@ -1110,7 +1110,7 @@ class TestPipelinesToolPublishPipelineRun:
         result = await handlers["publish_pipeline_run"]({"run_id": 99, "confirm": True})
         assert "не найден" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_pipeline_not_found(self, mock_db):
         pool = MagicMock()
         run = SimpleNamespace(id=1, pipeline_id=5)
@@ -1121,7 +1121,7 @@ class TestPipelinesToolPublishPipelineRun:
             result = await handlers["publish_pipeline_run"]({"run_id": 1, "confirm": True})
         assert "не найден" in _text(result)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_success(self, mock_db):
         pool = MagicMock()
         run = SimpleNamespace(id=1, pipeline_id=2)
@@ -1145,7 +1145,7 @@ class TestPipelinesToolPublishPipelineRun:
 
 
 class TestAgentProviderServiceLoadConfigs:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_returns_empty_on_no_setting(self, db):
         from src.config import AppConfig
         from src.services.agent_provider_service import AgentProviderService
@@ -1155,7 +1155,7 @@ class TestAgentProviderServiceLoadConfigs:
         result = await svc.load_provider_configs()
         assert result == []
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_returns_empty_on_invalid_json(self, db):
         from src.config import AppConfig
         from src.services.agent_provider_service import PROVIDER_SETTINGS_KEY, AgentProviderService
@@ -1166,7 +1166,7 @@ class TestAgentProviderServiceLoadConfigs:
         result = await svc.load_provider_configs()
         assert result == []
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_returns_empty_on_non_list_json(self, db):
         from src.config import AppConfig
         from src.services.agent_provider_service import PROVIDER_SETTINGS_KEY, AgentProviderService
@@ -1177,7 +1177,7 @@ class TestAgentProviderServiceLoadConfigs:
         result = await svc.load_provider_configs()
         assert result == []
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_skips_unknown_provider(self, db):
         from src.config import AppConfig
         from src.services.agent_provider_service import PROVIDER_SETTINGS_KEY, AgentProviderService
@@ -1189,7 +1189,7 @@ class TestAgentProviderServiceLoadConfigs:
         result = await svc.load_provider_configs()
         assert result == []
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_save_requires_cipher(self, db):
         from src.config import AppConfig
         from src.services.agent_provider_service import AgentProviderService
@@ -1208,7 +1208,7 @@ class TestAgentProviderServiceLoadConfigs:
 
 
 class TestAgentProviderServiceLoadModelCache:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_empty_on_no_setting(self, db):
         from src.config import AppConfig
         from src.services.agent_provider_service import AgentProviderService
@@ -1218,7 +1218,7 @@ class TestAgentProviderServiceLoadModelCache:
         result = await svc.load_model_cache()
         assert result == {}
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_empty_on_invalid_json(self, db):
         from src.config import AppConfig
         from src.services.agent_provider_service import MODEL_CACHE_SETTINGS_KEY, AgentProviderService
@@ -1229,7 +1229,7 @@ class TestAgentProviderServiceLoadModelCache:
         result = await svc.load_model_cache()
         assert result == {}
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_empty_on_non_dict_json(self, db):
         from src.config import AppConfig
         from src.services.agent_provider_service import MODEL_CACHE_SETTINGS_KEY, AgentProviderService
@@ -1240,7 +1240,7 @@ class TestAgentProviderServiceLoadModelCache:
         result = await svc.load_model_cache()
         assert result == {}
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_save_and_load_model_cache(self, db):
         from src.config import AppConfig
         from src.services.agent_provider_service import AgentProviderService, ProviderModelCacheEntry
@@ -1265,7 +1265,7 @@ class TestAgentProviderServiceLoadModelCache:
 
 
 class TestAgentProviderServiceBuildProviderViews:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_builds_view_for_openai(self, db):
         from src.agent.provider_registry import ProviderRuntimeConfig
         from src.config import AppConfig
@@ -1295,7 +1295,7 @@ class TestAgentProviderServiceBuildProviderViews:
         assert "gpt-4o" in view["models"]
         assert view["enabled"] is True
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_builds_view_with_empty_cache(self, db):
         from src.agent.provider_registry import ProviderRuntimeConfig
         from src.config import AppConfig
@@ -1361,7 +1361,7 @@ class TestAgentProviderServiceValidateConfig:
 
 
 class TestAgentProviderServiceRefreshAllModels:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_refresh_all_empty_configs(self, db, monkeypatch):
         from src.config import AppConfig
         from src.services.agent_provider_service import AgentProviderService
@@ -1376,7 +1376,7 @@ class TestAgentProviderServiceRefreshAllModels:
         results = await svc.refresh_all_models(configs=[])
         assert results == {}
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_refresh_all_with_config(self, db, monkeypatch):
         from src.agent.provider_registry import ProviderRuntimeConfig
         from src.config import AppConfig
@@ -1569,7 +1569,7 @@ class TestDeepagentsBackendProperties:
 
 
 class TestAgentManagerCancelStream:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_cancel_nonexistent_stream_returns_false(self, db):
         from src.agent.manager import AgentManager
 
@@ -1580,7 +1580,7 @@ class TestAgentManagerCancelStream:
         result = await mgr.cancel_stream(thread_id)
         assert result is False
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_cancel_active_stream_returns_true(self, db):
         import asyncio
 

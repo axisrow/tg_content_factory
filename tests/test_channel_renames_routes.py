@@ -79,7 +79,7 @@ async def _create_channel_with_flags(db, channel_id: int, *, filter_flags: str =
 # ---------- keep endpoint ----------
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_keep_accepted_clean(tmp_path):
     """Channel has only rename-related flags → unfilter → flash rename_accepted."""
     app, db = await _build_app_with_db(tmp_path)
@@ -106,7 +106,7 @@ async def test_keep_accepted_clean(tmp_path):
         await db.close()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_keep_accepted_still_filtered(tmp_path):
     """Channel has other flags → stays filtered with non-rename flags, honest flash."""
     app, db = await _build_app_with_db(tmp_path)
@@ -128,7 +128,7 @@ async def test_keep_accepted_still_filtered(tmp_path):
         await db.close()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_keep_already_decided(tmp_path):
     """Second POST on the same event is a no-op and returns rename_already_decided."""
     app, db = await _build_app_with_db(tmp_path)
@@ -154,7 +154,7 @@ async def test_keep_already_decided(tmp_path):
 # ---------- filter endpoint ----------
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_filter_ensures_state_even_after_manual_unfilter(tmp_path):
     """Admin manually unfiltered a channel between detection and the filter click.
     The filter endpoint must still leave it filtered with the correct flags."""
@@ -184,7 +184,7 @@ async def test_filter_ensures_state_even_after_manual_unfilter(tmp_path):
         await db.close()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_filter_already_decided(tmp_path):
     app, db = await _build_app_with_db(tmp_path)
     try:
@@ -203,7 +203,7 @@ async def test_filter_already_decided(tmp_path):
 # ---------- rename_events_page ----------
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_rename_events_page_renders(tmp_path):
     """Test rename events page renders with events list."""
     app, db = await _build_app_with_db(tmp_path)
@@ -226,7 +226,7 @@ async def test_rename_events_page_renders(tmp_path):
 # ---------- rename_events_count ----------
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_rename_events_count_zero(tmp_path):
     """Test rename events count returns empty when zero."""
     app, db = await _build_app_with_db(tmp_path)
@@ -244,7 +244,7 @@ async def test_rename_events_count_zero(tmp_path):
         await db.close()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_rename_events_count_nonzero(tmp_path):
     """Test rename events count returns badge when nonzero."""
     app, db = await _build_app_with_db(tmp_path)
@@ -309,7 +309,7 @@ def test_rename_required_flags_no_change():
 # ---------- keep endpoint — channel removed ----------
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_keep_channel_removed(tmp_path):
     """Channel was deleted while event was pending — event closed."""
     app, db = await _build_app_with_db(tmp_path)

@@ -14,7 +14,7 @@ from src.web.routes.search import _extract_length
 from tests.helpers import AsyncIterMessages, FakeCliTelethonClient
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_search_local_empty(db):
     engine = SearchEngine(db)
     result = await engine.search_local("test")
@@ -23,7 +23,7 @@ async def test_search_local_empty(db):
     assert result.query == "test"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_search_local_with_results(db):
     messages = [
         Message(
@@ -47,7 +47,7 @@ async def test_search_local_with_results(db):
     assert "crypto" in (result.messages[0].text or "")
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_search_local_pagination(db):
     messages = [
         Message(
@@ -66,7 +66,7 @@ async def test_search_local_pagination(db):
     assert result.total == 20
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_search_local_maps_channel_title(db):
     from src.models import Channel
 
@@ -88,7 +88,7 @@ async def test_search_local_maps_channel_title(db):
     assert result.messages[0].channel_username == "crypto_news"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_search_semantic_with_results(db, monkeypatch):
     await db.insert_messages_batch(
         [
@@ -204,7 +204,7 @@ async def _connect_search_account(
     await harness.initialize_connected_accounts()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_search_telegram_returns_results(db, real_pool_harness_factory):
     mock_msg = _make_mock_api_message()
     mock_chat = MagicMock()
@@ -235,7 +235,7 @@ async def test_search_telegram_returns_results(db, real_pool_harness_factory):
     assert result.messages[0].channel_title == "Test Channel"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_search_telegram_ignores_quota_probe_failure_when_search_succeeds(
     db,
     real_pool_harness_factory,
@@ -273,7 +273,7 @@ async def test_search_telegram_ignores_quota_probe_failure_when_search_succeeds(
     assert result.messages[0].message_id == 42
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_search_telegram_caches_to_db(db, real_pool_harness_factory):
     mock_msg = _make_mock_api_message(channel_id=100456, msg_id=7, text="cached search result")
     mock_chat = MagicMock()
@@ -302,7 +302,7 @@ async def test_search_telegram_caches_to_db(db, real_pool_harness_factory):
     assert messages[0].text == "cached search result"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_search_telegram_no_pool(db):
     engine = SearchEngine(db, pool=None)
     result = await engine.search_telegram("anything")
@@ -313,7 +313,7 @@ async def test_search_telegram_no_pool(db):
     assert result.error == "Нет подключённых Telegram-аккаунтов."
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_search_telegram_no_premium(db, real_pool_harness_factory):
     harness = real_pool_harness_factory()
     engine = SearchEngine(db, pool=harness.pool)
@@ -324,7 +324,7 @@ async def test_search_telegram_no_premium(db, real_pool_harness_factory):
     assert "Premium" in result.error
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_search_telegram_flood_wait_does_not_mark_generic_account_flood(
     db,
     real_pool_harness_factory,
@@ -359,7 +359,7 @@ async def test_search_telegram_flood_wait_does_not_mark_generic_account_flood(
     assert "Flood Wait" in unavailable_reason
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_check_search_quota_flood_wait_returns_none_and_marks_premium_flood(
     db,
     real_pool_harness_factory,
@@ -393,7 +393,7 @@ async def test_check_search_quota_flood_wait_returns_none_and_marks_premium_floo
     assert "Flood Wait" in unavailable_reason
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_search_my_chats_runtime_error_returns_search_result(
     db,
     real_pool_harness_factory,
@@ -420,7 +420,7 @@ async def test_search_my_chats_runtime_error_returns_search_result(
     assert "telegram api failure" in result.error
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_search_my_chats_returns_results(db, real_pool_harness_factory):
     mock_msg = _make_resolved_message()
     harness = real_pool_harness_factory()
@@ -443,7 +443,7 @@ async def test_search_my_chats_returns_results(db, real_pool_harness_factory):
     assert result.messages[0].channel_title == "My Chat"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_search_my_chats_skips_warm_dialog_cache_when_already_fetched(
     db,
     real_pool_harness_factory,
@@ -470,7 +470,7 @@ async def test_search_my_chats_skips_warm_dialog_cache_when_already_fetched(
     client.get_dialogs.assert_not_awaited()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_search_my_chats_reports_flood_wait_and_marks_account(
     db,
     real_pool_harness_factory,
@@ -505,7 +505,7 @@ async def test_search_my_chats_reports_flood_wait_and_marks_account(
     assert flooded.flood_wait_until is not None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_search_my_chats_no_pool(db):
     engine = SearchEngine(db, pool=None)
     result = await engine.search_my_chats("anything")
@@ -514,7 +514,7 @@ async def test_search_my_chats_no_pool(db):
     assert result.error == "Нет подключённых Telegram-аккаунтов."
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_search_my_chats_no_clients(db, real_pool_harness_factory):
     harness = real_pool_harness_factory()
     engine = SearchEngine(db, pool=harness.pool)
@@ -524,7 +524,7 @@ async def test_search_my_chats_no_clients(db, real_pool_harness_factory):
     assert result.error == "Нет доступных Telegram-аккаунтов. Проверьте подключение."
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_search_in_channel_returns_results(db, real_pool_harness_factory):
     mock_msg = _make_resolved_message(chat_id=200456, chat_title="Target Channel")
     harness = real_pool_harness_factory()
@@ -547,7 +547,7 @@ async def test_search_in_channel_returns_results(db, real_pool_harness_factory):
     assert result.messages[0].channel_title == "Target Channel"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_search_in_channel_all_channels(db, real_pool_harness_factory):
     mock_msg = _make_resolved_message(chat_id=300789, chat_title="All Chats Result")
     harness = real_pool_harness_factory()
@@ -569,7 +569,7 @@ async def test_search_in_channel_all_channels(db, real_pool_harness_factory):
     assert result.messages[0].channel_title == "All Chats Result"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_search_in_channel_entity_not_found(db, real_pool_harness_factory):
     harness = real_pool_harness_factory()
     await _connect_search_account(
@@ -589,7 +589,7 @@ async def test_search_in_channel_entity_not_found(db, real_pool_harness_factory)
     assert "Не удалось найти канал" in result.error
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_search_in_channel_runtime_error_returns_search_result(
     db,
     real_pool_harness_factory,

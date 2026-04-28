@@ -5,7 +5,7 @@ import pytest
 from src.database.connection import DBConnection, ProfilingConnection
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_db_connection_connect_and_close(tmp_path):
     db_path = str(tmp_path / "test_conn.db")
     conn = DBConnection(db_path)
@@ -18,7 +18,7 @@ async def test_db_connection_connect_and_close(tmp_path):
     assert conn.db is None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_db_connection_memory():
     conn = DBConnection(":memory:")
     db = await conn.connect()
@@ -26,7 +26,7 @@ async def test_db_connection_memory():
     await conn.close()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_db_connection_execute():
     conn = DBConnection(":memory:")
     await conn.connect()
@@ -40,7 +40,7 @@ async def test_db_connection_execute():
     await conn.close()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_db_connection_execute_fetchall():
     conn = DBConnection(":memory:")
     await conn.connect()
@@ -52,7 +52,7 @@ async def test_db_connection_execute_fetchall():
     await conn.close()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_profiling_connection_execute():
     inner = AsyncMock()
     mock_cursor = MagicMock()
@@ -65,7 +65,7 @@ async def test_profiling_connection_execute():
         assert result == mock_cursor
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_profiling_connection_execute_with_profiler():
     from src.web.timing import RequestProfiler
 
@@ -84,7 +84,7 @@ async def test_profiling_connection_execute_with_profiler():
         profiler.deactivate()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_profiling_connection_execute_fetchall():
     from src.web.timing import RequestProfiler
 
@@ -102,7 +102,7 @@ async def test_profiling_connection_execute_fetchall():
         profiler.deactivate()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_profiling_connection_executemany():
     from src.web.timing import RequestProfiler
 
@@ -119,7 +119,7 @@ async def test_profiling_connection_executemany():
         profiler.deactivate()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_profiling_connection_executescript():
     from src.web.timing import RequestProfiler
 

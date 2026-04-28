@@ -104,7 +104,7 @@ class TestIsPerPhoneFormat:
 
 
 class TestLoadToolPermissions:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_no_setting_returns_all_enabled(self):
         db = MagicMock()
         db.get_setting = AsyncMock(return_value=None)
@@ -112,7 +112,7 @@ class TestLoadToolPermissions:
         assert all(perms.values())
         assert len(perms) == len(TOOL_CATEGORIES)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_flat_format(self):
         db = MagicMock()
         raw = json.dumps({"search_messages": False, "send_message": True})
@@ -123,7 +123,7 @@ class TestLoadToolPermissions:
         # Non-specified tools default to True
         assert perms["list_channels"] is True
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_per_phone_format_with_matching_phone(self):
         db = MagicMock()
         raw = json.dumps({"+7900": {"search_messages": False, "list_channels": False}})
@@ -134,7 +134,7 @@ class TestLoadToolPermissions:
         # Non-specified tools for this phone default to True
         assert perms["send_message"] is True
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_per_phone_phone_not_in_saved(self):
         db = MagicMock()
         raw = json.dumps({"+7900": {"search_messages": False}})
@@ -143,7 +143,7 @@ class TestLoadToolPermissions:
         # Phone not in saved → defaults (all enabled)
         assert all(perms.values())
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_per_phone_none_defaults_to_primary(self):
         primary = SimpleNamespace(phone="+111", is_primary=True)
         db = MagicMock()
@@ -153,7 +153,7 @@ class TestLoadToolPermissions:
         perms = await load_tool_permissions(db, phone=None)
         assert perms["search_messages"] is False
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_corrupted_json_returns_defaults(self):
         db = MagicMock()
         db.get_setting = AsyncMock(return_value="not valid json{{{")
@@ -165,7 +165,7 @@ class TestLoadToolPermissions:
 
 
 class TestLoadToolPermissionsAllPhones:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_no_setting_returns_defaults(self):
         db = MagicMock()
         db.get_setting = AsyncMock(return_value=None)
@@ -174,7 +174,7 @@ class TestLoadToolPermissionsAllPhones:
         assert "+7900" in result
         assert all(result["+7900"].values())
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_flat_applies_to_all_phones(self):
         db = MagicMock()
         raw = json.dumps({"search_messages": False})
@@ -185,7 +185,7 @@ class TestLoadToolPermissionsAllPhones:
         assert result["+7900"]["search_messages"] is False
         assert result["+7800"]["search_messages"] is False
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_per_phone_isolation(self):
         db = MagicMock()
         raw = json.dumps({
@@ -199,7 +199,7 @@ class TestLoadToolPermissionsAllPhones:
         assert result["+7900"]["search_messages"] is False
         assert result["+7800"]["search_messages"] is True
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_phone_not_in_saved_gets_defaults(self):
         db = MagicMock()
         raw = json.dumps({"+7900": {"search_messages": False}})
@@ -214,7 +214,7 @@ class TestLoadToolPermissionsAllPhones:
 
 
 class TestSaveToolPermissions:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_flat_save(self):
         db = MagicMock()
         db.get_setting = AsyncMock(return_value=None)
@@ -225,7 +225,7 @@ class TestSaveToolPermissions:
         saved_json = db.set_setting.call_args[0][1]
         assert json.loads(saved_json) == perms
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_per_phone_save(self):
         db = MagicMock()
         db.get_setting = AsyncMock(return_value=None)
@@ -239,7 +239,7 @@ class TestSaveToolPermissions:
         assert "+7900" in parsed
         assert parsed["+7900"]["search_messages"] is False
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_per_phone_migrates_legacy_flat(self):
         """Saving per-phone when existing is flat should migrate to per-phone."""
         db = MagicMock()
@@ -255,7 +255,7 @@ class TestSaveToolPermissions:
         assert isinstance(parsed["+7900"], dict)
         assert parsed["+7900"]["search_messages"] is True
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_per_phone_does_not_touch_other_phones(self):
         db = MagicMock()
         existing = json.dumps({
@@ -280,14 +280,14 @@ class TestSaveToolPermissions:
 
 
 class TestLoadToolPermissionsUnion:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_no_setting_all_enabled(self):
         db = MagicMock()
         db.get_setting = AsyncMock(return_value=None)
         result = await load_tool_permissions_union(db)
         assert all(result.values())
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_flat_format(self):
         db = MagicMock()
         raw = json.dumps({"search_messages": False, "send_message": True})
@@ -296,7 +296,7 @@ class TestLoadToolPermissionsUnion:
         assert result["search_messages"] is False
         assert result["send_message"] is True
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_union_across_phones(self):
         """Union: True if ANY phone allows the tool."""
         db = MagicMock()
@@ -308,7 +308,7 @@ class TestLoadToolPermissionsUnion:
         result = await load_tool_permissions_union(db)
         assert result["search_messages"] is True
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_all_phones_disable_means_disabled(self):
         db = MagicMock()
         raw = json.dumps({
@@ -319,7 +319,7 @@ class TestLoadToolPermissionsUnion:
         result = await load_tool_permissions_union(db)
         assert result["search_messages"] is False
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_cache_returns_same_result(self):
         import src.agent.tools.permissions as perm_mod
         # Clear the module-level cache so we get a fresh start

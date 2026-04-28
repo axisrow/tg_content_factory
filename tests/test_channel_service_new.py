@@ -15,7 +15,7 @@ def _make_channel(pk=1, channel_id=100, title="Test", is_active=True, username="
     )
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_list_for_page():
     ch = _make_channel()
     channels = MagicMock()
@@ -30,7 +30,7 @@ async def test_list_for_page():
     assert result[2] == {}
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_add_by_identifier_success():
     channels = MagicMock()
     channels.add_channel = AsyncMock(return_value=1)
@@ -61,7 +61,7 @@ async def test_add_by_identifier_success():
     assert added.about == "Test about"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_add_by_identifier_not_found():
     channels = MagicMock()
     pool = MagicMock()
@@ -72,7 +72,7 @@ async def test_add_by_identifier_not_found():
     assert result is False
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_dialogs_with_added_flags():
     existing = [_make_channel(pk=1, channel_id=100)]
     channels = MagicMock()
@@ -90,7 +90,7 @@ async def test_get_dialogs_with_added_flags():
     assert result[1]["already_added"] is False
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_add_bulk_by_dialog_ids():
     channels = MagicMock()
     channels.add_channel = AsyncMock(return_value=1)
@@ -108,7 +108,7 @@ async def test_add_bulk_by_dialog_ids():
     assert added.channel_id == 100
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_my_dialogs():
     existing = [_make_channel(pk=1, channel_id=100)]
     channels = MagicMock()
@@ -126,7 +126,7 @@ async def test_get_my_dialogs():
     assert result[1]["already_added"] is False
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_toggle_deactivates():
     ch = _make_channel(is_active=True)
     channels = MagicMock()
@@ -139,7 +139,7 @@ async def test_toggle_deactivates():
     channels.set_active.assert_called_once_with(1, False)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_toggle_activates():
     ch = _make_channel(is_active=False)
     channels = MagicMock()
@@ -152,7 +152,7 @@ async def test_toggle_activates():
     channels.set_active.assert_called_once_with(1, True)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_toggle_not_found():
     channels = MagicMock()
     channels.get_by_pk = AsyncMock(return_value=None)
@@ -162,7 +162,7 @@ async def test_toggle_not_found():
     await svc.toggle(pk=999)  # Should not raise
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_delete_cancels_tasks():
     ch = _make_channel()
     channels = MagicMock()
@@ -178,7 +178,7 @@ async def test_delete_cancels_tasks():
     channels.delete_channel.assert_called_once_with(1)
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_by_pk_found():
     ch = _make_channel()
     channels = MagicMock()
@@ -189,7 +189,7 @@ async def test_get_by_pk_found():
     assert result == ch
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_get_by_pk_not_found():
     channels = MagicMock()
     channels.get_by_pk = AsyncMock(return_value=None)
@@ -199,7 +199,7 @@ async def test_get_by_pk_not_found():
     assert result is None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_refresh_channel_meta_success():
     ch = _make_channel()
     channels = MagicMock()
@@ -218,7 +218,7 @@ async def test_refresh_channel_meta_success():
     channels.update_channel_full_meta.assert_called_once()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_refresh_channel_meta_not_found():
     channels = MagicMock()
     channels.get_by_pk = AsyncMock(return_value=None)
@@ -230,7 +230,7 @@ async def test_refresh_channel_meta_not_found():
     assert result is False
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_refresh_channel_meta_no_meta():
     ch = _make_channel()
     channels = MagicMock()
@@ -243,7 +243,7 @@ async def test_refresh_channel_meta_no_meta():
     assert result is False
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_refresh_all_channel_meta():
     ch1 = _make_channel(pk=1, channel_id=100)
     ch2 = _make_channel(pk=2, channel_id=200)
@@ -264,7 +264,7 @@ async def test_refresh_all_channel_meta():
     assert failed == 0
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_leave_dialogs():
     pool = MagicMock()
     pool.leave_channels = AsyncMock(return_value={100: True, 200: False})

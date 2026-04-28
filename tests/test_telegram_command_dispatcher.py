@@ -35,7 +35,7 @@ class _FakeClient:
         return self._download_return
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_download_media_creates_output_dir(tmp_path, monkeypatch):
     """output_dir must be created (mkdir) and returned path must be inside it."""
     db = Database(str(tmp_path / "test.db"))
@@ -70,7 +70,7 @@ async def test_download_media_creates_output_dir(tmp_path, monkeypatch):
         await db.close()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_download_media_rejects_path_escape(tmp_path, monkeypatch):
     db = Database(str(tmp_path / "test.db"))
     await db.initialize()
@@ -100,7 +100,7 @@ async def test_download_media_rejects_path_escape(tmp_path, monkeypatch):
         await db.close()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_accounts_connect_reads_session_from_db(tmp_path):
     """accounts.connect handler must NOT accept session_string from payload;
     it reads it from the accounts table."""
@@ -124,7 +124,7 @@ async def test_accounts_connect_reads_session_from_db(tmp_path):
         await db.close()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_accounts_connect_raises_for_unknown_phone(tmp_path):
     db = Database(str(tmp_path / "test.db"))
     await db.initialize()
@@ -139,7 +139,7 @@ async def test_accounts_connect_raises_for_unknown_phone(tmp_path):
         await db.close()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_notification_service_uses_config_prefixes(tmp_path):
     """dispatcher._notification_service must propagate bot prefixes from AppConfig."""
     from src.config import AppConfig
@@ -160,7 +160,7 @@ async def test_notification_service_uses_config_prefixes(tmp_path):
         await db.close()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_notification_service_without_config_uses_defaults(tmp_path):
     db = Database(str(tmp_path / "test.db"))
     await db.initialize()
