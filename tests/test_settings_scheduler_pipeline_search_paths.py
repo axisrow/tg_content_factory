@@ -266,7 +266,7 @@ class TestWebSettingsRoutes:
     @pytest.mark.anyio
     async def test_settings_agent_providers_page(self, route_client):
         """GET /settings/agent-providers returns 200 or redirect."""
-        with patch("src.web.routes.settings._agent_provider_service") as mock_fn:
+        with patch("src.web.settings.handlers._agent_provider_service") as mock_fn:
             svc = MagicMock()
             svc.load_provider_configs = AsyncMock(return_value=[])
             mock_fn.return_value = svc
@@ -276,7 +276,7 @@ class TestWebSettingsRoutes:
     @pytest.mark.anyio
     async def test_settings_image_providers_get(self, route_client):
         """GET /settings/image-providers returns 200."""
-        with patch("src.web.routes.settings._image_provider_service") as mock_fn:
+        with patch("src.web.settings.handlers._image_provider_service") as mock_fn:
             svc = MagicMock()
             svc.load_provider_configs = AsyncMock(return_value=[])
             mock_fn.return_value = svc
