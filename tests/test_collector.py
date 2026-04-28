@@ -9,6 +9,7 @@ from telethon.tl.types import PeerChannel
 
 from src.config import SchedulerConfig
 from src.models import Channel, ChannelStats, CollectionTaskStatus, Message, StatsAllTaskPayload
+from src.telegram.backends import TelegramTransportSession
 from src.telegram.collector import (
     AllCollectionClientsFloodedError,
     Collector,
@@ -196,6 +197,127 @@ async def test_collect_positive_id_end_to_end(db):
     assert stats["channels"] == 1
     call_arg = mock_client.get_entity.call_args[0][0]
     assert call_arg == "my_chan"
+
+
+@pytest.mark.asyncio
+async def test_collect_channel_long_username_resolve_flood_sets_backoff_without_rotation(db):
+    ch = Channel(
+        channel_id=1970788984,
+        title="Long Username Flood",
+        username="long_flood",
+        last_collected_id=5,
+    )
+    ch_id = await db.add_channel(ch)
+    stored = await db.get_channel_by_pk(ch_id)
+    assert stored is not None
+
+    flood_err = FloodWaitError(request=None, capture=7200)
+    raw_client1 = FakeTelethonClient(entity_resolver=lambda _arg: flood_err)
+    raw_client2 = FakeTelethonClient(entity_resolver=lambda _arg: SimpleNamespace())
+    pool = make_mock_pool()
+    session1 = TelegramTransportSession(
+        raw_client1,
+        disconnect_on_close=False,
+        phone="+7001",
+        pool=pool,
+    )
+    session2 = TelegramTransportSession(
+        raw_client2,
+        disconnect_on_close=False,
+        phone="+7002",
+        pool=pool,
+    )
+    pool.get_available_client = AsyncMock(
+        side_effect=[
+            (session1, "+7001"),
+            (session2, "+7002"),
+        ]
+    )
+    collector = Collector(
+        pool,
+        db,
+        SchedulerConfig(delay_between_requests_sec=0, max_flood_wait_sec=10),
+    )
+
+    count = await collector._collect_channel(stored)
+
+    assert count == 0
+    pool.report_flood.assert_awaited_once_with("+7001", 7200)
+    pool.get_available_client.assert_awaited_once()
+    raw_client2.get_entity.assert_not_awaited()
+    remaining = collector._get_resolve_username_backoff_remaining_sec()
+    assert 3500 < remaining <= 3600
+
+
+@pytest.mark.asyncio
+async def test_collect_channel_short_username_resolve_flood_still_rotates(db):
+    ch = Channel(
+        channel_id=1970788985,
+        title="Short Username Flood",
+        username="short_flood",
+        last_collected_id=5,
+    )
+    ch_id = await db.add_channel(ch)
+    stored = await db.get_channel_by_pk(ch_id)
+    assert stored is not None
+
+    flood_err = FloodWaitError(request=None, capture=120)
+    raw_client1 = FakeTelethonClient(entity_resolver=lambda _arg: flood_err)
+    raw_client2 = FakeTelethonClient(entity_resolver=lambda _arg: SimpleNamespace())
+    pool = make_mock_pool()
+    session1 = TelegramTransportSession(
+        raw_client1,
+        disconnect_on_close=False,
+        phone="+7001",
+        pool=pool,
+    )
+    session2 = TelegramTransportSession(
+        raw_client2,
+        disconnect_on_close=False,
+        phone="+7002",
+        pool=pool,
+    )
+    pool.get_available_client = AsyncMock(
+        side_effect=[
+            (session1, "+7001"),
+            (session2, "+7002"),
+        ]
+    )
+    collector = Collector(
+        pool,
+        db,
+        SchedulerConfig(delay_between_requests_sec=0, max_flood_wait_sec=10),
+    )
+
+    count = await collector._collect_channel(stored)
+
+    assert count == 0
+    pool.report_flood.assert_awaited_once_with("+7001", 120)
+    assert pool.get_available_client.await_count == 2
+    raw_client2.get_entity.assert_awaited_once_with("short_flood")
+    assert collector._get_resolve_username_backoff_remaining_sec() == 0
+
+
+@pytest.mark.asyncio
+async def test_collect_channel_skips_username_resolve_when_backoff_active(db):
+    ch = Channel(
+        channel_id=1970788986,
+        title="Backoff Active",
+        username="backoff_active",
+        last_collected_id=5,
+    )
+    ch_id = await db.add_channel(ch)
+    stored = await db.get_channel_by_pk(ch_id)
+    assert stored is not None
+
+    pool = make_mock_pool(get_available_client=AsyncMock(return_value=(AsyncMock(), "+7001")))
+    collector = Collector(pool, db, SchedulerConfig(delay_between_requests_sec=0))
+    collector._set_resolve_username_backoff(600)
+
+    count = await collector._collect_channel(stored)
+
+    assert count == 0
+    pool.get_available_client.assert_not_awaited()
 
 
 @pytest.mark.asyncio
