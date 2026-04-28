@@ -60,6 +60,19 @@ db.repos.settings.get("key")
 - `src/web/container.py` — `AppContainer` агрегирует все сервисы
 - `src/web/deps.py` — хелперы `deps.get_db()`, `deps.get_pool()` и др.
 
+## Web Route Layering
+
+Для новых и постепенно рефакторимых web routes используем тонкие входные точки:
+
+- `forms`: парсят и валидируют данные FastAPI form/query/path без бизнес-логики.
+- `handlers`: оркестрируют сервисы и возвращают доменный результат.
+- `responses`: мапят результат в `RedirectResponse`, `JSONResponse` или template response.
+
+Общие redirect/JSON helpers живут в `src/web/responses.py`. Flash-redirects должны использовать
+query-string convention `?msg=...` / `?error=...` и статус `303`; route modules не должны заново
+кодировать этот boilerplate, если хватает общего helper-а. Не создавайте пустые `forms` или
+`handlers` модули заранее — выделяйте их при реальном разрезании конкретного route domain.
+
 ## Ключевые паттерны
 
 | Паттерн | Описание |

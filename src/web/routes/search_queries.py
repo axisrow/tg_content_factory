@@ -1,8 +1,9 @@
 from fastapi import APIRouter, Form, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse
 from pydantic import ValidationError
 
 from src.web import deps
+from src.web.responses import flash_redirect
 
 router = APIRouter()
 
@@ -29,7 +30,7 @@ async def add_search_query(
     max_length: int | None = Form(None),
 ):
     if not query.strip():
-        return RedirectResponse(url="/search-queries?error=invalid_value", status_code=303)
+        return flash_redirect("/search-queries", error="invalid_value")
     svc = deps.search_query_service(request)
     try:
         await svc.add(
@@ -43,11 +44,11 @@ async def add_search_query(
             max_length=max_length,
         )
     except ValidationError:
-        return RedirectResponse(url="/search-queries?error=invalid_value", status_code=303)
+        return flash_redirect("/search-queries", error="invalid_value")
     scheduler = deps.get_scheduler(request)
     if scheduler.is_running:
         await scheduler.sync_search_query_jobs()
-    return RedirectResponse(url="/search-queries?msg=sq_added", status_code=303)
+    return flash_redirect("/search-queries", msg="sq_added")
 
 
 @router.post("/{sq_id}/toggle")
@@ -57,7 +58,7 @@ async def toggle_search_query(request: Request, sq_id: int):
     scheduler = deps.get_scheduler(request)
     if scheduler.is_running:
         await scheduler.sync_search_query_jobs()
-    return RedirectResponse(url="/search-queries?msg=sq_toggled", status_code=303)
+    return flash_redirect("/search-queries", msg="sq_toggled")
 
 
 @router.post("/{sq_id}/edit")
@@ -74,7 +75,7 @@ async def edit_search_query(
     max_length: int | None = Form(None),
 ):
     if not query.strip():
-        return RedirectResponse(url="/search-queries?error=invalid_value", status_code=303)
+        return flash_redirect("/search-queries", error="invalid_value")
     svc = deps.search_query_service(request)
     try:
         await svc.update(
@@ -89,11 +90,11 @@ async def edit_search_query(
             max_length=max_length,
         )
     except ValidationError:
-        return RedirectResponse(url="/search-queries?error=invalid_value", status_code=303)
+        return flash_redirect("/search-queries", error="invalid_value")
     scheduler = deps.get_scheduler(request)
     if scheduler.is_running:
         await scheduler.sync_search_query_jobs()
-    return RedirectResponse(url="/search-queries?msg=sq_edited", status_code=303)
+    return flash_redirect("/search-queries", msg="sq_edited")
 
 
 @router.post("/{sq_id}/delete")
@@ -103,11 +104,11 @@ async def delete_search_query(request: Request, sq_id: int):
     scheduler = deps.get_scheduler(request)
     if scheduler.is_running:
         await scheduler.sync_search_query_jobs()
-    return RedirectResponse(url="/search-queries?msg=sq_deleted", status_code=303)
+    return flash_redirect("/search-queries", msg="sq_deleted")
 
 
 @router.post("/{sq_id}/run")
 async def run_search_query(request: Request, sq_id: int):
     svc = deps.search_query_service(request)
     await svc.run_once(sq_id)
-    return RedirectResponse(url="/search-queries?msg=sq_run", status_code=303)
+    return flash_redirect("/search-queries", msg="sq_run")
