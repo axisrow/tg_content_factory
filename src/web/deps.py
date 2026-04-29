@@ -268,8 +268,13 @@ def get_agent_manager(request: Request) -> AgentManager | None:
     embedded_worker = getattr(request.app.state, "embedded_worker", None)
     embedded_container = getattr(embedded_worker, "container", None)
     if embedded_container is not None:
-        return getattr(embedded_container, "agent_manager", None)
-    return get_container(request).agent_manager
+        manager = getattr(embedded_container, "agent_manager", None)
+        if manager is not None:
+            return manager
+    container = getattr(request.app.state, "container", None)
+    if container is not None:
+        return getattr(container, "agent_manager", None)
+    return None
 
 
 def get_llm_provider_service(request: Request) -> AgentProviderService:

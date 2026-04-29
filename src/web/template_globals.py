@@ -194,19 +194,9 @@ def _agent_available(config: AppConfig | None = None) -> bool:
 
 
 def _request_agent_manager(request: Request):
-    manager = getattr(request.app.state, "agent_manager", None)
-    if manager is not None:
-        return manager
-    embedded_worker = getattr(request.app.state, "embedded_worker", None)
-    embedded_container = getattr(embedded_worker, "container", None)
-    if embedded_container is not None:
-        manager = getattr(embedded_container, "agent_manager", None)
-        if manager is not None:
-            return manager
-    container = getattr(request.app.state, "container", None)
-    if container is None:
-        return None
-    return getattr(container, "agent_manager", None)
+    from src.web import deps
+
+    return deps.get_agent_manager(request)
 
 
 def _agent_available_for_request(request: Request) -> bool:
