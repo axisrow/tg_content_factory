@@ -262,7 +262,18 @@ def is_shutting_down(request: Request) -> bool:
 
 
 def get_agent_manager(request: Request) -> AgentManager | None:
-    return get_container(request).agent_manager
+    manager = getattr(request.app.state, "agent_manager", None)
+    if manager is not None:
+        return manager
+    embedded_worker = getattr(request.app.state, "embedded_worker", None)
+    embedded_container = getattr(embedded_worker, "container", None)
+    if embedded_container is not None:
+        ready_event = getattr(embedded_worker, "_ready_event", None)
+        if ready_event is not None and ready_event.is_set():
+            manager = getattr(embedded_container, "agent_manager", None)
+            if manager is not None:
+                return manager
+    return None
 
 
 def get_llm_provider_service(request: Request) -> AgentProviderService:
