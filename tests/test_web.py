@@ -162,6 +162,25 @@ def test_agent_available_uses_container_manager(monkeypatch):
     assert _agent_available_for_request(request) is True
 
 
+def test_agent_available_uses_embedded_worker_manager(monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
+    monkeypatch.delenv("AGENT_FALLBACK_MODEL", raising=False)
+
+    request = SimpleNamespace(
+        app=SimpleNamespace(
+            state=SimpleNamespace(
+                config=AppConfig(),
+                embedded_worker=SimpleNamespace(
+                    container=SimpleNamespace(agent_manager=SimpleNamespace(available=True))
+                ),
+            )
+        )
+    )
+
+    assert _agent_available_for_request(request) is True
+
+
 def test_agent_available_ignores_invalid_fallback_model(monkeypatch):
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)

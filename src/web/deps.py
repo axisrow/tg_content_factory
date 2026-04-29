@@ -262,6 +262,13 @@ def is_shutting_down(request: Request) -> bool:
 
 
 def get_agent_manager(request: Request) -> AgentManager | None:
+    manager = getattr(request.app.state, "agent_manager", None)
+    if manager is not None:
+        return manager
+    embedded_worker = getattr(request.app.state, "embedded_worker", None)
+    embedded_container = getattr(embedded_worker, "container", None)
+    if embedded_container is not None:
+        return getattr(embedded_container, "agent_manager", None)
     return get_container(request).agent_manager
 
 

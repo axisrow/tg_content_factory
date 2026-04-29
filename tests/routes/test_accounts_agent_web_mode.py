@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import base64
 from contextlib import asynccontextmanager
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -133,6 +135,39 @@ async def test_agent_chat_in_web_mode_returns_worker_only_error(tmp_path):
         assert resp.status_code == 503
         detail = resp.json().get("detail", "")
         assert "worker" in detail.lower()
+
+
+@pytest.mark.anyio
+async def test_agent_chat_in_embedded_worker_mode_uses_worker_agent_manager(web_mode_app, web_mode_client):
+    """Normal `serve` mode has a web container plus an embedded worker container.
+    Agent chat should use the worker AgentManager instead of returning the split-mode 503."""
+    app, container = web_mode_app
+    thread_id = await container.db.create_agent_thread("Test thread")
+
+    runtime = MagicMock()
+    runtime.selected_backend = "deepagents"
+    runtime.using_override = False
+    runtime.error = None
+
+    manager = MagicMock()
+    manager.get_runtime_status = AsyncMock(return_value=runtime)
+    manager.estimate_prompt_tokens = AsyncMock(return_value=100)
+
+    async def _fake_stream(*args, **kwargs):
+        yield 'data: {"delta": "ok"}\n\n'
+        yield 'data: {"done": true, "full_text": "ok"}\n\n'
+
+    manager.chat_stream = _fake_stream
+    app.state.embedded_worker = SimpleNamespace(container=SimpleNamespace(agent_manager=manager))
+
+    resp = await web_mode_client.post(
+        f"/agent/threads/{thread_id}/chat",
+        json={"message": "hi"},
+    )
+
+    assert resp.status_code == 200
+    assert "Agent chat is only available in the worker process" not in resp.text
+    assert '"full_text": "ok"' in resp.text
 
 
 @pytest.mark.anyio
