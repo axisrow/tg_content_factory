@@ -107,6 +107,7 @@ markers = [
     "real_tg_never: test must never request a real Telegram client fixture",
     "telegram_unit: pure unit test that does not verify backend transport wiring",
     "real_materializer: test uses real SessionMaterializer instead of the fake stub",
+    "real_provider_smoke: opt-in live provider API smoke test",
     "aiosqlite_serial: test must run without xdist parallelism because it exercises aiosqlite-backed database paths",
 ]
 

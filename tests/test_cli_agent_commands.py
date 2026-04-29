@@ -1,12 +1,18 @@
 """Tests for src/cli/commands/agent.py — CLI agent subcommands."""
 from __future__ import annotations
 
+import asyncio
 import json
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from src.agent.provider_registry import ZAI_DEFAULT_BASE_URL, ProviderRuntimeConfig
 from src.cli.commands.agent import _test_escaping, _test_tools, run
+from src.config import AppConfig
+from src.database import Database
+from src.services.agent_provider_service import AgentProviderService
 from tests.helpers import cli_ns, fake_asyncio_run, make_cli_config, make_cli_db
 
 # ---------------------------------------------------------------------------
@@ -699,3 +705,66 @@ def test_run_context_large_content(capsys):
 
     out = capsys.readouterr().out
     assert "символов всего" in out
+
+
+def test_run_chat_prompt_real_manager_uses_db_deepagents_provider(cli_db, capsys, monkeypatch):
+    config = AppConfig()
+    config.security.session_encryption_key = "provider-agent-cli-secret"
+    asyncio.run(
+        AgentProviderService(cli_db, config).save_provider_configs(
+            [
+                ProviderRuntimeConfig(
+                    provider="zai",
+                    enabled=True,
+                    priority=0,
+                    selected_model="glm-5-turbo",
+                    plain_fields={"base_url": "https://api.z.ai/api/anthropic/v1"},
+                    secret_fields={"api_key": "zai-key"},
+                )
+            ]
+        )
+    )
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
+    captured: dict[str, object] = {}
+
+    async def fake_init_db(_config_path: str):
+        cmd_db = Database(cli_db._db_path)
+        await cmd_db.initialize()
+        return config, cmd_db
+
+    async def fake_init_pool(_config, _db):
+        return MagicMock(cleanup=AsyncMock()), MagicMock(disconnect_all=AsyncMock())
+
+    def fake_init_chat_model(*, model, model_provider, **kwargs):
+        captured["model"] = model
+        captured["provider"] = model_provider
+        captured["kwargs"] = kwargs
+        return SimpleNamespace(model_provider=model_provider)
+
+    def fake_create_deep_agent(model, tools, system_prompt):
+        captured["tool_count"] = len(tools)
+        captured["system_prompt"] = system_prompt
+        assert model.model_provider == "openai"
+        return MagicMock(run=MagicMock(return_value="integration reply"))
+
+    with (
+        patch("src.cli.commands.agent.runtime.init_db", side_effect=fake_init_db),
+        patch("src.cli.commands.agent.runtime.init_pool", side_effect=fake_init_pool),
+        patch("src.cli.commands.agent.runtime.redirect_logging_to_file", return_value=None),
+        patch("src.cli.commands.agent.runtime.restore_logging"),
+        patch("langchain.chat_models.init_chat_model", side_effect=fake_init_chat_model),
+        patch("deepagents.create_deep_agent", side_effect=fake_create_deep_agent),
+    ):
+        run(_args(agent_action="chat", prompt="hello integration", thread_id=None, model=None))
+
+    out = capsys.readouterr().out
+    assert "Агент: integration reply" in out
+    assert captured["model"] == "glm-5-turbo"
+    assert captured["provider"] == "openai"
+    assert captured["kwargs"]["api_key"] == "zai-key"
+    assert captured["kwargs"]["base_url"] == ZAI_DEFAULT_BASE_URL
+    messages = asyncio.run(cli_db.get_agent_messages(1))
+    assert [msg["role"] for msg in messages] == ["user", "assistant"]
+    assert messages[0]["content"] == "hello integration"
+    assert messages[1]["content"] == "integration reply"
