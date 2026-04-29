@@ -1233,12 +1233,12 @@ async def test_settings_save_semantic_search_empty_provider_b3(_route_client_b3)
 
 
 # ===========================================================================
-# 6. web/routes/photo_loader.py — _build_feedback helper
+# 6. web/photo_loader/handlers.py — build_feedback helper
 # ===========================================================================
 
 
 class TestPhotoBuildFeedback:
-    """Unit tests for the _build_feedback helper in photo_loader.py."""
+    """Unit tests for the build_feedback helper in photo_loader handlers."""
 
     def _make_item(self, **kwargs):
         from types import SimpleNamespace
@@ -1246,7 +1246,7 @@ class TestPhotoBuildFeedback:
         return SimpleNamespace(**kwargs)
 
     def test_photo_sent_no_items(self):
-        from src.web.routes.photo_loader import _build_feedback
+        from src.web.photo_loader.handlers import build_feedback as _build_feedback
 
         result = _build_feedback("photo_sent", None, batches=[], items=[], auto_jobs=[])
         assert result is not None
@@ -1254,21 +1254,21 @@ class TestPhotoBuildFeedback:
         assert "Фото успешно отправлены" in result["body"]
 
     def test_photo_sent_with_target(self):
-        from src.web.routes.photo_loader import _build_feedback
+        from src.web.photo_loader.handlers import build_feedback as _build_feedback
 
         item = self._make_item(target_title="My Channel", target_dialog_id=123)
         result = _build_feedback("photo_sent", None, batches=[], items=[item], auto_jobs=[])
         assert "My Channel" in result["body"]
 
     def test_photo_scheduled_no_items(self):
-        from src.web.routes.photo_loader import _build_feedback
+        from src.web.photo_loader.handlers import build_feedback as _build_feedback
 
         result = _build_feedback("photo_scheduled", None, batches=[], items=[], auto_jobs=[])
         assert result["variant"] == "success"
         assert "Отложенная отправка создана" in result["body"]
 
     def test_photo_batch_created_with_batch(self):
-        from src.web.routes.photo_loader import _build_feedback
+        from src.web.photo_loader.handlers import build_feedback as _build_feedback
 
         batch = self._make_item(target_title="Batch Target", target_dialog_id=456)
         result = _build_feedback(
@@ -1277,7 +1277,7 @@ class TestPhotoBuildFeedback:
         assert "Batch Target" in result["body"]
 
     def test_photo_auto_created_with_job(self):
-        from src.web.routes.photo_loader import _build_feedback
+        from src.web.photo_loader.handlers import build_feedback as _build_feedback
 
         job = self._make_item(target_title="Auto Target", target_dialog_id=789)
         result = _build_feedback(
@@ -1286,13 +1286,13 @@ class TestPhotoBuildFeedback:
         assert "Auto Target" in result["body"]
 
     def test_error_photo_send_failed(self):
-        from src.web.routes.photo_loader import _build_feedback
+        from src.web.photo_loader.handlers import build_feedback as _build_feedback
 
         result = _build_feedback(None, "photo_send_failed", batches=[], items=[], auto_jobs=[])
         assert result["variant"] == "error"
 
     def test_error_photo_target_required(self):
-        from src.web.routes.photo_loader import _build_feedback
+        from src.web.photo_loader.handlers import build_feedback as _build_feedback
 
         result = _build_feedback(
             None, "photo_target_required", batches=[], items=[], auto_jobs=[]
@@ -1300,7 +1300,7 @@ class TestPhotoBuildFeedback:
         assert result["variant"] == "error"
 
     def test_error_photo_target_invalid(self):
-        from src.web.routes.photo_loader import _build_feedback
+        from src.web.photo_loader.handlers import build_feedback as _build_feedback
 
         result = _build_feedback(
             None, "photo_target_invalid", batches=[], items=[], auto_jobs=[]
@@ -1308,7 +1308,7 @@ class TestPhotoBuildFeedback:
         assert result["variant"] == "error"
 
     def test_error_photo_schedule_failed(self):
-        from src.web.routes.photo_loader import _build_feedback
+        from src.web.photo_loader.handlers import build_feedback as _build_feedback
 
         result = _build_feedback(
             None, "photo_schedule_failed", batches=[], items=[], auto_jobs=[]
@@ -1316,41 +1316,41 @@ class TestPhotoBuildFeedback:
         assert result["variant"] == "error"
 
     def test_error_photo_batch_failed(self):
-        from src.web.routes.photo_loader import _build_feedback
+        from src.web.photo_loader.handlers import build_feedback as _build_feedback
 
         result = _build_feedback(None, "photo_batch_failed", batches=[], items=[], auto_jobs=[])
         assert result["variant"] == "error"
 
     def test_error_photo_auto_failed(self):
-        from src.web.routes.photo_loader import _build_feedback
+        from src.web.photo_loader.handlers import build_feedback as _build_feedback
 
         result = _build_feedback(None, "photo_auto_failed", batches=[], items=[], auto_jobs=[])
         assert result["variant"] == "error"
 
     def test_no_msg_no_error_returns_none(self):
-        from src.web.routes.photo_loader import _build_feedback
+        from src.web.photo_loader.handlers import build_feedback as _build_feedback
 
         result = _build_feedback(None, None, batches=[], items=[], auto_jobs=[])
         assert result is None
 
     def test_target_label_with_title(self):
-        from src.web.routes.photo_loader import _target_label
+        from src.web.photo_loader.handlers import _target_label
 
         assert _target_label("My Channel", 123) == "My Channel"
 
     def test_target_label_with_id_only(self):
-        from src.web.routes.photo_loader import _target_label
+        from src.web.photo_loader.handlers import _target_label
 
         assert _target_label(None, 123) == "123"
 
     def test_target_label_none(self):
-        from src.web.routes.photo_loader import _target_label
+        from src.web.photo_loader.handlers import _target_label
 
         assert _target_label(None, None) is None
 
     def test_parse_schedule_at_naive(self):
         """_parse_schedule_at with naive datetime localises and converts to UTC."""
-        from src.web.routes.photo_loader import _parse_schedule_at
+        from src.web.photo_loader.forms import parse_schedule_at as _parse_schedule_at
 
         result = _parse_schedule_at("2025-06-15T14:30:00")
         from datetime import timezone
@@ -1358,7 +1358,7 @@ class TestPhotoBuildFeedback:
         assert result.tzinfo == timezone.utc
 
     def test_parse_schedule_at_aware(self):
-        from src.web.routes.photo_loader import _parse_schedule_at
+        from src.web.photo_loader.forms import parse_schedule_at as _parse_schedule_at
 
         result = _parse_schedule_at("2025-06-15T14:30:00+00:00")
         from datetime import timezone
@@ -1367,7 +1367,7 @@ class TestPhotoBuildFeedback:
 
     def test_parse_target_without_form_values(self):
         """_parse_target looks up title/type from dialogs when not in form."""
-        from src.web.routes.photo_loader import _parse_target
+        from src.web.photo_loader.forms import parse_target as _parse_target
 
         dialogs = [{"channel_id": 99, "title": "Found Title", "channel_type": "channel"}]
         form = {"target_dialog_id": "99", "target_title": "", "target_type": ""}
