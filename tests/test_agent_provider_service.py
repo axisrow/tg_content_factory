@@ -1189,6 +1189,43 @@ def test_canonical_endpoint_fingerprint_for_ollama_cloud(db):
     assert fingerprint == "ollama://cloud"
 
 
+def test_canonical_endpoint_fingerprint_for_zai_legacy_url(db):
+    """Legacy Z.AI Anthropic URLs are canonicalized to the OpenAI-compatible default."""
+    service = AgentProviderService(db, AppConfig())
+
+    cfg = ProviderRuntimeConfig(
+        provider="zai",
+        enabled=True,
+        priority=0,
+        selected_model="glm-5-turbo",
+        plain_fields={"base_url": "https://api.z.ai/api/anthropic/v1"},
+    )
+
+    fingerprint = service.canonical_endpoint_fingerprint(cfg)
+
+    assert fingerprint == "https://api.z.ai/api/paas/v4"
+
+
+def test_normalize_plain_fields_for_zai_legacy_url(db):
+    """Saving provider settings rewrites the old Z.AI Anthropic URL."""
+    service = AgentProviderService(db, AppConfig())
+
+    normalized = service._normalize_plain_fields(
+        "zai",
+        {"base_url": "https://api.z.ai/api/anthropic"},
+        {"api_key": "zai-key"},
+    )
+
+    assert normalized["base_url"] == "https://api.z.ai/api/paas/v4"
+
+
+def test_zai_provider_spec_uses_openai_package_hint():
+    spec = provider_spec("zai")
+
+    assert spec is not None
+    assert spec.package_name == "langchain-openai"
+
+
 # === Z.AI edge case tests ===
 
 

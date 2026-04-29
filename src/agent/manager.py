@@ -39,7 +39,7 @@ from src.agent.prompt_template import (
     build_prompt_template_context,
     render_prompt_template,
 )
-from src.agent.provider_registry import ZAI_DEFAULT_BASE_URL, ProviderRuntimeConfig
+from src.agent.provider_registry import ProviderRuntimeConfig, normalize_zai_base_url
 from src.config import AppConfig
 from src.database import Database
 from src.services.agent_provider_service import (
@@ -1207,10 +1207,8 @@ class DeepagentsBackend:
             extra.update({key: value for key, value in cfg.secret_fields.items() if value.strip()})
 
         if provider == "zai":
-            model_provider = "anthropic"
-            base_url = cfg.plain_fields.get("base_url", "").strip() or ZAI_DEFAULT_BASE_URL
-            extra.pop("base_url", None)
-            extra["anthropic_api_url"] = base_url
+            model_provider = "openai"
+            extra["base_url"] = normalize_zai_base_url(cfg.plain_fields.get("base_url", ""))
         self._init_attempted_model = cfg.model_name
 
         # ReAct fallback for Ollama models without native function calling
