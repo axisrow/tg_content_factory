@@ -268,12 +268,11 @@ def get_agent_manager(request: Request) -> AgentManager | None:
     embedded_worker = getattr(request.app.state, "embedded_worker", None)
     embedded_container = getattr(embedded_worker, "container", None)
     if embedded_container is not None:
-        manager = getattr(embedded_container, "agent_manager", None)
-        if manager is not None:
-            return manager
-    container = getattr(request.app.state, "container", None)
-    if container is not None:
-        return getattr(container, "agent_manager", None)
+        ready_event = getattr(embedded_worker, "_ready_event", None)
+        if ready_event is not None and ready_event.is_set():
+            manager = getattr(embedded_container, "agent_manager", None)
+            if manager is not None:
+                return manager
     return None
 
 

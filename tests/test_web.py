@@ -145,23 +145,6 @@ def test_templates_have_actual_app_version():
     assert get_app_version() == expected_version
 
 
-def test_agent_available_uses_container_manager(monkeypatch):
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
-    monkeypatch.delenv("AGENT_FALLBACK_MODEL", raising=False)
-
-    request = SimpleNamespace(
-        app=SimpleNamespace(
-            state=SimpleNamespace(
-                config=AppConfig(),
-                container=SimpleNamespace(agent_manager=SimpleNamespace(available=True)),
-            )
-        )
-    )
-
-    assert _agent_available_for_request(request) is True
-
-
 def test_agent_available_uses_embedded_worker_manager(monkeypatch):
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
@@ -172,13 +155,34 @@ def test_agent_available_uses_embedded_worker_manager(monkeypatch):
             state=SimpleNamespace(
                 config=AppConfig(),
                 embedded_worker=SimpleNamespace(
-                    container=SimpleNamespace(agent_manager=SimpleNamespace(available=True))
+                    _ready_event=SimpleNamespace(is_set=lambda: True),
+                    container=SimpleNamespace(agent_manager=SimpleNamespace(available=True)),
                 ),
             )
         )
     )
 
     assert _agent_available_for_request(request) is True
+
+
+def test_agent_available_ignores_embedded_worker_before_ready(monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
+    monkeypatch.delenv("AGENT_FALLBACK_MODEL", raising=False)
+
+    request = SimpleNamespace(
+        app=SimpleNamespace(
+            state=SimpleNamespace(
+                config=AppConfig(),
+                embedded_worker=SimpleNamespace(
+                    _ready_event=SimpleNamespace(is_set=lambda: False),
+                    container=SimpleNamespace(agent_manager=SimpleNamespace(available=True)),
+                ),
+            )
+        )
+    )
+
+    assert _agent_available_for_request(request) is False
 
 
 def test_agent_available_ignores_invalid_fallback_model(monkeypatch):

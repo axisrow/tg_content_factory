@@ -158,7 +158,10 @@ async def test_agent_chat_in_embedded_worker_mode_uses_worker_agent_manager(web_
         yield 'data: {"done": true, "full_text": "ok"}\n\n'
 
     manager.chat_stream = _fake_stream
-    app.state.embedded_worker = SimpleNamespace(container=SimpleNamespace(agent_manager=manager))
+    app.state.embedded_worker = SimpleNamespace(
+        _ready_event=SimpleNamespace(is_set=lambda: True),
+        container=SimpleNamespace(agent_manager=manager),
+    )
 
     resp = await web_mode_client.post(
         f"/agent/threads/{thread_id}/chat",
