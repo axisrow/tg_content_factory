@@ -74,9 +74,8 @@ class AgentProviderService:
         if zai_key and "zai" not in self._registry:
             try:
                 from src.agent.provider_registry import ZAI_DEFAULT_BASE_URL
-                from src.services.provider_adapters import make_anthropic_adapter
 
-                self.register_provider("zai", make_anthropic_adapter(zai_key, base_url=ZAI_DEFAULT_BASE_URL))
+                self.register_provider("zai", self._make_openai_compat_provider(ZAI_DEFAULT_BASE_URL, zai_key))
             except Exception:
                 logger.debug("Failed to register zai adapter", exc_info=True)
 
@@ -266,10 +265,10 @@ class AgentProviderService:
             return make_anthropic_adapter(api_key, base_url=base_url or None)
 
         if provider == "zai":
-            from src.agent.provider_registry import ZAI_DEFAULT_BASE_URL
+            from src.agent.provider_registry import normalize_zai_base_url
 
-            base_url = (cfg.plain_fields.get("base_url", "") or "").strip() or ZAI_DEFAULT_BASE_URL
-            return make_anthropic_adapter(api_key, base_url=base_url)
+            base_url = normalize_zai_base_url(cfg.plain_fields.get("base_url", ""))
+            return self._make_openai_compat_provider(base_url, api_key)
 
         if provider == "google_genai":
             # Google GenAI also needs a different request schema.

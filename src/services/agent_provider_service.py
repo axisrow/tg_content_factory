@@ -20,6 +20,7 @@ from src.agent.provider_registry import (
     ZAI_DEFAULT_BASE_URL,
     ProviderRuntimeConfig,
     ProviderSpec,
+    normalize_zai_base_url,
     provider_spec,
 )
 from src.config import AppConfig, resolve_session_encryption_secret
@@ -666,7 +667,7 @@ class AgentProviderService:
             return None
         if provider == "zai":
             base_url = cfg.plain_fields.get("base_url", "").strip()
-            normalized = self._normalize_urlish(base_url or ZAI_DEFAULT_BASE_URL)
+            normalized = self._normalize_urlish(normalize_zai_base_url(base_url))
             if normalized == ZAI_DEFAULT_BASE_URL:
                 return normalized
             return None
@@ -892,10 +893,7 @@ class AgentProviderService:
                 )
                 continue
             if key == "base_url" and provider_name == "zai":
-                v = value or ZAI_DEFAULT_BASE_URL
-                if v.rstrip("/") == "https://api.z.ai/api/anthropic":
-                    v = ZAI_DEFAULT_BASE_URL
-                normalized[key] = self._normalize_urlish(v)
+                normalized[key] = self._normalize_urlish(normalize_zai_base_url(value))
                 continue
             if key == "base_url" and provider_name in _OPENAI_STYLE_DEFAULT_BASE_URLS:
                 normalized[key] = self._normalize_urlish(

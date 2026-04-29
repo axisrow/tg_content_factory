@@ -38,7 +38,11 @@ def test_zai_registration_failure_path(clean_env):
     """Z.AI adapter registration failure is caught gracefully."""
     os.environ["ZAI_API_KEY"] = "zai-test-key"
     with patch("src.agent.provider_registry.ZAI_DEFAULT_BASE_URL", "http://zai.test", create=True):
-        with patch("src.services.provider_adapters.make_anthropic_adapter", side_effect=ImportError("no anthropic")):
+        with patch.object(
+            AgentProviderService,
+            "_make_openai_compat_provider",
+            side_effect=RuntimeError("no openai"),
+        ):
             svc = AgentProviderService()
     assert "zai" not in svc._registry
 

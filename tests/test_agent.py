@@ -1660,8 +1660,8 @@ def test_build_agent_langchain_import_error_blames_correct_provider(db, monkeypa
     assert "ollama" in mgr._deepagents_backend._init_error
 
 
-def test_build_agent_zai_uses_anthropic_init_chat_model(db):
-    """Z.AI should reuse the Anthropic integration with a custom API URL."""
+def test_build_agent_zai_uses_openai_compatible_init_chat_model(db):
+    """Z.AI should use its OpenAI-compatible GLM endpoint."""
     config = AppConfig()
     config.agent.fallback_model = "openai:gpt-4.1-mini"
     mgr = AgentManager(db, config)
@@ -1696,9 +1696,43 @@ def test_build_agent_zai_uses_anthropic_init_chat_model(db):
 
     assert agent is not None
     assert captured["model"] == "glm-5"
-    assert captured["provider"] == "anthropic"
+    assert captured["provider"] == "openai"
     assert captured["kwargs"]["api_key"] == "zai-key"
-    assert captured["kwargs"]["anthropic_api_url"] == ZAI_DEFAULT_BASE_URL
+    assert captured["kwargs"]["base_url"] == ZAI_DEFAULT_BASE_URL
+
+
+def test_build_agent_zai_normalizes_legacy_anthropic_url(db):
+    """Saved legacy Z.AI Anthropic URLs should not be sent to the OpenAI-compatible client."""
+    config = AppConfig()
+    mgr = AgentManager(db, config)
+
+    cfg = ProviderRuntimeConfig(
+        provider="zai",
+        enabled=True,
+        priority=0,
+        selected_model="glm-5-turbo",
+        plain_fields={"base_url": "https://api.z.ai/api/anthropic/v1"},
+        secret_fields={"api_key": "zai-key"},
+    )
+
+    captured: dict[str, object] = {}
+    fake_model = SimpleNamespace(name="zai-model")
+
+    def fake_init_chat_model(*, model, model_provider, **kwargs):
+        captured["model"] = model
+        captured["provider"] = model_provider
+        captured["kwargs"] = kwargs
+        return fake_model
+
+    with (
+        patch("langchain.chat_models.init_chat_model", side_effect=fake_init_chat_model),
+        patch("deepagents.create_deep_agent", return_value=MagicMock(run=MagicMock(return_value="ok"))),
+    ):
+        mgr._deepagents_backend._build_agent(cfg, record_last_used=False)
+
+    assert captured["model"] == "glm-5-turbo"
+    assert captured["provider"] == "openai"
+    assert captured["kwargs"]["base_url"] == ZAI_DEFAULT_BASE_URL
 
 
 def test_build_agent_tools_import_error_shows_details(db, monkeypatch):
