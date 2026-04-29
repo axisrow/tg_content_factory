@@ -58,7 +58,7 @@ async def test_photo_loader_page_shows_no_jobs(route_client, db):
 async def test_photo_refresh_redirects(route_client):
     """Test photo refresh redirects."""
     db = route_client._transport.app.state.db
-    with patch("src.web.routes.photo_loader.deps.channel_service") as mock_svc:
+    with patch("src.web.photo_loader.handlers.deps.channel_service") as mock_svc:
         mock_svc.return_value.get_my_dialogs = AsyncMock(return_value=[])
         resp = await route_client.post(
             "/dialogs/photos/refresh",
@@ -76,7 +76,7 @@ async def test_photo_refresh_redirects(route_client):
 async def test_photo_send_missing_target(route_client):
     """Test photo send with missing target."""
     with patch(
-        "src.web.routes.photo_loader._persist_uploads",
+        "src.web.photo_loader.forms.persist_uploads",
         AsyncMock(return_value=[]),
     ):
         # Create a minimal fake file upload
@@ -100,9 +100,9 @@ async def test_photo_send_invalid_target_id(route_client):
     from io import BytesIO
 
     with patch(
-        "src.web.routes.photo_loader._persist_uploads",
+        "src.web.photo_loader.forms.persist_uploads",
         AsyncMock(return_value=[]),
-    ), patch("src.web.routes.photo_loader.deps.channel_service") as mock_svc:
+    ), patch("src.web.photo_loader.handlers.deps.channel_service") as mock_svc:
         mock_svc.return_value.get_my_dialogs = AsyncMock(return_value=[])
         file_content = BytesIO(b"fake image")
         resp = await route_client.post(
@@ -125,10 +125,10 @@ async def test_photo_send_no_files(route_client):
 
     db = route_client._transport.app.state.db
     with patch(
-        "src.web.routes.photo_loader._persist_uploads",
+        "src.web.photo_loader.forms.persist_uploads",
         AsyncMock(return_value=["/tmp/one.jpg"]),
-    ), patch("src.web.routes.photo_loader.deps.channel_service") as mock_svc, patch(
-        "src.web.routes.photo_loader.deps.get_photo_task_service"
+    ), patch("src.web.photo_loader.handlers.deps.channel_service") as mock_svc, patch(
+        "src.web.photo_loader.handlers.deps.get_photo_task_service"
     ) as mock_task_svc:
         mock_svc.return_value.get_my_dialogs = AsyncMock(
             return_value=[{"channel_id": 200, "title": "Dialog", "channel_type": "channel"}]
@@ -179,9 +179,9 @@ async def test_photo_run_due_redirects(route_client):
     """Test photo run due redirects."""
     db = route_client._transport.app.state.db
     with patch(
-        "src.web.routes.photo_loader.deps.get_photo_task_service"
+        "src.web.photo_loader.handlers.deps.get_photo_task_service"
     ) as mock_task_svc, patch(
-        "src.web.routes.photo_loader.deps.get_photo_auto_upload_service"
+        "src.web.photo_loader.handlers.deps.get_photo_auto_upload_service"
     ) as mock_auto_svc:
         mock_task_svc.return_value.run_due = AsyncMock()
         mock_auto_svc.return_value.run_due = AsyncMock()
@@ -202,7 +202,7 @@ async def test_photo_run_due_redirects(route_client):
 async def test_photo_cancel_item_not_found(route_client):
     """Test photo cancel item not found."""
     with patch(
-        "src.web.routes.photo_loader.deps.get_photo_task_service"
+        "src.web.photo_loader.handlers.deps.get_photo_task_service"
     ) as mock_svc:
         mock_svc.return_value.cancel_item = AsyncMock(return_value=False)
         resp = await route_client.post(
@@ -217,7 +217,7 @@ async def test_photo_cancel_item_not_found(route_client):
 async def test_photo_toggle_auto_not_found(route_client):
     """Test photo toggle auto job not found."""
     with patch(
-        "src.web.routes.photo_loader.deps.get_photo_auto_upload_service"
+        "src.web.photo_loader.handlers.deps.get_photo_auto_upload_service"
     ) as mock_svc:
         mock_svc.return_value.get_job = AsyncMock(return_value=None)
         resp = await route_client.post(
@@ -233,7 +233,7 @@ async def test_photo_toggle_auto_not_found(route_client):
 async def test_photo_delete_auto(route_client):
     """Test photo delete auto job."""
     with patch(
-        "src.web.routes.photo_loader.deps.get_photo_auto_upload_service"
+        "src.web.photo_loader.handlers.deps.get_photo_auto_upload_service"
     ) as mock_svc:
         mock_svc.return_value.delete_job = AsyncMock()
         resp = await route_client.post(
