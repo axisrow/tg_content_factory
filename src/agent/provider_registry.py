@@ -4,7 +4,18 @@ from dataclasses import dataclass, field
 
 from src.agent.models import CLAUDE_MODELS
 
-ZAI_DEFAULT_BASE_URL = "https://api.z.ai/api/anthropic/v1"
+ZAI_DEFAULT_BASE_URL = "https://api.z.ai/api/paas/v4"
+ZAI_LEGACY_ANTHROPIC_BASE_URLS = {
+    "https://api.z.ai/api/anthropic",
+    "https://api.z.ai/api/anthropic/v1",
+}
+
+
+def normalize_zai_base_url(base_url: str = "") -> str:
+    normalized = (base_url or "").strip().rstrip("/")
+    if not normalized or normalized in ZAI_LEGACY_ANTHROPIC_BASE_URLS:
+        return ZAI_DEFAULT_BASE_URL
+    return normalized
 
 
 @dataclass(frozen=True, slots=True)
@@ -262,7 +273,7 @@ PROVIDER_SPECS: dict[str, ProviderSpec] = {
     "zai": ProviderSpec(
         name="zai",
         display_name="Z.AI",
-        package_name="langchain-anthropic",
+        package_name="langchain-openai",
         static_models=("glm-5", "glm-5-turbo", "glm-4.7"),
         secret_fields=(_field("api_key", "API key", required=True, secret=True),),
         plain_fields=(_field("base_url", "Base URL", placeholder=ZAI_DEFAULT_BASE_URL),),
