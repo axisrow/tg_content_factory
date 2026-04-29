@@ -1,14 +1,15 @@
 """Tests for CLI provider commands."""
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from src.agent.provider_registry import ProviderRuntimeConfig
+from src.agent.provider_registry import ZAI_DEFAULT_BASE_URL, ProviderRuntimeConfig
 from src.config import AppConfig
 from src.database import Database
-from src.services.agent_provider_service import ProviderModelCacheEntry
+from src.services.agent_provider_service import AgentProviderService, ProviderModelCacheEntry
 from tests.helpers import cli_ns as _ns
 
 
@@ -317,3 +318,85 @@ class TestTestAll:
         run(_ns(provider_action="test-all"))
         out = capsys.readouterr().out
         assert "FAIL" in out
+
+
+def _save_real_cli_provider_config(cli_db, config: AppConfig, cfg: ProviderRuntimeConfig) -> None:
+    asyncio.run(AgentProviderService(cli_db, config).save_provider_configs([cfg]))
+
+
+def test_probe_zai_real_service_reads_db_and_refreshes_models(cli_db, capsys, monkeypatch):
+    config = AppConfig()
+    config.security.session_encryption_key = "provider-cli-secret"
+    _save_real_cli_provider_config(
+        cli_db,
+        config,
+        ProviderRuntimeConfig(
+            provider="zai",
+            enabled=True,
+            priority=0,
+            selected_model="glm-5-turbo",
+            plain_fields={"base_url": "https://api.z.ai/api/anthropic/v1"},
+            secret_fields={"api_key": "zai-key"},
+        ),
+    )
+    fetched: list[tuple[str, dict[str, str] | None]] = []
+
+    async def fake_fetch_json(_self, url: str, headers: dict[str, str] | None = None):
+        fetched.append((url, headers))
+        return {"data": [{"id": "glm-5-turbo"}, {"id": "glm-5"}]}
+
+    async def fake_init_db(_config_path: str):
+        cmd_db = Database(cli_db._db_path)
+        await cmd_db.initialize()
+        return config, cmd_db
+
+    monkeypatch.setattr(AgentProviderService, "_fetch_json", fake_fetch_json)
+    with patch("src.cli.commands.provider.runtime.init_db", side_effect=fake_init_db):
+        from src.cli.commands.provider import run
+
+        run(_ns(provider_action="probe", name="zai"))
+
+    out = capsys.readouterr().out
+    assert "Probing zai" in out
+    assert "OK: 2 models available" in out
+    assert "glm-5-turbo" in out
+    assert fetched == [(f"{ZAI_DEFAULT_BASE_URL}/models", {"Authorization": "Bearer zai-key"})]
+
+
+def test_test_all_real_service_reads_db_and_refreshes_zai_models(cli_db, capsys, monkeypatch):
+    config = AppConfig()
+    config.security.session_encryption_key = "provider-cli-secret"
+    _save_real_cli_provider_config(
+        cli_db,
+        config,
+        ProviderRuntimeConfig(
+            provider="zai",
+            enabled=True,
+            priority=0,
+            selected_model="glm-5-turbo",
+            plain_fields={"base_url": ""},
+            secret_fields={"api_key": "zai-key"},
+        ),
+    )
+    fetched: list[str] = []
+
+    async def fake_fetch_json(_self, url: str, headers: dict[str, str] | None = None):
+        assert headers == {"Authorization": "Bearer zai-key"}
+        fetched.append(url)
+        return {"data": [{"id": "glm-5-turbo"}]}
+
+    async def fake_init_db(_config_path: str):
+        cmd_db = Database(cli_db._db_path)
+        await cmd_db.initialize()
+        return config, cmd_db
+
+    monkeypatch.setattr(AgentProviderService, "_fetch_json", fake_fetch_json)
+    with patch("src.cli.commands.provider.runtime.init_db", side_effect=fake_init_db):
+        from src.cli.commands.provider import run
+
+        run(_ns(provider_action="test-all"))
+
+    out = capsys.readouterr().out
+    assert "Testing 1 provider(s)" in out
+    assert "zai... OK (1 models)" in out
+    assert fetched == [f"{ZAI_DEFAULT_BASE_URL}/models"]
