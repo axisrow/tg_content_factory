@@ -5137,16 +5137,16 @@ class TestWebPipelinesRoutesCoverage:
 
     def test_pipeline_redirect_with_error(self):
         """Test the redirect helper."""
-        from src.web.routes.pipelines import _pipeline_redirect
+        from src.web.pipelines.responses import PipelineRedirect, pipeline_redirect_response
 
-        resp = _pipeline_redirect("test_msg")
+        resp = pipeline_redirect_response(PipelineRedirect("test_msg"))
         assert resp.status_code == 303
         assert "msg=test_msg" in str(resp.headers.get("location", ""))
 
     def test_pipeline_redirect_with_error_flag(self):
-        from src.web.routes.pipelines import _pipeline_redirect
+        from src.web.pipelines.responses import PipelineRedirect, pipeline_redirect_response
 
-        resp = _pipeline_redirect("err", error=True)
+        resp = pipeline_redirect_response(PipelineRedirect("err", error=True))
         assert "error=err" in str(resp.headers.get("location", ""))
 
 
@@ -6449,7 +6449,7 @@ class TestWebRoutesExtraBatch3:
 
     def test_pipeline_target_refs_parsing(self):
         """Cover _target_refs helper."""
-        from src.web.routes.pipelines import _target_refs
+        from src.web.pipelines.forms import parse_target_refs as _target_refs
 
         refs = _target_refs(["+1|123", "+2|456"])
         assert len(refs) == 2

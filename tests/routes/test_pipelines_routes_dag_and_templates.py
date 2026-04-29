@@ -214,7 +214,7 @@ async def test_create_wizard_submit_with_run_after(client_with_dialog, base_app)
         "edges": [],
     }
 
-    with patch("src.web.routes.pipelines.deps.get_task_enqueuer") as mock_enq:
+    with patch("src.web.pipelines.handlers.deps.get_task_enqueuer") as mock_enq:
         mock_enq.return_value.enqueue_pipeline_run = AsyncMock()
         resp = await client_with_dialog.post(
             "/pipelines/create-wizard",
@@ -317,7 +317,7 @@ async def test_add_pipeline_validation_error(route_client, base_app):
     app, _, _ = base_app
     app.state.llm_provider_service = _make_provider_svc(has=True)
 
-    with patch("src.web.routes.pipelines.deps.pipeline_service") as mock_svc:
+    with patch("src.web.pipelines.handlers.deps.pipeline_service") as mock_svc:
         mock_svc.return_value.add = AsyncMock(side_effect=PipelineValidationError("Bad"))
         resp = await route_client.post(
             "/pipelines/add",
@@ -371,7 +371,7 @@ async def test_edit_pipeline_dag_preserves_backend(client_with_dialog, base_app)
         edges=[PipelineEdge(from_node="src", to_node="pub")],
     )
     pipeline = _make_pipeline(1, dag=dag, backend=PipelineGenerationBackend.AGENT)
-    with patch("src.web.routes.pipelines.deps.pipeline_service") as mock_svc:
+    with patch("src.web.pipelines.handlers.deps.pipeline_service") as mock_svc:
         mock_svc.return_value.get = AsyncMock(return_value=pipeline)
         mock_svc.return_value.update = AsyncMock(return_value=True)
         resp = await client_with_dialog.post(
@@ -406,7 +406,7 @@ async def test_edit_pipeline_dag_preserves_prompt(client_with_dialog, base_app):
     pipeline = _make_pipeline(1, dag=dag)
     pipeline.prompt_template = "original prompt"
 
-    with patch("src.web.routes.pipelines.deps.pipeline_service") as mock_svc:
+    with patch("src.web.pipelines.handlers.deps.pipeline_service") as mock_svc:
         mock_svc.return_value.get = AsyncMock(return_value=pipeline)
         mock_svc.return_value.update = AsyncMock(return_value=True)
         resp = await client_with_dialog.post(
@@ -463,7 +463,7 @@ async def test_edit_pipeline_validation_error(route_client, base_app):
     app.state.llm_provider_service = _make_provider_svc(has=True)
     pipeline = _make_pipeline(1)
 
-    with patch("src.web.routes.pipelines.deps.pipeline_service") as mock_svc:
+    with patch("src.web.pipelines.handlers.deps.pipeline_service") as mock_svc:
         mock_svc.return_value.get = AsyncMock(return_value=pipeline)
         mock_svc.return_value.update = AsyncMock(side_effect=PipelineValidationError("Bad data"))
         resp = await route_client.post(
@@ -493,7 +493,7 @@ async def test_edit_pipeline_update_returns_false(route_client, base_app):
     app.state.llm_provider_service = _make_provider_svc(has=True)
     pipeline = _make_pipeline(1)
 
-    with patch("src.web.routes.pipelines.deps.pipeline_service") as mock_svc:
+    with patch("src.web.pipelines.handlers.deps.pipeline_service") as mock_svc:
         mock_svc.return_value.get = AsyncMock(return_value=pipeline)
         mock_svc.return_value.update = AsyncMock(return_value=False)
         resp = await route_client.post(
@@ -522,7 +522,7 @@ async def test_edit_pipeline_with_phone_query_param(route_client, base_app):
     app, _, _ = base_app
     app.state.llm_provider_service = _make_provider_svc(has=True)
 
-    with patch("src.web.routes.pipelines.deps.pipeline_service") as mock_svc:
+    with patch("src.web.pipelines.handlers.deps.pipeline_service") as mock_svc:
         mock_svc.return_value.get = AsyncMock(return_value=None)
         resp = await route_client.post(
             "/pipelines/1/edit?phone=%2B1234567890",
@@ -561,7 +561,7 @@ async def test_generate_stream_no_llm_nodes(route_client, base_app):
         edges=[PipelineEdge(from_node="src", to_node="pub")],
     )
 
-    with patch("src.web.routes.pipelines.deps.pipeline_service") as mock_svc:
+    with patch("src.web.pipelines.handlers.deps.pipeline_service") as mock_svc:
         mock_svc.return_value.get = AsyncMock(return_value=_make_pipeline(1, dag=dag))
         resp = await route_client.get("/pipelines/1/generate-stream", follow_redirects=False)
     assert resp.status_code == 303
@@ -615,7 +615,7 @@ async def test_generate_pipeline_no_llm_nodes_runs_graph(route_client, base_app)
         }
 
     with (
-        patch("src.web.routes.pipelines.deps.pipeline_service") as mock_svc,
+        patch("src.web.pipelines.handlers.deps.pipeline_service") as mock_svc,
         patch(
             "src.services.content_generation_service.ContentGenerationService._run_generation",
             fake_run_generation,
@@ -660,9 +660,9 @@ async def test_dry_run_pipeline_success(client_with_dialog, base_app):
     app.state.llm_provider_service = _make_provider_svc(has=True)
     await client_with_dialog.post("/pipelines/add", data=_ADD_DATA)
 
-    with patch("src.web.routes.pipelines.deps.pipeline_service") as mock_svc:
+    with patch("src.web.pipelines.handlers.deps.pipeline_service") as mock_svc:
         mock_svc.return_value.get = AsyncMock(return_value=_make_pipeline(1))
-        with patch("src.web.routes.pipelines.deps.get_task_enqueuer") as mock_enq:
+        with patch("src.web.pipelines.handlers.deps.get_task_enqueuer") as mock_enq:
             mock_enq.return_value.enqueue_pipeline_run = AsyncMock()
             resp = await client_with_dialog.post("/pipelines/1/dry-run", follow_redirects=False)
     assert resp.status_code == 303
@@ -675,7 +675,7 @@ async def test_dry_run_pipeline_not_found(route_client, base_app):
     app, _, _ = base_app
     app.state.llm_provider_service = _make_provider_svc(has=True)
 
-    with patch("src.web.routes.pipelines.deps.pipeline_service") as mock_svc:
+    with patch("src.web.pipelines.handlers.deps.pipeline_service") as mock_svc:
         mock_svc.return_value.get = AsyncMock(return_value=None)
         resp = await route_client.post("/pipelines/999/dry-run", follow_redirects=False)
     assert resp.status_code == 303
@@ -702,9 +702,9 @@ async def test_dry_run_pipeline_enqueue_failure(client_with_dialog, base_app):
     app.state.llm_provider_service = _make_provider_svc(has=True)
     await client_with_dialog.post("/pipelines/add", data=_ADD_DATA)
 
-    with patch("src.web.routes.pipelines.deps.pipeline_service") as mock_svc:
+    with patch("src.web.pipelines.handlers.deps.pipeline_service") as mock_svc:
         mock_svc.return_value.get = AsyncMock(return_value=_make_pipeline(1))
-        with patch("src.web.routes.pipelines.deps.get_task_enqueuer") as mock_enq:
+        with patch("src.web.pipelines.handlers.deps.get_task_enqueuer") as mock_enq:
             mock_enq.return_value.enqueue_pipeline_run = AsyncMock(side_effect=Exception("fail"))
             resp = await client_with_dialog.post("/pipelines/1/dry-run", follow_redirects=False)
     assert resp.status_code == 303
@@ -720,7 +720,7 @@ async def test_dry_run_count_not_found(route_client, base_app):
     app, _, _ = base_app
     app.state.llm_provider_service = _make_provider_svc()
 
-    with patch("src.web.routes.pipelines.deps.pipeline_service") as mock_svc:
+    with patch("src.web.pipelines.handlers.deps.pipeline_service") as mock_svc:
         mock_svc.return_value.get = AsyncMock(return_value=None)
         resp = await route_client.get("/pipelines/999/dry-run-count")
     assert resp.status_code == 404
@@ -733,7 +733,7 @@ async def test_dry_run_count_legacy_pipeline(route_client, base_app):
     app.state.llm_provider_service = _make_provider_svc()
     pipeline = _make_pipeline(1)  # legacy — no pipeline_json
 
-    with patch("src.web.routes.pipelines.deps.pipeline_service") as mock_svc:
+    with patch("src.web.pipelines.handlers.deps.pipeline_service") as mock_svc:
         mock_svc.return_value.get = AsyncMock(return_value=pipeline)
         resp = await route_client.get("/pipelines/1/dry-run-count")
     assert resp.status_code == 200
@@ -760,7 +760,7 @@ async def test_dry_run_count_dag_pipeline(route_client, base_app):
     )
     pipeline = _make_pipeline(1, dag=dag)
 
-    with patch("src.web.routes.pipelines.deps.pipeline_service") as mock_svc:
+    with patch("src.web.pipelines.handlers.deps.pipeline_service") as mock_svc:
         mock_svc.return_value.get = AsyncMock(return_value=pipeline)
         resp = await route_client.get("/pipelines/1/dry-run-count")
     assert resp.status_code == 200
@@ -839,7 +839,7 @@ async def test_dry_run_count_new_empty_ids(route_client, base_app):
 
 def test_apply_pipeline_filter_no_pipeline_json():
     """Filter returns all messages when no pipeline_json."""
-    from src.web.routes.pipelines import _apply_pipeline_filter
+    from src.web.pipelines.handlers import _apply_pipeline_filter
 
     pipeline = MagicMock()
     pipeline.pipeline_json = None
@@ -849,7 +849,7 @@ def test_apply_pipeline_filter_no_pipeline_json():
 
 def test_apply_pipeline_filter_no_filter_node():
     """Filter returns all messages when no filter node in graph."""
-    from src.web.routes.pipelines import _apply_pipeline_filter
+    from src.web.pipelines.handlers import _apply_pipeline_filter
 
     pipeline = MagicMock()
     pipeline.pipeline_json = PipelineGraph(
@@ -862,7 +862,7 @@ def test_apply_pipeline_filter_no_filter_node():
 
 def test_apply_pipeline_filter_keywords():
     """Filter node with keywords filters correctly."""
-    from src.web.routes.pipelines import _apply_pipeline_filter
+    from src.web.pipelines.handlers import _apply_pipeline_filter
 
     pipeline = MagicMock()
     pipeline.pipeline_json = PipelineGraph(
@@ -884,7 +884,7 @@ def test_apply_pipeline_filter_keywords():
 
 def test_apply_pipeline_filter_regex():
     """Filter node with regex pattern filters correctly."""
-    from src.web.routes.pipelines import _apply_pipeline_filter
+    from src.web.pipelines.handlers import _apply_pipeline_filter
 
     pipeline = MagicMock()
     pipeline.pipeline_json = PipelineGraph(
@@ -905,7 +905,7 @@ def test_apply_pipeline_filter_regex():
 
 def test_apply_pipeline_filter_regex_invalid():
     """Invalid regex pattern is treated as non-matching."""
-    from src.web.routes.pipelines import _apply_pipeline_filter
+    from src.web.pipelines.handlers import _apply_pipeline_filter
 
     pipeline = MagicMock()
     pipeline.pipeline_json = PipelineGraph(
@@ -923,7 +923,7 @@ def test_apply_pipeline_filter_regex_invalid():
 
 def test_apply_pipeline_filter_anonymous_sender():
     """Filter node with anonymous_sender checks sender_id."""
-    from src.web.routes.pipelines import _apply_pipeline_filter
+    from src.web.pipelines.handlers import _apply_pipeline_filter
 
     pipeline = MagicMock()
     pipeline.pipeline_json = PipelineGraph(
@@ -944,7 +944,7 @@ def test_apply_pipeline_filter_anonymous_sender():
 
 def test_apply_pipeline_filter_unknown_type():
     """Unknown filter type counts all messages."""
-    from src.web.routes.pipelines import _apply_pipeline_filter
+    from src.web.pipelines.handlers import _apply_pipeline_filter
 
     pipeline = MagicMock()
     pipeline.pipeline_json = PipelineGraph(
@@ -985,7 +985,7 @@ async def test_export_pipeline_not_found(route_client, base_app):
     app, _, _ = base_app
     app.state.llm_provider_service = _make_provider_svc()
 
-    with patch("src.web.routes.pipelines.deps.pipeline_service") as mock_svc:
+    with patch("src.web.pipelines.handlers.deps.pipeline_service") as mock_svc:
         mock_svc.return_value.export_json = AsyncMock(return_value=None)
         resp = await route_client.get("/pipelines/999/export", follow_redirects=False)
     assert resp.status_code == 303
@@ -1065,7 +1065,7 @@ async def test_import_pipeline_validation_error(route_client, base_app):
     app, _, _ = base_app
     app.state.llm_provider_service = _make_provider_svc()
 
-    with patch("src.web.routes.pipelines.deps.pipeline_service") as mock_svc:
+    with patch("src.web.pipelines.handlers.deps.pipeline_service") as mock_svc:
         mock_svc.return_value.import_json = AsyncMock(side_effect=PipelineValidationError("Bad"))
         resp = await route_client.post(
             "/pipelines/import",
@@ -1082,7 +1082,7 @@ async def test_import_pipeline_general_exception(route_client, base_app):
     app, _, _ = base_app
     app.state.llm_provider_service = _make_provider_svc()
 
-    with patch("src.web.routes.pipelines.deps.pipeline_service") as mock_svc:
+    with patch("src.web.pipelines.handlers.deps.pipeline_service") as mock_svc:
         mock_svc.return_value.import_json = AsyncMock(side_effect=Exception("Unexpected"))
         resp = await route_client.post(
             "/pipelines/import",
@@ -1102,7 +1102,7 @@ async def test_create_from_template_success(route_client, base_app):
     app, db, _ = base_app
     app.state.llm_provider_service = _make_provider_svc(has=True)
 
-    with patch("src.web.routes.pipelines.deps.pipeline_service") as mock_svc:
+    with patch("src.web.pipelines.handlers.deps.pipeline_service") as mock_svc:
         mock_svc.return_value.create_from_template = AsyncMock(return_value=42)
         resp = await route_client.post(
             "/pipelines/from-template",
@@ -1127,7 +1127,7 @@ async def test_create_from_template_validation_error(route_client, base_app):
     app, db, _ = base_app
     app.state.llm_provider_service = _make_provider_svc(has=True)
 
-    with patch("src.web.routes.pipelines.deps.pipeline_service") as mock_svc:
+    with patch("src.web.pipelines.handlers.deps.pipeline_service") as mock_svc:
         mock_svc.return_value.create_from_template = AsyncMock(
             side_effect=PipelineValidationError("Template not found")
         )
@@ -1168,7 +1168,7 @@ async def test_templates_json(route_client, base_app):
     app, db, _ = base_app
     app.state.llm_provider_service = _make_provider_svc()
 
-    with patch("src.web.routes.pipelines.deps.pipeline_service") as mock_svc:
+    with patch("src.web.pipelines.handlers.deps.pipeline_service") as mock_svc:
         tpl = MagicMock()
         tpl.id = 1
         tpl.name = "Test Template"
@@ -1197,9 +1197,9 @@ async def test_templates_page_renders(route_client, base_app):
     app, db, _ = base_app
     app.state.llm_provider_service = _make_provider_svc(has=True)
 
-    with patch("src.web.routes.pipelines.deps.pipeline_service") as mock_svc, \
-         patch("src.web.routes.pipelines.deps.get_channel_bundle") as mock_ch, \
-         patch("src.web.routes.pipelines.deps.get_account_bundle") as mock_acct:
+    with patch("src.web.pipelines.handlers.deps.pipeline_service") as mock_svc, \
+         patch("src.web.pipelines.handlers.deps.get_channel_bundle") as mock_ch, \
+         patch("src.web.pipelines.handlers.deps.get_account_bundle") as mock_acct:
         mock_svc.return_value.list_templates = AsyncMock(return_value=[])
         mock_svc.return_value.list_cached_dialogs_by_phone = AsyncMock(return_value={})
         mock_ch.return_value.list_channels = AsyncMock(return_value=[])
@@ -1245,7 +1245,7 @@ async def test_ai_edit_pipeline_success(route_client, base_app):
     app, db, _ = base_app
     app.state.llm_provider_service = _make_provider_svc(has=True)
 
-    with patch("src.web.routes.pipelines.deps.pipeline_service") as mock_svc:
+    with patch("src.web.pipelines.handlers.deps.pipeline_service") as mock_svc:
         mock_svc.return_value.edit_via_llm = AsyncMock(
             return_value={"ok": True, "pipeline_json": {"nodes": [], "edges": []}}
         )
@@ -1264,7 +1264,7 @@ async def test_ai_edit_pipeline_exception(route_client, base_app):
     app, db, _ = base_app
     app.state.llm_provider_service = _make_provider_svc(has=True)
 
-    with patch("src.web.routes.pipelines.deps.pipeline_service") as mock_svc:
+    with patch("src.web.pipelines.handlers.deps.pipeline_service") as mock_svc:
         mock_svc.return_value.edit_via_llm = AsyncMock(side_effect=Exception("LLM error"))
         resp = await route_client.post(
             "/pipelines/1/ai-edit",
@@ -1361,7 +1361,7 @@ async def test_set_refinement_steps_empty_prompt_filtered(client_with_dialog, ba
     await client_with_dialog.post("/pipelines/add", data=_ADD_DATA)
 
     # Mock pipeline exists in DB
-    with patch("src.web.routes.pipelines.deps.get_db") as mock_get_db:
+    with patch("src.web.pipelines.handlers.deps.get_db") as mock_get_db:
         mock_pipeline = MagicMock()
         mock_pipeline.id = 1
         mock_pipeline.refinement_steps = []
@@ -1457,7 +1457,7 @@ async def test_delete_pipeline_handles_scheduler(client_with_dialog, base_app):
 
 def test_apply_pipeline_filter_service_message():
     """Filter node with service_message type checks service types."""
-    from src.web.routes.pipelines import _apply_pipeline_filter
+    from src.web.pipelines.handlers import _apply_pipeline_filter
 
     pipeline = MagicMock()
     pipeline.pipeline_json = PipelineGraph(
@@ -1479,7 +1479,7 @@ def test_apply_pipeline_filter_service_message():
 
 def test_apply_pipeline_filter_message_filter_semantic_service():
     """Structured message_filter should use semantic service fields, not text."""
-    from src.web.routes.pipelines import _apply_pipeline_filter
+    from src.web.pipelines.handlers import _apply_pipeline_filter
 
     pipeline = MagicMock()
     pipeline.pipeline_json = PipelineGraph(

@@ -169,11 +169,11 @@ async def test_run_pipeline_enqueues(client):
     await client.post("/pipelines/add", data=_ADD_DATA)
 
     with patch("src.services.provider_service.AgentProviderService.has_providers", return_value=True):
-        with patch("src.web.routes.pipelines.deps.pipeline_service") as mock_svc:
+        with patch("src.web.pipelines.handlers.deps.pipeline_service") as mock_svc:
             mock_svc.return_value.get = AsyncMock(
                 return_value=MagicMock(id=1, is_active=True)
             )
-            with patch("src.web.routes.pipelines.deps.get_task_enqueuer") as mock_enq:
+            with patch("src.web.pipelines.handlers.deps.get_task_enqueuer") as mock_enq:
                 mock_enq.return_value.enqueue_pipeline_run = AsyncMock()
                 resp = await client.post("/pipelines/1/run", follow_redirects=False)
                 assert resp.status_code == 303
@@ -221,9 +221,9 @@ async def test_run_pipeline_allowed_for_non_llm_dag_without_provider(client):
 
     non_llm_pipeline.generation_backend = PipelineGenerationBackend.CHAIN
 
-    with patch("src.web.routes.pipelines.deps.pipeline_service") as mock_svc:
+    with patch("src.web.pipelines.handlers.deps.pipeline_service") as mock_svc:
         mock_svc.return_value.get = AsyncMock(return_value=non_llm_pipeline)
-        with patch("src.web.routes.pipelines.deps.get_task_enqueuer") as mock_enq:
+        with patch("src.web.pipelines.handlers.deps.get_task_enqueuer") as mock_enq:
             mock_enq.return_value.enqueue_pipeline_run = AsyncMock()
             resp = await client.post("/pipelines/1/run", follow_redirects=False)
             assert resp.status_code == 303
@@ -239,11 +239,11 @@ async def test_run_pipeline_failure(client):
     await client.post("/pipelines/add", data=_ADD_DATA)
 
     with patch("src.services.provider_service.AgentProviderService.has_providers", return_value=True):
-        with patch("src.web.routes.pipelines.deps.pipeline_service") as mock_svc:
+        with patch("src.web.pipelines.handlers.deps.pipeline_service") as mock_svc:
             mock_svc.return_value.get = AsyncMock(
                 return_value=MagicMock(id=1, is_active=True)
             )
-            with patch("src.web.routes.pipelines.deps.get_task_enqueuer") as mock_enq:
+            with patch("src.web.pipelines.handlers.deps.get_task_enqueuer") as mock_enq:
                 mock_enq.return_value.enqueue_pipeline_run = AsyncMock(
                     side_effect=Exception("Queue error")
                 )
@@ -460,7 +460,7 @@ async def test_toggle_pipeline_not_found(client):
 def test_target_refs_missing_separator():
     """Test _target_refs with missing separator."""
     from src.services.pipeline_service import PipelineValidationError
-    from src.web.routes.pipelines import _target_refs
+    from src.web.pipelines.forms import parse_target_refs as _target_refs
 
     try:
         _target_refs(["invalid_format"])
@@ -472,7 +472,7 @@ def test_target_refs_missing_separator():
 def test_target_refs_invalid_dialog_id():
     """Test _target_refs with invalid dialog_id."""
     from src.services.pipeline_service import PipelineValidationError
-    from src.web.routes.pipelines import _target_refs
+    from src.web.pipelines.forms import parse_target_refs as _target_refs
 
     try:
         _target_refs(["+1234567890|not_a_number"])
@@ -483,7 +483,7 @@ def test_target_refs_invalid_dialog_id():
 
 def test_target_refs_success():
     """Test _target_refs with valid input."""
-    from src.web.routes.pipelines import _target_refs
+    from src.web.pipelines.forms import parse_target_refs as _target_refs
 
     refs = _target_refs(["+1234567890|100", "+0987654321|200"])
     assert len(refs) == 2
