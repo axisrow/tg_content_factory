@@ -815,7 +815,73 @@ async def run_migrations(db: aiosqlite.Connection) -> bool:
         )
         await db.commit()
 
+    # Rewrite legacy Anthropic-compatible Z.AI base_url to the OpenAI-compatible
+    # default. Older versions stored https://api.z.ai/api/anthropic[/v1] which
+    # the deepagents runtime now rejects (see #518/#519/#526).
+    cur = await db.execute(
+        "SELECT value FROM settings WHERE key = '_migration_zai_base_url_v1' LIMIT 1"
+    )
+    if not await cur.fetchone():
+        await _migrate_zai_legacy_base_url(db)
+        await db.execute(
+            "INSERT OR IGNORE INTO settings (key, value) VALUES ('_migration_zai_base_url_v1', '1')"
+        )
+        await db.commit()
+
     return fts_available
+
+
+async def _migrate_zai_legacy_base_url(db: aiosqlite.Connection) -> None:
+    """Rewrite legacy Z.AI Anthropic-compatible base_url to the OpenAI-compatible default.
+
+    The deepagents runtime calls Z.AI through ``init_chat_model("openai", base_url=...)``
+    which only works against the ``/api/paas/v4`` family. Existing installs may still
+    have ``https://api.z.ai/api/anthropic`` saved from earlier versions; this rewrites
+    them in-place and clears the stale ``last_validation_error`` so the UI stops
+    showing the old message.
+    """
+    import json
+
+    from src.agent.provider_registry import (
+        ZAI_GENERAL_BASE_URL,
+        is_zai_legacy_anthropic_base_url,
+    )
+
+    cur = await db.execute(
+        "SELECT value FROM settings WHERE key = 'agent_deepagents_providers_v1' LIMIT 1"
+    )
+    row = await cur.fetchone()
+    if not row or not row["value"]:
+        return
+    try:
+        data = json.loads(row["value"])
+    except (json.JSONDecodeError, TypeError):
+        return
+    if not isinstance(data, list):
+        return
+
+    changed = False
+    for item in data:
+        if not isinstance(item, dict) or item.get("provider") != "zai":
+            continue
+        plain = item.get("plain_fields")
+        if not isinstance(plain, dict):
+            continue
+        current = str(plain.get("base_url", "") or "")
+        if is_zai_legacy_anthropic_base_url(current):
+            plain["base_url"] = ZAI_GENERAL_BASE_URL
+            item["last_validation_error"] = ""
+            changed = True
+
+    if not changed:
+        return
+
+    await db.execute(
+        "UPDATE settings SET value = ? WHERE key = 'agent_deepagents_providers_v1'",
+        (json.dumps(data, ensure_ascii=False),),
+    )
+    await db.commit()
+    logger.info("Migrated legacy Z.AI Anthropic-compatible base_url to %s", ZAI_GENERAL_BASE_URL)
 
 
 async def _migrate_tool_permission_key(db: aiosqlite.Connection, old_key: str, new_key: str) -> None:
