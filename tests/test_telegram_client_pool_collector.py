@@ -1873,7 +1873,7 @@ async def test_collect_channel_numeric_flood_wait():
 @pytest.mark.anyio
 async def test_collect_channel_private_group_invalidates_bad_phone():
     """When private group's phone can't resolve entity, clear and discover."""
-    channel = Channel(channel_id=123, title="Test", preferred_phone="+7001")
+    channel = Channel(id=7, channel_id=123, title="Test", preferred_phone="+7001")
     client = AsyncMock()
     # First get_entity (PeerChannel) fails with ValueError
     client.get_entity = AsyncMock(side_effect=ValueError("not found"))
@@ -1882,25 +1882,28 @@ async def test_collect_channel_private_group_invalidates_bad_phone():
         get_available_client=AsyncMock(return_value=(client, "+7001")),
         get_client_by_phone=AsyncMock(side_effect=[
             (client, "+7001"),  # first: get_client_by_phone for preferred_phone
-            None,  # discover: no candidate has access
+            None,  # discover: candidate has no available client
         ]),
     )
     pool.get_phone_for_channel = MagicMock(return_value=None)
     pool.clear_channel_phone = MagicMock()
+    pool.connected_phones = MagicMock(return_value={"+7001", "+7002"})
 
     db = MagicMock()
     db.get_channel_by_channel_id = AsyncMock(return_value=channel)
     db.get_channel_stats = AsyncMock(return_value=[])
     db.get_setting = AsyncMock(return_value=None)
+    db.set_channel_active = AsyncMock()
     db.repos.channels.update_channel_preferred_phone = AsyncMock()
 
     collector = Collector(pool, db, SchedulerConfig())
-    # This should try the phone, fail, clear it, try to discover, and fail
-    with pytest.raises(ValueError):
-        await collector._collect_channel(channel)
+    # This should try the phone, fail, clear it, try to discover, and skip without a traceback.
+    result = await collector._collect_channel(channel)
 
+    assert result == 0
     pool.clear_channel_phone.assert_called_once_with(123)
     db.repos.channels.update_channel_preferred_phone.assert_called_once_with(123, None)
+    db.set_channel_active.assert_awaited_once_with(7, False)
 
 
 @pytest.mark.anyio
