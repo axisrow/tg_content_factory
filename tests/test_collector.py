@@ -399,8 +399,8 @@ async def test_collect_channel_marks_username_changed_when_numeric_fallback_succ
 
 
 @pytest.mark.anyio
-async def test_collect_channel_no_username_no_cache_reports_error(db):
-    """Channel with no username and empty cache -> error logged, 0 messages."""
+async def test_collect_channel_no_username_no_cache_skips_without_error(db):
+    """Channel with no username and empty cache -> skipped/deactivated, 0 messages."""
     ch = Channel(channel_id=1970788983, title="Private Group")
     await db.add_channel(ch)
 
@@ -410,10 +410,12 @@ async def test_collect_channel_no_username_no_cache_reports_error(db):
     pool = make_mock_pool(get_available_client=AsyncMock(return_value=(mock_client, "+7000")))
 
     collector = Collector(pool, db, SchedulerConfig())
-    # Should not crash — collect_all_channels catches exceptions
     stats = await collector.collect_all_channels()
-    assert stats["errors"] == 1
+    assert stats["errors"] == 0
     assert stats["messages"] == 0
+    updated = await db.get_channel_by_channel_id(ch.channel_id)
+    assert updated is not None
+    assert updated.is_active is False
 
 
 @pytest.mark.anyio
