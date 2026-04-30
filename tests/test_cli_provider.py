@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from src.agent.provider_registry import ZAI_DEFAULT_BASE_URL, ProviderRuntimeConfig
+from src.agent.provider_registry import ZAI_CODING_BASE_URL, ZAI_DEFAULT_BASE_URL, ProviderRuntimeConfig
 from src.config import AppConfig
 from src.database import Database
 from src.services.agent_provider_service import AgentProviderService, ProviderModelCacheEntry
@@ -335,7 +335,7 @@ def test_probe_zai_real_service_reads_db_and_refreshes_models(cli_db, capsys, mo
             enabled=True,
             priority=0,
             selected_model="glm-5-turbo",
-            plain_fields={"base_url": "https://api.z.ai/api/anthropic/v1"},
+            plain_fields={"base_url": ZAI_CODING_BASE_URL},
             secret_fields={"api_key": "zai-key"},
         ),
     )
@@ -360,7 +360,7 @@ def test_probe_zai_real_service_reads_db_and_refreshes_models(cli_db, capsys, mo
     assert "Probing zai" in out
     assert "OK: 2 models available" in out
     assert "glm-5-turbo" in out
-    assert fetched == [(f"{ZAI_DEFAULT_BASE_URL}/models", {"Authorization": "Bearer zai-key"})]
+    assert fetched == [(f"{ZAI_CODING_BASE_URL}/models", {"Authorization": "Bearer zai-key"})]
 
 
 def test_test_all_real_service_reads_db_and_refreshes_zai_models(cli_db, capsys, monkeypatch):
