@@ -718,7 +718,7 @@ def test_run_chat_prompt_real_manager_uses_db_deepagents_provider(cli_db, capsys
                     enabled=True,
                     priority=0,
                     selected_model="glm-5-turbo",
-                    plain_fields={"base_url": ""},
+                    plain_fields={"base_url": ZAI_DEFAULT_BASE_URL},
                     secret_fields={"api_key": "zai-key"},
                 )
             ]

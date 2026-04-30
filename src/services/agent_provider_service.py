@@ -17,8 +17,9 @@ import aiohttp
 from src.agent.provider_registry import (
     PROVIDER_ORDER,
     PROVIDER_SPECS,
+    ZAI_BASE_URL_REQUIRED_HINT,
     ZAI_CODING_BASE_URL,
-    ZAI_DEFAULT_BASE_URL,
+    ZAI_GENERAL_BASE_URL,
     ProviderRuntimeConfig,
     ProviderSpec,
     is_zai_legacy_anthropic_base_url,
@@ -432,15 +433,17 @@ class AgentProviderService:
         spec = provider_spec(cfg.provider)
         if spec is None:
             return f"Unknown provider: {cfg.provider}"
-        if cfg.provider == "zai" and is_zai_legacy_anthropic_base_url(
-            cfg.plain_fields.get("base_url", "")
-        ):
-            return (
-                "This URL is the Z.AI Anthropic-compatible proxy. Configure the "
-                "anthropic provider with this URL instead, or use the OpenAI-compatible "
-                f"endpoint {ZAI_DEFAULT_BASE_URL}. Coding Plan users can explicitly set "
-                f"{ZAI_CODING_BASE_URL}."
-            )
+        if cfg.provider == "zai":
+            base_url = cfg.plain_fields.get("base_url", "").strip()
+            if not base_url:
+                return ZAI_BASE_URL_REQUIRED_HINT
+            if is_zai_legacy_anthropic_base_url(base_url):
+                return (
+                    "This URL is the Z.AI Anthropic-compatible proxy. Configure the "
+                    "anthropic provider with this URL instead, or use the OpenAI-compatible "
+                    f"endpoint {ZAI_GENERAL_BASE_URL}. Coding Plan users can explicitly set "
+                    f"{ZAI_CODING_BASE_URL}."
+                )
         for spec_field in spec.plain_fields:
             if spec_field.required and not cfg.plain_fields.get(spec_field.name, "").strip():
                 return f"Missing required field: {spec_field.label}"
@@ -679,7 +682,7 @@ class AgentProviderService:
         if provider == "zai":
             base_url = cfg.plain_fields.get("base_url", "").strip()
             normalized = self._normalize_urlish(normalize_zai_base_url(base_url))
-            if normalized in {ZAI_DEFAULT_BASE_URL, ZAI_CODING_BASE_URL}:
+            if normalized in {ZAI_GENERAL_BASE_URL, ZAI_CODING_BASE_URL}:
                 return normalized
             return None
         if provider in _OPENAI_STYLE_DEFAULT_BASE_URLS:
@@ -816,9 +819,11 @@ class AgentProviderService:
         if is_zai_legacy_anthropic_base_url(base_url):
             raise RuntimeError(
                 "The Z.AI Anthropic-compatible proxy does not expose OpenAI-compatible "
-                f"/models. Use {ZAI_DEFAULT_BASE_URL} or {ZAI_CODING_BASE_URL}."
+                f"/models. Use {ZAI_GENERAL_BASE_URL} or {ZAI_CODING_BASE_URL}."
             )
         resolved_base_url = normalize_zai_base_url(base_url)
+        if not resolved_base_url:
+            raise RuntimeError(ZAI_BASE_URL_REQUIRED_HINT)
         headers = {"Authorization": f"Bearer {api_key}"}
         payload = await self._fetch_json(
             f"{resolved_base_url.rstrip('/')}/models", headers=headers

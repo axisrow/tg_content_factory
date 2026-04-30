@@ -6,11 +6,21 @@ from src.agent.models import CLAUDE_MODELS
 
 ZAI_GENERAL_BASE_URL = "https://api.z.ai/api/paas/v4"
 ZAI_CODING_BASE_URL = "https://api.z.ai/api/coding/paas/v4"
-ZAI_DEFAULT_BASE_URL = ZAI_GENERAL_BASE_URL
+# Backwards-compatible alias. Used to substitute a default for an empty
+# base_url; that auto-defaulting was removed because the Coding Plan and the
+# pay-per-token PaaS endpoints are not interchangeable. Kept as an alias to
+# avoid breaking external references; equal to ZAI_CODING_BASE_URL because
+# that is what new installs default to.
+ZAI_DEFAULT_BASE_URL = ZAI_CODING_BASE_URL
 ZAI_LEGACY_ANTHROPIC_BASE_URLS = {
     "https://api.z.ai/api/anthropic",
     "https://api.z.ai/api/anthropic/v1",
 }
+ZAI_BASE_URL_REQUIRED_HINT = (
+    "Z.AI Base URL is required. Use https://api.z.ai/api/coding/paas/v4 for "
+    "the GLM Coding Plan, or https://api.z.ai/api/paas/v4 for pay-per-token "
+    "PaaS access."
+)
 
 
 def is_zai_legacy_anthropic_base_url(base_url: str = "") -> bool:
@@ -19,10 +29,12 @@ def is_zai_legacy_anthropic_base_url(base_url: str = "") -> bool:
 
 
 def normalize_zai_base_url(base_url: str = "") -> str:
-    normalized = (base_url or "").strip().rstrip("/")
-    if not normalized:
-        return ZAI_DEFAULT_BASE_URL
-    return normalized
+    """Strip whitespace and trailing slash from a Z.AI base URL.
+
+    Unlike earlier versions this no longer substitutes a default value when the
+    input is empty: callers that need a populated URL must validate first.
+    """
+    return (base_url or "").strip().rstrip("/")
 
 
 @dataclass(frozen=True, slots=True)
@@ -283,7 +295,22 @@ PROVIDER_SPECS: dict[str, ProviderSpec] = {
         package_name="langchain-openai",
         static_models=("glm-5", "glm-5-turbo", "glm-4.7"),
         secret_fields=(_field("api_key", "API key", required=True, secret=True),),
-        plain_fields=(_field("base_url", "Base URL", placeholder=ZAI_DEFAULT_BASE_URL),),
+        plain_fields=(
+            _field(
+                "base_url",
+                "Base URL",
+                required=True,
+                placeholder=(
+                    "https://api.z.ai/api/coding/paas/v4 (Coding Plan) or "
+                    "https://api.z.ai/api/paas/v4 (pay-per-token PaaS)"
+                ),
+                help_text=(
+                    "GLM Coding Plan subscribers must use the coding endpoint. "
+                    "See https://docs.z.ai/devpack/overview for the list of "
+                    "supported tools and restrictions."
+                ),
+            ),
+        ),
     ),
 }
 

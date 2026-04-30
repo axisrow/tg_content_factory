@@ -69,15 +69,26 @@ class AgentProviderService:
         if openai_key:
             self.register_provider("openai", self._make_openai_provider(openai_key))
 
-        # optional Z.AI provider
+        # optional Z.AI provider — needs an explicit ZAI_BASE_URL because the
+        # subscription (Coding Plan, https://api.z.ai/api/coding/paas/v4) and
+        # pay-per-token PaaS (https://api.z.ai/api/paas/v4) live on different
+        # endpoints and we cannot guess which one the user has.
         zai_key = os.environ.get("ZAI_API_KEY")
-        if zai_key and "zai" not in self._registry:
+        zai_base = (os.environ.get("ZAI_BASE_URL") or "").strip().rstrip("/")
+        if zai_key and zai_base and "zai" not in self._registry:
             try:
-                from src.agent.provider_registry import ZAI_DEFAULT_BASE_URL
-
-                self.register_provider("zai", self._make_openai_compat_provider(ZAI_DEFAULT_BASE_URL, zai_key))
+                self.register_provider(
+                    "zai", self._make_openai_compat_provider(zai_base, zai_key)
+                )
             except Exception:
                 logger.debug("Failed to register zai adapter", exc_info=True)
+        elif zai_key and not zai_base:
+            logger.info(
+                "ZAI_API_KEY set but ZAI_BASE_URL is empty — skipping env-based "
+                "registration. Configure the Z.AI provider via Settings or set "
+                "ZAI_BASE_URL to https://api.z.ai/api/coding/paas/v4 (Coding "
+                "Plan) or https://api.z.ai/api/paas/v4 (pay-per-token PaaS)."
+            )
 
         # optional Context7 provider (user may supply CONTEXT7_API_KEY)
         context7_key = os.environ.get("CONTEXT7_API_KEY") or os.environ.get("CTX7_API_KEY")
@@ -275,6 +286,9 @@ class AgentProviderService:
                 logger.debug("Skipping db provider %s: Anthropic-compatible URL is not OpenAI-compatible", provider)
                 return None
             base_url = normalize_zai_base_url(raw_base_url)
+            if not base_url:
+                logger.debug("Skipping db provider %s: base_url is empty", provider)
+                return None
             return self._make_openai_compat_provider(base_url, api_key)
 
         if provider == "google_genai":

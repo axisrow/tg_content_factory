@@ -6,7 +6,11 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from src.agent.provider_registry import ZAI_CODING_BASE_URL, ZAI_DEFAULT_BASE_URL, ProviderRuntimeConfig
+from src.agent.provider_registry import (
+    ZAI_CODING_BASE_URL,
+    ZAI_GENERAL_BASE_URL,
+    ProviderRuntimeConfig,
+)
 from src.config import AppConfig
 from src.database import Database
 from src.services.agent_provider_service import AgentProviderService, ProviderModelCacheEntry
@@ -374,7 +378,7 @@ def test_test_all_real_service_reads_db_and_refreshes_zai_models(cli_db, capsys,
             enabled=True,
             priority=0,
             selected_model="glm-5-turbo",
-            plain_fields={"base_url": ""},
+            plain_fields={"base_url": ZAI_GENERAL_BASE_URL},
             secret_fields={"api_key": "zai-key"},
         ),
     )
@@ -399,4 +403,4 @@ def test_test_all_real_service_reads_db_and_refreshes_zai_models(cli_db, capsys,
     out = capsys.readouterr().out
     assert "Testing 1 provider(s)" in out
     assert "zai... OK (1 models)" in out
-    assert fetched == [f"{ZAI_DEFAULT_BASE_URL}/models"]
+    assert fetched == [f"{ZAI_GENERAL_BASE_URL}/models"]

@@ -898,14 +898,25 @@ def test_build_adapter_for_config_huggingface():
 
 
 def test_build_adapter_for_config_zai():
-    """Covers _build_adapter_for_config for zai provider."""
+    """Covers _build_adapter_for_config for zai provider with explicit base_url."""
+    svc = AgentProviderService()
+    cfg = MagicMock()
+    cfg.provider = "zai"
+    cfg.secret_fields = {"api_key": "zai-test"}
+    cfg.plain_fields = {"base_url": "https://api.z.ai/api/coding/paas/v4"}
+    adapter = svc._build_adapter_for_config(cfg)
+    assert adapter is not None
+
+
+def test_build_adapter_for_config_zai_skips_when_base_url_empty():
+    """Without base_url the zai adapter is skipped — required field, no auto-default."""
     svc = AgentProviderService()
     cfg = MagicMock()
     cfg.provider = "zai"
     cfg.secret_fields = {"api_key": "zai-test"}
     cfg.plain_fields = {}
     adapter = svc._build_adapter_for_config(cfg)
-    assert adapter is not None
+    assert adapter is None
 
 
 def test_build_adapter_for_config_google_genai_returns_none():
