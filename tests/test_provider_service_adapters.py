@@ -18,7 +18,7 @@ def clean_env():
         "FIREWORKS_API_BASE", "FIREWORKS_API_KEY", "DEEPSEEK_BASE",
         "DEEPSEEK_API_BASE", "DEEPSEEK_API_KEY", "TOGETHER_BASE",
         "TOGETHER_API_BASE", "TOGETHER_API_KEY", "CONTEXT7_API_KEY",
-        "CTX7_API_KEY", "ZAI_API_KEY",
+        "CTX7_API_KEY", "ZAI_API_KEY", "ZAI_BASE_URL",
     ]:
         saved[var] = os.environ.get(var)
         if var in os.environ:
@@ -37,13 +37,20 @@ def clean_env():
 def test_zai_registration_failure_path(clean_env):
     """Z.AI adapter registration failure is caught gracefully."""
     os.environ["ZAI_API_KEY"] = "zai-test-key"
-    with patch("src.agent.provider_registry.ZAI_DEFAULT_BASE_URL", "http://zai.test", create=True):
-        with patch.object(
-            AgentProviderService,
-            "_make_openai_compat_provider",
-            side_effect=RuntimeError("no openai"),
-        ):
-            svc = AgentProviderService()
+    os.environ["ZAI_BASE_URL"] = "https://api.z.ai/api/coding/paas/v4"
+    with patch.object(
+        AgentProviderService,
+        "_make_openai_compat_provider",
+        side_effect=RuntimeError("no openai"),
+    ):
+        svc = AgentProviderService()
+    assert "zai" not in svc._registry
+
+
+def test_zai_env_registration_skipped_without_base_url(clean_env):
+    """ZAI_API_KEY without ZAI_BASE_URL no longer registers a provider."""
+    os.environ["ZAI_API_KEY"] = "zai-test-key"
+    svc = AgentProviderService()
     assert "zai" not in svc._registry
 
 

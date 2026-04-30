@@ -40,12 +40,14 @@ from src.agent.prompt_template import (
     render_prompt_template,
 )
 from src.agent.provider_registry import (
+    ZAI_BASE_URL_REQUIRED_HINT,
     ZAI_CODING_BASE_URL,
-    ZAI_DEFAULT_BASE_URL,
+    ZAI_GENERAL_BASE_URL,
     ProviderRuntimeConfig,
     is_zai_legacy_anthropic_base_url,
     normalize_zai_base_url,
 )
+from src.agent.zai_errors import format_provider_error
 from src.config import AppConfig
 from src.database import Database
 from src.services.agent_provider_service import (
@@ -1218,12 +1220,16 @@ class DeepagentsBackend:
                 self._init_error = (
                     "This URL is the Z.AI Anthropic-compatible proxy. Configure the "
                     "anthropic provider with this URL instead, or use the OpenAI-compatible "
-                    f"endpoint {ZAI_DEFAULT_BASE_URL}. Coding Plan users can explicitly set "
+                    f"endpoint {ZAI_GENERAL_BASE_URL}. Coding Plan users can explicitly set "
                     f"{ZAI_CODING_BASE_URL}."
                 )
                 raise RuntimeError(self._init_error)
+            normalized_base_url = normalize_zai_base_url(raw_base_url)
+            if not normalized_base_url:
+                self._init_error = ZAI_BASE_URL_REQUIRED_HINT
+                raise RuntimeError(self._init_error)
             model_provider = "openai"
-            extra["base_url"] = normalize_zai_base_url(raw_base_url)
+            extra["base_url"] = normalized_base_url
         self._init_attempted_model = cfg.model_name
 
         # ReAct fallback for Ollama models without native function calling
@@ -1365,7 +1371,7 @@ class DeepagentsBackend:
                 )
                 return
             except Exception as exc:
-                errors.append(f"{cfg.provider}: {exc}")
+                errors.append(format_provider_error(cfg.provider, exc))
                 logger.warning("Deepagents provider preflight failed (%s): %s", cfg.provider, exc)
         self._preflight_available = False
         self._init_error = (
@@ -1665,7 +1671,7 @@ class DeepagentsBackend:
                     "is_error": True,
                     "summary": str(exc),
                 })
-                errors.append(f"{cfg.provider}: {exc}")
+                errors.append(format_provider_error(cfg.provider, exc))
                 logger.warning("Deepagents provider failed (%s): %s", cfg.provider, exc)
         self._init_error = (
             "; ".join(errors) if errors else "Deepagents providers are not configured."
@@ -1718,7 +1724,7 @@ class DeepagentsBackend:
                 self._init_error = None
                 return final_result
             except Exception as exc:
-                errors.append(f"{cfg.provider}: {exc}")
+                errors.append(format_provider_error(cfg.provider, exc))
                 logger.warning("Deepagents researcher-writer failed (%s): %s", cfg.provider, exc)
 
         self._init_error = (

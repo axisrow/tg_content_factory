@@ -93,11 +93,11 @@ async def _save_zai_config(db, base_url: str = "") -> AppConfig:
 
 
 @pytest.mark.anyio
-async def test_zai_db_config_builds_runtime_adapter_and_calls_default_general_chat_endpoint(
+async def test_zai_db_config_builds_runtime_adapter_and_calls_general_chat_endpoint(
     db,
     monkeypatch,
 ):
-    config = await _save_zai_config(db, "")
+    config = await _save_zai_config(db, ZAI_GENERAL_BASE_URL)
     FakeAiohttpClientSession.requests = []
     monkeypatch.setattr(
         "src.services.provider_service.aiohttp.ClientSession",
@@ -128,6 +128,19 @@ async def test_zai_db_config_builds_runtime_adapter_and_calls_default_general_ch
         "max_tokens": 16,
         "temperature": 0.2,
     }
+
+
+@pytest.mark.anyio
+async def test_zai_db_config_with_empty_base_url_is_not_registered(db, monkeypatch):
+    config = await _save_zai_config(db, "")
+    monkeypatch.setattr(
+        "src.services.provider_service.aiohttp.ClientSession",
+        FakeAiohttpClientSession,
+    )
+
+    service = RuntimeProviderService(db, config)
+    assert await service.load_db_providers() == 0
+    assert not service.has_providers()
 
 
 @pytest.mark.anyio
@@ -178,7 +191,6 @@ async def test_zai_legacy_anthropic_base_url_is_rejected_before_runtime_registra
 @pytest.mark.parametrize(
     "configured_base_url,expected_models_url",
     [
-        ("", f"{ZAI_GENERAL_BASE_URL}/models"),
         (ZAI_GENERAL_BASE_URL, f"{ZAI_GENERAL_BASE_URL}/models"),
         (ZAI_CODING_BASE_URL, f"{ZAI_CODING_BASE_URL}/models"),
     ],
@@ -231,7 +243,7 @@ async def test_zai_model_refresh_rejects_legacy_anthropic_models_endpoint(db, mo
         # configured endpoint flowing through LangChain.
         (
             "zai",
-            "",
+            "https://api.z.ai/api/paas/v4",
             "glm-5-turbo",
             "https://api.z.ai/api/paas/v4/chat/completions",
         ),
