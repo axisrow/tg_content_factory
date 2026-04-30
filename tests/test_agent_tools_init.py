@@ -379,8 +379,8 @@ class TestBuildAgentToolsDict:
             return {"content": [{"type": "text", "text": "ok"}]}
 
         fake_tool = SdkMcpTool(
-            name="get_account_info",
-            description="Account info",
+            name="search_messages",
+            description="Search",
             input_schema={},
             handler=mock_handler,
         )
@@ -418,8 +418,13 @@ class TestBuildAgentToolsDict:
         ):
             tools_dict = build_agent_tools_dict(mock_db, client_pool=pool)
 
-        assert "get_account_info" in tools_dict
+        assert "search_messages" in tools_dict
         assert seen_contexts
         assert all(isinstance(ctx, AgentRuntimeContext) for ctx in seen_contexts)
         assert all(ctx.client_pool is pool for ctx in seen_contexts)
         assert all(ctx.runtime_kind == "live" for ctx in seen_contexts)
+
+    def test_account_info_is_not_pipeline_safe(self):
+        from src.agent.tools import _PIPELINE_SAFE_TOOLS
+
+        assert "get_account_info" not in _PIPELINE_SAFE_TOOLS

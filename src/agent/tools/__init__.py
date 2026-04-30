@@ -157,7 +157,6 @@ _PIPELINE_SAFE_TOOLS: frozenset[str] = frozenset({
     "list_tags",
     "list_search_queries",
     "get_search_query_stats",
-    "get_account_info",
 })
 
 
