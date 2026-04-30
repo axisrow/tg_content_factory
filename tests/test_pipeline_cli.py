@@ -391,9 +391,10 @@ def test_pipeline_generate_wires_agent_manager_for_deep_agents(tmp_path, cli_ini
     captured = {}
 
     class FakeAgentManager:
-        def __init__(self, db, config):
+        def __init__(self, db, config, client_pool=None):
             captured["db"] = db
             captured["config"] = config
+            captured["client_pool"] = client_pool
 
     class FakeContentGenerationService:
         def __init__(self, db, engine, agent_manager=None, **kwargs):
@@ -429,6 +430,7 @@ def test_pipeline_generate_wires_agent_manager_for_deep_agents(tmp_path, cli_ini
         )
 
     assert captured["agent_manager"] is not None
+    assert captured["client_pool"] is not None
     assert captured["quality_service"] is not None
     out = capsys.readouterr().out
     assert "Created generation run id=124" in out
