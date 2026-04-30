@@ -7,7 +7,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from src.agent.tools._registry import (
+    AgentToolContext,
+    ToolInputError,
     _text_response,
+    arg_bool,
+    arg_csv_ints,
+    arg_int,
+    arg_str,
     normalize_phone,
     require_confirmation,
     require_phone_permission,
@@ -74,6 +80,41 @@ class TestRequireConfirmation:
         result = require_confirmation("удалит канал", {"confirm": False})
         assert result is not None
         assert "confirm=true" in result["content"][0]["text"]
+
+
+# ── argument helpers / tool context ───────────────────────────────────────────
+
+
+class TestArgumentHelpers:
+    def test_arg_str_strips_and_requires(self):
+        assert arg_str({"name": "  test  "}, "name", required=True) == "test"
+        with pytest.raises(ToolInputError, match="name обязателен"):
+            arg_str({"name": " "}, "name", required=True)
+
+    def test_arg_int_parses_and_reports_invalid(self):
+        assert arg_int({"pk": "42"}, "pk", required=True) == 42
+        with pytest.raises(ToolInputError, match="pk должен быть целым числом"):
+            arg_int({"pk": "x"}, "pk", required=True)
+
+    def test_arg_csv_ints_parses_list_and_reports_invalid(self):
+        assert arg_csv_ints({"ids": "1, 2,3"}, "ids", required=True) == [1, 2, 3]
+        with pytest.raises(ToolInputError, match="ids должен содержать целые числа"):
+            arg_csv_ints({"ids": "1,a"}, "ids", required=True)
+
+    def test_arg_bool_preserves_existing_truthy_semantics(self):
+        assert arg_bool({"confirm": 1}, "confirm") is True
+        assert arg_bool({"confirm": False}, "confirm") is False
+
+
+class TestAgentToolContext:
+    def test_build_preserves_dependencies(self):
+        db = MagicMock()
+        pool = MagicMock()
+        ctx = AgentToolContext.build(db=db, client_pool=pool)
+        assert ctx.db is db
+        assert ctx.client_pool is pool
+        assert ctx.runtime_context is not None
+        assert ctx.runtime_context.db is db
 
 
 # ── require_pool ──────────────────────────────────────────────────────────────

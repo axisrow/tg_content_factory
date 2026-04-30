@@ -13,7 +13,7 @@ import functools
 from claude_agent_sdk import SdkMcpTool, create_sdk_mcp_server
 
 from src.agent.runtime_context import AgentRuntimeContext
-from src.agent.tools._registry import _text_response  # noqa: F401
+from src.agent.tools._registry import AgentToolContext, _text_response  # noqa: F401
 
 
 def _wrap_with_session_gate(tool: SdkMcpTool) -> SdkMcpTool:
@@ -90,7 +90,20 @@ def make_mcp_server(db, client_pool=None, scheduler_manager=None, config=None):
         client_pool=client_pool,
         scheduler_manager=scheduler_manager,
     )
-    extras = {"scheduler_manager": scheduler_manager, "config": config, "runtime_context": runtime_context}
+    tool_context = AgentToolContext.build(
+        db=db,
+        config=config,
+        client_pool=client_pool,
+        scheduler_manager=scheduler_manager,
+        embedding_service=embedding_service,
+        runtime_context=runtime_context,
+    )
+    extras = {
+        "scheduler_manager": scheduler_manager,
+        "config": config,
+        "runtime_context": runtime_context,
+        "tool_context": tool_context,
+    }
 
     all_tools = []
     for module in [
@@ -232,10 +245,19 @@ def build_agent_tools_dict(
         client_pool=client_pool,
         scheduler_manager=scheduler_manager,
     )
+    tool_context = AgentToolContext.build(
+        db=db,
+        config=config,
+        client_pool=client_pool,
+        scheduler_manager=scheduler_manager,
+        embedding_service=embedding_service,
+        runtime_context=runtime_context,
+    )
     extras: dict = {
         "scheduler_manager": scheduler_manager,
         "config": config,
         "runtime_context": runtime_context,
+        "tool_context": tool_context,
     }
     tools_dict: dict[str, object] = {}
 
