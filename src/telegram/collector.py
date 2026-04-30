@@ -694,7 +694,15 @@ class Collector:
                             )
                             # finally releases current phone; next iter picks up found
                             continue
-                        raise  # no phone has access — show error in UI
+                        logger.warning(
+                            "Channel %d (%s): no connected account can resolve entity; "
+                            "deactivating and skipping collection",
+                            channel_id,
+                            channel.title or channel.username or "no title",
+                        )
+                        if channel.id:
+                            await self._db.set_channel_active(channel.id, False)
+                        return total_collected
 
                 # Превентивная фильтрация по subscriber_ratio до загрузки
                 # сообщений.

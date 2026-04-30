@@ -59,10 +59,24 @@ class EmbeddedWorker:
         self._task: asyncio.Task[None] | None = None
         self._stop_event = asyncio.Event()
         self._ready_event = asyncio.Event()
+        self._agent_ready_event = asyncio.Event()
+        self._startup_error: str | None = None
 
     @property
     def container(self) -> AppContainer | None:
         return self._container
+
+    @property
+    def agent_ready(self) -> bool:
+        return self._agent_ready_event.is_set()
+
+    @property
+    def startup_failed(self) -> bool:
+        return self._startup_error is not None
+
+    @property
+    def startup_error(self) -> str | None:
+        return self._startup_error
 
     async def wait_ready(self, timeout: float | None = None) -> bool:
         """Wait until the worker has published its first heartbeat.
@@ -81,7 +95,7 @@ class EmbeddedWorker:
             raise RuntimeError("EmbeddedWorker already started")
         self._task = asyncio.create_task(self._run(), name="embedded-worker")
 
-    async def stop(self, timeout: float = 10.0) -> None:
+    async def stop(self, timeout: float = 150.0) -> None:
         if self._task is None:
             return
         self._stop_event.set()
@@ -103,7 +117,9 @@ class EmbeddedWorker:
                 self._config, log_buffer=LogBuffer(maxlen=500)
             )
             await start_container(self._container)
+            self._agent_ready_event.set()
         except Exception:
+            self._startup_error = "Embedded worker failed to start. Check server logs for details."
             logger.exception(
                 "[embedded-worker] failed to start; UI will show worker_down banner"
             )
@@ -137,4 +153,5 @@ class EmbeddedWorker:
             except Exception:
                 logger.exception("[embedded-worker] stop_container raised")
             self._container = None
+            self._agent_ready_event.clear()
             logger.info("[embedded-worker] stopped")

@@ -460,6 +460,26 @@ async def test_get_pending_channel_tasks(collection_tasks_repo):
     assert tasks[0].id == id2
 
 
+async def test_reset_collection_task_to_pending(collection_tasks_repo):
+    task_id = await collection_tasks_repo.create_collection_task(1, "Channel 1")
+    await collection_tasks_repo.update_collection_task(task_id, CollectionTaskStatus.RUNNING)
+    await collection_tasks_repo.update_collection_task(
+        task_id,
+        CollectionTaskStatus.FAILED,
+        error="interrupted",
+        note="old note",
+    )
+
+    await collection_tasks_repo.reset_collection_task_to_pending(task_id, note="shutdown")
+
+    task = await collection_tasks_repo.get_collection_task(task_id)
+    assert task.status == CollectionTaskStatus.PENDING
+    assert task.started_at is None
+    assert task.completed_at is None
+    assert task.error is None
+    assert task.note == "shutdown"
+
+
 # fail_running_collection_tasks_on_startup tests
 
 

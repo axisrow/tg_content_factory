@@ -921,8 +921,8 @@ async def test_fetch_live_models_zai_uses_bearer_auth(db, monkeypatch):
 
 
 @pytest.mark.anyio
-async def test_fetch_live_models_zai_requires_explicit_base_url(db):
-    """Empty base_url is rejected before hitting the network."""
+async def test_fetch_live_models_zai_defaults_empty_base_url(db, monkeypatch):
+    """Empty base_url uses the subscription/Coding Plan endpoint."""
     config = AppConfig()
     config.security.session_encryption_key = "provider-secret"
     service = AgentProviderService(db, config)
@@ -937,8 +937,20 @@ async def test_fetch_live_models_zai_requires_explicit_base_url(db):
 
     spec = provider_spec("zai")
     assert spec is not None
-    with pytest.raises(RuntimeError, match="Base URL is required"):
-        await service._fetch_live_models(spec, cfg)
+    captured: dict[str, object] = {}
+
+    async def _fake_fetch_json(url, headers=None):
+        captured["url"] = url
+        captured["headers"] = headers
+        return {"data": [{"id": "glm-5-turbo"}]}
+
+    monkeypatch.setattr(service, "_fetch_json", _fake_fetch_json)
+
+    models = await service._fetch_live_models(spec, cfg)
+
+    assert models == ["glm-5-turbo"]
+    assert captured["url"] == f"{ZAI_CODING_BASE_URL}/models"
+    assert captured["headers"] == {"Authorization": "Bearer zai-key"}
 
 
 @pytest.mark.anyio
@@ -1276,9 +1288,8 @@ def test_canonical_endpoint_fingerprint_for_zai_default_and_coding_urls(db):
         plain_fields={"base_url": ZAI_CODING_BASE_URL},
     )
 
-    # Empty base_url no longer auto-fills a default; the canonical fingerprint
-    # treats it as unknown/custom (None).
-    assert service.canonical_endpoint_fingerprint(empty_cfg) is None
+    # Empty base_url means the subscription/Coding Plan endpoint.
+    assert service.canonical_endpoint_fingerprint(empty_cfg) == ZAI_CODING_BASE_URL
     assert service.canonical_endpoint_fingerprint(general_cfg) == ZAI_GENERAL_BASE_URL
     assert service.canonical_endpoint_fingerprint(coding_cfg) == ZAI_CODING_BASE_URL
 

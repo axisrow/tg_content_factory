@@ -131,16 +131,26 @@ async def test_zai_db_config_builds_runtime_adapter_and_calls_general_chat_endpo
 
 
 @pytest.mark.anyio
-async def test_zai_db_config_with_empty_base_url_is_not_registered(db, monkeypatch):
+async def test_zai_db_config_with_empty_base_url_defaults_to_coding_endpoint(db, monkeypatch):
     config = await _save_zai_config(db, "")
+    FakeAiohttpClientSession.requests = []
     monkeypatch.setattr(
         "src.services.provider_service.aiohttp.ClientSession",
         FakeAiohttpClientSession,
     )
 
     service = RuntimeProviderService(db, config)
-    assert await service.load_db_providers() == 0
-    assert not service.has_providers()
+    assert await service.load_db_providers() == 1
+
+    result = await service.get_provider_callable("zai")(
+        prompt="hello",
+        model="glm-5-turbo",
+        max_tokens=16,
+        temperature=0.2,
+    )
+
+    assert result == "runtime-ok"
+    assert FakeAiohttpClientSession.requests[-1].url == f"{ZAI_CODING_BASE_URL}/chat/completions"
 
 
 @pytest.mark.anyio

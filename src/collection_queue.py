@@ -21,6 +21,9 @@ class CollectionQueue:
     # How often the worker re-checks the DB for new PENDING channel-collect tasks
     # written by the web container in split / embedded-worker setups (#491 follow-up).
     DB_PULL_INTERVAL_SEC = 3.0
+    GRACEFUL_SHUTDOWN_TIMEOUT_SEC = 120.0
+    FORCE_CANCEL_TIMEOUT_SEC = 10.0
+    SHUTDOWN_REQUEUE_NOTE = "Остановка сервиса во время сбора; задача будет продолжена после запуска."
 
     def __init__(self, collector: Collector, channels: ChannelBundle | Database):
         self._collector = collector
@@ -38,6 +41,7 @@ class CollectionQueue:
         self._known_task_ids: set[int] = set()
         self._pull_task: asyncio.Task | None = None
         self._pull_stop = asyncio.Event()
+        self._shutdown_requested = False
 
     async def enqueue(self, channel: Channel, force: bool = False, full: bool = True) -> int | None:
         """Enqueue a channel for collection, atomically skipping duplicates.
@@ -57,6 +61,12 @@ class CollectionQueue:
         )
         if task_id is None:
             return None
+        if self._shutdown_requested:
+            logger.info(
+                "Service is shutting down; collection task %d stays PENDING in DB",
+                task_id,
+            )
+            return task_id
         try:
             self._queue.put_nowait((task_id, channel, force, full))
             self._known_task_ids.add(task_id)
@@ -119,6 +129,9 @@ class CollectionQueue:
             remaining = max(0.0, run_after.timestamp() - time.time())
             if remaining > 0:
                 await asyncio.sleep(remaining)
+            if self._shutdown_requested:
+                self._known_task_ids.discard(task_id)
+                return
             try:
                 self._queue.put_nowait((task_id, channel, force, full))
                 self._known_task_ids.add(task_id)
@@ -141,6 +154,8 @@ class CollectionQueue:
 
     async def _run_worker(self) -> None:
         while True:
+            if self._shutdown_requested:
+                break
             try:
                 task_id, channel, force, full = await asyncio.wait_for(
                     self._queue.get(), timeout=1.0
@@ -205,6 +220,11 @@ class CollectionQueue:
                 self._queue.task_done()
                 continue
 
+            if self._shutdown_requested:
+                self._known_task_ids.discard(task_id)
+                self._queue.task_done()
+                continue
+
             try:
                 self._current_task_id = task_id
                 await self._channels.update_collection_task(task_id, CollectionTaskStatus.RUNNING)
@@ -216,11 +236,15 @@ class CollectionQueue:
                     channel, full=full, progress_callback=_progress, force=force
                 )
                 if self._collector.is_cancelled:
-                    await self._channels.cancel_collection_task(
-                        task_id,
-                        note="Задача отменена во время сбора.",
-                    )
-                    logger.info("Task %d cancelled during collection", task_id)
+                    if self._shutdown_requested:
+                        await self._reset_task_to_pending_after_shutdown(task_id)
+                        logger.info("Task %d requeued after service shutdown interrupted collection", task_id)
+                    else:
+                        await self._channels.cancel_collection_task(
+                            task_id,
+                            note="Задача отменена во время сбора.",
+                        )
+                        logger.info("Task %d cancelled during collection", task_id)
                 else:
                     note = None
                     if count == 0 and not force and channel.id is not None:
@@ -300,6 +324,17 @@ class CollectionQueue:
                 self._known_task_ids.discard(task_id)
                 self._queue.task_done()
 
+    async def _reset_task_to_pending_after_shutdown(self, task_id: int) -> None:
+        reset = getattr(self._channels, "reset_collection_task_to_pending", None)
+        if callable(reset):
+            await reset(task_id, note=self.SHUTDOWN_REQUEUE_NOTE)
+            return
+        await self._channels.update_collection_task(
+            task_id,
+            CollectionTaskStatus.PENDING,
+            note=self.SHUTDOWN_REQUEUE_NOTE,
+        )
+
     async def _try_reconnect_and_requeue(
         self, task_id: int, channel: Channel, full: bool, force: bool, exc: Exception
     ) -> bool:
@@ -343,6 +378,8 @@ class CollectionQueue:
         pending = await self._channels.get_pending_channel_tasks()
         count = 0
         for task in pending:
+            if self._shutdown_requested:
+                break
             if task.id is None or task.id in self._known_task_ids:
                 continue
             if task.channel_id is None:
@@ -439,17 +476,18 @@ class CollectionQueue:
             except asyncio.TimeoutError:
                 continue
 
-    async def shutdown(self) -> None:
-        await self.stop_db_pull()
-        if self._worker and not self._worker.done():
-            self._worker.cancel()
+    def _drain_memory_queue(self) -> int:
+        drained = 0
+        while True:
             try:
-                await self._worker
-            except asyncio.CancelledError:
-                pass
-        # Snapshot tasks before cancelling — the done_callback (discard)
-        # removes them from the set as soon as each resolves, so iterating
-        # the live set in a second loop would see an empty collection.
+                self._queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+            self._queue.task_done()
+            drained += 1
+        return drained
+
+    async def _cancel_delayed_requeues(self) -> None:
         pending = list(self._delayed_requeues)
         for task in pending:
             task.cancel()
@@ -459,4 +497,63 @@ class CollectionQueue:
             except asyncio.CancelledError:
                 pass
         self._delayed_requeues.clear()
+
+    async def shutdown(self, *, grace_timeout: float | None = None) -> None:
+        self._shutdown_requested = True
+        await self.stop_db_pull()
+        await self._cancel_delayed_requeues()
+
+        if self._worker and not self._worker.done():
+            timeout = self.GRACEFUL_SHUTDOWN_TIMEOUT_SEC if grace_timeout is None else grace_timeout
+            active_task_id = self._current_task_id
+            if active_task_id is not None:
+                logger.warning(
+                    "Останавливаем сервис: ждём завершения активной задачи сбора #%d "
+                    "(до %.0f сек). Новые задачи останутся pending в БД.",
+                    active_task_id,
+                    timeout,
+                )
+            try:
+                await asyncio.wait_for(asyncio.shield(self._worker), timeout=timeout)
+            except asyncio.TimeoutError:
+                active_task_id = self._current_task_id or active_task_id
+                if active_task_id is not None:
+                    logger.warning(
+                        "Активная задача сбора #%d не завершилась за %.0f сек; "
+                        "останавливаем сбор и возвращаем задачу в pending.",
+                        active_task_id,
+                        timeout,
+                    )
+                await self._collector.cancel()
+                try:
+                    await asyncio.wait_for(
+                        asyncio.shield(self._worker),
+                        timeout=self.FORCE_CANCEL_TIMEOUT_SEC,
+                    )
+                except asyncio.TimeoutError:
+                    if active_task_id is not None:
+                        await self._reset_task_to_pending_after_shutdown(active_task_id)
+                    self._worker.cancel()
+                    try:
+                        await self._worker
+                    except asyncio.CancelledError:
+                        pass
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("Collection queue worker failed during shutdown")
+
+        drained = self._drain_memory_queue()
+        if drained:
+            logger.info(
+                "Left %d queued collection task(s) pending in DB for the next worker start",
+                drained,
+            )
+        if self._current_task_id is not None:
+            try:
+                await self._reset_task_to_pending_after_shutdown(self._current_task_id)
+            except Exception:
+                logger.exception("Failed to reset active collection task during shutdown")
+            self._current_task_id = None
         self._retried_tasks.clear()
+        self._known_task_ids.clear()

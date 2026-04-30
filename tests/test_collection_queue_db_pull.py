@@ -8,6 +8,7 @@ ignored until the next worker restart.
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import datetime, timezone
 
 import pytest
@@ -28,6 +29,24 @@ class _FakeCollector:
 
     async def cancel(self):
         return None
+
+
+class _BlockingCollector:
+    def __init__(self):
+        self.calls: list[int] = []
+        self.started = asyncio.Event()
+        self.finish = asyncio.Event()
+        self.is_cancelled = False
+
+    async def collect_single_channel(self, channel, *, full=False, progress_callback=None, force=False):
+        self.calls.append(channel.channel_id)
+        self.started.set()
+        await self.finish.wait()
+        return 7
+
+    async def cancel(self):
+        self.is_cancelled = True
+        self.finish.set()
 
 
 async def _seed_channel(db: Database, channel_id: int = -1001) -> None:
@@ -212,6 +231,69 @@ async def test_clear_pending_tasks_clears_known_task_ids(tmp_path):
 
         assert deleted == 1
         assert queue._known_task_ids == set()
+    finally:
+        await queue.shutdown()
+        await db.close()
+
+
+@pytest.mark.anyio
+async def test_shutdown_waits_for_active_collection_and_leaves_queued_pending(tmp_path, caplog):
+    db = Database(str(tmp_path / "queue.db"))
+    await db.initialize()
+    try:
+        await _seed_channel(db, -1001)
+        await _seed_channel(db, -1002)
+        channels = await db.get_channels(active_only=True)
+        by_id = {channel.channel_id: channel for channel in channels}
+
+        collector = _BlockingCollector()
+        queue = CollectionQueue(collector, db)
+        first_id = await queue.enqueue(by_id[-1001])
+        second_id = await queue.enqueue(by_id[-1002])
+        await asyncio.wait_for(collector.started.wait(), timeout=1.0)
+
+        caplog.set_level(logging.WARNING, logger="src.collection_queue")
+        shutdown_task = asyncio.create_task(queue.shutdown(grace_timeout=2.0))
+        await asyncio.sleep(0.05)
+        assert not shutdown_task.done()
+
+        collector.finish.set()
+        await asyncio.wait_for(shutdown_task, timeout=2.0)
+
+        first = await db.get_collection_task(first_id)
+        second = await db.get_collection_task(second_id)
+        assert first.status == "completed"
+        assert first.messages_collected == 7
+        assert second.status == "pending"
+        assert collector.calls == [-1001]
+        assert "ждём завершения активной задачи сбора" in caplog.text
+        assert "Новые задачи останутся pending в БД" in caplog.text
+    finally:
+        await queue.shutdown()
+        await db.close()
+
+
+@pytest.mark.anyio
+async def test_shutdown_timeout_requeues_active_collection_task(tmp_path):
+    db = Database(str(tmp_path / "queue.db"))
+    await db.initialize()
+    try:
+        await _seed_channel(db, -1001)
+        channel = (await db.get_channels(active_only=True))[0]
+
+        collector = _BlockingCollector()
+        queue = CollectionQueue(collector, db)
+        task_id = await queue.enqueue(channel)
+        await asyncio.wait_for(collector.started.wait(), timeout=1.0)
+
+        await queue.shutdown(grace_timeout=0.01)
+
+        task = await db.get_collection_task(task_id)
+        assert task.status == "pending"
+        assert task.started_at is None
+        assert task.error is None
+        assert "Остановка сервиса" in (task.note or "")
+        assert collector.is_cancelled is True
     finally:
         await queue.shutdown()
         await db.close()

@@ -262,6 +262,14 @@ class ChannelBundle:
             messages_collected=messages_collected,
         )
 
+    async def reset_collection_task_to_pending(
+        self,
+        task_id: int,
+        *,
+        note: str | None = None,
+    ) -> None:
+        await self.tasks.reset_collection_task_to_pending(task_id, note=note)
+
     async def update_collection_task_progress(self, task_id: int, messages_collected: int) -> None:
         await self.tasks.update_collection_task_progress(task_id, messages_collected)
 

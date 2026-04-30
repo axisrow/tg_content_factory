@@ -100,7 +100,9 @@ def test_stop_success(capsys):
          patch("src.cli.commands.server_control.stop_server", return_value=outcome), \
          patch("src.cli.commands.server_control.pid_file_path", return_value="/tmp/test.pid"):
         run_stop(_args())
-    assert "stopped" in capsys.readouterr().out.lower()
+    out = capsys.readouterr().out
+    assert "подожду завершения активной задачи" in out
+    assert "stopped" in out.lower()
 
 
 def test_stop_process_control_error():
@@ -142,4 +144,6 @@ def test_restart_success(capsys):
          patch("src.cli.commands.server_control.pid_file_path", return_value="/tmp/test.pid"), \
          patch("src.cli.commands.serve.run") as mock_serve:
         run_restart(_args())
+    out = capsys.readouterr().out
+    assert "подожду завершения активной задачи" in out
     mock_serve.assert_called_once()

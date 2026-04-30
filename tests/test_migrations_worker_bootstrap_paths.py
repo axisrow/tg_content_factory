@@ -908,15 +908,15 @@ def test_build_adapter_for_config_zai():
     assert adapter is not None
 
 
-def test_build_adapter_for_config_zai_skips_when_base_url_empty():
-    """Without base_url the zai adapter is skipped — required field, no auto-default."""
+def test_build_adapter_for_config_zai_defaults_when_base_url_empty():
+    """Without base_url the zai adapter uses the subscription endpoint."""
     svc = AgentProviderService()
     cfg = MagicMock()
     cfg.provider = "zai"
     cfg.secret_fields = {"api_key": "zai-test"}
     cfg.plain_fields = {}
     adapter = svc._build_adapter_for_config(cfg)
-    assert adapter is None
+    assert adapter is not None
 
 
 def test_build_adapter_for_config_google_genai_returns_none():

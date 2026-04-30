@@ -36,7 +36,7 @@ def run(args: argparse.Namespace) -> None:
         sys.exit(1)
 
     try:
-        uvicorn.run(app, host=config.web.host, port=config.web.port)
+        uvicorn.run(app, host=config.web.host, port=config.web.port, timeout_graceful_shutdown=150)
     except KeyboardInterrupt:
         pass
     finally:

@@ -174,6 +174,72 @@ async def test_agent_chat_in_embedded_worker_mode_uses_worker_agent_manager(web_
 
 
 @pytest.mark.anyio
+async def test_agent_page_with_old_thread_during_embedded_worker_startup_is_retryable(tmp_path):
+    async with _web_mode_client(tmp_path) as (client, container):
+        thread_id = await container.db.create_agent_thread("Old chat")
+        await container.db.save_agent_message(thread_id, "user", "previous message")
+        client._transport.app.state.embedded_worker = SimpleNamespace(
+            agent_ready=False,
+            startup_failed=False,
+            container=SimpleNamespace(agent_manager=MagicMock()),
+        )
+
+        resp = await client.get(f"/agent?thread_id={thread_id}", follow_redirects=True)
+
+        assert resp.status_code == 200
+        assert "Old chat" in resp.text
+        assert "previous message" in resp.text
+        assert "Агент запускается." in resp.text
+        assert "Чат недоступен в web-процессе" not in resp.text
+        assert "Agent chat is only available in the worker process" not in resp.text
+
+
+@pytest.mark.anyio
+async def test_agent_chat_during_embedded_worker_startup_returns_retryable_503(tmp_path):
+    async with _web_mode_client(tmp_path) as (client, container):
+        thread_id = await container.db.create_agent_thread("Old chat")
+        client._transport.app.state.embedded_worker = SimpleNamespace(
+            agent_ready=False,
+            startup_failed=False,
+            container=SimpleNamespace(agent_manager=MagicMock()),
+        )
+
+        resp = await client.post(
+            f"/agent/threads/{thread_id}/chat",
+            json={"message": "hi"},
+        )
+
+        assert resp.status_code == 503
+        assert resp.headers["retry-after"] == "3"
+        body = resp.json()
+        assert body["runtime_state"] == "starting"
+        assert "worker process" not in body["detail"]
+        assert await container.db.get_agent_messages(thread_id) == []
+
+
+@pytest.mark.anyio
+async def test_agent_permission_during_embedded_worker_startup_returns_retryable_503(tmp_path):
+    async with _web_mode_client(tmp_path) as (client, container):
+        thread_id = await container.db.create_agent_thread("Old chat")
+        client._transport.app.state.embedded_worker = SimpleNamespace(
+            agent_ready=False,
+            startup_failed=False,
+            container=SimpleNamespace(agent_manager=MagicMock()),
+        )
+
+        resp = await client.post(
+            f"/agent/threads/{thread_id}/permission/abc-123",
+            json={"choice": "once"},
+        )
+
+        assert resp.status_code == 503
+        assert resp.headers["retry-after"] == "3"
+        body = resp.json()
+        assert body["runtime_state"] == "starting"
+        assert "worker process" not in body["detail"]
+
+
+@pytest.mark.anyio
 async def test_agent_permission_in_web_mode_returns_worker_only_error(tmp_path):
     """POST /agent/threads/{id}/permission/{req_id} in web returns the same 503 contract."""
     async with _web_mode_client(tmp_path) as (client, container):

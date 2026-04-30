@@ -49,6 +49,8 @@ from src.web.timing import TimingBuffer
 logger = logging.getLogger(__name__)
 _is_dev = os.environ.get("ENV", "PROD").upper() == "DEV"
 _POOL_INIT_TIMEOUT = 20
+_SHUTDOWN_DEFAULT_TIMEOUT = 15.0
+_SHUTDOWN_COLLECTION_QUEUE_TIMEOUT = 140.0
 
 
 async def load_telegram_credentials(db: Database, config: AppConfig) -> tuple[int, str]:
@@ -291,9 +293,6 @@ async def start_container(container: AppContainer) -> None:
     if _is_dev:
         t1 = time.monotonic()
 
-    recovered = await container.channel_bundle.fail_running_collection_tasks_on_startup()
-    if recovered:
-        logger.warning("Marked %d interrupted collection tasks as failed on startup", recovered)
     photo_recovered = await container.photo_task_service.recover_running()
     if photo_recovered:
         logger.warning("Requeued %d interrupted photo tasks on startup", photo_recovered)
@@ -386,29 +385,33 @@ async def _cancel_bg_tasks(tasks: set[asyncio.Task]) -> None:
 
 async def stop_container(container: AppContainer) -> None:
     container.shutting_down = True
-    shutdown_coroutines = []
-    if container.unified_dispatcher is not None:
-        shutdown_coroutines.append(("unified_dispatcher", container.unified_dispatcher.stop()))
-    if container.telegram_command_dispatcher is not None:
-        shutdown_coroutines.append(("telegram_command_dispatcher", container.telegram_command_dispatcher.stop()))
-    if container.collection_queue is not None:
-        shutdown_coroutines.append(("collection_queue", container.collection_queue.shutdown()))
-    if container.agent_manager is not None:
-        shutdown_coroutines.append(("agent_manager", container.agent_manager.close_all()))
-    shutdown_coroutines.extend(
-        [
-            ("scheduler", container.scheduler.stop()),
-            ("collector", container.collector.cancel()),
-            ("bg_tasks", _cancel_bg_tasks(container.bg_tasks)),
-            ("pool", container.pool.disconnect_all()),
-            ("auth", container.auth.cleanup()),
-            ("db", container.db.close()),
-        ]
-    )
-    for name, coro in shutdown_coroutines:
+
+    async def _stop_step(name: str, coro, *, timeout: float = _SHUTDOWN_DEFAULT_TIMEOUT) -> None:
         try:
-            await asyncio.wait_for(coro, timeout=5.0)
+            await asyncio.wait_for(coro, timeout=timeout)
         except asyncio.TimeoutError:
-            logger.warning("Shutdown of %s timed out", name)
+            logger.warning("Shutdown of %s timed out after %.0fs", name, timeout)
         except Exception:
             logger.warning("Error shutting down %s", name, exc_info=True)
+
+    # Stop producers first so no new collection work is created while the
+    # queue is draining the active channel collection.
+    await _stop_step("scheduler", container.scheduler.stop())
+    if container.unified_dispatcher is not None:
+        await _stop_step("unified_dispatcher", container.unified_dispatcher.stop())
+    if container.telegram_command_dispatcher is not None:
+        await _stop_step("telegram_command_dispatcher", container.telegram_command_dispatcher.stop())
+    if container.collection_queue is not None:
+        await _stop_step(
+            "collection_queue",
+            container.collection_queue.shutdown(),
+            timeout=_SHUTDOWN_COLLECTION_QUEUE_TIMEOUT,
+        )
+    if container.agent_manager is not None:
+        await _stop_step("agent_manager", container.agent_manager.close_all())
+
+    await _stop_step("collector", container.collector.cancel())
+    await _stop_step("bg_tasks", _cancel_bg_tasks(container.bg_tasks))
+    await _stop_step("pool", container.pool.disconnect_all())
+    await _stop_step("auth", container.auth.cleanup())
+    await _stop_step("db", container.db.close())

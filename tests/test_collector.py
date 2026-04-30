@@ -480,6 +480,29 @@ async def test_collect_private_group_discovers_access_phone(db):
 
 
 @pytest.mark.anyio
+async def test_collect_private_group_without_resolvable_entity_deactivates_without_error(db):
+    ch = Channel(channel_id=1877929309, title="Private Group")
+    await db.add_channel(ch)
+
+    mock_client = AsyncMock()
+    mock_client.get_dialogs = AsyncMock(return_value=[])
+    mock_client.get_entity = AsyncMock(side_effect=ValueError("Could not find the input entity"))
+
+    pool = make_mock_pool(
+        clients={"+7000": object()},
+        get_available_client=AsyncMock(return_value=(mock_client, "+7000")),
+    )
+
+    collector = Collector(pool, db, SchedulerConfig())
+    stats = await collector.collect_all_channels()
+
+    assert stats["errors"] == 0
+    channel = await db.get_channel_by_channel_id(1877929309)
+    assert channel is not None
+    assert channel.is_active is False
+
+
+@pytest.mark.anyio
 async def test_collect_all_dialogs_timeout(db):
     """Hanging get_dialogs() must not block collection (30s timeout)."""
     ch = Channel(channel_id=123, title="Test", username="test")

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import TypeVar
 
 from fastapi import Request
@@ -49,6 +50,17 @@ from src.web.timing import TimingBuffer
 
 T = TypeVar("T")
 _MISSING = object()
+
+
+@dataclass(frozen=True, slots=True)
+class AgentRuntimeState:
+    state: str
+    manager: AgentManager | None = None
+    error: str | None = None
+
+    @property
+    def live(self) -> bool:
+        return self.state == "live" and self.manager is not None
 
 
 def _request_cached(request: Request, key: str, factory: Callable[[], T]) -> T:
@@ -261,19 +273,39 @@ def is_shutting_down(request: Request) -> bool:
     return get_container(request).shutting_down
 
 
-def get_agent_manager(request: Request) -> AgentManager | None:
+def get_agent_runtime_state(request: Request) -> AgentRuntimeState:
     manager = getattr(request.app.state, "agent_manager", None)
     if manager is not None:
-        return manager
+        return AgentRuntimeState("live", manager=manager)
+
     embedded_worker = getattr(request.app.state, "embedded_worker", None)
     embedded_container = getattr(embedded_worker, "container", None)
     if embedded_container is not None:
-        ready_event = getattr(embedded_worker, "_ready_event", None)
-        if ready_event is not None and ready_event.is_set():
+        agent_ready = getattr(embedded_worker, "agent_ready", None)
+        if agent_ready is None:
+            ready_event = getattr(embedded_worker, "_ready_event", None)
+            agent_ready = bool(ready_event is not None and ready_event.is_set())
+        if bool(agent_ready):
             manager = getattr(embedded_container, "agent_manager", None)
             if manager is not None:
-                return manager
-    return None
+                return AgentRuntimeState("live", manager=manager)
+
+    startup_failed = bool(getattr(embedded_worker, "startup_failed", False))
+    if startup_failed:
+        return AgentRuntimeState(
+            "failed",
+            error=getattr(embedded_worker, "startup_error", None)
+            or "Embedded worker failed to start. Check server logs for details.",
+        )
+
+    if embedded_worker is not None or getattr(request.app.state, "embed_worker", False):
+        return AgentRuntimeState("starting")
+
+    return AgentRuntimeState("split_web")
+
+
+def get_agent_manager(request: Request) -> AgentManager | None:
+    return get_agent_runtime_state(request).manager
 
 
 def get_llm_provider_service(request: Request) -> AgentProviderService:

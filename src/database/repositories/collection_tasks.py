@@ -306,6 +306,29 @@ class CollectionTasksRepository:
         )
         await self._db.commit()
 
+    async def reset_collection_task_to_pending(
+        self,
+        task_id: int,
+        *,
+        note: str | None = None,
+    ) -> None:
+        sets = [
+            "status = ?",
+            "started_at = NULL",
+            "completed_at = NULL",
+            "error = NULL",
+        ]
+        params: list[Any] = [CollectionTaskStatus.PENDING.value]
+        if note is not None:
+            sets.append("note = ?")
+            params.append(note)
+        params.append(task_id)
+        await self._db.execute(
+            f"UPDATE collection_tasks SET {', '.join(sets)} WHERE id = ?",
+            tuple(params),
+        )
+        await self._db.commit()
+
     async def get_collection_task(self, task_id: int) -> CollectionTask | None:
         cur = await self._db.execute("SELECT * FROM collection_tasks WHERE id = ?", (task_id,))
         row = await cur.fetchone()
@@ -485,7 +508,7 @@ class CollectionTasksRepository:
         """
         cur = await self._db.execute(
             "UPDATE collection_tasks "
-            "SET status = ?, started_at = NULL "
+            "SET status = ?, started_at = NULL, completed_at = NULL, error = NULL "
             "WHERE task_type = ? AND status = ?",
             (
                 CollectionTaskStatus.PENDING.value,

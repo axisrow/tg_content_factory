@@ -108,6 +108,23 @@ async def test_start_container_calls_load_settings(tmp_path):
 
 
 @pytest.mark.anyio
+async def test_start_container_does_not_fail_running_channel_tasks(tmp_path):
+    db = Database(str(tmp_path / "test.db"))
+    await db.initialize()
+
+    container = _make_container(db)
+    scheduler_mock = AsyncMock()
+    scheduler_mock.load_settings = AsyncMock()
+    container.scheduler = scheduler_mock
+
+    try:
+        await start_container(container)
+        container.channel_bundle.fail_running_collection_tasks_on_startup.assert_not_called()
+    finally:
+        await db.close()
+
+
+@pytest.mark.anyio
 async def test_start_container_web_mode_skips_telegram_runtime(tmp_path):
     """Web runtime should not initialize Telegram pool or worker dispatchers."""
     db = Database(str(tmp_path / "test.db"))
