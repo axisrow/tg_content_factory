@@ -1701,8 +1701,8 @@ def test_build_agent_zai_uses_openai_compatible_init_chat_model(db):
     assert captured["kwargs"]["base_url"] == ZAI_DEFAULT_BASE_URL
 
 
-def test_build_agent_zai_normalizes_legacy_anthropic_url(db):
-    """Saved legacy Z.AI Anthropic URLs should not be sent to the OpenAI-compatible client."""
+def test_build_agent_zai_rejects_legacy_anthropic_url(db):
+    """Saved legacy Z.AI Anthropic URLs should not reach the OpenAI-compatible client."""
     config = AppConfig()
     mgr = AgentManager(db, config)
 
@@ -1715,24 +1715,17 @@ def test_build_agent_zai_normalizes_legacy_anthropic_url(db):
         secret_fields={"api_key": "zai-key"},
     )
 
-    captured: dict[str, object] = {}
-    fake_model = SimpleNamespace(name="zai-model")
-
     def fake_init_chat_model(*, model, model_provider, **kwargs):
-        captured["model"] = model
-        captured["provider"] = model_provider
-        captured["kwargs"] = kwargs
-        return fake_model
+        raise AssertionError(f"legacy URL should fail validation before model init: {model} {model_provider} {kwargs}")
 
     with (
         patch("langchain.chat_models.init_chat_model", side_effect=fake_init_chat_model),
         patch("deepagents.create_deep_agent", return_value=MagicMock(run=MagicMock(return_value="ok"))),
     ):
-        mgr._deepagents_backend._build_agent(cfg, record_last_used=False)
+        with pytest.raises(RuntimeError, match="Anthropic-compatible proxy"):
+            mgr._deepagents_backend._build_agent(cfg, record_last_used=False)
 
-    assert captured["model"] == "glm-5-turbo"
-    assert captured["provider"] == "openai"
-    assert captured["kwargs"]["base_url"] == ZAI_DEFAULT_BASE_URL
+    assert "anthropic provider" in (mgr._deepagents_backend.init_error or "")
 
 
 def test_build_agent_tools_import_error_shows_details(db, monkeypatch):

@@ -4,17 +4,23 @@ from dataclasses import dataclass, field
 
 from src.agent.models import CLAUDE_MODELS
 
-ZAI_DEFAULT_BASE_URL = "https://api.z.ai/api/coding/paas/v4"
 ZAI_GENERAL_BASE_URL = "https://api.z.ai/api/paas/v4"
+ZAI_CODING_BASE_URL = "https://api.z.ai/api/coding/paas/v4"
+ZAI_DEFAULT_BASE_URL = ZAI_GENERAL_BASE_URL
 ZAI_LEGACY_ANTHROPIC_BASE_URLS = {
     "https://api.z.ai/api/anthropic",
     "https://api.z.ai/api/anthropic/v1",
 }
 
 
+def is_zai_legacy_anthropic_base_url(base_url: str = "") -> bool:
+    normalized = (base_url or "").strip().rstrip("/")
+    return normalized in ZAI_LEGACY_ANTHROPIC_BASE_URLS
+
+
 def normalize_zai_base_url(base_url: str = "") -> str:
     normalized = (base_url or "").strip().rstrip("/")
-    if not normalized or normalized in ZAI_LEGACY_ANTHROPIC_BASE_URLS:
+    if not normalized:
         return ZAI_DEFAULT_BASE_URL
     return normalized
 

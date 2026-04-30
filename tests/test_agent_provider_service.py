@@ -8,7 +8,12 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from src.agent.manager import AgentManager
-from src.agent.provider_registry import ProviderRuntimeConfig, provider_spec
+from src.agent.provider_registry import (
+    ZAI_CODING_BASE_URL,
+    ZAI_GENERAL_BASE_URL,
+    ProviderRuntimeConfig,
+    provider_spec,
+)
 from src.config import AppConfig
 from src.services.agent_provider_service import (
     MODEL_CACHE_SETTINGS_KEY,
@@ -883,7 +888,7 @@ async def test_fetch_live_models_success_updates_cache(db, monkeypatch):
 
 @pytest.mark.anyio
 async def test_fetch_live_models_zai_uses_bearer_auth(db, monkeypatch):
-    """Z.AI live model fetch uses native API endpoint with Bearer auth."""
+    """Z.AI live model fetch uses general API endpoint with Bearer auth by default."""
     config = AppConfig()
     config.security.session_encryption_key = "provider-secret"
     service = AgentProviderService(db, config)
@@ -910,7 +915,41 @@ async def test_fetch_live_models_zai_uses_bearer_auth(db, monkeypatch):
     models = await service._fetch_live_models(spec, cfg)
 
     assert models == ["glm-5"]
-    assert captured["url"] == "https://api.z.ai/api/coding/paas/v4/models"
+    assert captured["url"] == f"{ZAI_GENERAL_BASE_URL}/models"
+    assert captured["headers"] == {"Authorization": "Bearer zai-key"}
+
+
+@pytest.mark.anyio
+async def test_fetch_live_models_zai_honors_configured_coding_base_url(db, monkeypatch):
+    """Z.AI live model fetch follows the configured base_url."""
+    config = AppConfig()
+    config.security.session_encryption_key = "provider-secret"
+    service = AgentProviderService(db, config)
+
+    cfg = ProviderRuntimeConfig(
+        provider="zai",
+        enabled=True,
+        priority=0,
+        selected_model="glm-5",
+        plain_fields={"base_url": ZAI_CODING_BASE_URL},
+        secret_fields={"api_key": "zai-key"},
+    )
+
+    captured: dict[str, object] = {}
+
+    async def _fake_fetch_json(url, headers=None):
+        captured["url"] = url
+        captured["headers"] = headers
+        return {"data": [{"id": "glm-5"}]}
+
+    monkeypatch.setattr(service, "_fetch_json", _fake_fetch_json)
+
+    spec = provider_spec("zai")
+    assert spec is not None
+    models = await service._fetch_live_models(spec, cfg)
+
+    assert models == ["glm-5"]
+    assert captured["url"] == f"{ZAI_CODING_BASE_URL}/models"
     assert captured["headers"] == {"Authorization": "Bearer zai-key"}
 
 
@@ -1189,34 +1228,51 @@ def test_canonical_endpoint_fingerprint_for_ollama_cloud(db):
     assert fingerprint == "ollama://cloud"
 
 
-def test_canonical_endpoint_fingerprint_for_zai_legacy_url(db):
-    """Legacy Z.AI Anthropic URLs are canonicalized to the OpenAI-compatible default."""
+def test_canonical_endpoint_fingerprint_for_zai_default_and_coding_urls(db):
+    """Known Z.AI OpenAI-compatible endpoints are canonicalized distinctly."""
     service = AgentProviderService(db, AppConfig())
 
+    default_cfg = ProviderRuntimeConfig(
+        provider="zai",
+        enabled=True,
+        priority=0,
+        selected_model="glm-5-turbo",
+        plain_fields={"base_url": ""},
+    )
+    coding_cfg = ProviderRuntimeConfig(
+        provider="zai",
+        enabled=True,
+        priority=0,
+        selected_model="glm-5-turbo",
+        plain_fields={"base_url": ZAI_CODING_BASE_URL},
+    )
+
+    assert service.canonical_endpoint_fingerprint(default_cfg) == ZAI_GENERAL_BASE_URL
+    assert service.canonical_endpoint_fingerprint(coding_cfg) == ZAI_CODING_BASE_URL
+
+
+def test_zai_legacy_anthropic_url_is_validation_error_not_rewritten(db):
+    """Z.AI Anthropic proxy URL is invalid for the OpenAI-compatible Z.AI provider."""
+    service = AgentProviderService(db, AppConfig())
+    legacy_url = "https://api.z.ai/api/anthropic"
     cfg = ProviderRuntimeConfig(
         provider="zai",
         enabled=True,
         priority=0,
         selected_model="glm-5-turbo",
-        plain_fields={"base_url": "https://api.z.ai/api/anthropic/v1"},
+        plain_fields={"base_url": legacy_url},
+        secret_fields={"api_key": "zai-key"},
     )
-
-    fingerprint = service.canonical_endpoint_fingerprint(cfg)
-
-    assert fingerprint == "https://api.z.ai/api/coding/paas/v4"
-
-
-def test_normalize_plain_fields_for_zai_legacy_url(db):
-    """Saving provider settings rewrites the old Z.AI Anthropic URL."""
-    service = AgentProviderService(db, AppConfig())
 
     normalized = service._normalize_plain_fields(
         "zai",
-        {"base_url": "https://api.z.ai/api/anthropic"},
+        {"base_url": legacy_url},
         {"api_key": "zai-key"},
     )
 
-    assert normalized["base_url"] == "https://api.z.ai/api/coding/paas/v4"
+    assert service.canonical_endpoint_fingerprint(cfg) is None
+    assert normalized["base_url"] == legacy_url
+    assert "Anthropic-compatible proxy" in service.validate_provider_config(cfg)
 
 
 def test_zai_provider_spec_uses_openai_package_hint():
