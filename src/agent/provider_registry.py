@@ -4,7 +4,8 @@ from dataclasses import dataclass, field
 
 from src.agent.models import CLAUDE_MODELS
 
-ZAI_DEFAULT_BASE_URL = "https://api.z.ai/api/paas/v4"
+ZAI_DEFAULT_BASE_URL = "https://api.z.ai/api/coding/paas/v4"
+ZAI_GENERAL_BASE_URL = "https://api.z.ai/api/paas/v4"
 ZAI_LEGACY_ANTHROPIC_BASE_URLS = {
     "https://api.z.ai/api/anthropic",
     "https://api.z.ai/api/anthropic/v1",
