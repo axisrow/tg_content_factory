@@ -17,7 +17,6 @@ import aiohttp
 from src.agent.provider_registry import (
     PROVIDER_ORDER,
     PROVIDER_SPECS,
-    ZAI_BASE_URL_REQUIRED_HINT,
     ZAI_CODING_BASE_URL,
     ZAI_GENERAL_BASE_URL,
     ProviderRuntimeConfig,
@@ -435,8 +434,6 @@ class AgentProviderService:
             return f"Unknown provider: {cfg.provider}"
         if cfg.provider == "zai":
             base_url = cfg.plain_fields.get("base_url", "").strip()
-            if not base_url:
-                return ZAI_BASE_URL_REQUIRED_HINT
             if is_zai_legacy_anthropic_base_url(base_url):
                 return (
                     "This URL is the Z.AI Anthropic-compatible proxy. Configure the "
@@ -822,8 +819,6 @@ class AgentProviderService:
                 f"/models. Use {ZAI_GENERAL_BASE_URL} or {ZAI_CODING_BASE_URL}."
             )
         resolved_base_url = normalize_zai_base_url(base_url)
-        if not resolved_base_url:
-            raise RuntimeError(ZAI_BASE_URL_REQUIRED_HINT)
         headers = {"Authorization": f"Bearer {api_key}"}
         payload = await self._fetch_json(
             f"{resolved_base_url.rstrip('/')}/models", headers=headers

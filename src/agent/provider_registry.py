@@ -6,20 +6,17 @@ from src.agent.models import CLAUDE_MODELS
 
 ZAI_GENERAL_BASE_URL = "https://api.z.ai/api/paas/v4"
 ZAI_CODING_BASE_URL = "https://api.z.ai/api/coding/paas/v4"
-# Backwards-compatible alias. Used to substitute a default for an empty
-# base_url; that auto-defaulting was removed because the Coding Plan and the
-# pay-per-token PaaS endpoints are not interchangeable. Kept as an alias to
-# avoid breaking external references; equal to ZAI_CODING_BASE_URL because
-# that is what new installs default to.
+# Default to the subscription/Coding Plan endpoint when a user only provides
+# ZAI_API_KEY. The pay-per-token endpoint can still be selected explicitly.
 ZAI_DEFAULT_BASE_URL = ZAI_CODING_BASE_URL
 ZAI_LEGACY_ANTHROPIC_BASE_URLS = {
     "https://api.z.ai/api/anthropic",
     "https://api.z.ai/api/anthropic/v1",
 }
 ZAI_BASE_URL_REQUIRED_HINT = (
-    "Z.AI Base URL is required. Use https://api.z.ai/api/coding/paas/v4 for "
-    "the GLM Coding Plan, or https://api.z.ai/api/paas/v4 for pay-per-token "
-    "PaaS access."
+    "Z.AI Base URL is optional. Empty value defaults to "
+    "https://api.z.ai/api/coding/paas/v4 for the GLM Coding Plan; use "
+    "https://api.z.ai/api/paas/v4 only for pay-per-token PaaS access."
 )
 
 
@@ -31,10 +28,9 @@ def is_zai_legacy_anthropic_base_url(base_url: str = "") -> bool:
 def normalize_zai_base_url(base_url: str = "") -> str:
     """Strip whitespace and trailing slash from a Z.AI base URL.
 
-    Unlike earlier versions this no longer substitutes a default value when the
-    input is empty: callers that need a populated URL must validate first.
+    Empty value means the subscription/Coding Plan endpoint.
     """
-    return (base_url or "").strip().rstrip("/")
+    return (base_url or "").strip().rstrip("/") or ZAI_DEFAULT_BASE_URL
 
 
 @dataclass(frozen=True, slots=True)
@@ -299,7 +295,6 @@ PROVIDER_SPECS: dict[str, ProviderSpec] = {
             _field(
                 "base_url",
                 "Base URL",
-                required=True,
                 placeholder=(
                     "https://api.z.ai/api/coding/paas/v4 (Coding Plan) or "
                     "https://api.z.ai/api/paas/v4 (pay-per-token PaaS)"

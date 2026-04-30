@@ -668,6 +668,15 @@ class Database:
             messages_collected=messages_collected,
         )
 
+    async def reset_collection_task_to_pending(
+        self,
+        task_id: int,
+        *,
+        note: str | None = None,
+    ) -> None:
+        self._require()
+        await self._tasks.reset_collection_task_to_pending(task_id, note=note)
+
     async def get_collection_task(self, task_id: int) -> CollectionTask | None:
         self._require()
         return await self._tasks.get_collection_task(task_id)
@@ -742,6 +751,10 @@ class Database:
     async def fail_running_collection_tasks_on_startup(self) -> int:
         self._require()
         return await self._tasks.fail_running_collection_tasks_on_startup()
+
+    async def reset_orphaned_running_tasks(self) -> int:
+        self._require()
+        return await self._tasks.reset_orphaned_running_tasks()
 
     async def cancel_collection_task(self, task_id: int, note: str | None = None) -> bool:
         self._require()
