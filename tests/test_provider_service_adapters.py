@@ -47,11 +47,11 @@ def test_zai_registration_failure_path(clean_env):
     assert "zai" not in svc._registry
 
 
-def test_zai_env_registration_skipped_without_base_url(clean_env):
-    """ZAI_API_KEY without ZAI_BASE_URL no longer registers a provider."""
+def test_zai_env_registration_defaults_without_base_url(clean_env):
+    """ZAI_API_KEY without ZAI_BASE_URL uses the subscription endpoint."""
     os.environ["ZAI_API_KEY"] = "zai-test-key"
     svc = AgentProviderService()
-    assert "zai" not in svc._registry
+    assert "zai" in svc._registry
 
 
 # === Context7 registration failure ===
