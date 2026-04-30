@@ -443,11 +443,6 @@ def run(args: argparse.Namespace) -> None:
                     print(f"Pipeline id={args.id} not found")
                     return
                 engine = SearchEngine(db)
-                agent_manager = None
-                if getattr(pipeline.generation_backend, "value", pipeline.generation_backend) == "deep_agents":
-                    from src.agent.manager import AgentManager
-
-                    agent_manager = AgentManager(db, config)
                 from src.services.provider_service import AgentProviderService
                 from src.services.quality_scoring_service import QualityScoringService
 
@@ -461,6 +456,11 @@ def run(args: argparse.Namespace) -> None:
                     return
                 _, pool = await runtime.init_pool(config, db)
                 client_pool = pool
+                agent_manager = None
+                if getattr(pipeline.generation_backend, "value", pipeline.generation_backend) == "deep_agents":
+                    from src.agent.manager import AgentManager
+
+                    agent_manager = AgentManager(db, config, client_pool=client_pool)
                 gen_svc = ContentGenerationService(
                     db,
                     engine,

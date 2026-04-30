@@ -12,6 +12,7 @@ import functools
 
 from claude_agent_sdk import SdkMcpTool, create_sdk_mcp_server
 
+from src.agent.runtime_context import AgentRuntimeContext
 from src.agent.tools._registry import _text_response  # noqa: F401
 
 
@@ -83,7 +84,13 @@ def make_mcp_server(db, client_pool=None, scheduler_manager=None, config=None):
     )
 
     # Extra context passed alongside the standard (db, client_pool, embedding_service)
-    extras = {"scheduler_manager": scheduler_manager, "config": config}
+    runtime_context = AgentRuntimeContext.build(
+        db=db,
+        config=config,
+        client_pool=client_pool,
+        scheduler_manager=scheduler_manager,
+    )
+    extras = {"scheduler_manager": scheduler_manager, "config": config, "runtime_context": runtime_context}
 
     all_tools = []
     for module in [
@@ -150,6 +157,7 @@ _PIPELINE_SAFE_TOOLS: frozenset[str] = frozenset({
     "list_tags",
     "list_search_queries",
     "get_search_query_stats",
+    "get_account_info",
 })
 
 
@@ -176,7 +184,14 @@ def _adapt_sdk_tool(sdk_tool: SdkMcpTool):
     return wrapper
 
 
-def build_agent_tools_dict(db, client_pool=None, search_engine=None, config=None):
+def build_agent_tools_dict(
+    db,
+    client_pool=None,
+    search_engine=None,
+    config=None,
+    scheduler_manager=None,
+    runtime_context: AgentRuntimeContext | None = None,
+):
     """Build a dict {tool_name: async_callable} for AgentLoopHandler in pipeline context.
 
     Only read-only tools are included — destructive operations require interactive
@@ -212,7 +227,17 @@ def build_agent_tools_dict(db, client_pool=None, search_engine=None, config=None
         settings,
     )
 
-    extras: dict = {"scheduler_manager": None, "config": config}
+    runtime_context = runtime_context or AgentRuntimeContext.build(
+        db=db,
+        config=config,
+        client_pool=client_pool,
+        scheduler_manager=scheduler_manager,
+    )
+    extras: dict = {
+        "scheduler_manager": scheduler_manager,
+        "config": config,
+        "runtime_context": runtime_context,
+    }
     tools_dict: dict[str, object] = {}
 
     for module in [

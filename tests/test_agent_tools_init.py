@@ -364,3 +364,62 @@ class TestBuildAgentToolsDict:
             result = await tools_dict["search_messages"](query="test")
             assert isinstance(result, str)
             assert handler_call_count == 1
+
+    def test_runtime_context_passed_to_pipeline_tool_registers(self):
+        from claude_agent_sdk import SdkMcpTool
+
+        from src.agent.runtime_context import AgentRuntimeContext
+        from src.agent.tools import build_agent_tools_dict
+
+        mock_db = MagicMock()
+        pool = MagicMock()
+        seen_contexts = []
+
+        async def mock_handler(args):
+            return {"content": [{"type": "text", "text": "ok"}]}
+
+        fake_tool = SdkMcpTool(
+            name="get_account_info",
+            description="Account info",
+            input_schema={},
+            handler=mock_handler,
+        )
+
+        mock_module = MagicMock()
+
+        def register(*args, **kwargs):
+            seen_contexts.append(kwargs.get("runtime_context"))
+            return [fake_tool]
+
+        mock_module.register = register
+
+        with (
+            patch("src.services.embedding_service.EmbeddingService"),
+            patch.multiple(
+                "src.agent.tools",
+                search=mock_module,
+                channels=mock_module,
+                collection=mock_module,
+                pipelines=mock_module,
+                moderation=mock_module,
+                search_queries=mock_module,
+                accounts=mock_module,
+                filters=mock_module,
+                analytics=mock_module,
+                scheduler=mock_module,
+                notifications=mock_module,
+                photo_loader=mock_module,
+                dialogs=mock_module,
+                messaging=mock_module,
+                images=mock_module,
+                settings=mock_module,
+                agent_threads=mock_module,
+            ),
+        ):
+            tools_dict = build_agent_tools_dict(mock_db, client_pool=pool)
+
+        assert "get_account_info" in tools_dict
+        assert seen_contexts
+        assert all(isinstance(ctx, AgentRuntimeContext) for ctx in seen_contexts)
+        assert all(ctx.client_pool is pool for ctx in seen_contexts)
+        assert all(ctx.runtime_kind == "live" for ctx in seen_contexts)

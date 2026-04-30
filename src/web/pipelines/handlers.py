@@ -586,6 +586,7 @@ async def generate_pipeline(
         engine,
         config=request.app.state.config,
         quality_service=QualityScoringService(db, provider_service=provider_service),
+        client_pool=deps.get_pool(request),
         provider_service=provider_service,
     )
     try:

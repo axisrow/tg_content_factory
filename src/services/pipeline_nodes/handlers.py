@@ -649,6 +649,12 @@ class AgentLoopHandler(BaseNodeHandler):
                 doc = inspect.getdoc(fn) or ""
                 parts.append(f"- {name}: {doc}")
             tool_desc = "\n\nДоступные инструменты:\n" + "\n".join(parts)
+            if "get_account_info" in agent_tools:
+                tool_desc += (
+                    "\n\nЕсли задача касается Telegram-аккаунта, номера, подключения или reconnect, "
+                    "сначала вызови get_account_info. Не делай выводы про SMS/2FA или отключение "
+                    "аккаунта без live результата этого инструмента."
+                )
 
         full_system = system_prompt + tool_desc + self._REACT_SUFFIX
 

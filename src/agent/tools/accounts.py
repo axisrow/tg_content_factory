@@ -7,15 +7,64 @@ from typing import Annotated
 from claude_agent_sdk import tool
 from mcp.types import ToolAnnotations
 
-from src.agent.tools._registry import _text_response, require_confirmation, require_pool, resolve_phone
+from src.agent.runtime_context import AgentRuntimeContext
+from src.agent.tools._registry import _text_response, normalize_phone, require_confirmation, resolve_phone
+
+_NO_LIVE_RUNTIME = "live Telegram runtime unavailable"
+
+
+def _runtime(kwargs: dict, db, client_pool) -> AgentRuntimeContext:
+    ctx = kwargs.get("runtime_context")
+    if isinstance(ctx, AgentRuntimeContext):
+        return ctx
+    return AgentRuntimeContext.build(db=db, client_pool=client_pool, config=kwargs.get("config"))
+
+
+def _matches_phone(phone: str, phone_filter: str) -> bool:
+    if not phone_filter:
+        return True
+    prefix = phone_filter.rstrip("*")
+    return phone == phone_filter or phone.startswith(prefix)
+
+
+async def get_live_account_info_text(runtime: AgentRuntimeContext, phone: str = "") -> str:
+    """Return account info grounded only in the live ClientPool."""
+    if not runtime.has_live_telegram:
+        return _NO_LIVE_RUNTIME
+
+    phone_filter = normalize_phone(phone.strip()) if phone.strip() else ""
+    users = await runtime.client_pool.get_users_info(include_avatar=False)
+    if phone_filter:
+        users = [u for u in users if _matches_phone(str(u.phone), phone_filter)]
+    if not users:
+        return "Live Telegram accounts not found for this request: не найдены."
+
+    db_accounts = await runtime.db.get_accounts()
+    db_by_phone = {a.phone: a for a in db_accounts}
+    lines = [f"Live Telegram accounts ({len(users)}):"]
+    for u in users:
+        db_account = db_by_phone.get(u.phone)
+        name = f"{u.first_name} {u.last_name}".strip() or "-"
+        username = f"@{u.username}" if u.username else "-"
+        premium = "да" if u.is_premium else "нет"
+        active = "да" if getattr(db_account, "is_active", False) else "нет"
+        primary = "да" if getattr(db_account, "is_primary", False) else "нет"
+        session_present = "да" if getattr(db_account, "session_string", "") else "нет"
+        lines.append(
+            f"- {u.phone}: {name} ({username}), premium={premium}, "
+            f"db_active={active}, db_primary={primary}, session-present={session_present}"
+        )
+    return "\n".join(lines)
 
 
 def register(db, client_pool, embedding_service, **kwargs):
+    runtime = _runtime(kwargs, db, client_pool)
     tools = []
 
     @tool(
         "list_accounts",
-        "List all connected Telegram accounts with their status. "
+        "List Telegram accounts from the database only, including stored active/flood status. "
+        "This does not prove whether a live Telegram client is currently connected. "
         "Returns id (account_id used by toggle_account/delete_account), phone, and flood_wait status.",
         {},
     )
@@ -24,7 +73,7 @@ def register(db, client_pool, embedding_service, **kwargs):
             accounts = await db.get_accounts()
             if not accounts:
                 return _text_response("Аккаунты не найдены.")
-            lines = [f"Аккаунты ({len(accounts)}):"]
+            lines = [f"Аккаунты ({len(accounts)}) в БД:"]
             for a in accounts:
                 status = "активен" if a.is_active else "неактивен"
                 flood = ""
@@ -88,13 +137,13 @@ def register(db, client_pool, embedding_service, **kwargs):
 
     tools.append(delete_account)
 
-    @tool("get_flood_status", "Get flood wait status for all accounts", {})
+    @tool("get_flood_status", "Get database flood-wait status for all accounts; this is not live connection state.", {})
     async def get_flood_status(args):
         try:
             accounts = await db.get_accounts()
             if not accounts:
                 return _text_response("Аккаунты не найдены.")
-            lines = ["Flood-статус аккаунтов:"]
+            lines = ["Flood-статус аккаунтов в БД:"]
             for a in accounts:
                 flood = "нет ограничений"
                 if hasattr(a, "flood_wait_until") and a.flood_wait_until:
@@ -144,32 +193,8 @@ def register(db, client_pool, embedding_service, **kwargs):
         {"phone": Annotated[str, "Номер телефона аккаунта (например +79001234567)"]},
     )
     async def get_account_info(args):
-        pool_gate = require_pool(client_pool, "Информация об аккаунтах")
-        if pool_gate:
-            return pool_gate
         try:
-            users = await client_pool.get_users_info(include_avatar=False)
-            phone_filter = args.get("phone", "").strip()
-            if phone_filter:
-                from src.agent.tools._registry import normalize_phone
-
-                phone_filter = normalize_phone(phone_filter)
-                users = [u for u in users if u.phone == phone_filter]
-            if not users:
-                return _text_response("Подключённые аккаунты не найдены.")
-            db_accounts = await db.get_accounts()
-            active_by_phone = {a.phone: a.is_active for a in db_accounts}
-            lines = [f"Аккаунты ({len(users)}):"]
-            for u in users:
-                name = f"{u.first_name} {u.last_name}".strip() or "—"
-                username = f"@{u.username}" if u.username else "—"
-                premium = "да" if u.is_premium else "нет"
-                active = "да" if active_by_phone.get(u.phone, False) else "нет"
-                lines.append(
-                    f"- {u.phone}: {name} ({username}), "
-                    f"premium={premium}, активен={active}"
-                )
-            return _text_response("\n".join(lines))
+            return _text_response(await get_live_account_info_text(runtime, args.get("phone", "")))
         except Exception as e:
             return _text_response(f"Ошибка получения информации об аккаунтах: {e}")
 
