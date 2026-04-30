@@ -8,8 +8,8 @@ import pytest
 
 from src.database.migrations import (
     _migrate_vec_to_portable,
+    _migrate_zai_empty_base_url_to_coding,
     _migrate_zai_legacy_base_url,
-    _migrate_zai_paas_to_coding,
 )
 
 
@@ -311,42 +311,38 @@ async def test_migrate_zai_legacy_base_url_skips_other_providers(tmp_path):
         await conn.close()
 
 
-# === Migration v2: paas → coding ===
+# === Migration v2: empty Z.AI base_url → coding ===
 
 
 @pytest.mark.anyio
 @pytest.mark.aiosqlite_serial
-async def test_migrate_zai_paas_to_coding_rewrites_paas(tmp_path):
+async def test_migrate_zai_empty_base_url_to_coding_leaves_general_url_untouched(tmp_path):
     conn = await _open_zai_db(tmp_path)
     try:
+        valid_payload = _zai_payload(
+            "https://api.z.ai/api/paas/v4",
+            last_validation_error="something stale",
+        )
         await conn.execute(
             "INSERT INTO settings (key, value) VALUES (?, ?)",
-            (
-                _ZAI_PROVIDERS_KEY,
-                _zai_payload(
-                    "https://api.z.ai/api/paas/v4",
-                    last_validation_error="something stale",
-                ),
-            ),
+            (_ZAI_PROVIDERS_KEY, valid_payload),
         )
         await conn.commit()
 
-        await _migrate_zai_paas_to_coding(conn)
+        await _migrate_zai_empty_base_url_to_coding(conn)
 
         cur = await conn.execute(
             "SELECT value FROM settings WHERE key = ?", (_ZAI_PROVIDERS_KEY,)
         )
         row = await cur.fetchone()
-        data = json.loads(row["value"])
-        assert data[0]["plain_fields"]["base_url"] == "https://api.z.ai/api/coding/paas/v4"
-        assert data[0]["last_validation_error"] == ""
+        assert json.loads(row["value"]) == json.loads(valid_payload)
     finally:
         await conn.close()
 
 
 @pytest.mark.anyio
 @pytest.mark.aiosqlite_serial
-async def test_migrate_zai_paas_to_coding_backfills_empty_base_url(tmp_path):
+async def test_migrate_zai_empty_base_url_to_coding_backfills_empty_base_url(tmp_path):
     conn = await _open_zai_db(tmp_path)
     try:
         await conn.execute(
@@ -361,7 +357,7 @@ async def test_migrate_zai_paas_to_coding_backfills_empty_base_url(tmp_path):
         )
         await conn.commit()
 
-        await _migrate_zai_paas_to_coding(conn)
+        await _migrate_zai_empty_base_url_to_coding(conn)
 
         cur = await conn.execute(
             "SELECT value FROM settings WHERE key = ?", (_ZAI_PROVIDERS_KEY,)
@@ -376,7 +372,7 @@ async def test_migrate_zai_paas_to_coding_backfills_empty_base_url(tmp_path):
 
 @pytest.mark.anyio
 @pytest.mark.aiosqlite_serial
-async def test_migrate_zai_paas_to_coding_leaves_coding_url_untouched(tmp_path):
+async def test_migrate_zai_empty_base_url_to_coding_leaves_coding_url_untouched(tmp_path):
     conn = await _open_zai_db(tmp_path)
     try:
         valid_payload = _zai_payload("https://api.z.ai/api/coding/paas/v4")
@@ -386,7 +382,7 @@ async def test_migrate_zai_paas_to_coding_leaves_coding_url_untouched(tmp_path):
         )
         await conn.commit()
 
-        await _migrate_zai_paas_to_coding(conn)
+        await _migrate_zai_empty_base_url_to_coding(conn)
 
         cur = await conn.execute(
             "SELECT value FROM settings WHERE key = ?", (_ZAI_PROVIDERS_KEY,)
@@ -399,17 +395,17 @@ async def test_migrate_zai_paas_to_coding_leaves_coding_url_untouched(tmp_path):
 
 @pytest.mark.anyio
 @pytest.mark.aiosqlite_serial
-async def test_migrate_zai_paas_to_coding_idempotent(tmp_path):
+async def test_migrate_zai_empty_base_url_to_coding_idempotent(tmp_path):
     conn = await _open_zai_db(tmp_path)
     try:
         await conn.execute(
             "INSERT INTO settings (key, value) VALUES (?, ?)",
-            (_ZAI_PROVIDERS_KEY, _zai_payload("https://api.z.ai/api/paas/v4")),
+            (_ZAI_PROVIDERS_KEY, _zai_payload("")),
         )
         await conn.commit()
 
-        await _migrate_zai_paas_to_coding(conn)
-        await _migrate_zai_paas_to_coding(conn)
+        await _migrate_zai_empty_base_url_to_coding(conn)
+        await _migrate_zai_empty_base_url_to_coding(conn)
 
         cur = await conn.execute(
             "SELECT value FROM settings WHERE key = ?", (_ZAI_PROVIDERS_KEY,)
@@ -423,10 +419,10 @@ async def test_migrate_zai_paas_to_coding_idempotent(tmp_path):
 
 @pytest.mark.anyio
 @pytest.mark.aiosqlite_serial
-async def test_migrate_zai_paas_to_coding_handles_missing_setting(tmp_path):
+async def test_migrate_zai_empty_base_url_to_coding_handles_missing_setting(tmp_path):
     conn = await _open_zai_db(tmp_path)
     try:
-        await _migrate_zai_paas_to_coding(conn)
+        await _migrate_zai_empty_base_url_to_coding(conn)
 
         cur = await conn.execute(
             "SELECT value FROM settings WHERE key = ?", (_ZAI_PROVIDERS_KEY,)
@@ -438,7 +434,7 @@ async def test_migrate_zai_paas_to_coding_handles_missing_setting(tmp_path):
 
 @pytest.mark.anyio
 @pytest.mark.aiosqlite_serial
-async def test_migrate_zai_paas_to_coding_skips_other_providers(tmp_path):
+async def test_migrate_zai_empty_base_url_to_coding_skips_other_providers(tmp_path):
     conn = await _open_zai_db(tmp_path)
     try:
         payload = json.dumps(
@@ -460,7 +456,7 @@ async def test_migrate_zai_paas_to_coding_skips_other_providers(tmp_path):
         )
         await conn.commit()
 
-        await _migrate_zai_paas_to_coding(conn)
+        await _migrate_zai_empty_base_url_to_coding(conn)
 
         cur = await conn.execute(
             "SELECT value FROM settings WHERE key = ?", (_ZAI_PROVIDERS_KEY,)

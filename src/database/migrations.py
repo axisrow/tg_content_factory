@@ -828,17 +828,14 @@ async def run_migrations(db: aiosqlite.Connection) -> bool:
         )
         await db.commit()
 
-    # Move every Z.AI provider sitting on the general PaaS endpoint to the
-    # Coding Plan endpoint. The general endpoint is pay-per-token (account
-    # balance) and is rarely what users intend — most Z.AI subscribers come
-    # via the GLM Coding Plan, which lives on /api/coding/paas/v4. Pay-per-
-    # token users can switch back manually; the runtime will surface a
-    # 1311 error if the chosen model is not in the subscription.
+    # Backfill empty Z.AI base_url values to the Coding Plan endpoint. Explicit
+    # general PaaS URLs are left intact because pay-per-token PaaS and Coding
+    # Plan endpoints are not interchangeable.
     cur = await db.execute(
         "SELECT value FROM settings WHERE key = '_migration_zai_base_url_v2' LIMIT 1"
     )
     if not await cur.fetchone():
-        await _migrate_zai_paas_to_coding(db)
+        await _migrate_zai_empty_base_url_to_coding(db)
         await db.execute(
             "INSERT OR IGNORE INTO settings (key, value) VALUES ('_migration_zai_base_url_v2', '1')"
         )
@@ -900,23 +897,17 @@ async def _migrate_zai_legacy_base_url(db: aiosqlite.Connection) -> None:
     logger.info("Migrated legacy Z.AI Anthropic-compatible base_url to %s", ZAI_GENERAL_BASE_URL)
 
 
-async def _migrate_zai_paas_to_coding(db: aiosqlite.Connection) -> None:
-    """Repoint every Z.AI provider with the general PaaS base_url to the Coding Plan endpoint.
+async def _migrate_zai_empty_base_url_to_coding(db: aiosqlite.Connection) -> None:
+    """Backfill empty Z.AI base_url values to the Coding Plan endpoint.
 
-    Background: the general PaaS endpoint (``https://api.z.ai/api/paas/v4``) is
-    pay-per-token tied to the account balance and is unrelated to subscription
-    benefits. The GLM Coding Plan lives on a dedicated endpoint
-    (``https://api.z.ai/api/coding/paas/v4``) and most Z.AI users come via the
-    plan rather than top-up balance, so we default to the Coding Plan endpoint.
-    Pay-per-token users will see code 1311 ("model not in subscription") and
-    can revert manually.
+    Older versions could save a Z.AI provider with an empty URL because runtime
+    loading supplied a default. Empty URLs are now invalid, so this preserves
+    upgrade behavior for those installs while leaving explicit pay-per-token
+    PaaS URLs untouched.
     """
     import json
 
-    from src.agent.provider_registry import (
-        ZAI_CODING_BASE_URL,
-        ZAI_GENERAL_BASE_URL,
-    )
+    from src.agent.provider_registry import ZAI_CODING_BASE_URL
 
     cur = await db.execute(
         "SELECT value FROM settings WHERE key = 'agent_deepagents_providers_v1' LIMIT 1"
@@ -939,7 +930,7 @@ async def _migrate_zai_paas_to_coding(db: aiosqlite.Connection) -> None:
         if not isinstance(plain, dict):
             continue
         current = (str(plain.get("base_url", "") or "")).strip().rstrip("/")
-        if current in {"", ZAI_GENERAL_BASE_URL}:
+        if current == "":
             plain["base_url"] = ZAI_CODING_BASE_URL
             item["last_validation_error"] = ""
             changed = True
@@ -952,7 +943,7 @@ async def _migrate_zai_paas_to_coding(db: aiosqlite.Connection) -> None:
         (json.dumps(data, ensure_ascii=False),),
     )
     await db.commit()
-    logger.info("Migrated Z.AI base_url from empty/general endpoint to %s", ZAI_CODING_BASE_URL)
+    logger.info("Migrated empty Z.AI base_url to %s", ZAI_CODING_BASE_URL)
 
 
 async def _migrate_tool_permission_key(db: aiosqlite.Connection, old_key: str, new_key: str) -> None:
