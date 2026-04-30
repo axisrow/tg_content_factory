@@ -12,6 +12,7 @@ Supported env vars (examples)
 - FIREWORKS_BASE, FIREWORKS_API_KEY — Fireworks inference endpoint
 - DEEPSEEK_BASE, DEEPSEEK_API_KEY — DeepSeek endpoint
 - TOGETHER_BASE, TOGETHER_API_KEY — Together API base
+- ZAI_API_KEY — Z.AI API key (OpenAI-compatible chat completions)
 
 Env-based registration
 
@@ -22,6 +23,13 @@ Settings UI
 - Use the Settings → Developer → Providers form to add, edit or remove provider configurations. Secret fields are encrypted before storage using SESSION_ENCRYPTION_KEY; when this key is not set the UI is read-only for provider secrets.
 - The provider registry uses canonical provider names (e.g. "openai", "cohere", "ollama", "huggingface", "context7").
 - For local Ollama testing, set OLLAMA_BASE to your server URL and optionally OLLAMA_DEFAULT_MODEL.
+
+Z.AI endpoints
+
+- The `zai` provider uses the OpenAI-compatible Z.AI API. Empty Base URL defaults to the general endpoint: `https://api.z.ai/api/paas/v4`.
+- GLM Coding Plan users can opt in by setting Base URL to `https://api.z.ai/api/coding/paas/v4`; model refresh and chat runtime both use the configured endpoint.
+- Do not use `https://api.z.ai/api/anthropic` or `/anthropic/v1` with the `zai` provider. That URL is the Anthropic-compatible proxy for tools such as Claude Code; configure the `anthropic` provider for that endpoint instead.
+- References: https://docs.z.ai/api-reference/introduction and https://docs.z.ai/devpack/tool/claude
 
 Context7 & operator caution
 

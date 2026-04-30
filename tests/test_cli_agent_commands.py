@@ -718,7 +718,7 @@ def test_run_chat_prompt_real_manager_uses_db_deepagents_provider(cli_db, capsys
                     enabled=True,
                     priority=0,
                     selected_model="glm-5-turbo",
-                    plain_fields={"base_url": "https://api.z.ai/api/anthropic/v1"},
+                    plain_fields={"base_url": ""},
                     secret_fields={"api_key": "zai-key"},
                 )
             ]
