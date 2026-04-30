@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+import asyncio
+import json
 import os
 from dataclasses import dataclass
 from typing import Any
 
+import httpx
 import pytest
 
 from src.agent.provider_registry import (
-    ZAI_DEFAULT_BASE_URL,
+    ZAI_CODING_BASE_URL,
     ZAI_GENERAL_BASE_URL,
     ProviderRuntimeConfig,
 )
@@ -65,8 +68,6 @@ class FakeAiohttpClientSession:
     ) -> FakeAiohttpResponse:
         del kwargs
         self.requests.append(RecordedRequest("POST", url, headers, json))
-        if url.startswith(ZAI_GENERAL_BASE_URL.rstrip("/") + "/chat/completions"):
-            return FakeAiohttpResponse(429, {"error": "rate limited on general endpoint"})
         return FakeAiohttpResponse(
             200,
             {"choices": [{"message": {"content": "runtime-ok"}}]},
@@ -92,11 +93,11 @@ async def _save_zai_config(db, base_url: str = "") -> AppConfig:
 
 
 @pytest.mark.anyio
-async def test_zai_db_config_builds_runtime_adapter_and_calls_coding_chat_endpoint(
+async def test_zai_db_config_builds_runtime_adapter_and_calls_default_general_chat_endpoint(
     db,
     monkeypatch,
 ):
-    config = await _save_zai_config(db, ZAI_DEFAULT_BASE_URL)
+    config = await _save_zai_config(db, "")
     FakeAiohttpClientSession.requests = []
     monkeypatch.setattr(
         "src.services.provider_service.aiohttp.ClientSession",
@@ -116,7 +117,7 @@ async def test_zai_db_config_builds_runtime_adapter_and_calls_coding_chat_endpoi
     assert result == "runtime-ok"
     request = FakeAiohttpClientSession.requests[-1]
     assert request.method == "POST"
-    assert request.url == f"{ZAI_DEFAULT_BASE_URL}/chat/completions"
+    assert request.url == f"{ZAI_GENERAL_BASE_URL}/chat/completions"
     assert request.headers == {
         "Content-Type": "application/json",
         "Authorization": "Bearer zai-test-key",
@@ -130,19 +131,8 @@ async def test_zai_db_config_builds_runtime_adapter_and_calls_coding_chat_endpoi
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize(
-    "legacy_base_url",
-    [
-        "https://api.z.ai/api/anthropic",
-        "https://api.z.ai/api/anthropic/v1",
-    ],
-)
-async def test_zai_legacy_anthropic_base_url_is_normalized_before_runtime_call(
-    db,
-    monkeypatch,
-    legacy_base_url,
-):
-    config = await _save_zai_config(db, legacy_base_url)
+async def test_zai_explicit_coding_endpoint_is_honored_by_runtime_adapter(db, monkeypatch):
+    config = await _save_zai_config(db, ZAI_CODING_BASE_URL)
     FakeAiohttpClientSession.requests = []
     monkeypatch.setattr(
         "src.services.provider_service.aiohttp.ClientSession",
@@ -150,16 +140,56 @@ async def test_zai_legacy_anthropic_base_url_is_normalized_before_runtime_call(
     )
 
     service = RuntimeProviderService(db, config)
-    await service.load_db_providers()
+    assert await service.load_db_providers() == 1
+
     result = await service.get_provider_callable("zai")(prompt="hello", model="glm-5-turbo")
 
     assert result == "runtime-ok"
-    assert FakeAiohttpClientSession.requests[-1].url == f"{ZAI_DEFAULT_BASE_URL}/chat/completions"
+    assert FakeAiohttpClientSession.requests[-1].url == f"{ZAI_CODING_BASE_URL}/chat/completions"
 
 
 @pytest.mark.anyio
-async def test_zai_models_success_does_not_mask_wrong_general_chat_endpoint(db, monkeypatch):
-    config = await _save_zai_config(db, ZAI_GENERAL_BASE_URL)
+@pytest.mark.parametrize(
+    "legacy_base_url",
+    [
+        "https://api.z.ai/api/anthropic",
+        "https://api.z.ai/api/anthropic/v1",
+    ],
+)
+async def test_zai_legacy_anthropic_base_url_is_rejected_before_runtime_registration(
+    db,
+    legacy_base_url,
+):
+    config = await _save_zai_config(db, legacy_base_url)
+    db_service = DbAgentProviderService(db, config)
+    loaded = await db_service.load_provider_configs()
+
+    validation_error = db_service.validate_provider_config(loaded[0])
+    assert "Anthropic-compatible proxy" in validation_error
+    assert "anthropic provider" in validation_error
+    assert ZAI_GENERAL_BASE_URL in validation_error
+
+    service = RuntimeProviderService(db, config)
+    assert await service.load_db_providers() == 0
+    assert not service.has_providers()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "configured_base_url,expected_models_url",
+    [
+        ("", f"{ZAI_GENERAL_BASE_URL}/models"),
+        (ZAI_GENERAL_BASE_URL, f"{ZAI_GENERAL_BASE_URL}/models"),
+        (ZAI_CODING_BASE_URL, f"{ZAI_CODING_BASE_URL}/models"),
+    ],
+)
+async def test_zai_model_refresh_uses_configured_base_url(
+    db,
+    monkeypatch,
+    configured_base_url,
+    expected_models_url,
+):
+    config = await _save_zai_config(db, configured_base_url)
     db_service = DbAgentProviderService(db, config)
 
     fetches: list[tuple[str, dict[str, str] | None]] = []
@@ -169,26 +199,169 @@ async def test_zai_models_success_does_not_mask_wrong_general_chat_endpoint(db, 
         return {"data": [{"id": "glm-5-turbo"}]}
 
     monkeypatch.setattr(db_service, "_fetch_json", fake_fetch_json)
-    entry = await db_service.refresh_models_for_provider("zai", _zai_cfg(ZAI_GENERAL_BASE_URL))
+    entry = await db_service.refresh_models_for_provider("zai", _zai_cfg(configured_base_url))
 
     assert entry.error == ""
     assert entry.models == ["glm-5-turbo"]
-    assert fetches == [(f"{ZAI_DEFAULT_BASE_URL}/models", {"Authorization": "Bearer zai-test-key"})]
+    assert fetches == [(expected_models_url, {"Authorization": "Bearer zai-test-key"})]
 
-    FakeAiohttpClientSession.requests = []
-    monkeypatch.setattr(
-        "src.services.provider_service.aiohttp.ClientSession",
-        FakeAiohttpClientSession,
+
+@pytest.mark.anyio
+async def test_zai_model_refresh_rejects_legacy_anthropic_models_endpoint(db, monkeypatch):
+    config = await _save_zai_config(db, "https://api.z.ai/api/anthropic/v1")
+    db_service = DbAgentProviderService(db, config)
+
+    async def fake_fetch_json(url: str, headers: dict[str, str] | None = None) -> dict[str, Any]:
+        raise AssertionError(f"legacy URL must be rejected before HTTP fetch: {url} {headers}")
+
+    monkeypatch.setattr(db_service, "_fetch_json", fake_fetch_json)
+    entry = await db_service.refresh_models_for_provider(
+        "zai",
+        _zai_cfg("https://api.z.ai/api/anthropic/v1"),
     )
-    runtime_service = RuntimeProviderService(db, config)
-    await runtime_service.load_db_providers()
 
-    with pytest.raises(RuntimeError, match="Provider error 429"):
-        await runtime_service.get_provider_callable("zai")(prompt="hello", model="glm-5-turbo")
+    assert entry.error
+    assert "Anthropic-compatible proxy" in entry.error
 
-    assert FakeAiohttpClientSession.requests[-1].url == (
-        f"{ZAI_GENERAL_BASE_URL}/chat/completions"
+
+@pytest.mark.parametrize(
+    "provider,base_url,model,expected_url",
+    [
+        # Expected URLs are hardcoded so the test catches changes to the
+        # configured endpoint flowing through LangChain.
+        (
+            "zai",
+            "",
+            "glm-5-turbo",
+            "https://api.z.ai/api/paas/v4/chat/completions",
+        ),
+        (
+            "zai",
+            "https://api.z.ai/api/coding/paas/v4",
+            "glm-5-turbo",
+            "https://api.z.ai/api/coding/paas/v4/chat/completions",
+        ),
+        (
+            "openai",
+            "https://api.openai.com/v1",
+            "gpt-4o-mini",
+            "https://api.openai.com/v1/chat/completions",
+        ),
+    ],
+)
+@pytest.mark.anyio
+async def test_deepagents_chat_runs_real_init_chat_model_and_create_deep_agent(
+    db,
+    monkeypatch,
+    provider,
+    base_url,
+    model,
+    expected_url,
+):
+    """Build a real langchain model + real deepagents agent and verify the
+    actual outbound HTTP call hits the correct OpenAI-compat endpoint.
+
+    Catches regressions on the AgentManager → langchain → openai → httpx path
+    that mocking init_chat_model / create_deep_agent would silently miss
+    (e.g. the Z.AI Coding endpoint regression from #516).
+    """
+    config = AppConfig()
+    config.security.session_encryption_key = "deepagents-runtime-secret"
+    cfg = ProviderRuntimeConfig(
+        provider=provider,
+        enabled=True,
+        priority=0,
+        selected_model=model,
+        plain_fields={"base_url": base_url},
+        secret_fields={"api_key": f"{provider}-test-key"},
     )
+    await DbAgentProviderService(db, config).save_provider_configs([cfg])
+
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    captured_requests: list[dict[str, Any]] = []
+
+    def _build_response(request: httpx.Request) -> httpx.Response:
+        body = {
+            "id": "chatcmpl-test",
+            "object": "chat.completion",
+            "created": 0,
+            "model": model,
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": "deepagents-runtime-ok",
+                    },
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+        }
+        return httpx.Response(
+            status_code=200,
+            headers={"Content-Type": "application/json"},
+            content=json.dumps(body).encode("utf-8"),
+            request=request,
+        )
+
+    def _capture(request: httpx.Request) -> None:
+        try:
+            payload = json.loads(request.content) if request.content else None
+        except json.JSONDecodeError:
+            payload = None
+        captured_requests.append(
+            {
+                "method": request.method,
+                "url": str(request.url),
+                "headers": {k.lower(): v for k, v in request.headers.items()},
+                "payload": payload,
+            }
+        )
+
+    def fake_sync_send(self, request, **kwargs):
+        del self, kwargs
+        _capture(request)
+        return _build_response(request)
+
+    async def fake_async_send(self, request, **kwargs):
+        del self, kwargs
+        _capture(request)
+        return _build_response(request)
+
+    monkeypatch.setattr(httpx.Client, "send", fake_sync_send)
+    monkeypatch.setattr(httpx.AsyncClient, "send", fake_async_send)
+
+    # Build the real DeepagentsBackend → real init_chat_model → real
+    # create_deep_agent. The backend's _build_agent reads cfg, normalizes
+    # the Z.AI base URL and selects model_provider="openai" — exactly the
+    # production path that the #516 regression broke.
+    from src.agent.manager import DeepagentsBackend
+
+    backend = DeepagentsBackend(db, config)
+    await backend.refresh_settings_cache()
+    agent = backend._build_agent(cfg, tools=[])
+
+    result = await asyncio.to_thread(
+        agent.invoke,
+        {"messages": [{"role": "user", "content": "hello"}]},
+    )
+
+    assert captured_requests, "Expected at least one HTTP request from deepagents agent"
+    first = captured_requests[0]
+    assert first["method"] == "POST"
+    assert first["url"] == expected_url
+    assert first["headers"].get("authorization") == f"Bearer {provider}-test-key"
+    assert first["payload"] is not None
+    assert first["payload"]["model"] == model
+    user_messages = [m for m in first["payload"]["messages"] if m.get("role") == "user"]
+    assert any("hello" in (m.get("content") or "") for m in user_messages)
+
+    text = backend._extract_result_text(result)
+    assert "deepagents-runtime-ok" in text
 
 
 @pytest.mark.real_provider_smoke

@@ -265,9 +265,16 @@ class AgentProviderService:
             return make_anthropic_adapter(api_key, base_url=base_url or None)
 
         if provider == "zai":
-            from src.agent.provider_registry import normalize_zai_base_url
+            from src.agent.provider_registry import (
+                is_zai_legacy_anthropic_base_url,
+                normalize_zai_base_url,
+            )
 
-            base_url = normalize_zai_base_url(cfg.plain_fields.get("base_url", ""))
+            raw_base_url = cfg.plain_fields.get("base_url", "")
+            if is_zai_legacy_anthropic_base_url(raw_base_url):
+                logger.debug("Skipping db provider %s: Anthropic-compatible URL is not OpenAI-compatible", provider)
+                return None
+            base_url = normalize_zai_base_url(raw_base_url)
             return self._make_openai_compat_provider(base_url, api_key)
 
         if provider == "google_genai":
