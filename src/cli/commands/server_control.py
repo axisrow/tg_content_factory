@@ -11,6 +11,10 @@ from src.config import load_config
 def run_stop(args: argparse.Namespace) -> None:
     config = load_config(args.config)
     try:
+        print(
+            "Останавливаю сервер gracefully. Если сейчас идёт сбор канала, "
+            "подожду завершения активной задачи; остальные останутся pending в БД."
+        )
         outcome = stop_server(pid_file_path(config))
     except ProcessControlError as exc:
         print(str(exc))
@@ -23,6 +27,10 @@ def run_stop(args: argparse.Namespace) -> None:
 def run_restart(args: argparse.Namespace) -> None:
     config = load_config(args.config)
     try:
+        print(
+            "Перезапускаю сервер gracefully. Если сейчас идёт сбор канала, "
+            "подожду завершения активной задачи; остальные останутся pending в БД."
+        )
         outcome = stop_server(pid_file_path(config))
     except ProcessControlError as exc:
         print(str(exc))

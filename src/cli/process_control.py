@@ -139,8 +139,8 @@ def unregister_current_process(path: Path) -> None:
 
 def stop_server(
     path: Path,
-    timeout_sec: float = 10.0,
-    kill_timeout_sec: float = 1.0,
+    timeout_sec: float = 150.0,
+    kill_timeout_sec: float = 5.0,
 ) -> StopOutcome:
     pid = read_pid(path)
     if pid is None:

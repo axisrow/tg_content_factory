@@ -20,12 +20,45 @@ class ChatRequest(BaseModel):
     model: str | None = None
 
 
+def _agent_unavailable_copy(runtime_state: deps.AgentRuntimeState) -> tuple[str, str]:
+    if runtime_state.state == "starting":
+        return (
+            "Агент запускается.",
+            "Embedded worker поднимает live runtime. Обновите страницу через несколько секунд.",
+        )
+    if runtime_state.state == "failed":
+        return (
+            "Агент не запустился.",
+            runtime_state.error or "Embedded worker failed to start. Check server logs for details.",
+        )
+    return (
+        "Чат недоступен в web-процессе.",
+        "Agent chat is only available in the worker process. "
+        "Run `python -m src.main worker` alongside the web server to enable it.",
+    )
+
+
+def _agent_unavailable_response(runtime_state: deps.AgentRuntimeState) -> JSONResponse:
+    _, detail = _agent_unavailable_copy(runtime_state)
+    headers = {"Retry-After": "3"} if runtime_state.state == "starting" else None
+    return JSONResponse(
+        {
+            "detail": detail,
+            "runtime_state": runtime_state.state,
+        },
+        status_code=503,
+        headers=headers,
+    )
+
+
 @router.get("", response_class=HTMLResponse)
 async def agent_page(request: Request, thread_id: int | None = None):
     db = deps.get_db(request)
-    agent_manager = deps.get_agent_manager(request)
+    agent_runtime_state = deps.get_agent_runtime_state(request)
+    agent_manager = agent_runtime_state.manager
     threads = await db.get_agent_threads()
     agent_status = None
+    agent_disabled_title = None
     agent_disabled_reason = None
     if agent_manager is not None:
         runtime_status = await agent_manager.get_runtime_status()
@@ -41,10 +74,7 @@ async def agent_page(request: Request, thread_id: int | None = None):
             "error": runtime_status.error,
         }
     else:
-        agent_disabled_reason = (
-            "Agent chat is only available in the worker process. "
-            "Run `python -m src.main worker` alongside the web server to enable it."
-        )
+        agent_disabled_title, agent_disabled_reason = _agent_unavailable_copy(agent_runtime_state)
 
     messages = []
     active_thread = None
@@ -72,6 +102,8 @@ async def agent_page(request: Request, thread_id: int | None = None):
             "active_thread": active_thread,
             "messages": messages,
             "agent_status": agent_status,
+            "agent_runtime_state": agent_runtime_state.state,
+            "agent_disabled_title": agent_disabled_title,
             "agent_disabled_reason": agent_disabled_reason,
             "model_options": CLAUDE_MODELS,
         },
@@ -198,15 +230,10 @@ async def resolve_permission(request: Request, thread_id: int, request_id: str):
     choice = body.get("choice", "deny")
     if choice not in ("once", "session", "deny"):
         raise HTTPException(status_code=400, detail="Invalid choice")
-    agent_manager = deps.get_agent_manager(request)
+    agent_runtime_state = deps.get_agent_runtime_state(request)
+    agent_manager = agent_runtime_state.manager
     if agent_manager is None:
-        raise HTTPException(
-            status_code=503,
-            detail=(
-                "Agent chat is only available in the worker process. "
-                "Run `python -m src.main worker` alongside the web server."
-            ),
-        )
+        return _agent_unavailable_response(agent_runtime_state)
     ok = agent_manager.permission_gate.resolve(request_id, choice)
     return JSONResponse({"ok": ok})
 
@@ -233,15 +260,10 @@ async def chat(request: Request, thread_id: int):
     model = raw_model if raw_model in CLAUDE_MODEL_IDS else None
 
     db = deps.get_db(request)
-    agent_manager = deps.get_agent_manager(request)
+    agent_runtime_state = deps.get_agent_runtime_state(request)
+    agent_manager = agent_runtime_state.manager
     if agent_manager is None:
-        raise HTTPException(
-            status_code=503,
-            detail=(
-                "Agent chat is only available in the worker process. "
-                "Run `python -m src.main worker` alongside the web server."
-            ),
-        )
+        return _agent_unavailable_response(agent_runtime_state)
     runtime_status = await agent_manager.get_runtime_status()
     if runtime_status.selected_backend is None:
         raise HTTPException(
