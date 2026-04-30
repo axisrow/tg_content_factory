@@ -888,7 +888,7 @@ async def test_fetch_live_models_success_updates_cache(db, monkeypatch):
 
 @pytest.mark.anyio
 async def test_fetch_live_models_zai_uses_bearer_auth(db, monkeypatch):
-    """Z.AI live model fetch uses general API endpoint with Bearer auth by default."""
+    """Z.AI live model fetch uses the configured general API endpoint with Bearer auth."""
     config = AppConfig()
     config.security.session_encryption_key = "provider-secret"
     service = AgentProviderService(db, config)
@@ -898,6 +898,7 @@ async def test_fetch_live_models_zai_uses_bearer_auth(db, monkeypatch):
         enabled=True,
         priority=0,
         selected_model="glm-5",
+        plain_fields={"base_url": ZAI_GENERAL_BASE_URL},
         secret_fields={"api_key": "zai-key"},
     )
 
@@ -917,6 +918,27 @@ async def test_fetch_live_models_zai_uses_bearer_auth(db, monkeypatch):
     assert models == ["glm-5"]
     assert captured["url"] == f"{ZAI_GENERAL_BASE_URL}/models"
     assert captured["headers"] == {"Authorization": "Bearer zai-key"}
+
+
+@pytest.mark.anyio
+async def test_fetch_live_models_zai_requires_explicit_base_url(db):
+    """Empty base_url is rejected before hitting the network."""
+    config = AppConfig()
+    config.security.session_encryption_key = "provider-secret"
+    service = AgentProviderService(db, config)
+
+    cfg = ProviderRuntimeConfig(
+        provider="zai",
+        enabled=True,
+        priority=0,
+        selected_model="glm-5",
+        secret_fields={"api_key": "zai-key"},
+    )
+
+    spec = provider_spec("zai")
+    assert spec is not None
+    with pytest.raises(RuntimeError, match="Base URL is required"):
+        await service._fetch_live_models(spec, cfg)
 
 
 @pytest.mark.anyio
@@ -1232,12 +1254,19 @@ def test_canonical_endpoint_fingerprint_for_zai_default_and_coding_urls(db):
     """Known Z.AI OpenAI-compatible endpoints are canonicalized distinctly."""
     service = AgentProviderService(db, AppConfig())
 
-    default_cfg = ProviderRuntimeConfig(
+    empty_cfg = ProviderRuntimeConfig(
         provider="zai",
         enabled=True,
         priority=0,
         selected_model="glm-5-turbo",
         plain_fields={"base_url": ""},
+    )
+    general_cfg = ProviderRuntimeConfig(
+        provider="zai",
+        enabled=True,
+        priority=0,
+        selected_model="glm-5-turbo",
+        plain_fields={"base_url": ZAI_GENERAL_BASE_URL},
     )
     coding_cfg = ProviderRuntimeConfig(
         provider="zai",
@@ -1247,7 +1276,10 @@ def test_canonical_endpoint_fingerprint_for_zai_default_and_coding_urls(db):
         plain_fields={"base_url": ZAI_CODING_BASE_URL},
     )
 
-    assert service.canonical_endpoint_fingerprint(default_cfg) == ZAI_GENERAL_BASE_URL
+    # Empty base_url no longer auto-fills a default; the canonical fingerprint
+    # treats it as unknown/custom (None).
+    assert service.canonical_endpoint_fingerprint(empty_cfg) is None
+    assert service.canonical_endpoint_fingerprint(general_cfg) == ZAI_GENERAL_BASE_URL
     assert service.canonical_endpoint_fingerprint(coding_cfg) == ZAI_CODING_BASE_URL
 
 
@@ -1297,6 +1329,7 @@ async def test_zai_fetch_models_http_error_propagates(db, monkeypatch):
         enabled=True,
         priority=0,
         selected_model="glm-5",
+        plain_fields={"base_url": ZAI_GENERAL_BASE_URL},
         secret_fields={"api_key": "zai-key"},
     )
 
@@ -1322,6 +1355,7 @@ async def test_zai_fetch_models_empty_response(db, monkeypatch):
         enabled=True,
         priority=0,
         selected_model="",
+        plain_fields={"base_url": ZAI_GENERAL_BASE_URL},
         secret_fields={"api_key": "zai-key"},
     )
 
@@ -1347,6 +1381,7 @@ async def test_zai_fetch_models_missing_api_key(db, monkeypatch):
         enabled=True,
         priority=0,
         selected_model="",
+        plain_fields={"base_url": ZAI_GENERAL_BASE_URL},
         # No api_key in secret_fields
     )
 

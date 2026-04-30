@@ -815,7 +815,144 @@ async def run_migrations(db: aiosqlite.Connection) -> bool:
         )
         await db.commit()
 
+    # Rewrite legacy Anthropic-compatible Z.AI base_url to the OpenAI-compatible
+    # default. Older versions stored https://api.z.ai/api/anthropic[/v1] which
+    # the deepagents runtime now rejects (see #518/#519/#526).
+    cur = await db.execute(
+        "SELECT value FROM settings WHERE key = '_migration_zai_base_url_v1' LIMIT 1"
+    )
+    if not await cur.fetchone():
+        await _migrate_zai_legacy_base_url(db)
+        await db.execute(
+            "INSERT OR IGNORE INTO settings (key, value) VALUES ('_migration_zai_base_url_v1', '1')"
+        )
+        await db.commit()
+
+    # Move every Z.AI provider sitting on the general PaaS endpoint to the
+    # Coding Plan endpoint. The general endpoint is pay-per-token (account
+    # balance) and is rarely what users intend — most Z.AI subscribers come
+    # via the GLM Coding Plan, which lives on /api/coding/paas/v4. Pay-per-
+    # token users can switch back manually; the runtime will surface a
+    # 1311 error if the chosen model is not in the subscription.
+    cur = await db.execute(
+        "SELECT value FROM settings WHERE key = '_migration_zai_base_url_v2' LIMIT 1"
+    )
+    if not await cur.fetchone():
+        await _migrate_zai_paas_to_coding(db)
+        await db.execute(
+            "INSERT OR IGNORE INTO settings (key, value) VALUES ('_migration_zai_base_url_v2', '1')"
+        )
+        await db.commit()
+
     return fts_available
+
+
+async def _migrate_zai_legacy_base_url(db: aiosqlite.Connection) -> None:
+    """Rewrite legacy Z.AI Anthropic-compatible base_url to the OpenAI-compatible default.
+
+    The deepagents runtime calls Z.AI through ``init_chat_model("openai", base_url=...)``
+    which only works against the ``/api/paas/v4`` family. Existing installs may still
+    have ``https://api.z.ai/api/anthropic`` saved from earlier versions; this rewrites
+    them in-place and clears the stale ``last_validation_error`` so the UI stops
+    showing the old message.
+    """
+    import json
+
+    from src.agent.provider_registry import (
+        ZAI_GENERAL_BASE_URL,
+        is_zai_legacy_anthropic_base_url,
+    )
+
+    cur = await db.execute(
+        "SELECT value FROM settings WHERE key = 'agent_deepagents_providers_v1' LIMIT 1"
+    )
+    row = await cur.fetchone()
+    if not row or not row["value"]:
+        return
+    try:
+        data = json.loads(row["value"])
+    except (json.JSONDecodeError, TypeError):
+        return
+    if not isinstance(data, list):
+        return
+
+    changed = False
+    for item in data:
+        if not isinstance(item, dict) or item.get("provider") != "zai":
+            continue
+        plain = item.get("plain_fields")
+        if not isinstance(plain, dict):
+            continue
+        current = str(plain.get("base_url", "") or "")
+        if is_zai_legacy_anthropic_base_url(current):
+            plain["base_url"] = ZAI_GENERAL_BASE_URL
+            item["last_validation_error"] = ""
+            changed = True
+
+    if not changed:
+        return
+
+    await db.execute(
+        "UPDATE settings SET value = ? WHERE key = 'agent_deepagents_providers_v1'",
+        (json.dumps(data, ensure_ascii=False),),
+    )
+    await db.commit()
+    logger.info("Migrated legacy Z.AI Anthropic-compatible base_url to %s", ZAI_GENERAL_BASE_URL)
+
+
+async def _migrate_zai_paas_to_coding(db: aiosqlite.Connection) -> None:
+    """Repoint every Z.AI provider with the general PaaS base_url to the Coding Plan endpoint.
+
+    Background: the general PaaS endpoint (``https://api.z.ai/api/paas/v4``) is
+    pay-per-token tied to the account balance and is unrelated to subscription
+    benefits. The GLM Coding Plan lives on a dedicated endpoint
+    (``https://api.z.ai/api/coding/paas/v4``) and most Z.AI users come via the
+    plan rather than top-up balance, so we default to the Coding Plan endpoint.
+    Pay-per-token users will see code 1311 ("model not in subscription") and
+    can revert manually.
+    """
+    import json
+
+    from src.agent.provider_registry import (
+        ZAI_CODING_BASE_URL,
+        ZAI_GENERAL_BASE_URL,
+    )
+
+    cur = await db.execute(
+        "SELECT value FROM settings WHERE key = 'agent_deepagents_providers_v1' LIMIT 1"
+    )
+    row = await cur.fetchone()
+    if not row or not row["value"]:
+        return
+    try:
+        data = json.loads(row["value"])
+    except (json.JSONDecodeError, TypeError):
+        return
+    if not isinstance(data, list):
+        return
+
+    changed = False
+    for item in data:
+        if not isinstance(item, dict) or item.get("provider") != "zai":
+            continue
+        plain = item.get("plain_fields")
+        if not isinstance(plain, dict):
+            continue
+        current = (str(plain.get("base_url", "") or "")).strip().rstrip("/")
+        if current == ZAI_GENERAL_BASE_URL:
+            plain["base_url"] = ZAI_CODING_BASE_URL
+            item["last_validation_error"] = ""
+            changed = True
+
+    if not changed:
+        return
+
+    await db.execute(
+        "UPDATE settings SET value = ? WHERE key = 'agent_deepagents_providers_v1'",
+        (json.dumps(data, ensure_ascii=False),),
+    )
+    await db.commit()
+    logger.info("Migrated Z.AI base_url from %s to %s", ZAI_GENERAL_BASE_URL, ZAI_CODING_BASE_URL)
 
 
 async def _migrate_tool_permission_key(db: aiosqlite.Connection, old_key: str, new_key: str) -> None:
