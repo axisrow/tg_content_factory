@@ -104,6 +104,50 @@ class TestDeepagentsSyncGetFloodStatus:
         assert "Flood-статус" in result
 
 
+class TestDeepagentsSyncGetAccountInfo:
+    def test_no_live_runtime(self, mock_db):
+        from src.agent.tools.deepagents_sync import build_deepagents_tools
+
+        tools = build_deepagents_tools(mock_db)
+        tool_map = {t.__name__: t for t in tools}
+        result = tool_map["get_account_info"]()
+        assert result == "live Telegram runtime unavailable"
+        lowered = result.lower()
+        assert "disabled" not in lowered
+        assert "sms" not in lowered
+        assert "2fa" not in lowered
+
+    def test_live_pool_via_sync_bridge(self, mock_db):
+        from src.agent.tools.deepagents_sync import build_deepagents_tools
+
+        pool = MagicMock()
+        pool.get_users_info = AsyncMock(return_value=[
+            SimpleNamespace(
+                phone="+8613000000000",
+                first_name="Live",
+                last_name="Pool",
+                username="livepool",
+                is_premium=False,
+            )
+        ])
+        mock_db.get_accounts = AsyncMock(return_value=[
+            SimpleNamespace(
+                id=1,
+                phone="+8613000000000",
+                is_active=True,
+                is_primary=True,
+                session_string="s",
+            )
+        ])
+        tools = build_deepagents_tools(mock_db, client_pool=pool)
+        tool_map = {t.__name__: t for t in tools}
+        result = tool_map["get_account_info"]("+8613*")
+        assert "+8613000000000" in result
+        assert "Live Pool" in result
+        assert "db_primary=да" in result
+        pool.get_users_info.assert_awaited_once_with(include_avatar=False)
+
+
 class TestDeepagentsSyncAgentThreads:
     def test_list_empty(self, mock_db):
         from src.agent.tools.deepagents_sync import build_deepagents_tools

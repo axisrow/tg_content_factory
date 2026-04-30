@@ -47,6 +47,7 @@ from src.agent.provider_registry import (
     is_zai_legacy_anthropic_base_url,
     normalize_zai_base_url,
 )
+from src.agent.runtime_context import AgentRuntimeContext
 from src.agent.zai_errors import format_provider_error
 from src.config import AppConfig
 from src.database import Database
@@ -379,6 +380,12 @@ class ClaudeSdkBackend:
         self._config = config
         self._client_pool = client_pool
         self._scheduler_manager = scheduler_manager
+        self._runtime_context = AgentRuntimeContext.build(
+            db=db,
+            config=config,
+            client_pool=client_pool,
+            scheduler_manager=scheduler_manager,
+        )
         self._server = None
         self._initialized = False
 
@@ -958,9 +965,17 @@ class ClaudeSdkBackend:
 
 
 class DeepagentsBackend:
-    def __init__(self, db: Database, config: AppConfig) -> None:
+    def __init__(self, db: Database, config: AppConfig, client_pool=None, scheduler_manager=None) -> None:
         self._db = db
         self._config = config
+        self._client_pool = client_pool
+        self._scheduler_manager = scheduler_manager
+        self._runtime_context = AgentRuntimeContext.build(
+            db=db,
+            config=config,
+            client_pool=client_pool,
+            scheduler_manager=scheduler_manager,
+        )
         self._provider_service = AgentProviderService(db, config)
         self._cached_db_configs: list[ProviderRuntimeConfig] = []
         self._cached_model_cache: dict[str, ProviderModelCacheEntry] = {}
@@ -1152,7 +1167,12 @@ class DeepagentsBackend:
         """Return the tool set for deepagents backend, filtered by permissions."""
         from src.agent.tools.deepagents_sync import build_deepagents_tools
 
-        all_tools = build_deepagents_tools(self._db, config=self._config)
+        all_tools = build_deepagents_tools(
+            self._db,
+            client_pool=self._client_pool,
+            config=self._config,
+            runtime_context=self._runtime_context,
+        )
         if permissions is None:
             return all_tools
         return [t for t in all_tools if permissions.get(t.__name__, True)]
@@ -1412,6 +1432,12 @@ class DeepagentsBackend:
             system_prompt += (
                 "\n\nУ тебя есть доступ к следующим инструментам (tools). "
                 "Используй их для выполнения задач:\n" + "\n".join(f"- {n}" for n in tool_names)
+            )
+        if "get_account_info" in tool_names:
+            system_prompt += (
+                "\n\nДля диагностики Telegram-аккаунтов, подключения номера или reconnect "
+                "сначала вызывай get_account_info. Не утверждай, что нужен SMS/2FA или что "
+                "аккаунт выключен/not connected, если live tool этого не подтвердил."
             )
         agent = self._build_agent(cfg, system_prompt=system_prompt, permissions=permissions)
         logger.info(
@@ -1773,7 +1799,9 @@ class AgentManager:
         self._claude_backend = ClaudeSdkBackend(
             db, self._config, client_pool=client_pool, scheduler_manager=scheduler_manager,
         )
-        self._deepagents_backend = DeepagentsBackend(db, self._config)
+        self._deepagents_backend = DeepagentsBackend(
+            db, self._config, client_pool=client_pool, scheduler_manager=scheduler_manager,
+        )
         self._active_tasks: dict[int, asyncio.Task] = {}
         self._settings_cache = _SettingsCache()
         self._cached_allowed_tools: list[str] | None = None

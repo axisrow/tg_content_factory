@@ -253,6 +253,7 @@ class ContentGenerationService:
                 db=self._db,
                 client_pool=self._client_pool,
                 search_engine=self._search,
+                config=self._config,
             )
         except Exception:
             logger.debug("agent_tools unavailable for pipeline execution", exc_info=True)
@@ -311,7 +312,15 @@ class ContentGenerationService:
     ) -> dict[str, Any]:
         """Run generation using AgentManager deep agents backend."""
         if self._agent_manager is None:
-            raise RuntimeError("AgentManager not configured for deep_agents generation")
+            if self._config is None:
+                raise RuntimeError("AgentManager not configured for deep_agents generation")
+            from src.agent.manager import AgentManager
+
+            self._agent_manager = AgentManager(
+                self._db,
+                self._config,
+                client_pool=self._client_pool,
+            )
 
         import json
 

@@ -15,6 +15,8 @@ data/
 data/*
 !data/deepagents_model_compatibility_catalog.json
 *.db
+*.db-shm
+*.db-wal
 *.session
 .env
 pattaya.xlsx

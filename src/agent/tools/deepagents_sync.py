@@ -11,6 +11,8 @@ import logging
 from collections.abc import Awaitable, Callable
 from typing import TypeVar
 
+from src.agent.runtime_context import AgentRuntimeContext
+
 _T = TypeVar("_T")
 logger = logging.getLogger(__name__)
 
@@ -24,12 +26,22 @@ def _run_sync(tool_name: str, operation: Callable[[], Awaitable[_T]]) -> _T:
     raise RuntimeError(f"Deepagents tool '{tool_name}' cannot run inside an active event loop")
 
 
-def build_deepagents_tools(db, client_pool=None, config=None) -> list[Callable]:  # noqa: C901
+def build_deepagents_tools(
+    db,
+    client_pool=None,
+    config=None,
+    runtime_context: AgentRuntimeContext | None = None,
+) -> list[Callable]:  # noqa: C901
     """Build all sync tools for the deepagents backend.
 
     Returns a list of callables compatible with LangChain tool registration.
     """
     tools: list[Callable] = []
+    runtime_context = runtime_context or AgentRuntimeContext.build(
+        db=db,
+        config=config,
+        client_pool=client_pool,
+    )
 
     # === Search ===
 
@@ -248,6 +260,7 @@ def build_deepagents_tools(db, client_pool=None, config=None) -> list[Callable]:
                 engine,
                 config=config,
                 image_service=image_service,
+                client_pool=client_pool,
                 provider_service=provider_service,
             )
             run = _run_sync("run_pipeline", lambda: gen_svc.generate(pipeline))
@@ -421,14 +434,14 @@ def build_deepagents_tools(db, client_pool=None, config=None) -> list[Callable]:
     # === Accounts ===
 
     def list_accounts() -> str:
-        """List all connected Telegram accounts. Returns id (account_id for toggle/delete), phone, status."""
+        """List Telegram accounts from the database only. Not live Telegram connection state."""
         try:
             accounts = _run_sync("list_accounts", db.get_accounts)
         except Exception as exc:
             return f"Ошибка: {exc}"
         if not accounts:
             return "Аккаунты не найдены."
-        lines = [f"Аккаунты ({len(accounts)}):"]
+        lines = [f"Аккаунты ({len(accounts)}) в БД:"]
         for a in accounts:
             status = "активен" if a.is_active else "неактивен"
             lines.append(f"- id={a.id}, phone={a.phone}, {status}")
@@ -461,20 +474,34 @@ def build_deepagents_tools(db, client_pool=None, config=None) -> list[Callable]:
     tools.append(delete_account)
 
     def get_flood_status() -> str:
-        """Get flood wait status for all accounts."""
+        """Get database flood-wait status for all accounts; this is not live connection state."""
         try:
             accounts = _run_sync("flood_status", db.get_accounts)
         except Exception as exc:
             return f"Ошибка: {exc}"
         if not accounts:
             return "Аккаунты не найдены."
-        lines = ["Flood-статус:"]
+        lines = ["Flood-статус в БД:"]
         for a in accounts:
             flood = getattr(a, "flood_wait_until", None) or "нет"
             lines.append(f"- {a.phone}: {flood}")
         return "\n".join(lines)
 
     tools.append(get_flood_status)
+
+    def get_account_info(phone: str = "") -> str:
+        """Get live Telegram account info. Requires live runtime; use before account/reconnect diagnostics."""
+        try:
+            from src.agent.tools.accounts import get_live_account_info_text
+
+            return runtime_context.run_sync(
+                "get_account_info",
+                lambda: get_live_account_info_text(runtime_context, phone),
+            )
+        except Exception as exc:
+            return f"Ошибка получения информации об аккаунтах: {exc}"
+
+    tools.append(get_account_info)
 
     # === Filters ===
 

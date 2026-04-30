@@ -1,6 +1,7 @@
 """Tests for agent tools: accounts.py."""
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -179,6 +180,58 @@ class TestGetFloodStatusTool:
         assert "Ошибка получения flood-статуса" in _text(result)
 
 
+class TestGetAccountInfoTool:
+    @pytest.mark.anyio
+    async def test_snapshot_runtime_is_explicitly_unavailable(self, mock_db):
+        class SnapshotClientPool:
+            pass
+
+        handlers = _get_tool_handlers(mock_db, client_pool=SnapshotClientPool())
+        result = await handlers["get_account_info"]({})
+        text = _text(result)
+        assert text == "live Telegram runtime unavailable"
+        lowered = text.lower()
+        assert "disabled" not in lowered
+        assert "not connected" not in lowered
+        assert "sms" not in lowered
+        assert "2fa" not in lowered
+
+    @pytest.mark.anyio
+    async def test_exact_phone_filter_annotations(self, mock_db):
+        pool = MagicMock()
+        pool.get_users_info = AsyncMock(return_value=[
+            SimpleNamespace(
+                phone="+71112223344",
+                first_name="Live",
+                last_name="User",
+                username="liveuser",
+                is_premium=True,
+            ),
+            SimpleNamespace(
+                phone="+75556667788",
+                first_name="Other",
+                last_name="",
+                username=None,
+                is_premium=False,
+            ),
+        ])
+        mock_db.get_accounts = AsyncMock(return_value=[
+            _make_account(phone="+71112223344", is_active=True, is_primary=True),
+            _make_account(phone="+75556667788", is_active=False, is_primary=False),
+        ])
+
+        handlers = _get_tool_handlers(mock_db, client_pool=pool)
+        result = await handlers["get_account_info"]({"phone": "71112223344"})
+        text = _text(result)
+        assert "+71112223344" in text
+        assert "+75556667788" not in text
+        assert "Live User" in text
+        assert "premium=да" in text
+        assert "db_active=да" in text
+        assert "db_primary=да" in text
+        assert "session-present=да" in text
+
+
 class TestClearFloodStatusTool:
     @pytest.mark.anyio
     async def test_no_confirm_returns_gate(self, mock_db):
@@ -203,4 +256,3 @@ class TestClearFloodStatusTool:
         result = await handlers["clear_flood_status"]({"phone": "+71111111111", "confirm": True})
         assert "сброшен" in _text(result)
         mock_db.update_account_flood.assert_awaited_once_with("+71111111111", None)
-
