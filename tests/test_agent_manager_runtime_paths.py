@@ -28,6 +28,36 @@ from src.database import Database
 # ---------------------------------------------------------------------------
 
 
+class TestAgentRuntimeContextPlumbing:
+    def test_agent_manager_passes_live_runtime_to_both_backends(self):
+        pool = MagicMock()
+        scheduler = MagicMock()
+        db = MagicMock(spec=Database)
+        config = AppConfig()
+
+        mgr = AgentManager(db, config=config, client_pool=pool, scheduler_manager=scheduler)
+
+        assert mgr._claude_backend._runtime_context.client_pool is pool
+        assert mgr._claude_backend._runtime_context.scheduler_manager is scheduler
+        assert mgr._claude_backend._runtime_context.runtime_kind == "live"
+        assert mgr._deepagents_backend._runtime_context.client_pool is pool
+        assert mgr._deepagents_backend._runtime_context.scheduler_manager is scheduler
+        assert mgr._deepagents_backend._runtime_context.runtime_kind == "live"
+
+    def test_deepagents_default_tools_use_live_pool(self):
+        pool = MagicMock()
+        db = MagicMock(spec=Database)
+        config = AppConfig()
+        backend = DeepagentsBackend(db, config, client_pool=pool)
+
+        with patch("src.agent.tools.deepagents_sync.build_deepagents_tools", return_value=[]) as build:
+            backend._default_tools()
+
+        assert build.call_args.kwargs["client_pool"] is pool
+        assert build.call_args.kwargs["runtime_context"].client_pool is pool
+        assert build.call_args.kwargs["runtime_context"].runtime_kind == "live"
+
+
 def _make_assistant_msg(text, model="test"):
     """Create a MagicMock AssistantMessage (avoids constructor issues)."""
     from claude_agent_sdk import AssistantMessage, TextBlock
