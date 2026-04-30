@@ -23,8 +23,10 @@ def _runtime(kwargs: dict, db, client_pool) -> AgentRuntimeContext:
 def _matches_phone(phone: str, phone_filter: str) -> bool:
     if not phone_filter:
         return True
-    prefix = phone_filter.rstrip("*")
-    return phone == phone_filter or phone.startswith(prefix)
+    if phone_filter.endswith("*"):
+        prefix = phone_filter[:-1]
+        return bool(prefix) and phone.startswith(prefix)
+    return phone == phone_filter
 
 
 async def get_live_account_info_text(runtime: AgentRuntimeContext, phone: str = "") -> str:

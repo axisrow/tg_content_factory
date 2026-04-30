@@ -578,15 +578,19 @@ async def generate_pipeline(
     if pipeline_needs_llm(pipeline) and not provider_service.has_providers():
         return _pipeline_redirect("llm_not_configured", error=True)
 
+    from src.agent.runtime_context import detect_runtime_kind
     from src.services.content_generation_service import ContentGenerationService
     from src.services.quality_scoring_service import QualityScoringService
+
+    pool = deps.get_pool(request)
+    live_pool = pool if detect_runtime_kind(pool) == "live" else None
 
     gen = ContentGenerationService(
         db,
         engine,
         config=request.app.state.config,
         quality_service=QualityScoringService(db, provider_service=provider_service),
-        client_pool=deps.get_pool(request),
+        client_pool=live_pool,
         provider_service=provider_service,
     )
     try:

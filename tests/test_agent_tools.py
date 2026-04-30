@@ -857,6 +857,26 @@ class TestGetAccountInfoTool:
         mock_pool.get_users_info.assert_awaited_once_with(include_avatar=False)
 
     @pytest.mark.anyio
+    async def test_phone_filter_requires_wildcard_for_prefix_match(self, mock_db):
+        mock_pool = MagicMock()
+        mock_pool.get_users_info = AsyncMock(return_value=[
+            SimpleNamespace(phone="+8613000000000", first_name="Alice", last_name="",
+                            username=None, is_premium=False),
+            SimpleNamespace(phone="+8613999999999", first_name="Ana", last_name="",
+                            username=None, is_premium=False),
+        ])
+        mock_db.get_accounts = AsyncMock(return_value=[
+            SimpleNamespace(id=1, phone="+8613000000000", is_active=True, is_primary=False, session_string="s"),
+            SimpleNamespace(id=2, phone="+8613999999999", is_active=True, is_primary=False, session_string="s"),
+        ])
+        handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
+        result = await handlers["get_account_info"]({"phone": "+8613"})
+        text = _text(result)
+        assert "не найдены" in text
+        assert "+8613000000000" not in text
+        assert "+8613999999999" not in text
+
+    @pytest.mark.anyio
     async def test_no_accounts(self, mock_db):
         mock_pool = MagicMock()
         mock_pool.get_users_info = AsyncMock(return_value=[])
