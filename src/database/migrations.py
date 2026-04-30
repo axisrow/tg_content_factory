@@ -939,7 +939,7 @@ async def _migrate_zai_paas_to_coding(db: aiosqlite.Connection) -> None:
         if not isinstance(plain, dict):
             continue
         current = (str(plain.get("base_url", "") or "")).strip().rstrip("/")
-        if current == ZAI_GENERAL_BASE_URL:
+        if current in {"", ZAI_GENERAL_BASE_URL}:
             plain["base_url"] = ZAI_CODING_BASE_URL
             item["last_validation_error"] = ""
             changed = True
@@ -952,7 +952,7 @@ async def _migrate_zai_paas_to_coding(db: aiosqlite.Connection) -> None:
         (json.dumps(data, ensure_ascii=False),),
     )
     await db.commit()
-    logger.info("Migrated Z.AI base_url from %s to %s", ZAI_GENERAL_BASE_URL, ZAI_CODING_BASE_URL)
+    logger.info("Migrated Z.AI base_url from empty/general endpoint to %s", ZAI_CODING_BASE_URL)
 
 
 async def _migrate_tool_permission_key(db: aiosqlite.Connection, old_key: str, new_key: str) -> None:

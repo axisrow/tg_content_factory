@@ -346,6 +346,36 @@ async def test_migrate_zai_paas_to_coding_rewrites_paas(tmp_path):
 
 @pytest.mark.anyio
 @pytest.mark.aiosqlite_serial
+async def test_migrate_zai_paas_to_coding_backfills_empty_base_url(tmp_path):
+    conn = await _open_zai_db(tmp_path)
+    try:
+        await conn.execute(
+            "INSERT INTO settings (key, value) VALUES (?, ?)",
+            (
+                _ZAI_PROVIDERS_KEY,
+                _zai_payload(
+                    "",
+                    last_validation_error="Z.AI Base URL is required",
+                ),
+            ),
+        )
+        await conn.commit()
+
+        await _migrate_zai_paas_to_coding(conn)
+
+        cur = await conn.execute(
+            "SELECT value FROM settings WHERE key = ?", (_ZAI_PROVIDERS_KEY,)
+        )
+        row = await cur.fetchone()
+        data = json.loads(row["value"])
+        assert data[0]["plain_fields"]["base_url"] == "https://api.z.ai/api/coding/paas/v4"
+        assert data[0]["last_validation_error"] == ""
+    finally:
+        await conn.close()
+
+
+@pytest.mark.anyio
+@pytest.mark.aiosqlite_serial
 async def test_migrate_zai_paas_to_coding_leaves_coding_url_untouched(tmp_path):
     conn = await _open_zai_db(tmp_path)
     try:
