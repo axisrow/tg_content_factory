@@ -805,7 +805,7 @@ class AgentProviderService:
         # Use the native Z.AI API endpoint with Bearer auth instead.
         headers = {"Authorization": f"Bearer {api_key}"}
         payload = await self._fetch_json(
-            "https://api.z.ai/api/paas/v4/models", headers=headers
+            f"{ZAI_DEFAULT_BASE_URL}/models", headers=headers
         )
         return [
             str(item.get("id", "")).strip()

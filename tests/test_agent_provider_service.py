@@ -910,7 +910,7 @@ async def test_fetch_live_models_zai_uses_bearer_auth(db, monkeypatch):
     models = await service._fetch_live_models(spec, cfg)
 
     assert models == ["glm-5"]
-    assert captured["url"] == "https://api.z.ai/api/paas/v4/models"
+    assert captured["url"] == "https://api.z.ai/api/coding/paas/v4/models"
     assert captured["headers"] == {"Authorization": "Bearer zai-key"}
 
 
@@ -1203,7 +1203,7 @@ def test_canonical_endpoint_fingerprint_for_zai_legacy_url(db):
 
     fingerprint = service.canonical_endpoint_fingerprint(cfg)
 
-    assert fingerprint == "https://api.z.ai/api/paas/v4"
+    assert fingerprint == "https://api.z.ai/api/coding/paas/v4"
 
 
 def test_normalize_plain_fields_for_zai_legacy_url(db):
@@ -1216,7 +1216,7 @@ def test_normalize_plain_fields_for_zai_legacy_url(db):
         {"api_key": "zai-key"},
     )
 
-    assert normalized["base_url"] == "https://api.z.ai/api/paas/v4"
+    assert normalized["base_url"] == "https://api.z.ai/api/coding/paas/v4"
 
 
 def test_zai_provider_spec_uses_openai_package_hint():
