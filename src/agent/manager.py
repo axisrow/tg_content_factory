@@ -40,12 +40,7 @@ from src.agent.prompt_template import (
     render_prompt_template,
 )
 from src.agent.provider_registry import (
-    ZAI_BASE_URL_REQUIRED_HINT,
-    ZAI_CODING_BASE_URL,
-    ZAI_GENERAL_BASE_URL,
     ProviderRuntimeConfig,
-    is_zai_legacy_anthropic_base_url,
-    normalize_zai_base_url,
 )
 from src.agent.runtime_context import AgentRuntimeContext
 from src.agent.zai_errors import format_provider_error
@@ -1218,38 +1213,11 @@ class DeepagentsBackend:
                 "иначе deepagents переиспользует Claude SDK credentials."
             )
             raise RuntimeError(self._init_error)
-        model_provider = provider
-        extra: dict[str, object] = {
-            key: value for key, value in cfg.plain_fields.items() if value.strip()
-        }
-        if provider == "ollama":
-            api_key = cfg.secret_fields.get("api_key", "").strip()
-            normalized_base_url = self._provider_service.normalize_ollama_base_url(
-                str(extra.get("base_url", "")),
-                api_key,
-            )
-            extra["base_url"] = normalized_base_url
-            if api_key:
-                extra["client_kwargs"] = {"headers": {"Authorization": f"Bearer {api_key}"}}
-        else:
-            extra.update({key: value for key, value in cfg.secret_fields.items() if value.strip()})
-
-        if provider == "zai":
-            raw_base_url = cfg.plain_fields.get("base_url", "")
-            if is_zai_legacy_anthropic_base_url(raw_base_url):
-                self._init_error = (
-                    "This URL is the Z.AI Anthropic-compatible proxy. Configure the "
-                    "anthropic provider with this URL instead, or use the OpenAI-compatible "
-                    f"endpoint {ZAI_GENERAL_BASE_URL}. Coding Plan users can explicitly set "
-                    f"{ZAI_CODING_BASE_URL}."
-                )
-                raise RuntimeError(self._init_error)
-            normalized_base_url = normalize_zai_base_url(raw_base_url)
-            if not normalized_base_url:
-                self._init_error = ZAI_BASE_URL_REQUIRED_HINT
-                raise RuntimeError(self._init_error)
-            model_provider = "openai"
-            extra["base_url"] = normalized_base_url
+        try:
+            model_provider, extra = self._provider_service.deepagents_runtime_options(cfg)
+        except RuntimeError as exc:
+            self._init_error = str(exc)
+            raise
         self._init_attempted_model = cfg.model_name
 
         # ReAct fallback for Ollama models without native function calling

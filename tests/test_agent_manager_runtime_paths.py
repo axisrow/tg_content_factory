@@ -19,7 +19,7 @@ from src.agent.manager import (
     _SettingsCache,
     _ToolTracker,
 )
-from src.agent.provider_registry import ProviderRuntimeConfig
+from src.agent.provider_registry import ZAI_CODING_BASE_URL, ProviderRuntimeConfig
 from src.config import AppConfig
 from src.database import Database
 
@@ -1244,6 +1244,39 @@ class TestDeepagentsBackendBuildAgent:
         ):
             backend._build_agent(cfg)
             assert captured["model"] == "gpt-4"
+
+    def test_build_agent_zai_empty_base_url_uses_registry_runtime_options(self, mock_db):
+        """Z.AI defaults and LangChain provider mapping come from provider service helpers."""
+        config = AppConfig()
+        backend = DeepagentsBackend(mock_db, config)
+
+        cfg = ProviderRuntimeConfig(
+            provider="zai",
+            enabled=True,
+            priority=0,
+            selected_model="glm-5-turbo",
+            plain_fields={"base_url": ""},
+            secret_fields={"api_key": "zai-key"},
+        )
+
+        captured = {}
+
+        def fake_init_chat_model(*, model, model_provider, **kwargs):
+            captured["model"] = model
+            captured["model_provider"] = model_provider
+            captured.update(kwargs)
+            return MagicMock()
+
+        with (
+            patch("langchain.chat_models.init_chat_model", side_effect=fake_init_chat_model),
+            patch("deepagents.create_deep_agent", return_value=MagicMock()),
+        ):
+            backend._build_agent(cfg)
+
+        assert captured["model"] == "glm-5-turbo"
+        assert captured["model_provider"] == "openai"
+        assert captured["base_url"] == ZAI_CODING_BASE_URL
+        assert captured["api_key"] == "zai-key"
 
     def test_build_agent_record_last_used(self, mock_db):
         """_build_agent records last used provider/model when flag is True."""
