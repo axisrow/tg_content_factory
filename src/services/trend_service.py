@@ -2,16 +2,27 @@ from __future__ import annotations
 
 import asyncio
 import html
+import importlib
 import logging
 import re
+import warnings
 from collections import Counter
 from dataclasses import dataclass
 
-from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.feature_extraction.text import ENGLISH_STOP_WORDS, TfidfVectorizer
 
 from src.database import Database
 
 logger = logging.getLogger(__name__)
+# jieba imports pkg_resources on Python 3.12; pytest treats that deprecation as an error.
+with warnings.catch_warnings():
+    warnings.filterwarnings(
+        "ignore",
+        message="pkg_resources is deprecated as an API.*",
+        category=UserWarning,
+    )
+    jieba = importlib.import_module("jieba")
+jieba.setLogLevel(logging.WARNING)
 
 
 @dataclass
@@ -58,7 +69,23 @@ class TrendService:
         r"\b(?:https?|www|html?|amp|nbsp|quot|lt|gt|href|target|blank|utm_[a-z]+)\b",
         re.IGNORECASE,
     )
-    _STOP_WORDS = frozenset({
+    _LATIN_CYRILLIC_TOKEN_RE = re.compile(r"(?u)\b[а-яёa-z]{4,}\b")
+    _CJK_TOKEN_RE = re.compile(r"^[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]{2,}$")
+    _TOPIC_NOISE_WORDS = frozenset({
+        "content",
+        "data",
+        "need",
+        "needed",
+        "needs",
+        "page",
+        "pages",
+        "require",
+        "required",
+        "requires",
+        "site",
+        "sites",
+    })
+    _STOP_WORDS = ENGLISH_STOP_WORDS | _TOPIC_NOISE_WORDS | frozenset({
         "about",
         "after",
         "again",
@@ -130,6 +157,42 @@ class TrendService:
         "который",
         "которая",
     })
+    _CHINESE_STOP_WORDS = frozenset({
+        "一个",
+        "一些",
+        "以及",
+        "他们",
+        "但是",
+        "你们",
+        "因为",
+        "为了",
+        "什么",
+        "今天",
+        "只是",
+        "可以",
+        "可能",
+        "已经",
+        "并且",
+        "我们",
+        "所以",
+        "时候",
+        "明天",
+        "然后",
+        "现在",
+        "由于",
+        "自己",
+        "这个",
+        "这些",
+        "这样",
+        "这种",
+        "这里",
+        "进行",
+        "还是",
+        "那些",
+        "那么",
+        "那里",
+        "需要",
+    })
 
     def __init__(self, db: Database) -> None:
         self._db = db
@@ -191,10 +254,10 @@ class TrendService:
 
     def _rank_trending_topics(self, texts: list[str], limit: int) -> list[TrendingTopic]:
         vectorizer = TfidfVectorizer(
-            token_pattern=r"(?u)\b[а-яёa-z]{4,}\b",
+            analyzer=self._analyze_topic_text,
+            token_pattern=None,
             max_df=0.85,
             min_df=2,
-            stop_words=sorted(self._STOP_WORDS),
         )
         try:
             tfidf_matrix = vectorizer.fit_transform(texts)
@@ -217,6 +280,24 @@ class TrendService:
             if len(topics) >= limit:
                 break
         return topics
+
+    @classmethod
+    def _analyze_topic_text(cls, text: str) -> list[str]:
+        text = text.lower()
+        tokens = [
+            token
+            for token in cls._LATIN_CYRILLIC_TOKEN_RE.findall(text)
+            if token not in cls._STOP_WORDS
+        ]
+
+        for token in jieba.cut(text):
+            token = token.strip()
+            if token in cls._CHINESE_STOP_WORDS:
+                continue
+            if cls._CJK_TOKEN_RE.fullmatch(token):
+                tokens.append(token)
+
+        return tokens
 
     async def get_trending_channels(self, days: int = 7, limit: int = 10) -> list[TrendingChannel]:
         """Return channels with the highest average views in the last N days."""
