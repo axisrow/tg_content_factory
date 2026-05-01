@@ -8,7 +8,11 @@ from claude_agent_sdk import tool
 from mcp.types import ToolAnnotations
 
 from src.agent.tools._registry import (
+    ToolInputError,
     _text_response,
+    arg_csv_ints,
+    arg_str,
+    get_tool_context,
     require_confirmation,
     require_phone_permission,
     require_pool,
@@ -19,7 +23,20 @@ from src.telegram.flood_wait import HandledFloodWaitError, run_with_flood_wait
 
 
 def register(db, client_pool, embedding_service, **kwargs):
+    ctx = get_tool_context(kwargs, db=db, client_pool=client_pool, embedding_service=embedding_service)
     tools = []
+
+    async def _prepare_telegram_tool(args, *, tool_name: str, action: str) -> tuple[str, dict | None]:
+        pool_gate = ctx.require_pool(action)
+        if pool_gate:
+            return "", pool_gate
+        phone, err = await ctx.resolve_phone(args.get("phone", ""))
+        if err:
+            return "", err
+        perm_gate = await ctx.require_phone_permission(phone, tool_name)
+        if perm_gate:
+            return "", perm_gate
+        return phone, None
 
     @tool(
         "send_message",
@@ -33,18 +50,13 @@ def register(db, client_pool, embedding_service, **kwargs):
         },
     )
     async def send_message(args):
-        pool_gate = require_pool(client_pool, "Отправка сообщения")
-        if pool_gate:
-            return pool_gate
-        phone, err = await resolve_phone(db, args.get("phone", ""))
+        phone, err = await _prepare_telegram_tool(args, tool_name="send_message", action="Отправка сообщения")
         if err:
             return err
-        perm_gate = await require_phone_permission(db, phone, "send_message")
-        if perm_gate:
-            return perm_gate
-        recipient = args.get("recipient", "")
-        text = args.get("text", "")
-        if not recipient or not text:
+        try:
+            recipient = arg_str(args, "recipient", required=True)
+            text = arg_str(args, "text", required=True)
+        except ToolInputError:
             return _text_response("Ошибка: recipient и text обязательны.")
         preview = text[:120] + ("..." if len(text) > 120 else "")
         gate = require_confirmation(
@@ -121,21 +133,17 @@ def register(db, client_pool, embedding_service, **kwargs):
         annotations=ToolAnnotations(destructiveHint=True),
     )
     async def delete_message(args):
-        pool_gate = require_pool(client_pool, "Удаление сообщений")
-        if pool_gate:
-            return pool_gate
-        phone, err = await resolve_phone(db, args.get("phone", ""))
+        phone, err = await _prepare_telegram_tool(args, tool_name="delete_message", action="Удаление сообщений")
         if err:
             return err
-        perm_gate = await require_phone_permission(db, phone, "delete_message")
-        if perm_gate:
-            return perm_gate
-        chat_id = args.get("chat_id", "")
-        message_ids_str = args.get("message_ids", "")
-        if not chat_id or not message_ids_str:
+        try:
+            chat_id = arg_str(args, "chat_id", required=True)
+            arg_str(args, "message_ids", required=True)
+        except ToolInputError:
             return _text_response("Ошибка: chat_id и message_ids обязательны.")
-        ids = [int(x.strip()) for x in message_ids_str.split(",") if x.strip().isdigit()]
-        if not ids:
+        try:
+            ids = arg_csv_ints(args, "message_ids", required=True)
+        except ToolInputError:
             return _text_response("Ошибка: не указаны валидные message_ids.")
         gate = require_confirmation(
             f"удалит {len(ids)} сообщений из чата {chat_id}: {ids}", args
@@ -166,22 +174,18 @@ def register(db, client_pool, embedding_service, **kwargs):
         },
     )
     async def forward_messages(args):
-        pool_gate = require_pool(client_pool, "Пересылка сообщений")
-        if pool_gate:
-            return pool_gate
-        phone, err = await resolve_phone(db, args.get("phone", ""))
+        phone, err = await _prepare_telegram_tool(args, tool_name="forward_messages", action="Пересылка сообщений")
         if err:
             return err
-        perm_gate = await require_phone_permission(db, phone, "forward_messages")
-        if perm_gate:
-            return perm_gate
-        from_chat = args.get("from_chat", "")
-        to_chat = args.get("to_chat", "")
-        message_ids_str = args.get("message_ids", "")
-        if not from_chat or not to_chat or not message_ids_str:
+        try:
+            from_chat = arg_str(args, "from_chat", required=True)
+            to_chat = arg_str(args, "to_chat", required=True)
+            arg_str(args, "message_ids", required=True)
+        except ToolInputError:
             return _text_response("Ошибка: from_chat, to_chat и message_ids обязательны.")
-        ids = [int(x.strip()) for x in message_ids_str.split(",") if x.strip().isdigit()]
-        if not ids:
+        try:
+            ids = arg_csv_ints(args, "message_ids", required=True)
+        except ToolInputError:
             return _text_response("Ошибка: не указаны валидные message_ids.")
         gate = require_confirmation(
             f"перешлёт {len(ids)} сообщений из {from_chat} в {to_chat}: {ids}", args
@@ -415,17 +419,15 @@ def register(db, client_pool, embedding_service, **kwargs):
         },
     )
     async def edit_admin(args):
-        pool_gate = require_pool(client_pool, "Изменение прав администратора")
-        if pool_gate:
-            return pool_gate
-        phone, err = await resolve_phone(db, args.get("phone", ""))
+        phone, err = await _prepare_telegram_tool(
+            args,
+            tool_name="edit_admin",
+            action="Изменение прав администратора",
+        )
         if err:
             return err
-        perm_gate = await require_phone_permission(db, phone, "edit_admin")
-        if perm_gate:
-            return perm_gate
-        chat_id = args.get("chat_id", "")
-        user_id = args.get("user_id", "")
+        chat_id = arg_str(args, "chat_id")
+        user_id = arg_str(args, "user_id")
         is_admin = args.get("is_admin", True)
         title = args.get("title") or None
         if not chat_id or not user_id:
@@ -469,17 +471,15 @@ def register(db, client_pool, embedding_service, **kwargs):
     async def edit_permissions(args):
         from datetime import datetime
 
-        pool_gate = require_pool(client_pool, "Изменение ограничений пользователя")
-        if pool_gate:
-            return pool_gate
-        phone, err = await resolve_phone(db, args.get("phone", ""))
+        phone, err = await _prepare_telegram_tool(
+            args,
+            tool_name="edit_permissions",
+            action="Изменение ограничений пользователя",
+        )
         if err:
             return err
-        perm_gate = await require_phone_permission(db, phone, "edit_permissions")
-        if perm_gate:
-            return perm_gate
-        chat_id = args.get("chat_id", "")
-        user_id = args.get("user_id", "")
+        chat_id = arg_str(args, "chat_id")
+        user_id = arg_str(args, "user_id")
         until_date_str = args.get("until_date") or None
         send_messages = args.get("send_messages")
         send_media = args.get("send_media")
@@ -526,17 +526,11 @@ def register(db, client_pool, embedding_service, **kwargs):
         annotations=ToolAnnotations(destructiveHint=True),
     )
     async def kick_participant(args):
-        pool_gate = require_pool(client_pool, "Исключение участника")
-        if pool_gate:
-            return pool_gate
-        phone, err = await resolve_phone(db, args.get("phone", ""))
+        phone, err = await _prepare_telegram_tool(args, tool_name="kick_participant", action="Исключение участника")
         if err:
             return err
-        perm_gate = await require_phone_permission(db, phone, "kick_participant")
-        if perm_gate:
-            return perm_gate
-        chat_id = args.get("chat_id", "")
-        user_id = args.get("user_id", "")
+        chat_id = arg_str(args, "chat_id")
+        user_id = arg_str(args, "user_id")
         if not chat_id or not user_id:
             return _text_response("Ошибка: chat_id и user_id обязательны.")
         gate = require_confirmation(f"исключит {user_id} из чата {chat_id}", args)

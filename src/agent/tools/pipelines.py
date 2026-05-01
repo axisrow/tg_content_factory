@@ -8,14 +8,41 @@ from typing import Annotated
 from claude_agent_sdk import tool
 from mcp.types import ToolAnnotations
 
-from src.agent.tools._registry import _text_response, require_confirmation, require_pool
+from src.agent.tools._registry import (
+    ToolInputError,
+    _text_response,
+    arg_bool,
+    arg_csv_ints,
+    arg_int,
+    arg_str,
+    get_tool_context,
+    require_confirmation,
+)
 
 logger = logging.getLogger(__name__)
 
 
 def register(db, client_pool, embedding_service, **kwargs):
     config = kwargs.get("config")
+    ctx = get_tool_context(kwargs, db=db, client_pool=client_pool, embedding_service=embedding_service)
     tools = []
+
+    def _parse_target_refs(raw: str):
+        from src.services.pipeline_service import PipelineTargetRef
+
+        target_refs = []
+        for part in raw.split(","):
+            part = part.strip()
+            if not part:
+                continue
+            if "|" not in part:
+                raise ToolInputError(f"Неверный формат target_ref: '{part}'. Ожидается 'phone|dialog_id'.")
+            phone, dialog_id = part.split("|", 1)
+            try:
+                target_refs.append(PipelineTargetRef(phone=phone.strip(), dialog_id=int(dialog_id.strip())))
+            except ValueError as exc:
+                raise ToolInputError(f"dialog_id в target_ref '{part}' должен быть целым числом.") from exc
+        return target_refs
 
     async def _build_image_service():
         """Build ImageGenerationService with DB providers + env fallback."""
@@ -46,10 +73,8 @@ def register(db, client_pool, embedding_service, **kwargs):
     )
     async def list_pipelines(args):
         try:
-            from src.services.pipeline_service import PipelineService
-
-            svc = PipelineService(db)
-            active_only = bool(args.get("active_only", False))
+            svc = ctx.pipeline_service()
+            active_only = arg_bool(args, "active_only", False)
             pipelines = await svc.list(active_only=active_only)
             if not pipelines:
                 return _text_response("Пайплайны не найдены.")
@@ -76,14 +101,13 @@ def register(db, client_pool, embedding_service, **kwargs):
         {"pipeline_id": Annotated[int, "ID пайплайна из list_pipelines"]},
     )
     async def get_pipeline_detail(args):
-        pipeline_id = args.get("pipeline_id")
-        if pipeline_id is None:
-            return _text_response("Ошибка: pipeline_id обязателен.")
         try:
-            from src.services.pipeline_service import PipelineService
-
-            svc = PipelineService(db)
-            detail = await svc.get_detail(int(pipeline_id))
+            pipeline_id = arg_int(args, "pipeline_id", required=True)
+        except ToolInputError as exc:
+            return exc.to_response()
+        try:
+            svc = ctx.pipeline_service()
+            detail = await svc.get_detail(pipeline_id)
             if detail is None:
                 return _text_response(f"Пайплайн id={pipeline_id} не найден.")
             p = detail["pipeline"]
@@ -116,7 +140,7 @@ def register(db, client_pool, embedding_service, **kwargs):
     )
     async def get_pipeline_queue(args):
         try:
-            limit = int(args.get("limit", 20))
+            limit = arg_int(args, "limit", 20) or 20
             runs = await db.repos.generation_runs.list_by_status(["pending", "running"], limit=limit)
             if not runs:
                 return _text_response("Очередь генерации пуста.")
@@ -139,11 +163,12 @@ def register(db, client_pool, embedding_service, **kwargs):
         {"pipeline_id": Annotated[int, "ID пайплайна из list_pipelines"]},
     )
     async def get_refinement_steps(args):
-        pipeline_id = args.get("pipeline_id")
-        if pipeline_id is None:
-            return _text_response("Ошибка: pipeline_id обязателен.")
         try:
-            pipeline = await db.repos.content_pipelines.get_by_id(int(pipeline_id))
+            pipeline_id = arg_int(args, "pipeline_id", required=True)
+        except ToolInputError as exc:
+            return exc.to_response()
+        try:
+            pipeline = await db.repos.content_pipelines.get_by_id(pipeline_id)
             if pipeline is None:
                 return _text_response(f"Пайплайн id={pipeline_id} не найден.")
             steps = pipeline.refinement_steps or []
@@ -183,26 +208,18 @@ def register(db, client_pool, embedding_service, **kwargs):
         if gate:
             return gate
         try:
-            from src.services.pipeline_service import PipelineService, PipelineTargetRef
-
-            name = args.get("name", "").strip()
-            prompt_template = args.get("prompt_template", "").strip()
-            source_str = args.get("source_channel_ids", "")
-            target_str = args.get("target_refs", "")
+            name = arg_str(args, "name")
+            prompt_template = arg_str(args, "prompt_template")
+            source_str = arg_str(args, "source_channel_ids")
+            target_str = arg_str(args, "target_refs")
             if not name or not prompt_template or not source_str or not target_str:
                 return _text_response(
                     "Ошибка: name, prompt_template, source_channel_ids и target_refs обязательны."
                 )
-            source_ids = [int(x.strip()) for x in source_str.split(",") if x.strip()]
-            target_refs = []
-            for part in target_str.split(","):
-                part = part.strip()
-                if "|" not in part:
-                    return _text_response(f"Неверный формат target_ref: '{part}'. Ожидается 'phone|dialog_id'.")
-                phone, dialog_id = part.split("|", 1)
-                target_refs.append(PipelineTargetRef(phone=phone.strip(), dialog_id=int(dialog_id.strip())))
+            source_ids = arg_csv_ints(args, "source_channel_ids", required=True)
+            target_refs = _parse_target_refs(target_str)
 
-            svc = PipelineService(db)
+            svc = ctx.pipeline_service()
             llm_model = args.get("llm_model")
             publish_mode = args.get("publish_mode", "moderated")
             pipeline_id = await svc.add(
@@ -214,6 +231,8 @@ def register(db, client_pool, embedding_service, **kwargs):
                 publish_mode=publish_mode,
             )
             return _text_response(f"Пайплайн '{name}' создан (id={pipeline_id}).")
+        except ToolInputError as e:
+            return e.to_response()
         except Exception as e:
             return _text_response(f"Ошибка создания пайплайна: {e}")
 
@@ -238,14 +257,15 @@ def register(db, client_pool, embedding_service, **kwargs):
         gate = require_confirmation("изменит настройки пайплайна", args)
         if gate:
             return gate
-        pipeline_id = args.get("pipeline_id")
-        if pipeline_id is None:
-            return _text_response("Ошибка: pipeline_id обязателен.")
         try:
-            from src.services.pipeline_service import PipelineService, PipelineTargetRef
+            pipeline_id = arg_int(args, "pipeline_id", required=True)
+        except ToolInputError as exc:
+            return exc.to_response()
+        try:
+            from src.services.pipeline_service import PipelineTargetRef
 
-            svc = PipelineService(db)
-            existing = await svc.get_detail(int(pipeline_id))
+            svc = ctx.pipeline_service()
+            existing = await svc.get_detail(pipeline_id)
             if existing is None:
                 return _text_response(f"Пайплайн id={pipeline_id} не найден.")
             p = existing["pipeline"]
@@ -257,28 +277,20 @@ def register(db, client_pool, embedding_service, **kwargs):
 
             source_str = args.get("source_channel_ids")
             if source_str:
-                source_ids = [int(x.strip()) for x in source_str.split(",") if x.strip()]
+                source_ids = arg_csv_ints(args, "source_channel_ids", required=True)
             else:
                 source_ids = existing["source_ids"]
 
             target_str = args.get("target_refs")
             if target_str:
-                target_refs = []
-                for part in target_str.split(","):
-                    part = part.strip()
-                    if "|" not in part:
-                        return _text_response(
-                            f"Неверный формат target_ref: '{part}'. Ожидается 'phone|dialog_id'."
-                        )
-                    phone, dialog_id = part.split("|", 1)
-                    target_refs.append(PipelineTargetRef(phone=phone.strip(), dialog_id=int(dialog_id.strip())))
+                target_refs = _parse_target_refs(target_str)
             else:
                 target_refs = [
                     PipelineTargetRef(phone=t.phone, dialog_id=t.dialog_id) for t in existing["targets"]
                 ]
 
             ok = await svc.update(
-                int(pipeline_id),
+                pipeline_id,
                 name=name,
                 prompt_template=prompt_template,
                 source_channel_ids=source_ids,
@@ -289,6 +301,8 @@ def register(db, client_pool, embedding_service, **kwargs):
             if ok:
                 return _text_response(f"Пайплайн '{name}' (id={pipeline_id}) обновлён.")
             return _text_response(f"Не удалось обновить пайплайн id={pipeline_id}.")
+        except ToolInputError as e:
+            return e.to_response()
         except Exception as e:
             return _text_response(f"Ошибка редактирования пайплайна: {e}")
 
@@ -300,17 +314,16 @@ def register(db, client_pool, embedding_service, **kwargs):
         {"pipeline_id": Annotated[int, "ID пайплайна из list_pipelines"]},
     )
     async def toggle_pipeline(args):
-        pipeline_id = args.get("pipeline_id")
-        if pipeline_id is None:
-            return _text_response("Ошибка: pipeline_id обязателен.")
         try:
-            from src.services.pipeline_service import PipelineService
-
-            svc = PipelineService(db)
-            ok = await svc.toggle(int(pipeline_id))
+            pipeline_id = arg_int(args, "pipeline_id", required=True)
+        except ToolInputError as exc:
+            return exc.to_response()
+        try:
+            svc = ctx.pipeline_service()
+            ok = await svc.toggle(pipeline_id)
             if not ok:
                 return _text_response(f"Пайплайн id={pipeline_id} не найден.")
-            pipeline = await svc.get(int(pipeline_id))
+            pipeline = await svc.get(pipeline_id)
             status = "активирован" if pipeline and pipeline.is_active else "деактивирован"
             name = pipeline.name if pipeline else f"id={pipeline_id}"
             return _text_response(f"Пайплайн '{name}' {status}.")
@@ -329,19 +342,18 @@ def register(db, client_pool, embedding_service, **kwargs):
         annotations=ToolAnnotations(destructiveHint=True),
     )
     async def delete_pipeline(args):
-        pipeline_id = args.get("pipeline_id")
-        if pipeline_id is None:
-            return _text_response("Ошибка: pipeline_id обязателен.")
         try:
-            from src.services.pipeline_service import PipelineService
-
-            svc = PipelineService(db)
-            pipeline = await svc.get(int(pipeline_id))
+            pipeline_id = arg_int(args, "pipeline_id", required=True)
+        except ToolInputError as exc:
+            return exc.to_response()
+        try:
+            svc = ctx.pipeline_service()
+            pipeline = await svc.get(pipeline_id)
             name = pipeline.name if pipeline else f"id={pipeline_id}"
             gate = require_confirmation(f"безвозвратно удалит пайплайн '{name}'", args)
             if gate:
                 return gate
-            await svc.delete(int(pipeline_id))
+            await svc.delete(pipeline_id)
             return _text_response(f"Пайплайн '{name}' удалён.")
         except Exception as e:
             return _text_response(f"Ошибка удаления пайплайна: {e}")
@@ -553,7 +565,7 @@ def register(db, client_pool, embedding_service, **kwargs):
         },
     )
     async def publish_pipeline_run(args):
-        gate = require_pool(client_pool, "Публикация контента")
+        gate = ctx.require_pool("Публикация контента")
         if gate:
             return gate
         gate = require_confirmation("опубликует генерацию в целевые каналы", args)

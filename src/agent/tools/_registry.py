@@ -5,6 +5,10 @@ from __future__ import annotations
 import json as _json
 import logging
 import re as _re
+from dataclasses import dataclass
+from typing import Any
+
+from src.agent.runtime_context import AgentRuntimeContext
 
 logger = logging.getLogger(__name__)
 
@@ -12,6 +16,157 @@ logger = logging.getLogger(__name__)
 def _text_response(text: str) -> dict:
     """Wrap text into MCP tool response format."""
     return {"content": [{"type": "text", "text": text}]}
+
+
+class ToolInputError(ValueError):
+    """User-facing tool argument validation error."""
+
+    def to_response(self) -> dict:
+        return _text_response(f"Ошибка: {self}")
+
+
+@dataclass(slots=True)
+class AgentToolContext:
+    """Shared dependencies and guards for agent tool handlers."""
+
+    db: object
+    config: object | None = None
+    client_pool: object | None = None
+    scheduler_manager: object | None = None
+    embedding_service: object | None = None
+    runtime_context: AgentRuntimeContext | None = None
+
+    @classmethod
+    def build(
+        cls,
+        *,
+        db: object,
+        config: object | None = None,
+        client_pool: object | None = None,
+        scheduler_manager: object | None = None,
+        embedding_service: object | None = None,
+        runtime_context: AgentRuntimeContext | None = None,
+    ) -> "AgentToolContext":
+        runtime_context = runtime_context or AgentRuntimeContext.build(
+            db=db,
+            config=config,
+            client_pool=client_pool,
+            scheduler_manager=scheduler_manager,
+        )
+        return cls(
+            db=db,
+            config=config,
+            client_pool=client_pool,
+            scheduler_manager=scheduler_manager,
+            embedding_service=embedding_service,
+            runtime_context=runtime_context,
+        )
+
+    def require_pool(self, action: str = "Эта операция") -> dict | None:
+        return require_pool(self.client_pool, action)
+
+    async def resolve_phone(self, raw_phone: str) -> tuple[str, dict | None]:
+        return await resolve_phone(self.db, raw_phone)
+
+    async def require_phone_permission(self, phone: str, tool_name: str) -> dict | None:
+        return await require_phone_permission(self.db, phone, tool_name)
+
+    def channel_service(self):
+        from src.services.channel_service import ChannelService
+
+        return ChannelService(self.db, self.client_pool, None)
+
+    def pipeline_service(self):
+        from src.services.pipeline_service import PipelineService
+
+        return PipelineService(self.db)
+
+
+def get_tool_context(
+    kwargs: dict,
+    *,
+    db: object,
+    client_pool: object | None = None,
+    embedding_service: object | None = None,
+) -> AgentToolContext:
+    """Return the shared tool context passed by the registry, or build one for direct tests."""
+    ctx = kwargs.get("tool_context")
+    if isinstance(ctx, AgentToolContext):
+        return ctx
+    return AgentToolContext.build(
+        db=db,
+        config=kwargs.get("config"),
+        client_pool=client_pool,
+        scheduler_manager=kwargs.get("scheduler_manager"),
+        embedding_service=embedding_service,
+        runtime_context=kwargs.get("runtime_context"),
+    )
+
+
+def arg_bool(args: dict[str, Any], name: str, default: bool = False) -> bool:
+    return bool(args.get(name, default))
+
+
+def arg_str(args: dict[str, Any], name: str, default: str = "", *, required: bool = False) -> str:
+    value = args.get(name, default)
+    if value is None:
+        value = ""
+    value = str(value).strip()
+    if required and not value:
+        raise ToolInputError(f"{name} обязателен.")
+    return value
+
+
+def arg_int(args: dict[str, Any], name: str, default: int | None = None, *, required: bool = False) -> int | None:
+    value = args.get(name, default)
+    if value is None or value == "":
+        if required:
+            raise ToolInputError(f"{name} обязателен.")
+        return default
+    try:
+        return int(value)
+    except (TypeError, ValueError) as exc:
+        raise ToolInputError(f"{name} должен быть целым числом.") from exc
+
+
+def arg_csv_ints(
+    args: dict[str, Any],
+    name: str,
+    *,
+    required: bool = False,
+    allow_empty: bool = False,
+) -> list[int]:
+    value = args.get(name, "")
+    if value is None:
+        value = ""
+    if isinstance(value, (list, tuple)):
+        parts = [str(v).strip() for v in value]
+    else:
+        parts = [part.strip() for part in str(value).split(",")]
+    parts = [part for part in parts if part]
+    if not parts:
+        if required and not allow_empty:
+            raise ToolInputError(f"{name} обязателен.")
+        return []
+    result: list[int] = []
+    invalid: list[str] = []
+    for part in parts:
+        try:
+            result.append(int(part))
+        except ValueError:
+            invalid.append(part)
+    if invalid:
+        raise ToolInputError(f"{name} должен содержать целые числа через запятую: {', '.join(invalid)}")
+    return result
+
+
+def require_args(args: dict[str, Any], *names: str) -> dict[str, str]:
+    values = {name: arg_str(args, name) for name in names}
+    missing = [name for name, value in values.items() if not value]
+    if missing:
+        joined = ", ".join(missing)
+        raise ToolInputError(f"{joined} обязательны.")
+    return values
 
 
 def normalize_phone(phone: str) -> str:

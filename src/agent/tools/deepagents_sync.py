@@ -144,7 +144,7 @@ def build_deepagents_tools(
             from src.services.channel_service import ChannelService
 
             svc = ChannelService(db, client_pool, None)
-            result = _run_sync("add_channel", lambda: svc.add_by_identifier(identifier))
+            result = runtime_context.run_sync("add_channel", lambda: svc.add_by_identifier(identifier))
             return f"Канал добавлен: {result}" if result else f"Не удалось добавить канал: {identifier}"
         except Exception as exc:
             return f"Ошибка добавления канала: {exc}"
@@ -157,7 +157,7 @@ def build_deepagents_tools(
             from src.services.channel_service import ChannelService
 
             svc = ChannelService(db, client_pool, None)
-            _run_sync("delete_channel", lambda: svc.delete(pk))
+            runtime_context.run_sync("delete_channel", lambda: svc.delete(pk))
             return f"Канал pk={pk} удалён."
         except Exception as exc:
             return f"Ошибка удаления канала: {exc}"
@@ -170,7 +170,7 @@ def build_deepagents_tools(
             from src.services.channel_service import ChannelService
 
             svc = ChannelService(db, client_pool, None)
-            _run_sync("toggle_channel", lambda: svc.toggle(pk))
+            runtime_context.run_sync("toggle_channel", lambda: svc.toggle(pk))
             return f"Канал pk={pk} переключён."
         except Exception as exc:
             return f"Ошибка переключения канала: {exc}"
@@ -233,7 +233,7 @@ def build_deepagents_tools(
             from src.services.pipeline_service import PipelineService
 
             svc = PipelineService(db)
-            _run_sync("delete_pipeline", lambda: svc.delete(pipeline_id))
+            runtime_context.run_sync("delete_pipeline", lambda: svc.delete(pipeline_id))
             return f"Пайплайн id={pipeline_id} удалён."
         except Exception as exc:
             return f"Ошибка удаления пайплайна: {exc}"
