@@ -94,6 +94,8 @@ def test_filter_analyze(tmp_path, cli_init_patch, capsys):
 
     out = capsys.readouterr().out
     assert "No channels found" in out
+    mock_instance.analyze_all.assert_awaited_once()
+    mock_instance.apply_filters.assert_not_awaited()
 
 
 def test_filter_apply(tmp_path, cli_init_patch, capsys):

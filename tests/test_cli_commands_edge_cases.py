@@ -1033,7 +1033,7 @@ class TestFilterAnalyze:
         assert "100" in out
         assert "TestChannel" in out
         assert "75.5" in out
-        assert "Filtered: 1" in out
+        assert "Flagged: 1" in out
 
     def test_apply(self, capsys):
         from src.cli.commands.filter import run

@@ -8,6 +8,47 @@ from src.filters.models import ChannelFilterResult
 from src.models import NotificationBot
 
 
+class TestDeepagentsSyncSearchMessages:
+    def test_results_include_channel_label(self, mock_db):
+        from src.agent.tools.deepagents_sync import build_deepagents_tools
+
+        msg = SimpleNamespace(
+            channel_id=100,
+            channel_title="Readable Title",
+            channel_username="readable_user",
+            text="Labeled message",
+            date="2025-01-01",
+        )
+        mock_db.search_messages = AsyncMock(return_value=([msg], 1))
+        tools = build_deepagents_tools(mock_db)
+        tool_map = {t.__name__: t for t in tools}
+
+        result = tool_map["search_messages"]("label", limit=10)
+
+        assert "Readable Title" in result
+        assert "@readable_user" in result
+        assert "channel_id=100" in result
+
+    def test_results_without_channel_label_fall_back_to_channel_id(self, mock_db):
+        from src.agent.tools.deepagents_sync import build_deepagents_tools
+
+        msg = SimpleNamespace(
+            channel_id=100,
+            channel_title=None,
+            channel_username=None,
+            text="Fallback message",
+            date="2025-01-01",
+        )
+        mock_db.search_messages = AsyncMock(return_value=([msg], 1))
+        tools = build_deepagents_tools(mock_db)
+        tool_map = {t.__name__: t for t in tools}
+
+        result = tool_map["search_messages"]("fallback", limit=10)
+
+        assert "channel_id=100" in result
+        assert "@None" not in result
+
+
 class TestDeepagentsSyncListChannels:
     def test_empty(self, mock_db):
         from src.agent.tools.deepagents_sync import build_deepagents_tools
