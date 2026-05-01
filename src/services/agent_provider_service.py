@@ -10,7 +10,6 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlsplit, urlunsplit
 
 import aiohttp
 
@@ -21,7 +20,12 @@ from src.agent.provider_registry import (
     ZAI_GENERAL_BASE_URL,
     ProviderRuntimeConfig,
     ProviderSpec,
+    canonical_endpoint_fingerprint_for_config,
+    default_base_url_for,
     is_zai_legacy_anthropic_base_url,
+    normalize_ollama_base_url,
+    normalize_provider_plain_fields,
+    normalize_urlish,
     normalize_zai_base_url,
     provider_spec,
 )
@@ -41,27 +45,6 @@ _PYPROJECT_PATH = _PROJECT_ROOT / "pyproject.toml"
 COMMUNITY_COMPATIBILITY_CATALOG_PATH = (
     _PROJECT_ROOT / "data" / "deepagents_model_compatibility_catalog.json"
 )
-
-_OPENAI_STYLE_DEFAULT_BASE_URLS = {
-    "openai": "https://api.openai.com/v1",
-    "groq": "https://api.groq.com/openai/v1",
-    "deepseek": "https://api.deepseek.com/v1",
-    "xai": "https://api.x.ai/v1",
-    "perplexity": "https://api.perplexity.ai",
-    "together": "https://api.together.xyz/v1",
-    "fireworks": "https://api.fireworks.ai/inference/v1",
-    "mistralai": "https://api.mistral.ai/v1",
-}
-_NON_CANONICAL_EXPORT_PROVIDERS = {
-    "azure_openai",
-    "azure_ai",
-    "google_vertexai",
-    "google_anthropic_vertex",
-    "bedrock",
-    "bedrock_converse",
-    "ibm",
-}
-
 
 @dataclass(slots=True)
 class ProviderModelCompatibilityRecord:
@@ -451,6 +434,42 @@ class AgentProviderService:
             return "Model is required."
         return ""
 
+    def deepagents_runtime_options(
+        self,
+        cfg: ProviderRuntimeConfig,
+    ) -> tuple[str, dict[str, object]]:
+        spec = provider_spec(cfg.provider)
+        if spec is None:
+            raise RuntimeError(f"Unknown provider: {cfg.provider}")
+
+        model_provider = spec.resolved_runtime_provider
+        extra: dict[str, object] = {
+            key: value for key, value in cfg.plain_fields.items() if value.strip()
+        }
+        if cfg.provider == "ollama":
+            api_key = cfg.secret_fields.get("api_key", "").strip()
+            extra["base_url"] = self.normalize_ollama_base_url(
+                str(extra.get("base_url", "")),
+                api_key,
+            )
+            if api_key:
+                extra["client_kwargs"] = {"headers": {"Authorization": f"Bearer {api_key}"}}
+            return model_provider, extra
+
+        extra.update({key: value for key, value in cfg.secret_fields.items() if value.strip()})
+        if cfg.provider == "zai":
+            raw_base_url = cfg.plain_fields.get("base_url", "")
+            if is_zai_legacy_anthropic_base_url(raw_base_url):
+                raise RuntimeError(
+                    "This URL is the Z.AI Anthropic-compatible proxy. Configure the "
+                    "anthropic provider with this URL instead, or use the OpenAI-compatible "
+                    f"endpoint {ZAI_GENERAL_BASE_URL}. Coding Plan users can explicitly set "
+                    f"{ZAI_CODING_BASE_URL}."
+                )
+            normalized_base_url = normalize_zai_base_url(raw_base_url)
+            extra["base_url"] = normalized_base_url
+        return model_provider, extra
+
     def config_fingerprint(
         self,
         cfg: ProviderRuntimeConfig,
@@ -461,9 +480,7 @@ class AgentProviderService:
         spec = provider_spec(cfg.provider)
         if spec is None:
             raise RuntimeError(f"Unknown provider: {cfg.provider}")
-        normalized_plain = self._normalize_plain_fields(
-            cfg.provider, cfg.plain_fields, cfg.secret_fields
-        )
+        normalized_plain = self.normalize_provider_plain_fields(cfg)
         secret_payload = {
             field.name: cfg.secret_fields.get(field.name, "").strip()
             for field in spec.secret_fields
@@ -667,43 +684,13 @@ class AgentProviderService:
         return export_path
 
     def canonical_endpoint_fingerprint(self, cfg: ProviderRuntimeConfig) -> str | None:
-        provider = cfg.provider
-        if provider in _NON_CANONICAL_EXPORT_PROVIDERS:
-            return None
-        if provider == "ollama":
-            api_key = cfg.secret_fields.get("api_key", "").strip()
-            base_url = self.normalize_ollama_base_url(cfg.plain_fields.get("base_url", ""), api_key)
-            if api_key and base_url == "https://ollama.com":
-                return "ollama://cloud"
-            return None
-        if provider == "zai":
-            base_url = cfg.plain_fields.get("base_url", "").strip()
-            normalized = self._normalize_urlish(normalize_zai_base_url(base_url))
-            if normalized in {ZAI_GENERAL_BASE_URL, ZAI_CODING_BASE_URL}:
-                return normalized
-            return None
-        if provider in _OPENAI_STYLE_DEFAULT_BASE_URLS:
-            base_url = cfg.plain_fields.get("base_url", "").strip()
-            default_base_url = _OPENAI_STYLE_DEFAULT_BASE_URLS[provider]
-            normalized = self._normalize_urlish(base_url or default_base_url)
-            if normalized == default_base_url:
-                return normalized
-            return None
-        return f"{provider}://default"
+        return canonical_endpoint_fingerprint_for_config(cfg)
+
+    def default_base_url_for(self, provider_name: str) -> str:
+        return default_base_url_for(provider_name)
 
     def normalize_ollama_base_url(self, base_url: str, api_key: str = "") -> str:
-        raw = base_url.strip()
-        if not raw:
-            return "https://ollama.com" if api_key.strip() else "http://localhost:11434"
-
-        parsed = urlsplit(raw)
-        if not parsed.scheme or not parsed.netloc:
-            return raw.rstrip("/")
-
-        normalized_path = parsed.path.rstrip("/")
-        if normalized_path == "/api":
-            normalized_path = ""
-        return urlunsplit((parsed.scheme, parsed.netloc, normalized_path, "", "")).rstrip("/")
+        return normalize_ollama_base_url(base_url, api_key)
 
     async def _fetch_live_models(
         self,
@@ -717,12 +704,9 @@ class AgentProviderService:
                 cfg.plain_fields.get("base_url", ""),
                 cfg.secret_fields.get("api_key", ""),
             )
-        if provider in _OPENAI_STYLE_DEFAULT_BASE_URLS:
+        if spec.openai_compatible and spec.default_base_url:
             assert cfg is not None
-            base_url = (
-                cfg.plain_fields.get("base_url", "").strip()
-                or _OPENAI_STYLE_DEFAULT_BASE_URLS[provider]
-            )
+            base_url = cfg.plain_fields.get("base_url", "").strip() or spec.default_base_url
             return await self._fetch_openai_models(base_url, cfg.secret_fields.get("api_key", ""))
         if provider == "anthropic":
             assert cfg is not None
@@ -895,46 +879,13 @@ class AgentProviderService:
         plain_fields: dict[str, str],
         secret_fields: dict[str, str],
     ) -> dict[str, str]:
-        normalized: dict[str, str] = {}
-        spec = provider_spec(provider_name)
-        if spec is None:
-            return normalized
-        for spec_field in spec.plain_fields:
-            key = spec_field.name
-            value = plain_fields.get(key, "").strip()
-            if key == "base_url" and provider_name == "ollama":
-                normalized[key] = self.normalize_ollama_base_url(
-                    value,
-                    secret_fields.get("api_key", ""),
-                )
-                continue
-            if key == "base_url" and provider_name == "zai":
-                normalized[key] = self._normalize_urlish(normalize_zai_base_url(value))
-                continue
-            if key == "base_url" and provider_name in _OPENAI_STYLE_DEFAULT_BASE_URLS:
-                normalized[key] = self._normalize_urlish(
-                    value or _OPENAI_STYLE_DEFAULT_BASE_URLS[provider_name]
-                )
-                continue
-            if key in {"base_url", "endpoint", "azure_endpoint", "url"}:
-                normalized_value = self._normalize_urlish(value)
-                if normalized_value:
-                    normalized[key] = normalized_value
-                continue
-            if value:
-                normalized[key] = value
-        return normalized
+        return normalize_provider_plain_fields(provider_name, plain_fields, secret_fields)
+
+    def normalize_provider_plain_fields(self, cfg: ProviderRuntimeConfig) -> dict[str, str]:
+        return normalize_provider_plain_fields(cfg.provider, cfg.plain_fields, cfg.secret_fields)
 
     def _normalize_urlish(self, raw: str) -> str:
-        value = raw.strip()
-        if not value:
-            return ""
-        parsed = urlsplit(value)
-        if not parsed.scheme or not parsed.netloc:
-            return value.rstrip("/")
-        return urlunsplit((parsed.scheme, parsed.netloc, parsed.path.rstrip("/"), "", "")).rstrip(
-            "/"
-        )
+        return normalize_urlish(raw)
 
     def _parse_provider_form_item(
         self,

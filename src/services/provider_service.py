@@ -6,22 +6,14 @@ from typing import Any, Awaitable, Callable, Dict, Optional
 
 import aiohttp
 
-from src.agent.provider_registry import normalize_zai_base_url
+from src.agent.provider_registry import (
+    is_zai_legacy_anthropic_base_url,
+    normalize_ollama_base_url,
+    normalize_zai_base_url,
+    provider_spec,
+)
 
 logger = logging.getLogger(__name__)
-
-# Base URLs for OpenAI-compatible providers (shared with agent_provider_service.py).
-_OPENAI_STYLE_BASE_URLS: Dict[str, str] = {
-    "openai": "https://api.openai.com/v1",
-    "groq": "https://api.groq.com/openai/v1",
-    "deepseek": "https://api.deepseek.com/v1",
-    "xai": "https://api.x.ai/v1",
-    "perplexity": "https://api.perplexity.ai",
-    "together": "https://api.together.xyz/v1",
-    "fireworks": "https://api.fireworks.ai/inference/v1",
-    "mistralai": "https://api.mistral.ai/v1",
-}
-
 
 async def build_provider_service(
     db: object | None = None,
@@ -115,9 +107,13 @@ class AgentProviderService:
 
             ollama_base = os.environ.get("OLLAMA_BASE") or os.environ.get("OLLAMA_URL")
             if ollama_base and "ollama" not in self._registry:
+                normalized_ollama_base = normalize_ollama_base_url(
+                    ollama_base,
+                    os.environ.get("OLLAMA_API_KEY", ""),
+                )
                 _http_adapters.append(
                     ("ollama", lambda: make_ollama_adapter(
-                        ollama_base, os.environ.get("OLLAMA_API_KEY")
+                        normalized_ollama_base, os.environ.get("OLLAMA_API_KEY")
                     ))
                 )
 
@@ -245,11 +241,26 @@ class AgentProviderService:
         provider = cfg.provider
         api_key = (cfg.secret_fields.get("api_key", "") or "").strip()
 
+        spec = provider_spec(provider)
+        if spec is None:
+            return None
+
+        if provider == "zai":
+            raw_base_url = cfg.plain_fields.get("base_url", "")
+            if is_zai_legacy_anthropic_base_url(raw_base_url):
+                logger.debug(
+                    "Skipping db provider %s: Anthropic-compatible URL is not OpenAI-compatible",
+                    provider,
+                )
+                return None
+            base_url = normalize_zai_base_url(raw_base_url)
+            return self._make_openai_compat_provider(base_url, api_key)
+
         # OpenAI-compatible providers
-        if provider in _OPENAI_STYLE_BASE_URLS:
+        if spec.openai_compatible and spec.default_base_url:
             base_url = (cfg.plain_fields.get("base_url", "") or "").strip()
             if not base_url:
-                base_url = _OPENAI_STYLE_BASE_URLS[provider]
+                base_url = spec.default_base_url
             return self._make_openai_compat_provider(base_url, api_key)
 
         if provider == "cohere":
@@ -258,6 +269,7 @@ class AgentProviderService:
 
         if provider == "ollama":
             base_url = (cfg.plain_fields.get("base_url", "") or "").strip()
+            base_url = normalize_ollama_base_url(base_url, api_key)
             return make_ollama_adapter(base_url=base_url or None, api_key=api_key or None)
 
         if provider == "huggingface":
@@ -267,19 +279,6 @@ class AgentProviderService:
         if provider == "anthropic":
             base_url = (cfg.plain_fields.get("base_url", "") or "").strip()
             return make_anthropic_adapter(api_key, base_url=base_url or None)
-
-        if provider == "zai":
-            from src.agent.provider_registry import (
-                is_zai_legacy_anthropic_base_url,
-                normalize_zai_base_url,
-            )
-
-            raw_base_url = cfg.plain_fields.get("base_url", "")
-            if is_zai_legacy_anthropic_base_url(raw_base_url):
-                logger.debug("Skipping db provider %s: Anthropic-compatible URL is not OpenAI-compatible", provider)
-                return None
-            base_url = normalize_zai_base_url(raw_base_url)
-            return self._make_openai_compat_provider(base_url, api_key)
 
         if provider == "google_genai":
             # Google GenAI also needs a different request schema.
