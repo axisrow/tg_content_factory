@@ -2,10 +2,36 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import inspect
 
 from src.cli import runtime
 from src.services.notification_service import NotificationService
 from src.services.notification_target_service import NotificationTargetService
+
+
+async def _describe_target(target_svc):
+    describe = getattr(target_svc, "describe_target", None)
+    if not callable(describe):
+        return None
+    status = describe()
+    if inspect.isawaitable(status):
+        return await status
+    return None
+
+
+def _print_target_status(status) -> None:
+    print("Notification target unavailable.")
+    print(f"Mode: {getattr(status, 'mode', 'unknown')}")
+    print(f"Status: {getattr(status, 'state', 'unknown')}")
+    configured_phone = getattr(status, "configured_phone", None)
+    effective_phone = getattr(status, "effective_phone", None)
+    if configured_phone:
+        print(f"Configured phone: {configured_phone}")
+    if effective_phone:
+        print(f"Effective phone: {effective_phone}")
+    message = getattr(status, "message", None)
+    if message:
+        print(f"Diagnostic: {message}")
 
 
 def run(args: argparse.Namespace) -> None:
@@ -29,6 +55,10 @@ def run(args: argparse.Namespace) -> None:
                 print(f"Send /start to @{bot.bot_username} in Telegram to activate it.")
 
             elif args.notification_action == "status":
+                target_status = await _describe_target(target_svc)
+                if target_status is not None and getattr(target_status, "state", None) != "available":
+                    _print_target_status(target_status)
+                    return
                 bot = await svc.get_status()
                 if bot is None:
                     print("No notification bot configured.")

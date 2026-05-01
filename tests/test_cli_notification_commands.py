@@ -1,6 +1,7 @@
 """Tests for src/cli/commands/notification.py — CLI notification subcommands."""
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from src.cli.commands.notification import run
@@ -83,6 +84,36 @@ def test_status_with_bot(capsys):
          patch("asyncio.run", fake_asyncio_run):
         run(_args(notification_action="status"))
     assert "test_bot" in capsys.readouterr().out
+
+
+def test_status_target_unavailable_prints_diagnostic(capsys):
+    db = make_cli_db()
+    pool = _make_pool()
+    config = make_notification_config()
+    target_status = SimpleNamespace(
+        mode="primary",
+        state="disconnected",
+        message="Аккаунт +123 не подключён.",
+        configured_phone=None,
+        effective_phone="+123",
+    )
+    mock_svc = MagicMock()
+    mock_svc.get_status = AsyncMock(side_effect=AssertionError("get_status should not be called"))
+    mock_ts = MagicMock()
+    mock_ts.describe_target = AsyncMock(return_value=target_status)
+    with patch("src.cli.commands.notification.runtime.init_db", AsyncMock(return_value=(config, db))), \
+         patch("src.cli.commands.notification.runtime.init_pool", AsyncMock(return_value=(MagicMock(), pool))), \
+         patch("src.cli.commands.notification.NotificationService", return_value=mock_svc), \
+         patch("src.cli.commands.notification.NotificationTargetService", return_value=mock_ts), \
+         patch("asyncio.run", fake_asyncio_run):
+        run(_args(notification_action="status"))
+
+    out = capsys.readouterr().out
+    assert "Notification target unavailable" in out
+    assert "disconnected" in out
+    assert "+123" in out
+    assert "Аккаунт +123 не подключён." in out
+    mock_svc.get_status.assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------

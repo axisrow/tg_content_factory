@@ -15,6 +15,39 @@ def _display_metric(value: object) -> object:
     return "?" if value is None else value
 
 
+def _first_value(obj: object, names: Iterable[str]) -> object:
+    for name in names:
+        value = _value(obj, name)
+        if value:
+            return value
+    return None
+
+
+def _display_username(value: object) -> str | None:
+    if not value:
+        return None
+    username = str(value).strip()
+    if not username:
+        return None
+    return f"@{username.lstrip('@')}"
+
+
+def format_channel_identity(
+    obj: object,
+    *,
+    title_names: Iterable[str] = ("channel_title", "title"),
+    username_names: Iterable[str] = ("channel_username", "username"),
+) -> str:
+    channel_id = _value(obj, "channel_id", "?")
+    title = _first_value(obj, title_names)
+    username = _display_username(_first_value(obj, username_names))
+    label_parts = [str(part) for part in (title, username) if part]
+    id_part = f"channel_id={channel_id}"
+    if not label_parts:
+        return id_part
+    return f"{' / '.join(label_parts)} ({id_part})"
+
+
 def format_notification_status(bot: object | None, target_status: object | None = None) -> str:
     lines: list[str]
     if bot is None:

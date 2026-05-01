@@ -51,7 +51,6 @@ def run(args: argparse.Namespace) -> None:
 
             if args.filter_action == "analyze":
                 report = await analyzer.analyze_all()
-                count = await analyzer.apply_filters(report)
                 if not report.results:
                     print("No channels found.")
                     return
@@ -86,8 +85,7 @@ def run(args: argparse.Namespace) -> None:
 
                 print(
                     f"\nTotal: {report.total_channels}, "
-                    f"Filtered: {report.filtered_count}, "
-                    f"Applied: {count}"
+                    f"Filtered: {report.filtered_count}"
                 )
 
             elif args.filter_action == "apply":

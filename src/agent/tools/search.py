@@ -4,6 +4,7 @@ from typing import Annotated
 
 from claude_agent_sdk import tool
 
+from src.agent.tools._formatters import format_channel_identity
 from src.agent.tools._registry import _text_response, require_pool
 
 
@@ -27,7 +28,8 @@ def register(db, client_pool, embedding_service, **kwargs):
         ]
         for message in messages:
             preview = (message.text or "")[:300]
-            lines.append(f"- [channel_id={message.channel_id}, date={message.date}]: {preview}")
+            channel = format_channel_identity(message)
+            lines.append(f"- [{channel}, date={message.date}]: {preview}")
         return "\n".join(lines)
 
     # ------------------------------------------------------------------
