@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import html
 import logging
+import re
 from collections import Counter
 from dataclasses import dataclass
 
@@ -50,6 +52,84 @@ class TrendService:
 
     _TOPIC_BATCH_SIZE = 5000
     _MAX_TOPIC_DOCUMENTS = 10000
+    _URL_RE = re.compile(r"https?://\S+|www\.\S+|t\.me/\S+", re.IGNORECASE)
+    _HTML_TAG_RE = re.compile(r"<[^>]+>")
+    _TECH_TOKEN_RE = re.compile(
+        r"\b(?:https?|www|html?|amp|nbsp|quot|lt|gt|href|target|blank|utm_[a-z]+)\b",
+        re.IGNORECASE,
+    )
+    _STOP_WORDS = frozenset({
+        "about",
+        "after",
+        "again",
+        "also",
+        "because",
+        "been",
+        "before",
+        "being",
+        "between",
+        "could",
+        "from",
+        "have",
+        "into",
+        "more",
+        "most",
+        "only",
+        "other",
+        "over",
+        "some",
+        "than",
+        "that",
+        "their",
+        "then",
+        "there",
+        "these",
+        "they",
+        "this",
+        "those",
+        "through",
+        "under",
+        "very",
+        "were",
+        "what",
+        "when",
+        "where",
+        "which",
+        "while",
+        "with",
+        "would",
+        "если",
+        "или",
+        "как",
+        "для",
+        "при",
+        "про",
+        "что",
+        "это",
+        "этот",
+        "эти",
+        "они",
+        "она",
+        "оно",
+        "уже",
+        "еще",
+        "ещё",
+        "были",
+        "было",
+        "будет",
+        "после",
+        "перед",
+        "только",
+        "очень",
+        "можно",
+        "когда",
+        "где",
+        "или",
+        "также",
+        "которые",
+        "который",
+        "которая",
+    })
 
     def __init__(self, db: Database) -> None:
         self._db = db
@@ -95,13 +175,26 @@ class TrendService:
                 self._MAX_TOPIC_DOCUMENTS,
             )
 
-        return await asyncio.to_thread(self._rank_trending_topics, texts, limit)
+        cleaned_texts = [cleaned for text in texts if (cleaned := self._cleanup_topic_text(text))]
+        if not cleaned_texts:
+            return []
+
+        return await asyncio.to_thread(self._rank_trending_topics, cleaned_texts, limit)
+
+    @classmethod
+    def _cleanup_topic_text(cls, text: str) -> str:
+        text = html.unescape(text)
+        text = cls._URL_RE.sub(" ", text)
+        text = cls._HTML_TAG_RE.sub(" ", text)
+        text = cls._TECH_TOKEN_RE.sub(" ", text)
+        return text
 
     def _rank_trending_topics(self, texts: list[str], limit: int) -> list[TrendingTopic]:
         vectorizer = TfidfVectorizer(
             token_pattern=r"(?u)\b[а-яёa-z]{4,}\b",
             max_df=0.85,
             min_df=2,
+            stop_words=sorted(self._STOP_WORDS),
         )
         try:
             tfidf_matrix = vectorizer.fit_transform(texts)

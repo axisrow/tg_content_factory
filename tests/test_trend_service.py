@@ -427,3 +427,26 @@ async def test_get_trending_topics_tfidf_suppresses_noise(service, mock_db):
 
     assert "криптовалюта" in keywords
     assert "hello" not in keywords  # in 100% documents → filtered by max_df
+
+
+@pytest.mark.anyio
+async def test_get_trending_topics_cleans_urls_html_and_stop_words(service, mock_db):
+    """Regression #539: URL/HTML noise should not outrank meaningful keywords."""
+    messages = [
+        {"text": "<a href='https://t.me/news'>Read this</a> quantum рынок &amp;nbsp;"},
+        {"text": "www.example.com/?utm_source=x quantum рынок after before"},
+        {"text": "<b>AI</b> quantum рынок https://example.com/page"},
+        {"text": "daily update product launch"},
+    ]
+    mock_db.execute_fetchall = AsyncMock(return_value=messages)
+
+    result = await service.get_trending_topics(days=7, limit=20)
+    keywords = [t.keyword for t in result]
+
+    assert "quantum" in keywords
+    assert "рынок" in keywords
+    assert "href" not in keywords
+    assert "https" not in keywords
+    assert "example" not in keywords
+    assert "after" not in keywords
+    assert "before" not in keywords

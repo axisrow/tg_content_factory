@@ -5,6 +5,7 @@ from typing import Annotated
 from claude_agent_sdk import tool
 from mcp.types import ToolAnnotations
 
+from src.agent.tools._formatters import format_channel_stats
 from src.agent.tools._registry import (
     ToolInputError,
     _text_response,
@@ -70,16 +71,8 @@ def register(db, client_pool, embedding_service, **kwargs):
     async def get_channel_stats(args):
         try:
             stats = await db.get_latest_stats_for_all()
-            if not stats:
-                return _text_response("Статистика каналов пока не собрана.")
-            lines = [f"Статистика каналов ({len(stats)}):"]
-            for cid, s in stats.items():
-                lines.append(
-                    f"- channel_id={cid}: "
-                    f"subscribers={s.subscriber_count or '?'}, "
-                    f"avg_views={s.avg_views or '?'}"
-                )
-            return _text_response("\n".join(lines))
+            channels = await db.get_channels(active_only=False, include_filtered=True)
+            return _text_response(format_channel_stats(stats, channels))
         except Exception as e:
             return _text_response(f"Ошибка получения статистики каналов: {e}")
 

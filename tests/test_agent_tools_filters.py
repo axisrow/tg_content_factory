@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from src.filters.models import ChannelFilterResult
 from tests.agent_tools_helpers import _get_tool_handlers, _text
 
 
@@ -30,11 +31,12 @@ class TestAnalyzeFiltersTool:
     @pytest.mark.anyio
     async def test_report_with_flagged_channels(self, mock_db):
         """Flagged channels are listed with their flags."""
-        r = MagicMock()
-        r.should_filter = True
-        r.title = "SpamChan"
-        r.channel_id = 100
-        r.flags = ["low_uniqueness", "spam"]
+        r = ChannelFilterResult(
+            channel_id=100,
+            title="SpamChan",
+            flags=["low_uniqueness", "spam"],
+            is_filtered=True,
+        )
         report = MagicMock()
         report.results = [r]
         with patch("src.filters.analyzer.ChannelAnalyzer") as mock_analyzer:
@@ -52,12 +54,12 @@ class TestAnalyzeFiltersTool:
         """More than 30 flagged channels are all shown without truncation."""
 
         def _make_result(i):
-            r = MagicMock()
-            r.should_filter = True
-            r.title = f"Chan{i}"
-            r.channel_id = i
-            r.flags = ["low_uniqueness"]
-            return r
+            return ChannelFilterResult(
+                channel_id=i,
+                title=f"Chan{i}",
+                flags=["low_uniqueness"],
+                is_filtered=True,
+            )
 
         report = MagicMock()
         report.results = [_make_result(i) for i in range(35)]
@@ -72,11 +74,7 @@ class TestAnalyzeFiltersTool:
     @pytest.mark.anyio
     async def test_report_non_flagged_not_listed(self, mock_db):
         """Non-flagged channels don't appear in the flagged list."""
-        ok = MagicMock()
-        ok.should_filter = False
-        ok.title = "GoodChan"
-        ok.channel_id = 1
-        ok.flags = []
+        ok = ChannelFilterResult(channel_id=1, title="GoodChan", is_filtered=False)
         report = MagicMock()
         report.results = [ok]
         with patch("src.filters.analyzer.ChannelAnalyzer") as mock_analyzer:

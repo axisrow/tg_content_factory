@@ -2,12 +2,24 @@
 
 from __future__ import annotations
 
+import inspect
 from typing import Annotated
 
 from claude_agent_sdk import tool
 from mcp.types import ToolAnnotations
 
+from src.agent.tools._formatters import format_notification_status
 from src.agent.tools._registry import _text_response, require_confirmation, require_pool
+
+
+async def _describe_target(target_service):
+    describe = getattr(target_service, "describe_target", None)
+    if not callable(describe):
+        return None
+    status = describe()
+    if inspect.isawaitable(status):
+        return await status
+    return None
 
 
 def register(db, client_pool, embedding_service, **kwargs):
@@ -19,16 +31,13 @@ def register(db, client_pool, embedding_service, **kwargs):
             from src.services.notification_service import NotificationService
             from src.services.notification_target_service import NotificationTargetService
 
-            svc = NotificationService(db, NotificationTargetService(db, client_pool))
+            target_service = NotificationTargetService(db, client_pool)
+            target_status = await _describe_target(target_service)
+            if target_status is not None and getattr(target_status, "state", None) != "available":
+                return _text_response(format_notification_status(None, target_status))
+            svc = NotificationService(db, target_service)
             bot = await svc.get_status()
-            if bot is None:
-                return _text_response("Бот уведомлений не настроен.")
-            return _text_response(
-                f"Бот уведомлений:\n"
-                f"- Username: @{bot.bot_username}\n"
-                f"- Chat ID: {bot.chat_id}\n"
-                f"- Создан: {bot.created_at}"
-            )
+            return _text_response(format_notification_status(bot, target_status))
         except Exception as e:
             return _text_response(f"Ошибка получения статуса бота: {e}")
 
@@ -56,7 +65,8 @@ def register(db, client_pool, embedding_service, **kwargs):
             return _text_response(
                 f"Бот уведомлений создан!\n"
                 f"- Username: @{bot.bot_username}\n"
-                f"- Chat ID: {bot.chat_id}"
+                f"- Bot ID: {bot.bot_id or 'неизвестен'}\n"
+                f"- Target user ID: {bot.tg_user_id}"
             )
         except Exception as e:
             return _text_response(f"Ошибка настройки бота: {e}")

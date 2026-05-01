@@ -7,6 +7,7 @@ from typing import Annotated
 from claude_agent_sdk import tool
 from mcp.types import ToolAnnotations
 
+from src.agent.tools._formatters import format_filter_report
 from src.agent.tools._registry import _text_response, require_confirmation
 
 
@@ -25,17 +26,7 @@ def register(db, client_pool, embedding_service, **kwargs):
 
             analyzer = ChannelAnalyzer(db)
             report = await analyzer.analyze_all()
-            if not report.results:
-                return _text_response("Нет каналов для анализа фильтров.")
-            flagged = [r for r in report.results if r.should_filter]
-            lines = [
-                f"Анализ фильтров: {len(report.results)} каналов проверено, "
-                f"{len(flagged)} рекомендовано к фильтрации."
-            ]
-            for r in flagged:
-                flags = ", ".join(r.flags) if r.flags else "—"
-                lines.append(f"- {r.title} (id={r.channel_id}): {flags}")
-            return _text_response("\n".join(lines))
+            return _text_response(format_filter_report(report))
         except Exception as e:
             return _text_response(f"Ошибка анализа фильтров: {e}")
 
